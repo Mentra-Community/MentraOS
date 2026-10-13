@@ -22,6 +22,8 @@ class AudioSessionMonitor {
     static var isMonitoring = false
     static var devicePattern: String?
     static var callback: ((Bool, String?) -> Void)?
+    /// Last pair-audio decision line. The check runs on a timer; log only changes.
+    private static var lastPairFlow = ""
 
     private init() {
         Bridge.log("AudioMonitor: Initialized")
@@ -114,6 +116,17 @@ class AudioSessionMonitor {
         // Keep categorical evidence at notice level without exposing names or
         // selecting an input, activating the session, or changing audio routing.
         readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(session.category.rawValue, privacy: .public) outputs=\(outputs.count, privacy: .public) bluetoothOutputs=\(route.bluetoothOutputCount, privacy: .public) targetNameOutputs=\(route.targetNameOutputCount, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
+        let decision = activeTarget
+            ? "advance_active_output"
+            : (bluetoothInput != nil ? "advance_hfp_input" : "wait_no_route")
+        let outputNames = outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let inputNames = (availableInputs ?? []).map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let pairFlow =
+            "PAIRFLOW: pair_audio decision=\(decision) pattern=\(devicePattern) category=\(session.category.rawValue) outputs=[\(outputNames)] inputs=[\(inputNames)]"
+        if pairFlow != lastPairFlow {
+            lastPairFlow = pairFlow
+            Bridge.log(pairFlow)
+        }
 
         // Check if already active (using A2DP for music or HFP for calls)
         if activeTarget {

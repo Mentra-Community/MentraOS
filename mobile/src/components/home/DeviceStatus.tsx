@@ -1,6 +1,7 @@
 import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import type {GlassesNotReadyEvent} from "@mentra/engine"
 import {useState, useEffect, useRef, type ReactNode} from "react"
+import {useNavigation} from "@react-navigation/native"
 import {
   ActivityIndicator,
   Image,
@@ -35,6 +36,31 @@ import {
 import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import G2ConnectionProgress from "@/components/glasses/G2ConnectionProgress"
+
+/** Home stays visible while the pairing page slides over it. Clear the saved
+ * glasses only after that cover finishes, so Home does not swap cards mid-slide. */
+const PAIR_AGAIN_COVER_MS = 1200
+
+type PairingCoverNavigation = {
+  addListener: (event: "transitionEnd", callback: (event: {data?: {closing?: boolean}}) => void) => () => void
+}
+
+function unpairAfterPairingCover(navigation: PairingCoverNavigation) {
+  let finished = false
+  let remove = () => {}
+  let guard: ReturnType<typeof setTimeout>
+  const finish = () => {
+    if (finished) return
+    finished = true
+    remove()
+    clearTimeout(guard)
+    unpairSavedGlasses().catch((error) => console.warn("Failed to unpair glasses after owner loss:", error))
+  }
+  remove = navigation.addListener("transitionEnd", (event) => {
+    if (event.data?.closing) finish()
+  })
+  guard = setTimeout(finish, PAIR_AGAIN_COVER_MS)
+}
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"
@@ -72,6 +98,7 @@ export const DeviceStatus = ({onPress, image, children, className = "h-28"}: Dev
 
 export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
+  const navigation = useNavigation()
   const {push, clearHistoryAndGoHome} = useNavigationStore.getState()
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
@@ -308,10 +335,13 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       {
         text: translate(action === "pairAgain" ? "home:pairAgain" : "settings:forgetGlasses"),
         onPress: () => {
+          if (action === "pairAgain") {
+            unpairAfterPairingCover(navigation as PairingCoverNavigation)
+            push("/pairing/prep", {deviceModel: DeviceTypes.LIVE})
+            return
+          }
           unpairSavedGlasses()
-            .then(() =>
-              action === "pairAgain" ? push("/pairing/prep", {deviceModel: DeviceTypes.LIVE}) : clearHistoryAndGoHome(),
-            )
+            .then(() => clearHistoryAndGoHome())
             .catch((error) => console.warn("Failed to unpair glasses after owner loss:", error))
         },
       },
@@ -321,16 +351,17 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   if (ownerLost && displayModel === DeviceTypes.LIVE && !glassesConnected) {
     return (
       <View style={style}>
-        <DeviceStatus onPress={() => confirmOwnerLostAction("pairAgain")} image={getCurrentGlassesImage()}>
+        <DeviceStatus
+          className="h-36"
+          onPress={() => confirmOwnerLostAction("pairAgain")}
+          image={getCurrentGlassesImage()}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
             <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
           </View>
           <Text className="text-secondary-foreground text-sm text-end self-end" tx="home:liveOwnerLostStatus" />
           <Button
-            flex
             compact
-            className="max-h-10"
             tx="home:pairAgain"
             preset="primary"
             onPress={() => confirmOwnerLostAction("pairAgain")}

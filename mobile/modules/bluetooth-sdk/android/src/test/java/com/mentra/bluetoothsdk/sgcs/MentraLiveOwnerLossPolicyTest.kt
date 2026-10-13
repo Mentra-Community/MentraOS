@@ -76,6 +76,38 @@ class MentraLiveOwnerLossPolicyTest {
         )
     }
 
+    @Test
+    fun classicAudioDoesNotCommitAnUnbondedSecurePair() {
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                        explicitPairing = true,
+                        securePairingTarget = true,
+                        bondState = BluetoothDevice.BOND_BONDING,
+                )
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                        explicitPairing = true,
+                        securePairingTarget = true,
+                        bondState = BluetoothDevice.BOND_NONE,
+                )
+        )
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                        explicitPairing = true,
+                        securePairingTarget = true,
+                        bondState = BluetoothDevice.BOND_BONDED,
+                )
+        )
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                        explicitPairing = false,
+                        securePairingTarget = true,
+                        bondState = BluetoothDevice.BOND_NONE,
+                )
+        )
+    }
+
     private fun bondRemoved(
             msSinceAutoReconnectLink: Long?,
             killed: Boolean = false,

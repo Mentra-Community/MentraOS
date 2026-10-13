@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record glasses + phone logcat and BES ring dumps for a manual (hand) session.
 
-Usage: watch.py <run-subdir> <seconds>
+Usage: watch.py <watch-subdir> <seconds>   (writes under runs/<run>/watch/, never old evidence)
 Writes glasses.log, phone.log, bes_trace.txt and events.txt (pairing-relevant lines).
 """
 
@@ -19,8 +19,9 @@ KEYS = (
 
 def main() -> None:
     sub, seconds = sys.argv[1], float(sys.argv[2])
-    d = pmx.RUNS / "m1" / sub
+    d = pmx.RUNS / pmx.RUN_NAME / "watch" / sub
     d.mkdir(parents=True, exist_ok=True)
+    pmx.assert_unit3()
     g = pmx.LogTap(pmx.GLASSES, d / "glasses.log").start(clear=False)
     p = pmx.LogTap(pmx.PHONE, d / "phone.log").start(clear=False)
     pmx.bes_trace(True, 3000)

@@ -8,6 +8,20 @@ import {useNavigationStore} from "@/stores/navigation"
 import {showAlert} from "@/utils/AlertUtils"
 import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
+const mockPairingCover = {end: undefined as undefined | ((event?: {data?: {closing?: boolean}}) => void)}
+
+jest.mock("@react-navigation/native", () => {
+  const actual = jest.requireActual("@react-navigation/native")
+  return {
+    ...actual,
+    useNavigation: () => ({
+      addListener: (_event: string, callback: (event?: {data?: {closing?: boolean}}) => void) => {
+        mockPairingCover.end = callback
+        return () => {}
+      },
+    }),
+  }
+})
 jest.mock("@/stores/navigation", () => ({useNavigationStore: {getState: jest.fn()}}))
 jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 jest.mock("@/utils/pairing/unpairSavedGlasses", () => ({unpairSavedGlasses: jest.fn(() => Promise.resolve())}))
@@ -125,12 +139,28 @@ describe("Mentra Live paired to another phone", () => {
   })
 
   it("pair again confirms, unpairs, and opens Mentra Live pairing prep", async () => {
+    let resolveUnpair: () => void = () => {}
+    ;(unpairSavedGlasses as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUnpair = resolve
+        }),
+    )
     const screen = render(<GlassesStatus />)
     fireEvent.press(screen.getByLabelText("home:pairAgain"))
     const message = pressConfirm()
     expect(message).toContain("home:liveOwnerLostIosBluetooth")
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"}))
+    expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"})
+    expect(unpairSavedGlasses).not.toHaveBeenCalled()
+    await act(async () => {
+      mockPairingCover.end?.({data: {closing: true}})
+    })
     expect(unpairSavedGlasses).toHaveBeenCalledTimes(1)
+    expect(push.mock.invocationCallOrder[0]).toBeLessThan((unpairSavedGlasses as jest.Mock).mock.invocationCallOrder[0])
+    expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveUnpair()
+    })
     expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
   })
 

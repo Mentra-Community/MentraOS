@@ -57,6 +57,9 @@ public class K900CommandHandler {
             String command = json.optString("C", "");
             JSONObject bData = json.optJSONObject("B");
             Log.d(TAG, "📦 Received K900 command: " + command);
+            if ("hm_pairlog".equals(command) || "hm_pairexit".equals(command) || "hm_spkcode".equals(command)) {
+                Log.i("PAIRFLOW", command + " " + (bData != null ? bData.toString() : "{}"));
+            }
 
             // sr_log is consumed here directly: packets are reassembled into the BES log session
             // owned by the outgoing mh_logs request flow (requestBesLogs*), which lives in this

@@ -60,4 +60,17 @@ internal object MentraLiveOwnerLossPolicy {
      */
     fun shouldDeferReadyForBond(securePairingTarget: Boolean, bondState: Int?): Boolean =
             securePairingTarget && bondState != BluetoothDevice.BOND_BONDED
+
+    /** How long an explicit secure pair may wait for a bond result before the attempt fails. */
+    const val SECURE_BOND_WAIT_MS = 40_000L
+
+    /**
+     * Classic audio can come up before the BLE bond. During an explicit secure pair that must
+     * not save this phone. A reconnect of an already-paired phone can still mark ready.
+     */
+    fun shouldMarkReadyFromAudio(
+            explicitPairing: Boolean,
+            securePairingTarget: Boolean,
+            bondState: Int?,
+    ): Boolean = !explicitPairing || !shouldDeferReadyForBond(securePairingTarget, bondState)
 }

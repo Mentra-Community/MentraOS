@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mac as a second BLE central (stranger or new owner) against Mentra Live.
 
-Usage: mac_central.py [--name Mentra_Live_02BE] [--hold 70] [--read] [--attempts 1]
+Usage: mac_central.py [--name <glasses name; default from ident.py>] [--hold 70] [--read] [--attempts 1]
 
 Connects, optionally reads an attribute to provoke encryption/bonding, and holds the
 link for --hold seconds. Prints one JSON line per attempt with how long the link lived.
@@ -11,6 +11,8 @@ import argparse
 import asyncio
 import json
 import time
+
+import ident
 
 from bleak import BleakClient, BleakScanner
 
@@ -68,13 +70,15 @@ async def main_async(args) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--name", default="Mentra_Live_02BE")
+    ap.add_argument("--name", default=None, help="BLE name; default: the configured glasses (ident.py)")
     ap.add_argument("--hold", type=float, default=10)
     ap.add_argument("--read", action="store_true")
     ap.add_argument("--pair", action="store_true")
     ap.add_argument("--attempts", type=int, default=1)
     ap.add_argument("--pause", type=float, default=1)
-    asyncio.run(main_async(ap.parse_args()))
+    args = ap.parse_args()
+    args.name = args.name or ident.name()
+    asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":

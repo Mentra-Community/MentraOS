@@ -3,26 +3,38 @@
 
 Each case starts fresh glasses + phone logcat taps, writes them under
 runs/<run>/<case>/ and appends a verdict row to runs/<run>/results.jsonl.
+
+Device runs (`--run x2`) execute from an immutable harness snapshot via run_case.py; every
+result row carries the snapshot id and manifest sha256. Glasses are unit3 only (pmx routing,
+lab-units guard at every case start); the glasses identity comes from ident.py.
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
+import hashlib
 import json
 import os
+import re
+import signal
 import sys
 import time
 from pathlib import Path
 
+import ident
 import ios
+import owner_lost
 import pmx
+
+HERE = Path(__file__).resolve().parent
+PROTECTED_RUNS = {"x1", "m1", "m2", "m3", "m4", "baseline"}  # old evidence: never written
 
 class PreconditionFailed(Exception):
     """Ownership does not match the case's precondition: stop, do not run the case body."""
 
 
 CASES = {}
-LONG = os.environ.get('PMX_LONG') == '1'  # re-run the 120 s / 300 s timers
 
 
 def case(cid):
@@ -33,10 +45,24 @@ def case(cid):
     return deco
 
 
+def fresh_case_dir(run_dir: Path, cid: str) -> Path:
+    """runs/<run>/<case>/, or <case>__rerun<n> when that already holds evidence (never overwrite)."""
+    d = run_dir / cid
+    n = 1
+    while d.exists() and any(d.iterdir()):
+        n += 1
+        d = run_dir / f"{cid}__rerun{n}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 class Ctx:
     def __init__(self, run_dir: Path, cid: str):
-        self.dir = run_dir / cid
-        self.dir.mkdir(parents=True, exist_ok=True)
+        # Fail closed before any tap starts: identity configured, phone route set, exactly one unit3.
+        ident.get().mac_dash  # name, code and MAC must all be configured (blueutil steps need the MAC)
+        pmx.phone_adb_path()
+        self.unit3 = dict(pmx.assert_unit3())
+        self.dir = fresh_case_dir(run_dir, cid)
         self.cid = cid
         self.g = pmx.LogTap(pmx.GLASSES, self.dir / "glasses.log").start()
         self.p = pmx.LogTap(pmx.PHONE, self.dir / "phone.log").start()
@@ -47,6 +73,13 @@ class Ctx:
         time.sleep(1)
         self.notes: list = []
         self.checks: list = []
+        self.gaps: list = []
+        self.bench: list = []  # informational bench observations; never part of the product verdict
+        self.blocked: str = ""  # precondition/guard failure: the case ends BLOCKED and the run stops
+        self.invalid: str = ""  # a required observation window ran short: the case is INVALID, not a pass
+        self.phases: list = []
+        self._phase_open: dict = {}
+        self.stop_run_reason: str = ""  # the verdict stands, but the next case cannot run (e.g. unit3 adb absent)
 
     def note(self, msg: str) -> None:
         stamp = time.strftime("%H:%M:%S")
@@ -83,6 +116,30 @@ class Ctx:
     def shot(self, name: str) -> Path:
         return pmx.screenshot(self.dir / f"{name}.png")
 
+    def phase_begin(self, name: str) -> None:
+        self._phase_open[name] = time.time()
+
+    def phase_end(self, name: str) -> None:
+        start = self._phase_open.pop(name, None)
+        end = time.time()
+        self.phases.append({"phase": name, "start": start if start is not None else end, "end": end})
+
+    def mark_invalid(self, why: str) -> None:
+        self.invalid = why
+        self.note(f"INVALID {why}")
+
+    def bench_note(self, name: str, ok: bool, detail: str = "") -> None:
+        """Bench observation (for example how long adb took to return). Recorded, never fails the case."""
+        self.bench.append({"bench": name, "ok": bool(ok), "detail": detail})
+        self.note(f"BENCH {'ok' if ok else 'NOTE'} {name} {detail}")
+
+    def gap(self, name: str, detail: str = "") -> None:
+        """A required BES proof is missing and no other source proves the SAME fact: harness gap.
+
+        The case cannot PASS; it ends OPEN unless a check failed (FAIL)."""
+        self.gaps.append({"gap": name, "detail": detail})
+        self.note(f"HARNESS GAP {name}: {detail}")
+
     def finish(self) -> dict:
         time.sleep(4)
         self.g.stop()
@@ -90,14 +147,33 @@ class Ctx:
         self.i.stop()
         (self.dir / "bes_trace.txt").write_text("\n".join(pmx.bes_lines(self.g, 0)) + "\n")
         (self.dir / "notes.txt").write_text("\n".join(self.notes) + "\n")
+        for name, start in list(self._phase_open.items()):
+            self.phases.append({"phase": name, "start": start, "end": time.time(), "open": True})
+            self._phase_open.pop(name, None)
+        wall = union_duration([(p["start"], p["end"]) for p in self.phases])
+        (self.dir / "phases.jsonl").write_text("".join(json.dumps(p) + "\n" for p in self.phases))
+        self.note(f"phase wall {wall:.1f}s union of {len(self.phases)} intervals (overlapping intervals counted once)")
         failed = [c for c in self.checks if not c["ok"]]
-        status = "FAIL" if failed else "PASS"
+        status = "FAIL" if failed else ("OPEN" if self.gaps else "PASS")
+        if self.invalid:
+            status = "INVALID"
+        if self.blocked:
+            status = "BLOCKED"
         if self.untestable:
             status = "NOT_TESTABLE" if not self.checks else status
         return {
             "status": status,
             "checks": self.checks,
+            "gaps": self.gaps,
+            "bench_notes": self.bench,
+            "phases": self.phases,
+            "phase_wall_s": round(wall, 1),
+            "blocked_reason": self.blocked,
+            "invalid_reason": self.invalid,
+            "run_blocked_after": self.stop_run_reason,
             "untestable": self.untestable,
+            "dir": str(self.dir),
+            "unit3": self.unit3,
         }
 
     untestable: str = ""
@@ -113,6 +189,141 @@ class Ctx:
 
     def ishot(self, name: str) -> Path:
         return ios.screenshot(self.dir / f"ios_{name}.png")
+
+
+class PreviousOwnerLinkDown(Exception):
+    """The phone that should be the previous owner has no live link to the glasses: the case ends BLOCKED."""
+
+
+def union_duration(intervals: list) -> float:
+    """Wall time of intervals, counting overlap once. A limit (a cap, a timeout) is not a duration."""
+    segs = sorted((float(a), float(b)) for a, b in intervals if b >= a)
+    if not segs:
+        return 0.0
+    total = 0.0
+    start, end = segs[0]
+    for a, b in segs[1:]:
+        if a <= end:
+            end = max(end, b)
+        else:
+            total += end - start
+            start, end = a, b
+    return total + (end - start)
+
+
+USB_BUDGET_S = 180.0  # expected USB return; over this is a bench note
+USB_CAP_S = 240.0  # from the reboot request; no USB by then is BLOCKED
+
+
+LINK_UP_RX = {
+    "s22": re.compile(r"Received pong response - connection healthy|BLE reconnection fully ready"
+                      r"|Received glasses_ready message"),
+    "ios": re.compile(r"Received pong response - connection healthy|Received glasses_ready message"
+                      r"|pairing_info confirms owner commit"),
+}
+LINK_DOWN_RX = {
+    "s22": re.compile(r"Disconnected from GATT server|Disconnecting from Mentra Live glasses|Owner loss"
+                      r"|MAN: Device disconnected"),
+    "ios": re.compile(r"Disconnected from GATT server|disconnect\(\) -Disconnecting|Owner loss"),
+}
+
+
+def link_state(lines: list, up: re.Pattern, down: re.Pattern):
+    """True when the newest link event in `lines` is a readiness/heartbeat-pong line, False when it is a
+    disconnect/owner-loss line, None when there is no link event at all. ReactNativeJS duplicates are ignored."""
+    state = None
+    for _, line in lines:
+        if "ReactNativeJS" in line:
+            continue
+        if up.search(line):
+            state = True
+        elif down.search(line):
+            state = False
+    return state
+
+
+# The Android phone SDK reads RSSI every 10 s while the GATT link is up and stops polling on disconnect, so a
+# fresh RSSI line proves a live link up to 30 s sooner than waiting for the 30 s heartbeat pong. iOS has no such
+# periodic log line and keeps the pong/ready evidence.
+LINK_FRESH_RX = {
+    "s22": re.compile(r"LIVE: \U0001F4F6 RSSI: -?\d+ dBm"),
+}
+# TEMPORARY BENCH SPEEDUPS (opt-in): PMX_BENCH_SPEEDUPS=1 enables the RSSI shortcut above and the software wake of
+# the glasses while waiting for the link. Both are iteration aids only. Default is OFF (strict: wait for a real
+# pong/ready line, no wake); final and release-gate runs must be strict. See runs/x2/temporary-speedups.md.
+def bench_speedups() -> bool:
+    return os.environ.get("PMX_BENCH_SPEEDUPS") == "1"
+_LOGCAT_TS_RX = re.compile(r"^\s*(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)\.(\d+)")
+
+
+def link_fresh(lines: list, fresh: re.Pattern, down: re.Pattern, max_age_s: float = 15.0, now=None) -> bool:
+    """True when the newest link event is a fresh periodic link line (not followed by a disconnect/owner-loss
+    line) no older than `max_age_s`. A line without a parseable logcat timestamp never counts."""
+    import datetime
+
+    now = now or datetime.datetime.now()
+    stamp = None
+    for _, line in lines:
+        if "ReactNativeJS" in line:
+            continue
+        if fresh.search(line):
+            stamp = line
+        elif down.search(line):
+            stamp = None
+    if stamp is None:
+        return False
+    m = _LOGCAT_TS_RX.match(stamp)
+    if not m:
+        return False
+    month, day, hh, mm, ss = (int(m.group(i)) for i in range(1, 6))
+    try:
+        seen = datetime.datetime(now.year, month, day, hh, mm, ss, int(m.group(6).ljust(6, "0")[:6]))
+    except ValueError:
+        return False
+    return -2.0 <= (now - seen).total_seconds() <= max_age_s
+
+
+def await_live_link(ctx, who: str, timeout: float = 60.0, poll: float = 2.0, clock=None) -> str:
+    """Require a live link to the previous owner phone right before the gesture. The phone logs a heartbeat pong
+    every 30 s while connected and ready, so a live link shows up within one heartbeat; nothing is poked (no extra
+    presses, no reconnect nudges). Not live after `timeout` -> PreviousOwnerLinkDown (case BLOCKED)."""
+    clock = clock or time
+    tap = ctx.p if who == "s22" else ctx.i
+    up, down = LINK_UP_RX[who], LINK_DOWN_RX[who]
+    deadline = clock.time() + timeout
+    state = None
+    wake_every, last_wake = 8.0, 0.0
+    while True:
+        # The glasses' Android sleeps within seconds and then does not answer the phone's ping, so a live link
+        # would never log a pong. A software wake over adb is not a BES button press and sends nothing to the phone.
+        if bench_speedups() and clock is time and clock.time() - last_wake >= wake_every:
+            last_wake = clock.time()
+            try:
+                pmx.gsh("input keyevent KEYCODE_WAKEUP", timeout=10)
+            except Exception as exc:  # noqa: BLE001 - wake is best effort, the pong check below decides
+                ctx.note(f"glasses wake skipped: {exc}")
+        lines = tap.since(0)
+        state = link_state(lines, up, down)
+        if state:
+            ctx.note(f"live link to the previous owner ({who}) confirmed")
+            return "live"
+        fresh = LINK_FRESH_RX.get(who)
+        if bench_speedups() and fresh is not None and link_fresh(lines, fresh, down):
+            ctx.note(f"live link to the previous owner ({who}) confirmed by a fresh RSSI read (10 s poll)")
+            return "live"
+        if clock.time() >= deadline:
+            break
+        clock.sleep(poll)
+    why = {None: "no link event (no heartbeat pong / ready line) in the log", False: "last link event is a disconnect"}[state]
+    raise PreviousOwnerLinkDown(
+        f"precondition: previous owner has no live link ({who}): {why} within {timeout:.0f} s; "
+        "restore the link (no extra presses were tried)")
+
+
+def run_owner_lost(ctx, previous_owner: str, **kw):
+    """owner_lost_on_notice with the live-link precondition (waits up to 60 s right before the gesture)."""
+    kw.setdefault("live_link", lambda: await_live_link(ctx, previous_owner))
+    return owner_lost.owner_lost_on_notice(ctx, previous_owner, **kw)
 
 
 def pair_from_app(ctx: Ctx, timeout: float = 60, accept_dialog: bool = True):
@@ -163,7 +374,7 @@ def enter_pairing(ctx: Ctx, n: int = 3, gap_ms: int = 300) -> int:
 
 @case("F1")
 def f1_idle_expiry(ctx: Ctx):
-    """Window with no phone expires after 120 s idle: locked, no owner, exit phrase once, code every 30 s."""
+    """Window with no phone expires after 120 s idle: locked, no owner, exit phrase once, code once."""
     pmx.bes_trace(True, 1000)
     time.sleep(3)
     m = enter_pairing(ctx)
@@ -176,7 +387,7 @@ def f1_idle_expiry(ctx: Ctx):
     exits = [l for _, l in ctx.g.since(0) if "hm_pairexit received" in l]
     ctx.check("exit phrase exactly once", len(exits) == 1, str(len(exits)))
     codes = [l for _, l in ctx.g.since(0) if "hm_spkcode received" in l]
-    ctx.check("code spoken every 30 s (4-5 times)", 4 <= len(codes) <= 5, str(len(codes)))
+    ctx.check("code spoken once", len(codes) == 1, str(len(codes)))
     dump = ctx.bes(r"window_close st=", m)
     ctx.check("no owner after expiry", bool(dump) and "own=0/0" in dump[-1], dump[-1] if dump else "")
     a = ctx.adv(6)
@@ -199,7 +410,7 @@ def d1_first_pair(ctx: Ctx):
     ctx.check("Connected plays exactly once", len(conn) == 1, str(conn))
     dump = ctx.bes(r"st=OWNER_ONLY .*own=1/1")
     ctx.check("owner BLE+Classic recorded", bool(dump), dump[-1] if dump else "")
-    bonds = [b for b in pmx.phone_bonds() if "02BE" in b["name"]]
+    bonds = pmx.glasses_bonds()
     ctx.check("phone bonded", bool(bonds), str(bonds))
     ctx.shot("after_pair")
 
@@ -213,31 +424,22 @@ def phone_lines(ctx: Ctx, pattern: str, mark: int = 0) -> list:
 
 @case("D4")
 def d4_owner_presses_and_nobody_pairs(ctx: Ctx):
-    """S22 owner connected; 3 presses; app yields for the window; nobody pairs; what does S22 do after?"""
-    gm, pm = ctx.g.mark(), ctx.p.mark()
-    m = enter_pairing(ctx)
-    ctx.check("glasses send entering_pairing_mode",
-              ctx.log_wait(ctx.p, r"Glasses entering pairing mode", 15, pm) is not None)
-    order = ctx.bes(r"forget|clear_owner|entering_pairing|state OWNER_ONLY -> PAIRING|disconnect phones|hm_spkcode sent", m)
-    ctx.note("C1 order: " + " || ".join(order))
-    ctx.check("C1 old owner disconnected", any("disconnect phones n=" in l and "n=0" not in l for l in order),
-              str([l for l in order if "disconnect phones" in l]))
-    yield_mark = ctx.p.mark()
-    close = ctx.bes_wait(r"window_close reason=", 150, m)
-    ctx.check("window expires (nobody paired)", close is not None, close[1] if close else "")
-    attempts = phone_lines(ctx, r"ATTEMPTING CONNECTION", yield_mark)
-    ctx.check("app stood down during window (no GATT attempts)", not attempts, str(len(attempts)))
-    ctx.note("waiting 90 s for the app's reclaim attempts")
-    time.sleep(90)
-    after = ctx.p.mark()
-    errs = phone_lines(ctx, r"GATT connection error: status=\d+", yield_mark)
-    ctx.note(f"reclaim errors: {[e[-60:] for e in errs[:6]]}")
-    lost = phone_lines(ctx, r"Owner loss|owner_replaced", yield_mark)
-    ctx.check("app surfaces owner loss after reclaim is rejected", bool(lost), str(lost[:2]))
-    rejects = ctx.bes(r"ble_reject", m)
-    ctx.note(f"BES rejects: {rejects[:3]}")
+    """R15: S22 owner; 3 presses; nobody pairs. Immediate card (no yield), 20 s with no connect attempt/prompt/
+    reconnect line, glasses end ownerless and locked via one single click (the 120 s idle close is F1's), then
+    30 s more with no reclaim attempt. D4B/D4FIX are subsumed by D4BFIX + this case."""
+    ctx.check("precondition S22 owner", r_s22(ctx))
     pmx.app_home()
-    ctx.shot("home_after_window")
+    gm = ctx.g.mark()
+    res = run_owner_lost(
+        ctx, "s22", scenario="ownerless",
+        trigger=lambda: open_window(ctx, settle=False),
+        adv=lambda: ctx.adv(5),
+    )
+    ctx.note("C1 order: " + " || ".join(ctx.bes(r"clear_owner|entering_pairing|state OWNER_ONLY -> PAIRING|"
+                                                 r"disconnect phones|window_close|cancel by single click", gm)))
+    ctx.shot("owner_lost_card")
+    owner_lost.observe_after_close(ctx, res, seconds=30)
+    ctx.check("glasses did not commit any owner", not ctx.bes(r"owner committed", gm))
 
 
 def mac_central(*args: str, timeout: float = 200) -> list:
@@ -256,7 +458,7 @@ def mac_central(*args: str, timeout: float = 200) -> list:
     return rows
 
 
-@case("E1")
+@case("E1MAC")
 def e1_stranger_outside_window(ctx: Ctx):
     """Outside pairing, the Mac (stranger) cannot connect or bond."""
     m = ctx.g.mark()
@@ -269,7 +471,7 @@ def e1_stranger_outside_window(ctx: Ctx):
               json.dumps((a or {}).get("mentra")))
 
 
-@case("D3")
+@case("D3MAC")
 def d3_unbonded_central_reaped(ctx: Ctx):
     """In the window, an unbonded Mac central holding the single BLE slot is dropped at ~60 s."""
     m = enter_pairing(ctx)
@@ -294,7 +496,9 @@ def mac_becomes_owner(ctx: Ctx):
     ctx.note(f"mac: {rows}")
     commit = ctx.bes_wait(r"owner committed|smp_accept=1|st=OWNER_ONLY .*own=1/", 30, m)
     ctx.check("Mac committed as owner", commit is not None, commit[1] if commit else "")
-    ctx.check("pairing exit phrase", ctx.log_wait(ctx.g, r"hm_pairexit received reason=paired", 30) is not None)
+    exit_line = ctx.bes_wait(
+        r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 30, m)
+    ctx.check("pairing exit phrase, or skipped because Connected follows", exit_line is not None)
 
 
 def wait_owner_link(ctx: Ctx, mark: int, timeout: float = 60):
@@ -305,8 +509,8 @@ def wait_owner_link(ctx: Ctx, mark: int, timeout: float = 60):
 
 
 def no_owner_loss(ctx: Ctx, mark: int) -> None:
-    lost = phone_lines(ctx, r"Owner loss|owner_replaced", mark)
-    ctx.check("no owner-loss / owner_replaced", not lost, str(lost[:2]))
+    lost = phone_lines(ctx, r"Owner loss|owner_replaced|owner lost, no reconnect", mark)
+    ctx.check("no owner-loss / owner_replaced / notice", not lost, str(lost[:2]))
     gm = ctx.bes(r"clear_owner|st=\w+ .*own=0/0")
     ctx.check("glasses kept the owner", not gm, str(gm[:2]))
 
@@ -320,6 +524,9 @@ def g3_bt_toggle(ctx: Ctx):
     pmx.phone_bt(True)
     ctx.check("owner reconnects", wait_owner_link(ctx, pm, 90) is not None)
     no_owner_loss(ctx, pm)
+    pmx.app_home()
+    ctx.check("no owner-lost card after the Bluetooth toggle", pmx.ui_find(r"^In pairing mode$") is None)
+    ctx.shot("after_bt_toggle")
 
 
 @case("G4")
@@ -346,21 +553,87 @@ def g5_app_force_stop(ctx: Ctx):
     ctx.shot("home")
 
 
-@case("E3")
-def e3_mtk_reboot(ctx: Ctx):
-    """Glasses Android (MTK) reboot via adb: owner reconnects; readiness re-latches (A3 observation)."""
-    pm = ctx.p.mark()
+def reboot_unit3_android(ctx: Ctx) -> None:
+    """Start an Android reboot of unit3 through adb (unit3 re-asserted first). The glasses tap stops; no glasses adb
+    is used again until adb_return_bench() has seen unit3 back and re-asserted it. The USB cap is measured from
+    this request (`ctx.t_reboot`), not from when the Bluetooth checks finish."""
+    pmx.assert_unit3()
+    ctx.phase_begin("reboot_request")
     pmx.gsh("reboot", timeout=10)
+    ctx.phase_end("reboot_request")
     ctx.g.stop()
-    ok = pmx.wait_glasses_boot(240)
-    ctx.check("glasses Android back", ok)
+    ctx.t_reboot = time.time()
+    ctx.phase_begin("usb_return")
+
+
+def adb_return_bench(ctx: Ctx, max_s: float = USB_CAP_S, trace_ms: int = 1000, poll: float = 5) -> bool:
+    """Wait only for the USB time still left since the reboot request.
+
+    Bluetooth checks run first. If USB is already back, this adds no wait. The cap is 4 minutes from
+    `ctx.t_reboot` (3 minutes logs an over-budget note). No USB by the cap ends the case BLOCKED and stops
+    the run. `max_s` cannot raise the cap above 4 minutes. Poll every 5 s. BES flashes are not this path:
+    USB stays gone until a physical replug.
+    """
+    cap = min(float(max_s), USB_CAP_S)
+    t_reboot = getattr(ctx, "t_reboot", None)
+    if t_reboot is None:
+        t_reboot = time.time()
+        ctx.t_reboot = t_reboot
+    if "usb_return" not in ctx._phase_open:
+        ctx.phase_begin("usb_return")
+    remaining = max(0.0, t_reboot + cap - time.time())
+    el = pmx.wait_unit3_return(remaining, poll)
+    ctx.phase_end("usb_return")
+    since = time.time() - t_reboot
+    if el is None:
+        reason = "unit3 USB not back within 4 min of the reboot" if cap >= USB_CAP_S else (
+            f"unit3 USB not back within {cap:.0f}s of the reboot")
+        ctx.blocked = reason
+        ctx.stop_run_reason = reason
+        ctx.bench_note("usb return within cap", False, f"absent {since:.0f}s after the reboot request (cap {cap:.0f}s)")
+        ctx.note(reason)
+        return False
+    ctx.note(f"adb return measured: unit3 back {since:.0f} s after the reboot request")
+    if since > USB_BUDGET_S:
+        ctx.bench_note("usb return over the 3 min budget", False, f"{since:.0f} s after the reboot request")
+    ok = pmx.wait_glasses_boot(300)  # boot_completed + ASG running, and assert_unit3() again
+    ctx.bench_note("adb returned and exactly one unit3", ok, f"{since:.0f} s after the reboot request")
+    if not ok:
+        ctx.stop_run_reason = "unit3 booted state not confirmed after the Android reboot (bench)"
+        return False
+    pmx.assert_unit3()
     pmx.gsh("dumpsys battery set level 80")
     ctx.g = pmx.LogTap(pmx.GLASSES, ctx.dir / "glasses_after.log").start(clear=False)
-    pmx.bes_trace(True, 3000)
-    ctx.check("owner reconnects after reboot", wait_owner_link(ctx, pm, 120) is not None)
+    pmx.bes_trace(True, trace_ms)
+    return True
+
+
+@case("E3")
+def e3_mtk_reboot(ctx: Ctx):
+    """E3 (e3_mtk_reboot): S22 owner with a live link (run R_S22 first), glasses Android (MTK) reboot via adb. The
+    product verdict is taken on BLE readiness, without adb: the owner reconnects with no action, no owner loss/notice,
+    owner kept (bond held and re-admitted), no owner-lost card, no pairing window (advertisement flag clear). USB
+    recovery is counted from the reboot request and overlaps these checks; 4 minutes with no USB is BLOCKED."""
+    ctx.check("precondition S22 owner (run R_S22 first)", s22_holds_bond())
+    await_live_link(ctx, "s22")
+    pm = ctx.p.mark()
+    tick0 = (ring_generation(ctx) or (0, 0))[0]
+    reboot_unit3_android(ctx)
+    ctx.phase_begin("ble_reconnect")
+    ctx.check("owner reconnects after reboot (BLE readiness, no adb)", wait_owner_link(ctx, pm, 180) is not None)
+    ctx.phase_end("ble_reconnect")
     time.sleep(10)
     no_owner_loss(ctx, pm)
-    ctx.note("readiness lines: " + str(ctx.bes(r"mtk|ready|NOT_READY|not ready")[:8]))
+    pmx.app_home()
+    ctx.check("no owner-lost card after the reboot", pmx.ui_find(r"^In pairing mode$") is None)
+    a = ctx.adv(6)
+    ctx.check("no pairing window opened by the reboot (advertisement pairing flag clear)",
+              bool(a) and not a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+    ctx.check("owner kept: the S22 still holds its bond", s22_holds_bond())
+    if adb_return_bench(ctx, trace_ms=3000):
+        win = ring_after_tick(ctx, tick0, r"mode_enter_done|auto-enter")
+        ctx.bench_note("BES ring (after adb returned) shows no new window", not win, str(win[:2]))
+        ctx.note("readiness lines: " + str(ctx.bes(r"mtk|ready|NOT_READY|not ready")[:8]))
 
 
 @case("B8")
@@ -401,26 +674,6 @@ def pairexits(ctx: Ctx, gmark: int = 0) -> list:
     return [l for _, l in ctx.g.since(gmark) if "hm_pairexit received" in l and "PairingAudio" in l]
 
 
-@case("B5B6")
-def b5_b6_extra_presses_and_reentry(ctx: Ctx):
-    """5 fast presses enter once; 3 more presses while PAIRING restart the window (R4 re-entry)."""
-    m = ctx.g.mark()
-    pmx.inject(pmx.presses(5, 250), 50)
-    time.sleep(8)
-    enters = ctx.bes(r"3-press queue pairing mode", m)
-    ctx.check("5 presses enter exactly once", len(enters) == 1, str(enters))
-    m2 = ctx.g.mark()
-    time.sleep(10)
-    pmx.inject(pmx.presses(3, 300), 50)
-    hit = ctx.bes_wait(r"mode_enter_done", 20, m2)
-    ctx.check("re-entry while PAIRING runs mode_enter again", hit is not None, hit[1] if hit else "")
-    gens = ctx.bes(r"mode_enter_done", m)
-    ctx.note(f"mode_enter_done lines: {gens}")
-    a = ctx.adv(5)
-    ctx.check("still advertising pairing", bool(a) and a["mentra"].get("pairing"), "")
-    ctx.check("no pairing-exit phrase on re-entry", not pairexits(ctx), str(pairexits(ctx)))
-
-
 @case("B11")
 def b11_single_click_cancel(ctx: Ctx):
     """Single click inside 2 s grace and before the 4 s count reset is ignored; after it, cancels once."""
@@ -458,7 +711,7 @@ def d6_app_unpair_clears_glasses(ctx: Ctx):
     hit = ctx.bes_wait(r"clear_owner reason=phone_unpair", 20, m)
     ctx.check("glasses received unpair and cleared owner (clear_owner reason=phone_unpair)",
               hit is not None, hit[1] if hit else "")
-    ctx.check("Android bond removed", not [b for b in pmx.phone_bonds() if "02BE" in b["name"]])
+    ctx.check("Android bond removed", not pmx.glasses_bonds())
     time.sleep(5)
     ctx.check("no pairing window opened by unpair", not ctx.bes(r"state OWNER_ONLY -> PAIRING", m))
 
@@ -468,13 +721,11 @@ def a3_presses_during_mtk_reboot(ctx: Ctx):
     """3 presses land while Android reboots (delayed injection). Expect not-ready, no window."""
     pmx.inject(pmx.presses(3, 300), 50, delay_ms=12000)
     time.sleep(1)
-    pmx.gsh("reboot", timeout=10)
-    ctx.g.stop()
-    ok = pmx.wait_glasses_boot(240)
-    ctx.check("glasses Android back", ok)
-    pmx.gsh("dumpsys battery set level 80")
-    ctx.g = pmx.LogTap(pmx.GLASSES, ctx.dir / "glasses_after.log").start(clear=False)
-    pmx.bes_trace(True, 3000)
+    reboot_unit3_android(ctx)
+    ok = adb_return_bench(ctx, trace_ms=3000)  # BES ring needs adb; USB cap is 4 min from the reboot request
+    ctx.check("glasses Android back (adb)", ok)
+    if not ok:
+        return
     time.sleep(15)
     lines = ctx.bes(r"3-press|MTK not ready|did not answer ping|mode_enter|mark_mtk_off|android_poweroff|PWR press|dbgkey")
     ctx.note("lines: " + " || ".join(lines[:12]))
@@ -483,6 +734,91 @@ def a3_presses_during_mtk_reboot(ctx: Ctx):
     ctx.check("no window opened", not any("mode_enter_done" in l for l in lines), "")
     a = ctx.adv(5)
     ctx.check("not advertising pairing", bool(a) and not a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+
+
+def tick_floor(ctx: Ctx, tick0: int) -> int:
+    """Ticks restart at 0 when BES itself rebooted; then every line in the ring belongs to the new boot."""
+    ticks = [t for t in (ring_tick(l) for l in ctx.bes("", 0)) if t is not None]
+    return 0 if ticks and max(ticks) < tick0 else tick0
+
+
+@case("A5")
+def a5_auto_window_once_per_boot(ctx: Ctx):
+    """R3 from R_NONE: reboot the glasses; exactly one auto window opens at MTK-ready; the S22 pairs in it; a second
+    disconnect in the same boot (S22 Bluetooth off/on) does not reopen the window.
+    PMX_A5_MODE=android (default: adb reboot) or bes_booted (the coordinator just reflashed/power-cycled BES; no reboot
+    here). BES evaluates auto-pair once per BES boot (m8_pairing.cpp g_auto_pair_evaluated), so an Android-only
+    reboot may not reopen the window: that is recorded as a harness gap (case OPEN), not a pass."""
+    p = own_probe(ctx)
+    ctx.check("precondition no owner (run R_NONE first)", p.get("own") == 0 and not s22_holds_bond(), str(p.get("line", ""))[-90:])
+    mode = os.environ.get("PMX_A5_MODE", "android")
+    tick0 = (ring_generation(ctx) or (0, 0))[0]
+    if mode == "android":
+        reboot_unit3_android(ctx)
+        ok = adb_return_bench(ctx)  # the BES ring needs adb; USB cap is 4 min from the reboot request
+        ctx.check("glasses Android back and still exactly one unit3", ok)
+        if not ok:
+            return
+    else:
+        ctx.note("PMX_A5_MODE=bes_booted: BES was just booted by the coordinator; observing the boot already in progress")
+        tick0 = 0
+    ctx.phase_begin("auto_window")
+    hit = prove_wait(ctx, lambda: ring_after_tick(ctx, tick_floor(ctx, tick0), r"auto-enter pairing|mode_enter_done"), 150)
+    ctx.phase_end("auto_window")
+    floor = tick_floor(ctx, tick0)
+    bes_rebooted = floor == 0 and tick0 > 0
+    if hit is None:
+        if mode == "android" and not bes_rebooted:
+            ctx.gap("A5 auto window after an Android-only reboot",
+                    "no `auto-enter pairing`/mode_enter_done in 150 s and the BES ring ticks continue (BES did not "
+                    "reboot): auto-pair is once per BES boot, so R3 needs a BES boot (re-run with PMX_A5_MODE=bes_booted "
+                    "right after a BES reflash/power cycle). Continuing with a manual 3-press window for the rest.")
+        else:
+            ctx.check("exactly one auto window at MTK-ready", False, "no auto-enter/mode_enter_done after the boot")
+        open_window(ctx)
+    else:
+        time.sleep(15)
+        auto = ring_after_tick(ctx, floor, r"auto-enter pairing")
+        enters = ring_after_tick(ctx, floor, r"mode_enter_done")
+        ctx.check("exactly one auto-enter at MTK-ready", len(auto) == 1, str(auto))
+        ctx.check("exactly one window opened (one mode_enter_done)", len(enters) <= 1, str(enters))
+        a = ctx.adv(5)
+        ctx.check("auto window advertises pairing (flag + code)", bool(a) and a["mentra"].get("pairing"),
+                  json.dumps((a or {}).get("mentra")))
+    gm = ctx.g.mark()
+    pmx.open_pairing_scan()
+    res = pmx.app_pair(timeout=60)
+    ctx.note(f"S22 app_pair: {res}")
+    s22_finish_setup()
+    commit = ctx.bes_wait(r"owner committed from ble bond", 20, gm)
+    pr = own_probe(ctx)
+    ctx.check("S22 paired in the window", bool(res.get("success_screen")) and (
+        commit is not None or (pr.get("own") == 1 and s22_holds_bond())), str(res.get("steps")))
+    tick1 = (ring_generation(ctx) or (0, 0))[0]
+    pm = ctx.p.mark()
+    pmx.phone_bt(False)
+    time.sleep(8)
+    pmx.phone_bt(True)
+    ctx.check("owner reconnects after the second disconnect", wait_owner_link(ctx, pm, 90) is not None)
+    time.sleep(10)
+    no_owner_loss(ctx, pm)
+    ctx.check("second disconnect in the same boot did not reopen a window",
+              not ring_after_tick(ctx, tick1, r"auto-enter pairing|mode_enter_done|state OWNER_ONLY -> PAIRING"))
+    a = ctx.adv(5)
+    ctx.check("advertisement not in pairing mode after the second disconnect",
+              bool(a) and not a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+
+
+def prove_wait(ctx: Ctx, fn, timeout: float):
+    """Poll fn() (a list of lines) until non-empty or timeout; returns the first line or None."""
+    deadline = time.time() + timeout
+    while True:
+        lines = fn()
+        if lines:
+            return lines[0]
+        if time.time() >= deadline:
+            return None
+        time.sleep(2)
 
 
 @case("E1B")
@@ -495,9 +831,9 @@ def e1b_phone_cannot_pick_owned_glasses(ctx: Ctx):
     pmx.tap_text(r"^Mentra Live$", 8)
     time.sleep(12)
     ctx.shot("scan_list")
-    found = phone_lines(ctx, r"Found compatible K900 glasses device: Mentra_Live_02BE", pm)
+    found = phone_lines(ctx, rf"Found compatible K900 glasses device: {re.escape(ident.name())}", pm)
     ctx.note(f"scan hits: {found[:2]}")
-    ctx.check("02BE not offered as pairing-mode", not any("pairingMode=true" in l for l in found), str(found[:1]))
+    ctx.check("glasses not offered as pairing-mode", not any("pairingMode=true" in l for l in found), str(found[:1]))
     pmx.psh("input keyevent KEYCODE_BACK")
     pmx.psh("input keyevent KEYCODE_BACK")
     m = ctx.g.mark()
@@ -510,24 +846,9 @@ def e1b_phone_cannot_pick_owned_glasses(ctx: Ctx):
 
 @case("D4B")
 def d4b_new_owner_takes_over(ctx: Ctx):
-    """S22 owner; 3 presses; Mac bonds as the new owner; S22 must show 'Paired to another phone'."""
-    pm = ctx.p.mark()
-    m = enter_pairing(ctx)
-    ctx.check("S22 yields", ctx.log_wait(ctx.p, r"Glasses entering pairing mode", 15, pm) is not None)
-    rows = mac_central("--hold", "20")
-    ctx.note(f"mac: {rows}")
-    ex = ctx.log_wait(ctx.g, r"hm_pairexit received reason=paired", 30, 0)
-    ctx.check("Mac committed as new owner", ex is not None)
-    ctx.note("waiting for the S22 yield (120 s) to end and its reclaim attempts")
-    lost = ctx.log_wait(ctx.p, r"Owner loss|owner_replaced", 200, pm)
-    ctx.check("S22 surfaces owner_replaced", lost is not None, lost[1][:200] if lost else "")
-    errs = phone_lines(ctx, r"GATT connection error: status=\d+", pm)
-    ctx.note(f"S22 reclaim errors: {[e[-50:] for e in errs[:4]]}")
-    pmx.app_home()
-    time.sleep(2)
-    ctx.shot("s22_home_after_takeover")
-    stored = pmx.psh("run-as com.mentra.mentra ls files 2>/dev/null | head -3")
-    ctx.note(f"app files: {stored.strip()[:120]}")
+    """SUBSUMED by D4BFIX (takeover) and D4 (nobody pairs); see runs/x2/lane-b-status.md for the check list."""
+    ctx.not_testable("SUBSUMED by D4BFIX + D4 (coordinator decision 4:46 PM): the yield/reclaim assertions of the "
+                     "old D4B no longer exist under R15; run D4BFIX and D4 instead")
 
 
 @case("D1NOACCEPT")
@@ -541,8 +862,8 @@ def d1_declined_dialog_never_reports_success(ctx: Ctx):
     deadline = time.time() + 60
     while time.time() < deadline:
         nodes = pmx.ui_nodes()
-        if not picked and pmx.ui_find(r"^02BE$", nodes):
-            pmx.tap(*pmx.ui_find(r"^02BE$", nodes).center)
+        if not picked and pmx.ui_find(rf"^{re.escape(ident.code())}$", nodes):
+            pmx.tap(*pmx.ui_find(rf"^{re.escape(ident.code())}$", nodes).center)
             picked = True
         cancel = pmx.ui_find(r"^取消$", nodes)
         if cancel and pmx.ui_find(r"配对请求", nodes) and not declined:
@@ -578,74 +899,112 @@ def d1_declined_dialog_never_reports_success(ctx: Ctx):
 
 @case("BTOFF_REJOIN")
 def btoff_owner_rejoins_window(ctx: Ctx):
-    """BUG-3: owner phone misses entering_pairing_mode (BT off), comes back into the window."""
-    pm = ctx.p.mark()
+    """R15 missed notice, window STILL OPEN: S22 owner has Bluetooth off while the window opens, then comes back into
+    it. No notice arrives. R1: during a window non-owners may connect, so an HCI 0x05 reject is NOT required here (it
+    only applies outside a window: see BTOFF_REJOIN_LOCKED). Required: the phone logs a rejection-based owner loss
+    (`Owner loss (bond_removed_by_glasses)` / gatt_auth_status_5), the BES owner record shows the glasses did not admit
+    it (own=0/0 stays, no commit), the card within 10 s, 20 s with no connect attempt/prompt/reconnect line, and the
+    window stays open and advertising for the new phone."""
+    ctx.check("precondition S22 owner", r_s22(ctx))
+    await_live_link(ctx, "s22")  # BLOCKED, not failed, when the previous owner has no live link
     pmx.phone_bt(False)
     time.sleep(6)
-    m = enter_pairing(ctx)
-    time.sleep(3)
-    pmx.phone_bt(True)
-    lost = ctx.log_wait(ctx.p, r"Owner loss|owner_replaced", 90, pm)
-    ctx.check("old owner stands down", lost is not None, lost[1][:200] if lost else "")
-    time.sleep(10)
-    nodes = pmx.ui_nodes()
-    prompt = pmx.ui_find(r"配对请求|Pairing request", nodes)
+    wm = ctx.g.mark()
+    open_window(ctx)  # one 3-press gesture; BES has no phone to notify
+    ctx.check("window open while the phone is offline", ctx.bes_wait(r"mode_enter_done", 15, wm) is not None)
+    res = run_owner_lost(
+        ctx, "s22", scenario="missed_notice",
+        trigger=lambda: pmx.phone_bt(True),
+    )
     ctx.shot("after_rejoin")
-    ctx.check("no unsolicited pairing prompt on the old owner", prompt is None, prompt.label if prompt else "")
     a = ctx.adv(5)
     ctx.check("window still open and advertising for the new phone",
               bool(a) and a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+    ctx.check("glasses did not commit any owner", not ctx.bes(r"owner committed", wm))
+
+
+@case("BTOFF_REJOIN_LOCKED")
+def btoff_owner_rejoins_locked(ctx: Ctx):
+    """R15 missed notice, window ALREADY CLOSED: S22 owner (live link); Bluetooth off; 3 presses open the window and
+    forget the owner; ONE single click closes it, so the glasses are ownerless and locked (chosen over a Mac
+    takeover: no pairing sheet, no extra bond to clean, same R1/R8 path: with no owner an unresolved or former-owner
+    peer is rejected at connect). Then Bluetooth on: the glasses must reject the former owner's first reconnect with
+    HCI 0x05. BES lines that count as that evidence: `lxy pair: ble_reject auth=N` (connect-time reject) or
+    `lxy pair: encrypt_ltk drop` (resolvable-address peer dropped at encryption with disconnect reason 0x05).
+    Also required: the phone's rejection-based owner loss, the card within 10 s, and 20 s with no connect
+    attempt/prompt/reconnect line after the rejection."""
+    ctx.check("precondition S22 owner", r_s22(ctx))
+    await_live_link(ctx, "s22")
+    pmx.phone_bt(False)
+    time.sleep(6)
+    wm = ctx.g.mark()
+    open_window(ctx)  # the only 3-press gesture of this case
+    ctx.check("window open while the phone is offline", ctx.bes_wait(r"mode_enter_done", 15, wm) is not None)
+    time.sleep(6)  # past the 2 s grace and the 4 s count reset, so one click cancels
+    pmx.inject("C", 50)
+    ctx.check("window closed by one single click",
+              ctx.bes_wait(r"cancel by single click|window_close reason=", 15, wm) is not None)
+    time.sleep(3)
+    a = ctx.adv(5)
+    ctx.check("glasses locked: advertisement pairing flag clear", bool(a) and not a["mentra"].get("pairing"),
+              json.dumps((a or {}).get("mentra")))
+    ctx.check("glasses ownerless (BES own=0/0)",
+              any(owner_lost.own_pair(l) == (0, 0) for l in ctx.bes(r"st=\w+ .*own=\d/\d", wm)))
+    res = run_owner_lost(
+        ctx, "s22", scenario="missed_notice_locked",
+        trigger=lambda: pmx.phone_bt(True),
+    )
+    ctx.shot("after_rejoin_locked")
+    ctx.check("glasses did not commit any owner", not ctx.bes(r"owner committed", wm))
 
 
 @case("D4FIX")
 def d4fix_owner_presses_and_nobody_pairs(ctx: Ctx):
-    """BUG-2/5: owner yields the whole window, then is rejected and shows owner loss."""
-    pm = ctx.p.mark()
-    m = enter_pairing(ctx)
-    y = ctx.log_wait(ctx.p, r"Glasses entering pairing mode — yield (\d+)ms", 15, pm)
-    ctx.check("S22 yields 300 s", y is not None and "300000" in y[1], y[1][-80:] if y else "")
-    lost = ctx.log_wait(ctx.p, r"Owner loss|owner_replaced", 420, pm)
-    ctx.check("S22 surfaces owner loss after the window", lost is not None, lost[1][:200] if lost else "")
-    attempts = phone_lines(ctx, r"ATTEMPTING CONNECTION", pm)
-    ctx.note(f"connection attempts after yield: {len(attempts)}")
-    ctx.check("at most a couple of reclaim attempts", len(attempts) <= 3, str(len(attempts)))
-    pmx.app_home()
-    time.sleep(3)
-    ctx.shot("owner_lost_card")
-    card = pmx.ui_find(r"another phone|Pair again", None)
-    ctx.check("owner-lost card shown", card is not None, card.label if card else "")
+    """SUBSUMED by D4 (immediate card, no reclaim after the close) and BTOFF_REJOIN."""
+    ctx.not_testable("SUBSUMED by D4 + BTOFF_REJOIN (coordinator decision 4:46 PM): the 300 s yield no longer exists "
+                     "under R15; run D4 instead")
 
 
 @case("D5D7")
 def d5_d7_pair_again_from_card(ctx: Ctx):
-    """Owner-lost card -> Pair again -> pairs, card and owner-lost flag clear."""
+    """R15: owner-lost card -> Pair again with the window still open -> pairs; card and owner-lost flag clear.
+    The card comes from the notice path (3 presses; default) or, with PMX_D5D7_VIA=missed, from a missed notice
+    (Bluetooth off while the window opens). The 20 s owner-lost interval ends before Pair again starts."""
+    ctx.check("precondition S22 owner", r_s22(ctx))
     pm = ctx.p.mark()
-    m = enter_pairing(ctx)
+    if os.environ.get("PMX_D5D7_VIA") == "missed":
+        await_live_link(ctx, "s22")
+        pmx.phone_bt(False)
+        time.sleep(6)
+        wm = ctx.g.mark()
+        open_window(ctx)
+        ctx.check("window open while the phone is offline", ctx.bes_wait(r"mode_enter_done", 15, wm) is not None)
+        run_owner_lost(ctx, "s22", scenario="missed_notice", trigger=lambda: pmx.phone_bt(True))
+    else:
+        run_owner_lost(ctx, "s22", scenario="notice", trigger=lambda: open_window(ctx, settle=False))
+    # ---- separate later step: intentional Pair again (never inside the 20 s interval)
     pmx.app_home()
-    ctx.check("card visible before", pmx.ui_find(r"^Paired to another phone$") is not None)
+    ctx.check("card visible before Pair again", pmx.ui_find(r"^In pairing mode$") is not None)
+    ctx.shot("card_before_pair_again")
     pmx.tap_text(r"^Pair again$", 8)
     time.sleep(1.5)
+    ctx.shot("pair_again_modal")
     pmx.tap(810, 1363)  # modal confirm "Pair again" (modal is outside the uiautomator tree)
     time.sleep(3)
+    gm = ctx.g.mark()
     res = pmx.app_pair(timeout=60)
     ctx.note(f"app_pair: {res}")
-    ex = ctx.log_wait(ctx.g, r"hm_pairexit received reason=paired", 30, 0)
-    ctx.check("glasses committed S22 again", ex is not None)
-    for _ in range(6):
-        n = pmx.ui_nodes()
-        lb = pmx.ui_find(r"Open debugger to view warnings", n)
-        if lb:
-            pmx.tap(lb.bounds[2] - 60, (lb.bounds[1] + lb.bounds[3]) // 2)
-            time.sleep(1)
-            continue
-        b = pmx.ui_find(r"^(Continue setup|Continue|Skip|Done|Next|Got it)$", n)
-        if not b:
-            break
-        pmx.tap(*b.center)
-        time.sleep(2)
+    ctx.check("S22 Success screen", bool(res.get("success_screen")), str(res.get("steps")))
+    ex = ctx.bes_wait(
+        r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 30, gm)
+    ctx.check("glasses committed S22 again (exit phrase, or skipped because Connected follows)",
+              ex is not None)
+    ctx.check("BES owner committed", ctx.bes_wait(r"owner committed from ble bond", 15, gm) is not None
+              or (own_probe(ctx).get("own") == 1 and s22_holds_bond()))
+    s22_finish_setup()
     time.sleep(5)
     ctx.shot("home_after_pair_again")
-    ctx.check("owner-lost card gone", pmx.ui_find(r"^Paired to another phone$") is None)
+    ctx.check("owner-lost card gone", pmx.ui_find(r"^In pairing mode$") is None)
     cleared = phone_lines(ctx, r"mentra_live_owner_lost.*false|owner_lost.*cleared|clearOwnerLost", pm)
     ctx.note(f"owner-lost clear lines: {cleared[:2]}")
 
@@ -653,7 +1012,7 @@ def d5_d7_pair_again_from_card(ctx: Ctx):
 def make_s22_owner(ctx: Ctx) -> bool:
     ios.bridge(False)  # the iOS radio must not hold the glasses' single BLE slot
     pmx.app_home()
-    if pmx.ui_find(r"^Paired to another phone$"):
+    if pmx.ui_find(r"^In pairing mode$"):
         pmx.tap_text(r"^Pair again$", 8)
         time.sleep(1.5)
         pmx.tap(810, 1363)
@@ -686,64 +1045,80 @@ def own_s22(ctx: Ctx):
     """Setup: make the S22 the owner."""
     import subprocess
 
-    subprocess.run(["blueutil", "--unpair", "cc-e7-de-e0-02-be"], capture_output=True)
+    subprocess.run(["blueutil", "--unpair", ios.glasses_mac()], capture_output=True)
     ctx.check("S22 is owner", make_s22_owner(ctx))
+
+
+def answer_mac_sheet_while(fn, interval: float = 1.0):
+    """Run fn() while a helper answers the macOS 'Connection Request' pairing sheet (Connect), like a user."""
+    import threading
+
+    stop = threading.Event()
+    answered = []
+
+    def loop():
+        while not stop.is_set():
+            try:
+                if ios.mac_sheet():
+                    answered.append(ios.mac_sheet_click("Connect"))
+            except Exception:  # noqa: BLE001
+                pass
+            stop.wait(interval)
+
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+    try:
+        return fn(), len(answered)
+    finally:
+        stop.set()
+        th.join(timeout=10)
+
+
+def mac_new_owner(ctx: Ctx, settle_s: float = 3.0, hold_s: int = 25):
+    """The Mac bonds inside the open window as the new owner (stand-in for a second phone)."""
+    time.sleep(settle_s)
+    (rows, sheets) = answer_mac_sheet_while(lambda: mac_central("--hold", str(hold_s), "--read", "--pair"))
+    ctx.note(f"mac new owner: {rows}; macOS sheets answered: {sheets}")
+    return rows
 
 
 @case("D4BFIX")
 def d4b_fix_new_owner_takes_over(ctx: Ctx):
-    """BUG-5: S22 owner; 3 presses; Mac takes the window; S22 stays out, then shows owner loss, no prompts."""
-    ctx.check("S22 is owner", make_s22_owner(ctx))
-    time.sleep(10)
-    import subprocess
-
-    subprocess.run(["blueutil", "--unpair", "cc-e7-de-e0-02-be"], capture_output=True)
-    pm = ctx.p.mark()
-    m = enter_pairing(ctx)
-    ctx.check("S22 yields 300 s", ctx.log_wait(ctx.p, r"yield 300000ms", 15, pm) is not None)
-    rows = mac_central("--hold", "30")
-    ctx.note(f"mac: {rows}")
-    paired = ctx.log_wait(ctx.g, r"hm_pairexit received reason=paired", 20, 0)
-    ctx.note(f"Mac committed as new owner: {paired is not None}")
-    prompts = 0
-    early = []
-    deadline = time.time() + 330
-    lost = None
-    while time.time() < deadline:
-        if pmx.ui_find(r"配对请求"):
-            prompts += 1
-            c = pmx.ui_find(r"^取消$")
-            if c:
-                pmx.tap(*c.center)
-        lost = ctx.p.wait_for(r"Owner loss|owner_replaced", pm, 0.1)
-        if lost:
-            break
-        time.sleep(5)
-    start = phone_lines(ctx, r"yield 300000ms", pm)
-    end = phone_lines(ctx, r"Pairing yield ended", pm)
-    t0 = start[0][:18] if start else ""
-    t1 = end[0][:18] if end else ""
-    attempts = phone_lines(ctx, r"ATTEMPTING CONNECTION|GATT link connected", pm)
-    inside = [a for a in attempts if t0 and t1 and t0 <= a[:18] < t1]
-    ctx.check("S22 made no connection attempt during the yield",
-              bool(t0 and t1) and not inside, f"yield {t0}..{t1}, attempts inside={len(inside)}")
-    ctx.check("S22 shows owner loss after the window", lost is not None, lost[1][:160] if lost else "")
-    ctx.check("no unsolicited pairing prompts on S22", prompts == 0, str(prompts))
+    """R15: S22 owner; 3 presses; the Mac takes the window as the new owner. S22 stands down at the notice
+    (log line, card within 10 s, 20 s with no connect attempt/prompt/reconnect line) while the Mac pairs."""
+    ctx.check("precondition S22 owner", r_s22(ctx))
+    time.sleep(5)
+    ios.mac_forget()  # clean Mac bond for the confirmed glasses MAC only
+    gm = ctx.g.mark()
+    res = run_owner_lost(
+        ctx, "s22", scenario="takeover",
+        trigger=lambda: open_window(ctx, settle=False),
+        during=lambda: mac_new_owner(ctx),
+        new_owner_bond=ios.mac_bonded,
+    )
+    rows = res.during_value or []
+    ctx.check("Mac connected inside the window", bool(rows) and bool(rows[0].get("connected")), str(rows[:1]))
+    ctx.check("hm_pairexit reason=paired, or skipped because Connected follows",
+              ctx.bes_wait(r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 10, gm)
+              is not None)
+    ctx.check("Mac bond created", ios.mac_bonded())
     pmx.app_home()
-    time.sleep(3)
+    time.sleep(2)
     ctx.shot("s22_card")
 
 
 # ------------------------------------------------- cross-platform (iOS simulator + S22)
 #
 # The iOS side is the Mentra App in the iOS Simulator; its BLE runs on the Mac radio
-# through the ImpossiBLE passthrough helper, so "iOS bond" == the Mac's bond with 02BE.
+# through the ImpossiBLE passthrough helper, so "iOS bond" == the Mac's bond with the configured glasses.
 
 
-def open_window(ctx: Ctx, delay_ms: int = 0) -> bool:
-    """Exactly one 3-press gesture. Never repeat it: extra presses can close or reset the window."""
+def open_window(ctx: Ctx, delay_ms: int = 0, settle: bool = True) -> bool:
+    """Exactly one 3-press gesture. Never repeat it: extra presses can close or reset the window.
+    settle=False returns right after the broadcast (owner_lost_on_notice measures from the phone's notice)."""
     pmx.inject(pmx.presses(3, 300), 50, delay_ms=delay_ms)
-    time.sleep(3 + delay_ms / 1000)
+    if settle:
+        time.sleep(3 + delay_ms / 1000)
     return True
 
 
@@ -773,7 +1148,7 @@ def own_probe(ctx: Ctx) -> dict:
 
 
 def s22_holds_bond() -> bool:
-    return any("02BE" in b["name"] for b in pmx.phone_bonds())
+    return bool(pmx.glasses_bonds())
 
 
 def s22_finish_setup() -> None:
@@ -791,27 +1166,61 @@ def s22_finish_setup() -> None:
         time.sleep(2)
 
 
-def ios_pair(ctx: Ctx, timeout: float = 180):
-    """Simulator app pairs with 02BE inside an open window. Returns (commit_hit, ui_result).
-    Stops at the first decisive line: still on Pairing / Pair Audio 60 s after the pick with no BES commit."""
-    gm, im = ctx.g.mark(), ctx.i.mark()
+def ios_pair_hooks(ctx: Ctx, gm: int) -> dict:
+    """window_open / window_closed callbacks for ios.pair. Read-only: BES ring, ASG log, Mac advertisement scan.
+    Nothing here presses a glasses button (one 3-press gesture per window, never retried)."""
+    state = {"adv_clear": 0, "last_adv": 0.0}
 
-    def stuck(out):
-        t = out.get("t_sheet") or out.get("t_pick")
-        if not t or time.time() - t < (45 if out.get("t_sheet") else 120) \
-                or ctx.bes(r"owner committed from ble bond", gm):
-            return None
-        if ios.find(r"^Pair Audio$") or ios.find(r"^Pairing$"):
-            return "still on Pairing/Pair Audio with no commit after pick, glasses not committed"
+    def window_open():
+        a = pmx.glasses_adv(seconds=3)
+        m = (a or {}).get("mentra", {})
+        ctx.note(f"rescan check: Mac advertisement {m if a else 'absent'}")
+        return bool(a) and bool(m.get("pairing"))
+
+    def window_closed():
+        closes = ctx.bes(r"window_close reason=\w+", gm)
+        if closes:
+            return closes[-1].strip()[-60:]
+        exits = [l for _, l in ctx.g.since(gm) if "hm_pairexit received reason=" in l]
+        if exits:
+            return exits[-1].strip()[-70:]
+        now = time.time()
+        if now - state["last_adv"] >= 10:
+            state["last_adv"] = now
+            a = pmx.glasses_adv(seconds=3)
+            if a and not a.get("mentra", {}).get("pairing"):
+                state["adv_clear"] += 1
+            elif a:
+                state["adv_clear"] = 0
+            if state["adv_clear"] >= 2:
+                return "advertisement pairing flag cleared"
         return None
 
-    res = ios.pair(timeout=timeout, abort_if=stuck)
+    return {"window_open": window_open, "window_closed": window_closed}
+
+
+def ios_pair(ctx: Ctx, timeout: float = 180):
+    """Simulator app pairs with the glasses inside an open window. Returns (commit_hit, ui_result).
+
+    No early abort: Pair Audio alone can take ~90 s and the sheet must be answered, so the run ends on the
+    Success/Failed screen or the timeout, never on a first decisive line. `commit_hit` is the BES line;
+    when the BES ring dropped it, `ui_result["commit_source"]` says the commit rests on pairing_info only
+    (enough for setup recipes, NOT proof of a BES commit: owner_lost_on_notice decides that)."""
+    ios.require_fresh_advert()
+    gm, im = ctx.g.mark(), ctx.i.mark()
+    res = ios.pair(timeout=timeout, **ios_pair_hooks(ctx, gm))
     ctx.note(f"ios.pair: {res}")
+    if res.get("rescans"):
+        ctx.note(f"stale advert: {res['rescans']} rescan(s), steps {res['steps']}")
+    if res.get("window_closed_before_pick"):
+        ctx.check("iOS picked the glasses before the window closed", False, res["window_closed_before_pick"])
     if res.get("t_pick"):
         ctx.note(f"pick -> end {time.time() - res['t_pick']:.0f}s")
     ctx.ishot("pair_flow_end")
-    commit = ctx.bes_wait(r"owner committed from ble bond", 5 if res.get("aborted") else 15, gm)
+    commit = ctx.bes_wait(r"owner committed from ble bond", 15, gm)
     info = ctx.i.grep(r"pairing_info confirms owner commit", im)
+    res["pairing_info"] = len(info)
+    res["commit_source"] = "bes" if commit else ("pairing_info" if info else "none")
     ctx.note(f"ios pairing_info lines: {len(info)}")
     if commit is None and info and res.get("success_screen"):
         commit = (time.time(), "pairing_info confirms owner commit (BES ring dropped the commit line)")
@@ -834,7 +1243,7 @@ def r_none(ctx: Ctx) -> bool:
     """R_NONE: no owner anywhere. Owner phone unpairs in its app; both bonds removed."""
     if ios.mac_bonded() or ios.owner_lost_card():
         ios.unpair()
-    if s22_holds_bond() or pmx.ui_find(r"^Paired to another phone$"):
+    if s22_holds_bond() or pmx.ui_find(r"^In pairing mode$"):
         pmx.app_unpair()
     ios.mac_forget()
     time.sleep(3)
@@ -875,20 +1284,6 @@ def r_ios(ctx: Ctx) -> bool:
     ok = commit is not None and bool(res.get("success_screen")) and ios.mac_bonded()
     ctx.note(f"R_IOS -> {ok}")
     return ok
-
-
-def ios_owner_loss_after_yield(ctx: Ctx, im: int, timeout: float = 420):
-    y = ctx.ios_wait(r"Glasses entering pairing mode — yield (\d+)ms", 20, im)
-    lost = ctx.ios_wait(r"LIVE: Owner loss \(", timeout, im)
-    start = ctx.i.grep(r"yield 300000ms", im)
-    t0 = next((t for t, l in ctx.i.since(im) if "yield 300000ms" in l), None)
-    t1 = next((t for t, l in ctx.i.since(im) if "Pairing yield ended" in l), None)
-    inside = [l for t, l in ctx.i.since(im)
-              if t0 and t1 and t0 < t < t1 and ("Connecting to" in l or "didConnect" in l or "connectToDevice" in l)
-              and "blocked" not in l]
-    conn = [l for t, l in ctx.i.since(im) if "(type=connect)" in l and (not lost or t <= lost[0])]
-    ctx.note(f"iOS notice received: {y is not None}; connect attempts before owner loss: {len(conn)}")
-    return y, lost, (t0, t1), inside, conn
 
 
 @case("X2")
@@ -936,8 +1331,8 @@ def e1_ios_stranger(ctx: Ctx):
     reached = "scan:True" in res["steps"]
     ctx.check("iOS app reached the scan list (case is valid)", reached, str(res["steps"]))
     ctx.check("iOS never reaches Success", reached and not res["success_screen"])
-    rows = [t for t in texts if re_s(r"02BE", t) and not re_s(r"not in pairing mode", t)]
-    ctx.check("iOS scan does not offer 02BE as pairable", reached and not rows, str(texts[:10]))
+    rows = [t for t in texts if re_s(re.escape(ident.code()), t) and not re_s(r"not in pairing mode", t)]
+    ctx.check("iOS scan does not offer the glasses as pairable", reached and not rows, str(texts[:10]))
     ctx.check("glasses kept the S22 owner", not ctx.bes(r"owner committed|clear_owner", gm))
     ctx.check("no Mac bond created", not ios.mac_bonded())
     rej = ctx.bes(r"reject|drop|auth", gm)
@@ -947,6 +1342,10 @@ def e1_ios_stranger(ctx: Ctx):
     ctx.note(f"adv: {m2}")
     ctx.check("adv not in pairing mode (R12)", not a or not m2.get("pairing"), json.dumps(m2))
     ios.tap_text(r"^Back$", 2)
+
+
+def find_card_ios() -> bool:
+    return ios.find(r".*In pairing mode.*") is not None
 
 
 def re_s(pattern: str, text: str) -> bool:
@@ -963,10 +1362,10 @@ def e2_classic_stranger(ctx: Ctx):
     ctx.check("precondition S22 owner", r_s22(ctx))
     ios.mac_forget()
     gm = ctx.g.mark()
-    proc = subprocess.run(["blueutil", "--connect", ios.GLASSES_MAC], capture_output=True, text=True, timeout=40)
+    proc = subprocess.run(["blueutil", "--connect", ios.glasses_mac()], capture_output=True, text=True, timeout=40)
     ctx.note(f"blueutil --connect rc={proc.returncode} err={proc.stderr.strip()[:120]}")
     time.sleep(8)
-    conn = subprocess.run(["blueutil", "--is-connected", ios.GLASSES_MAC], capture_output=True, text=True).stdout.strip()
+    conn = subprocess.run(["blueutil", "--is-connected", ios.glasses_mac()], capture_output=True, text=True).stdout.strip()
     ctx.check("Classic link not established", conn != "1", f"is-connected={conn}")
     acl = ctx.bes(r"classic|acl|reject|NOT_ACCESSIBLE|BT-PAIR", gm)
     ctx.note(f"BES classic lines: {acl[:5]}")
@@ -975,52 +1374,36 @@ def e2_classic_stranger(ctx: Ctx):
     ios.mac_forget()
 
 
+def ios_takeover_during(ctx: Ctx, settle_s: float = 4.0):
+    """New-owner action for the iPhone side: sit out the settle time, then pair from the open scan list."""
+    def run():
+        time.sleep(settle_s)
+        return ios_pair(ctx)
+    return run
+
+
 @case("X6")
 def x6_s22_to_ios(ctx: Ctx):
-    """S22 owner -> 3 presses -> iOS pairs. S22 yields 300 s then owner loss; iOS Success only after pairing_info."""
+    """R15 (also the S22 half of the two-platform smoke): S22 owner -> 3 presses -> iOS pairs.
+    S22 stands down at the notice while iOS pairs; iOS Success only after pairing_info."""
     ctx.check("precondition S22 owner", r_s22(ctx))
     ios.mac_forget()
     ios.reset_ios_side()
     ios.open_pairing_scan()
-    pm, gm, im = ctx.p.mark(), ctx.g.mark(), ctx.i.mark()
-    open_window(ctx)
-    ctx.check("S22 yields 300 s", ctx.log_wait(ctx.p, r"yield 300000ms", 20, pm) is not None)
-    time.sleep(4)
-    commit, res = ios_pair(ctx)
-    ctx.check("iOS committed as owner", commit is not None, commit[1] if commit else "")
-    ctx.check("iOS Success screen", res["success_screen"], str(res["steps"]))
+    gm, im = ctx.g.mark(), ctx.i.mark()
+    res = run_owner_lost(
+        ctx, "s22", scenario="takeover",
+        trigger=lambda: open_window(ctx, settle=False),
+        during=ios_takeover_during(ctx),
+        new_owner_bond=ios.mac_bonded,
+    )
+    commit, pres = res.during_value or (None, {})
+    ctx.check("iOS Success screen", bool(pres.get("success_screen")), str(pres.get("steps")))
+    ctx.check("iOS pairing_info seen", pres.get("pairing_info", 0) > 0, str(pres.get("commit_source")))
     ctx.check("iOS Success only after pairing_info", ios_success_after_pairing_info(ctx, im))
     ex = [l for _, l in ctx.g.since(gm) if "hm_pairexit received reason=" in l]
     ctx.check("hm_pairexit once", len(ex) == 1, str([e[-60:] for e in ex]))
     ctx.check("Mac (iOS) bond created", ios.mac_bonded())
-    if not LONG:
-        ctx.note("S22 yield/reclaim not re-run (baseline, this image: 300 s stand-down, 0 attempts, 0 prompts; "
-                 "first reclaim GATT status 133, no owner-loss card)")
-    else:
-        prompts, first = 0, None
-        deadline = time.time() + 400
-        ended = None
-        while time.time() < deadline:
-            if pmx.ui_find(r"配对请求|Pairing request"):
-                prompts += 1
-                cbtn = pmx.ui_find(r"^取消$|^Cancel$")
-                if cbtn:
-                    pmx.tap(*cbtn.center)
-            ended = ended or ctx.p.wait_for(r"Pairing yield ended", pm, 0.1)
-            if ended:
-                first = ctx.p.wait_for(r"GATT connection error: status=\d+|Owner loss", pm, 20)
-                break
-            time.sleep(5)
-        s = phone_lines(ctx, r"yield 300000ms", pm)
-        e = phone_lines(ctx, r"Pairing yield ended", pm)
-        t0, t1 = (s[0][:18] if s else ""), (e[0][:18] if e else "")
-        att = phone_lines(ctx, r"ATTEMPTING CONNECTION|GATT link connected", pm)
-        inside = [a for a in att if t0 and t1 and t0 <= a[:18] < t1]
-        ctx.check("S22 no connection attempt during yield", bool(t0 and t1) and not inside,
-                  f"yield {t0}..{t1} inside={len(inside)}")
-        ctx.check("S22 first reclaim status recorded", first is not None, first[1][-110:] if first else "")
-        ctx.note(f"first reclaim: {first[1][-110:] if first else None}")
-        ctx.check("S22 no pairing prompts", prompts == 0, str(prompts))
     pmx.app_home()
     time.sleep(3)
     ctx.shot("s22_after_takeover")
@@ -1042,22 +1425,21 @@ def x3_ios_reconnects(ctx: Ctx):
     ios.bridge(True)
     ctx.check("reconnect after Bluetooth off/on", ctx.ios_wait(rx, 90, im) is not None)
     time.sleep(5)
+    await_live_link(ctx, "ios")
     im = ctx.i.mark()
     ios.simctl("launch", ios.SIM, "com.apple.Preferences")
     time.sleep(3)
-    pmx.gsh("reboot", timeout=10)
-    ctx.g.stop()
-    ok = pmx.wait_glasses_boot(240)
-    pmx.gsh("dumpsys battery set level 80")
-    ctx.g = pmx.LogTap(pmx.GLASSES, ctx.dir / "glasses_after.log").start(clear=False)
-    pmx.bes_trace(True, 1000)
-    ctx.check("ASG back", ok)
-    got = ctx.ios_wait(rx, 120, im)
-    ctx.check("reconnect (app backgrounded) after ASG reboot", got is not None)
-    lost = ctx.i.grep(r"Owner loss", 0)
-    ctx.check("no owner loss", not lost, str(lost[:1]))
+    reboot_unit3_android(ctx)
+    ctx.phase_begin("ble_reconnect")
+    got = ctx.ios_wait(rx, 180, im)
+    ctx.phase_end("ble_reconnect")
+    ctx.check("reconnect (app backgrounded) after ASG reboot (BLE readiness, no adb)", got is not None)
+    lost = ctx.i.grep(r"Owner loss|owner lost, no reconnect", 0)
+    ctx.check("no owner loss / notice", not lost, str(lost[:1]))
     ios.home()
+    ctx.check("no owner-lost card", find_card_ios() is False)
     ctx.ishot("after_x3")
+    adb_return_bench(ctx)
 
 
 @case("NEW5")
@@ -1078,37 +1460,21 @@ def new5_rf_loss_not_owner_loss(ctx: Ctx):
 
 @case("X5")
 def x5_ios_to_s22(ctx: Ctx):
-    """iOS owner -> 3 presses -> S22 pairs. iOS yields 300 s, then auth failure -> owner-lost card."""
+    """R15 (also the simulator-app half of the two-platform smoke): iOS owner -> 3 presses -> S22 pairs.
+    iOS stands down at the notice (log line, card within 10 s, 20 s with no connect attempt) while S22 pairs."""
     ctx.check("precondition iOS owner", r_ios(ctx))
-    if pmx.ui_find(r"^Paired to another phone$"):
-        pmx.tap_text(r"^Pair again$", 8)
-        time.sleep(1.5)
-        pmx.tap(810, 1363)
-        time.sleep(3)
+    clear_s22_card(ctx)
     pmx.open_pairing_scan()
     gm, im = ctx.g.mark(), ctx.i.mark()
-    open_window(ctx)
-    time.sleep(6)
-    res = pmx.app_pair(timeout=60)
-    ctx.note(f"S22 app_pair: {res}")
-    commit = ctx.bes_wait(r"owner committed from ble bond", 15, gm)
-    pr = own_probe(ctx)  # the BES ring can drop the commit line; the owner dump is authoritative
-    ctx.check("S22 committed as owner", res["success_screen"] and (commit is not None or (pr.get("own") == 1 and s22_holds_bond())),
-              str(res["steps"]))
-    s22_finish_setup()
-    y, lost, (t0, t1), inside, conn = ios_owner_loss_after_yield(ctx, im)
-    if y is not None:
-        ctx.check("iOS yields 300 s", "300000" in y[1], y[1][-80:])
-        ctx.check("iOS no connect attempt during yield", bool(t0 and t1) and not inside,
-                  f"yield {t0}..{t1} inside={inside[:2]}")
-    else:
-        ctx.note("FINDING: iOS missed entering_pairing_mode; covered by the missed-notice fallback")
-        ctx.check("iOS fallback: at most one reconnect attempt before owner loss", len(conn) <= 1, str(len(conn)))
-    ctx.check("iOS owner loss via auth failure (ios_auth_fail)", lost is not None and "ios_auth_fail" in lost[1],
-              lost[1][-120:] if lost else "")
-    err = ctx.i.grep(r"Failed to connect to peripheral|didDisconnect|Disconnected", im)
-    ctx.note(f"iOS connect errors: {[e[-140:] for e in err[-4:]]}")
-    ctx.check("owner-lost card shown on iOS", ios.owner_lost_card())
+    res = run_owner_lost(
+        ctx, "ios", scenario="takeover",
+        trigger=lambda: open_window(ctx, settle=False),
+        during=lambda: s22_takeover_pair(ctx),
+        new_owner_bond=s22_holds_bond,
+    )
+    commit, pres = res.during_value or (None, {})
+    ctx.check("S22 Success screen", bool(pres.get("success_screen")), str(pres.get("steps")))
+    ctx.check("S22 bond created", s22_holds_bond())
     ctx.ishot("owner_lost_card")
     texts = ios.visible_texts()
     ctx.note(f"iOS card text: {texts[:15]}")
@@ -1117,9 +1483,31 @@ def x5_ios_to_s22(ctx: Ctx):
     ctx.check("S22 kept ownership", p.get("own") == 1 and s22_holds_bond(), p.get("line", "")[-80:])
 
 
+def clear_s22_card(ctx: Ctx) -> None:
+    """If the S22 still shows 'In pairing mode', Pair again so the scan starts from a clean state."""
+    if pmx.ui_find(r"^In pairing mode$"):
+        pmx.tap_text(r"^Pair again$", 8)
+        time.sleep(1.5)
+        pmx.tap(810, 1363)  # modal confirm "Pair again" (outside the uiautomator tree)
+        time.sleep(3)
+
+
+def s22_takeover_pair(ctx: Ctx, settle_s: float = 5.0):
+    """New-owner action for the S22 side: settle, pick the glasses on the open scan list, finish setup."""
+    time.sleep(settle_s)
+    gm = ctx.g.mark()
+    res = pmx.app_pair(timeout=60)
+    ctx.note(f"S22 app_pair: {res}")
+    commit = ctx.bes_wait(r"owner committed from ble bond", 15, gm)
+    s22_finish_setup()
+    return commit, res
+
+
 @case("X7A")
 def x7a_settings_detour(ctx: Ctx):
-    """After loss: forget in Settings (Mac bond), Pair again from the card with 3 presses -> iOS owner."""
+    """After loss (run right after X5 while the iOS card is live): forget in Settings (Mac bond), Pair again
+    from the card with 3 presses -> iOS owner. The S22 (owner from X5) is the previous owner of this window.
+    Ends with the iPhone as owner."""
     if not ios.owner_lost_card():
         ctx.not_testable("needs the iOS owner-lost card from X5")
         return
@@ -1128,12 +1516,25 @@ def x7a_settings_detour(ctx: Ctx):
     ios.pair_again_from_card()
     ios.open_pairing_scan()
     gm, im = ctx.g.mark(), ctx.i.mark()
-    open_window(ctx)
-    time.sleep(2)
-    commit, res = ios_pair(ctx)
-    ctx.check("iOS owner again", commit is not None and res["success_screen"], str(res["steps"]))
+    if s22_holds_bond():
+        res = run_owner_lost(
+            ctx, "s22", scenario="takeover",
+            trigger=lambda: open_window(ctx, settle=False),
+            during=ios_takeover_during(ctx, settle_s=2.0),
+            new_owner_bond=ios.mac_bonded,
+        )
+        commit, pres = res.during_value or (None, {})
+    else:
+        ctx.note("S22 holds no bond: no previous Android owner, R15 assertions for S22 skipped")
+        open_window(ctx)
+        time.sleep(2)
+        commit, pres = ios_pair(ctx)
+    ctx.check("iOS owner again (Success + pairing_info)",
+              bool(pres.get("success_screen")) and pres.get("pairing_info", 0) > 0, str(pres.get("steps")))
     ctx.check("Success only after pairing_info", ios_success_after_pairing_info(ctx, im))
+    ctx.check("Mac (iOS) bond created", ios.mac_bonded())
     ctx.check("owner-lost card gone", not ios.owner_lost_card())
+    ctx.ishot("ios_owner_again")
 
 
 @case("X7B")
@@ -1210,69 +1611,96 @@ def x1_first_ios_pair(ctx: Ctx):
     pmx.tap_text(r"^Mentra Live$", 8)
     time.sleep(12)
     ctx.shot("s22_scan")
-    found = phone_lines(ctx, r"Found compatible K900 glasses device: Mentra_Live_02BE", pm)
-    ctx.check("S22 is not offered 02BE as pairable", not any("pairingMode=true" in l for l in found), str(found[:1]))
+    found = phone_lines(ctx, rf"Found compatible K900 glasses device: {re.escape(ident.name())}", pm)
+    ctx.check("S22 is not offered the glasses as pairable", not any("pairingMode=true" in l for l in found), str(found[:1]))
     pmx.psh("input keyevent KEYCODE_BACK")
     pmx.psh("input keyevent KEYCODE_BACK")
 
 
 @case("X11")
 def x11_cancel_with_ios_former_owner(ctx: Ctx):
-    """iOS owner; 3 presses then single click after the grace: no owner; iOS yields then owner loss."""
+    """R15: iOS owner; 3 presses, then one single click after the grace: no owner; iOS shows the card at the notice.
+    Cancel by single click once, hm_pairexit once, pairing flag cleared, 20 s with no connect attempt/prompt."""
     ctx.check("precondition iOS owner", r_ios(ctx))
-    gm, im = ctx.g.mark(), ctx.i.mark()
-    m = enter_pairing(ctx)
-    time.sleep(6)
-    pmx.inject("C", 50)
-    hit = ctx.bes_wait(r"cancel by single click|cancel skipped", 15, m)
-    ctx.check("cancel by single click", hit is not None and "by single click" in hit[1], hit[1] if hit else "")
-    time.sleep(8)
-    ex = pairexits(ctx, m)
-    ctx.check("hm_pairexit once", len(ex) == 1, str(ex))
-    a = ctx.adv(5)
-    ctx.check("adv pairing flag cleared", bool(a) and not a["mentra"].get("pairing"), "")
-    y, lost, (t0, t1), inside, _ = ios_owner_loss_after_yield(ctx, im, 360)
-    ctx.check("iOS yields 300 s", y is not None and "300000" in y[1])
-    ctx.check("iOS reclaim -> owner loss (ios_auth_fail) within 330 s of yield end",
-              lost is not None and "ios_auth_fail" in lost[1], lost[1][-120:] if lost else "OPEN BUG if absent")
-    ctx.check("owner-lost card", ios.owner_lost_card())
+    gm = ctx.g.mark()
+    res = run_owner_lost(
+        ctx, "ios", scenario="cancel", cancel_at_s=6.0,
+        trigger=lambda: open_window(ctx, settle=False),
+        adv=lambda: ctx.adv(5),
+    )
     ctx.ishot("x11_card")
+    ctx.check("glasses did not commit any owner", not ctx.bes(r"owner committed", gm))
 
 
 @case("X10")
 def x10_ios_owner_nobody_pairs(ctx: Ctx):
-    """iOS owner presses and nobody pairs: window closes ~120 s, no owner; iOS yields then owner loss."""
+    """R15: iOS owner presses and nobody pairs. Immediate card (no yield), 20 s quiet, ownerless locked via one
+    single click (the 120 s idle close is F1's), then 30 s more with no reclaim attempt."""
     ctx.check("precondition iOS owner", r_ios(ctx))
-    im = ctx.i.mark()
-    m = enter_pairing(ctx)
-    close = ctx.bes_wait(r"window_close reason=", 170, m)
-    ctx.check("window closes (idle) with no owner", close is not None and "idle" in close[1], close[1] if close else "")
-    y, lost, (t0, t1), inside, _ = ios_owner_loss_after_yield(ctx, im, 300)
-    ctx.check("iOS yields 300 s", y is not None and "300000" in y[1])
-    ctx.check("iOS no attempt during yield", bool(t0 and t1) and not inside, str(inside[:2]))
-    ctx.check("iOS owner loss after the yield", lost is not None and "ios_auth_fail" in lost[1],
-              lost[1][-120:] if lost else "")
-    ctx.check("owner-lost card", ios.owner_lost_card())
+    gm = ctx.g.mark()
+    res = run_owner_lost(
+        ctx, "ios", scenario="ownerless",
+        trigger=lambda: open_window(ctx, settle=False),
+        adv=lambda: ctx.adv(5),
+    )
     ctx.ishot("x10_card")
+    texts = ios.visible_texts()
+    ctx.note(f"iOS card text: {texts[:15]}")
+    owner_lost.observe_after_close(ctx, res, seconds=30)
+    ctx.check("glasses did not commit any owner", not ctx.bes(r"owner committed", gm))
+
+
+def ring_tick(line: str) -> int | None:
+    m = re.match(r"\s*(\d+) \|", line)
+    return int(m.group(1)) if m else None
+
+
+def ring_generation(ctx: Ctx, mark: int = 0):
+    """(tick, window generation) of the newest BES ring line that carries `generation=`; None when empty."""
+    best = None
+    for line in ctx.bes(r"generation=\d+", mark):
+        t = ring_tick(line)
+        g = re.search(r"generation=(\d+)", line)
+        if t is not None and g and (best is None or t >= best[0]):
+            best = (t, int(g.group(1)))
+    return best
+
+
+def ring_after_tick(ctx: Ctx, tick: int, pattern: str, mark: int = 0) -> list:
+    """BES lines newer than `tick`: the ring replays history on every dump, so a mark alone is not enough."""
+    return [l for l in ctx.bes(pattern, mark) if (ring_tick(l) or 0) > tick]
 
 
 @case("B5B6")
 def b5_b6_presses_and_reentry(ctx: Ctx):
-    """4 and 5 presses fire one entry; 3 presses during a window restart it (generation +1, forgotten again)."""
-    import re
-
+    """4 and 5 presses fire exactly one entry (proved by window generation +1 and the advertisement pairing flag,
+    not only by a ring line); 3 presses during a window restart it (generation +1, forgotten again).
+    Start from R_NONE."""
     for n in (4, 5):
-        m = ctx.g.mark()
+        before = ring_generation(ctx)
+        if before is None:
+            own_probe(ctx)  # one short press: its click_window_end dump carries the current generation
+            before = ring_generation(ctx)
+        ctx.check(f"{n} presses: generation baseline in the ring", before is not None, str(before))
+        tick0, gen0 = before or (0, 0)
         pmx.inject(pmx.presses(n, 300), 50)
         time.sleep(8)
-        entries = ctx.bes(r"mode_enter_done", m)
-        ctx.check(f"{n} presses -> one entry", len(entries) == 1, str(entries))
-        pmx.inject("C", 50) if not entries else None
-        time.sleep(3)
-        if entries:
-            time.sleep(1)
-            pmx.inject("C", 50)
-            time.sleep(6)
+        gens = sorted({int(re.search(r"generation=(\d+)", l).group(1))
+                       for l in ring_after_tick(ctx, tick0, r"generation=\d+")})
+        entries = ring_after_tick(ctx, tick0, r"mode_enter_done")
+        ctx.note(f"{n} presses: generations after the gesture {gens}, mode_enter_done lines {len(entries)}")
+        ctx.check(f"{n} presses -> exactly one window generation (+1)",
+                  bool(gens) and max(gens) == gen0 + 1, f"{gen0} -> {gens}")
+        a = ctx.adv(5)
+        ctx.check(f"{n} presses -> advertisement shows the pairing window",
+                  bool(a) and a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+        ctx.check(f"{n} presses -> at most one mode_enter_done line (a dropped line is a ring gap, not a failure)",
+                  len(entries) <= 1, str(entries))
+        pmx.inject("C", 50)  # single click after the grace and the count reset closes the window
+        time.sleep(6)
+        a = ctx.adv(5)
+        ctx.check(f"{n} presses -> window closed by the single click", bool(a) and not a["mentra"].get("pairing"),
+                  json.dumps((a or {}).get("mentra")))
     m = enter_pairing(ctx)
     first = ctx.bes(r"mode_enter_done", m)
     g1 = re.search(r"generation=(\d+)", first[-1]) if first else None
@@ -1285,6 +1713,7 @@ def b5_b6_presses_and_reentry(ctx: Ctx):
               bool(g1 and g2) and int(g2.group(1)) == int(g1.group(1)) + 1,
               f"{g1.group(1) if g1 else None} -> {g2.group(1) if g2 else None}")
     ctx.check("re-entry forgets again (own=0/0)", again is not None and "own=0/0" in again[1])
+    ctx.check("no pairing-exit phrase on re-entry", not pairexits(ctx, m2), str(pairexits(ctx, m2)))
     time.sleep(35)
     spk = [l for _, l in ctx.g.since(m2) if "hm_spkcode received code=" in l]
     ctx.note(f"spoken code lines after re-entry: {len(spk)}")
@@ -1294,18 +1723,15 @@ def b5_b6_presses_and_reentry(ctx: Ctx):
 
 @case("E3S22")
 def e3_s22_reconnect(ctx: Ctx):
-    """S22 owner reconnects with zero action after the glasses reboot."""
+    """S22 owner (live link) reconnects with zero action after the glasses reboot; BLE readiness first, adb return is a
+    separate informational wait."""
     ctx.check("precondition S22 owner", r_s22(ctx))
+    await_live_link(ctx, "s22")
     pm = ctx.p.mark()
-    pmx.gsh("reboot", timeout=10)
-    ctx.g.stop()
-    ok = pmx.wait_glasses_boot(240)
-    pmx.gsh("dumpsys battery set level 80")
-    ctx.g = pmx.LogTap(pmx.GLASSES, ctx.dir / "glasses_after.log").start(clear=False)
-    pmx.bes_trace(True, 1000)
-    ctx.check("ASG back", ok)
-    ctx.check("S22 owner link after ASG reboot", wait_owner_link(ctx, pm, 120) is not None)
+    reboot_unit3_android(ctx)
+    ctx.check("S22 owner link after ASG reboot (BLE readiness, no adb)", wait_owner_link(ctx, pm, 180) is not None)
     no_owner_loss(ctx, pm)
+    adb_return_bench(ctx)
 
 
 @case("NEW3")
@@ -1316,7 +1742,7 @@ def new3_classic_first(ctx: Ctx):
     ctx.check("precondition no owner", r_none(ctx))
     ios.open_pairing_scan()
     m = enter_pairing(ctx)
-    proc = subprocess.run(["blueutil", "--connect", ios.GLASSES_MAC], capture_output=True, text=True, timeout=40)
+    proc = subprocess.run(["blueutil", "--connect", ios.glasses_mac()], capture_output=True, text=True, timeout=40)
     ctx.note(f"classic connect rc={proc.returncode} {proc.stderr.strip()[:100]}")
     time.sleep(8)
     ctx.check("window still open after Classic", not ctx.bes(r"window_close|owner committed", m))
@@ -1368,12 +1794,41 @@ def new6_s22_abandoned_scan(ctx: Ctx):
     no_owner_loss(ctx, pm)
 
 
+STALE_GESTURE_COPY = r"\b(5|five)\s*(x|times|presses)|hold both|10 s"
+GOOD_GESTURE_COPY = r"(3|three)\s*(times|presses)|press.*(3|three)"
+
+
+def copy_findings(texts: list) -> tuple:
+    bad = [x for x in texts if re_s(STALE_GESTURE_COPY, x)]
+    good = [x for x in texts if re_s(GOOD_GESTURE_COPY, x)]
+    return bad, good
+
+
 @case("NEW8IOS")
 def new8_ios_copy(ctx: Ctx):
-    """iOS screens: pairing prep, not-in-pairing-mode, owner-lost card; gesture copy says 3 presses."""
+    """iOS copy: its own mini-takeover (iOS owner, 3 presses, nobody pairs) for the owner-lost card screenshot, the
+    Pair again prompt, then the pairing prep and not-in-pairing-mode screens. All gesture copy says 3 presses."""
+    ctx.check("precondition iOS owner", r_ios(ctx))
     texts = []
+    gm = ctx.g.mark()
+    res = run_owner_lost(
+        ctx, "ios", scenario="ownerless",
+        trigger=lambda: open_window(ctx, settle=False),
+        adv=lambda: ctx.adv(5),
+    )
     ios.home()
-    ok = ios.open_pairing_scan()
+    ctx.ishot("owner_lost_card")
+    card = ios.visible_texts()
+    texts += card
+    ctx.note(f"owner-lost card texts: {card[:15]}")
+    if ios.tap_text(r"^Pair again$", 6):
+        time.sleep(1.5)
+        ctx.ishot("pair_again_prompt")
+        prompt = ios.visible_texts()
+        texts += prompt
+        ctx.note(f"Pair again prompt texts: {prompt[:15]}")
+        ios.dismiss_owner_lost_modal() or ios.tap_text(r"^Cancel$", 3)
+    ios.open_pairing_scan()
     t = ios.visible_texts()
     texts += t
     ctx.ishot("scan_or_prep")
@@ -1383,28 +1838,49 @@ def new8_ios_copy(ctx: Ctx):
     ctx.ishot("not_in_pairing_mode")
     ios.tap_text(r"^Back$", 2)
     ctx.note(f"screens: {t[:10]} / {t2[:10]}")
-    bad = [x for x in texts if re_s(r"\b(5|five)\s*(x|times|presses)|hold both|10 s", x)]
-    good = [x for x in texts if re_s(r"(3|three)\s*(times|presses)|press.*(3|three)", x)]
+    bad, good = copy_findings(texts)
     ctx.check("no stale gesture copy", not bad, str(bad))
     ctx.note(f"3-press mentions: {good}")
+    ctx.check("some screen tells the user to press 3 times", bool(good), str(texts[:12]))
+    ctx.check("owner-lost card was shown", any(re_s(r"In pairing mode", x) for x in card), str(card[:8]))
 
 
 @case("NEW8S22")
 def new8_s22_copy(ctx: Ctx):
-    """S22 screens: gesture copy says 3 presses."""
+    """S22 copy: its own mini-takeover (S22 owner, 3 presses, nobody pairs) for the owner-lost card screenshot, the
+    Pair again prompt (screenshot only: the modal is outside the uiautomator tree), then the scan/prep screens.
+    All gesture copy says 3 presses."""
+    ctx.check("precondition S22 owner", r_s22(ctx))
+    pmx.app_home()
+    res = run_owner_lost(
+        ctx, "s22", scenario="ownerless",
+        trigger=lambda: open_window(ctx, settle=False),
+        adv=lambda: ctx.adv(5),
+    )
+    pmx.app_home()
+    ctx.shot("owner_lost_card")
+    labels = [n.label for n in pmx.ui_nodes() if n.label]
+    ctx.note(f"owner-lost card labels: {labels[:20]}")
+    if pmx.tap_text(r"^Pair again$", 6):
+        time.sleep(1.5)
+        ctx.shot("pair_again_prompt")
+        pmx.psh("input keyevent KEYCODE_BACK")
+        time.sleep(1)
     pmx.open_pairing_scan()
     time.sleep(15)
     ctx.shot("s22_scan_or_prep")
-    labels = [n.label for n in pmx.ui_nodes() if n.label]
-    bad = [x for x in labels if re_s(r"\b(5|five)\s*(x|times|presses)|hold both|10 s", x)]
+    labels2 = [n.label for n in pmx.ui_nodes() if n.label]
+    bad, good = copy_findings(labels + labels2)
     ctx.check("no stale gesture copy", not bad, str(bad))
-    ctx.note(f"labels: {labels[:20]}")
+    ctx.check("some screen tells the user to press 3 times", bool(good), str((labels + labels2)[:12]))
+    ctx.note(f"labels: {labels2[:20]}")
+    ctx.check("owner-lost card was shown", any(re_s(r"In pairing mode", x) for x in labels), str(labels[:8]))
     pmx.psh("input keyevent KEYCODE_BACK")
 
 
 @case("X8")
 def x8_race(ctx: Ctx):
-    """Both phones on the scan list; one window; both pick 02BE. Exactly one owner; loser fails cleanly."""
+    """Both phones on the scan list; one window; both pick the glasses. Exactly one owner; loser fails cleanly."""
     import threading
 
     ctx.check("precondition no owner", r_none(ctx))
@@ -1418,7 +1894,7 @@ def x8_race(ctx: Ctx):
 
     def run_ios():
         stamps["ios"] = time.time()
-        out["ios"] = ios.pair(timeout=70)
+        out["ios"] = ios.pair(timeout=70, **ios_pair_hooks(ctx, gm))
 
     def run_s22():
         stamps["s22"] = time.time()
@@ -1459,7 +1935,7 @@ def x9_back_and_forth(ctx: Ctx):
         for direction in ("to_ios", "to_s22"):
             gm = ctx.g.mark()
             if direction == "to_ios":
-                if pmx.ui_find(r"^Paired to another phone$"):
+                if pmx.ui_find(r"^In pairing mode$"):
                     pass
                 if ios.owner_lost_card():
                     ios.pair_again_from_card()
@@ -1471,7 +1947,7 @@ def x9_back_and_forth(ctx: Ctx):
                 ok = commit is not None and ios.mac_bonded()
             else:
                 pmx.app_home()
-                if pmx.ui_find(r"^Paired to another phone$"):
+                if pmx.ui_find(r"^In pairing mode$"):
                     pmx.tap_text(r"^Pair again$", 8)
                     time.sleep(1.5)
                     pmx.tap(810, 1363)
@@ -1498,29 +1974,112 @@ def new7_permission_denied(ctx: Ctx):
                      "revoking the permission is not observable by the app")
 
 
+def snapshot_info() -> dict:
+    """Snapshot id + manifest sha256 when running from a published harness snapshot, else nulls."""
+    m = HERE / "manifest.json"
+    if not m.is_file():
+        return {"snapshot_id": None, "manifest_sha256": None}
+    raw = m.read_bytes()
+    try:
+        sid = json.loads(raw).get("snapshot_id")
+    except ValueError:
+        sid = None
+    return {"snapshot_id": sid, "manifest_sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def acquire_pid_file(run_dir: Path) -> Path:
+    """runs/<run>/active.pid: refuse to start when it points at a live process; clean up on exit.
+    Stopping a run means stopping exactly this pid, never a pattern kill."""
+    pf = run_dir / "active.pid"
+    if pf.exists():
+        try:
+            old = int(pf.read_text().split()[0])
+        except (ValueError, IndexError):
+            old = None
+        if old and old != os.getpid() and pid_alive(old):
+            raise SystemExit(f"refusing to start: {pf} points at live process {old} (another run is active)")
+    pf.write_text(f"{os.getpid()}\n")
+
+    def cleanup() -> None:
+        try:
+            if pf.read_text().split()[0] == str(os.getpid()):
+                pf.unlink()
+        except (OSError, IndexError):
+            pass
+
+    atexit.register(cleanup)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    return pf
+
+
+GUARD_ERRORS = (pmx.Unit3GuardError, pmx.RouteError, ident.IdentityMissing, ios.BridgeNotOwned)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
     ap.add_argument("cases", nargs="+")
     args = ap.parse_args()
+    if args.run in PROTECTED_RUNS or re.fullmatch(r"m\d+", args.run):
+        print(f"refusing to write into old evidence run {args.run!r}; use --run x2")
+        sys.exit(2)
+    snap = snapshot_info()
+    if snap["snapshot_id"] is None and os.environ.get("PMX_ALLOW_LIVE") != "1":
+        print("refusing to run device cases from the live harness files: run through run_case.py "
+              "(immutable snapshot), or set PMX_ALLOW_LIVE=1 for a local dry run")
+        sys.exit(2)
+    unknown = [c for c in args.cases if c not in CASES]
+    if unknown:
+        print(f"unknown case(s) {unknown}")
+        sys.exit(2)
     run_dir = pmx.RUNS / args.run
     run_dir.mkdir(parents=True, exist_ok=True)
+    acquire_pid_file(run_dir)
+    print(f"snapshot={snap['snapshot_id']} manifest_sha256={snap['manifest_sha256']}", flush=True)
     for cid in args.cases:
-        fn = CASES.get(cid)
-        if fn is None:
-            print(f"unknown case {cid}")
-            sys.exit(2)
+        fn = CASES[cid]
         print(f"== {cid}: {fn.__doc__.strip() if fn.__doc__ else ''}", flush=True)
-        ctx = Ctx(run_dir, cid)
+        try:
+            ctx = Ctx(run_dir, cid)
+        except GUARD_ERRORS as e:
+            row = {"case": cid, "t": time.strftime("%H:%M:%S"), "status": "BLOCKED", "reason": str(e)[:600], **snap}
+            with open(run_dir / "results.jsonl", "a") as fh:
+                fh.write(json.dumps(row) + "\n")
+            print(f"== {cid} BLOCKED (fail closed): {e}", flush=True)
+            sys.exit(4)
+        blocked = None
         try:
             fn(ctx)
+        except (PreviousOwnerLinkDown, ios.BenchBlocked) as e:
+            ctx.blocked = str(e)
+            ctx.note(f"BLOCKED {e}")
+            blocked = e
+        except GUARD_ERRORS as e:
+            blocked = e
+            ctx.check("device guard", False, repr(e)[:300])
         except Exception as e:  # noqa: BLE001
             ctx.check("exception", False, repr(e))
         res = ctx.finish()
-        row = {"case": cid, "t": time.strftime("%H:%M:%S"), **res}
+        row = {"case": cid, "t": time.strftime("%H:%M:%S"), **snap, **res}
         with open(run_dir / "results.jsonl", "a") as fh:
             fh.write(json.dumps(row) + "\n")
         print(f"== {cid} {res['status']}", flush=True)
+        if blocked is not None:
+            print(f"guard failed mid-case, stopping the run: {blocked}", flush=True)
+            sys.exit(5 if isinstance(blocked, PreviousOwnerLinkDown) else 4)
+        if ctx.stop_run_reason:
+            print(f"verdict recorded; stopping the run: {ctx.stop_run_reason}", flush=True)
+            sys.exit(4)
 
 
 if __name__ == "__main__":

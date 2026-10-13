@@ -103,7 +103,9 @@ export default function BtClassicPairingScreen() {
   }, [device])
 
   useEffect(() => {
-    console.log("BTCLASSIC: check bluetoothClassicConnected", bluetoothClassicConnected)
+    console.log(
+      `PAIRFLOW: btclassic device=${deviceName} bluetoothClassicConnected=${bluetoothClassicConnected} ${bluetoothClassicConnected ? "advance" : "wait_for_audio_route"}`,
+    )
     if (bluetoothClassicConnected) {
       handleSuccess()
     }

@@ -5,6 +5,10 @@ Run with the bleak venv: ~/.venvs/mentra-ble/bin/python pmx.py <command> [...]
 
 Glasses must run the MENTRA_DEBUG_KEY_INJECT BES image and the debug ASG APK
 (com.mentra.DEBUG_BES_KEY receiver). See README.md.
+
+Device routing (see the GLASSES/PHONE block below): glasses = unit3 wrapper adb only
+(opt-in: PMX_LANE=unit2 / run_case.py --lane unit2 swaps it for the unit2 wrapper and the unit2 guard),
+phone = PMX_PHONE_ADB with -s <S22 serial>. Glasses name/code/MAC come from ident.py.
 """
 
 from __future__ import annotations
@@ -21,24 +25,187 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
-GLASSES = os.environ.get("PMX_GLASSES", "0123456789ABCDEF")
-PHONE = os.environ.get("PMX_PHONE", "RFCT31GXXQJ")
+import ident
+
 APP_PKG = "com.mentra.mentra"
 ASG_PKG = "com.mentra.asg_client"
 HERE = Path(__file__).resolve().parent
-RUNS = HERE / "runs"
+# A harness snapshot sets PMX_RUNS_DIR so it still writes to the live runs/ tree.
+RUNS = Path(os.environ.get("PMX_RUNS_DIR") or (HERE / "runs"))
+RUN_NAME = ident.run_name()  # "x2" by default; "x2/lanes/unit2" only when PMX_LANE=unit2
+
+# ------------------------------------------------------------------ device routing
+#
+# Two routes only, addressed by token, never by serial:
+#   GLASSES: unit3 only. The unit3 wrapper `adb` selects the glasses by eMMC id. It is
+#            called by its absolute wrapper path with the wrapper dir first on PATH,
+#            ANDROID_SERIAL unset, and never with -s/-t. No other adb is ever used for glasses.
+#   PHONE:   the S22. Needs PMX_PHONE_ADB (path to a plain adb binary) and is invoked as
+#            [PMX_PHONE_ADB, "-s", PHONE_SERIAL, ...]. Refused when unset or when it points at
+#            the shared system adb or any wrapper. The wrapper is never used for the phone.
+GLASSES = "glasses"
+PHONE = "phone"
+PHONE_SERIAL = os.environ.get("PMX_PHONE", "RFCT31GXXQJ")
+LAB_BIN = Path(os.environ.get("PMX_LAB_BIN", "/Users/mentra/Documents/MentraApps/os-1988/bin"))
+UNIT3_DIR = Path(os.environ.get("PMX_UNIT3_BIN") or (LAB_BIN / "unit3"))
+UNIT2_DIR = Path(os.environ.get("PMX_UNIT2_BIN") or (LAB_BIN / "unit2"))  # only used when PMX_LANE=unit2
+LAB_UNITS = LAB_BIN / "lab-units"
 
 
-def adb(serial: str, *args: str, timeout: float = 30, check: bool = False) -> str:
+class RouteError(RuntimeError):
+    """A device command was refused because its route is not safe or not configured."""
+
+
+class Unit3GuardError(RuntimeError):
+    """lab-units did not show exactly one unit3 row: fail closed."""
+
+
+class LaneGuardError(Unit3GuardError):
+    """lab-units did not show exactly one row for the active lane's unit: fail closed (a Unit3GuardError so the
+    existing case handlers still treat it as a blocked device guard)."""
+
+
+def glasses_dir() -> Path:
+    """Wrapper dir for the glasses route: the unit3 dir unless a lane (unit2) is active."""
+    return UNIT2_DIR if ident.lane() == "unit2" else UNIT3_DIR
+
+
+def _clean_env(route: str | None = None) -> dict:
+    env = dict(os.environ)
+    env.pop("ANDROID_SERIAL", None)
+    if route == GLASSES:
+        env["PATH"] = f"{glasses_dir()}{os.pathsep}{env.get('PATH', '')}"
+    return env
+
+
+def _is_shared_system_adb(path: str) -> bool:
+    """The shared package-manager adb (any path under a homebrew prefix) is never a harness route."""
+    return "homebrew" in Path(path).parts or "homebrew" in Path(os.path.realpath(path)).parts
+
+
+def phone_adb_path() -> str:
+    path = os.environ.get("PMX_PHONE_ADB", "").strip()
+    if not path:
+        raise RouteError("PMX_PHONE_ADB is not set: refusing to run phone commands (set it to the S22 adb binary)")
+    p = Path(path)
+    if not (p.is_file() and os.access(p, os.X_OK)):
+        raise RouteError(f"PMX_PHONE_ADB is not an executable file: {path}")
+    real = os.path.realpath(path)
+    if _is_shared_system_adb(path):
+        raise RouteError(f"PMX_PHONE_ADB must not be the shared system adb: {path}")
+    lab = os.path.realpath(str(LAB_BIN))
+    if real == lab or real.startswith(lab + os.sep) or str(p.parent).startswith(str(LAB_BIN)):
+        raise RouteError(f"PMX_PHONE_ADB must not be a lab-unit wrapper: {path}")
+    return path
+
+
+def glasses_adb_path() -> str:
+    wrapper = glasses_dir() / "adb"
+    if not (wrapper.is_file() and os.access(wrapper, os.X_OK)):
+        raise RouteError(f"{ident.lane() or 'unit3'} adb wrapper missing or not executable: {wrapper}")
+    return str(wrapper)
+
+
+def adb_argv(route: str, *args: str) -> list:
+    if route == GLASSES:
+        if args and args[0] in ("-s", "-t", "-d", "-e"):
+            raise RouteError("glasses adb calls never take -s/-t/-d/-e (the unit3 wrapper selects the device)")
+        return [glasses_adb_path(), *args]
+    if route == PHONE:
+        return [phone_adb_path(), "-s", PHONE_SERIAL, *args]
+    raise RouteError(f"unknown adb route {route!r}: use pmx.GLASSES or pmx.PHONE, never a serial")
+
+
+def adb(route: str, *args: str, timeout: float = 30, check: bool = False) -> str:
     proc = subprocess.run(
-        ["adb", "-s", serial, *args],
+        adb_argv(route, *args),
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=_clean_env(route),
     )
     if check and proc.returncode != 0:
         raise RuntimeError(f"adb {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
+
+
+def adb_popen(route: str, *args: str, **kwargs) -> subprocess.Popen:
+    return subprocess.Popen(adb_argv(route, *args), env=_clean_env(route), **kwargs)
+
+
+def parse_lab_units(text: str) -> list:
+    """Rows of `lab-units`: transport usb role serial cid."""
+    rows = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[0] == "transport":
+            continue
+        rows.append({
+            "transport": parts[0], "usb": parts[1], "role": parts[2],
+            "serial": parts[3] if len(parts) > 3 else "", "cid": (parts[4] if len(parts) > 4 else "").lower(),
+        })
+    return rows
+
+
+LAST_UNIT3: dict = {}
+
+
+def assert_lane_unit(role: str, run=subprocess.run) -> dict:
+    """Lane gate: lab-units must show exactly one row whose role is `role` (e.g. unit2). Fail closed otherwise.
+
+    A unit3 row is never accepted for another role: rows are matched on the role column only.
+    """
+    if not LAB_UNITS.is_file():
+        raise LaneGuardError(f"lab-units not found at {LAB_UNITS}; refusing to touch glasses")
+    try:
+        proc = run([str(LAB_UNITS)], capture_output=True, text=True, timeout=120, env=_clean_env())
+    except Exception as exc:  # noqa: BLE001
+        raise LaneGuardError(f"lab-units failed to run: {exc!r}") from exc
+    rows = parse_lab_units(proc.stdout or "")
+    mine = [r for r in rows if r["role"] == role]
+    if proc.returncode != 0 or len(mine) != 1:
+        raise LaneGuardError(
+            f"expected exactly one {role} row from lab-units, found {len(mine)} (rc={proc.returncode}); "
+            f"not attached means the pair is down or rebooting, more than one means ambiguous. Output:\n"
+            f"{(proc.stdout or '').strip()}\n{(proc.stderr or '').strip()}"
+        )
+    want = ident.lane_cid()
+    if want and mine[0]["cid"] != want:
+        raise LaneGuardError(f"{role} cid {mine[0]['cid']} does not match the recorded {role} cid {want}")
+    LAST_UNIT3.clear()  # case records read LAST_UNIT3; in a lane it holds that lane's row
+    LAST_UNIT3.update(mine[0])
+    return mine[0]
+
+
+def assert_unit3(run=subprocess.run) -> dict:
+    """Gate: lab-units must show exactly one `unit3` row. Fail closed otherwise.
+
+    Called at every case start and after every glasses reboot. Returns the unit3 row.
+    With PMX_LANE=unit2 the same call (cases.py keeps calling it) is the unit2 guard instead, so the default
+    path below is untouched and a lane can never be satisfied by a unit3 row.
+    """
+    if ident.lane() == "unit2":
+        return assert_lane_unit("unit2", run)
+    if not LAB_UNITS.is_file():
+        raise Unit3GuardError(f"lab-units not found at {LAB_UNITS}; refusing to touch glasses")
+    try:
+        proc = run([str(LAB_UNITS)], capture_output=True, text=True, timeout=120, env=_clean_env())
+    except Exception as exc:  # noqa: BLE001
+        raise Unit3GuardError(f"lab-units failed to run: {exc!r}") from exc
+    rows = parse_lab_units(proc.stdout or "")
+    unit3 = [r for r in rows if r["role"] == "unit3"]
+    if proc.returncode != 0 or len(unit3) != 1:
+        raise Unit3GuardError(
+            f"expected exactly one unit3 row from lab-units, found {len(unit3)} (rc={proc.returncode}); "
+            f"not attached means the pair is down or rebooting, more than one means ambiguous. Output:\n"
+            f"{(proc.stdout or '').strip()}\n{(proc.stderr or '').strip()}"
+        )
+    want = ident.unit3_cid()
+    if want and unit3[0]["cid"] != want:
+        raise Unit3GuardError(f"unit3 cid {unit3[0]['cid']} does not match the recorded unit3_cid {want}")
+    LAST_UNIT3.clear()
+    LAST_UNIT3.update(unit3[0])
+    return unit3[0]
 
 
 def gsh(cmd: str, timeout: float = 30) -> str:
@@ -62,7 +229,7 @@ def _unescape(s: str) -> str:
 class LogTap:
     """Streams logcat from one device into memory and a file."""
 
-    serial: str
+    serial: str  # route token: pmx.GLASSES or pmx.PHONE (never a device serial)
     path: Path
     lines: list = field(default_factory=list)
     _proc: subprocess.Popen | None = None
@@ -73,8 +240,9 @@ class LogTap:
             adb(self.serial, "logcat", "-c")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = open(self.path, "a", buffering=1)
-        self._proc = subprocess.Popen(
-            ["adb", "-s", self.serial, "logcat", "-v", "time"],
+        self._proc = adb_popen(
+            self.serial,
+            "logcat", "-v", "time",
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -202,7 +370,9 @@ def bes_trace(enabled: bool = True, interval_ms: int = 3000) -> None:
 def inject(seq: str, gap_ms: int = 150, code: str = "pwr", delay_ms: int = 0) -> None:
     import traceback
 
-    with open(RUNS / "inject-audit.log", "a") as fh:
+    audit = RUNS / RUN_NAME / "inject-audit.log"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    with open(audit, "a") as fh:
         caller = " <- ".join(f"{f.name}:{f.lineno}" for f in traceback.extract_stack()[-4:-1])
         fh.write(f"{time.strftime('%H:%M:%S')} pid={os.getpid()} seq={seq} code={code} {caller}\n")
     gsh(
@@ -233,16 +403,43 @@ def media_count() -> int:
 
 
 def wait_glasses_boot(timeout: float = 240) -> bool:
+    """Wait for unit3's Android to be back after a reboot, then re-run the unit3 guard."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        state = subprocess.run(
-            ["adb", "-s", GLASSES, "get-state"], capture_output=True, text=True
-        ).stdout.strip()
-        if state == "device" and gsh("getprop sys.boot_completed").strip() == "1":
-            if gsh(f"pidof {ASG_PKG}").strip():
-                return True
+        try:
+            state = adb(GLASSES, "get-state", timeout=45).strip()
+            if state == "device" and gsh("getprop sys.boot_completed").strip() == "1":
+                if gsh(f"pidof {ASG_PKG}").strip():
+                    assert_unit3()
+                    return True
+        except subprocess.TimeoutExpired:
+            pass
         time.sleep(3)
     return False
+
+
+def wait_unit3_return(timeout: float = 1200, poll: float = 15, run=subprocess.run, clock=time) -> float | None:
+    """After an Android reboot the USB adb can take 10+ minutes to reappear while BLE is back in under a minute.
+
+    Informational wait: poll `lab-units` every `poll` s for up to `timeout` s until exactly one unit3 row shows.
+    Returns the elapsed seconds, or None when it never returned. A row count above one is ambiguous and raises
+    Unit3GuardError (never guess). Uses only lab-units, no glasses adb.
+    """
+    role = "unit2" if ident.lane() == "unit2" else "unit3"
+    start = clock.time()
+    while True:
+        try:
+            proc = run([str(LAB_UNITS)], capture_output=True, text=True, timeout=120, env=_clean_env())
+            unit3 = [r for r in parse_lab_units(proc.stdout or "") if r["role"] == role]
+        except Exception:  # noqa: BLE001
+            unit3 = []
+        if len(unit3) > 1:
+            raise Unit3GuardError(f"lab-units shows {len(unit3)} {role} rows while waiting for adb: ambiguous")
+        if len(unit3) == 1:
+            return clock.time() - start
+        if clock.time() - start >= timeout:
+            return None
+        clock.sleep(poll)
 
 
 # ------------------------------------------------------------------------ phone
@@ -316,7 +513,7 @@ def tap_text(pattern: str, timeout: float = 10) -> bool:
 def screenshot(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = subprocess.run(
-        ["adb", "-s", PHONE, "exec-out", "screencap", "-p"], capture_output=True
+        adb_argv(PHONE, "exec-out", "screencap", "-p"), capture_output=True, env=_clean_env(PHONE)
     ).stdout
     path.write_bytes(data)
     return path
@@ -342,6 +539,11 @@ def phone_bonds() -> list:
                 if bonds:
                     break
     return bonds
+
+
+def glasses_bonds() -> list:
+    """Phone bonds that belong to the configured glasses (by code in the Bluetooth name)."""
+    return [b for b in phone_bonds() if ident.is_glasses_name(b["name"])]
 
 
 BT_DIALOG_ACCEPT = r"^(配对|Pair|PAIR|OK|确定|允许|Allow)$"
@@ -372,7 +574,7 @@ def app_unpair() -> bool:
             break
         tap(*blocker.center)
         time.sleep(2)
-    owner_lost_card = ui_find(r"^Paired to another phone$") is not None
+    owner_lost_card = ui_find(r"^In pairing mode$") is not None
     if not owner_lost_card:
         if not tap_text(r"^Mentra Live$", 8):
             return False
@@ -412,8 +614,9 @@ def open_pairing_scan() -> None:
                 tap(*btn.center)
 
 
-def app_pair(code: str = "02BE", timeout: float = 60, accept_dialog: bool = True, pick_timeout: float | None = None) -> dict:
+def app_pair(code: str | None = None, timeout: float = 60, accept_dialog: bool = True, pick_timeout: float | None = None) -> dict:
     """Drive Pair glasses -> Mentra Live -> <code>, accepting Android's pairing dialog."""
+    code = re.escape(code or ident.code())
     out = {"dialog_seen": False, "dialog_accepted": False, "success_screen": False, "steps": []}
     open_pairing_scan()
     out["steps"].append("scan")
@@ -493,7 +696,8 @@ def ble_scan(seconds: float = 6.0) -> list:
     return asyncio.run(scan(seconds))
 
 
-def glasses_adv(name_suffix: str = "02BE", seconds: float = 6.0):
+def glasses_adv(name_suffix: str | None = None, seconds: float = 6.0):
+    name_suffix = name_suffix or ident.code()
     for r in ble_scan(seconds):
         if r.get("name", "").endswith(name_suffix):
             return r

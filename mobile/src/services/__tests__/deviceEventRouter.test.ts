@@ -138,6 +138,13 @@ describe("DeviceEventRouter", () => {
     expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
   })
 
+  it("marks owner-lost the moment the glasses announce pairing mode (R15 notice, no yield window)", () => {
+    const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+    emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+    expect(setSpy).toHaveBeenCalledTimes(1)
+    expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+  })
+
   it("clears owner-lost once the glasses connect again", () => {
     const settings = useSettingsStore.getState()
     jest.spyOn(settings, "getSetting").mockImplementation((key: string) => key === "mentra_live_owner_lost")

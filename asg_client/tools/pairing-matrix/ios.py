@@ -17,16 +17,29 @@ import re
 import subprocess
 import threading
 import time
+import signal
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import ident
+
 SIM = os.environ.get("PMX_SIM", "FC25B30E-4AE6-4314-803E-65889C65653B")
 APP = "com.mentra.mentra"
 WDA = os.environ.get("PMX_WDA", "http://127.0.0.1:8100")
-GLASSES_MAC = "cc-e7-de-e0-02-be"
-HFP_FLAG = "/tmp/sim-hfp-02BE"
 BRIDGE_APP = "/tmp/ImpossiBLE/ImpossiBLE-Mac.app"
+BRIDGE_EXE = "ImpossiBLE-Mac.app/Contents/MacOS"
+RUNS_DIR = Path(os.environ.get("PMX_RUNS_DIR") or (Path(__file__).resolve().parent / "runs"))
+BRIDGE_PID_FILE = RUNS_DIR / os.environ.get("PMX_RUN", "x2") / "bridge.pid"
+
+
+def glasses_mac() -> str:
+    """The Mac-form (blueutil) address of the configured glasses, e.g. cc-e7-de-e0-02-be."""
+    return ident.mac_dash()
+
+
+def hfp_flag() -> str:
+    return ident.hfp_flag()
 
 _session: str | None = None
 
@@ -237,24 +250,66 @@ def app_restart() -> None:
 # ------------------------------------------------------------------ "iOS radio"
 
 
+def bridge_pids() -> list:
+    out = subprocess.run(["pgrep", "-f", BRIDGE_EXE], capture_output=True, text=True).stdout
+    return [int(x) for x in out.split() if x.strip().isdigit()]
+
+
 def bridge_running() -> bool:
-    return bool(subprocess.run(["pgrep", "-f", "ImpossiBLE-Mac.app/Contents/MacOS"],
-                               capture_output=True, text=True).stdout.strip())
+    return bool(bridge_pids())
+
+
+class BridgeNotOwned(RuntimeError):
+    """The ImpossiBLE bridge is running but this run did not start it."""
+
+
+def _pid_is_bridge(pid: int) -> bool:
+    out = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+    return BRIDGE_EXE in out
 
 
 def bridge(enabled: bool) -> None:
-    """Start/stop the passthrough provider: the simulator's Bluetooth on/off switch."""
-    if enabled and not bridge_running():
-        subprocess.run(["open", BRIDGE_APP])
-        time.sleep(3)
-    elif not enabled:
-        subprocess.run(["pkill", "-f", "ImpossiBLE-Mac.app/Contents/MacOS"])
-        time.sleep(2)
+    """Start/stop the passthrough provider: the simulator's Bluetooth on/off switch.
+
+    No pattern kills. Start reuses a running bridge and records the pid of one it launches.
+    Stop only signals a pid this harness recorded (runs/<run>/bridge.pid), or, when the
+    coordinator confirms the bench owns the bridge (PMX_BRIDGE_OWNED=1), the explicit pids
+    found for the ImpossiBLE executable. A bridge somebody else started is never killed.
+    """
+    if enabled:
+        if not bridge_running():
+            before = set(bridge_pids())
+            subprocess.run(["open", BRIDGE_APP])
+            time.sleep(3)
+            new = sorted(set(bridge_pids()) - before)
+            if new:
+                BRIDGE_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+                BRIDGE_PID_FILE.write_text(" ".join(str(p) for p in new) + "\n")
+        return
+    pids = bridge_pids()
+    if not pids:
+        return
+    ours = []
+    try:
+        ours = [int(x) for x in BRIDGE_PID_FILE.read_text().split()]
+    except (OSError, ValueError):
+        pass
+    targets = pids if os.environ.get("PMX_BRIDGE_OWNED") == "1" else [p for p in pids if p in ours]
+    if not targets or (set(pids) - set(targets)):
+        raise BridgeNotOwned(
+            f"ImpossiBLE bridge pids {pids} are not all owned by this run (recorded {ours}); refusing to stop a "
+            "shared bridge. Set PMX_BRIDGE_OWNED=1 only when the coordinator confirms this bench owns it."
+        )
+    for pid in targets:
+        if _pid_is_bridge(pid):
+            os.kill(pid, signal.SIGTERM)
+    time.sleep(2)
+    BRIDGE_PID_FILE.unlink(missing_ok=True)
 
 
 def mac_bonded() -> bool:
     out = subprocess.run(["blueutil", "--paired"], capture_output=True, text=True).stdout
-    return GLASSES_MAC in out
+    return glasses_mac() in out
 
 
 def escape_to_home(max_steps: int = 6) -> bool:
@@ -277,7 +332,7 @@ def escape_to_home(max_steps: int = 6) -> bool:
 
 def dismiss_owner_lost_modal() -> bool:
     t = visible_texts()
-    if "Paired to another phone" in t and "Cancel" in t and "Pair again" in t:
+    if "In pairing mode" in t and "Cancel" in t and "Pair again" in t:
         return tap_text(r"^Cancel$", 3)
     return False
 
@@ -293,25 +348,95 @@ def reset_ios_side() -> bool:
 
 def mac_forget() -> None:
     """iOS 'Forget This Device': drop the Mac's bond (the simulator's bond) with the glasses."""
-    subprocess.run(["blueutil", "--unpair", GLASSES_MAC], capture_output=True, text=True)
-    Path(HFP_FLAG).unlink(missing_ok=True)
+    subprocess.run(["blueutil", "--unpair", glasses_mac()], capture_output=True, text=True)
+    Path(hfp_flag()).unlink(missing_ok=True)
     time.sleep(1)
+
+
+class BenchBlocked(Exception):
+    """The Mac UI bench cannot answer (System Events / BluetoothUIServer). The case ends BLOCKED, not FAIL."""
+
+
+def _restart_system_events(runner) -> None:
+    """Signal the System Events pid directly. No name-wide kill."""
+    found = runner(["pgrep", "-x", "System Events"], capture_output=True, text=True)
+    for token in (getattr(found, "stdout", "") or "").split():
+        if token.isdigit():
+            os.kill(int(token), signal.SIGTERM)
+
+
+def osascript(script: str, timeout: float = 8, runner=None, sleeper=None):
+    """Run one osascript. A timeout restarts System Events once and retries; a second timeout is BenchBlocked.
+
+    A missing BluetoothUIServer (non-zero exit, no timeout) is not a bench failure: callers treat empty
+    stdout as 'no sheet'.
+    """
+    runner = runner or subprocess.run
+    sleeper = sleeper or time.sleep
+
+    def once():
+        try:
+            return runner(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            return exc
+
+    first = once()
+    if not isinstance(first, subprocess.TimeoutExpired):
+        return first
+    _restart_system_events(runner)
+    sleeper(1)
+    second = once()
+    if isinstance(second, subprocess.TimeoutExpired):
+        raise BenchBlocked(
+            "osascript timed out talking to System Events / BluetoothUIServer after restarting System Events once; "
+            "grant Automation and Accessibility to the process that launches the harness"
+        )
+    return second
+
+
+def ios_ui_preflight(timeout: float = 5) -> None:
+    """Short probe that System Events answers, before an iOS case touches the pairing sheet."""
+    osascript('tell application "System Events" to return name of first process', timeout=timeout)
+
+
+def advert_is_fresh(adv: dict | None, max_age_s: float = 20.0, now: float | None = None) -> bool:
+    """True when a glasses advertisement was seen within max_age_s. A missing or undated advert is stale."""
+    if not adv:
+        return False
+    seen = adv.get("last_seen")
+    if seen is None:
+        return False
+    return (time.time() if now is None else now) - float(seen) <= max_age_s
+
+
+def require_fresh_advert(adv_fn=None, max_age_s: float = 20.0) -> dict:
+    """BLE scan once. A stale or missing simulator advertisement blocks the iOS case instead of pairing against a cache."""
+    import pmx
+
+    adv = (adv_fn or (lambda seconds=4: pmx.glasses_adv(seconds=seconds)))(seconds=4)
+    if not advert_is_fresh(adv, max_age_s=max_age_s):
+        raise BenchBlocked(
+            "simulator advertisement is stale or missing; restart ImpossiBLE and confirm a fresh advert "
+            "before this iOS case"
+        )
+    return adv
 
 
 def mac_sheet() -> str | None:
     """Title of the macOS 'Connection Request from <glasses>' numeric-comparison sheet (the iOS pairing-sheet stand-in)."""
-    r = subprocess.run(["osascript", "-e",
-                        'tell application "System Events" to tell process "BluetoothUIServer" to '
-                        'if (count of windows) > 0 then return name of window 1'],
-                       capture_output=True, text=True, timeout=15)
-    t = r.stdout.strip()
+    r = osascript(
+        'tell application "System Events" to tell process "BluetoothUIServer" to '
+        'if (count of windows) > 0 then return name of window 1'
+    )
+    t = (r.stdout or "").strip()
     return t or None
 
 
 def mac_sheet_click(button: str) -> bool:
-    r = subprocess.run(["osascript", "-e",
-                        f'tell application "System Events" to tell process "BluetoothUIServer" to click button "{button}" of window 1'],
-                       capture_output=True, text=True, timeout=15)
+    r = osascript(
+        'tell application "System Events" to tell process "BluetoothUIServer" to '
+        f'click button "{button}" of window 1'
+    )
     return r.returncode == 0
 
 
@@ -319,7 +444,7 @@ def classic_audio_pair() -> dict:
     """Stand-in for 'pair the audio device in iOS Settings': Classic pair from the Mac radio (answering its
     pairing sheet like a user), then expose the HFP route to the simulator app."""
     out = {"sheets": 0}
-    proc = subprocess.Popen(["blueutil", "--pair", GLASSES_MAC], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(["blueutil", "--pair", glasses_mac()], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     deadline = time.time() + 60
     while time.time() < deadline and proc.poll() is None:
         if mac_sheet():
@@ -332,8 +457,8 @@ def classic_audio_pair() -> dict:
     out["pair_rc"] = proc.returncode
     out["paired"] = mac_bonded()
     if out["paired"]:
-        Path(HFP_FLAG).write_text("1")
-    out["flag"] = Path(HFP_FLAG).exists()
+        Path(hfp_flag()).write_text("1")
+    out["flag"] = Path(hfp_flag()).exists()
     return out
 
 
@@ -448,7 +573,7 @@ def open_pairing_scan() -> bool:
         has = lambda s: any(re.fullmatch(s, x) for x in t)  # noqa: E731
         if has(r"Choose your glasses") or has(r"Not showing up\?"):
             return True
-        if has(r"Pair again") and has(r"Cancel") and has(r"Paired to another phone"):
+        if has(r"Pair again") and has(r"Cancel") and has(r"In pairing mode"):
             tap_text(r"^Pair again$", 3)
         elif has(r"Ignore"):
             tap_text(r"^Ignore$", 3)
@@ -481,7 +606,7 @@ def clean_pending() -> bool:
     for _ in range(4):
         handle_alert()
         t = visible_texts()
-        if "Paired to another phone" in t and "Cancel" in t and "Pair again" in t:
+        if "In pairing mode" in t and "Cancel" in t and "Pair again" in t:
             tap_text(r"^Cancel$", 3)
             continue
         if "Ignore" in t:
@@ -496,9 +621,37 @@ def clean_pending() -> bool:
     return dropped
 
 
-def pair(code: str = "02BE", timeout: float = 75, abort_if=None, sheet: str | None = "Connect") -> dict:
-    """Pair glasses -> Mentra Live -> <code>; waits for Success or Pairing Failed."""
-    out = {"success_screen": False, "failed_screen": False, "steps": []}
+def rescan_scan_list() -> str:
+    """Force the app to scan again: Try Again if the screen has one, else leave the scan screen and reopen it."""
+    if tap_text(r"^Try Again$", 2):
+        return "try_again"
+    tap_text(r"^Back$", 3)
+    time.sleep(1.5)
+    return f"reopen:{open_pairing_scan()}"
+
+
+def pair(code: str | None = None, timeout: float = 75, abort_if=None, sheet: str | None = "Connect",
+         window_open=None, window_closed=None, rescan_after_s: float = 8.0, rescan_gap_s: float = 10.0,
+         max_rescans: int = 3) -> dict:
+    """Pair glasses -> Mentra Live -> <code>; waits for Success or Pairing Failed.
+
+    window_open():   True when the glasses window is known to be open (the caller already did its one 3-press gesture AND the Mac
+                     advertisement shows pairing=true; read-only). Enables the stale-advert rescan below. Without it
+                     the legacy behavior stays (tap Try Again every 6 s while the row says Not in pairing mode).
+    window_closed(): returns a reason string once the window is gone (BES window_close / hm_pairexit, or the
+                     advertisement pairing flag cleared); before a pick that ends the run at once with
+                     out["window_closed_before_pick"] instead of waiting out the timeout.
+    Stale advert: the Mac CoreBluetooth/ImpossiBLE passthrough can keep a cached non-pairing advert, so the list shows
+    `Mentra Live, <code> · Not in pairing mode` (sometimes with no Try Again button) although the window is open. If that
+    row stays for rescan_after_s with no pick, rescan (Try Again, else Back + open_pairing_scan), up to max_rescans, at
+    least rescan_gap_s apart, recorded as steps `rescan:N`. This function never presses the glasses' buttons.
+    """
+    code = re.escape(code or ident.code())
+    out = {"success_screen": False, "failed_screen": False, "steps": [], "rescans": 0}
+    stale_since = None
+    last_rescan = -1e9
+    next_open_check = 0.0
+    last_closed_check = 0.0
     fresh = not bridge_running()
     bridge(True)
     if fresh:
@@ -564,10 +717,38 @@ def pair(code: str = "02BE", timeout: float = 75, abort_if=None, sheet: str | No
                 picked = True
                 out["steps"].append(f"picked:{code}")
                 out["t_pick"] = time.time()
-            elif find(r".*Not in pairing mode.*") and time.time() - last_retry > 6:
-                if tap_text(r"^Try Again$", 2):
-                    last_retry = time.time()
-                    out["steps"].append("try_again")
+            elif window_open is None:
+                if find(r".*Not in pairing mode.*") and time.time() - last_retry > 6:
+                    if tap_text(r"^Try Again$", 2):
+                        last_retry = time.time()
+                        out["steps"].append("try_again")
+            else:
+                now = time.time()
+                if find(rf".*{code}.*Not in pairing mode.*"):
+                    if stale_since is None:
+                        stale_since = now
+                    if (now - stale_since >= rescan_after_s and out["rescans"] < max_rescans
+                            and now - last_rescan >= rescan_gap_s and now >= next_open_check):
+                        if window_open():
+                            out["rescans"] += 1
+                            how = rescan_scan_list()
+                            out["steps"].append(f"rescan:{out['rescans']}")
+                            out["steps"].append(f"rescan:{out['rescans']}:{how}")
+                            last_rescan = time.time()
+                            stale_since = None
+                        else:
+                            out["steps"].append("rescan_skipped:advert_not_pairing")
+                            next_open_check = time.time() + rescan_gap_s
+                else:
+                    stale_since = None
+        if window_closed and not picked and time.time() - last_closed_check >= 3:
+            last_closed_check = time.time()
+            why = window_closed()
+            if why:
+                out["window_closed_before_pick"] = str(why)
+                out["aborted"] = f"window closed before pick: {why}"
+                out["steps"].append("window_closed_before_pick")
+                break
         time.sleep(1)
     if not (out["success_screen"] or out["failed_screen"]):
         out["last_texts"] = visible_texts()[:10]
@@ -586,7 +767,7 @@ def unpair() -> bool:
     clear_blockers()
     if find(r"^Pair glasses$"):
         return True
-    card = find(r"^Paired to another phone$") is not None
+    card = find(r"^In pairing mode$") is not None
     if not card and not tap_text(r".*Mentra Live(, .*)?", 8):
         return False
     time.sleep(2)
@@ -604,7 +785,7 @@ def unpair() -> bool:
 
 def owner_lost_card() -> bool:
     home()
-    return find(r".*Paired to another phone.*") is not None
+    return find(r".*In pairing mode.*") is not None
 
 
 def pair_again_from_card() -> bool:

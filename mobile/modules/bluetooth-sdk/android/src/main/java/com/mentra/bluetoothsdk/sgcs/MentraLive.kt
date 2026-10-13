@@ -625,6 +625,8 @@ class MentraLive : SGCManager() {
     /** Glasses opened a pairing window — stop reconnect without forgetting identity/bonds. */
     private var pairingYieldActive = false
     private var pairingYieldEndRunnable: Runnable? = null
+    /** Fails an explicit secure pair if bonding never reaches a terminal state. */
+    private var secureBondWaitRunnable: Runnable? = null
     /** After yield ends, auth/not-owner failures may clear saved glasses. */
     private var pairingYieldAwaitingReclaim = false
     /** elapsedRealtime of the last GATT link that was not an explicit pairing attempt. */
@@ -4795,6 +4797,7 @@ class MentraLive : SGCManager() {
                 ) {
                     Bridge.log("LIVE: glasses_ready before BLE bond — waiting for bond to report ready")
                     markPairingTiming("waiting_ble_bond", "queueSize=${sendQueue.size}")
+                    armSecureBondWait()
                     return
                 }
                 endPairingTiming(
@@ -7283,6 +7286,7 @@ class MentraLive : SGCManager() {
                                                 }
                                                 bondingRetryCount =
                                                         0 // Reset retry counter on success
+                                                cancelSecureBondWait()
                                                 // Bond != audio profile. Explicitly open A2DP
                                                 // after createBond() completes (already-bonded
                                                 // path does this at GATT connect).
@@ -7371,6 +7375,7 @@ class MentraLive : SGCManager() {
                                                     "LIVE: CTKD: secure pairing bond not completed — reporting pairing failure"
                                             )
                                             bondingRetryCount = 0
+                                            cancelSecureBondWait()
                                             Bridge.sendPairFailureEvent("errors:pairingCouldNotStart")
                                         } else if (previousBondState == BluetoothDevice.BOND_BONDING) {
                                             // User cancelled or bonding failed - retry up to
@@ -7806,6 +7811,27 @@ class MentraLive : SGCManager() {
         )
     }
 
+    private fun armSecureBondWait() {
+        if (secureBondWaitRunnable != null) return
+        val runnable = Runnable {
+            secureBondWaitRunnable = null
+            if (isKilled || !isExplicitPairingAttempt()) return@Runnable
+            val bondState = connectedDevice?.bondState
+            if (bondState == BluetoothDevice.BOND_BONDED) return@Runnable
+            val alreadyBooted = DeviceStore.store.get("glasses", "fullyBooted") as? Boolean ?: false
+            if (alreadyBooted) return@Runnable
+            Bridge.log("LIVE: secure pairing bond wait expired")
+            Bridge.sendPairFailureEvent("errors:pairingCouldNotStart")
+        }
+        secureBondWaitRunnable = runnable
+        handler.postDelayed(runnable, MentraLiveOwnerLossPolicy.SECURE_BOND_WAIT_MS)
+    }
+
+    private fun cancelSecureBondWait() {
+        secureBondWaitRunnable?.let { handler.removeCallbacks(it) }
+        secureBondWaitRunnable = null
+    }
+
     /** Helper to mark audio as connected and notify */
     private fun markAudioConnected(device: BluetoothDevice) {
         if (isKilled) {
@@ -7820,6 +7846,17 @@ class MentraLive : SGCManager() {
             Bridge.sendAudioConnected(safeDeviceName(device))
         }
         if (glassesReadyReceived) {
+            if (!MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                            isExplicitPairingAttempt(),
+                            isSecurePairingTarget(device),
+                            device.bondState,
+                    )
+            ) {
+                Bridge.log("LIVE: A2DP up before BLE bond — not marking paired")
+                armSecureBondWait()
+                return
+            }
+            cancelSecureBondWait()
             Bridge.log(
                     "LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected"
             )

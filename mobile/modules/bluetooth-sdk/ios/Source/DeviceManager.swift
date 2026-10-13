@@ -1893,21 +1893,21 @@ struct ViewState {
     }
 
     func connectByName(_ dName: String, requiresAncs: Bool = true) {
-        Bridge.log("MAN: Connecting to wearable: \(dName)")
         var name = dName
 
         // use stored device name if available:
         if dName.isEmpty && !deviceName.isEmpty {
             name = deviceName
         }
+        Bridge.log("PAIRFLOW: connect_by_name requested=\(dName) resolved=\(name)")
 
         if pendingWearable.isEmpty, defaultWearable.isEmpty {
-            Bridge.log("MAN: No pending or default wearable, returning")
+            Bridge.log("PAIRFLOW: connect_by_name abort reason=no_wearable")
             return
         }
 
         if pendingWearable.isEmpty, !defaultWearable.isEmpty {
-            Bridge.log("MAN: No pending wearable, using default wearable: \(defaultWearable)")
+            Bridge.log("PAIRFLOW: connect_by_name pending=\(defaultWearable)")
             pendingWearable = defaultWearable
         }
 
@@ -1918,6 +1918,20 @@ struct ViewState {
             return
         }
 
+        initSGC(pendingWearable)
+        if let live = sgc as? MentraLive, !live.isManagerKilled {
+            // The pairing scan already found this peripheral. Destroying the
+            // manager here drops it, and the glasses are no longer discoverable
+            // after the BLE bond, so the replacement scan never sees them.
+            Bridge.log("PAIRFLOW: connect_by_name decision=reuse_manager name=\(name)")
+            searching = true
+            pendingDeviceName = name
+            live.setRequiresAncs(requiresAncs)
+            live.connectById(name)
+            return
+        }
+
+        Bridge.log("PAIRFLOW: connect_by_name decision=new_manager name=\(name)")
         Task {
             disconnect(clearPendingConnection: false)
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms

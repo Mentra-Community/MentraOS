@@ -79,9 +79,9 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
   - Three power-button presses enter pairing mode, but only after MTK readiness (the first valid MTK→BES UART frame). Earlier presses play "not ready". Short press (battery readout) and the ~2 s power-off are unchanged.
   - Glasses with no bonded phone enter pairing mode automatically once per boot when MTK becomes ready. A bonded phone that is merely absent never triggers this.
   - Entering pairing mode forgets the previous owner's BLE and Classic bonds immediately. The first phone to complete a BLE bond becomes the sole owner. Outside pairing mode only the owner connects. Media is never wiped by pairing or ownership change.
-  - ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, repeated by BES every 30 seconds, and speaks “Pairing mode ended.” when BES reports the window closing.
+  - ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, once per pairing entry. A later three-press speaks it again. It speaks “Pairing mode ended.” when BES reports the window closing. A successful pair whose next prompt is “Connected” does not speak “Pairing mode ended.”
   - Upgrading from flag-off firmware keeps the existing owner. An iPhone that only has a Classic bond attaches its BLE identity once while its Classic link is up, with no re-pair.
-  - The previous owner's phone keeps the glasses listed as not connected ("Paired to another phone") with Pair again and Unpair actions.
+  - The previous owner's phone keeps the glasses listed as not connected ("In pairing mode") with Pair again and Unpair actions. Entering pairing mode is not the same as another phone already owning the glasses.
 
 ### Camera capture
 

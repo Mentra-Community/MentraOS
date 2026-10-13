@@ -3,6 +3,54 @@ import Foundation
 import XCTest
 
 final class MentraLivePairingAdvertisementTests: XCTestCase {
+    func testKnownConnectUsesThePeripheralFoundDuringPairing() {
+        XCTAssertEqual(
+            MentraLiveKnownConnectRoute.decide(
+                bluetoothPoweredOn: false,
+                hasCachedPeripheral: true,
+                hasSavedIdentifier: true,
+                systemConnectedMatch: true
+            ),
+            .waitForPower
+        )
+        XCTAssertEqual(
+            MentraLiveKnownConnectRoute.decide(
+                bluetoothPoweredOn: true,
+                hasCachedPeripheral: true,
+                hasSavedIdentifier: true,
+                systemConnectedMatch: false
+            ),
+            .cachedPeripheral
+        )
+        XCTAssertEqual(
+            MentraLiveKnownConnectRoute.decide(
+                bluetoothPoweredOn: true,
+                hasCachedPeripheral: false,
+                hasSavedIdentifier: true,
+                systemConnectedMatch: false
+            ),
+            .savedIdentifier
+        )
+        XCTAssertEqual(
+            MentraLiveKnownConnectRoute.decide(
+                bluetoothPoweredOn: true,
+                hasCachedPeripheral: false,
+                hasSavedIdentifier: false,
+                systemConnectedMatch: true
+            ),
+            .alreadyConnected
+        )
+        XCTAssertEqual(
+            MentraLiveKnownConnectRoute.decide(
+                bluetoothPoweredOn: true,
+                hasCachedPeripheral: false,
+                hasSavedIdentifier: false,
+                systemConnectedMatch: false
+            ),
+            .scan
+        )
+    }
+
     func testConnectedPairingRecoveryRequiresExplicitPendingTarget() {
         XCTAssertFalse(
             MentraLivePendingPairingTarget.matches(
@@ -137,6 +185,11 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
                 )
             }
         }
+    }
+
+    func testCapabilityFlagDoesNotConfirmOwnership() {
+        XCTAssertFalse(MentraLivePairingAdvertisement.pairingInfoConfirmsOwner(ownerCommitted: false))
+        XCTAssertTrue(MentraLivePairingAdvertisement.pairingInfoConfirmsOwner(ownerCommitted: true))
     }
 
     private func legacyPayload() -> Data {

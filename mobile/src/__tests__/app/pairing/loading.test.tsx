@@ -274,6 +274,42 @@ describe("pairing loading screen", () => {
     )
   })
 
+  it.each([
+    ["route string false", {securePairingCapable: "false"}],
+    [
+      "device payload false",
+      {
+        device: JSON.stringify({
+          id: "MENTRA_LIVE_BLE_EXISTING",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_EXISTING",
+          securePairingCapable: false,
+        }),
+      },
+    ],
+  ])("does not wait for pairing_info on legacy firmware (%s)", async (_label, extra) => {
+    ;(useRoute as jest.Mock).mockReturnValue({
+      params: makeRouteParams("Mentra Live", "MENTRA_LIVE_BLE_EXISTING", extra),
+    })
+    render(<GlassesPairingLoadingScreen />)
+    await startPairingKickoff()
+
+    act(() => {
+      promoteWearable("Mentra Live", "MENTRA_LIVE_BLE_EXISTING")
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+
+    expect(replace).not.toHaveBeenCalled()
+
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
   it("does not wait for pairing_info when the advertisement reports existing pairing behavior", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({
       params: makeRouteParams("Mentra Live", "MENTRA_LIVE_BLE_EXISTING", {securePairingCapable: false}),

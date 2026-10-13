@@ -54,6 +54,38 @@ struct MentraLivePairingAdvertisement: Equatable {
     }
 }
 
+/// How to reach glasses that already left discoverable advertising. A fresh name
+/// scan cannot see them after the BLE bond; the peripheral found during pairing
+/// has to be connected directly.
+enum MentraLiveKnownConnectRoute: String {
+    case waitForPower
+    case cachedPeripheral
+    case savedIdentifier
+    case alreadyConnected
+    case scan
+
+    static func decide(
+        bluetoothPoweredOn: Bool,
+        hasCachedPeripheral: Bool,
+        hasSavedIdentifier: Bool,
+        systemConnectedMatch: Bool
+    ) -> MentraLiveKnownConnectRoute {
+        if !bluetoothPoweredOn {
+            return .waitForPower
+        }
+        if hasCachedPeripheral {
+            return .cachedPeripheral
+        }
+        if hasSavedIdentifier {
+            return .savedIdentifier
+        }
+        if systemConnectedMatch {
+            return .alreadyConnected
+        }
+        return .scan
+    }
+}
+
 enum MentraLiveConnectionAttemptPolicy {
     static func shouldAcceptDidConnect(
         pairingYieldActive: Bool,
@@ -85,6 +117,12 @@ enum MentraLiveConnectionAttemptPolicy {
             return false
         }
         return peripheralName == savedDeviceName
+    }
+
+    /// `secure_pairing_capable` only means the firmware can do secure pairing.
+    /// Ownership is the separate `owner_committed` bit, set after the BLE bond.
+    static func pairingInfoConfirmsOwner(ownerCommitted: Bool) -> Bool {
+        ownerCommitted
     }
 }
 
