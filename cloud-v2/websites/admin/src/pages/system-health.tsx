@@ -1,6 +1,7 @@
 import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TestingButton} from "../components/testing-ui";
 import {elapsedDuration} from "../lib/run-duration";
+import {useClock} from "../lib/use-clock";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
@@ -55,7 +56,6 @@ const cleanupReason = (event: CleanupHealthEvent) => event.reason === "budget-li
   : event.reason === "none" ? "" : event.reason === "unknown" ? "Reason unavailable." : reasonText[event.reason].summary;
 const cleanupStatus = (event: CleanupHealthEvent) => event.status === "already-running"
   ? "Skipped: another cleanup was running" : event.status.replaceAll("-", " ");
-function useClock() { const [now, setNow] = useState(Date.now); useEffect(() => { const id = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(id); }, []); return now; }
 function useHostHealth() { return useQuery({ queryKey: ["test-host-health"], queryFn: () => api<TestHostList>("/api/admin/test-runs/health"), refetchInterval: 60_000 }); }
 
 /** Shared query powers both page and prominent entry links; a fetch failure never keeps an old healthy badge. */
@@ -160,13 +160,13 @@ export function MemoryHealth({ host, now, unavailable = false }: { host: TestHos
 export function SystemHealthPage({tab = 'lanes', lane = null, onTabChange = () => {}}: {
   tab?: SystemHealthTab; lane?: LaneSelection | null; onTabChange?: (tab: SystemHealthTab) => void;
 }) {
-  const now = useClock(), selected = lane ? 'lanes' : tab;
+  const selected = lane ? 'lanes' : tab;
   return <SystemHealthTabs selected={selected} onSelect={onTabChange}>
-    {selected === 'lanes' ? lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} now={now} /> : <LaneHealthSection now={now} />
+    {selected === 'lanes' ? lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} /> : <LaneHealthSection />
       : selected === 'pending' ? <PendingQueueSection />
-      : selected === 'framework' ? <FrameworkHealthSection now={now} />
+      : selected === 'framework' ? <FrameworkHealthSection />
       : selected === 'repair' ? <LaneRestorationPage />
-      : <HostHealthSection key={selected} section={selected} now={now} />}
+      : <HostHealthSection key={selected} section={selected} />}
   </SystemHealthTabs>;
 }
 
@@ -185,7 +185,8 @@ function HostServices({host, now, unavailable}: {host: TestHostLatest; now: numb
   })}</div>;
 }
 
-function HostHealthSection({section, now}: {section: 'services' | 'memory' | 'disk'; now: number}) {
+function HostHealthSection({section}: {section: 'services' | 'memory' | 'disk'}) {
+  const now = useClock();
   const query = useHostHealth(), client = useQueryClient(), [hostId, setHostId] = useState<string | null>(null);
   const hosts = query.data?.hosts ?? [], host = hosts.find(value => value.hostId === hostId) ?? hosts[0];
   const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));

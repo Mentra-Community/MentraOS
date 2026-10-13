@@ -1,3 +1,4 @@
+import {useClock} from '../lib/use-clock';
 import {useState} from 'react';
 import {useQuery} from '@tanstack/react-query';
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from '../components/testing-ui';
@@ -113,7 +114,8 @@ function FrameworkHost({host, fresh}: {host: LaneOverviewHost; fresh: boolean}) 
     </details>
   </div>;
 }
-export function FrameworkHealthSection({now}: {now: number}) {
+export function FrameworkHealthSection() {
+  const now = useClock();
   const query = useQuery(laneOverviewQuery);
   return <section className={TESTING_PANEL} aria-label="Framework installations">
     <div className="flex flex-wrap items-start justify-between gap-3"><h2 className="text-xl font-semibold">Framework</h2>
