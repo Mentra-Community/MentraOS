@@ -46,7 +46,7 @@ export function createOfficialManifest(): DeploymentManifest {
       supportUrl: null,
     },
     systemMiniapps: {approvedPackageNamesOverride: null},
-    miniapps: {managed: [], configuration: {}},
+    miniapps: {managed: [], configuration: officialMiniappConfiguration()},
     glasses: {allowedModelsOverride: null},
     features: {
       runtimeRealtimeSession: true,
@@ -58,6 +58,15 @@ export function createOfficialManifest(): DeploymentManifest {
     },
     telemetry: true,
   }
+}
+
+/**
+ * The Store miniapp's `storeUrl`: this build environment's Store, passed through unread. Without it the
+ * Store miniapp uses the production Store.
+ */
+function officialMiniappConfiguration(): DeploymentManifest["miniapps"]["configuration"] {
+  const storeUrl = process.env.EXPO_PUBLIC_STORE_URL?.trim()
+  return storeUrl ? {"com.mentra.store": {storeUrl}} : {}
 }
 
 export function createConsumerDeployment(): ConsumerDeployment {

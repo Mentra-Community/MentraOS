@@ -5,9 +5,12 @@ Every active deployment has a schema-v1 `DeploymentManifest`:
 - **Official Mentra:** `officialManifest.ts` embeds the consumer defaults. Expo's
   `EXPO_PUBLIC_CLOUD_CORE_URL` and `EXPO_PUBLIC_CLOUD_RUNTIME_URL` still take
   precedence over the shared Cloud Dev defaults. Store links respect the existing
-  regional app configuration. The selection is persisted, but the official
-  manifest is reconstructed from the installed build, never restored from an old
-  build's cached values.
+  regional app configuration. `EXPO_PUBLIC_STORE_URL` becomes the Store
+  miniapp's `storeUrl` configuration (`com.mentra.store`), so each build lane's
+  Store miniapp uses its own environment's Store; the app never reads it, and
+  without it the Store miniapp uses the production Store. The selection is
+  persisted, but the official manifest is reconstructed from the installed
+  build, never restored from an old build's cached values.
 - **Workspace:** the resolver downloads and validates the customer's manifest.
   Consumer environment variables do not change these defaults. The cached source
   manifest remains unchanged when debugging.
