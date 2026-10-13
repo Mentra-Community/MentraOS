@@ -1,13 +1,16 @@
 import assert from "node:assert/strict"
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
+import {createHash} from "node:crypto"
+import {mkdtemp, readFile, readdir, rm, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
+import {Readable} from "node:stream"
 import test from "node:test"
 
 import {
   artifactKey,
   artifactHeaders,
   artifactUrl,
+  downloadAsset,
   mergeAssets,
   publishR2Artifact,
   readArtifactIndex,
@@ -130,6 +133,84 @@ test("artifact keys preserve release identity and reject traversal/reserved inde
     assert.throws(() => artifactKey(repository, "v1", name))
   }
   assert.throws(() => artifactKey(repository, "../v1", "a.apk"))
+})
+
+test("internal R2 recovery streams authoritative bytes when the public CDN is unavailable", async (t) => {
+  const {file, store} = await fixture(t)
+  const chunks = [Buffer.from('{"owner":"coordinated-run:38421666968",'), Buffer.from('"buildNumber":310000543}')]
+  const bytes = Buffer.concat(chunks)
+  const key = artifactKey(repository, release.tag_name, "mentra-build-number-310000543.json")
+  const requests = []
+  store.get = async (actual) => {
+    requests.push(actual)
+    return {
+      Body: Readable.from(chunks),
+      ContentLength: bytes.length,
+      Metadata: {sha256: createHash("sha256").update(bytes).digest("hex")},
+      LastModified: new Date(),
+      ETag: "marker-etag",
+    }
+  }
+  t.mock.method(globalThis, "fetch", () => {
+    throw new Error("Public CDN is unavailable")
+  })
+  await downloadAsset(repository, {id: `r2:${key}`}, file, {store})
+  assert.deepEqual(await readFile(file), bytes)
+  assert.deepEqual(requests, [key])
+  assert.equal(globalThis.fetch.mock.callCount(), 0)
+})
+
+test("internal R2 corruption or missing checksum cannot replace a previously verified file", async (t) => {
+  const {file, store} = await fixture(t)
+  const original = await readFile(file)
+  const key = artifactKey(repository, release.tag_name, "mentra-build-number-310000543.json")
+  const cases = [
+    {ContentLength: 10, Metadata: {sha256: digest}, expected: /size mismatch/},
+    {ContentLength: 3, Metadata: {sha256: digest}, expected: /SHA-256 mismatch/},
+    {ContentLength: 3, Metadata: {}, expected: /invalid checksum/},
+  ]
+  for (const {expected, ...metadata} of cases) {
+    let body
+    store.get = async () => ({...metadata, LastModified: new Date(), Body: (body = Readable.from(["bad"]))})
+    await assert.rejects(downloadAsset(repository, {id: `r2:${key}`}, file, {store}), expected)
+    assert.ok(body.destroyed)
+    assert.deepEqual(await readFile(file), original)
+    assert.deepEqual(await readdir(path.dirname(file)), [path.basename(file)])
+  }
+})
+
+test("internal R2 recovery rejects foreign or malformed IDs before reading and never treats a missing object as success", async (t) => {
+  const {file, store} = await fixture(t)
+  const requests = []
+  store.get = async (key) => {
+    requests.push(key)
+    return null
+  }
+  for (const id of [
+    "r2:Other/Repo/releases/v1/marker.json",
+    `r2:${repository}/releases/v1/../marker.json`,
+    `r2:${repository}/releases/v1/nested/marker.json`,
+    `r2:${repository}/releases/v1/_assets.json`,
+  ]) {
+    await assert.rejects(downloadAsset(repository, {id}, file, {store}), /different repository|Invalid/)
+  }
+  assert.deepEqual(requests, [])
+  const key = artifactKey(repository, release.tag_name, "mentra-build-number-310000543.json")
+  await assert.rejects(downloadAsset(repository, {id: `r2:${key}`}, file, {store}), /is missing/)
+  assert.deepEqual(requests, [key])
+})
+
+test("public download verification still uses the CDN and verifies the recorded bytes", async (t) => {
+  const {file} = await fixture(t)
+  const bytes = Buffer.from("signed public APK")
+  const record = {...asset(), size: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`}
+  t.mock.method(globalThis, "fetch", async (url) => {
+    assert.equal(url, record.url)
+    return new Response(bytes)
+  })
+  await downloadAsset(repository, record, file)
+  assert.deepEqual(await readFile(file), bytes)
+  assert.equal(globalThis.fetch.mock.callCount(), 1)
 })
 
 test("public index fails closed on wrong release, altered download URLs, and duplicate entries", () => {
