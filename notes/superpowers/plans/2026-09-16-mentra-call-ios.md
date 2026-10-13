@@ -35,9 +35,10 @@ hidden by default with explicit testing opt-ins described in
   Android listener teardown waits for the accept thread to release its socket.
 - Audio diagnostics retain bounded first-event and final counters. PCM peak
   analysis is compiled only with `MENTRA_E2E` for diagnostic test builds.
-- Mac prejoined-network reuse and the expiring E2E lease belong to harness PR4069,
-  alongside its explicit build flag and launcher. They do not qualify native
-  association. Normal product builds continue through native hotspot association.
+- The former test-only Mac prejoined-network lease and launcher build option are
+  removed. iOS-on-Mac uses app-owned public CoreWLAN association through the shared
+  glasses transport; physical iPhone uses NEHotspotConfiguration. Historical Mac
+  recordings below do not qualify the new association path.
 
 ## Bundled source and backend
 

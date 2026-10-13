@@ -9,6 +9,11 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
   stopDownload: jest.fn(),
 }))
 
+jest.mock("@mentra/glasses-media", () => ({
+  glassesHotspot: {join: jest.fn(async () => "192.168.43.2"), leave: jest.fn(async () => {})},
+}))
+jest.mock("@mentra/crust", () => ({__esModule: true, default: {isIOSAppOnMac: false}}))
+
 import {
   localNetworkErrorDetails,
   localNetworkTransport,
@@ -16,7 +21,125 @@ import {
 } from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {Platform} from "react-native"
 import {emitLocalNetworkEvent, mentraLocalNetworkMock as mockNativeModule} from "../../test-utils/mockBluetoothSdk"
+const networkOwner = Symbol("transport-test")
+const otherOwner = Symbol("other-test")
 const mockLegacyConnect = jest.requireMock("react-native-wifi-reborn").default.connectToProtectedSSID as jest.Mock
+const mockMacHotspot = jest.requireMock("@mentra/glasses-media").glassesHotspot as {join: jest.Mock; leave: jest.Mock}
+const mockCrust = jest.requireMock("@mentra/crust").default
+
+describe("Mac hotspot ownership", () => {
+  beforeEach(async () => {
+    mockMacHotspot.leave.mockResolvedValue(undefined)
+    await localNetworkTransport.disconnect(networkOwner)
+    jest.clearAllMocks()
+    mockCrust.isIOSAppOnMac = true
+    Platform.OS = "ios"
+  })
+  afterEach(async () => {
+    mockMacHotspot.leave.mockResolvedValue(undefined)
+    await localNetworkTransport.disconnect(networkOwner)
+    mockCrust.isIOSAppOnMac = false
+    Platform.OS = "android"
+  })
+
+  it("returns the actual Mac Wi-Fi address without using the iPhone join", async () => {
+    await expect(
+      localNetworkTransport.connect(networkOwner, "glasses", "private", {gateway: "192.168.43.1"}),
+    ).resolves.toBe("192.168.43.2")
+    expect(mockMacHotspot.join).toHaveBeenCalledWith(
+      expect.any(String),
+      "glasses",
+      "private",
+      "192.168.43.1",
+      "outgoing-client",
+    )
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+
+  it("joins for an incoming OTA server while retaining exclusive network ownership", async () => {
+    await expect(
+      localNetworkTransport.connect(networkOwner, "glasses", "private", {
+        gateway: "192.168.43.1",
+        purpose: "incoming-server",
+      }),
+    ).resolves.toBe("192.168.43.2")
+    expect(mockMacHotspot.join).toHaveBeenCalledWith(
+      expect.any(String),
+      "glasses",
+      "private",
+      "192.168.43.1",
+      "incoming-server",
+    )
+    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
+    await localNetworkTransport.disconnect(otherOwner)
+    expect(mockMacHotspot.leave).not.toHaveBeenCalled()
+    await localNetworkTransport.disconnect(networkOwner)
+    expect(mockMacHotspot.leave).toHaveBeenCalledTimes(1)
+  })
+
+  it("rejects overlap without invalidating the admitted connection", async () => {
+    let finish!: (address: string) => void
+    mockMacHotspot.join.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const first = localNetworkTransport.connect(networkOwner, "glasses", "private")
+    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
+    finish("192.168.43.2")
+    await expect(first).resolves.toBe("192.168.43.2")
+    expect(mockMacHotspot.join).toHaveBeenCalledTimes(1)
+  })
+
+  it("retains custody until late native completion has been released", async () => {
+    let finish!: (address: string) => void
+    let released!: () => void
+    mockMacHotspot.join.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    mockMacHotspot.leave.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          released = resolve
+        }),
+    )
+    const connection = localNetworkTransport.connect(networkOwner, "glasses", "private")
+    const failure = expect(connection).rejects.toThrow("superseded")
+    const leaving = localNetworkTransport.disconnect(networkOwner)
+    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
+    finish("192.168.43.2")
+    released()
+    await leaving
+    await failure
+  })
+
+  it("preserves the original association error when cleanup also fails", async () => {
+    const original = new Error("association refused")
+    mockMacHotspot.join.mockRejectedValueOnce(original)
+    mockMacHotspot.leave.mockRejectedValueOnce(new Error("cleanup refused"))
+    await expect(localNetworkTransport.connect(networkOwner, "glasses", "private")).rejects.toBe(original)
+    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
+    await localNetworkTransport.disconnect(networkOwner)
+    await expect(localNetworkTransport.connect(networkOwner, "glasses", "private")).resolves.toBe("192.168.43.2")
+  })
+
+  it.each([
+    [Symbol("ota"), Symbol("gallery")],
+    [Symbol("gallery"), Symbol("ota")],
+  ])("does not let a refused caller release the admitted caller", async (admitted, refused) => {
+    await localNetworkTransport.connect(admitted, "glasses", "private")
+    await expect(localNetworkTransport.connect(refused, "glasses", "private")).rejects.toThrow("not been released")
+    await localNetworkTransport.disconnect(refused)
+    expect(mockMacHotspot.leave).not.toHaveBeenCalled()
+    await expect(localNetworkTransport.connect(refused, "glasses", "private")).rejects.toThrow("not been released")
+    await localNetworkTransport.disconnect(admitted)
+    expect(mockMacHotspot.leave).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe("localNetworkErrorDetails", () => {
   it("preserves bridged domain and underlying code without a native stack or private userInfo", () => {
@@ -51,11 +174,11 @@ describe("localNetworkErrorDetails", () => {
 describe("localNetworkTransport", () => {
   beforeEach(async () => {
     jest.clearAllMocks()
-    await localNetworkTransport.disconnect()
+    await localNetworkTransport.disconnect(networkOwner)
   })
 
   it("uses the scoped native connection on supported Android phones", async () => {
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
 
     expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password")
     expect(mockLegacyConnect).not.toHaveBeenCalled()
@@ -71,7 +194,7 @@ describe("localNetworkTransport", () => {
         }),
     )
     let current = true
-    const connecting = localNetworkTransport.connect("AndroidShare_test", "password", {
+    const connecting = localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password", {
       retryIosInternalError: true,
       assertCurrent: () => {
         if (!current) throw new Error("OTA owner changed")
@@ -81,13 +204,13 @@ describe("localNetworkTransport", () => {
     resolve({connected: true, ssid: "AndroidShare_test", localAddress: "192.168.43.2"})
     await expect(connecting).resolves.toBe("192.168.43.2")
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
-    await localNetworkTransport.disconnect()
+    await localNetworkTransport.disconnect(networkOwner)
     expect(mockNativeModule.disconnect).toHaveBeenCalled()
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
   })
 
   it("routes glasses HTTP through the captured WiFi network", async () => {
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
 
     const response = await localNetworkTransport.fetch("http://192.168.43.1:8089/api/health")
 
@@ -96,7 +219,7 @@ describe("localNetworkTransport", () => {
   })
 
   it("forwards caller-specific timeouts to scoped HTTP requests", async () => {
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
 
     await localNetworkTransport.fetch("http://192.168.43.1:8089/api/v3/hash", undefined, 10 * 60 * 1000)
 
@@ -111,26 +234,26 @@ describe("localNetworkTransport", () => {
   })
 
   it("releases the scoped connection during cleanup", async () => {
-    await localNetworkTransport.connect("AndroidShare_test", "password")
-    await localNetworkTransport.disconnect()
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
+    await localNetworkTransport.disconnect(networkOwner)
 
     expect(mockNativeModule.disconnect).toHaveBeenCalled()
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
   })
 
   it("reports failed native release and retains the active connection for later cleanup", async () => {
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
     const failure = new Error("Native network release failed")
     mockNativeModule.disconnect.mockRejectedValueOnce(failure)
-    await expect(localNetworkTransport.disconnect()).rejects.toBe(failure)
+    await expect(localNetworkTransport.disconnect(networkOwner)).rejects.toBe(failure)
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
-    await localNetworkTransport.disconnect()
+    await localNetworkTransport.disconnect(networkOwner)
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
   })
 
   it("cancels a native request when its AbortSignal fires", async () => {
     mockNativeModule.request.mockImplementationOnce(() => new Promise(() => {}))
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
     const controller = new AbortController()
 
     void localNetworkTransport.fetch("http://192.168.43.1:8089/api/sync", {signal: controller.signal})
@@ -148,7 +271,7 @@ describe("localNetworkTransport", () => {
           rejectDownload = reject
         }),
     )
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
 
     const handle = localNetworkTransport.downloadFile({
       fromUrl: "http://192.168.43.1:8089/api/download?file=video.mp4",
@@ -173,7 +296,7 @@ describe("localNetworkTransport", () => {
           resolveDownload = resolve
         }),
     )
-    await localNetworkTransport.connect("AndroidShare_test", "password")
+    await localNetworkTransport.connect(networkOwner, "AndroidShare_test", "password")
     const begin = jest.fn()
 
     const handle = localNetworkTransport.downloadFile({
@@ -228,7 +351,7 @@ describe("completed iOS hotspot join recovery", () => {
     jest.useFakeTimers()
     Object.assign(Platform, {OS: "ios"})
     mockLegacyConnect.mockReset().mockResolvedValue(undefined)
-    await localNetworkTransport.disconnect()
+    await localNetworkTransport.disconnect(networkOwner)
   })
   afterEach(() => {
     jest.useRealTimers()
@@ -254,7 +377,7 @@ describe("completed iOS hotspot join recovery", () => {
   it("retries the same hotspot once the original apply has rejected, then returns actual native success", async () => {
     const original = internalJoinError()
     mockLegacyConnect.mockRejectedValueOnce(original)
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions)
     await Promise.resolve()
     await Promise.resolve()
     expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
@@ -270,7 +393,7 @@ describe("completed iOS hotspot join recovery", () => {
     const original = internalJoinError()
     const final = internalJoinError()
     mockLegacyConnect.mockRejectedValueOnce(original).mockRejectedValueOnce(original).mockRejectedValueOnce(final)
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions)
     const failure = pending.catch((error) => error)
     await jest.advanceTimersByTimeAsync(6000)
     expect(await failure).toBe(final)
@@ -280,16 +403,20 @@ describe("completed iOS hotspot join recovery", () => {
   it.each([7, 1, 2, 9, 13, 14])("does not retry native code %s", async (code) => {
     const error = internalJoinError(code)
     mockLegacyConnect.mockRejectedValueOnce(error)
-    await expect(localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)).rejects.toBe(error)
+    await expect(
+      localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions),
+    ).rejects.toBe(error)
     expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
   })
 
   it("never retries a generic mapped error or nests retries for Gallery's existing caller", async () => {
     const error = {code: "unableToConnect", domain: "NEHotspotConfigurationErrorDomain"}
     mockLegacyConnect.mockRejectedValueOnce(error)
-    await expect(localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)).rejects.toBe(error)
+    await expect(
+      localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions),
+    ).rejects.toBe(error)
     mockLegacyConnect.mockRejectedValueOnce(internalJoinError())
-    await expect(localNetworkTransport.connect("test-hotspot", "test-passphrase")).rejects.toMatchObject({
+    await expect(localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase")).rejects.toMatchObject({
       code: "unableToConnect",
     })
     expect(mockLegacyConnect).toHaveBeenCalledTimes(2)
@@ -298,7 +425,7 @@ describe("completed iOS hotspot join recovery", () => {
   it("does not admit a retry when the timer resumes after its admission budget", async () => {
     const original = internalJoinError()
     mockLegacyConnect.mockRejectedValueOnce(original)
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions)
     const failure = pending.catch((error) => error)
     await Promise.resolve()
     await Promise.resolve()
@@ -316,7 +443,7 @@ describe("completed iOS hotspot join recovery", () => {
         reject = r
       }),
     )
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions)
     const failure = pending.catch((error) => error)
     await jest.advanceTimersByTimeAsync(31_000)
     expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
@@ -334,7 +461,7 @@ describe("completed iOS hotspot join recovery", () => {
       }),
     )
     let current = true
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", {
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", {
       ...retryOptions,
       assertCurrent: () => {
         if (!current) throw new Error("OTA owner changed")
@@ -348,11 +475,11 @@ describe("completed iOS hotspot join recovery", () => {
 
   it("does not resend after disconnect or owner replacement during the retry delay", async () => {
     mockLegacyConnect.mockRejectedValueOnce(internalJoinError())
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", retryOptions)
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", retryOptions)
     const failure = pending.catch((error) => error)
     await Promise.resolve()
     await Promise.resolve()
-    await localNetworkTransport.disconnect()
+    await localNetworkTransport.disconnect(networkOwner)
     await jest.advanceTimersByTimeAsync(3000)
     expect(await failure).toEqual(expect.objectContaining({message: "Local network connection was superseded"}))
     expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
@@ -364,7 +491,10 @@ describe("completed iOS hotspot join recovery", () => {
       if (!current) throw new Error("OTA owner changed")
     }
     mockLegacyConnect.mockRejectedValueOnce(internalJoinError())
-    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", {...retryOptions, assertCurrent})
+    const pending = localNetworkTransport.connect(networkOwner, "test-hotspot", "test-passphrase", {
+      ...retryOptions,
+      assertCurrent,
+    })
     const failure = pending.catch((error) => error)
     await Promise.resolve()
     await Promise.resolve()

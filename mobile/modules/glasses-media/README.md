@@ -4,7 +4,7 @@ Native receivers, WHIP publishers and network helpers shared by the Mentra App. 
 
 - Android: the existing `GlassesMediaSource`, local WHIP and WHEP receivers, scoped SoftAP networking, decoded I420/PCM delivery, and transport diagnostics moved here. The ACS session and raw outgoing streams remain in `acs-meeting`.
 - iOS: `DecodedGlassesMediaSource` delivers `CVPixelBuffer` video and interleaved PCM16. `LocalWhipIngestSource` answers the glasses' existing WHIP client; `WhepVideoSource` retains the cloud subscription path.
-- `GlassesHotspotNetwork` uses the same persistent `NEHotspotConfiguration` join as gallery transfers. Wi-Fi carries the glasses link; cellular carries the call. It verifies the joined SSID and the address of the one interface Network framework reports as Wi-Fi (not a fixed `en0`; a Mac can use `en1`), keeps that interface for loss checks and ACS binding, reports network loss, and retains a cancelled join until the uncancellable system callback has been cleaned up.
+- `GlassesHotspotNetwork` owns hotspot association for OTA, gallery transfers and media. iPhone uses persistent `NEHotspotConfiguration`; iOS-on-Mac uses public CoreWLAN in the app process and the standard Location permission needed to identify Wi-Fi networks. Wi-Fi carries the glasses link; cellular carries the call. The owner verifies the requested SSID and actual Wi-Fi interface address, retains that interface for loss checks and ACS binding, and serializes network writers across consumers. Cancellation retains custody until blocking native work and cleanup finish. Cleanup preserves a network the user joined afterward; a failed release rejects and retains ownership for a later cleanup attempt.
 
 The publisher owns its outgoing encoders, audio policy, and destination. Receivers do not open the phone microphone or play the glasses microphone locally. iOS uses a receive-only audio device to drive decoded PCM delivery without changing the app's audio session.
 
@@ -53,6 +53,18 @@ The iOS internet publisher posts its offer on the first server-reflexive candida
 
 Android temporarily lifts the cellular process pin while creating the local WHIP listener, then restores it before starting the outgoing publisher. Otherwise the listener inherits the cellular socket mark and cannot reply to the glasses. The outgoing audio callback supplies its own PCM frame clock: WebRTC's external-recording mode does not pace callbacks and reports zero captured bytes, so the callback fills the entire buffer and waits for the next frame interval without opening the phone microphone.
 
-An attempt-specific ID isolates late callbacks and glasses status. Reconnect tears down the glasses publisher, both phone peers and hotspot before rebuilding against the same provisioned input. Three retries bound consecutive failures; a minute of stable streaming renews the retry budget. Last-subscriber stop cancels startup/backoff, awaits native cleanup and disables the hotspot. Failed cleanup retains ownership and can be retried by stop. BLE-unreachable stop/hotspot commands are deferred until reconnection. ACS and managed streaming share a hotspot reservation. Native media queues keep running when the UI is backgrounded; Android holds a partial wake lock and uses the engine's background timers for retry/readiness.
+An attempt-specific ID isolates late callbacks and glasses status. Reconnect tears down the glasses publisher, both phone peers and hotspot before rebuilding against the same provisioned input. Three retries bound consecutive failures; a minute of stable streaming renews the retry budget. Last-subscriber stop cancels startup/backoff, awaits native cleanup and disables the hotspot. Failed cleanup retains ownership and can be retried by stop. BLE-unreachable stop/hotspot commands are deferred until reconnection. OTA, Gallery, ACS and managed streaming share one hotspot reservation before BLE AP changes or native association. OTA, Gallery and managed relay retain it until their owned cleanup completes. ACS still has an older retirement policy that releases its JavaScript reservation after reporting an unconfirmed stop; native association custody remains retained on failure. Consolidating that ACS retirement is a separate qualification gate. A refused OTA or Gallery caller makes no AP or association changes. Native media queues keep running when the UI is backgrounded; Android holds a partial wake lock and uses the engine's background timers for retry/readiness.
 
 Device qualification for this outgoing pipeline must include Android and iPhone: audio/video playback on the provisioned WHEP URL, mute/video-only capture, last-subscriber stop, cancellation at each setup step, cellular/hotspot/BLE loss and recovery, repeated starts, screen-off/background operation and a sustained thermal/audio-sync run. Unit tests and platform compilation cover lifecycle/format contracts; they do not establish those hardware results.
+
+### Incoming OTA server and outgoing media clients
+
+Hotspot association verifies the glasses SSID and the Wi-Fi interface/address for
+both uses. Gallery and relay clients also wait for outgoing Local Network access
+by connecting to the glasses HTTP endpoint. OTA selects `incoming-server`: it
+serves already downloaded artifacts to connections initiated by the glasses, and
+its own listener must become ready before the app sends the OTA manifest URL.
+It does not depend on the Gallery HTTP server being available. Apple TN3179 lists
+accepting incoming TCP as an operation that does not require Local Network
+permission. This does not change outgoing Gallery/relay consent or the shared
+network ownership and teardown rules.
