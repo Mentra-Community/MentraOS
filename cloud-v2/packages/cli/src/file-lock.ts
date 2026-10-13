@@ -12,10 +12,11 @@
  * the holder that was inspected (`<lock>.gone-<holder>`). That rename can happen
  * once per holder: the tombstone then exists and is not empty, so a command that
  * inspected a holder whose lock is already gone fails, instead of moving the lock
- * that replaced it. A taken-over lock's tombstone is kept for `tombstoneMs`, much
- * longer than the two consecutive calls between inspecting and renaming; a
- * released one is removed at once, since its holder was alive and nobody could
- * have judged it stale. Acquiring clears old tombstones and abandoned attempts.
+ * that replaced it. Every tombstone, a released lock's too (its holder may have
+ * looked stale to another command just before it resumed and released), is kept
+ * for `tombstoneMs`, much longer than the two consecutive calls between
+ * inspecting and renaming. Acquiring and releasing clear older tombstones and
+ * abandoned attempts.
  */
 
 import {randomUUID} from "node:crypto"
@@ -95,6 +96,7 @@ export async function withFileLock<T>(path: string, options: FileLockOptions, wo
     clearInterval(heartbeat)
     closeSync(fd)
     release(path, holder)
+    clearLeftovers(path, options.tombstoneMs ?? DEFAULT_TOMBSTONE_MS)
   }
 }
 
@@ -172,7 +174,9 @@ function release(path: string, holder: string): void {
     return
   }
   if (readHolder(tombstone) === holder) {
-    rmSync(tombstone, {recursive: true, force: true})
+    // Kept, dated from now: a command that saw this lock stale must not find its name free.
+    const now = new Date()
+    utimesSync(tombstone, now, now)
     return
   }
   // Ours was taken over so long ago that its tombstone is gone, and this moved its successor: put it back.

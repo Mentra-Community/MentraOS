@@ -144,6 +144,26 @@ test("what earlier takeovers left behind is cleared once it is old", async () =>
   await withFileLock(lock, {...options, tombstoneMs: 100}, async () => {})
 
   const left = readdirSync(dir).sort()
-  // The takeover just now leaves its own record, for any command that saw the same stale lock.
-  expect(left).toEqual(["store-refresh.lock.gone-dead-holder"])
+  // What this takeover and this release left stays, for any command that saw those locks earlier.
+  expect(left).toContain("store-refresh.lock.gone-dead-holder")
+  expect(left).toHaveLength(2)
+  expect(left.every(name => name.startsWith("store-refresh.lock.gone-"))).toBe(true)
+  expect(left).not.toContain("store-refresh.lock.gone-old")
+})
+
+test("a holder that resumes and releases after another command saw its lock stale leaves that command nothing to move", async () => {
+  const slow: FileLockOptions = {staleMs: 200, waitMs: 5_000, busyMessage: "busy", heartbeatMs: 60_000}
+  let seen: ReturnType<typeof inspectLock> = null
+  await withFileLock(lock, slow, async () => {
+    // This holder was suspended long enough to look stale, and another command saw it so...
+    const then = new Date(Date.now() - 5_000)
+    utimesSync(join(lock, "holder"), then, then)
+    seen = inspectLock(lock)
+  })
+  // ...then it resumed and released, and a third command took the lock.
+  await withFileLock(lock, options, async () => {
+    const mine = holderOf()
+    expect(takeOverStaleLock(lock, seen!)).toBe(false)
+    expect(holderOf()).toBe(mine)
+  })
 })
