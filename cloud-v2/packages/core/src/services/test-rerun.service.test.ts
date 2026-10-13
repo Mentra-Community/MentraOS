@@ -272,6 +272,41 @@ test('accepted absent linked child cancellation preserves exact selection and de
  expect(await f.service.cancelRequest('unrelated-original','Check cancelled')).toBe(false);
 })
 
+for (const status of ['preparing', 'cancelled'] as const) {
+ test(`bound cancellation before executable input retains ${status} in history and latest attempts`, async () => {
+  const f=fixture(), original=structuredClone(f.members), preview=await f.preview(`bound-${status}`,{memberIds:['member-20']});
+  const member=preview.plan.members[0]!;
+  await f.service.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest});
+  await f.service.cancelRequest(member.requestId,'Check cancelled');
+  const request=f.requests.get(member.requestId);
+  if(status==='cancelled'){request.state='terminal';request.terminalStatus='cancelled';}
+  expect(request.fleetBinding).toEqual({hostId:'mini',laneId:'android'});
+  expect(request.input).toBeUndefined();
+  const retained=structuredClone(request);
+  expect((await f.service.detail(preview.rerunId)).attempts[0]).toMatchObject({status,publicationComplete:false});
+  expect((await f.service.history({suiteId:'nightly'},'member-20')).attempts[0]).toMatchObject({status,publicationComplete:false});
+  const latest=await f.service.latestAttempts([{parent:{suiteId:'nightly'},memberId:'member-20'}]);
+  expect([...latest.values()][0]).toMatchObject({requestId:member.requestId,status,publicationComplete:false});
+  expect((await f.service.progress('nightly')).members.find(m=>m.memberId==='member-20')!.latest).toMatchObject({status});
+  expect(request).toEqual(retained);expect(f.members).toEqual(original);
+ });
+}
+
+test('unbound cancellation remains not-run in history and latest attempts', async () => {
+ const f=fixture(), original=structuredClone(f.members), preview=await f.preview('unbound-cancelled',{memberIds:['member-20']});
+ const member=preview.plan.members[0]!;f.failId=member.requestId;
+ await f.service.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest});
+ await f.service.cancelRequest(member.requestId,'Check cancelled');
+ const request=f.requests.get(member.requestId), retained=structuredClone(request);
+ expect(request.fleetBinding).toBeUndefined();expect(request.input).toBeUndefined();
+ expect((await f.service.detail(preview.rerunId)).attempts[0]).toMatchObject({status:'not-run',publicationComplete:false});
+ expect((await f.service.history({suiteId:'nightly'},'member-20')).attempts[0]).toMatchObject({status:'not-run',publicationComplete:false});
+ const latest=await f.service.latestAttempts([{parent:{suiteId:'nightly'},memberId:'member-20'}]);
+ expect([...latest.values()][0]).toMatchObject({requestId:member.requestId,status:'not-run',publicationComplete:false});
+ expect((await f.service.progress('nightly')).members.find(m=>m.memberId==='member-20')!.latest).toMatchObject({status:'not-run'});
+ expect(request).toEqual(retained);expect(f.members).toEqual(original);
+});
+
 test('linked cancellation rejects tampered or unaccepted plan rather than inventing a frozen job', async () => {
  const f=fixture(), preview=await f.preview('unaccepted',{memberIds:['member-20']});
  expect(await f.service.cancelRequest(preview.plan.members[0]!.requestId,'Cancel')).toBe(false); expect(f.executions).toBe(0);

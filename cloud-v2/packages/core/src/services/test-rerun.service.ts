@@ -121,9 +121,9 @@ export class TestRerunService {
     const accepted = readAcceptedRoutineRequest(request);
     if (selection && (!job.fleetSelection || requestInputDigest(accepted.selection) !== requestInputDigest(selection)))
       throw new TestRunError(503, 'Rerun request differs from its frozen selection');
-    if (!accepted.ready) return {...identity, requestId, status: request.terminalStatus ?? request.state,
+    if (!accepted.ready) return {...identity, requestId, status: job.fleetCancellation && !job.fleetBinding ? 'not-run' : request.terminalStatus ?? request.state,
       publicationComplete: false, build: accepted.input.build, definitionRevision: accepted.input.routineRevision,
-      ...(job.fleetCancellation ? {status: 'not-run', reason: job.fleetCancellation.reason} : {}),
+      ...(job.fleetCancellation ? {reason: job.fleetCancellation.reason} : {}),
       ...('preparationRejection' in request && request.preparationRejection ? {reason: request.preparationRejection.reason, preparationDisposition: request.preparationRejection.disposition} : {})};
     if (!isExecutableRequest(request)) throw new TestRunError(503, 'Rerun executable request is unavailable');
     const input = accepted.input;
