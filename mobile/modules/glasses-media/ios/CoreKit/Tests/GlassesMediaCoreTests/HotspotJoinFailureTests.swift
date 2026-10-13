@@ -9,6 +9,9 @@ final class HotspotJoinFailureTests: XCTestCase {
         let cancelled = HotspotJoinFailure(CancellationError())
         XCTAssertEqual(cancelled.code, "ERR_HOTSPOT_CANCELLED")
         XCTAssertEqual(cancelled.message, "Hotspot join cancelled")
+        let leave = HotspotJoinFailure(LocalMediaError("Hotspot join cancelled"))
+        XCTAssertEqual(leave.code, "ERR_HOTSPOT_CANCELLED")
+        XCTAssertEqual(leave.message, "Hotspot join cancelled")
     }
 
     func testNativeFailureOmitsPrivateDescriptionAndUserInfo() {
