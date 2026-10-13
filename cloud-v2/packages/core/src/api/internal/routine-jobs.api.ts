@@ -9,6 +9,13 @@ import type {AppEnv} from '../../types/hono.types';
 import {testRunIngestAuth} from '../middleware/test-run-ingest-auth.middleware';
 import {createTestHostAuth, type TestHostEnv} from '../middleware/test-host-auth.middleware';
 import {frameworkBodyLimit, frameworkJson} from './framework-json';
+const failureDiagnostic = (error: unknown) => {
+  if (error instanceof TestRunError) return {status: error.status, errorKind: 'routine_job_error'};
+  if (error instanceof TestDispatchError) return {status: error.status, errorKind: 'routine_job_error'};
+  if (error instanceof TestRequestConflict) return {status: 409, errorKind: 'routine_job_conflict'};
+  if (error instanceof ZodError) return {status: 400, errorKind: 'invalid_routine_job'};
+  return {status: 503, errorKind: 'routine_job_unavailable'};
+};
 const failure = (error: Error, c: Context) => {
   if (error instanceof ZodError) return c.json({error: 'invalid_routine_job'}, 400);
   if (error instanceof TestRunError || error instanceof TestDispatchError)
@@ -49,7 +56,7 @@ export function createRoutineJobsApi(service = new RoutineJobService(), authors 
       if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), status: response.status}, 'slow routine job observation completed');
       return response;
     } catch (error) {
-      if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), errorName: error instanceof Error ? error.name : 'unknown'}, 'slow routine job observation failed');
+      if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), ...failureDiagnostic(error), errorName: error instanceof Error ? error.name : 'unknown'}, 'slow routine job observation failed');
       throw error;
     } finally {clearTimeout(timer);}
   });

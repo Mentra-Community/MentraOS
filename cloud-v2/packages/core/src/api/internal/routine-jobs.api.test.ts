@@ -4,6 +4,8 @@ import {createRoutineJobBindingApi, createRoutineJobsApi} from './routine-jobs.a
 import {RoutineJobService} from '../../services/routine-job.service';
 import {RoutineWorkService} from '../../services/routine-work.service';
 import {TestRunError} from '../../services/test-result-error';
+import {TestRequestConflict} from '../../services/test-request.service';
+import {TestDispatchError} from '../../services/test-builds.service';
 import type {AppEnv} from '../../types/hono.types';
 
 test('normal observations stay quiet and a slow original request retains its phase and existing request context',async()=>{
@@ -35,8 +37,30 @@ test('slow fallback failure settles its diagnostic timer without changing the or
   try{
     const response=await app.request('/author/observation',{headers:{authorization:`Bearer ${observerToken}`}});
     expect(response.status).toBe(409);expect(await response.json()).toMatchObject({message:'Original author conflict'});
-    expect(cleared).toBe(true);expect(warnings).toEqual([{fields:{phase:'author',elapsedMs:11000,errorName:'Error'},message:'slow routine job observation failed'}]);
+    expect(cleared).toBe(true);expect(warnings).toEqual([{fields:{phase:'author',elapsedMs:11000,status:409,errorKind:'routine_job_error',errorName:'Error'},message:'slow routine job observation failed'}]);
   }finally{clock.mockRestore();timer.mockRestore();cancel.mockRestore();}
+});
+
+test('slow failure diagnostics distinguish existing API statuses without logging error messages',async()=>{
+  process.env.TEST_RUN_INGEST_TOKEN=observerToken;
+  for(const [error,status,errorKind] of [
+    [new TestRunError(403,'private request payload'),403,'routine_job_error'],
+    [new TestDispatchError(404,'private artifact URL'),404,'routine_job_error'],
+    [new TestRequestConflict('private conflicting request'),409,'routine_job_conflict'],
+    [new Error('private database details'),503,'routine_job_unavailable'],
+  ]as const) {
+    let now=0,cleared=false;const warnings:any[]=[];
+    const clock=spyOn(Date,'now').mockImplementation(()=>now);
+    const timer=spyOn(globalThis,'setTimeout').mockImplementation((()=>1)as any),cancel=spyOn(globalThis,'clearTimeout').mockImplementation((()=>{cleared=true;})as any);
+    const jobs={async observation(){now=11000;throw error;}}as unknown as RoutineJobService;
+    const app=new Hono<AppEnv>();app.use('*',async(c,next)=>{c.set('logger',{warn:(fields:unknown,message:string)=>warnings.push({fields,message}),error:()=>{}}as any);await next();});app.route('/',createRoutineJobsApi(jobs));
+    try {
+      const response=await app.request('/one/observation',{headers:{authorization:`Bearer ${observerToken}`}});
+      expect(response.status).toBe(status);expect(cleared).toBe(true);
+      expect(warnings).toEqual([{fields:{phase:'request',elapsedMs:11000,status,errorKind,errorName:'Error'},message:'slow routine job observation failed'}]);
+      expect(JSON.stringify(warnings)).not.toContain(error.message);
+    }finally{clock.mockRestore();timer.mockRestore();cancel.mockRestore();}
+  }
 });
 const previous = process.env.TEST_RUN_INGEST_TOKEN;
 afterEach(() => {if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN; else process.env.TEST_RUN_INGEST_TOKEN=previous});
