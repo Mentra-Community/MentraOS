@@ -1,6 +1,6 @@
 /**
  * `@mentra/cloud-core` — Mentra Services. OEM auth runtime, OEM portal backend,
- * miniapp store, REST endpoints.
+ * REST endpoints.
  *
  * Boot order:
  *   1. Connect Mongo (fail-fast on misconfiguration).
@@ -13,7 +13,7 @@
  * `bun packages/core/src/index.ts`, the `import.meta.main` block at the
  * bottom drives the boot from env vars.
  *
- * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
+ * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/.
  */
 
 import {ensureRoutineCaseIndexes} from './models/routine-case.model'

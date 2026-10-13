@@ -14,10 +14,8 @@ Production hostnames omit the environment label:
 | Admin console | `admin.mentraglass.com` |
 | Enterprise portal | `portal.mentraglass.com` |
 
-The Developer Console is deployed by the private miniapp-store repository to
-`mentra-console2-dev` (`console2.dev.mentraglass.com`); MentraOS does not deploy
-to any `mentra-console2-*` project. `websites/console` is the old built-in
-console and is not deployed.
+The Developer Console and the Store website are deployed by the Mentra Miniapp
+Store service, not by MentraOS.
 
 Use one Pages project per surface per environment. That keeps each website's
 `CORE_URL` plain and prevents dev, staging, and production domains from

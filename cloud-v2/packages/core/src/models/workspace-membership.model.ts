@@ -15,7 +15,7 @@
  * Identity is `mentraUserId`, the Core user. A membership imported from the
  * Store's developer organizations (`scripts/migrate-store-developer-orgs.ts`)
  * waits for its person instead: it has no `mentraUserId` and carries the
- * Store's WorkOS user id as `pendingWorkosUserId` until that person's first
+ * Store's former user id as `pendingWorkosUserId` until that person's first
  * sign-in with a matching verified email claims it
  * (`services/workspaces/membership-claim.service.ts`), which sets
  * `mentraUserId` and clears the pending id. A pending membership authorizes no
@@ -52,7 +52,7 @@ const WorkspaceMembershipSchema = new Schema(
     workspaceId: {type: String, required: true, index: true},
     /** The Core user; null only while an imported membership waits for its person's first sign-in. */
     mentraUserId: {type: String, default: null},
-    /** Imported memberships only: the Store's WorkOS user id, until the person claims the membership. */
+    /** Imported memberships only: the Store's former user id, until the person claims the membership. */
     pendingWorkosUserId: {type: String},
     email: {type: String, default: null},
     role: {type: String, enum: WORKSPACE_ROLES, required: true},
@@ -71,7 +71,7 @@ const WorkspaceMembershipSchema = new Schema(
   {timestamps: true, collection: "workspace_memberships"},
 )
 
-// Every membership names its person: a Core user, or (imported, unclaimed) a WorkOS user.
+// Every membership names its person: a Core user, or (imported, unclaimed) the Store's former user id.
 WorkspaceMembershipSchema.pre("validate", function (next) {
   const named = (value: unknown) => typeof value === "string" && value.trim().length > 0
   if (!named(this.mentraUserId) && !named(this.pendingWorkosUserId)) {
@@ -89,10 +89,10 @@ WorkspaceMembershipSchema.index(
 )
 // "Which workspaces is this person in?"
 WorkspaceMembershipSchema.index({mentraUserId: 1, status: 1})
-// The claim at first sign-in: a WorkOS user's pending memberships. Deliberately not unique: Azure
-// Cosmos DB cannot add a unique index to a collection that already holds documents, so the import
-// script, the only writer of pending memberships, keeps one active pending membership per WorkOS
-// user per workspace inside its transaction.
+// The claim at first sign-in: one former Store user's pending memberships. Deliberately not unique:
+// Azure Cosmos DB cannot add a unique index to a collection that already holds documents, so the
+// import script, the only writer of pending memberships, keeps one active pending membership per
+// former Store user per workspace inside its transaction.
 WorkspaceMembershipSchema.index({pendingWorkosUserId: 1, status: 1})
 // Last-owner checks and role listings.
 WorkspaceMembershipSchema.index({workspaceId: 1, role: 1, status: 1})

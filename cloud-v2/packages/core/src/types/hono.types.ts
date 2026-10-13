@@ -25,13 +25,6 @@ export interface AppVariables {
     tenantId: string
   }
 
-  /** OEM portal user (browser session, WorkOS-issued). */
-  oemAdmin?: {
-    workosUserId: string
-    tenantId: string
-    role: "owner" | "admin" | "viewer"
-  }
-
   /** End user (mobile client), identified via Mentra-issued access token. */
   user?: {
     mentraUserId: string
@@ -59,14 +52,11 @@ export interface AppVariables {
   /** The raw body the service signature covered, read once by `serviceAuth`. */
   serviceBody?: string
 
-  /** Developer console session, or the admin portal caller (its label for audit fields). */
+  /** The admin portal's caller, as its label for audit fields. */
   developer?: {
     developerId: string
     email: string
   }
-
-  /** Admin scope flag, set when the caller's credential carries admin perms. */
-  isAdmin?: boolean
 }
 
 export interface AppEnv {

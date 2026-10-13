@@ -21,29 +21,24 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/legacy-admin-keys.integration.test.ts`
  */
 
-import {createHash, randomBytes} from "node:crypto"
-
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
 
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
-import {DeveloperOrgApiKeyModel} from "../packages/core/src/models/developer-org-api-key.model"
 import {ReportModel} from "../packages/core/src/models/report.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {
-  apiKeyEnvironmentLabel,
-  DeveloperApiKeyService,
-} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
+import {deploymentEnvironmentLabel} from "../packages/core/src/services/workspaces/organization"
 import {OPERATOR_KEY_SCOPES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {legacyAdminKey, legacyKeyAddress, legacyKeys} from "./support/legacy-admin-key"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
   coreAccessToken,
@@ -61,7 +56,6 @@ setDefaultTimeout(30_000)
 
 const MODELS = [
   AccessCredentialModel,
-  DeveloperOrgApiKeyModel,
   ReportModel,
   UserModel,
   WorkspaceAuditEventModel,
@@ -69,12 +63,6 @@ const MODELS = [
   WorkspaceMembershipModel,
   WorkspaceModel,
 ]
-const LEGACY_KEYS = "developer_org_api_keys"
-/** The legacy collection, through the connection the models use (the only one this test opens). */
-const legacyKeys = () => WorkspaceModel.db.collection(LEGACY_KEYS)
-const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-/** A key id of the shape the earlier Core minted (a ULID). */
-const keyIdOf = () => [...randomBytes(26)].map((byte, index) => CROCKFORD[index === 0 ? byte % 8 : byte % 32]).join("")
 const OPERATOR_SCOPES = [...OPERATOR_KEY_SCOPES].sort()
 
 let databaseUrl: string
@@ -97,36 +85,9 @@ async function person(key: string, email = `${key}@example.test`): Promise<strin
   return coreAccessToken({sub, email, emailVerified: true})
 }
 
-interface LegacyKey {
-  keyId: string
-  token: string
-  hash: string
-  last4: string
-}
-
 /** A developer-organization API key row as the earlier Core wrote it, with its token. */
-async function legacyKey(options: {env?: string; revokedAt?: Date | null; name?: string} = {}): Promise<LegacyKey> {
-  const env = options.env ?? "local"
-  const keyId = keyIdOf()
-  const secret = randomBytes(32).toString("base64url")
-  const hash = createHash("sha256").update(secret).digest("hex")
-  await legacyKeys().insertOne({
-    keyId,
-    orgId: "org_legacy",
-    name: options.name ?? "Incident triage",
-    env,
-    hash,
-    last4: secret.slice(-4),
-    createdByUserId: "user_legacy",
-    lastUsedAt: null,
-    revokedAt: options.revokedAt ?? null,
-    createdAt: new Date("2026-06-01T00:00:00Z"),
-    updatedAt: new Date("2026-06-01T00:00:00Z"),
-  })
-  return {keyId, token: `msk_${env}_${keyId}.${secret}`, hash, last4: secret.slice(-4)}
-}
-
-const address = (key: {keyId: string}) => `api-key@${key.keyId}.local`
+const legacyKey = legacyAdminKey
+const address = legacyKeyAddress
 
 function allowlist(...keys: Array<{keyId: string}>) {
   process.env.CLOUD_CORE_ADMIN_EMAILS = [ADMIN_EMAIL, ...keys.map(address)].join(",")
@@ -217,8 +178,6 @@ beforeEach(async () => {
     CLOUD_CORE_WORKSPACE_CREATION: undefined,
     CONSOLE2_URL: undefined,
     MENTRA_ACCOUNT_JWT_PUBLIC_KEY: undefined,
-    // Startup would otherwise ask WorkOS about developer organizations.
-    WORKOS_API_KEY: undefined,
   })
   assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
   await Promise.all(MODELS.map(model => model.deleteMany({})))
@@ -277,8 +236,8 @@ describe("legacy admin keys", () => {
       ["POST", "/api/admin/workspaces", {name: "Keyed"}],
       ["GET", "/api/workspaces"],
       ["POST", "/api/workspaces", {name: "Keyed"}],
-      // Core's built-in Store administration needs an Organization Admin who is a person.
-      ["GET", "/api/admin/submissions"],
+      // The audit log needs an Organization Admin who is a person.
+      ["GET", "/api/admin/audit-log"],
     ] as Array<[string, string, unknown?]>) {
       const reply = await call(method, path, key.token, body)
       expect({method, path, status: reply.status, error: reply.json?.error}).toEqual({
@@ -514,21 +473,21 @@ describe("legacy admin keys", () => {
     for (const [consoleUrl, label] of consoles) {
       process.env.CONSOLE2_URL = consoleUrl
       // The earlier Core's console labelled a new key with this deployment's environment.
-      const created = await new DeveloperApiKeyService().create("org_console", "Incident triage", "user_console", apiKeyEnvironmentLabel())
-      expect(created.value!.startsWith(`msk_${label}_`)).toBe(true)
-      allowlist({keyId: created.id})
+      const created = await legacyKey({env: deploymentEnvironmentLabel(), orgId: "org_console"})
+      expect(created.token.startsWith(`msk_${label}_`)).toBe(true)
+      allowlist(created)
 
       expect({consoleUrl, result: await convertLegacyAdminKeys()}).toEqual({
         consoleUrl,
-        result: {converted: [created.id], revoked: [], failed: []},
+        result: {converted: [created.keyId], revoked: [], failed: []},
       })
 
-      const reports = await call("GET", "/api/admin/reports", created.value!)
+      const reports = await call("GET", "/api/admin/reports", created.token)
       expect({consoleUrl, status: reports.status}).toEqual({consoleUrl, status: 200})
-      expect((await AccessCredentialModel.findOne({credentialId: created.id}).lean())!.env).toBe(label)
+      expect((await AccessCredentialModel.findOne({credentialId: created.keyId}).lean())!.env).toBe(label)
       // Another deployment's label is not this one's.
       process.env.CONSOLE2_URL = "http://localhost:3000"
-      expect({consoleUrl, status: (await call("GET", "/api/admin/reports", created.value!)).status}).toEqual({
+      expect({consoleUrl, status: (await call("GET", "/api/admin/reports", created.token)).status}).toEqual({
         consoleUrl,
         status: 401,
       })

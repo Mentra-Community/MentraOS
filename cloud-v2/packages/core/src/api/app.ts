@@ -13,6 +13,8 @@
  *   /api/client/reports/*       — device-filed reports
  *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
  *                                 unauthenticated (called from customer apps)
+ *   /api/client/miniapps/*      — LEGACY: the frozen preinstalled catalog that
+ *                                 released Mentra App versions still install from
  *   /api/agent/reports/*        — read-only private dev-agent access
  *   /api/cli/config             — the issuer and client ID the `mentra` CLI signs
  *                                 in with, unauthenticated
@@ -71,7 +73,6 @@ import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import cliApi from "./cli/cli.api";
-import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import { createOrganizationApi } from "./organization/organization.api";
@@ -161,10 +162,11 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/routine-work-deliveries", createRoutineWorkDeliveriesApi());
   app.route("/api/internal/test-runs", testRunIngest);
   app.route("/api/internal/test-host-observations", testHostObservations);
+  // LEGACY: released Mentra App versions install their preinstalled miniapps
+  // from here until supported versions install only from the Store's backend.
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
-  app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);
   app.route("/api/admin", adminApi);
   app.route("/api/workspaces", createWorkspacesApi());

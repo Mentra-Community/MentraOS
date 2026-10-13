@@ -108,8 +108,8 @@ export function requireOrganizationCapability(capability: OrganizationCapability
 }
 
 /**
- * Requires an Organization Admin who is a person (a verified allowlisted email). For the administration
- * of Core's built-in Store, which has no organization capability of its own; keys are refused.
+ * Requires an Organization Admin who is a person (a verified allowlisted email). For the admin audit log,
+ * which has no organization capability of its own; keys are refused.
  */
 export function requireOrganizationAdminPerson(): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {

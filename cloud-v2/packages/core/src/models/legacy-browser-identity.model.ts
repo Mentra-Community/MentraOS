@@ -16,7 +16,7 @@
  * Cosmos DB refuses a unique index on a collection that already holds documents).
  */
 
-import {Schema, type InferSchemaType} from "mongoose"
+import {Schema, type ClientSession, type InferSchemaType} from "mongoose"
 import {registerModel} from "./register-model"
 
 const LegacyBrowserIdentitySchema = new Schema(
@@ -37,3 +37,16 @@ LegacyBrowserIdentitySchema.index({claimedBy: 1})
 
 export type LegacyBrowserIdentityRow = InferSchemaType<typeof LegacyBrowserIdentitySchema>
 export const LegacyBrowserIdentityModel = registerModel("LegacyBrowserIdentity", LegacyBrowserIdentitySchema)
+
+/** The identities exported for `workosUserIds`, each with the Core user that claimed it, if any. */
+export async function legacyIdentityClaims(
+  workosUserIds: string[],
+  session?: ClientSession | null,
+): Promise<Array<{legacyUserId: string; claimedBy: string | null}>> {
+  if (workosUserIds.length === 0) return []
+  const rows = await LegacyBrowserIdentityModel.find({workosUserId: {$in: workosUserIds}})
+    .select({_id: 0, workosUserId: 1, claimedBy: 1})
+    .session(session ?? null)
+    .lean<Array<{workosUserId: string; claimedBy?: string | null}>>()
+  return rows.map(row => ({legacyUserId: row.workosUserId, claimedBy: row.claimedBy ?? null}))
+}

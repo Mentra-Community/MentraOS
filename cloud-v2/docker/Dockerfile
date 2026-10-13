@@ -36,7 +36,6 @@ COPY cloud-v2/test/test-oem/package.json ./test/test-oem/
 COPY cloud-v2/test/test-client/package.json ./test/test-client/
 COPY cloud-v2/websites/account/package.json ./websites/account/
 COPY cloud-v2/websites/admin/package.json ./websites/admin/
-COPY cloud-v2/websites/console/package.json ./websites/console/
 COPY cloud-v2/websites/portal/package.json ./websites/portal/
 COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 

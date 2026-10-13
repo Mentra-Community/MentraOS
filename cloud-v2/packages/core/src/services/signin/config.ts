@@ -29,7 +29,7 @@ export const MENTRA_SOURCE_ID = "mentra"
 /** Asymmetric algorithms accepted on Supabase tokens, verified against the project's key set. HS256 uses the JWT secret. */
 export const SUPABASE_ASYMMETRIC_ALGORITHMS = ["RS256", "ES256"] as const
 
-const RESERVED_TENANT_IDS = new Set(["mentra", "workos"])
+const RESERVED_TENANT_IDS = new Set(["mentra"])
 const MENTRA_EMAIL_DOMAINS = ["mentra.glass", "mentraglass.com"]
 const DEPLOYED_ENVIRONMENTS: ReadonlySet<string> = new Set(["dev", "staging", "prod", "production"])
 

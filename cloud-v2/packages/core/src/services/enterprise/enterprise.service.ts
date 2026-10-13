@@ -173,7 +173,7 @@ export class EnterpriseServiceError extends Error {
 // that order, so an enterprise org must never claim a reserved or OEM tenantId:
 // a collision would bind enterprise sessions to the wrong authority or bypass
 // revocation entirely.
-const RESERVED_TENANT_IDS = new Set(["mentra", "workos"]);
+const RESERVED_TENANT_IDS = new Set(["mentra"]);
 
 async function assertTenantIdAvailable(tenantId: string): Promise<void> {
   if (RESERVED_TENANT_IDS.has(tenantId)) {
