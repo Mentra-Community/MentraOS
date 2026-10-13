@@ -67,7 +67,7 @@ test('historical suite member results remain readable without routine or framewo
   mocks.push(spyOn(TestSuiteModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
     async lean() {return {payload};}} as any));
   mocks.push(spyOn(TestRunModel, 'find').mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;},
-    async lean() {return [{payload: run, uploadsComplete: true}];}} as any));
+    async lean() {return [{runId: run.result.runId, requestId: run.requestId, payloadSha256: requestInputDigest(run), summaryProjection: createRecordedFrameworkRunSummaryProjection(run, requestInputDigest(run)), uploadsComplete: true}];}} as any));
   const result = await new TestSuiteService().detail(payload.suiteId);
   expect(result.members[0]).toMatchObject({runId: run.requestId, status: 'pass', publicationComplete: true, hostId: 'mini', laneId: 'mac'});
   expect(JSON.stringify(run)).toBe(before);
@@ -197,7 +197,7 @@ test("persisted suite completion lists passing members with incomplete publicati
     assets: [],
     result: {runId: "request", finishedAt: "2026-10-01T11:01:00Z", setup: {status: "passed"}, test: "passed", steps: [{id: "one", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [], timing: {startedAt: payload.startedAt, setupMs: 1, testMs: 1, teardownMs: 1}},
   }
-  const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{payload: run, uploadsComplete: false}]};
+  const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{runId: run.result.runId, requestId: run.requestId, payloadSha256: requestInputDigest(run), summaryProjection: createRecordedFrameworkRunSummaryProjection(run, requestInputDigest(run)), uploadsComplete: false}]};
   mocks.push(spyOn(TestRunModel, "find").mockReturnValue(runs as any));
   mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: any, update: any) => {
   Object.assign(row, update.$set);return {modifiedCount: 1};
@@ -284,7 +284,7 @@ test("ordinary suite readers retain publication failure, preserve a later result
       failures: [], evidence: [], timing: {startedAt, setupMs: 0, testMs: 1, teardownMs: 0}}};
   const payloadSha256 = requestInputDigest(run);
   request.terminalStatus = "pass"; // A later authentic result retains the original failure receipt.
-  results = [{runId: requestId, requestId, payload: run, payloadSha256, uploadsComplete: true,
+  results = [{runId: requestId, requestId, build: run.build, payloadSha256, uploadsComplete: true,
     summaryProjection: createRecordedFrameworkRunSummaryProjection(run, payloadSha256)}];
   expect((await service.detail(payload.suiteId)).members[0]).toMatchObject({status: "pass", publicationComplete: true, runId: requestId});
   expect((await service.summaries([payload.suiteId], Date.now() + 5000)).get(payload.suiteId))
@@ -545,7 +545,7 @@ test('history summaries read portable members through the real nightly snapshot 
    teardown:{ready:true,outcomes:[],errors:[],unavailableResources:[]},failures:[],evidence:[],
    timing:{startedAt:binding.boundAt,setupMs:0,testMs:1,teardownMs:0}}};
  const payloadSha256=requestInputDigest(run);
- publishedRows=[{runId:'two',requestId:'two',payloadSha256,uploadsComplete:true,payload:{build},
+ publishedRows=[{runId:'two',requestId:'two',payloadSha256,uploadsComplete:true,build,
   summaryProjection:createRecordedFrameworkRunSummaryProjection(run,payloadSha256)}];
  Object.assign(requests[0]!,{state:'terminal',fleetCancellation:{requestedAt:finishedAt,reason:'Occurrence cancelled before assignment.'}});
  const published=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
@@ -573,7 +573,8 @@ test("large summary pages bound receipt batches and concurrency under one deadli
     selected.push(...batch);
     return {read() {return this;}, readConcern() {return this;}, option(options: {timeoutMS: number}) {
       expect(options.timeoutMS).toBeGreaterThan(0);
-      expect(options.timeoutMS).toBeLessThanOrEqual(deadline - Date.now());
+      // The service computes the remaining time before invoking this mock; the wall clock can advance between them.
+      expect(options.timeoutMS).toBeLessThanOrEqual(10_000);
       return this;
     }, async exec() {
       active++; peak = Math.max(peak, active);

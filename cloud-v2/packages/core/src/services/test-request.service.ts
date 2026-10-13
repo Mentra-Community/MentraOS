@@ -77,7 +77,7 @@ export interface TestRequestRepository {
 export class TestRequestConflict extends Error {}
 
 /** Sort object keys before hashing: transport formatting cannot change identity. */
-export function requestInputDigest(input: unknown): string {
+export function requestInputJson(input: unknown): string {
   const canonical = (value: unknown): unknown => {
     if (value === null || typeof value === "boolean" || typeof value === "string") return value;
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -86,7 +86,10 @@ export function requestInputDigest(input: unknown): string {
       return Object.fromEntries(Object.keys(value as object).sort().map(key => [key, canonical((value as Record<string, unknown>)[key])]));
     throw new TestRequestConflict("Request input must be finite JSON");
   };
-  return createHash("sha256").update(JSON.stringify(canonical(input))).digest("hex");
+  return JSON.stringify(canonical(input));
+}
+export function requestInputDigest(input: unknown): string {
+  return createHash("sha256").update(requestInputJson(input)).digest("hex");
 }
 
 const mongoRepository: TestRequestRepository = {

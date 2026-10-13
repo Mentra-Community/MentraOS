@@ -115,7 +115,7 @@ export const routineJobRepository: RoutineJobRepository = {
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async hasResult(requestId) {
-    return !!await TestRunModel.exists({requestId, 'payload.schemaVersion': 1}).read('primary').readConcern('majority');
+    return !!await TestRunModel.exists({requestId, resultSchemaVersion: 1}).read('primary').readConcern('majority');
   },
   async publicationFailed(requestId, hostId, completion, publicationFailure) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256: completion.inputSha256,

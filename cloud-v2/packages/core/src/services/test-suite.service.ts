@@ -1,3 +1,4 @@
+import {verifiedFrameworkRunSummaryProjection} from './framework-run-summary.service';
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, recordedFrameworkRunSchema} from "../types/framework-run.types";
 import type {PipelineStage} from "mongoose";
 import {createLogger} from "@mentra/cloud-shared";
@@ -479,18 +480,16 @@ export class TestSuiteService {
       return nightlySuiteProjection(suite, plan, result);
     }
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
-      .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
-    const runs: SuiteRun[] = rows.map(row => {
-      const framework = recordedFrameworkRunSchema.safeParse(row.payload);
-      if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
-      const run = framework.data;
-      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
-        hostId: run.hostId, laneId: run.laneId,
+    const runs: SuiteRun[] = await Promise.all(rows.map(async row => {
+      const projection = verifiedFrameworkRunSummaryProjection(row), run = projection.summary;
+      return {runId: run.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+        definitionRevision: projection.definitionRevision, hostId: run.hostId, laneId: run.laneId,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
-        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
-        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run), evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
-    });
+        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: run.outcome,
+        publicationComplete: row.uploadsComplete === true && run.evidenceStatus === 'complete', evidenceStatus: run.evidenceStatus};
+    }));
     const requests = await boundSuiteRequests(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
     const rejections = suiteRejections(requests);
     return withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, rejections), requests);

@@ -70,6 +70,7 @@ const ReportSchema = new Schema(
     slackDelivery: { type: Schema.Types.Mixed },
     logCollection: {type: LogCollectionSchema},
     artifacts: { type: [ReportArtifactSchema], default: [] },
+    nativeDiagnostics: {type: Schema.Types.Mixed},
     status: {
       type: String,
       enum: ["collecting", "ready", "closed"],
