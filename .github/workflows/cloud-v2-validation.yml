@@ -106,7 +106,8 @@ jobs:
             websites/admin/src/lib/shared-react.test.ts \
             websites/admin/src/components/signed-out.test.tsx \
             websites/admin/src/pages/workspaces.test.tsx \
-            websites/admin/src/pages/operator-keys.test.tsx
+            websites/admin/src/pages/operator-keys.test.tsx \
+            websites/admin/src/pages/fleet.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
