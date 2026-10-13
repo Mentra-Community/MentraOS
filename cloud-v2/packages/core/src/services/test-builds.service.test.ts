@@ -229,6 +229,7 @@ test("dev inventory distinguishes a newer unpublished build from the previous im
   started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
   steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]}]});
  f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
+  expired: false, workflow_run: {id: 50, head_sha: HEAD}}, {name: `coordinated-release-result-mentra-${identity}`,
   expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
  f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
   artifactContainerTag: tag, native: {buildNumber: 20, marketingVersion: "3.2.1"}, artifactNames: {otaManifest: `mentra-live-ota-${identity}.json`}});
@@ -259,6 +260,7 @@ function nightlyFixture() {
  f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [finalizer]});
  f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
+  expired: false, workflow_run: {id: 50, head_sha: HEAD}}, {name: `coordinated-release-result-mentra-${identity}`,
   expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
  f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
   artifactContainerTag: tag, native: {buildNumber: 20, marketingVersion: "3.2.1"}, artifactNames: {otaManifest: `mentra-live-ota-${identity}.json`}});
@@ -330,6 +332,38 @@ test("successful finalizers without readable immutable platform receipts remain 
   f.rows.delete(`${CDN}${f.tag}/${receipt}`);
   await expect(f.gateway.resolve(f.source, platform)).rejects.toThrow("Build metadata unavailable (HTTP 404)");
   await expect(f.gateway.latestDev(platform, before)).rejects.toThrow("Build metadata unavailable (HTTP 404)");
+ }
+});
+
+test("a successful unpublished dry run cannot displace an older real nightly publication", async () => {
+ const f = coordinatedFixture();
+ const dry = releaseRun({id: 60, event: "workflow_dispatch", created_at: "2026-09-23T02:00:00Z"});
+ f.rows.set(nightlyUrl, {total_count: 2, workflow_runs: [dry, releaseRun()]});
+ f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...finalizer, id: 71, steps: []}]});
+ f.rows.set(`${API}/actions/runs/60/artifacts?per_page=100`, {artifacts: [{name: "coordinated-release-plan-mentra-3.2.1-dev.21",
+  expired: false, workflow_run: {id: 60, head_sha: HEAD}}]});
+ f.rows.set(`${API}/actions/runs/60/attempts/1`, dry);
+ for (const platform of ["android", "ios-on-mac"] as const) {
+  expect(await f.gateway.latestDev(platform, before)).toMatchObject({availability: "available", source: f.source});
+  expect(await f.gateway.resolve({channel: "dev", buildRunId: 60, publicationAttempt: 1}, platform)).toMatchObject({availability: "unavailable"});
+ }
+ expect(f.calls.some(call => call.url.includes("mentra-release-plan-3.2.1-dev.21.json"))).toBe(false);
+});
+
+test("expired, ambiguous or source-mismatched finalized results never select an older release", async () => {
+ for (const mismatch of ["expired", "name", "source", "run", "duplicate"]) {
+  const f = coordinatedFixture();
+  const result = {name: `coordinated-release-result-mentra-${f.identity}`, expired: false, workflow_run: {id: 50, head_sha: HEAD}};
+  if (mismatch === "expired") result.expired = true;
+  if (mismatch === "name") result.name = "coordinated-release-result-mentra-3.2.1-dev.21";
+  if (mismatch === "source") result.workflow_run.head_sha = BASE;
+  if (mismatch === "run") result.workflow_run.id = 99;
+  const listing = f.rows.get(`${API}/actions/runs/50/artifacts?per_page=100`) as {artifacts: unknown[]};
+  listing.artifacts = [listing.artifacts[0], result, ...(mismatch === "duplicate" ? [result] : [])];
+  for (const platform of ["android", "ios-on-mac"] as const) {
+   await expect(f.gateway.latestDev(platform, before)).rejects.toThrow("Finalized release result is missing or ambiguous");
+   expect(await f.gateway.resolve(f.source, platform)).toMatchObject({availability: "unavailable", reason: "Finalized release result is missing or ambiguous"});
+  }
  }
 });
 
