@@ -276,6 +276,23 @@ describe("the frozen catalog", () => {
     expect(json.entries.map(entry => entry.packageName)).toEqual(["com.mentra.kept"])
   })
 
+  test("the registry lists only bundles a phone can download", async () => {
+    const released = await seedRelease({packageName: "com.mentra.released", version: "1.0.0"})
+    const accepted = await seedRelease({packageName: "com.mentra.accepted", version: "1.0.0", status: "accepted"})
+    const draft = await seedRelease({packageName: "com.mentra.draft", version: "1.0.0", status: "draft"})
+    const suspended = await seedRelease({packageName: "com.mentra.suspended", version: "1.0.0", status: "suspended"})
+    const icon = await seedRelease({packageName: "com.mentra.icon", version: "1.0.0", role: "store_icon"})
+    await seedRegistry("prod", [draft, released, suspended, icon, accepted])
+
+    const json = (await (await get("/api/client/miniapps/registry", await phoneToken())).json()) as {
+      entries: Array<{packageName: string; bundleUrl: string}>
+    }
+    expect(json.entries.map(entry => entry.packageName)).toEqual(["com.mentra.released", "com.mentra.accepted"])
+    for (const entry of json.entries) {
+      expect([entry.packageName, (await get(new URL(entry.bundleUrl).pathname)).status]).toEqual([entry.packageName, 200])
+    }
+  })
+
   test("the registry and the listing need a phone access token", async () => {
     for (const path of ["/api/client/miniapps", "/api/client/miniapps/registry"]) {
       expect([path, (await get(path)).status]).toEqual([path, 400])

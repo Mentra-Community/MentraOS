@@ -22,6 +22,9 @@ import {
 const DEFAULT_REGISTRY_NAME = "default"
 /** Release states whose bundles were cleared to reach phones. */
 const RELEASED = ["accepted", "published"]
+/** The asset role of a release's installable bundle. */
+const RELEASE_BUNDLE = "release_bundle"
+const OBJECT_ID = /^[0-9a-f]{24}$/i
 
 export interface LegacyRegistryEntry {
   packageName: string
@@ -54,7 +57,9 @@ export class LegacyRegistryError extends Error {
 
 /**
  * The active registry for `environment` (Core's own environment when absent or unknown), the
- * tenant's own registry first. Each entry's bundle is downloaded from `baseUrl`.
+ * tenant's own registry first. It lists only entries a phone can download, the rule
+ * `legacyBundleAsset` serves by: a release that cleared review, with its release bundle. Each
+ * bundle is downloaded from `baseUrl`.
  */
 export async function legacyClientRegistry(opts: {
   environment?: string | null
@@ -80,10 +85,13 @@ export async function legacyClientRegistry(opts: {
   }).lean()
   if (!revision) return empty()
 
-  const releases = await LegacyReleaseModel.find({_id: {$in: revision.entries.map(entry => entry.releaseId)}}).lean()
+  const releaseIds = revision.entries.map(entry => entry.releaseId).filter(id => OBJECT_ID.test(id))
+  const releases = await LegacyReleaseModel.find({_id: {$in: releaseIds}, status: {$in: RELEASED}}).lean()
   const releaseById = new Map(releases.map(release => [release._id.toString(), release]))
-  const assetIds = releases.flatMap(release => (release.releaseBundleAssetId ? [release.releaseBundleAssetId] : []))
-  const assets = await LegacyAssetModel.find({_id: {$in: assetIds}}).lean()
+  const assetIds = releases.flatMap(release =>
+    release.releaseBundleAssetId && OBJECT_ID.test(release.releaseBundleAssetId) ? [release.releaseBundleAssetId] : [],
+  )
+  const assets = await LegacyAssetModel.find({_id: {$in: assetIds}, role: RELEASE_BUNDLE}).lean()
   const assetIdsFound = new Set(assets.map(asset => asset._id.toString()))
 
   const baseUrl = opts.baseUrl.replace(/\/$/, "")
@@ -115,8 +123,8 @@ export async function legacyClientRegistry(opts: {
  */
 export async function legacyBundleAsset(assetId: string) {
   const notFound = () => new LegacyRegistryError("not_found", "bundle asset not found", 404)
-  if (!/^[0-9a-f]{24}$/i.test(assetId)) throw notFound()
-  const asset = await LegacyAssetModel.findOne({_id: assetId, role: "release_bundle"}).lean()
+  if (!OBJECT_ID.test(assetId)) throw notFound()
+  const asset = await LegacyAssetModel.findOne({_id: assetId, role: RELEASE_BUNDLE}).lean()
   if (!asset) throw notFound()
   const released = await LegacyReleaseModel.exists({releaseBundleAssetId: assetId, status: {$in: RELEASED}})
   if (!released) throw notFound()
