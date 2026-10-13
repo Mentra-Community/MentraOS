@@ -1169,6 +1169,33 @@ describe("re-running apply carries access removals made in the Store", () => {
     expect(await validateCredentialToken(keys.betaOwner.token)).not.toBeNull()
   })
 
+  test("when another of a person's active rows comes to rank first, its membership replaces the one imported", async () => {
+    await run({apply: true})
+    // BETA lists Bea twice (member, then admin): the admin row was imported.
+    const adminRow = await sourceMembershipHex(U.betaAdmin, ORG_BETA, "admin")
+    const memberRow = await sourceMembershipHex(U.betaAdmin, ORG_BETA, "member")
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${adminRow}`}).lean()).toMatchObject({role: "admin", status: "active"})
+    // The imported row is lowered to member and the other raised to admin: the other now ranks first.
+    const rows = sourceDb().collection("developer_org_memberships")
+    const beas = await rows.find({orgId: ORG_BETA, userId: U.betaAdmin}).toArray()
+    const byHex = new Map(beas.map(row => [String(row._id), row._id]))
+    await rows.updateOne({_id: byHex.get(adminRow)}, {$set: {role: "member"}})
+    await rows.updateOne({_id: byHex.get(memberRow)}, {$set: {role: "admin"}})
+
+    const report = await run({apply: true})
+
+    expect(report.pendingCollisions).toEqual([])
+    expect(report.removedMemberships).toEqual([
+      {orgId: ORG_BETA, membershipId: `wm_${adminRow}`, replacedByMembershipId: `wm_${memberRow}`, movedCredentialIds: [], revokedCredentialIds: []},
+    ])
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${adminRow}`}).lean()).toMatchObject({status: "ended"})
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${memberRow}`}).lean()).toMatchObject({
+      status: "active",
+      role: "admin",
+      pendingWorkosUserId: U.betaAdmin,
+    })
+  })
+
   test("a newer Store invitation for the same email replaces the one imported earlier, even while both are pending in the Store", async () => {
     await run({apply: true})
     const newer = `dinv_${ulid()}`

@@ -25,8 +25,9 @@
  * the last run, because that can only reduce what a key or person may do.
  *  - A Store key that is now revoked, and still live in Core, is revoked in Core
  *    (`revokedCredentials`, one `credential.revoked` event each, as the system).
- *  - A Store membership that is gone or no longer active, whose Core membership is
- *    still unclaimed (nobody has signed in with it), is ended as `removed` and the
+ *  - A Store membership that is gone, no longer active, or no longer the row that
+ *    ranks first among its person's active rows, whose Core membership is still
+ *    unclaimed (nobody has signed in with it), is ended as `removed` and the
  *    keys it created are revoked, as `endMembership` does (`removedMemberships`,
  *    one `membership.removed` event each, as the system). When the Store replaced
  *    it with another active membership of the same person (removed and re-added,
@@ -914,13 +915,12 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
     const fromSource = (id: string) =>
       id === ownerId || plan.source.membershipActive.has(id) || SOURCE_ROW_MEMBERSHIP_ID.test(id)
     /**
-     * Whether the Store still gives this membership's person access through it. A synthesized owner
-     * lasts while the plan still synthesizes it; once the person has a row of their own, that row's
-     * membership replaces it (below), with its role.
+     * Whether the Store still gives this membership's person access through it: it is the membership
+     * this run plans for them. Another of their memberships (a row that no longer ranks first among
+     * their active rows, a removed one, or a synthesized owner once they have a row) is replaced by
+     * the planned one, with its role, or ended when they have none (below).
      */
-    const stillGranted = (membership: TargetMembership) =>
-      plannedIds.has(membership.membershipId) ||
-      (membership.membershipId !== ownerId && plan.source.membershipActive.get(membership.membershipId) === true)
+    const stillGranted = (membership: TargetMembership) => plannedIds.has(membership.membershipId)
 
     result.revokeCredentials = target.liveCredentials
       .filter(credential => plan.source.revokedKeys.has(credential.credentialId))
