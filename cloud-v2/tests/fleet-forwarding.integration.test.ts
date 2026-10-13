@@ -13,8 +13,8 @@
  * when unverified) and its body bytes and request id round-trip; an Organization Admin session reaches
  * `/v1/admin` with the organization scope whatever the request asks for; workspace keys, operator keys
  * and people without the Fleet capability never reach Fleet; a phone token is no admin credential and an
- * admin cookie is no phone token; Fleet's UI module (`/api/admin/fleet/ui/*`) streams through the same
- * session, behind the same gates, and keeps the session cookie Core rotated; and Core signs the exact
+ * admin cookie is no phone token; Fleet's UI module (`/api/admin/fleet/ui/*`) is relayed whole through the
+ * same session, behind the same gates, and keeps the session cookie Core rotated; and Core signs the exact
  * bytes it sends, which the fake Fleet shows by refusing a request changed after Core signed it.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
@@ -706,7 +706,7 @@ describe("Fleet's UI module", () => {
     }
   })
 
-  test("a 3 MiB module streams through a session due for rotation intact, and the rotated cookie reaches the browser", async () => {
+  test("a 3 MiB module comes through a session due for rotation intact, and the rotated cookie reaches the browser", async () => {
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
     const old = await staleSession(admin)
     const bytes = new Uint8Array(3 * 1024 * 1024)

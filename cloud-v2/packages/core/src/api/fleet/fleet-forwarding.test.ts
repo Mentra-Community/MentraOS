@@ -126,6 +126,7 @@ afterEach(() => {
 })
 
 afterAll(() => {
+  coreServer?.stop(true)
   upstream.stop(true)
 })
 
@@ -199,6 +200,83 @@ function rawUrlRequest(rawUrl: string, headers: Record<string, string>): Request
   const request = new Request("http://localhost/", {headers})
   Object.defineProperty(request, "url", {value: rawUrl})
   return request
+}
+
+/** Bytes that differ from position to position, so a dropped, repeated or reordered chunk shows. */
+function patterned(length: number): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(length)
+  for (let i = 0; i < length; i++) bytes[i] = (i * 31 + (i >> 8)) & 0xff
+  return bytes
+}
+
+/** An upstream body that counts what was pulled from it and whether it was cancelled. Nothing is pulled until it is read. */
+function watchedBody(chunkBytes: number, chunks = Number.POSITIVE_INFINITY) {
+  const state = {pulled: 0, cancelled: false}
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (state.pulled >= chunks) return controller.close()
+        state.pulled++
+        controller.enqueue(new Uint8Array(chunkBytes).fill(97))
+      },
+      cancel() {
+        state.cancelled = true
+      },
+    },
+    {highWaterMark: 0},
+  )
+  return {body, state}
+}
+
+/** A body that never ends, for the stub server to send: it pauses between chunks so the server stays responsive. */
+function endlessBody(chunkBytes: number, onCancel: () => void = () => {}) {
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      controller.enqueue(new Uint8Array(chunkBytes).fill(97))
+      await Bun.sleep(1)
+    },
+    cancel: onCancel,
+  })
+}
+
+async function eventually(condition: () => boolean, ms = 3000): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (condition()) return true
+    await Bun.sleep(5)
+  }
+  return condition()
+}
+
+let coreServer: ReturnType<typeof Bun.serve> | null = null
+
+/** The stub app served over a real socket, for tests that need to see what a real HTTP client gets. */
+function coreOverHttp(): string {
+  coreServer ??= Bun.serve({hostname: "127.0.0.1", port: 0, fetch: request => root.fetch(request)})
+  return `http://127.0.0.1:${coreServer.port}`
+}
+
+/**
+ * A Fleet that dies mid-answer: it promises `declared` bytes, sends `sent` of them and closes the connection.
+ * Raw TCP, because `Bun.serve` would not send a body shorter than its declared length.
+ */
+function resettingFleet(declared: number, sent: number) {
+  const answered = new WeakSet<object>()
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket) {
+        if (answered.has(socket)) return
+        answered.add(socket)
+        socket.write(
+          `HTTP/1.1 200 OK\r\ncontent-type: text/javascript\r\netag: "from-fleet"\r\ncache-control: public, max-age=31536000\r\ncontent-length: ${declared}\r\nconnection: close\r\n\r\n`,
+        )
+        socket.write(new Uint8Array(sent).fill(97))
+        socket.end()
+      },
+    },
+  })
 }
 
 const decodePrincipal = (header: string | null) => JSON.parse(Buffer.from(header ?? "", "base64url").toString())
@@ -726,6 +804,51 @@ describe("limits and failures", () => {
     expect(Date.now() - started).toBeLessThan(3000)
   })
 
+  test("a response over the cap ends the request to Fleet: the connection closes and the rest is not downloaded", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "64"})
+    let sent = 0
+    let cancelled = false
+    // Bun's fetch ignores a body cancel and keeps downloading; only aborting the request closes the connection.
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            sent++
+            controller.enqueue(new Uint8Array(1024).fill(97))
+            await Bun.sleep(1)
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        {headers: {"content-type": "application/json"}},
+      )
+
+    const response = await phone("/devices")
+
+    expect(response.status).toBe(503)
+    expect(await eventually(() => cancelled)).toBe(true)
+    // It had no end: had Core read it to the end this test would not finish.
+    expect(sent).toBeLessThan(2000)
+  })
+
+  test("so does a failure or a redirect whose body never ends: the request is ended, not just the read", async () => {
+    configure()
+    for (const [status, headers] of [
+      [500, {}],
+      [503, {"retry-after": "5"}],
+      [302, {location: "https://elsewhere.example/x"}],
+    ] as const) {
+      let cancelled = false
+      respond = () => new Response(endlessBody(1024, () => (cancelled = true)), {status, headers})
+
+      const response = await phone("/overview")
+
+      expect([status, response.status]).toEqual([status, 503])
+      expect([status, await eventually(() => cancelled)]).toEqual([status, true])
+    }
+  })
+
   test("a response exactly at the cap passes through", async () => {
     configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16"})
     respond = () => new Response("x".repeat(16), {headers: {"content-type": "text/plain"}})
@@ -1227,73 +1350,13 @@ describe("a cookie the request already set", () => {
 
 describe("Fleet UI assets", () => {
   // `/api/admin/fleet/ui/<rest>` is the browser-loadable module the admin portal imports. It has its own
-  // route ahead of the JSON forwarder: GET and HEAD only, the body streamed under a byte cap, and a
-  // content-type allowlist, because what it relays runs in the portal's origin.
+  // route ahead of the JSON forwarder: GET and HEAD only, the body read whole under a byte cap and
+  // checked against its declared length before any of it is relayed, and a content-type allowlist, because
+  // what it relays runs in the portal's origin.
   const ENTRY = "/ui/entry.js"
   const JS = "text/javascript; charset=utf-8"
   const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'"
   const ROTATED = "__Host-mentra_admin_session=rotated-value; Path=/; HttpOnly; Secure; SameSite=Lax"
-
-  /** Bytes that differ from position to position, so a dropped, repeated or reordered chunk shows. */
-  function patterned(length: number): Uint8Array<ArrayBuffer> {
-    const bytes = new Uint8Array(length)
-    for (let i = 0; i < length; i++) bytes[i] = (i * 31 + (i >> 8)) & 0xff
-    return bytes
-  }
-
-  /** What reaches a caller: how many bytes arrived before the body ended, and how it ended (null: cleanly). */
-  async function drain(response: Response): Promise<{received: number; error: unknown}> {
-    const reader = response.body!.getReader()
-    let received = 0
-    try {
-      for (;;) {
-        const {done, value} = await reader.read()
-        if (done) return {received, error: null}
-        received += value.byteLength
-      }
-    } catch (error) {
-      return {received, error}
-    }
-  }
-
-  /** An upstream body that counts what was pulled from it and whether it was cancelled. Nothing is pulled until it is read. */
-  function watchedBody(chunkBytes: number, chunks = Number.POSITIVE_INFINITY) {
-    const state = {pulled: 0, cancelled: false}
-    const body = new ReadableStream<Uint8Array>(
-      {
-        pull(controller) {
-          if (state.pulled >= chunks) return controller.close()
-          state.pulled++
-          controller.enqueue(new Uint8Array(chunkBytes).fill(97))
-        },
-        cancel() {
-          state.cancelled = true
-        },
-      },
-      {highWaterMark: 0},
-    )
-    return {body, state}
-  }
-
-  /** A body that never ends, for the stub server to send: it pauses between chunks so the server stays responsive. */
-  function endlessBody(chunkBytes: number, onCancel: () => void = () => {}) {
-    return new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        controller.enqueue(new Uint8Array(chunkBytes).fill(97))
-        await Bun.sleep(1)
-      },
-      cancel: onCancel,
-    })
-  }
-
-  async function eventually(condition: () => boolean, ms = 3000): Promise<boolean> {
-    const deadline = Date.now() + ms
-    while (Date.now() < deadline) {
-      if (condition()) return true
-      await Bun.sleep(5)
-    }
-    return condition()
-  }
 
   /** Core's `fetch` to Fleet answers with `response` (the stub server cannot show what was read from a body). */
   function fleetAnswers(response: Response) {
@@ -1302,7 +1365,7 @@ describe("Fleet UI assets", () => {
 
   const organizationAdmin = () => as("organization-admin", person(true))
 
-  test("a 3 MiB JS asset streams intact, with its etag and nosniff", async () => {
+  test("a 3 MiB JS asset arrives intact, with its etag and nosniff", async () => {
     configure()
     const bytes = patterned(3 * 1024 * 1024)
     respond = () =>
@@ -1445,7 +1508,7 @@ describe("Fleet UI assets", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff")
   })
 
-  test("an answer exactly at the cap passes, declared or not", async () => {
+  test("an answer exactly at the cap passes, declared or not, and is sent with its true length", async () => {
     configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
     respond = () => new Response(patterned(1024), {headers: {"content-type": JS}})
     const declared = await admin(organizationAdmin(), ENTRY)
@@ -1457,34 +1520,37 @@ describe("Fleet UI assets", () => {
     const undeclared = await admin(organizationAdmin(), ENTRY)
     fetched.mockRestore()
     expect(undeclared.status).toBe(200)
-    expect(undeclared.headers.get("content-length")).toBeNull()
-    expect(await drain(undeclared)).toEqual({received: 1024, error: null})
+    expect(undeclared.headers.get("content-length")).toBe("1024")
+    expect((await undeclared.arrayBuffer()).byteLength).toBe(1024)
   })
 
-  test("an answer with no length, or a wrong one, is counted as it streams: it is cut off and the upstream body is cancelled", async () => {
+  test("an undeclared body that passes the cap is a 503 with none of Fleet's headers, and the upstream is cancelled", async () => {
     configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "64"})
     // Endless, and it declares no length: only a counter can stop it.
     const {body, state} = watchedBody(8)
-    const fetched = fleetAnswers(new Response(body, {headers: {"content-type": JS, "etag": '"x"'}}))
+    const fetched = fleetAnswers(
+      new Response(body, {headers: {"content-type": JS, "etag": '"from-fleet"', "cache-control": "public, max-age=31536000"}}),
+    )
 
     const response = await admin(organizationAdmin(), ENTRY)
     fetched.mockRestore()
-    // The status went out with the headers, so it cannot change: 200, then the body ends in an error.
-    expect(response.status).toBe(200)
-    const {received, error} = await drain(response)
 
-    expect(error).toBeInstanceOf(Error)
-    // Never more than the cap reaches the caller...
-    expect(received).toBeLessThanOrEqual(64)
-    // ...the upstream was told to stop...
+    // A status cannot change once a body is on its way, so Core reads the body whole first: 503, not a short 200.
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error: "fleet_unavailable"})
+    expect(response.headers.get("etag")).toBeNull()
+    expect(response.headers.get("cache-control")).toBeNull()
+    expect(response.headers.get("content-type")).toBe("application/json")
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff")
     expect(await eventually(() => state.cancelled)).toBe(true)
-    // ...and it was not read to the end (it has no end): a handful of chunks past the cap at most.
+    // It had no end: a handful of chunks past the cap at most.
     expect(state.pulled).toBeLessThan(20)
-    // The cut-off is logged as a warning, naming the reason and nothing of the body.
-    expect(await eventually(() => logs.some(line => line.level === "warn" && line.fields.reason === "asset_over_cap"))).toBe(true)
+    expect(logs.some(line => line.level === "warn" && line.fields.reason === "asset_over_cap" && line.fields.upstreamStatus === 200)).toBe(
+      true,
+    )
   })
 
-  test("a real upstream that keeps streaming past the cap has its connection closed", async () => {
+  test("a real client of Core sees that 503, never a 200, and the connection to Fleet is closed", async () => {
     configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: String(256 * 1024)})
     let sent = 0
     let cancelled = false
@@ -1501,52 +1567,85 @@ describe("Fleet UI assets", () => {
             cancelled = true
           },
         }),
-        {headers: {"content-type": "text/css"}},
+        {headers: {"content-type": "text/css", "etag": '"from-fleet"', "cache-control": "public, max-age=31536000"}},
       )
 
-    const response = await admin(organizationAdmin(), "/ui/entry.css")
-    const {received, error} = await drain(response)
+    const response = await fetch(`${coreOverHttp()}/api/admin/fleet/ui/entry.css`, {
+      headers: {"x-test-principal": organizationAdmin()},
+    })
 
-    expect(error).toBeInstanceOf(Error)
-    expect(received).toBeLessThanOrEqual(256 * 1024)
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error: "fleet_unavailable"})
+    expect(response.headers.get("etag")).toBeNull()
+    expect(response.headers.get("cache-control")).toBeNull()
     expect(await eventually(() => cancelled)).toBe(true)
     // It had no end: had Core read it to the end this test would not finish.
     expect(sent).toBeLessThan(2000)
   })
 
-  test("a body that decodes to more than the cap is cut off, whatever length the encoded one declared", async () => {
-    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
-    const encoded = Bun.gzipSync(new Uint8Array(100_000))
-    expect(encoded.byteLength).toBeLessThan(1024)
-    respond = () =>
-      new Response(encoded, {headers: {"content-type": JS, "content-encoding": "gzip", "content-length": String(encoded.byteLength)}})
+  test("a body shorter or longer than its declared length is a 503, and so is a Fleet that dies mid-answer", async () => {
+    configure()
+    for (const [declared, actual] of [
+      [1000, 100],
+      [100, 200],
+    ]) {
+      const fetched = fleetAnswers(
+        new Response(patterned(actual), {headers: {"content-type": JS, "etag": '"from-fleet"', "content-length": String(declared)}}),
+      )
+      const response = await admin(organizationAdmin(), ENTRY)
+      fetched.mockRestore()
+      expect([declared, actual, response.status]).toEqual([declared, actual, 503])
+      expect(response.headers.get("etag")).toBeNull()
+      expect(await response.json()).toEqual({error: "fleet_unavailable"})
+    }
+    expect(logs.filter(line => line.fields.reason === "length_mismatch")).toHaveLength(2)
 
-    const response = await admin(organizationAdmin(), ENTRY)
-
-    expect(response.status).toBe(200)
-    const {received, error} = await drain(response)
-    expect(error).toBeInstanceOf(Error)
-    expect(received).toBeLessThanOrEqual(1024)
+    // On a real socket: Fleet promises 1000 bytes, sends 100 and closes. A real client of Core sees a 503.
+    logs = []
+    const dying = resettingFleet(1000, 100)
+    try {
+      process.env.CLOUD_CORE_FLEET_URL = `http://127.0.0.1:${dying.port}`
+      const response = await fetch(`${coreOverHttp()}/api/admin/fleet/ui/entry.js`, {
+        headers: {"x-test-principal": organizationAdmin()},
+      })
+      expect(response.status).toBe(503)
+      expect(await response.json()).toEqual({error: "fleet_unavailable"})
+      expect(response.headers.get("etag")).toBeNull()
+      expect(response.headers.get("cache-control")).toBeNull()
+      // It shows in the logs: a warning that names what failed and what Fleet had answered, never the content.
+      const failure = logs.find(line => line.message.includes("Fleet request forwarded") && line.fields.status === 503)
+      expect(failure?.level).toBe("warn")
+      expect(failure?.fields.upstreamStatus).toBe(200)
+      expect(typeof failure?.fields.reason).toBe("string")
+    } finally {
+      dying.stop(true)
+    }
   })
 
-  test("content-length passes only for an identity-encoded answer; the encoding itself is never relayed", async () => {
+  test("an encoding Core did not ask for is a 503: it asks for none, and a length of encoded bytes proves nothing", async () => {
     configure()
     const plain = patterned(5000)
     const encoded = Bun.gzipSync(plain)
     respond = request =>
       new URL(request.url).pathname.endsWith("gz.js")
         ? new Response(encoded, {headers: {"content-type": JS, "content-encoding": "gzip"}})
-        : new Response(plain, {headers: {"content-type": JS, "content-encoding": "identity"}})
+        : new Response(plain, {headers: {"content-type": JS, "content-encoding": "identity", "etag": '"plain"'}})
 
     const identity = await admin(organizationAdmin(), "/ui/plain.js")
     const gzipped = await admin(organizationAdmin(), "/ui/gz.js")
 
+    expect(identity.status).toBe(200)
     expect(identity.headers.get("content-length")).toBe("5000")
+    expect(identity.headers.get("content-encoding")).toBeNull()
     expect(Buffer.from(await identity.arrayBuffer()).equals(Buffer.from(plain))).toBe(true)
-    // Core's own fetch has decoded the body, so the declared length is the encoded one and is not the caller's.
-    expect(gzipped.headers.get("content-length")).toBeNull()
+    expect(gzipped.status).toBe(503)
     expect(gzipped.headers.get("content-encoding")).toBeNull()
-    expect(Buffer.from(await gzipped.arrayBuffer()).equals(Buffer.from(plain))).toBe(true)
+    expect(await gzipped.json()).toEqual({error: "fleet_unavailable"})
+    expect(logs.some(line => line.level === "warn" && line.fields.reason === "content_encoding_not_identity")).toBe(true)
+    // Even a small body that would decode to far more than the cap is refused before anything is read.
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
+    respond = () => new Response(Bun.gzipSync(new Uint8Array(100_000)), {headers: {"content-type": JS, "content-encoding": "gzip"}})
+    expect((await admin(organizationAdmin(), ENTRY)).status).toBe(503)
   })
 
   test("the content types allowed are scripts, styles, images, fonts and JSON", async () => {
@@ -1614,6 +1713,37 @@ describe("Fleet UI assets", () => {
     respond = () => new Response(new Uint8Array([1, 2, 3]))
     const typeless = await admin(organizationAdmin(), "/ui/typeless")
     expect(typeless.status).toBe(503)
+  })
+
+  test("a content-type holding a comma is a 503: a browser keeps the last of the values", async () => {
+    configure()
+    for (const type of [
+      "text/javascript; charset=utf-8, text/html",
+      "text/javascript,text/html",
+      "text/html, text/javascript",
+      "application/json, text/css",
+      "image/png, image/svg+xml",
+    ]) {
+      respond = () => new Response(patterned(32), {headers: {"content-type": type}})
+      const get = await admin(organizationAdmin(), "/ui/page")
+      const head = await admin(organizationAdmin(), "/ui/page", {method: "HEAD"})
+      expect([type, get.status, head.status]).toEqual([type, 503, 503])
+      expect(await get.json()).toEqual({error: "fleet_unavailable"})
+    }
+
+    // Two content-type lines arrive as one comma-joined value.
+    const fetched = fleetAnswers(
+      new Response(patterned(32), {
+        headers: new Headers([
+          ["content-type", "text/javascript"],
+          ["content-type", "text/html"],
+        ]),
+      }),
+    )
+    const joined = await admin(organizationAdmin(), "/ui/page")
+    fetched.mockRestore()
+    expect(joined.status).toBe(503)
+    expect(logs.filter(line => line.fields.reason === "content_type_not_allowed").length).toBeGreaterThanOrEqual(5)
   })
 
   test("a 404 or a 403 from Fleet passes through as JSON, and an empty one with no content type does too", async () => {
@@ -1788,15 +1918,29 @@ describe("Fleet UI assets", () => {
     const fetched = spyOn(globalThis, "fetch")
     const rawRequest = (path: string) =>
       rawUrlRequest(`http://localhost/api/admin/fleet${path}`, {"x-test-principal": organizationAdmin()})
+    // Each spelling and the exact answer it gets. `%55` is "U": routing decodes it, so "/%55i/" is "/Ui/".
+    const spellings: Array<[string, number]> = [
+      ["/UI/entry.js", 404],
+      ["/Ui/entry.js", 404],
+      ["/%55i/entry.js", 404],
+      ["/%55I/entry.js", 404],
+      ["//ui/entry.js", 404],
+      ["//UI/entry.js", 404],
+      ["/./ui/entry.js", 400],
+      ["/ui/entry.js", 200],
+      ["/%75i/entry.js", 200],
+    ]
 
-    for (const path of ["/UI/entry.js", "/Ui/entry.js", "//ui/entry.js", "/%55i/../x", "/ui/entry.js"]) {
+    for (const [path, status] of spellings) {
       const response = await root.fetch(rawRequest(path))
-      // Either the asset route's own answer or Core's refusal; never the JSON route's forward of a ui path.
-      if (path === "/ui/entry.js") expect([path, response.status]).toEqual([path, 200])
-      else expect([path, [400, 404].includes(response.status)]).toEqual([path, true])
+      expect([path, response.status]).toEqual([path, status])
+      // The ones that are answered are answered by the asset route: its security headers are on them.
+      if (status === 200) expect([path, response.headers.get("x-content-type-options")]).toEqual([path, "nosniff"])
+      else expect(await response.json()).toEqual({error: status === 404 ? "not_found" : "invalid_path"})
     }
     fetched.mockRestore()
-    expect(calls.map(call => call.pathWithQuery)).toEqual(["/v1/admin/ui/entry.js"])
+    // Only the two that are `ui` reached Fleet, as received.
+    expect(calls.map(call => call.pathWithQuery)).toEqual(["/v1/admin/ui/entry.js", "/v1/admin/%75i/entry.js"])
 
     // A path that only starts with the letters is an ordinary one.
     await admin(organizationAdmin(), "/uikit/x")
@@ -1831,7 +1975,7 @@ describe("Fleet UI assets", () => {
     expect(await unreachable.json()).toEqual({error: "fleet_unavailable"})
   })
 
-  test("an upstream that does not answer within the timeout is a 503, and one that stalls mid-body ends the body", async () => {
+  test("an upstream that does not answer within the timeout is a 503, and so is one that stalls mid-body", async () => {
     configure({CLOUD_CORE_FLEET_TIMEOUT_MS: "150"})
     respond = () => new Promise<Response>(() => {})
     const started = Date.now()
@@ -1847,31 +1991,23 @@ describe("Fleet UI assets", () => {
             // Never closed: the headers arrive, the body never finishes.
           },
         }),
-        {headers: {"content-type": JS}},
+        {headers: {"content-type": JS, "etag": '"from-fleet"', "cache-control": "public, max-age=31536000"}},
       )
+    logs = []
     const stalled = await admin(organizationAdmin(), ENTRY)
-    expect(stalled.status).toBe(200)
-    const {received, error} = await drain(stalled)
-    expect(error).toBeInstanceOf(Error)
-    expect(received).toBeLessThanOrEqual(100)
+    expect(stalled.status).toBe(503)
+    expect(await stalled.json()).toEqual({error: "fleet_unavailable"})
+    expect(stalled.headers.get("etag")).toBeNull()
+    expect(stalled.headers.get("cache-control")).toBeNull()
     expect(Date.now() - started).toBeLessThan(3000)
-    // Fleet outlasting the timeout is a warning that names the reason, not the caller going away.
-    expect(await eventually(() => logs.some(line => line.level === "warn" && line.fields.reason === "timeout"))).toBe(true)
-  })
+    // Fleet outlasting the timeout is a warning that names the reason and what Fleet had answered.
+    const failure = logs.find(line => line.message.includes("Fleet request forwarded"))
+    expect([failure?.level, failure?.fields.reason, failure?.fields.upstreamStatus]).toEqual(["warn", "TimeoutError", 200])
 
-  test("a caller that goes away mid-download ends the request to Fleet, quietly", async () => {
-    configure()
-    let cancelled = false
-    respond = () => new Response(endlessBody(1024, () => (cancelled = true)), {headers: {"content-type": JS}})
-
-    const response = await admin(organizationAdmin(), ENTRY)
-    const reader = response.body!.getReader()
-    await reader.read()
-    await reader.cancel(new Error("navigated away"))
-
-    expect(await eventually(() => cancelled)).toBe(true)
-    expect(await eventually(() => logs.some(line => line.level === "debug" && line.fields.reason === "aborted"))).toBe(true)
-    expect(logs.some(line => line.level === "warn")).toBe(false)
+    // What a real client of Core sees is the same 503, not a 200 that ends early.
+    const real = await fetch(`${coreOverHttp()}/api/admin/fleet/ui/entry.js`, {headers: {"x-test-principal": organizationAdmin()}})
+    expect(real.status).toBe(503)
+    expect(real.headers.get("etag")).toBeNull()
   })
 
   test("the default cap is 25 MiB, and an unusable value does not lift it", async () => {
@@ -1891,7 +2027,7 @@ describe("Fleet UI assets", () => {
     expect((await atCap.arrayBuffer()).byteLength).toBe(CAP)
   })
 
-  test("logs once per asset request without a body, header, query or secret, and says why a stream was cut", async () => {
+  test("logs once per asset request without a body, header, query or secret, and says why one was refused", async () => {
     configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
     respond = () => new Response(patterned(100), {headers: {"content-type": JS, "etag": '"etag-secret"', "x-request-id": "fleet-9"}})
     const withContext = new Hono<AppEnv>()
@@ -1920,9 +2056,14 @@ describe("Fleet UI assets", () => {
     await admin(organizationAdmin(), "/ui/page?token=query-secret")
     respond = () => new Response(null, {headers: {"content-type": JS, "content-length": "2048"}})
     await admin(organizationAdmin(), "/ui/page?token=query-secret", {method: "HEAD"})
+    const {body: endless} = watchedBody(8)
+    const fetched = fleetAnswers(new Response(endless, {headers: {"content-type": JS}}))
+    await admin(organizationAdmin(), "/ui/page?token=query-secret")
+    fetched.mockRestore()
     const refusals = logs.filter(line => line.message.includes("Fleet") && line.fields.status === 503)
     expect(refusals.map(line => [line.level, line.fields.reason])).toEqual([
       ["warn", "content_type_not_allowed"],
+      ["warn", "asset_over_cap"],
       ["warn", "asset_over_cap"],
     ])
 
@@ -1935,7 +2076,7 @@ describe("Fleet UI assets", () => {
   describe("a cookie the request already set", () => {
     // `principalAuth` rotates the portal session before the handler runs; the asset route answers through the
     // context for the same reason the JSON route does, or the Organization Admin is signed out a minute later.
-    test("survives every answer of the asset route, relayed or its own, and a stream cut off after its headers", async () => {
+    test("survives every answer of the asset route, relayed or its own", async () => {
       configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "64"})
       const organization = organizationAdmin()
       const html = () => new Response("<h1>x</h1>", {headers: {"content-type": "text/html"}})
@@ -1955,7 +2096,8 @@ describe("Fleet UI assets", () => {
         "an upstream redirect, answered 503": [() => new Response(null, {status: 302, headers: {location: "/x"}})],
         "text/html, answered 503": [html],
         "a declared length over the cap, answered 503": [() => new Response("x".repeat(65), {headers: {"content-type": JS}})],
-        "a stream cut off after its headers": [() => new Response(endlessBody(16), {headers: {"content-type": JS}})],
+        "an undeclared body past the cap, answered 503": [() => new Response(endlessBody(16), {headers: {"content-type": JS}})],
+        "a content-type with a comma, answered 503": [() => new Response("x", {headers: {"content-type": "text/javascript, text/html"}})],
         "a request that never gets an answer": [() => new Promise<Response>(() => {})],
         "a method that is not allowed": [() => html(), {method: "POST", body: "{}"}],
       }
