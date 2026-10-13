@@ -1,20 +1,20 @@
 {
   "repository": "https://github.com/Mentra-Community/MentraOS",
-  "commit": "4ce1f2d5e98ba07a3384038c5d6a5ebbcb69eb7a",
+  "commit": "4001172c858019abda93d78f8fc68a4ac6000827",
   "packages": [
-    {
-      "name": "@mentra/miniapp-cli",
-      "version": "0.1.0-dev.2",
-      "directory": "sdk/miniapp-cli",
-      "archive": "mentra-miniapp-cli-0.1.0-dev.2-4ce1f2d5e98b.tgz",
-      "sha256": "91615bc4e6dd3226b10f2ddbe8ceba9763284b274c8770572cff9cd233e3fcd4"
-    },
     {
       "name": "@mentra/cli",
       "version": "2.0.0-dev.2",
       "directory": "cloud-v2/packages/cli",
-      "archive": "mentra-cli-2.0.0-dev.2-4ce1f2d5e98b.tgz",
-      "sha256": "84b73653754d34f048490ba01a62bc974f504d53c9fd65380f5a25b40d4a31f8"
+      "archive": "mentra-cli-2.0.0-dev.2-4001172c8580.tgz",
+      "sha256": "8c5774f693a8f918682288ee4b63a117c3f32a95e583d9c9b212b43d8614dcf3"
+    },
+    {
+      "name": "@mentra/miniapp-cli",
+      "version": "0.1.0-dev.2",
+      "directory": "sdk/miniapp-cli",
+      "archive": "mentra-miniapp-cli-0.1.0-dev.2-4001172c8580.tgz",
+      "sha256": "91615bc4e6dd3226b10f2ddbe8ceba9763284b274c8770572cff9cd233e3fcd4"
     }
   ]
 }
