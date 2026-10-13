@@ -126,7 +126,7 @@ same environment/token; assigned agents use their scoped case diagnostics.
 For a permission/preflight timeout, system-sheet refusal or unexplained blocked UI,
 first open both the app screenshot and the full-desktop failure screenshot,
 alongside the app accessibility tree and available system-alert observation. In
-the helper's `detail.json`, match `run.failureScreens[]` by `phase`/`actionId` and
+the helper's `detail.json`, match `failureScreens[]` by `phase`/`actionId` and
 fetch its `assetId` (app) and `desktopAssetId` (desktop) with `--asset`. Check the
 current result envelope if the projection is absent; do not guess an asset ID.
 The raw worker journal separately names `desktopScreenshot`,
