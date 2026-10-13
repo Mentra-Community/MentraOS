@@ -1127,6 +1127,40 @@ describe("re-running apply carries access removals made in the Store", () => {
     })
   })
 
+  test("a synthesized owner who now has a row of their own, under a new owner, gets that row's membership and role", async () => {
+    await run({apply: true})
+    const synthesized = `wm_owner_${ORG_BETA}`
+    expect(await WorkspaceMembershipModel.findOne({membershipId: synthesized}).lean()).toMatchObject({role: "owner", status: "active"})
+    // The Store now lists the recorded owner as a member, and someone new as the owner.
+    const {insertedId} = await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_BETA, userId: U.betaOwner, role: "member", email: "owner@beta.example"}))
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_BETA, userId: "user_01J8Z3K6V4W9Q2X5R7T1B0NOWN", role: "owner", email: "new.owner@beta.example"}))
+    const replacement = `wm_${String(insertedId)}`
+
+    const report = await run({apply: true})
+
+    expect(report.pendingCollisions).toEqual([])
+    expect(report.removedMemberships).toEqual([
+      {
+        orgId: ORG_BETA,
+        membershipId: synthesized,
+        replacedByMembershipId: replacement,
+        movedCredentialIds: [keys.betaOwner.row.keyId],
+        revokedCredentialIds: [],
+      },
+    ])
+    expect(await WorkspaceMembershipModel.findOne({membershipId: synthesized}).lean()).toMatchObject({status: "ended"})
+    expect(await WorkspaceMembershipModel.findOne({membershipId: replacement}).lean()).toMatchObject({
+      status: "active",
+      role: "developer",
+      pendingWorkosUserId: U.betaOwner,
+    })
+    expect(await validateCredentialToken(keys.betaOwner.token)).not.toBeNull()
+  })
+
   test("a newer Store invitation for the same email replaces the one imported earlier, even while both are pending in the Store", async () => {
     await run({apply: true})
     const newer = `dinv_${ulid()}`

@@ -34,8 +34,8 @@
  *    its live keys and pending invitations move to the replacement first, as a
  *    claim's merge does (`movedCredentialIds`, `replacedByMembershipId`, and a
  *    `membership.replaced` event). The synthesized owner
- *    (`wm_owner_<orgId>`) counts as gone once the Store no longer gives that person
- *    access to the org at all.
+ *    (`wm_owner_<orgId>`) counts as gone once the Store no longer synthesizes it: a
+ *    row of the person's own then replaces it, with that row's role.
  *  - A Store invitation that is no longer pending, and is still pending in Core, is
  *    revoked in Core (`revokedInvitations`, one `invitation.revoked` event each). So
  *    is a pending one an earlier run imported when a newer Store invitation for the
@@ -856,16 +856,17 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
   if (target.workspaceStatus === "active") {
     const ownerId = `wm_owner_${plan.orgId}`
     const plannedIds = new Set(plan.memberships.map(membership => membership.membershipId))
-    const plannedUsers = new Set(plan.memberships.map(membership => membership.sourceUserId))
     /** A membership this script made from a Store row or from the org's recorded owner. */
     const fromSource = (id: string) =>
       id === ownerId || plan.source.membershipActive.has(id) || SOURCE_ROW_MEMBERSHIP_ID.test(id)
-    /** Whether the Store still gives this membership's person access through it. */
+    /**
+     * Whether the Store still gives this membership's person access through it. A synthesized owner
+     * lasts while the plan still synthesizes it; once the person has a row of their own, that row's
+     * membership replaces it (below), with its role.
+     */
     const stillGranted = (membership: TargetMembership) =>
       plannedIds.has(membership.membershipId) ||
-      (membership.membershipId === ownerId
-        ? membership.pendingWorkosUserId !== null && plannedUsers.has(membership.pendingWorkosUserId)
-        : plan.source.membershipActive.get(membership.membershipId) === true)
+      (membership.membershipId !== ownerId && plan.source.membershipActive.get(membership.membershipId) === true)
 
     result.revokeCredentials = target.liveCredentials
       .filter(credential => plan.source.revokedKeys.has(credential.credentialId))
