@@ -7,6 +7,12 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     private var manager: CLLocationManager?
     private var completion: ((Result<Void, Error>) -> Void)?
     private var finished = false
+    private let diagnostics: MacHotspotJoinDiagnostics?
+
+    init(diagnostics: MacHotspotJoinDiagnostics? = nil) {
+        self.diagnostics = diagnostics
+        super.init()
+    }
 
     func start(completion: @escaping (Result<Void, Error>) -> Void) {
         DispatchQueue.main.async {
@@ -15,8 +21,11 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
             let manager = CLLocationManager()
             self.manager = manager
             manager.delegate = self
-            self.handle(manager.authorizationStatus)
-            if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+            self.handle(manager.authorizationStatus, initial: true)
+            if manager.authorizationStatus == .notDetermined {
+                self.diagnostics?.authorizationStatus(Int(manager.authorizationStatus.rawValue), requested: true)
+                manager.requestWhenInUseAuthorization()
+            }
         }
     }
 
@@ -36,7 +45,8 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
         return false
     }
 
-    private func handle(_ status: CLAuthorizationStatus) {
+    private func handle(_ status: CLAuthorizationStatus, initial: Bool = false) {
+        diagnostics?.authorizationStatus(Int(status.rawValue), initial: initial)
         if Self.isAuthorized(status) { finish(.success(())); return }
         switch status {
         case .denied, .restricted:

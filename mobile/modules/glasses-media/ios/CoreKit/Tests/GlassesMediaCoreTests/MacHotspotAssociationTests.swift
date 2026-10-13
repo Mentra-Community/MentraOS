@@ -44,6 +44,22 @@ final class MacHotspotAssociationTests: XCTestCase {
         XCTAssertEqual(wifi.leaves, 1)
     }
 
+    func testBlockingScanAndAssociationExposeTheirActualPendingStage() throws {
+        let wifi = Wifi()
+        var messages: [String] = []
+        let diagnostics = MacHotspotJoinDiagnostics(generation: 1) { messages.append($0) }
+        wifi.onScan = {
+            XCTAssertTrue(messages.last?.contains("\"stage\":\"scan\"") == true)
+        }
+        wifi.beforeJoin = {
+            XCTAssertTrue(messages.last?.contains("\"stage\":\"association\"") == true)
+        }
+        let join = MacHotspotAssociation(diagnostics: diagnostics) { wifi }
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
+        XCTAssertFalse(messages.joined().contains("private"))
+        XCTAssertFalse(messages.joined().contains("glasses"))
+    }
+
     func testExistingUserAssociationIsReusedWithoutOwningItsRelease() throws {
         let wifi = Wifi(); wifi.ssid = "glasses"
         let join = MacHotspotAssociation { wifi }

@@ -31,6 +31,7 @@ public final class GlassesHotspotNetwork {
     private let macWorker = DispatchQueue(label: "com.mentra.glassesmedia.mac-wifi")
     private var macAssociation: MacHotspotAssociation?
     private var macAuthorization: MacHotspotAuthorization?
+    private var macDiagnostics: MacHotspotJoinDiagnostics?
     private var ownershipToken: UUID?
     private var finishingLeave = false
     public var onLost: ((String) -> Void)?
@@ -62,6 +63,10 @@ public final class GlassesHotspotNetwork {
             self.joinReply = completion
             self.startInterfaceMonitors(generation: gen)
             if ProcessInfo.processInfo.isiOSAppOnMac {
+                let logger = self.logger
+                self.macDiagnostics = MacHotspotJoinDiagnostics(generation: gen) { message in
+                    logger.info("HOTSPOT_JOIN mac_diagnostic \(message, privacy: .public)")
+                }
                 self.authorizeMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen)
             } else {
                 self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
@@ -73,7 +78,8 @@ public final class GlassesHotspotNetwork {
                 self.cancelled = true
                 self.macAssociation?.cancel()
                 self.macAuthorization?.cancel()
-                self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
+                let error = self.macDiagnostics?.timeout() ?? LocalMediaError("Hotspot join timed out")
+                self.finishJoin(.failure(error))
                 // apply() cannot be cancelled. Retain the reservation until its callback and remove the
                 // late configuration before another call is permitted to acquire the network.
                 if self.ownsConfiguration { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
@@ -195,14 +201,17 @@ public final class GlassesHotspotNetwork {
     }
 
     private func authorizeMacAssociation(ssid: String, passphrase: String, generation gen: Int) {
-        let authorization = MacHotspotAuthorization()
+        macDiagnostics?.begin(.authorization)
+        let authorization = MacHotspotAuthorization(diagnostics: macDiagnostics)
         macAuthorization = authorization
         authorization.start { result in
             self.queue.async {
                 guard gen == self.generation, !self.cancelled else { return }
                 self.macAuthorization = nil
                 switch result {
-                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen)
+                case .success:
+                    self.macDiagnostics?.result()
+                    self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen)
                 case let .failure(error):
                     self.finishJoin(.failure(error)); self.finishLeave()
                 }
@@ -211,7 +220,7 @@ public final class GlassesHotspotNetwork {
     }
 
     private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int) {
-        let association = MacHotspotAssociation()
+        let association = MacHotspotAssociation(diagnostics: macDiagnostics)
         macAssociation = association
         applying = true
         macWorker.async {
@@ -228,6 +237,8 @@ public final class GlassesHotspotNetwork {
                         self.finishLeave(); return
                     }
                     self.wifiIdentity.observe([HotspotInterfaceReport(name: name, index: index, isWifi: true)])
+                    self.macDiagnostics?.result(interface: name)
+                    self.macDiagnostics?.begin(.address)
                     self.waitForMacAddress(ssid: ssid, association: association, generation: gen, remaining: 60)
                 case let .failure(error):
                     self.finishJoin(.failure(error)); self.finishLeave()
@@ -246,6 +257,7 @@ public final class GlassesHotspotNetwork {
                     self.finishJoin(.failure(error)); self.finishLeave(); return
                 }
                 if (try? membership.get()) == true, let selected = self.selectBinding() {
+                    self.macDiagnostics?.result(interface: selected.interface)
                     self.bind(selected)
                     self.finishAssociation(address: selected.address, generation: gen)
                 } else if remaining > 0 {
@@ -383,6 +395,7 @@ public final class GlassesHotspotNetwork {
     }
 
     private func waitForLocalAccess(address: String, generation gen: Int) {
+        macDiagnostics?.begin(.localAccess)
         let gateway = gatewayAddress ?? address.split(separator: ".").prefix(3).joined(separator: ".") + ".1"
         let request = LocalNetworkAccessRequest(localAddress: address, gateway: gateway, queue: queue)
         localAccess = request
@@ -406,6 +419,12 @@ public final class GlassesHotspotNetwork {
     private func finishJoin(_ result: Result<String, Error>) {
         let reply = joinReply
         joinReply = nil
+        if reply != nil {
+            switch result {
+            case .success: macDiagnostics?.finish()
+            case let .failure(error): macDiagnostics?.finish(error: error)
+            }
+        }
         reply?(result)
     }
 
@@ -439,6 +458,7 @@ public final class GlassesHotspotNetwork {
     private func completeLeave() {
         generation += 1
         macAuthorization?.cancel(); macAuthorization = nil
+        macDiagnostics = nil
         localAccess?.cancel(); localAccess = nil
         interfaceMonitors.forEach { $0.cancel() }
         interfaceMonitors = []

@@ -10,24 +10,34 @@ final class MacHotspotAssociation {
     private var interface: MacWifiInterface?
     private var joinedSSID: String?
     private let makeInterface: () throws -> MacWifiInterface
+    private let diagnostics: MacHotspotJoinDiagnostics?
 
-    init(makeInterface: @escaping () throws -> MacWifiInterface = { try PublicCoreWlanInterface() }) {
-        self.makeInterface = makeInterface
+    init(diagnostics: MacHotspotJoinDiagnostics? = nil, makeInterface: (() throws -> MacWifiInterface)? = nil) {
+        self.diagnostics = diagnostics
+        self.makeInterface = makeInterface ?? { try PublicCoreWlanInterface(diagnostics: diagnostics) }
     }
 
     func associate(ssid: String, password: String) throws -> String {
         try checkCurrent()
+        diagnostics?.begin(.interface)
         let interface = try makeInterface()
         self.interface = interface
+        diagnostics?.result(interface: try? interface.name())
+        diagnostics?.begin(.membership)
         if try interface.currentSSID() != ssid {
+            diagnostics?.begin(.scan)
             let network = try interface.network(ssid: ssid)
+            diagnostics?.result()
             try checkCurrent()
             // Record the intended association before this blocking call. A late
             // successful join still belongs to us and must be cleaned up.
             joinedSSID = ssid
+            diagnostics?.begin(.association)
             try interface.associate(network: network, password: password)
+            diagnostics?.result()
         }
         try checkCurrent()
+        diagnostics?.begin(.membership)
         guard try interface.currentSSID() == ssid else {
             throw LocalMediaError("Mac Wi-Fi did not associate with the requested glasses hotspot")
         }
@@ -84,14 +94,16 @@ enum MacWifiInvocation {
 private final class PublicCoreWlanInterface: MacWifiInterface {
     private let bundle: Bundle
     private let interface: NSObject
+    private let diagnostics: MacHotspotJoinDiagnostics?
     private typealias Disassociate = @convention(c) (AnyObject, Selector) -> Void
 
-    init() throws {
+    init(diagnostics: MacHotspotJoinDiagnostics? = nil) throws {
+        self.diagnostics = diagnostics
         guard let bundle = Bundle(path: "/System/Library/Frameworks/CoreWLAN.framework") else {
             throw LocalMediaError("Mac Wi-Fi framework is unavailable")
         }
         do { try bundle.loadAndReturnError() }
-        catch { throw Self.failure("framework loading", error as NSError) }
+        catch { throw Self.failure("framework loading", error as NSError, diagnostics: diagnostics) }
         guard let clientClass = NSClassFromString("CWWiFiClient") as? NSObject.Type,
               clientClass.responds(to: NSSelectorFromString("sharedWiFiClient")),
               let client = clientClass.perform(NSSelectorFromString("sharedWiFiClient"))?.takeUnretainedValue() as? NSObject,
@@ -127,7 +139,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Scan.self)
         var error: NSError?
         guard let networks = invoke(interface, selector, NSData(data: Data(ssid.utf8)), &error)?.takeUnretainedValue() else {
-            throw Self.failure("scan", error)
+            throw Self.failure("scan", error, diagnostics: diagnostics)
         }
         // A directed scan can include unrelated networks. Match the requested
         // SSID bytes without reading or logging BSSID or other scan identities.
@@ -144,7 +156,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         let selector = NSSelectorFromString("associateToNetwork:password:error:")
         let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Associate.self)
         var error: NSError?
-        guard invoke(interface, selector, network, password as NSString, &error) else { throw Self.failure("association", error) }
+        guard invoke(interface, selector, network, password as NSString, &error) else { throw Self.failure("association", error, diagnostics: diagnostics) }
     }
 
     func disassociate() {
@@ -153,7 +165,8 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         invoke(interface, selector)
     }
 
-    private static func failure(_ operation: String, _ error: NSError?) -> Error {
+    private static func failure(_ operation: String, _ error: NSError?, diagnostics: MacHotspotJoinDiagnostics?) -> Error {
+        if let error { diagnostics?.result(error: error) }
         let domain = error?.domain ?? "unavailable"
         let safeDomain = domain.range(of: "^[A-Za-z0-9_.-]{1,128}$", options: .regularExpression) == nil ? "unavailable" : domain
         return LocalMediaError("Mac Wi-Fi \(operation) failed (\(safeDomain), \(error?.code ?? -1))")
