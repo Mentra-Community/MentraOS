@@ -72,13 +72,19 @@ export function storeLogin(credentials: CliCredentials): Promise<"keychain" | "f
 }
 
 /**
- * Select `workspaceId` on `target`'s login as it is stored now, with whatever tokens a refresh rotated
- * meanwhile. Null when signed out.
+ * Select `workspaceId`, which was checked for `chosenFor`'s person, on `target`'s login as it is
+ * stored now, keeping whatever tokens a refresh rotated meanwhile. Null, changing nothing, when signed
+ * out or when another person's login has replaced it since (the workspace was not checked for them).
  */
-export function selectWorkspace(target: CliTarget, workspaceId: string): Promise<"keychain" | "file" | null> {
+export function selectWorkspace(
+  target: CliTarget,
+  workspaceId: string,
+  chosenFor: {mentraUserId: string},
+): Promise<"keychain" | "file" | null> {
   return withRefreshLock(target, async () => {
     const current = await loadStoredLogin(target)
-    return current ? saveCredentials({...current, workspaceId}) : null
+    if (!current || current.mentraUserId !== chosenFor.mentraUserId) return null
+    return saveCredentials({...current, workspaceId})
   })
 }
 

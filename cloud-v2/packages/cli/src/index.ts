@@ -138,7 +138,7 @@ async function announceStoreLogin(
   }
   const workspaceId =
     session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
-  const storage = workspaceId ? await selectWorkspace(targetOf(credentials), workspaceId) : null;
+  const storage = workspaceId ? await selectWorkspace(targetOf(credentials), workspaceId, credentials) : null;
   console.log(`Signed in as ${session.user.email}`);
   if (workspaceId) console.log(`Workspace: ${workspaceId}`);
   if (session.workspaces.length > 1 && !workspaceId) {
@@ -209,7 +209,9 @@ workspace
       const session = await getConsoleSession(creds);
       const selected = session.workspaces.find(candidate => candidate.workspaceId === workspaceId);
       if (!selected) throw new Error("You do not have access to that workspace");
-      if (!(await selectWorkspace(targetOf(creds), selected.workspaceId))) throw new Error("Not signed in. Run `mentra login`.");
+      if (!(await selectWorkspace(targetOf(creds), selected.workspaceId, creds))) {
+        throw new Error("The sign-in changed while selecting the workspace. Run the command again.");
+      }
       console.log(`Using ${selected.name} (${selected.workspaceId})`);
     } catch (error) {
       fail(error);
@@ -283,7 +285,7 @@ workspace
       const created = await createWorkspace(creds, name);
       // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
       const next = {...creds, workspaceId: created.workspaceId};
-      if (isStoredLogin(next)) await selectWorkspace(targetOf(next), created.workspaceId);
+      if (isStoredLogin(next)) await selectWorkspace(targetOf(next), created.workspaceId, next);
       console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
       if (!isStoredLogin(next)) console.log(`Set MENTRA_CLI_WORKSPACE_ID=${created.workspaceId} to use it with MENTRA_CLI_TOKEN.`);
       if (options.packagePrefix) {

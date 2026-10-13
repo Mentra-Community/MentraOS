@@ -124,13 +124,21 @@ test("selecting a workspace keeps the tokens a concurrent refresh rotated", asyn
   idp.refreshDelayMs = 300
   const refreshing = loadFreshCredentials(target)
   await Bun.sleep(80)
-  expect(await selectWorkspace(target, "ws_2")).not.toBeNull()
+  expect(await selectWorkspace(target, "ws_2", {mentraUserId: login.mentraUserId})).not.toBeNull()
   const refreshed = (await refreshing) as CliCredentials
   const stored = (await loadStoredLogin(target))!
   expect(stored.workspaceId).toBe("ws_2")
   expect(stored.refreshToken).toBe(refreshed.refreshToken)
   expect(stored.refreshToken).not.toBe(login.refreshToken)
   expect(idp.refreshTokenActive(stored.refreshToken)).toBe(true)
+})
+
+test("a workspace chosen for one person is never applied to another person's login stored meanwhile", async () => {
+  const login = await storedLogin(3_600_000)
+  expect(await selectWorkspace(target, "ws_2", {mentraUserId: "mu_someone_else"})).toBeNull()
+  expect((await loadStoredLogin(target))!.workspaceId).toBe(login.workspaceId)
+  expect(await selectWorkspace(target, "ws_2", {mentraUserId: login.mentraUserId})).not.toBeNull()
+  expect((await loadStoredLogin(target))!.workspaceId).toBe("ws_2")
 })
 
 test("a new sign-in stored during a refresh of the previous one is not overwritten by it", async () => {
