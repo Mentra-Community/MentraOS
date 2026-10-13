@@ -4,28 +4,48 @@ import test from "node:test"
 
 import {
   CookieJar,
-  isDevBranchPolicy,
+  isBranchPolicy,
   loadMiniapps,
+  MENTRAOS,
   MINIAPPS,
+  parseArguments,
   planSetup,
+  publishBranch,
+  REPOSITORIES,
+  secretName,
+  selectRepositories,
   staffEmail,
   STORES,
 } from "./setup-store-publishing.mjs"
 
 const workflow = readFileSync(new URL("../workflows/miniapp-store-publish.yml", import.meta.url), "utf8")
 
-test("sets up the same Stores, environments and key names the publish workflow uses", () => {
-  assert.match(
-    workflow,
-    /^ {10}- \{name: prod, url: "https:\/\/api\.apps\.mentraglass\.com", environment: "", secretPrefix: MENTRA_STORE_PUBLISH_TOKEN_\}$/m,
-  )
-  for (const [name, store] of Object.entries(STORES)) {
-    const entry = `{name: ${name}, url: "${store.url}", environment: ${store.environment}, secretPrefix: ${store.secretPrefix}}`
-    assert.ok(workflow.includes(entry), `the workflow lists the ${name} Store as ${entry}`)
-    assert.notEqual(store.secretPrefix, "MENTRA_STORE_PUBLISH_TOKEN_", "only production uses the repository secrets")
+/** The workflow's Store table, with each Store's on/off expression read as off. */
+function workflowStores() {
+  const block = /STORES: >-\n((?: {12}.*\n)+)/.exec(workflow)?.[1]
+  assert.ok(block, "the workflow lists its Stores in STORES")
+  return JSON.parse(block.replace(/\$\{\{[^}]*\}\}/g, "false"))
+}
+
+test("publishes each Store from its own branch, with the environments and key names the script sets up", () => {
+  const stores = workflowStores()
+  assert.deepEqual(stores.map((store) => store.name).sort(), Object.keys(STORES).sort())
+  const mentraos = REPOSITORIES.find((entry) => entry.repository === MENTRAOS)
+  for (const store of stores) {
+    const expected = STORES[store.name]
+    assert.equal(store.url, expected.url, `${store.name} Store URL`)
+    assert.equal(store.environment, expected.environment, `${store.name} environment`)
+    assert.equal(store.secretPrefix, `${expected.secret}_`, `${store.name} key names`)
+    assert.equal(store.branch, publishBranch(store.name, mentraos.branches), `${store.name} publishes from its branch`)
+    assert.equal(store.on, !expected.switch, `${store.name} is on unless a variable switches it on`)
   }
-  assert.match(workflow, /^ {10}- \{name: dev, /m, "the dev Store publishes")
-  assert.match(workflow, /^ {10}# - \{name: staging, /m, "the staging Store stays off until its keys exist")
+  assert.ok(
+    workflow.includes(`"on": \${{ vars.${STORES.staging.switch} == 'true' }}`),
+    "the staging Store is on only once its repository variable is set",
+  )
+  assert.match(workflow, /^ {4}branches: \[dev, staging, main\]$/m, "every branch's pushes run the workflow")
+  assert.match(workflow, /environment: \$\{\{ matrix\.store\.environment \}\}/)
+  assert.match(workflow, /branch: \$\{\{ github\.ref_name \}\}/, "a run checks the tip of its own branch")
 })
 
 test("covers exactly the miniapps the workflow validates and publishes, with their key names", () => {
@@ -45,14 +65,69 @@ test("covers exactly the miniapps the workflow validates and publishes, with the
   }
 })
 
-test("reads each miniapp's package and Store listing", () => {
+test("reads each MentraOS miniapp's package and Store listing", () => {
   const miniapps = loadMiniapps()
   assert.equal(miniapps.length, MINIAPPS.length)
   for (const miniapp of miniapps) {
     assert.match(miniapp.packageName, /^com\.mentra\.[a-z0-9.]+$/)
     assert.ok(miniapp.name)
   }
-  assert.equal(miniapps.find((miniapp) => miniapp.directory === "navigation")?.key, "MAPS")
+  assert.equal(miniapps.find((miniapp) => miniapp.packageName === "com.mentra.navigation")?.key, "MAPS")
+})
+
+test("publishes each Store from its own branch, or from main in a repository without that branch", () => {
+  assert.equal(publishBranch("dev", ["dev", "staging", "main"]), "dev")
+  assert.equal(publishBranch("staging", ["dev", "staging", "main"]), "staging")
+  assert.equal(publishBranch("prod", ["dev", "staging", "main"]), "main")
+  assert.equal(publishBranch("dev", ["dev", "main"]), "dev")
+  assert.equal(publishBranch("staging", ["dev", "main"]), "main")
+  assert.equal(publishBranch("dev", ["main"]), "main")
+  assert.equal(publishBranch("staging", ["main"]), "main")
+})
+
+test("lists every first-party repository once, each with a main branch and com.mentra packages", () => {
+  const names = REPOSITORIES.map((entry) => entry.repository)
+  assert.equal(new Set(names).size, names.length)
+  assert.ok(names.includes(MENTRAOS))
+  const packages = REPOSITORIES.filter((entry) => entry.repository !== MENTRAOS).map((entry) => entry.packageName)
+  assert.equal(new Set(packages).size, packages.length)
+  for (const entry of REPOSITORIES) {
+    assert.ok(entry.branches.includes("main"), `${entry.repository} has main`)
+    if (entry.repository !== MENTRAOS) assert.match(entry.packageName, /^com\.mentra\.[a-z0-9.]+$/)
+  }
+  assert.deepEqual(
+    selectRepositories(["mentra-call", "Mentra-Community/Merge-Miniapp"]).map((entry) => entry.repository),
+    ["Mentra-Community/Mentra-Call", "Mentra-Community/Merge-Miniapp"],
+  )
+  assert.equal(selectRepositories([]), REPOSITORIES)
+  assert.throws(() => selectRepositories(["Someone-Else"]), /not in REPOSITORIES/)
+})
+
+test("names a key after its Store, and after its miniapp in MentraOS", () => {
+  assert.equal(secretName(STORES.dev, "CAPTIONS"), "MENTRA_DEV_STORE_PUBLISH_TOKEN_CAPTIONS")
+  assert.equal(secretName(STORES.dev, ""), "MENTRA_DEV_STORE_PUBLISH_TOKEN")
+  assert.equal(secretName(STORES.prod, ""), "MENTRA_STORE_PUBLISH_TOKEN", "production keeps its key names")
+  assert.equal(secretName(STORES.prod, "MAPS"), "MENTRA_STORE_PUBLISH_TOKEN_MAPS")
+})
+
+test("reads the Store, repositories and options from the command line", () => {
+  assert.deepEqual(parseArguments(["dev"]), {
+    storeName: "dev",
+    repos: [],
+    dryRun: false,
+    reissue: false,
+    publish: false,
+    environmentsOnly: false,
+  })
+  const options = parseArguments(["staging", "--repo", "Mentra-Call", "--repo=Merge-Miniapp", "--publish"])
+  assert.deepEqual(options.repos, ["Mentra-Call", "Merge-Miniapp"])
+  assert.equal(options.publish, true)
+  assert.equal(parseArguments(["prod", "--environments-only"]).environmentsOnly, true)
+  assert.throws(() => parseArguments([]), /name one Store/)
+  assert.throws(() => parseArguments(["production"]), /name one Store/)
+  assert.throws(() => parseArguments(["dev", "--repo"]), /needs a repository/)
+  assert.throws(() => parseArguments(["dev", "--force"]), /unknown option/)
+  assert.throws(() => parseArguments(["prod", "--environments-only", "--reissue"]), /issues no keys/)
 })
 
 test("signs in as the QA account's +store-staff plus-address", () => {
@@ -70,7 +145,7 @@ test("creates only missing miniapps and issues only missing keys, unless reissui
     miniapps,
     storeApps: [{packageName: "com.mentra.captions"}],
     secretNames: ["MENTRA_DEV_STORE_PUBLISH_TOKEN_CAPTIONS", "MENTRA_STORE_PUBLISH_TOKEN_RECORDER"],
-    secretPrefix: "MENTRA_DEV_STORE_PUBLISH_TOKEN_",
+    store: STORES.dev,
   })
   assert.deepEqual(
     plan.map(({packageName, secret, create, issueKey}) => ({packageName, secret, create, issueKey})),
@@ -93,7 +168,7 @@ test("creates only missing miniapps and issues only missing keys, unless reissui
     miniapps,
     storeApps: miniapps,
     secretNames: ["MENTRA_DEV_STORE_PUBLISH_TOKEN_CAPTIONS", "MENTRA_DEV_STORE_PUBLISH_TOKEN_RECORDER"],
-    secretPrefix: "MENTRA_DEV_STORE_PUBLISH_TOKEN_",
+    store: STORES.dev,
     reissue: true,
   })
   assert.deepEqual(
@@ -103,6 +178,13 @@ test("creates only missing miniapps and issues only missing keys, unless reissui
       {create: false, issueKey: true},
     ],
   )
+  const single = planSetup({
+    miniapps: [{packageName: "com.mentra.call", key: ""}],
+    storeApps: [],
+    secretNames: [],
+    store: STORES.staging,
+  })
+  assert.equal(single[0].secret, "MENTRA_STAGING_STORE_PUBLISH_TOKEN")
 })
 
 test("keeps one sign-in's cookies per host and drops expired ones", () => {
@@ -117,10 +199,10 @@ test("keeps one sign-in's cookies per host and drops expired ones", () => {
   assert.equal(jar.header("https://account.example/"), "_session=s2")
 })
 
-test("lets only the dev branch deploy to a Store's environment", () => {
-  assert.equal(isDevBranchPolicy({name: "dev", type: "branch"}), true)
-  assert.equal(isDevBranchPolicy({name: "dev"}), true)
-  assert.equal(isDevBranchPolicy({name: "dev", type: "tag"}), false)
-  assert.equal(isDevBranchPolicy({name: "main", type: "branch"}), false)
-  assert.equal(isDevBranchPolicy({name: "*", type: "branch"}), false)
+test("lets only the branch that publishes to a Store deploy to its environment", () => {
+  assert.equal(isBranchPolicy({name: "dev", type: "branch"}, "dev"), true)
+  assert.equal(isBranchPolicy({name: "main"}, "main"), true)
+  assert.equal(isBranchPolicy({name: "dev", type: "tag"}, "dev"), false)
+  assert.equal(isBranchPolicy({name: "dev", type: "branch"}, "main"), false)
+  assert.equal(isBranchPolicy({name: "*", type: "branch"}, "main"), false)
 })

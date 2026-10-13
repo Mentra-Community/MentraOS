@@ -1,9 +1,10 @@
 name: Publish first-party miniapps to the Store
 
 # Builds and validates the first-party miniapps kept in miniapps/ on every
-# change, and publishes them from dev to each Mentra Miniapp Store: production
-# and the dev Store (staging once its keys exist). A version a Store already has
-# is skipped, so publishing happens when a miniapp.json version is bumped.
+# change. Each branch publishes them to its own Mentra Miniapp Store: dev to the
+# dev Store, staging to the staging Store (once its keys exist), and main to
+# production. A version a Store already has is skipped, so publishing happens
+# when a miniapp.json version is bumped.
 
 on:
   pull_request:
@@ -19,7 +20,7 @@ on:
       - ".github/scripts/setup-store-publishing*"
       - ".github/workflows/miniapp-store-publish.yml"
   push:
-    branches: [dev]
+    branches: [dev, staging, main]
     paths:
       - "miniapps/captions/**"
       - "miniapps/translation/**"
@@ -94,23 +95,43 @@ jobs:
           node-version: "20"
       - run: node --test .github/scripts/setup-store-publishing.test.mjs
 
+  stores:
+    name: Choose this branch's Store
+    if: github.event_name != 'pull_request'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      stores: ${{ steps.choose.outputs.stores }}
+    steps:
+      - id: choose
+        env:
+          BRANCH: ${{ github.ref_name }}
+          # Each Store, the branch that publishes to it, and the GitHub environment holding its keys,
+          # which only that branch may deploy to. The keys are named <secretPrefix><miniapp key>.
+          # .github/scripts/setup-store-publishing.mjs sets a Store up, issues its keys and, for staging,
+          # turns it on with the MENTRA_STAGING_STORE_PUBLISHING repository variable.
+          STORES: >-
+            [
+            {"name": "prod", "branch": "main", "url": "https://api.apps.mentraglass.com", "environment": "miniapp-store-production", "secretPrefix": "MENTRA_STORE_PUBLISH_TOKEN_", "on": true},
+            {"name": "staging", "branch": "staging", "url": "https://api.apps.staging.mentraglass.com", "environment": "miniapp-store-staging", "secretPrefix": "MENTRA_STAGING_STORE_PUBLISH_TOKEN_", "on": ${{ vars.MENTRA_STAGING_STORE_PUBLISHING == 'true' }}},
+            {"name": "dev", "branch": "dev", "url": "https://api.apps.dev.mentraglass.com", "environment": "miniapp-store-dev", "secretPrefix": "MENTRA_DEV_STORE_PUBLISH_TOKEN_", "on": true}
+            ]
+        run: |
+          stores=$(jq -c --arg branch "$BRANCH" 'map(select(.on and .branch == $branch))' <<<"$STORES")
+          echo "stores=$stores" >> "$GITHUB_OUTPUT"
+          if [[ "$stores" == "[]" ]]; then echo "$BRANCH publishes to no Store."; fi
+
   publish:
     name: Publish ${{ matrix.miniapp.name }} to the ${{ matrix.store.name }} Store
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-    needs: [validate, setup-script]
+    needs: [validate, setup-script, stores]
+    if: needs.stores.outputs.stores != '[]'
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Production's keys are the original repository secrets. Every other Store's keys are in the GitHub
-    # environment named after it, under their own names, so a missing key never falls back to
-    # production's. .github/scripts/setup-store-publishing.mjs sets a Store up and issues its keys.
+    # The Store's keys are in its GitHub environment, which only the branch that publishes to it may
+    # use, so another branch can neither publish there nor read them.
     environment: ${{ matrix.store.environment }}
     strategy:
       fail-fast: false
       matrix:
-        store:
-          - {name: prod, url: "https://api.apps.mentraglass.com", environment: "", secretPrefix: MENTRA_STORE_PUBLISH_TOKEN_}
-          - {name: dev, url: "https://api.apps.dev.mentraglass.com", environment: miniapp-store-dev, secretPrefix: MENTRA_DEV_STORE_PUBLISH_TOKEN_}
-          # Off until `dev` is merged to `staging` and setup-store-publishing.mjs staging has issued its keys:
-          # - {name: staging, url: "https://api.apps.staging.mentraglass.com", environment: miniapp-store-staging, secretPrefix: MENTRA_STAGING_STORE_PUBLISH_TOKEN_}
+        store: ${{ fromJSON(needs.stores.outputs.stores) }}
         miniapp:
           - {name: captions, key: CAPTIONS}
           - {name: translation, key: TRANSLATION}
@@ -151,9 +172,7 @@ jobs:
           ENVIRONMENT: ${{ matrix.store.environment }}
         run: |
           if [[ "$HAS_KEY" != "true" ]]; then
-            where="repository secret"
-            [[ -n "$ENVIRONMENT" ]] && where="secret in the $ENVIRONMENT environment"
-            echo "::error::The $where $KEY_NAME is not set. A Store administrator issues an app-restricted publishing key for this miniapp (.github/scripts/setup-store-publishing.mjs for a non-production Store)."
+            echo "::error::The secret $KEY_NAME is not set in the $ENVIRONMENT environment. A Store administrator issues an app-restricted publishing key for this miniapp (.github/scripts/setup-store-publishing.mjs)."
             exit 1
           fi
       - uses: ./.github/actions/publish-miniapp
@@ -161,6 +180,6 @@ jobs:
         with:
           operation: publish
           directory: miniapps/${{ matrix.miniapp.name }}
-          branch: dev
+          branch: ${{ github.ref_name }}
           store-url: ${{ matrix.store.url }}
           token: ${{ secrets[format('{0}{1}', matrix.store.secretPrefix, matrix.miniapp.key)] }}
