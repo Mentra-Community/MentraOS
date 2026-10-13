@@ -44,7 +44,7 @@ export const routineJobCompletionReportSchema = routineJobCompletionSchema.exten
 export const routineJobActionsSchema = z.object({inputSha256: jobHashSchema, actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/)}).strict();
 export const routinePreparationStatusSchema = z.object({inputSha256: jobHashSchema,
   actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/),
-  phase: z.enum(['source cleanup', 'selected archive', 'Git inventory', 'Git blobs', 'routine description', 'routine bundle',
+  phase: z.enum(['workflow registration', 'source cleanup', 'selected archive', 'Git inventory', 'Git blobs', 'routine description', 'routine bundle',
     'bundle publication', 'prepared job commit', 'prepared job readback']),
   code: z.enum(['source-unavailable', 'source-invalid', 'not-applicable']), retryable: z.boolean(),
 }).strict().refine(value => value.code === 'source-unavailable' ? value.retryable : !value.retryable,
