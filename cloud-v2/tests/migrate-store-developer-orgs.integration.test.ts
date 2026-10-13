@@ -1196,6 +1196,34 @@ describe("re-running apply carries access removals made in the Store", () => {
     })
   })
 
+  test("when the first-ranked row flips back to one whose membership was replaced, the person keeps the membership they have", async () => {
+    await run({apply: true})
+    const adminRow = await sourceMembershipHex(U.betaAdmin, ORG_BETA, "admin")
+    const memberRow = await sourceMembershipHex(U.betaAdmin, ORG_BETA, "member")
+    const rows = sourceDb().collection("developer_org_memberships")
+    const beas = await rows.find({orgId: ORG_BETA, userId: U.betaAdmin}).toArray()
+    const byHex = new Map(beas.map(row => [String(row._id), row._id]))
+    const swap = async (adminHex: string, memberHex: string) => {
+      await rows.updateOne({_id: byHex.get(adminHex)}, {$set: {role: "admin"}})
+      await rows.updateOne({_id: byHex.get(memberHex)}, {$set: {role: "member"}})
+    }
+    await swap(memberRow, adminRow)
+    await run({apply: true})
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${memberRow}`}).lean()).toMatchObject({status: "active"})
+
+    // The first row ranks first again, but its membership has ended: Core never revives one.
+    await swap(adminRow, memberRow)
+    const report = await run({apply: true})
+
+    expect(report.removedMemberships).toEqual([])
+    expect(report.pendingCollisions).toEqual([])
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${memberRow}`}).lean()).toMatchObject({
+      status: "active",
+      role: "admin",
+      pendingWorkosUserId: U.betaAdmin,
+    })
+  })
+
   test("a newer Store invitation for the same email replaces the one imported earlier, even while both are pending in the Store", async () => {
     await run({apply: true})
     const newer = `dinv_${ulid()}`

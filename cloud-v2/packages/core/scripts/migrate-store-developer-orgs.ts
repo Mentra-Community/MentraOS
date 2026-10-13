@@ -914,13 +914,29 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
     /** A membership this script made from a Store row or from the org's recorded owner. */
     const fromSource = (id: string) =>
       id === ownerId || plan.source.membershipActive.has(id) || SOURCE_ROW_MEMBERSHIP_ID.test(id)
+    // A planned membership that already ended in Core is never revived: the person's other active
+    // membership from the Store, if they have one (a row that ranked first at an earlier run), stands
+    // in for it, with its role.
+    const activeIds = new Set(target.memberships.map(membership => membership.membershipId))
+    const standIns = new Map<string, PlannedMembership>()
+    for (const planned of plan.memberships) {
+      if (activeIds.has(planned.membershipId) || !target.existingMembershipIds.has(planned.membershipId)) continue
+      const standIn = target.memberships.find(
+        membership =>
+          membership.membershipId !== planned.membershipId &&
+          membership.pendingWorkosUserId === planned.sourceUserId &&
+          fromSource(membership.membershipId),
+      )
+      if (standIn) standIns.set(standIn.membershipId, planned)
+    }
     /**
      * Whether the Store still gives this membership's person access through it: it is the membership
-     * this run plans for them. Another of their memberships (a row that no longer ranks first among
-     * their active rows, a removed one, or a synthesized owner once they have a row) is replaced by
-     * the planned one, with its role, or ended when they have none (below).
+     * this run plans for them, or stands in for it. Another of their memberships (a row that no longer
+     * ranks first among their active rows, a removed one, or a synthesized owner once they have a row)
+     * is replaced by the planned one, with its role, or ended when they have none (below).
      */
-    const stillGranted = (membership: TargetMembership) => plannedIds.has(membership.membershipId)
+    const stillGranted = (membership: TargetMembership) =>
+      plannedIds.has(membership.membershipId) || standIns.has(membership.membershipId)
 
     result.revokeCredentials = target.liveCredentials
       .filter(credential => plan.source.revokedKeys.has(credential.credentialId))
@@ -951,7 +967,7 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
     // the import, is lowered in Core; any other difference is reported and left alone.
     const plannedById = new Map(plan.memberships.map(membership => [membership.membershipId, membership]))
     for (const membership of remaining) {
-      const planned = plannedById.get(membership.membershipId)
+      const planned = plannedById.get(membership.membershipId) ?? standIns.get(membership.membershipId)
       if (!planned || planned.role === membership.role) continue
       const lowered = !roleAtLeast(planned.role, membership.role as WorkspaceRole)
       const reason: RoleDriftReason | null = membership.mentraUserId
