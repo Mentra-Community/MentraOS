@@ -94,10 +94,12 @@ export async function recordOrganizationEvent(event: WorkspaceAuditEventInput): 
 
 /**
  * Record a change-feed event without a transaction, for the one writer that must still work on a
- * database that is known to be unable to run one (the `user.deleted` tombstone of a person who
- * belongs to no workspace; see `isTransactionsUnsupportedError`). Never use it for a transient
- * failure on a database that can run transactions: its `seq` is unique and increasing but, unlike
- * {@link recordWorkspaceEvent}'s, not guaranteed to follow commit order. A transaction could take
+ * database that is known to be unable to run one: a standalone mongod, or Azure Cosmos DB for
+ * MongoDB, which fails a transaction across two collections (the `user.deleted` tombstone of a
+ * person who belongs to no workspace; see `isTransactionsUnsupportedError` and
+ * `isCrossCollectionTransactionUnsupported`). Never use it for a transient failure on a database
+ * that can run transactions: its `seq` is unique and increasing but, unlike
+ * {@link recordWorkspaceEvent}'s, not ordered against concurrent writers. A transaction could take
  * the next number and commit between this counter increment and this insert, and a poller would
  * pass the number whose event is not written yet. A database that cannot run transactions has no
  * other feed writer (workspace writes need them), so only two tombstones written within

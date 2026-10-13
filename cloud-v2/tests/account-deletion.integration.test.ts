@@ -706,20 +706,37 @@ describe("removeDeletedUserFromWorkspaces", () => {
   const driver = mongoose.mongo
 
   /**
-   * Make the first command a session sends fail with `error`, as the server answers the first command of a
-   * transaction: the driver's real `withTransaction` aborts and rethrows it, and Core's wraps it. Returns how
-   * many commands were sent in a session.
+   * Make a command a session sends fail with `error`, as the server answers a command of a transaction: the
+   * driver's real `withTransaction` aborts and rethrows it, and Core's rewraps what it recognizes. By default
+   * the first command fails; with `model`, the commands on that model's collection do (the earlier ones run).
+   * Returns how many commands failed.
    */
-  function failFirstTransactionCommand(error: Error) {
+  function failFirstTransactionCommand(error: Error, model?: unknown) {
     const exec = mongoose.Query.prototype.exec
-    let sent = 0
+    let failed = 0
     const spy = spyOn(mongoose.Query.prototype, "exec").mockImplementation(function (this: any, ...args: any[]) {
-      if (!this.getOptions().session) return exec.apply(this, args)
-      sent += 1
+      if (!this.getOptions().session || (model !== undefined && this.model !== model)) return exec.apply(this, args)
+      failed += 1
       return Promise.reject(error)
     } as any)
-    return {sent: () => sent, restore: () => spy.mockRestore()}
+    return {sent: () => failed, restore: () => spy.mockRestore()}
   }
+
+  /**
+   * What Azure Cosmos DB for MongoDB (RU, API 4.2) answers the write that touches a transaction's second
+   * collection (probed on the CI account): code 2, no error labels, and this text (the tail after the
+   * message body is abbreviated).
+   */
+  const cosmosSecondCollection = (overrides: Record<string, unknown> = {}) =>
+    new driver.MongoServerError({
+      message:
+        "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
+        'ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21; Reason: (Message: {"Errors":["Transaction is not active"]}\r\n' +
+        "ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21, Request URI: /apps/.../partitions/..., RequestStats: ...)'",
+      code: 2,
+      errorLabels: [],
+      ...overrides,
+    })
 
   /** A standalone mongod's answer to the first command of a transaction (code 20, `IllegalOperation`). */
   const standaloneMongod = () =>
@@ -749,6 +766,46 @@ describe("removeDeletedUserFromWorkspaces", () => {
       const {events} = await listChanges({})
       expect(events).toHaveLength(1)
       expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
+    })
+
+    test("Azure Cosmos DB for MongoDB: the second collection's write fails, and the tombstone is written without a transaction", async () => {
+      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-cosmos"})
+      // The transaction's read of the audit events (one collection) runs; the counter's write (the second) fails.
+      const failing = failFirstTransactionCommand(cosmosSecondCollection(), WorkspaceAuditCounterModel)
+      try {
+        expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
+          endedMembershipIds: [],
+          revokedInvitationIds: [],
+          revokedOperatorKeyIds: [],
+        })
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+        expect(failing.sent()).toBe(1)
+      } finally {
+        failing.restore()
+      }
+
+      const {events} = await listChanges({})
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
+    })
+
+    test("Azure Cosmos DB for MongoDB: a person with workspace state is not ended half way either", async () => {
+      const s = await scenario()
+      const events = await WorkspaceAuditEventModel.countDocuments({})
+      const failing = failFirstTransactionCommand(cosmosSecondCollection(), WorkspaceAuditCounterModel)
+      try {
+        const err = await removeDeletedUserFromWorkspaces(s.mentraUserId).then(
+          () => null,
+          (caught: unknown) => caught,
+        )
+        expect(err).toBeInstanceOf(driver.MongoServerError)
+      } finally {
+        failing.restore()
+      }
+
+      expect((await WorkspaceMembershipModel.findOne({membershipId: s.teamMembershipId}).lean())!.status).toBe("active")
+      expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
     })
 
     test("a topology without sessions is recognized before any command is sent", async () => {
@@ -793,6 +850,12 @@ describe("removeDeletedUserFromWorkspaces", () => {
       ["no server to select", new driver.MongoServerSelectionError("Server selection timed out after 30000 ms", {} as any)],
       ["a dropped connection", new driver.MongoNetworkError("connection 3 to 127.0.0.1:27017 closed")],
       ["a look-alike without the standalone code", Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {code: 11000})],
+      // Code 2 without the whole Cosmos signature is any other server error, not "transactions unsupported".
+      ["code 2 with another message", new driver.MongoServerError({message: "BadValue: unknown operator", code: 2})],
+      ["code 2 with only Transaction is not active", cosmosSecondCollection({message: "Error=2, Details='Transaction is not active'"})],
+      ["code 2 with only Substatus 1101", cosmosSecondCollection({message: "Error=2, Details='BadRequest (400); Substatus: 1101'"})],
+      ["the Cosmos text under another code", cosmosSecondCollection({code: 112})],
+      ["the Cosmos text on a plain Error", Object.assign(new Error(cosmosSecondCollection().message), {code: 2})],
     ] as const
 
     test("propagates, and writes no tombstone outside the transaction, so a poller cannot pass it", async () => {

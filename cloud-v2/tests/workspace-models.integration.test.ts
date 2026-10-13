@@ -19,6 +19,7 @@ import type {Model} from "mongoose"
 import {
   connectMongo,
   disconnectMongo,
+  isCrossCollectionTransactionUnsupported,
   isTransactionsUnsupportedError,
   withTransaction,
 } from "../packages/core/src/connections/mongo.connection"
@@ -247,6 +248,60 @@ describe("withTransaction (error mapping, no Mongo)", () => {
     ]) {
       expect(isTransactionsUnsupportedError(failed)).toBe(false)
     }
+  })
+
+  describe("Azure Cosmos DB for MongoDB's refusal of a transaction across collections", () => {
+    const cosmosMessage =
+      "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
+      'ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21; Reason: (Message: {"Errors":["Transaction is not active"]}\r\n' +
+      "ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21, Request URI: /apps/.../partitions/..., RequestStats: ...)'"
+    const cosmos = (fields: Record<string, unknown> = {}) =>
+      new (WorkspaceModel.base.mongo.MongoServerError)({message: cosmosMessage, code: 2, errorLabels: [], ...fields})
+
+    test("is recognized by its code and both parts of its text, on the error or its cause", () => {
+      const refused = cosmos()
+      expect(refused.name).toBe("MongoServerError")
+      expect(refused.hasErrorLabel("TransientTransactionError")).toBe(false)
+
+      for (const recognized of [refused, new Error("outer", {cause: refused})]) {
+        expect(isCrossCollectionTransactionUnsupported(recognized)).toBe(true)
+      }
+    })
+
+    test("is nothing broader: another code, half the text, another class, or a non-error is not it", () => {
+      for (const other of [
+        cosmos({code: 112}),
+        cosmos({code: undefined}),
+        cosmos({message: "BadValue: unknown operator"}),
+        cosmos({message: "Error=2, Details='Transaction is not active'"}),
+        cosmos({message: "Error=2, Details='BadRequest (400); Substatus: 1101'"}),
+        cosmos({errorLabels: ["TransientTransactionError"], code: 112, message: "write conflict"}),
+        Object.assign(new Error(cosmosMessage), {code: 2}),
+        new Error("outer", {cause: Object.assign(new Error(cosmosMessage), {code: 2})}),
+        new Error("connection closed"),
+        cosmosMessage,
+        null,
+        undefined,
+      ]) {
+        expect(isCrossCollectionTransactionUnsupported(other)).toBe(false)
+      }
+    })
+
+    test("is not what withTransaction rewraps as a replica-set requirement: the workspace writes see Cosmos' own error", async () => {
+      const refused = cosmos()
+      expect(isTransactionsUnsupportedError(refused)).toBe(false)
+      const spy = spyOn(WorkspaceModel.db, "startSession").mockResolvedValue({
+        withTransaction: async () => {
+          throw refused
+        },
+        endSession: async () => {},
+      } as any)
+      try {
+        expect(await thrown(() => withTransaction(async () => 1))).toBe(refused)
+      } finally {
+        spy.mockRestore()
+      }
+    })
   })
 
   test("rethrows unrelated errors unchanged and still ends the session", async () => {

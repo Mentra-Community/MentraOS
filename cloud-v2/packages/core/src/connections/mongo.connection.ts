@@ -84,6 +84,30 @@ export function isTransactionsUnsupportedError(err: unknown): boolean {
 }
 
 /**
+ * True only for the one failure Azure Cosmos DB for MongoDB (RU) gives a transaction that touches a
+ * second collection: it commits a transaction within one collection, and answers the write to the
+ * second with `MongoServerError` code 2, no error labels, and a message that starts
+ * `Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; ...
+ * Reason: (Message: {"Errors":["Transaction is not active"]}`. It matches that signature and nothing
+ * broader: code 2 together with both `Transaction is not active` and `Substatus: 1101`, on the error or
+ * its `cause`. MongoDB Atlas never produces this text, so on a replica set every failure still propagates.
+ *
+ * Kept apart from {@link isTransactionsUnsupportedError} on purpose: `withTransaction` rewraps that one
+ * into an error naming the replica-set requirement, which this one's callers (the account-deletion
+ * tombstone) do not want applied to every transaction on Cosmos.
+ */
+export function isCrossCollectionTransactionUnsupported(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.cause !== undefined && isCrossCollectionTransactionUnsupported(err.cause)) return true;
+  return (
+    err.name === "MongoServerError" &&
+    (err as { code?: unknown }).code === 2 &&
+    err.message.includes("Transaction is not active") &&
+    err.message.includes("Substatus: 1101")
+  );
+}
+
+/**
  * Run `fn` inside a MongoDB transaction and commit when it resolves.
  *
  * Every write that must be atomic has to pass the supplied `session`. The
