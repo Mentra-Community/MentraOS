@@ -20,6 +20,10 @@ import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/s
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
+import {
+  WORKSPACE_AUDIT_COUNTER_ID,
+  WorkspaceAuditCounterModel,
+} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -33,6 +37,7 @@ const MODELS: Model<any>[] = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
   LegacyBrowserIdentityModel,
 ]
 
@@ -663,6 +668,40 @@ describe("workspace models (local replica set)", () => {
       expect(byKey({workspaceId: 1, eventId: -1})).toBeDefined()
     })
 
+    test("indexes the change feed by seq, and the index is not unique", async () => {
+      // `workspace_audit_events` is populated in every deployment, and Azure Cosmos DB cannot add a unique
+      // index to a populated collection: a unique seq index would stop an upgrade. Sequence order comes from
+      // the counter's transaction, not from the index.
+      const index = (await WorkspaceAuditEventModel.collection.indexes()).find(
+        candidate => JSON.stringify(candidate.key) === JSON.stringify({seq: 1}),
+      )
+      expect(index).toBeDefined()
+      expect(index!.unique).not.toBe(true)
+      const [fields, options] = WorkspaceAuditEventModel.schema.indexes().find(([f]) => "seq" in f)!
+      expect(fields).toEqual({seq: 1})
+      expect(options.unique).not.toBe(true)
+    })
+
+    test("takes a seq only from events recorded for the feed: older events and organization events have none", async () => {
+      const row = await WorkspaceAuditEventModel.create({
+        eventId: "01HZ0000000000000000000030",
+        action: "credential.created",
+        actor: {kind: "system"},
+        occurredAt: new Date(),
+      })
+      expect(row.seq).toBeUndefined()
+      const stored = await WorkspaceAuditEventModel.collection.findOne({eventId: "01HZ0000000000000000000030"})
+      expect(stored).not.toHaveProperty("seq")
+      await WorkspaceAuditEventModel.create({
+        eventId: "01HZ0000000000000000000031",
+        seq: 5,
+        action: "workspace.created",
+        actor: {kind: "system"},
+        occurredAt: new Date(),
+      })
+      expect((await WorkspaceAuditEventModel.findOne({eventId: "01HZ0000000000000000000031"}).lean())?.seq).toBe(5)
+    })
+
     test("allows organization-level events without a workspace and validates the actor kind", async () => {
       const row = await WorkspaceAuditEventModel.create({
         eventId: "01HZ0000000000000000000011",
@@ -691,6 +730,17 @@ describe("workspace models (local replica set)", () => {
           )
         ).name,
       ).toBe("ValidationError")
+    })
+  })
+
+  describe("workspace audit counter", () => {
+    test("is one document under a fixed id that starts at 0 and cannot be created twice", async () => {
+      const row = await WorkspaceAuditCounterModel.create({_id: WORKSPACE_AUDIT_COUNTER_ID})
+      expect(row.seq).toBe(0)
+      expect(
+        (await thrown(() => WorkspaceAuditCounterModel.create({_id: WORKSPACE_AUDIT_COUNTER_ID}))).code,
+      ).toBe(11000)
+      expect(WorkspaceAuditCounterModel.collection.collectionName).toBe("workspace_audit_counters")
     })
   })
 

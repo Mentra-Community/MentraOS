@@ -6,7 +6,9 @@
  * memberships created and every invitation the person sent, in one transaction, before the account
  * itself is deleted; then their operator keys are revoked and their identity is cleared from the rows
  * that stay. Nothing else about workspaces changes: other people's memberships and keys, service keys,
- * and invitations addressed to the person stay.
+ * and invitations addressed to the person stay. The last write of that transaction is the
+ * `user.deleted` tombstone on the change feed, which tells a service keeping data keyed by the
+ * person to delete it.
  *
  * Real rows on a local replica set: users, one-time codes, memberships, credentials, invitations and
  * audit events. The account directory (GoTrue's admin API, where the account is deleted) is a fake
@@ -28,6 +30,7 @@ import {BrowserSessionModel} from "../packages/core/src/models/browser-session.m
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -41,6 +44,7 @@ import {
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
+import {listChanges} from "../packages/core/src/services/workspaces/audit.service"
 import {
   createOperatorKey,
   createWorkspaceCredential,
@@ -83,6 +87,7 @@ const MODELS = [
   RefreshTokenModel,
   SupportProfileModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
@@ -282,9 +287,11 @@ describe("confirmAccountDeletion", () => {
       expect((await getWorkspace(previous.workspaceId))!.authorizationRevision).toBeGreaterThan(previous.authorizationRevision)
     }
 
-    // The audit trail: one membership.removed per membership, in its workspace, and nothing else.
-    const added = (await WorkspaceAuditEventModel.find({}).lean()).filter(event => !eventsBefore.has(event.eventId))
-    expect(added.map(event => event.action)).toEqual(["membership.removed", "membership.removed"])
+    // The audit trail: one membership.removed per membership, in its workspace, then the tombstone.
+    const added = (await WorkspaceAuditEventModel.find({}).sort({seq: 1}).lean()).filter(
+      event => !eventsBefore.has(event.eventId),
+    )
+    expect(added.map(event => event.action)).toEqual(["membership.removed", "membership.removed", "user.deleted"])
     const byMembership = new Map(added.map(event => [(event.target as {membershipId: string}).membershipId, event]))
     expect(byMembership.get(s.teamMembershipId)).toMatchObject({
       workspaceId: s.team.workspaceId,
@@ -299,9 +306,11 @@ describe("confirmAccountDeletion", () => {
       before: {role: "owner", status: "active"},
       after: {status: "ended", endedReason: "account_deleted", revokedCredentialIds: [s.soloKey.credential.credentialId]},
     })
-    // No organization-level record of the person is kept.
-    expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: null})).toBe(0)
-    expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
+    // The only organization-level record of the person is the tombstone, and it names the opaque id alone.
+    const organizational = await WorkspaceAuditEventModel.find({workspaceId: null}).lean()
+    expect(organizational.map(event => event.action)).toEqual(["user.deleted"])
+    expect(organizational[0]).toMatchObject({target: {mentraUserId: s.mentraUserId}})
+    expect(JSON.stringify(organizational[0])).not.toContain(s.email)
   })
 
   test("a last owner's deletion is not refused: the workspace is left without an owner for recovery", async () => {
@@ -530,7 +539,7 @@ describe("confirmAccountDeletion", () => {
 })
 
 describe("removeDeletedUserFromWorkspaces", () => {
-  test("a second run ends nothing more and records nothing", async () => {
+  test("a second run ends nothing more and records nothing, the tombstone included", async () => {
     const s = await scenario()
 
     expect((await removeDeletedUserFromWorkspaces(s.mentraUserId)).endedMembershipIds.sort()).toEqual(
@@ -551,7 +560,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
     }
   })
 
-  test("a person with no active membership needs no transaction and changes no workspace", async () => {
+  test("a person with no active membership changes no workspace and records only the tombstone", async () => {
     const {mentraUserId: lonely} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-lonely"})
     const {mentraUserId: former} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-former"})
     const team = await createWorkspace(actor("mu_owner"), {name: "Team"})
@@ -567,9 +576,11 @@ describe("removeDeletedUserFromWorkspaces", () => {
           result: {endedMembershipIds: [], revokedInvitationIds: [], revokedOperatorKeyIds: []},
         })
       }
-      expect(startSession).not.toHaveBeenCalled()
+      // Each has a tombstone to record, which takes a transaction of its own.
+      expect(startSession).toHaveBeenCalledTimes(3)
 
-      // Someone with a membership does go through a transaction.
+      // Someone with a membership goes through one transaction, tombstone included.
+      startSession.mockClear()
       const {mentraUserId: member} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-member"})
       const membershipId = await addMember(team.workspaceId, {mentraUserId: member, role: "member"})
       expect(await removeDeletedUserFromWorkspaces(member)).toEqual({
@@ -578,11 +589,23 @@ describe("removeDeletedUserFromWorkspaces", () => {
         revokedOperatorKeyIds: [],
       })
       expect(startSession).toHaveBeenCalledTimes(1)
+
+      // Running it again changes nothing, and does not even open a transaction.
+      startSession.mockClear()
+      for (const mentraUserId of [lonely, former, "mu_never_seen", member]) await removeDeletedUserFromWorkspaces(mentraUserId)
+      expect(startSession).not.toHaveBeenCalled()
     } finally {
       startSession.mockRestore()
     }
-    // Only the member's removal changed anything.
-    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(eventsBefore + 1)
+    // The three tombstones, the member's removal and the member's tombstone: nothing else was recorded.
+    const added = await WorkspaceAuditEventModel.find({}).sort({seq: 1}).lean()
+    expect(added.slice(eventsBefore).map(event => event.action)).toEqual([
+      "user.deleted",
+      "user.deleted",
+      "user.deleted",
+      "membership.removed",
+      "user.deleted",
+    ])
     expect((await getWorkspace(team.workspaceId))!.authorizationRevision).toBe(revision + 1)
   })
 
@@ -601,6 +624,120 @@ describe("removeDeletedUserFromWorkspaces", () => {
     expect(await WorkspaceMembershipModel.findOne({membershipId}).lean()).toMatchObject({
       status: "ended",
       endedReason: "account_deleted",
+    })
+  })
+
+  test("records user.deleted last, after the membership.removed events of the same deletion, on the change feed", async () => {
+    const s = await scenario()
+    const {events: before} = await listChanges({})
+
+    await removeDeletedUserFromWorkspaces(s.mentraUserId)
+
+    const {events, next} = await listChanges({after: String(before.at(-1)!.seq)})
+    expect(events.map(event => event.action)).toEqual(["membership.removed", "membership.removed", "user.deleted"])
+    expect(events.slice(0, 2).map(event => event.workspaceId).sort()).toEqual(
+      [s.team.workspaceId, s.solo.workspaceId].sort(),
+    )
+    // Strictly increasing: the tombstone follows both removals in the feed's own order.
+    expect(events[0]!.seq).toBeLessThan(events[1]!.seq)
+    expect(events[1]!.seq).toBeLessThan(events[2]!.seq)
+    expect(events.at(-1)).toMatchObject({
+      workspaceId: null,
+      action: "user.deleted",
+      target: {mentraUserId: s.mentraUserId},
+      before: null,
+      after: null,
+    })
+    expect(next).toBeNull()
+    const tombstone = (await WorkspaceAuditEventModel.findOne({action: "user.deleted"}).lean())!
+    expect(tombstone.actor).toMatchObject({kind: "user", mentraUserId: s.mentraUserId})
+  })
+
+  test("a person in no workspace still gets a tombstone, and only one however often or at once it runs", async () => {
+    const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-nobody"})
+
+    await Promise.all([removeDeletedUserFromWorkspaces(mentraUserId), removeDeletedUserFromWorkspaces(mentraUserId)])
+    await removeDeletedUserFromWorkspaces(mentraUserId)
+
+    const {events} = await listChanges({})
+    expect(events.map(event => [event.action, event.workspaceId, event.target])).toEqual([
+      ["user.deleted", null, {mentraUserId}],
+    ])
+  })
+
+  test("concurrent runs for a person in workspaces end each membership once and record one tombstone", async () => {
+    const s = await scenario()
+
+    await Promise.all([removeDeletedUserFromWorkspaces(s.mentraUserId), removeDeletedUserFromWorkspaces(s.mentraUserId)])
+
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.removed"})).toBe(2)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(1)
+  })
+
+  test("the tombstone is the deletion's last write, in its transaction: if it cannot be written, nothing is ended", async () => {
+    const s = await scenario()
+    const events = await WorkspaceAuditEventModel.countDocuments({})
+    const create = WorkspaceAuditEventModel.create.bind(WorkspaceAuditEventModel) as (...args: any[]) => Promise<unknown>
+    const failing = spyOn(WorkspaceAuditEventModel, "create").mockImplementation(((docs: any, options: any) => {
+      if (docs?.[0]?.action === "user.deleted") return Promise.reject(new Error("tombstone write failed"))
+      return create(docs, options)
+    }) as any)
+    try {
+      await expect(removeDeletedUserFromWorkspaces(s.mentraUserId)).rejects.toThrow("tombstone write failed")
+    } finally {
+      failing.mockRestore()
+    }
+
+    // The failure rolled back the memberships it had ended before it, and their events.
+    for (const membershipId of [s.teamMembershipId, s.soloMembershipId]) {
+      expect((await WorkspaceMembershipModel.findOne({membershipId}).lean())!.status).toBe("active")
+    }
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.sentInvitationId}).lean())!.status).toBe("pending")
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+    const counter = await WorkspaceAuditCounterModel.findOne({}).lean()
+    expect((await listChanges({limit: 500})).events.at(-1)?.seq).toBe(counter?.seq)
+  })
+
+  describe("on a database that cannot run transactions", () => {
+    const unsupported = () =>
+      spyOn(WorkspaceModel.db, "startSession").mockRejectedValue(
+        new Error("Transaction numbers are only allowed on a replica set member or mongos"),
+      )
+
+    test("a person with no workspace state still gets a tombstone, written without one", async () => {
+      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-no-transactions"})
+      const startSession = unsupported()
+      try {
+        expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
+          endedMembershipIds: [],
+          revokedInvitationIds: [],
+          revokedOperatorKeyIds: [],
+        })
+        // A second run finds the first one's tombstone and has no transaction to attempt.
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+        expect(startSession).toHaveBeenCalledTimes(1)
+      } finally {
+        startSession.mockRestore()
+      }
+
+      const {events} = await listChanges({})
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
+    })
+
+    test("a person with workspace state is not ended half way: the deletion fails and nothing changes", async () => {
+      const s = await scenario()
+      const events = await WorkspaceAuditEventModel.countDocuments({})
+      const startSession = unsupported()
+      try {
+        await expect(removeDeletedUserFromWorkspaces(s.mentraUserId)).rejects.toThrow("Transaction numbers are only allowed")
+      } finally {
+        startSession.mockRestore()
+      }
+
+      expect((await WorkspaceMembershipModel.findOne({membershipId: s.teamMembershipId}).lean())!.status).toBe("active")
+      expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
     })
   })
 

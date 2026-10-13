@@ -104,6 +104,49 @@ export interface ResolveEmailResponse {
   mentraUserId: string
 }
 
+// --- Change feed ------------------------------------------------------------
+
+/**
+ * One entry of Core's change feed (`GET /changes`). `eventId` identifies the event; `seq` is its
+ * position in the feed, assigned in commit order, and is the only thing to page by: pass the last
+ * `seq` you processed, as a decimal string, as the next request's `after`. The feed leaves out
+ * organization-level events (operator keys), so consecutive events can skip `seq` numbers. A
+ * skipped number is never a missed event.
+ *
+ * `workspaceId` is null only for user-level tombstones ({@link USER_DELETED_ACTION}). `action`
+ * names the change (`"user.deleted"`, `"workspace.created"`, ...); a receiver treats an action it
+ * does not know as a no-op. `target`, `before` and `after` are snapshots whose shape depends on
+ * `action` (see the event catalog in Core's `docs/fleet-integration.md`), null when the event has
+ * none, with every credential-looking key (`token`, `secret`, `hash`, `password`) removed at any
+ * depth.
+ */
+export interface WorkspaceChangeEvent {
+  eventId: string
+  seq: number
+  workspaceId: string | null
+  action: string
+  occurredAt: string
+  target: Record<string, unknown> | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}
+
+/**
+ * Response of `GET /changes`: events in `seq` order. `next` is the cursor for the following page
+ * (the last event's `seq`), or null when the page was not full and there is nothing more yet.
+ */
+export interface WorkspaceChangesResponse {
+  events: WorkspaceChangeEvent[]
+  next: string | null
+}
+
+/**
+ * `action` of the tombstone recorded when a Mentra account is deleted: `workspaceId` is null and
+ * `target` is `{mentraUserId}`. A service that keeps data keyed by that user deletes it. Each
+ * membership the deletion ended was recorded before it, as a `membership.removed` event.
+ */
+export const USER_DELETED_ACTION = "user.deleted"
+
 // --- Forwarded principals (Core -> Fleet) ----------------------------------
 
 /**

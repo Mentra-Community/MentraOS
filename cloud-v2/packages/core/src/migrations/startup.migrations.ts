@@ -24,6 +24,7 @@ import { TestDispatchModel } from "../models/test-dispatch.model";
 import {ReportModel} from '../models/report.model';
 import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-asset.model';
 import { AccessCredentialModel } from "../models/access-credential.model";
+import { WorkspaceAuditCounterModel } from "../models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
@@ -100,7 +101,10 @@ export async function runStartupMigrations(): Promise<void> {
   // collections, before serving: a request in the first moments after boot must
   // not create a collection inside a transaction. The membership claim's legacy
   // identities are among them: their collection is created here while it is
-  // empty, so its unique index can be built on Azure Cosmos DB too. An index the
+  // empty, so its unique index can be built on Azure Cosmos DB too. The change
+  // feed's counter collection is new and built empty the same way; the feed's
+  // `seq` index on the already populated audit events is not unique, because
+  // Cosmos DB cannot add a unique index to a populated collection. An index the
   // database refuses (some databases a Private Cloud uses support only part of
   // MongoDB's index options) is logged and does not stop Core: sign-in,
   // incidents and keys keep working.
@@ -111,6 +115,7 @@ export async function runStartupMigrations(): Promise<void> {
       WorkspaceInvitationModel,
       AccessCredentialModel,
       WorkspaceAuditEventModel,
+      WorkspaceAuditCounterModel,
       LegacyBrowserIdentityModel,
     ].map(
       async (model) => {

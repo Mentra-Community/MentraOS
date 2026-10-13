@@ -4,7 +4,8 @@ Fleet is an optional, separately deployed service (MFM) that collects usage from
 the Mentra App and shows an organization its devices and activity. Core stores
 none of its data. It authenticates the caller, decides who the caller is and what
 the request covers, forwards the request to Fleet with a signed statement of
-that, and relays Fleet's answer. This page is the contract between the two; the
+that, and relays Fleet's answer. Fleet follows Core's change feed to learn when
+Core deletes an account. This page is the contract between the two; the
 behavior is implemented and tested in
 `packages/core/src/api/fleet/fleet-forwarding.ts`, with the configuration in
 `packages/core/src/services/fleet/fleet-config.ts` and the signing in
@@ -43,8 +44,16 @@ every Core variable.
 - `CLOUD_CORE_FLEET_TIMEOUT_MS`: how long Fleet has to answer, body included.
   Default `10000`. A value above `2147483647`, the longest a timer holds, is
   treated as `2147483647`.
+- `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
+  its calls to Core with (below), for example
+  `{"store": ["<newest>", "<older>"], "fleet": ["<newest>", "<older>"]}`. Without
+  a `fleet` list, Core refuses every call from Fleet.
 
 A limit that is not a positive integer falls back to its default.
+
+The two secrets cover the two directions. Core signs what it forwards to Fleet
+with `CLOUD_CORE_FLEET_SECRET`; Fleet signs its calls to Core with a secret from
+the `fleet` list. They may hold the same value.
 
 ## Is Fleet installed?
 
@@ -227,6 +236,130 @@ not know. The consequence for Core is one rule: **a future restriction on what a
 caller may do must change the value of a field that exists, never add a field.**
 A field an older Fleet does not know would be ignored, and the restriction with
 it.
+
+## Following Core's changes
+
+Fleet keeps data keyed by the people who use it, so it learns from Core when a
+person is gone. It calls Core's internal workspace API at
+`/api/internal/workspaces/*`, signing each request as service `fleet` with a
+secret from the `fleet` list in `CLOUD_CORE_SERVICE_SECRETS`. The signature, the
+60-second clock skew and the refusals (`401 service_unauthorized`) are the
+Store's, described in [Store integration](store-integration.md#signing), with
+`x-mentra-service: fleet`. `createCoreWorkspaceClient` in
+`@mentra/workspace-contract/server` speaks the API, refuses an answer that does
+not have the documented shape, and reads the feed with `listChanges`:
+
+```ts
+import {createCoreWorkspaceClient} from "@mentra/workspace-contract/server"
+
+const core = createCoreWorkspaceClient({baseUrl: CORE_URL, service: "fleet", secret: FLEET_SERVICE_SECRET})
+const {events, next} = await core.listChanges({after: cursor, limit: 500}) // cursor: string | null
+```
+
+The feed (`GET /changes`) answers the `store` and `fleet` services. The routes
+that answer any service ([Store integration](store-integration.md#routes)) answer
+Fleet too. `POST /credentials` and `POST /users/resolve-email` are the Store's
+and answer Fleet `403 {"error":"forbidden"}`.
+
+### The change feed
+
+`GET /changes?after=&limit=` lists workspace changes in commit order, so a service
+that was offline can catch up:
+
+- **Paging.** `after` is the `seq` of the last event processed, as a decimal
+  string (omit it to start from the beginning); anything else is
+  `400 invalid_request`. `limit` defaults to 100 and is clamped to 1 to 500; a
+  value that is not an integer is `400 invalid_request`. `next` is the cursor for
+  the following page, or null when the page was not full. A full page may be the
+  last: the next call returns no events. Store your cursor only after processing
+  an event.
+- **Order and gaps.** `seq` is assigned in commit order from one counter, inside
+  the transaction that records the event, and a rolled-back transaction gives its
+  number back. A later read therefore never shows an event with a lower `seq` than
+  one already seen. The feed leaves organization-level events (operator keys) out,
+  so consecutive feed events can skip numbers. A skipped number is never a missed
+  workspace event. On a database that cannot run transactions, the one event Core
+  can still record, the `user.deleted` tombstone of a person in no workspace, is
+  written without one: its `seq` is still unique and increasing, and only two such
+  tombstones written within milliseconds of each other could be seen out of order.
+- **Retention.** Nothing is ever pruned. The feed begins with the first event
+  Core recorded for it: events recorded before Core had a feed carry no `seq` and
+  are not on it, so it cannot rebuild earlier history. A service that needs the
+  current state asks `GET /workspaces/:workspaceId` and `POST /memberships/check`.
+- **Contents.** Each event is `{eventId, seq, workspaceId, action, occurredAt,
+  target, before, after}`. `target`, `before` and `after` are snapshots with
+  every credential-looking key (`token`, `secret`, `hash`, `password`) removed at
+  any depth; each is null when the change has none. The actor and request id are
+  not on the feed. Treat unknown actions as no-ops. Membership and invitation
+  events name the member's or invitee's email in `target`: it is a display
+  attribute, never an identity key. Key records by `mentraUserId`.
+- **Scope.** Workspace-scoped events (a `workspaceId`) and user-level tombstones
+  (`workspaceId` null) only. Fleet sees every workspace's events and filters to
+  the workspaces it serves.
+
+### Event catalog
+
+| `action` | `target` | `before` | `after` |
+| --- | --- | --- | --- |
+| `workspace.created` | `{workspaceId, membershipId}` | null | `{name, role: "owner"}` (the creator's membership) |
+| `workspace.renamed` | `{workspaceId}` | `{name}` | `{name}` |
+| `workspace.deleted` | `{workspaceId}` | `{name, status: "active"}` | `{status: "deleted"}` |
+| `workspace.imported` | `{workspaceId}` | null | `{name, created, memberships, invitations, credentials}` (counts) |
+| `membership.added` | `{membershipId, mentraUserId, email}` | `{role: null}` | `{role}` |
+| `membership.role_changed` | `{membershipId, mentraUserId, email}` | `{role}` | `{role}` |
+| `membership.removed` | `{membershipId, mentraUserId, email}` | `{role, status: "active"}` | `{status: "ended", endedReason, revokedCredentialIds, revokedInvitationIds}` |
+| `membership.left` | `{membershipId, mentraUserId, email}` | `{role, status: "active"}` | `{status: "ended", endedReason: "left", revokedCredentialIds, revokedInvitationIds}` |
+| `membership.claimed` | `{membershipId, mentraUserId, email}` | `{mentraUserId: null}` | `{mentraUserId, role}` |
+| `membership.merged_duplicate` | `{membershipId, mentraUserId, email}` | `{role, status, keptMembershipId, keptRole}` | `{status: "ended", endedReason: "removed", keptMembershipId, resultingRole, repointedCredentialIds, repointedInvitationIds}` |
+| `membership.replaced` | `{membershipId, mentraUserId: null, email}` | null | `{replacedByMembershipId, repointedCredentialIds, repointedInvitationIds}` |
+| `membership.ownership_recovered` | `{membershipId, mentraUserId, email}` | `{role}` (null when there was no membership) | `{role: "owner"}` |
+| `invitation.created` | `{invitationId, email}` | null | `{email, role, expiresAt}` |
+| `invitation.accepted` | `{invitationId, membershipId, email}` | `{status: "pending"}` | `{status: "accepted"}` |
+| `invitation.revoked` | `{invitationId, email}` | `{status: "pending", role}` | `{status: "revoked"}`, with `reason: "superseded", supersededBy` when a new invitation replaced it and `reason: "inviter_account_deleted"` when the inviter's account was deleted |
+| `credential.created` | `{credentialId, prefix, credentialKind, workspaceId, name}` | null | `{scopes, packageNames, expiresAt, createdByMembershipId, issuedByService}` |
+| `credential.revoked` | `{credentialId, prefix, credentialKind, workspaceId, name}` | `{revokedAt: null}` | `{revokedAt}` |
+| `user.deleted` | `{mentraUserId}` | null | null |
+
+Notes:
+
+- `membership.removed` has `endedReason` `removed` (an administrator removed the
+  person, or an import ended a membership the Store no longer has) or
+  `account_deleted`. `mentraUserId` is null for a membership nobody has signed in
+  with yet.
+- `workspace.deleted` ends every membership of the workspace
+  (`endedReason: "workspace_deleted"`), revokes its credentials and invitations,
+  and records no per-membership event: treat it as ending them all.
+- A role change made by merging a duplicate shows as `membership.merged_duplicate`
+  with `resultingRole`; the surviving membership's history has the new role.
+- Credentials revoked because their creator's membership ended are listed in
+  that membership's `revokedCredentialIds`, and pending invitations it sent in
+  `revokedInvitationIds`, without their own events.
+- `credential.*` events are the workspace keys'. Operator keys belong to the
+  organization and are not on the feed.
+
+### Account deletion
+
+Deleting a Mentra account ends all of that person's workspace access in one
+transaction, before the account itself is deleted:
+
+1. Each active membership ends with `endedReason: "account_deleted"`: one
+   `membership.removed` event each, the workspace's revision bumped and the
+   credentials and pending invitations that membership created revoked.
+2. The other pending invitations the person sent are revoked
+   (`invitation.revoked`, `after.reason: "inviter_account_deleted"`).
+3. Last, a `user.deleted` tombstone: `workspaceId` null,
+   `target: {"mentraUserId": "..."}`. Delete or anonymize what Fleet keeps keyed
+   by that user, and refuse delayed uploads that would recreate it. Core records
+   it for every deleted account, including a person who belongs to no workspace,
+   and once. Process it idempotently anyway: a service may read a page twice.
+
+The tombstone follows the removals in `seq`, so by the time Fleet reads it the
+person's memberships have ended. Deletion is never refused for a workspace's sake.
+A workspace whose last owner deleted their account stays active without an owner,
+and an Organization Admin recovers it. Invitations addressed to the person's email
+stay valid, since they name an address and not an account. The operator keys the
+person created are revoked outside the feed, and their identity is cleared from
+the rows that stay as history.
 
 ## Not installed versus unavailable
 
