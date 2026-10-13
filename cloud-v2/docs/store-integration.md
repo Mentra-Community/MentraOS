@@ -157,6 +157,7 @@ before the Store starts deferring to Core.
 | `demotedMemberships` | Unclaimed memberships whose role the Store lowered, and Core had not changed since the import: lowered in Core, audited as the system. |
 | `roleDrift` | Memberships whose Store role differs from Core's and that the run leaves alone, with why: `claimed` (the person signed in), `changed_in_core`, or `raised_in_store` (a run only carries reductions). |
 | `claimedMembershipDrift` | Claimed memberships the Store removed, left for an admin to act on in Core. |
+| `invitationConflicts` | Store invitations not imported because Core already has a pending invitation for that email made in Core; the one in Core is kept. (A newer Store invitation for an email replaces the one an earlier run imported, which then appears in `revokedInvitations`.) |
 | `keptLastOwners` | Unclaimed Owner memberships the Store removed or demoted, kept because the workspace would have no other Owner. An Organization Admin decides in Core; a later run ends them once the workspace has another Owner. |
 | `pendingCollisions` | Memberships not imported because the person already holds an unclaimed one in that workspace, with the keys bound to them. |
 | `duplicateMemberships` | People with several active memberships in one organization; the highest role was kept. |

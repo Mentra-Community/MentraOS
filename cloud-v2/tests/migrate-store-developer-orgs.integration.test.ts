@@ -26,7 +26,7 @@
 import {createHash, randomBytes} from "node:crypto"
 import {join} from "node:path"
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
 
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {
@@ -502,6 +502,7 @@ describe("dry run", () => {
       removedMemberships: [],
       demotedMemberships: [],
       roleDrift: [],
+      invitationConflicts: [],
       revokedInvitations: [],
       claimedMembershipDrift: [],
       pendingCollisions: [],
@@ -941,31 +942,28 @@ describe("re-running apply", () => {
   })
 
   test("one org's failure rolls back that org only, and a re-run completes the import", async () => {
-    // A Core row already holds a pending invitation for BETA's invitee under another id, so BETA's
-    // invitation violates the unique (workspace, email) pending-invitation index inside BETA's transaction.
-    await WorkspaceInvitationModel.create({
-      invitationId: "winv_preexisting",
-      workspaceId: ORG_BETA,
-      email: "friend@beta.example",
-      role: "developer",
-      tokenHash: sha256Hex("preexisting"),
-      status: "pending",
-      invitedByAuthority: "system",
-      expiresAt: at("2026-10-20T12:00:00.000Z"),
-    })
-
-    const err = await thrown(() => run({apply: true}))
+    // BETA's invitations fail to write inside BETA's transaction, as a unique index refusing them would.
+    const write = WorkspaceInvitationModel.bulkWrite.bind(WorkspaceInvitationModel)
+    const failing = spyOn(WorkspaceInvitationModel, "bulkWrite").mockImplementation(((operations: unknown[], options: unknown) => {
+      if (JSON.stringify(operations).includes(invitationIds.betaOwnerInvite)) throw new Error("E11000 duplicate key (injected)")
+      return write(operations as never, options as never)
+    }) as never)
+    let err: Error
+    try {
+      err = await thrown(() => run({apply: true}))
+    } finally {
+      failing.mockRestore()
+    }
     expect(err).toBeInstanceOf(MigrationError)
     expect(err.message).toContain(ORG_BETA)
 
     // ACME (processed first) committed whole; BETA left nothing behind, not even an audit event.
     expect(await WorkspaceModel.find({}).distinct("workspaceId")).toEqual([ORG_ACME])
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
-    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ORG_BETA})).toBe(1)
+    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
     expect(await AccessCredentialModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
     expect(await WorkspaceAuditEventModel.find({}).distinct("workspaceId")).toEqual([ORG_ACME])
 
-    await WorkspaceInvitationModel.deleteOne({invitationId: "winv_preexisting"})
     await run({apply: true})
 
     expect(await WorkspaceModel.countDocuments({})).toBe(4)
@@ -1124,6 +1122,59 @@ describe("re-running apply carries access removals made in the Store", () => {
       actor: {kind: "system"},
       target: {invitationId: invitationIds.acmeAdmin},
     })
+  })
+
+  test("a newer Store invitation for the same email replaces the one imported earlier, even while both are pending in the Store", async () => {
+    await run({apply: true})
+    const newer = `dinv_${ulid()}`
+    await sourceDb()
+      .collection("developer_org_invitations")
+      .insertOne({
+        ...invitation("acmeAdmin", {orgId: ORG_ACME, email: "New.Admin@acme.example", role: "admin"}),
+        invitationId: newer,
+        tokenHash: sha256Hex("invite-newer"),
+        createdAt: at("2026-10-06T12:00:00.000Z"),
+      })
+
+    const dry = await withReadOnlyTarget(target => run({target}))
+    const report = await run({apply: true})
+
+    expect(report).toEqual({...dry, mode: "apply"})
+    expect(report.revokedInvitations).toEqual([{orgId: ORG_ACME, invitationId: invitationIds.acmeAdmin}])
+    expect(await WorkspaceInvitationModel.findOne({invitationId: invitationIds.acmeAdmin}).lean()).toMatchObject({status: "revoked"})
+    expect(await WorkspaceInvitationModel.findOne({invitationId: newer}).lean()).toMatchObject({
+      status: "pending",
+      email: "new.admin@acme.example",
+    })
+  })
+
+  test("a pending invitation made in Core keeps its email: the Store's for the same address is reported, not imported", async () => {
+    await run({apply: true})
+    await WorkspaceInvitationModel.create({
+      invitationId: "winv_made_in_core",
+      workspaceId: ORG_ACME,
+      email: "late.joiner@acme.example",
+      role: "developer",
+      tokenHash: sha256Hex("invite-core"),
+      status: "pending",
+      invitedByAuthority: "system",
+      expiresAt: at("2036-10-12T12:00:00.000Z"),
+    })
+    const fromStore = `dinv_${ulid()}`
+    await sourceDb()
+      .collection("developer_org_invitations")
+      .insertOne({
+        ...invitation("acmeMember", {orgId: ORG_ACME, email: "late.joiner@acme.example"}),
+        invitationId: fromStore,
+        tokenHash: sha256Hex("invite-late"),
+      })
+
+    const report = await run({apply: true})
+
+    expect(report.invitationConflicts).toEqual([{orgId: ORG_ACME, invitationId: fromStore, keptInvitationId: "winv_made_in_core"}])
+    expect(report.revokedInvitations).toEqual([])
+    expect(await WorkspaceInvitationModel.findOne({invitationId: fromStore}).lean()).toBeNull()
+    expect(await WorkspaceInvitationModel.findOne({invitationId: "winv_made_in_core"}).lean()).toMatchObject({status: "pending"})
   })
 
   test("a person removed and re-added in the Store gets their new membership in place of the old one, keeping their keys and invitations", async () => {

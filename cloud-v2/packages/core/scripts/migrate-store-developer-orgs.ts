@@ -37,7 +37,11 @@
  *    (`wm_owner_<orgId>`) counts as gone once the Store no longer gives that person
  *    access to the org at all.
  *  - A Store invitation that is no longer pending, and is still pending in Core, is
- *    revoked in Core (`revokedInvitations`, one `invitation.revoked` event each).
+ *    revoked in Core (`revokedInvitations`, one `invitation.revoked` event each). So
+ *    is a pending one an earlier run imported when a newer Store invitation for the
+ *    same email replaces it (Core keeps one pending invitation per email). A pending
+ *    invitation made in Core is kept, and the Store's for that email is reported
+ *    instead of imported (`invitationConflicts`).
  *  - A role the Store lowered, on a membership still unclaimed whose role Core has
  *    not changed since the import (its only role history entry), is lowered in Core
  *    (`demotedMemberships`, one `membership.role_changed` event each, as the system).
@@ -288,7 +292,15 @@ export type MigrationReport = {
    * reductions).
    */
   roleDrift: Array<{orgId: string; membershipId: string; coreRole: string; storeRole: string; reason: RoleDriftReason}>
-  /** Pending Core invitations revoked because their Store invitation is no longer pending. */
+  /**
+   * Store invitations not imported because Core already has a pending invitation for that email that
+   * did not come from the Store (made in Core since): the one in Core is kept.
+   */
+  invitationConflicts: Array<{orgId: string; invitationId: string; keptInvitationId: string}>
+  /**
+   * Pending Core invitations revoked because their Store invitation is no longer pending, or because a
+   * newer Store invitation for the same email replaces them.
+   */
   revokedInvitations: Array<{orgId: string; invitationId: string}>
   /** Claimed (signed-in) memberships whose Store membership is gone: reported, never changed. */
   claimedMembershipDrift: Array<{orgId: string; membershipId: string; mentraUserId: string}>
@@ -430,6 +442,7 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     demotedMemberships: [],
     roleDrift: [],
     revokedInvitations: [],
+    invitationConflicts: [],
     claimedMembershipDrift: [],
     pendingCollisions: [],
     keptLastOwners: [],
@@ -708,6 +721,8 @@ type TargetState = {
   liveCredentials: Array<{credentialId: string; createdByMembershipId: string | null}>
   /** The workspace's pending invitations. */
   pendingInvitationIds: string[]
+  /** The email of each pending invitation, lowercased, by invitation id. */
+  pendingInvitationEmails: Map<string, string>
   /** Planned membership, invitation and credential ids that already exist in Core, in any state. */
   existingMembershipIds: Set<string>
   existingInvitationIds: Set<string>
@@ -730,6 +745,7 @@ type Reconciliation = {
   roleDrift: Array<{membershipId: string; coreRole: string; storeRole: string; reason: RoleDriftReason}>
   claimedDrift: Array<{membershipId: string; mentraUserId: string}>
   collisions: Array<{membershipId: string; userId: string; skippedCredentialIds: string[]}>
+  invitationConflicts: Array<{invitationId: string; keptInvitationId: string}>
   keptLastOwners: Array<{membershipId: string; userId: string}>
   /** What this run inserts (absent from Core and not skipped). */
   insert: {memberships: PlannedMembership[]; invitations: PlannedInvitation[]; credentials: PlannedCredential[]}
@@ -757,7 +773,7 @@ async function readTargetState(
         .find({workspaceId, revokedAt: null}, {...options, projection: {credentialId: 1, createdByMembershipId: 1}})
         .toArray(),
       collection(WorkspaceInvitationModel)
-        .find({workspaceId, status: "pending"}, {...options, projection: {invitationId: 1}})
+        .find({workspaceId, status: "pending"}, {...options, projection: {invitationId: 1, email: 1}})
         .toArray(),
       collection(WorkspaceMembershipModel)
         .find(
@@ -804,6 +820,7 @@ async function readTargetState(
       createdByMembershipId: stringOrNull(row.createdByMembershipId),
     })),
     pendingInvitationIds: invitations.map(row => String(row.invitationId)),
+    pendingInvitationEmails: new Map(invitations.map(row => [String(row.invitationId), String(row.email ?? "").trim().toLowerCase()])),
     existingMembershipIds: new Set(existingMemberships.map(row => String(row.membershipId))),
     existingInvitationIds: new Set(existingInvitations.map(row => String(row.invitationId))),
     existingCredentialIds: new Set(existingCredentials.map(row => String(row.credentialId))),
@@ -824,6 +841,7 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
     roleDrift: [],
     claimedDrift: [],
     collisions: [],
+    invitationConflicts: [],
     keptLastOwners: [],
     insert: {memberships: [], invitations: [], credentials: []},
   }
@@ -968,11 +986,31 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
     memberships: plan.memberships.filter(
       membership => !skippedMemberships.has(membership.membershipId) && !target.existingMembershipIds.has(membership.membershipId),
     ),
-    invitations: plan.invitations.filter(invitation => !target.existingInvitationIds.has(invitation.invitationId)),
+    invitations: [] as PlannedInvitation[],
     credentials: plan.credentials.filter(
       credential => !skippedCredentials.has(credential.credentialId) && !target.existingCredentialIds.has(credential.credentialId),
     ),
   }
+
+  // Core keeps one pending invitation per email per workspace. A new Store invitation replaces a pending
+  // one an earlier run imported for the same email (the Store's newest wins); one made in Core is kept.
+  const revoking = new Set(result.revokeInvitationIds)
+  for (const invitation of plan.invitations) {
+    if (target.existingInvitationIds.has(invitation.invitationId)) continue
+    const pendingForEmail = [...target.pendingInvitationEmails].find(
+      ([id, email]) => email === invitation.email && id !== invitation.invitationId && !revoking.has(id),
+    )?.[0]
+    if (pendingForEmail && !plan.source.invitationStatus.has(pendingForEmail)) {
+      result.invitationConflicts.push({invitationId: invitation.invitationId, keptInvitationId: pendingForEmail})
+      continue
+    }
+    if (pendingForEmail) {
+      result.revokeInvitationIds.push(pendingForEmail)
+      revoking.add(pendingForEmail)
+    }
+    result.insert.invitations.push(invitation)
+  }
+  result.revokeInvitationIds.sort(compareStrings)
 
   // A membership the Store replaced with another one of the same person (removed and re-added, or
   // another of their rows now ranks first) hands its live keys and pending invitations to that one,
@@ -1043,6 +1081,7 @@ function recordOrg(report: MigrationReport, plan: OrgPlan, result: Reconciliatio
   for (const invitationId of result.revokeInvitationIds) report.revokedInvitations.push({orgId, invitationId})
   for (const entry of result.claimedDrift) report.claimedMembershipDrift.push({orgId, ...entry})
   for (const entry of collisions) report.pendingCollisions.push({orgId, ...entry})
+  for (const entry of result.invitationConflicts) report.invitationConflicts.push({orgId, ...entry})
   for (const entry of result.keptLastOwners) report.keptLastOwners.push({orgId, ...entry})
 }
 
