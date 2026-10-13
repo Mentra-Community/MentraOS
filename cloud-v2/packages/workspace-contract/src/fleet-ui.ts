@@ -1,0 +1,40 @@
+/// <reference lib="dom" />
+/**
+ * The contract between a host page and the Fleet UI module that the Fleet integration serves
+ * (`/api/admin/fleet/ui/entry.js`). The host, an admin portal page, imports the module, checks
+ * `contractVersion`, and calls `mount` with a {@link FleetUiContext}. Types and one constant only,
+ * so the host and the module can both import it in the browser.
+ */
+
+/** The version of this contract. A host and a module that disagree on it must not be mounted together. */
+export const FLEET_UI_CONTRACT_VERSION = 1
+
+/** What the host knows about the caller. */
+export interface FleetUiMe {
+  authenticated: true
+  /** The signed-in Mentra user, or null when the caller is not signed in as one. */
+  user: {mentraUserId: string; email: string | null} | null
+  organization: {capabilities: string[]}
+  fleet: {installed: boolean}
+}
+
+/** Everything the host hands the module when it mounts. */
+export interface FleetUiContext {
+  contractVersion: 1
+  /** Where the module sends its API requests, e.g. `/api/admin/fleet`. */
+  apiBase: string
+  me: FleetUiMe
+  /** The host's current route. */
+  route: {path: string; query: string}
+  /** Asks the host to go to `path`; with `replace`, the current history entry is replaced instead of a new one added. */
+  navigate(path: string, opts?: {replace?: boolean}): void
+  /** Tells the host the caller's session has ended (the API answered 401), so it can send them to sign in. */
+  onSessionExpired(): void
+}
+
+/** What the Fleet UI entry exports. */
+export interface FleetUiModule {
+  contractVersion: number
+  /** Renders into `element`; the returned handle removes everything the module added. */
+  mount(element: HTMLElement | ShadowRoot, ctx: FleetUiContext): {unmount(): void}
+}

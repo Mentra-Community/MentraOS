@@ -104,6 +104,51 @@ export interface ResolveEmailResponse {
   mentraUserId: string
 }
 
+// --- Forwarded principals (Core -> Fleet) ----------------------------------
+
+/**
+ * The headers Core adds to a request it forwards to the Fleet integration, beyond the service
+ * signature headers (`SERVICE_HEADERS`, with `x-mentra-service: core`). `principal` is the caller as
+ * base64url JSON ({@link ForwardedPrincipal}); `principalSignature` is a base64url HMAC-SHA256,
+ * keyed with the same secret as the service signature, over `<timestamp>\n<principal header>`.
+ * Verify both with `verifyForwardedPrincipal` from `@mentra/workspace-contract/server`.
+ */
+export const FORWARDED_PRINCIPAL_HEADERS = {
+  principal: "x-mentra-principal",
+  principalSignature: "x-mentra-principal-signature",
+} as const
+
+/** The `x-mentra-service` value of every request Core forwards. */
+export const FORWARDING_SERVICE = "core"
+
+/**
+ * What a signed-in person's Fleet request covers, decided by Core: the whole organization, or one
+ * workspace (a team).
+ */
+export type FleetScope = {kind: "organization"} | {kind: "workspace"; workspaceId: string}
+
+/**
+ * Who a forwarded request is from. Only people reach Fleet: `/v1/client` only ever receives `phone`
+ * principals and `/v1/admin` only `user` principals.
+ *
+ * - `phone`: a signed-in phone session. `email` is the account's verified email, or null; it is a
+ *   display attribute and never an identity key.
+ * - `user`: a signed-in person. `isOrganizationAdmin` comes from a verified identity email; `email`
+ *   may be unverified (`emailVerified`) and is never an authorization. `organizationCapabilities` is
+ *   what Core decided the person may do to the organization, and `scope` is what this request covers.
+ */
+export type ForwardedPrincipal =
+  | {kind: "phone"; mentraUserId: string; tenantId: string; sessionId: string; email: string | null}
+  | {
+      kind: "user"
+      mentraUserId: string
+      email: string | null
+      emailVerified: boolean
+      isOrganizationAdmin: boolean
+      organizationCapabilities: OrganizationCapability[]
+      scope: FleetScope
+    }
+
 /**
  * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`
  * from `/principal` as "this bearer token is not valid"; anything else is a service-level failure.
