@@ -7,7 +7,7 @@ import {refreshTokenGrant} from "openid-client"
 
 import {ensureOidcClient, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
-import {loadStoredLogin, saveCredentials, type CliCredentials} from "./credentials"
+import {clearCredentials, loadStoredLogin, saveCredentials, type CliCredentials} from "./credentials"
 import {loopbackLogin} from "./loopback-login"
 import {loadFreshCredentials, selectWorkspace, signOut, storeLogin} from "./session"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
@@ -163,6 +163,21 @@ test("a refresh never overwrites a login another command stored while it was in 
   const result = (await refreshing) as CliCredentials
   expect(result.refreshToken).toBe("other-refresh")
   expect((await loadStoredLogin(target))!.refreshToken).toBe("other-refresh")
+  // The tokens this refresh obtained, which nothing will use, are revoked.
+  expect(idp.revocations).toHaveLength(1)
+})
+
+test("a refresh that finishes after the login was signed out (by a command that took over) stores nothing", async () => {
+  await storedLogin(30_000)
+  idp.refreshDelayMs = 300
+  const refreshing = loadFreshCredentials(target)
+  await Bun.sleep(80)
+  await clearCredentials(target)
+  expect(await refreshing).toBeNull()
+  expect(await loadStoredLogin(target)).toBeNull()
+  // The tokens it obtained are revoked, not left live.
+  expect(idp.revocations).toHaveLength(1)
+  expect(idp.refreshTokenActive(idp.revocations[0]!.token)).toBe(false)
 })
 
 test("a refused refresh token says Session expired and clears the login", async () => {
