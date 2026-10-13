@@ -243,7 +243,7 @@ function AdminPage() {
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
     workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
     "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
-    audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile changes." },
+    audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile lookups." },
   };
 
   if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;

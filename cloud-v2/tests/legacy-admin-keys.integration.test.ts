@@ -236,8 +236,8 @@ describe("legacy admin keys", () => {
       ["POST", "/api/admin/workspaces", {name: "Keyed"}],
       ["GET", "/api/workspaces"],
       ["POST", "/api/workspaces", {name: "Keyed"}],
-      // Core's built-in Store administration needs an Organization Admin who is a person.
-      ["GET", "/api/admin/submissions"],
+      // The audit log needs an Organization Admin who is a person.
+      ["GET", "/api/admin/audit-log"],
     ] as Array<[string, string, unknown?]>) {
       const reply = await call(method, path, key.token, body)
       expect({method, path, status: reply.status, error: reply.json?.error}).toEqual({
