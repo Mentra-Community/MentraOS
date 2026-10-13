@@ -30,7 +30,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.junit.After;
@@ -567,18 +566,10 @@ public class I2SAudioControllerPlayFileTest {
         }
     }
 
-    private final AtomicReference<String> awaitTrace = new AtomicReference<>("");
-
     private Thread startAwait(AtomicBoolean done) {
         Thread worker = new Thread(() -> {
-            try {
-                awaitTrace.set("looper=" + Looper.myLooper());
-                controller.playAssetAndAwait(AudioAssets.VIDEO_RECORDING_START, 3_000L);
-                done.set(true);
-                awaitTrace.set(awaitTrace.get() + " returned");
-            } catch (Throwable t) {
-                awaitTrace.set(awaitTrace.get() + " threw " + t);
-            }
+            controller.playAssetAndAwait(AudioAssets.VIDEO_RECORDING_START, 3_000L);
+            done.set(true);
         });
         worker.start();
         return worker;
@@ -589,9 +580,7 @@ public class I2SAudioControllerPlayFileTest {
         while (players.constructed().isEmpty() && System.currentTimeMillis() < deadline) {
             pumpMain();
         }
-        assertThat(players.constructed())
-                .as(awaitTrace.get())
-                .isNotEmpty();
+        assertThat(players.constructed()).isNotEmpty();
         return players.constructed().get(0);
     }
 
