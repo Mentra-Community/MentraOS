@@ -2,6 +2,7 @@ import {DeviceEventEmitter, Platform} from "react-native"
 import {fetchVersionInfo} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {observeManifestNativeErrors} from "../../modules/engine/src/services/otaNativeNetworkDiagnostics"
 import {logBuffer} from "../../modules/engine/src/utils/devLogging"
+import {BgTimer} from "../../modules/engine/src/utils/timers"
 
 const marker = "OTA: native network failure observation "
 
@@ -167,6 +168,39 @@ describe("Android native manifest-window diagnostics", () => {
     ) as unknown as typeof fetch
     await fetchVersionInfo("https://example.test/manifest")
     expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("expires on the background timer while ordinary JS timers are paused", () => {
+    jest.useFakeTimers()
+    const backgroundCallbacks = new Map<number, () => void>()
+    let nextId = 1
+    jest.spyOn(BgTimer, "setTimeout").mockImplementation((callback, delay) => {
+      expect(delay).toBe(60_000)
+      const id = nextId++
+      backgroundCallbacks.set(id, callback)
+      return id
+    })
+    jest.spyOn(BgTimer, "clearTimeout").mockImplementation((id) => {
+      backgroundCallbacks.delete(id)
+    })
+    const stopped: (() => void)[] = []
+    const before = DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")
+    const regularTimer = jest.fn()
+    setTimeout(regularTimer, 60_000)
+    try {
+      for (let poll = 0; poll < 5; poll++) {
+        stopped.push(observeManifestNativeErrors(poll, Date.now()))
+        expect(DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")).toBe(before + 1)
+        DeviceEventEmitter.emit("didCompleteNetworkResponse", [42, "timeout", true])
+        expect(events()).toHaveLength(poll + 1)
+        for (const callback of [...backgroundCallbacks.values()]) callback()
+        expect(DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")).toBe(before)
+      }
+      expect(regularTimer).not.toHaveBeenCalled()
+      expect(backgroundCallbacks.size).toBe(0)
+    } finally {
+      stopped.forEach((cleanup) => cleanup())
+    }
   })
 
   it("listener and cleanup failures cannot replace a manifest result", async () => {

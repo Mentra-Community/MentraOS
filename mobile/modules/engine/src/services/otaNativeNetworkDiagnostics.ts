@@ -1,4 +1,5 @@
 import {DeviceEventEmitter, Platform} from "react-native"
+import {BgTimer} from "../utils/timers"
 
 type FailureCategory = "dns" | "connect" | "tls" | "timeout" | "other"
 const OBSERVATION_WINDOW_MS = 60_000
@@ -30,7 +31,7 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
   if (Platform.OS !== "android") return () => {}
   try {
     let active = true
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let timer: number | undefined
     const subscription = DeviceEventEmitter.addListener("didCompleteNetworkResponse", (payload: unknown) => {
       try {
         if (!active) return
@@ -58,7 +59,7 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
     const stop = () => {
       if (!active) return
       active = false
-      if (timer !== undefined) clearTimeout(timer)
+      if (timer !== undefined) BgTimer.clearTimeout(timer)
       try {
         subscription.remove()
       } catch {
@@ -68,7 +69,7 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
     // Fetch can remain pending across periodic checks. Bound only this observer;
     // do not cancel or impose a deadline on the product request.
     try {
-      timer = setTimeout(stop, OBSERVATION_WINDOW_MS)
+      timer = BgTimer.setTimeout(stop, OBSERVATION_WINDOW_MS)
     } catch {
       stop()
     }
