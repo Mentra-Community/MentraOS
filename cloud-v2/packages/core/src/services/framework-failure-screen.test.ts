@@ -132,7 +132,7 @@ test('the real diagnostic media path aborts stalled S3 HEAD at the display deadl
 
 test('a delayed frozen declaration cannot start an upload lookup or storage read after its deadline', async () => {
   const run = fixture();
-  let finishDeclaration!: (value: {runId: string; asset: typeof run.assets[number]}) => void;
+  let finishDeclaration!: (value: {runId: string; asset: typeof run.assets[number]; accepted: null}) => void;
   const service = new FrameworkResultService({async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;},
     getAsset() {return new Promise(resolve => {finishDeclaration = resolve;});}});
   const upload = spyOn(TestAssetModel, 'findOne');
@@ -140,7 +140,7 @@ test('a delayed frozen declaration cannot start an upload lookup or storage read
     const reading = readFailureScreens(run, (asset, signal) => service.mediaByRun(run.result.runId, asset.id,
       new Request('http://localhost/diagnostic', {signal})));
     expect(await reading).toEqual([]);
-    finishDeclaration({runId: run.result.runId, asset: run.assets[1]!});
+    finishDeclaration({runId: run.result.runId, asset: run.assets[1]!, accepted: null});
     await Bun.sleep(20);
     expect(upload).not.toHaveBeenCalled();
   } finally {upload.mockRestore();}

@@ -49,7 +49,7 @@ test('canonical catalog reads recorded payload and summary with genuinely absent
       steps: [{id: 'observe', status: 'passed', durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [], evidence: ['video'], timing: {startedAt: example.startedAt, setupMs: 0, testMs: 1, teardownMs: 0}}});
   const payloadSha256 = requestInputDigest(old), projection = createRecordedFrameworkRunSummaryProjection(old, payloadSha256);
-  const row = {runId: old.requestId, requestId: old.requestId, payloadSha256, payload: old, summaryProjection: projection, uploadsComplete: true};
+  const row = {runId: old.requestId, requestId: old.requestId, payloadSha256, build: old.build, recordingAssetId: old.recordingAssetId, recordedPassingExample: true, summaryProjection: projection, uploadsComplete: true};
   const before = JSON.stringify(row);
   const find = spyOn(TestRunModel, 'findOne').mockReturnValue({sort() {return this;}, select() {return this;}, read() {return this;},
     readConcern() {return this;}, async lean() {return row;}} as never);

@@ -7,6 +7,8 @@ import {testWriteConcern} from "../models/test-write-concern";
 import {createStorageService, type StorageService} from "./storage/storage.service";
 import {ByteRangeError, parseSingleByteRange} from "./storage/byte-range";
 import {TestRunError} from "./test-result-error";
+import {findAcceptedTestAsset} from './framework-run-detail.service';
+
 export interface TestAsset {assetId: string; kind: string; contentType: string; filename: string; sizeBytes: number; sha256: string}
 export interface StoredTestAsset {runId: string; assetId: string; storageKey: string; sizeBytes: number; sha256: string}
 export function parseTestAssetRange(header: string | null, size: number): { start: number; end: number } | undefined {
@@ -31,16 +33,18 @@ function mediaSignatureMatches(type: string, bytes: Buffer): boolean {
 
 const assets = {
   async findAsset(runId: string, assetId: string): Promise<StoredTestAsset | null> {
-    return await TestAssetModel.findOne({runId, assetId}).read("primary").readConcern("majority").lean();
+    return findAcceptedTestAsset(runId, assetId);
   },
   async insertAsset(asset: StoredTestAsset): Promise<StoredTestAsset> {
-    try {await TestAssetModel.create([asset], {writeConcern: testWriteConcern}); return asset;}
-    catch (error) {
-      if ((error as {code?: number}).code !== 11000) throw error;
-      const winner = await TestAssetModel.findOne({runId: asset.runId, assetId: asset.assetId}).read("primary").readConcern("majority").lean();
-      if (!winner || winner.sizeBytes !== asset.sizeBytes || winner.sha256 !== asset.sha256) throw new TestRunError(409, "Stored asset differs from declared asset");
-      return winner;
-    }
+    try {await TestAssetModel.create([asset], {writeConcern: testWriteConcern});}
+    catch (error) {if ((error as {code?: number}).code !== 11000) throw error;}
+    // Completion may have compacted the winner while this duplicate upload was in flight.
+    const winner = await findAcceptedTestAsset(asset.runId, asset.assetId);
+    if (!winner || winner.sizeBytes !== asset.sizeBytes || winner.sha256 !== asset.sha256)
+      throw new TestRunError(409, "Stored asset differs from declared asset");
+    if (winner.storageKey !== asset.storageKey) await TestAssetModel.deleteOne({runId: asset.runId,
+      assetId: asset.assetId, storageKey: asset.storageKey}, {writeConcern: testWriteConcern});
+    return winner;
   },
 };
 export class TestAssetService {

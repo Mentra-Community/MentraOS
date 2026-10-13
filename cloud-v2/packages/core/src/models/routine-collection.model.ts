@@ -6,6 +6,7 @@ const schema = new Schema({
   commit: {type: String, required: true, immutable: true},
   version: {type: Number, required: true, immutable: true},
   manifestSha256: {type: String, required: true, immutable: true},
+  detail: {type: Schema.Types.Mixed, required: true, immutable: true},
   members: {type: [{
     _id: false,
     routineId: {type: String, required: true},

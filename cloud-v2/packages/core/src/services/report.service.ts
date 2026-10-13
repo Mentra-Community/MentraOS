@@ -1,3 +1,8 @@
+import {requestInputDigest} from './test-request.service';
+import {readNativeReportAssets, reportNativeSnapshotSchema} from './report-native-detail.service';
+import {TestingDetailStorage} from './testing-detail-storage.service';
+import {readStoredRun} from './framework-run-detail.service';
+import {TestRunModel} from '../models/test-run.model';
 /**
  * @fileoverview Report service for Cloud V2 core.
  *
@@ -13,7 +18,6 @@ import { createHash } from "node:crypto";
 import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
-import { TestAssetModel } from "../models/test-run.model";
 import type { RecordedFrameworkRun } from "../types/framework-run.types";
 import { notifyReportSlack } from "./report-slack.service";
 import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
@@ -446,56 +450,32 @@ export async function updateReportLogCollection(input: {
 /** Attach all already-acknowledged native diagnostic and screenshot bytes by reference, never
  * copying recordings or reading unbounded device output into the report. */
 export async function referenceTestRunDiagnostics(owner: {reportId: string; mentraUserId: string}, run: RecordedFrameworkRun) {
-  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report" || asset.kind === "screenshot");
-  // A timed-out write may already have committed. Verify and reuse those rows
-  // on retry instead of issuing the entire frozen export's upserts again.
-  const batchSize = 100;
-  for (let offset = 0; offset < declared.length; offset += batchSize) {
-    const batch = declared.slice(offset, offset + batchSize);
-    const screenshotIds = new Set(batch.filter(asset => asset.kind === "screenshot").map(asset => asset.id));
-    const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: batch.map(asset => asset.id)}})
-      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
-    const byId = new Map(stored.map(asset => [asset.assetId, asset]));
-    const references = batch.map(asset => {
-      const blob = byId.get(asset.id);
-      if (!blob || blob.sha256 !== asset.sha256 || blob.sizeBytes !== asset.size)
-        throw new ReportArtifactError(503, "Routine diagnostic custody differs from its frozen manifest");
-      return {artifactId: stableReportId("art", `${owner.reportId}\nnative-diagnostic\n${asset.id}`), ...owner,
-        storageKey: blob.storageKey, sourceTestRunId: run.result.runId, sourceTestAssetId: asset.id, fileName: asset.path.split('/').at(-1),
-        contentType: asset.mimeType, sizeBytes: asset.size, sha256: asset.sha256};
-    });
-    const readRows = () => ReportAssetModel.find({artifactId: {$in: references.map(reference => reference.artifactId)}})
-      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
-    let rows = await readRows();
-    const matches = (row: typeof rows[number], reference: typeof references[number]) =>
-      row.reportId === reference.reportId && row.mentraUserId === reference.mentraUserId && row.storageKey === reference.storageKey
-      && row.sha256 === reference.sha256 && row.sizeBytes === reference.sizeBytes && row.sourceTestRunId === reference.sourceTestRunId
-      && row.sourceTestAssetId === reference.sourceTestAssetId && row.fileName === reference.fileName && row.contentType === reference.contentType;
-    const existing = new Map(rows.map(row => [row.artifactId, row]));
-    const missing = references.filter(reference => {
-      const row = existing.get(reference.artifactId);
-      if (row && !matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-      return !row;
-    });
-    if (missing.length) {
-      await ReportAssetModel.bulkWrite(missing.map(reference => ({updateOne: {filter: {artifactId: reference.artifactId},
-        update: {$setOnInsert: reference}, upsert: true}})), {writeConcern: attachmentWriteConcern, ordered: false, timeoutMS: 10_000});
-      rows = await readRows();
-    }
-    const byArtifactId = new Map(rows.map(row => [row.artifactId, row]));
-    const metadata = references.map(reference => {
-      const row = byArtifactId.get(reference.artifactId);
-      if (!row) throw new ReportArtifactError(503, "Routine diagnostic reference is unavailable");
-      if (!matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-      const screenshot = screenshotIds.has(reference.sourceTestAssetId);
-      return {artifactId: row.artifactId, type: screenshot ? "screenshot" : "state_snapshot",
-        source: screenshot ? "framework-screenshot" : "framework-diagnostic", filename: row.fileName,
-        contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
-    });
-    const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
-      {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
-    if (result.matchedCount !== 1) throw new ReportArtifactError(503, "Routine incident is unavailable");
+  const existing = await ReportModel.findOne(owner).read('primary').readConcern('majority').lean();
+  if (!existing) throw new ReportArtifactError(503, 'Routine incident is unavailable');
+  if (existing.nativeDiagnostics) {
+    const reference = existing.nativeDiagnostics as {runId?: unknown; payloadSha256?: unknown};
+    if (reference.runId !== run.result.runId || reference.payloadSha256 !== requestInputDigest(run))
+      throw new ReportArtifactError(409, 'Routine incident already binds another result');
+    return (await readNativeReportAssets(existing)).artifacts.length;
   }
+  const row = await TestRunModel.findOne({resultSchemaVersion: 1, runId: run.result.runId, uploadsComplete: true})
+    .read('primary').readConcern('majority').lean();
+  if (!row) throw new ReportArtifactError(503, 'Routine result authority is unavailable');
+  const envelope = await readStoredRun(row);
+  if (envelope.payloadSha256 !== requestInputDigest(run)) throw new ReportArtifactError(409, 'Routine incident result differs');
+  const declared = run.assets.filter(asset => asset.kind === 'diagnostic' || asset.kind === 'report' || asset.kind === 'screenshot');
+  const snapshot = reportNativeSnapshotSchema.parse({version: 1, reportId: owner.reportId, mentraUserId: owner.mentraUserId, runId: run.result.runId,
+    payloadSha256: envelope.payloadSha256, artifacts: declared.map(asset => ({
+      artifactId: stableReportId('art', `${owner.reportId}\nnative-diagnostic\n${asset.id}`), assetId: asset.id,
+      createdAt: new Date(existing.createdAt).toISOString(), type: asset.kind === 'screenshot' ? 'screenshot' : 'state_snapshot',
+      source: asset.kind === 'screenshot' ? 'framework-screenshot' : 'framework-diagnostic'}))});
+  const detail = await new TestingDetailStorage().write('report-native', owner.reportId, snapshot);
+  const reference = {runId: snapshot.runId, payloadSha256: snapshot.payloadSha256, count: snapshot.artifacts.length, detail};
+  await ReportModel.updateOne({...owner, nativeDiagnostics: {$exists: false}}, {$set: {nativeDiagnostics: reference}},
+    {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
+  const settled = await ReportModel.findOne(owner).read('primary').readConcern('majority').lean();
+  if (!settled || requestInputDigest(settled.nativeDiagnostics) !== requestInputDigest(reference))
+    throw new ReportArtifactError(409, 'Routine incident source publication conflicts');
   return declared.length;
 }
 
@@ -855,7 +835,7 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
     {$limit: limit},
     {$project: {_id: 0, reportId: 1, kind: 1, status: 1, mentraUserId: 1,
       trigger: 1, report: 1, feedback: 1, createdAt: 1, updatedAt: 1,
-      artifactCount: {$size: {$ifNull: ["$artifacts", []]}}}},
+      artifactCount: {$add: [{$size: {$ifNull: ["$artifacts", []]}}, {$ifNull: ["$nativeDiagnostics.count", 0]}]}}},
   ]);
   return rows.map(row => ({...serializeReportSummary(row), artifactCount: row.artifactCount}));
 }
@@ -883,11 +863,12 @@ export async function getReport(
 ): Promise<{ report: AdminReportDetail; assets: AdminReportAsset[] } | null> {
   const row = await ReportModel.findOne({ reportId }).lean();
   if (!row) return null;
-  const assets = await ReportAssetModel.find({ reportId }).sort({ createdAt: 1 }).lean();
+  const [assets, native] = await Promise.all([ReportAssetModel.find({ reportId, sourceTestRunId: {$exists: false} }).sort({ createdAt: 1 }).lean(),
+    readNativeReportAssets(row)]);
   return {
     report: {
       ...serializeReportSummary(row),
-      artifacts: (row.artifacts ?? []).map(artifact => ({
+      artifacts: [...(row.artifacts ?? []).map(artifact => ({
         artifactId: artifact.artifactId,
         type: artifact.type as AdminReportArtifact["type"],
         source: artifact.source,
@@ -895,12 +876,12 @@ export async function getReport(
         contentType: artifact.contentType ?? null,
         sizeBytes: artifact.sizeBytes ?? null,
         createdAt: toIso(artifact.createdAt),
-      })),
+      })), ...native.artifacts].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
       context: (row.context ?? {}) as Record<string, unknown>,
       ...(row.slackDelivery ? {slackDelivery: row.slackDelivery as ReportSlackDelivery} : {}),
       ...(row.logCollection ? {logCollection: visibleReportLogCollection(row.logCollection)} : {}),
     },
-    assets: assets.map((asset) => ({
+    assets: [...assets.map((asset) => ({
       artifactId: asset.artifactId,
       storageKey: asset.storageKey,
       fileName: asset.fileName ?? null,
@@ -908,7 +889,7 @@ export async function getReport(
       sizeBytes: asset.sizeBytes,
       sha256: asset.sha256,
       createdAt: toIso(asset.createdAt),
-    })),
+    })), ...native.assets].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
   };
 }
 
@@ -921,7 +902,9 @@ export async function readReportArtifact(
   artifactId: string,
 ): Promise<{ sizeBytes: number; contentType: string; fileName: string | null; sha256: string;
   stream: (range?: ByteRange) => Promise<ReadableStream<Uint8Array> | Blob> } | null> {
-  const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
+  const owned = await ReportAssetModel.findOne({reportId, artifactId, sourceTestRunId: {$exists: false}}).lean();
+  const report = owned ? null : await ReportModel.findOne({reportId}).lean();
+  const asset = owned ?? (report ? (await readNativeReportAssets(report)).assets.find(value => value.artifactId === artifactId) : null);
   if (!asset) return null;
   const storage = getStorage();
   if ((await storage.statObject(asset.storageKey)).sizeBytes !== asset.sizeBytes) throw new Error("stored report artifact size changed");

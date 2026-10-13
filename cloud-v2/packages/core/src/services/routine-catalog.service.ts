@@ -21,17 +21,14 @@ const mongoRuns: CatalogRunRepository = {
     // A definition change does not erase earlier passing coverage. The example
     // carries its real revision and build; it is not proof of the current code.
     const row = await TestRunModel.findOne({...nativeRunFilter, routineId: definition.routineId, platform: definition.platform,
-      outcome: "pass", uploadsComplete: true, "payload.result.setup.status": "passed",
-      "payload.result.test": "passed", "payload.result.failures.phase": {$ne: "evidence"}, "payload.result.teardown.ready": true,
-      "payload.recordingAssetId": {$type: "string"},
+      outcome: "pass", uploadsComplete: true, recordedPassingExample: true,
       catalogEligible: {$ne: false},
-    }).sort({startedAt: -1, runId: -1}).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.recordingAssetId": 1, "payload.build": 1})
+    }).sort({startedAt: -1, runId: -1}).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, recordingAssetId: 1, build: 1})
       .read("primary").readConcern("majority").lean();
     if (!row) return null;
     const projection = await readFrameworkRunSummaryProjection(row), summary = projection.summary;
-    const payload = row.payload as {build?: unknown; recordingAssetId?: unknown};
-    const build = frameworkBuildSchema.safeParse(payload.build);
-    if (!build.success || !projection.recordingAssetId || projection.recordingAssetId !== payload.recordingAssetId
+    const build = frameworkBuildSchema.safeParse(row.build);
+    if (!build.success || !projection.recordingAssetId || projection.recordingAssetId !== row.recordingAssetId
       || build.data.repository !== summary.build.repository || build.data.channel !== summary.build.channel
       || build.data.headSha !== summary.build.headSha || build.data.prNumber !== summary.build.prNumber)
       throw new TestRunError(503, "Recorded example build or recording is unavailable");

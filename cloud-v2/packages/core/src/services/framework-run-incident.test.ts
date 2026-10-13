@@ -48,7 +48,7 @@ test('existing authenticated completion recovers a filed report link after trans
     return {payload: run, payloadSha256: hash, uploadsComplete};
   }, async getByRun() {return {payload: run, payloadSha256: hash, uploadsComplete};}, async getAsset() {return null;}},
   async () => ({hostId: 'owned-host', input: {} as never}), undefined, undefined, undefined,
-  {async list() {return [];}, async complete() {throw new Error('Must not acknowledge missing uploads');}},
+  {async complete(row) {if (!row.uploadsComplete) throw new Error('Required uploads are not acknowledged');}},
   {async complete() {return undefined;}}, undefined, async correlation => {
     lookup++; expect(correlation).toEqual({alertId: 'original-alert', testRunId: runId});
     if (unavailableLookup) throw new Error('Optional report lookup unavailable');

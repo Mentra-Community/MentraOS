@@ -7,6 +7,7 @@ import {RoutineDefinitionService, type RoutineDefinitionRepository} from "./rout
 import {requestInputDigest} from "./test-request.service";
 import {GithubRoutineMergeGateway} from './routine-merge-eligibility.service';
 import {RoutineWorkModel} from '../models/routine-work.model';
+import {writeRoutineDefinition} from './routine-definition-detail.service';
 import {authoringWorkSchema} from '../types/routine-work.types';
 
 const revision = "a".repeat(40);
@@ -55,13 +56,13 @@ test("standalone Mongo enrollment uses one immutable insert and reconciles dupli
   const row = enrollment();
   const insert = spyOn(RoutineDefinitionModel, "create").mockRejectedValue(Object.assign(new Error("duplicate"), {code: 11000}));
   const chain = (value: unknown) => ({read() {return this;}, readConcern() {return this;}, lean: async () => value});
-  const find = spyOn(RoutineDefinitionModel, "findOne").mockReturnValue(chain(row) as any);
+  const find = spyOn(RoutineDefinitionModel, "findOne").mockReturnValue(chain(await writeRoutineDefinition(row)) as any);
   const transaction = spyOn(RoutineDefinitionModel.db, "transaction");
   const update = spyOn(RoutineDefinitionModel, 'updateOne').mockResolvedValue({matchedCount: 1} as any);
   try {
     expect(await new RoutineDefinitionService(undefined, undefined, null).enroll(row)).toEqual(row);
     expect(transaction).not.toHaveBeenCalled();
-    expect(insert.mock.calls[0]?.[0]).toMatchObject([{...row, ordinaryEnrolledAt: expect.any(Date)}]);
+    expect(insert.mock.calls[0]?.[0]).toMatchObject([{...await writeRoutineDefinition(row), ordinaryEnrolledAt: expect.any(Date)}]);
     find.mockReturnValue(chain({...row, definitionSha256: "b".repeat(64)}) as any);
     await expect(new RoutineDefinitionService(undefined, undefined, null).enroll(row)).rejects.toThrow("different contents");
   } finally {insert.mockRestore(); find.mockRestore(); transaction.mockRestore(); update.mockRestore();}
@@ -70,7 +71,7 @@ test("standalone Mongo enrollment uses one immutable insert and reconciles dupli
 test('concurrent candidate enrollment is bounded and settles the exact current attempt without rewriting definitions', async () => {
   const row = enrollment(), verification = {workId: 'work:new', attemptId: 2, sourceRevision: revision};
   const candidate = {...row, verification};
-  let stored = {...row, candidateBindings: Array.from({length: 19}, (_, index) =>
+  let stored = {...await writeRoutineDefinition(row), candidateBindings: Array.from({length: 19}, (_, index) =>
     ({workId: `work:${index}`, attemptId: 1, sourceRevision: revision}))};
   const insert = spyOn(RoutineDefinitionModel, 'create').mockRejectedValue(Object.assign(Error('duplicate'), {code: 11000}));
   const find = spyOn(RoutineDefinitionModel, 'findOne').mockImplementation(() => ({read() {return this;}, readConcern() {return this;}, lean: async () =>
@@ -93,15 +94,16 @@ test('concurrent candidate enrollment is bounded and settles the exact current a
       service.enroll({...candidate, verification: {...verification, workId: 'work:racing'}}, 'mini')]);
     expect(results.filter(value => value.status === 'fulfilled')).toHaveLength(1);
     expect(stored.candidateBindings).toHaveLength(20);
-    expect(stored.definitionSha256).toBe(requestInputDigest(stored.definition));
+    expect(stored.definitionSha256).toBe(row.definitionSha256);
     expect(stored).not.toHaveProperty('ordinaryEnrolledAt');
     expect(updates).toHaveLength(2);
-    await service.enroll(candidate, 'mini');
+    const winner = stored.candidateBindings.find(value => value.workId === 'work:new' || value.workId === 'work:racing')!;
+    await service.enroll({...candidate, verification: winner}, 'mini');
     expect(updates).toHaveLength(2);
-    await service.enroll({...candidate, verification: {...verification, attemptId: 3}}, 'mini');
-    expect(stored.candidateBindings.find(value => value.workId === verification.workId)?.attemptId).toBe(3);
+    await service.enroll({...candidate, verification: {...winner, attemptId: 3}}, 'mini');
+    expect(stored.candidateBindings.find(value => value.workId === winner.workId)?.attemptId).toBe(3);
     expect(stored.candidateBindings).toHaveLength(20);
-    await expect(service.enroll(candidate, 'mini')).rejects.toThrow('another attempt');
+    await expect(service.enroll({...candidate, verification: winner}, 'mini')).rejects.toThrow('another attempt');
   } finally {insert.mockRestore(); find.mockRestore(); update.mockRestore();}
 });
 
@@ -118,7 +120,7 @@ test('omitting verification cannot make the same unmerged candidate SHA ordinary
   const prUrl = 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/500';
   const chain = (value: unknown) => ({read() {return this;}, readConcern() {return this;}, lean: async () => value});
   const create = spyOn(RoutineDefinitionModel, 'create').mockRejectedValue(Object.assign(Error('duplicate'), {code: 11000}));
-  const definitions = spyOn(RoutineDefinitionModel, 'findOne').mockReturnValue(chain({...row, candidateBindings: [binding]}) as any);
+  const definitions = spyOn(RoutineDefinitionModel, 'findOne').mockReturnValue(chain({...await writeRoutineDefinition(row), candidateBindings: [binding]}) as any);
   const jobs = spyOn(RoutineWorkModel, 'findOne').mockReturnValue(chain({status: {details: {workId: binding.workId,
     hostId: 'mini', inputSha256: requestInputDigest(work), work, acceptedAt: '2026-10-05T10:00:00Z', state: 'passed',
     sequence: 4, attemptId: 3, events: [], details: {sourceRevision: revision, prUrl,
@@ -152,7 +154,7 @@ test('card overview projects display fields from the exact chosen collection wit
   const row = enrollment(), other = {...row, routineId: 'notes', platform: 'android' as const};
   const compact = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision,
     definitionSha256: row.definitionSha256, definition: {title: row.definition.title, purpose: row.definition.purpose}};
-  let stored = [compact], publication = {commit: revision, members: [{routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}]};
+  let stored = [{...compact, card: compact.definition, definition: undefined}], publication = {commit: revision, members: [{routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}]};
   const chain = (get: () => unknown) => ({read() {return this;}, readConcern() {return this;}, sort() {return this;},
     select: mock(function(this: unknown) {return this;}), lean: async () => get()});
   const collection = chain(() => publication), definitions = chain(() => stored);
@@ -166,9 +168,9 @@ test('card overview projects display fields from the exact chosen collection wit
   try {
     expect(await new RoutineDefinitionService(undefined, undefined, null).overview()).toEqual([compact]);
     expect(definitions.select).toHaveBeenCalledWith({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1,
-      'definition.title': 1, 'definition.purpose': 1, 'definition.glasses.models': 1, _id: 0});
+      card: 1, _id: 0});
     publication = {commit: revision, members: [{routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}]};
-    stored = [{...compact, definitionSha256: 'f'.repeat(64)}];
+    stored = [{...compact, card: compact.definition, definition: undefined, definitionSha256: 'f'.repeat(64)}];
     await expect(new RoutineDefinitionService(undefined, undefined, null).overview()).rejects.toThrow('member is unavailable');
   } finally {findPublication.mockRestore(); findDefinitions.mockRestore();}
 });
@@ -250,13 +252,16 @@ test('collection manifest freezes membership, version and rows across retries an
     expect(await service.current()).toEqual([a,b]);
     const next = at('d'.repeat(40));
     // A reader which already chose a receipt must still read that exact membership after newer publication.
-    const readRows = all.getMockImplementation()!;
-    all.mockImplementation(((query: any) => chain(async () => {
+    const readRows = publication.getMockImplementation()!;
+    // Restore before publish inside the mock to avoid recursively handling its transaction lookup.
+    publication.mockImplementationOnce(((query: any) => chain(async () => {
+      const original = await (readRows(query) as any).lean();
+      publication.mockImplementation(readRows);
       await service.publishCollection({commit:next.definitionRevision, version:40, definitions:[next]});
-      const result = readRows(query) as any; return result.lean();
+      return original;
     })) as any);
     expect(await service.current()).toEqual([a,b]);
-    all.mockImplementation(readRows);
+    publication.mockImplementation(readRows);
     expect(await service.current()).toEqual([next]);
     const legacy = at('e'.repeat(40));
     rows.set(identity(legacy), {...legacy, routineSource: undefined});
@@ -267,8 +272,9 @@ test('collection manifest freezes membership, version and rows across retries an
 
 test('exact manual selection requires an ordinary enrollment while candidate readers retain exact source', async () => {
   const row = enrollment();
+  const snapshot = await writeRoutineDefinition(row);
   const find = spyOn(RoutineDefinitionModel, 'findOne').mockImplementation((query?: any) => ({read() {return this;}, readConcern() {return this;}, lean: async () =>
-    query?.ordinaryEnrolledAt ? null : row}) as any);
+    query?.ordinaryEnrolledAt ? null : snapshot}) as any);
   try {
     const service = new RoutineDefinitionService(undefined, undefined, null);
     expect(await service.getExact(row.routineId, row.platform, row.definitionRevision)).toEqual(row);

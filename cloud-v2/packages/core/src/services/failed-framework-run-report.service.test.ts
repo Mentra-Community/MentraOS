@@ -207,11 +207,8 @@ test("native completion acknowledges evidence before incident retry and pending 
     undefined,
     undefined,
     {
-      async list() {
-        return []
-      },
       async complete() {
-        writes++
+        if (!stored.uploadsComplete) writes++
         stored.uploadsComplete = true
       },
     },

@@ -58,9 +58,9 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
     {$match: {...nativeRunFilter, ...sourceCursor(after, "run", "runId")}},
     {$sort: {startedAt: -1, runId: -1}},
     {$limit: RAW_HISTORY_BATCH_SIZE},
-    {$lookup: {from: TestSuiteModel.collection.name, localField: "payload.requestId", foreignField: "payload.members.requestId",
-      let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform",
-        channel: "$payload.build.channel", headSha: "$payload.build.headSha"},
+    {$lookup: {from: TestSuiteModel.collection.name, localField: "requestId", foreignField: "payload.members.requestId",
+      let: {requestId: "$requestId", routineId: "$routineId", platform: "$platform",
+        channel: "$build.channel", headSha: "$build.headSha"},
       pipeline: [{$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, $expr: {$and: [
         {$eq: ["$payload.channel", "$$channel"]},
         {$anyElementTrue: [{$map: {input: "$payload.members", as: "member", in: {$and: [
@@ -69,14 +69,14 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
           {$eq: [{$ifNull: ["$$member.headSha", "$payload.build.headSha"]}, "$$headSha"]},
         ]}}}]},
       ]}}}, {$limit: 1}], as: "historySuites"}},
-    {$lookup: {from: TestRerunModel.collection.name, localField: "payload.requestId", foreignField: "plan.members.requestId",
-      let: {requestId: "$payload.requestId"}, pipeline: [{$match: {state: "accepted"}}, {$limit: 1},
+    {$lookup: {from: TestRerunModel.collection.name, localField: "requestId", foreignField: "plan.members.requestId",
+      let: {requestId: "$requestId"}, pipeline: [{$match: {state: "accepted"}}, {$limit: 1},
         {$set: {member: {$arrayElemAt: [{$filter: {input: "$plan.members", as: "member", cond: {$eq: ["$$member.requestId", "$$requestId"]}}}, 0]}}},
         {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId", rootKey: "$member.rootKey"}}],
       as: "historyReruns"}},
-    {$lookup: {from: TestSuiteModel.collection.name, localField: 'payload.requestId', foreignField: 'nightlyPlan.members.requestId',
-      let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform"},
-      pipeline: [{$match: {$expr: {$anyElementTrue: [{$map: {input: "$nightlyPlan.members", as: "member", in: {$and: [
+    {$lookup: {from: TestSuiteModel.collection.name, localField: 'requestId', foreignField: 'nightlyPlan.members.requestId',
+      let: {requestId: "$requestId", routineId: "$routineId", platform: "$platform"},
+      pipeline: [{$match: {$expr: {$anyElementTrue: [{$map: {input: {$ifNull: ["$nightlyPlan.members", []]}, as: "member", in: {$and: [
         {$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.routineId", "$$routineId"]},
         {$eq: ["$$member.platform", "$$platform"]},
       ]}}}]}}}, {$limit: 1}, {$project: {_id: 0, suiteId: 1,
@@ -86,7 +86,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
       rerun: {$arrayElemAt: ["$historyReruns", 0]},
       origin: {$cond: [{$gt: [{$size: '$historyReruns'}, 0]}, 'other', {$cond: [{$or: [{$gt: [{$size: '$historyNightly'}, 0]},
         {$anyElementTrue: [{$map: {input: '$historySuites', as: 'suite', in: {$eq: ['$$suite.payload.trigger', 'nightly']}}}]}]},
-        'nightly', {$cond: [{$eq: ['$payload.build.channel', 'pr']}, 'pr', 'other']}]}]},
+        'nightly', {$cond: [{$eq: ['$build.channel', 'pr']}, 'pr', 'other']}]}]},
       historySuppressed: {$or: [{$gt: [{$size: "$historySuites"}, 0]},
         // Declared membership groups late evidence without changing the frozen verdict.
         {$anyElementTrue: [{$map: {input: "$historyNightly", as: "suite", in: "$$suite.listable"}}]},
