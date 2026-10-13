@@ -269,6 +269,7 @@ export class RoutineJobService {
     const frozen = portableRoutineSelectionSchema.parse(selection), date = z.string().datetime({offset: true}).parse(deadline);
     if (Date.parse(date) > this.now() + 3 * 3600_000) throw new TestRunError(400, 'Routine job deadline must be within three hours');
     const validatedTarget = target ? routineJobTargetSchema.parse(target) : undefined;
+    if (!await this.rows.get(frozen.requestId)) await this.assertKnownPlatform(frozen);
     const row: StoredRoutineJob = {requestId: frozen.requestId, state: 'awaiting-source', fleetSelection: frozen,
       fleetSelectionSha256: requestInputDigest(frozen), fleetDeadline: new Date(date), ...(validatedTarget ? {fleetTarget: validatedTarget} : {})};
     try {await this.rows.insert(row);}
@@ -329,7 +330,8 @@ export class RoutineJobService {
       if(previous)await this.rows.dispatch?.(row.requestId,previous,{...previous,checkedAt:new Date(this.now()).toISOString(),error:error instanceof TestRunError?error.message:'Actions run discovery is unavailable'});
       return this.job(row.requestId);
     }
-    if (!row.fleetPreparation && (previous?.attempts ?? 0) >= 20 && runs.length && runs.every(run => run.status === 'completed')) {
+    if (!row.fleetPreparation && (previous?.attempts ?? 0) >= 20 && runs.every(run => run.status === 'completed') &&
+      (runs.length > 0 || this.now() - Date.parse(previous!.lastAttemptAt) >= 120_000)) {
       await this.rows.exhaustPreparation?.(row.requestId, runs.map(run => run.actionsRunId), new Date(this.now()));
       return this.job(row.requestId);
     }

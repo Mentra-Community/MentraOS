@@ -580,3 +580,17 @@ test('retry exhaustion database write cannot cancel concurrently prepared, bound
   expect(cas.mock.calls[0]![1]).toMatchObject({$set:{state:'terminal',terminalStatus:'not-run'}});
  }finally{TestRequestModel.collection.findOneAndUpdate=original}
 });
+
+test('frozen Android admissions cannot bypass an exact iOS-only declaration', async () => {
+ const f=fixture(),known=await f.service.freezeSelection(selection);
+ (f.service as any).definitions={async getExact(_id:string,platform:string){return platform==='ios-on-mac'?{definition:{platforms:['ios-on-mac']}}:null}};
+ await expect(f.service.submitFrozen(known,'2026-10-08T01:00:00Z')).rejects.toThrow('does not support android');expect(f.row).toBeNull();
+});
+test('twenty failed deliveries with no created workflow terminate after the absence window', async () => {
+ const f=fixture();await f.service.submit(selection);
+ await f.rows.dispatch!(selection.requestId,undefined,{attempts:20,lastAttemptAt:'2026-10-07T23:59:00.000Z'});
+ (f.service as any).actionsTransport={async dispatch(){throw Error('No further dispatch')},async runs(){return []},async cancel(){}};
+ expect((await f.service.observation(selection.requestId)).terminal).toBe(false);
+ f.advance(61_000);
+ expect(await f.service.observation(selection.requestId)).toMatchObject({terminal:true,terminalStatus:'not-run',waitingReason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'});
+});
