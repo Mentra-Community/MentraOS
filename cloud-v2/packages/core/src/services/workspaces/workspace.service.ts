@@ -127,7 +127,7 @@ export async function getActiveMembership(workspaceId: string, mentraUserId: str
   return WorkspaceMembershipModel.findOne({workspaceId, mentraUserId, status: "active"}).lean<MembershipRow>()
 }
 
-/** Active memberships, oldest first. */
+/** Active memberships, oldest first, imported ones still waiting for their person's first sign-in included. */
 export async function listMembers(workspaceId: string): Promise<MembershipRow[]> {
   return WorkspaceMembershipModel.find({workspaceId, status: "active"})
     .sort({startedAt: 1, _id: 1})
@@ -137,16 +137,18 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
 /**
  * The workspace's active owners who can still act: a deleted account's owner membership never
  * counts (its deletion ends it, and Core finishes an interrupted deletion itself), so the last-owner
- * guard cannot rest on an owner nobody can sign in as.
+ * guard cannot rest on an owner nobody can sign in as. An imported owner membership still waiting
+ * for its person counts: that person takes it up at their first sign-in.
  */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
   const owners = await WorkspaceMembershipModel.find({workspaceId, role: "owner", status: "active"})
     .select({_id: 0, mentraUserId: 1})
     .session(session ?? null)
-    .lean<Array<{mentraUserId: string}>>()
-  if (owners.length === 0) return 0
+    .lean<Array<{mentraUserId?: string | null}>>()
+  const userIds = owners.flatMap(owner => (isId(owner.mentraUserId) ? [owner.mentraUserId] : []))
+  if (userIds.length === 0) return owners.length
   const deleted = await UserModel.countDocuments({
-    mentraUserId: {$in: owners.map(owner => owner.mentraUserId)},
+    mentraUserId: {$in: userIds},
     supportTelemetryDeletedAt: {$ne: null},
   }).session(session ?? null)
   return owners.length - deleted

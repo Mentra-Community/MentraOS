@@ -19,6 +19,7 @@ import type {Model} from "mongoose"
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -32,6 +33,7 @@ const MODELS: Model<any>[] = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  LegacyBrowserIdentityModel,
 ]
 
 /** Run `fn` and return whatever it throws (fails the test if it does not throw). */
@@ -369,22 +371,46 @@ describe("workspace models (local replica set)", () => {
       // The lookups the services use are indexed too.
       expect(byKey({mentraUserId: 1, status: 1})).toBeDefined()
       expect(byKey({workspaceId: 1, role: 1, status: 1})).toBeDefined()
+      // The claim at first sign-in finds a WorkOS user's pending rows. The index is not unique: Azure
+      // Cosmos DB cannot add a unique index to a populated collection, so the import enforces one pending
+      // row per person per workspace itself.
+      const pending = byKey({pendingWorkosUserId: 1, status: 1})
+      expect(pending).toBeDefined()
+      expect(pending?.unique).toBeUndefined()
+      expect(indexes.filter(index => index.unique && "pendingWorkosUserId" in index.key)).toEqual([])
     })
 
-    test("requires a mentraUserId and keeps only the fields it defines", async () => {
+    test("needs a Core user or a pending WorkOS user, and keeps only the fields it defines", async () => {
       for (const mentraUserId of [null, undefined, ""]) {
         const err = await thrown(() =>
           WorkspaceMembershipModel.create(membership({membershipId: `wm_${String(mentraUserId)}`, mentraUserId})),
         )
         expect(err.name).toBe("ValidationError")
       }
-      // Memberships carry no display name and no pending identity-provider id.
-      const row = await WorkspaceMembershipModel.create(
-        membership({membershipId: "wm_a", name: "Ada", pendingWorkosUserId: "user_01"}),
-      )
+      expect(
+        (await thrown(() =>
+          WorkspaceMembershipModel.create(membership({membershipId: "wm_blank", mentraUserId: null, pendingWorkosUserId: " "})),
+        )).name,
+      ).toBe("ValidationError")
+      // Memberships carry no display name. A row a Core mutation creates has no pending id at all.
+      const row = await WorkspaceMembershipModel.create(membership({membershipId: "wm_a", name: "Ada"}))
       const stored = await WorkspaceMembershipModel.findOne({membershipId: row.membershipId}).lean()
       expect(stored).not.toHaveProperty("name")
       expect(stored).not.toHaveProperty("pendingWorkosUserId")
+    })
+
+    test("a membership imported from the Store waits for its person under their WorkOS user id", async () => {
+      const pending = await WorkspaceMembershipModel.create(
+        membership({membershipId: "wm_pending_a", mentraUserId: null, pendingWorkosUserId: "user_01A"}),
+      )
+      expect(pending.mentraUserId).toBeNull()
+      expect(pending.pendingWorkosUserId).toBe("user_01A")
+      // Pending rows never meet the one-active-membership index, which only covers string user ids.
+      await WorkspaceMembershipModel.create(
+        membership({membershipId: "wm_pending_b", mentraUserId: null, pendingWorkosUserId: "user_01B"}),
+      )
+      await WorkspaceMembershipModel.create(membership({membershipId: "wm_claimed"}))
+      expect(await WorkspaceMembershipModel.countDocuments({workspaceId: "ws_1", status: "active"})).toBe(3)
     })
 
     test("applies defaults and validates role and endedReason", async () => {
@@ -718,6 +744,22 @@ describe("workspace models (local replica set)", () => {
       expect(err.code).toBe(11000)
       expect(await WorkspaceModel.countDocuments({workspaceId: "ws_side"})).toBe(0)
       expect(await WorkspaceMembershipModel.countDocuments({membershipId: "wm_dup"})).toBe(0)
+    })
+  })
+
+  describe("legacy browser identities", () => {
+    test("one row per WorkOS user, its email lowercased, unclaimed until claimed", async () => {
+      const row = await LegacyBrowserIdentityModel.create({workosUserId: "user_01A", email: " Dev@Studio.Example "})
+      expect(row).toMatchObject({workosUserId: "user_01A", email: "dev@studio.example", claimedAt: null, claimedBy: null})
+      const duplicate = await thrown(() => LegacyBrowserIdentityModel.create({workosUserId: "user_01A", email: "x@studio.example"}))
+      expect(duplicate.code).toBe(11000)
+      // Two WorkOS users may share an address: the claim takes both for the person who verified it.
+      await LegacyBrowserIdentityModel.create({workosUserId: "user_01B", email: "dev@studio.example"})
+      expect(await LegacyBrowserIdentityModel.countDocuments({email: "dev@studio.example"})).toBe(2)
+      const indexes = await LegacyBrowserIdentityModel.collection.indexes()
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({workosUserId: 1}))?.unique).toBe(true)
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({email: 1}))).toBeDefined()
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({claimedBy: 1}))).toBeDefined()
     })
   })
 

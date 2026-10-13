@@ -57,8 +57,16 @@ export function isDeletedAccount(user: { supportTelemetryDeletedAt?: Date | null
   return Boolean(user?.supportTelemetryDeletedAt);
 }
 
-/** Whether `mentraUserId` names a deleted account (see `isDeletedAccount`). An unknown id does not. */
-export async function isDeletedAccountId(mentraUserId: string, session?: ClientSession | null): Promise<boolean> {
+/**
+ * Whether `mentraUserId` names a deleted account (see `isDeletedAccount`). An unknown id does not, and
+ * neither does a missing one (an imported membership still waiting for its person has none).
+ */
+export async function isDeletedAccountId(
+  mentraUserId: string | null | undefined,
+  session?: ClientSession | null,
+): Promise<boolean> {
+  // A `null` filter would match documents without the field.
+  if (typeof mentraUserId !== "string" || !mentraUserId) return false;
   const tombstone = await UserModel.exists({ mentraUserId, supportTelemetryDeletedAt: { $ne: null } }).session(
     session ?? null,
   );

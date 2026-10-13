@@ -35,9 +35,13 @@ export interface SignedInPerson extends SessionIdentity {
 export type AfterSignInHook = (identity: SessionIdentity) => Promise<void>
 const afterSignInHooks: AfterSignInHook[] = []
 
-/** Run `hook` after every sign-in at Core's sign-in server. A throwing hook is logged and never blocks sign-in. */
+/**
+ * Run `hook` after every sign-in at Core's sign-in server. A throwing hook is logged and never blocks
+ * sign-in. Registering the same hook again changes nothing, so a process that starts Core more than
+ * once runs it once per sign-in.
+ */
 export function registerAfterSignInHook(hook: AfterSignInHook): void {
-  afterSignInHooks.push(hook)
+  if (!afterSignInHooks.includes(hook)) afterSignInHooks.push(hook)
 }
 
 /** Record the person's sign-in identity and run the after-sign-in hooks. */

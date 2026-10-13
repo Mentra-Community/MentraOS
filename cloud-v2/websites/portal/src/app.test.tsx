@@ -48,8 +48,8 @@ function listItem(workspaceId: string, name: string, role: WorkspaceRole): Works
 }
 
 const MEMBERS: MemberView[] = [
-  { membershipId: `wm_${ACME}`, mentraUserId: "u_self", email: "sam@acme.test", role: "owner", startedAt: "2026-09-01T10:00:00.000Z" },
-  { membershipId: "wm_2", mentraUserId: "u_2", email: "priya@acme.test", role: "admin", startedAt: "2026-09-02T10:00:00.000Z" },
+  { membershipId: `wm_${ACME}`, mentraUserId: "u_self", email: "sam@acme.test", role: "owner", startedAt: "2026-09-01T10:00:00.000Z", pending: false },
+  { membershipId: "wm_2", mentraUserId: "u_2", email: "priya@acme.test", role: "admin", startedAt: "2026-09-02T10:00:00.000Z", pending: false },
 ];
 
 const ME: PortalMe = {
