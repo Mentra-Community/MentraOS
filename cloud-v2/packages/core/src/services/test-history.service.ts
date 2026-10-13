@@ -212,7 +212,7 @@ export class TestHistoryService {
     const identities = originals.flatMap<Parameters<TestRerunService["latestAttempts"]>[0][number]>(entry => entry.kind === 'run' ? [{parent: {requestId: entry.requestId}, memberId: entry.requestId}]
       : entry.kind === 'suite' ? (suiteSummaries.get(entry.suiteId) as Exclude<SuiteSummaryRead, Error> | undefined)?.members.map(member => ({parent: {suiteId: entry.suiteId}, memberId: member.memberId})) ?? [] : []);
     try {
-      const latest = identities.length ? await this.reruns.latestAttempts(identities) : new Map();
+      const latest = identities.length ? await this.reruns.latestAttempts(identities, deadline) : new Map();
       for (const entry of originals) {
         if (entry.kind === 'run') entry.latest = latest.get(rerunRootKey({requestId: entry.requestId}, entry.requestId));
         else if (entry.kind === 'suite') {

@@ -268,7 +268,7 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
 }
 
 const SUITE_SUMMARY_BATCH_SIZE = 5;
-const SUITE_SUMMARY_CONCURRENCY = 5;
+const SUITE_SUMMARY_CONCURRENCY = 10;
 
 export class TestSuiteService {
   constructor(private readonly lanes: Pick<LaneRestorationService, "overview"> = new LaneRestorationService()) {}
@@ -301,17 +301,18 @@ export class TestSuiteService {
     const rows: SummaryRow[] = [];
     // Large nightly receipts make one page-sized response exceed the history deadline.
     // Bound both response size and concurrency while retaining the same projection and deadline.
-    const windowSize = SUITE_SUMMARY_BATCH_SIZE * SUITE_SUMMARY_CONCURRENCY;
-    for (let offset = 0; offset < suiteIds.length; offset += windowSize) {
-      const window = suiteIds.slice(offset, offset + windowSize);
-      const batches = await Promise.all(Array.from({length: Math.ceil(window.length / SUITE_SUMMARY_BATCH_SIZE)}, (_, index) => {
-        const ids = window.slice(index * SUITE_SUMMARY_BATCH_SIZE, (index + 1) * SUITE_SUMMARY_BATCH_SIZE);
-        return TestSuiteModel.aggregate<SummaryRow>([
+    const batches = Array.from({length: Math.ceil(suiteIds.length / SUITE_SUMMARY_BATCH_SIZE)}, (_, index) =>
+      suiteIds.slice(index * SUITE_SUMMARY_BATCH_SIZE, (index + 1) * SUITE_SUMMARY_BATCH_SIZE));
+    let nextBatch = 0;
+    await Promise.all(Array.from({length: Math.min(SUITE_SUMMARY_CONCURRENCY, batches.length)}, async () => {
+      while (nextBatch < batches.length) {
+        const ids = batches[nextBatch++]!;
+        const batch = await TestSuiteModel.aggregate<SummaryRow>([
           {$match: {suiteId: {$in: ids}}}, {$limit: ids.length + 1}, suiteHistoryProjection,
         ]).read("primary").readConcern("majority").option(remaining()).exec();
-      }));
-      rows.push(...batches.flat());
-    }
+        rows.push(...batch);
+      }
+    }));
     if (rows.length > suiteIds.length || new Set(rows.map(row => row.suiteId)).size !== rows.length)
       throw new TestRunError(503, "Suite identity is ambiguous");
     const membersToRead = (row: typeof rows[number]) => {

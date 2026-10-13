@@ -863,3 +863,11 @@ test('suite history projects original evidence failure and incomplete coverage w
     comparison: {original: {failed: 1, total: 3, skipped: 0, pending: 1, incomplete: 1}}});
   expect((await service.list()).entries[0]).not.toHaveProperty('comparison.latest');
 });
+
+
+test('history latest comparisons share the original page deadline and preserve originals on timeout',async()=>{
+ const suite={suiteId:'deadline-suite',channel:'dev',trigger:'nightly',startedAt:'2026-10-12T10:00:00Z',outcome:'failed',passed:0,build:{headSha:'a'.repeat(40)},members:[{memberId:'one',routineId:'one',platform:'android',status:'failed',publicationComplete:true}]};
+ let pageDeadline=0;
+ const service=new TestHistoryService({async summaries(_ids,deadline){expect(deadline).toBe(pageDeadline);return new Map([[suite.suiteId,suite as any]])}},async(_query,deadline)=>{pageDeadline=deadline;return[[],[{historyKind:'suite',historyId:suite.suiteId,historyStartedAt:new Date(suite.startedAt)}]]},{async latestAttempts(_ids,deadline){expect(deadline).toBe(pageDeadline);throw new TestRunError(503,'Rerun summary query timed out')}});
+ expect((await service.list()).entries[0]).toMatchObject({outcome:'failed',failedCount:1,latestUnavailable:true,comparison:{original:{failed:1,total:1}}});
+});

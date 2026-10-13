@@ -11,7 +11,7 @@ import {individualRerunSchema, rerunPlanSchema, recordedRerunPlanSchema, rerunPr
 import {TestSuiteService} from "./test-suite.service";
 import {RoutineJobService} from "./routine-job.service";
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from "../types/routine-job.types";
-import {TestRequestService, requestInputDigest, isExecutableRequest} from "./test-request.service";
+import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {readAcceptedRoutineRequest} from './routine-request-input';
 import {FrameworkResultService, frameworkResultSummaryFields, readFrameworkResultSummary, nativeRunFilter} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
@@ -23,7 +23,7 @@ export interface RerunRepository {
   insert(row: RerunRecord): Promise<void>;
   accept(id: string, digest: string, claimKeys: string[], acceptedAt: string): Promise<RerunRecord | null>;
   history(rootKey: string, before: number, limit: number): Promise<RerunRecord[]>;
-  latest(rootKeys: string[]): Promise<RerunRecord[]>;
+  latest(rootKeys: string[], deadline?: number): Promise<RerunRecord[]>;
   children(suiteId: string, before: string, limit: number): Promise<RerunRecord[]>;
   byRequest(requestId: string): Promise<RerunRecord | null>;
 }
@@ -41,16 +41,17 @@ export const testRerunRepository: RerunRepository = {
       {$sort: {"historyMember.attemptNumber": -1}}, {$limit: limit}, {$unset: "historyMember"},
     ]).read("primary").readConcern("majority") as RerunRecord[];
   },
-  async latest(rootKeys) {
+  async latest(rootKeys, deadline = Date.now() + 5000) {
     if (!rootKeys.length) return [];
-    return await TestRerunModel.aggregate([
-      {$match: {state: "accepted", "plan.members.rootKey": {$in: rootKeys}}},
+    const batches = await readRerunBatches(rootKeys, 100, deadline, keys => TestRerunModel.aggregate([
+      {$match: {state: "accepted", "plan.members.rootKey": {$in: keys}}},
       {$set: {latestRow: "$$ROOT"}}, {$unwind: "$plan.members"},
-      {$match: {"plan.members.rootKey": {$in: rootKeys}}},
+      {$match: {"plan.members.rootKey": {$in: keys}}},
       {$sort: {"plan.members.attemptNumber": -1}},
       {$group: {_id: "$plan.members.rootKey", row: {$first: "$latestRow"}}},
       {$group: {_id: "$row.rerunId", row: {$first: "$row"}}}, {$replaceRoot: {newRoot: "$row"}},
-    ]).read("primary").readConcern("majority").option({maxTimeMS: 5000}) as RerunRecord[];
+    ]).read("primary").readConcern("majority").option(rerunQueryBudget(deadline)).exec() as Promise<RerunRecord[]>);
+    return [...new Map(batches.flat().map(row => [row.rerunId, row])).values()];
   },
   async children(suiteId, before, limit) {
     const cursor = before ? decodeChildCursor(before) : undefined;
@@ -75,23 +76,61 @@ const verified = (row: RerunRecord): RerunRecord => {
 };
 
 export interface RerunAttemptBatch {
-  read(requestIds: string[]): Promise<{requests: Map<string, Awaited<ReturnType<TestRequestService['get']>>>;
+  read(requestIds: string[], deadline?: number): Promise<{requests: Map<string, Awaited<ReturnType<TestRequestService['get']>>>;
     results: Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>}>
 }
-const rerunAttemptBatch: RerunAttemptBatch = {
-  async read(requestIds) {
-    if (!requestIds.length) return {requests: new Map(), results: new Map()};
-    const [requests, rows] = await Promise.all([
-      TestRequestModel.find({requestId: {$in: requestIds}}).read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean(),
-      TestRunModel.find({...nativeRunFilter, requestId: {$in: requestIds}}).select(frameworkResultSummaryFields)
-        .read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean(),
-    ]);
-    const results = new Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>();
-    for (const row of rows) {
-      try {results.set(row.requestId, await readFrameworkResultSummary(row));}
-      catch (error) {results.set(row.requestId, error instanceof Error ? error : new Error('Rerun summary unavailable'));}
+const rerunQueryBudget = (deadline: number) => {
+  const timeoutMS = deadline - Date.now();
+  if (timeoutMS <= 0) throw new TestRunError(503, 'Rerun summary query timed out');
+  return {timeoutMS, maxTimeMS: timeoutMS};
+};
+
+/** Keep response batches small without serial window barriers or unbounded database concurrency. */
+async function readRerunBatches<T, R>(items: T[], size: number, deadline: number, read: (batch: T[]) => Promise<R[]>): Promise<R[][]> {
+  const batches = Array.from({length: Math.ceil(items.length / size)}, (_, index) => items.slice(index * size, (index + 1) * size));
+  const results: R[][] = new Array(batches.length);
+  let next = 0;
+  await Promise.all(Array.from({length: Math.min(5, batches.length)}, async () => {
+    while (next < batches.length) {
+      const index = next++;
+      rerunQueryBudget(deadline);
+      results[index] = await read(batches[index]!);
     }
-    return {requests: new Map(requests.map(row => [row.requestId, row])), results};
+  }));
+  return results;
+}
+
+export const rerunAttemptRequestFields = {requestId: 1, hostId: 1, input: 1, inputSha256: 1,
+  dispatchIntent: 1, dispatchIntentSha256: 1, state: 1, terminalStatus: 1, hostRejection: 1,
+  publicationFailure: 1, preparationRejection: 1, fleetSelection: 1, fleetSelectionSha256: 1,
+  fleetBinding: 1, fleetCancellation: 1, 'fleetPreparation.routineSource': 1} as const;
+
+export const rerunAttemptBatch: RerunAttemptBatch = {
+  async read(requestIds, deadline = Date.now() + 5000) {
+    requestIds = [...new Set(requestIds)];
+    if (!requestIds.length) return {requests: new Map(), results: new Map()};
+    const batches = await readRerunBatches(requestIds, 10, deadline, async ids => {
+      const [requests, rows] = await Promise.all([
+        TestRequestModel.find({requestId: {$in: ids}}).select(rerunAttemptRequestFields).limit(ids.length + 1)
+          .read('primary').readConcern('majority').setOptions(rerunQueryBudget(deadline)).lean(),
+        TestRunModel.find({...nativeRunFilter, requestId: {$in: ids}}).select(frameworkResultSummaryFields).limit(ids.length + 1)
+          .read('primary').readConcern('majority').setOptions(rerunQueryBudget(deadline)).lean(),
+      ]);
+      if (requests.length > ids.length || new Set(requests.map(row => row.requestId)).size !== requests.length
+        || rows.length > ids.length || new Set(rows.map(row => row.requestId)).size !== rows.length)
+        throw new TestRunError(503, 'Rerun summary identity is ambiguous');
+      return [{requests, rows}];
+    });
+    const requests = new Map<string, Awaited<ReturnType<TestRequestService['get']>>>();
+    const results = new Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>();
+    for (const batch of batches.flat()) {
+      for (const request of batch.requests) requests.set(request.requestId, request as unknown as StoredRequest);
+      for (const row of batch.rows) {
+        try {results.set(row.requestId, await readFrameworkResultSummary(row, deadline));}
+        catch (error) {results.set(row.requestId, error instanceof Error ? error : new Error('Rerun summary unavailable'));}
+      }
+    }
+    return {requests, results};
   },
 };
 
@@ -372,17 +411,17 @@ export class TestRerunService {
       nextChildrenCursor: children.length > 20 ? encodeChildCursor(children[19]!) : null};
   }
   /** One accepted latest attempt per original member, never the most recent passing attempt. */
-  async latestAttempts(identities: {parent: RerunPlan['parent']; memberId: string}[]) {
+  async latestAttempts(identities: {parent: RerunPlan['parent']; memberId: string}[], deadline = Date.now() + 5000) {
     if (identities.length > 10000) throw new TestRunError(400, 'Too many original members');
     const roots = [...new Set(identities.map(value => rerunRootKey(value.parent, value.memberId)))], requestedRoots = new Set(roots);
-    const rows = (await this.store.latest(roots)).map(verified), selected = new Map<string, {row: RerunRecord; member: RecordedRerunMember}>();
+    const rows = (await this.store.latest(roots, deadline)).map(verified), selected = new Map<string, {row: RerunRecord; member: RecordedRerunMember}>();
     for (const row of rows) for (const member of row.plan.members) if (requestedRoots.has(member.rootKey)) {
       const previous = selected.get(member.rootKey);
       if (!previous || member.attemptNumber > previous.member.attemptNumber) selected.set(member.rootKey, {row, member});
       else if (member.attemptNumber === previous.member.attemptNumber && member.requestId !== previous.member.requestId)
         throw new TestRunError(503, 'Latest rerun lineage is ambiguous');
     }
-    const observed = await this.batch.read([...selected.values()].map(value => value.member.requestId));
+    const observed = await this.batch.read([...selected.values()].map(value => value.member.requestId), deadline);
     return new Map(await Promise.all([...selected].map(async ([root, value]) => {
       try {return [root, await this.attempt(value.row, value.member, observed)] as const;}
       catch {return [root, {attemptId: value.member.requestId, requestId: value.member.requestId, attemptNumber: value.member.attemptNumber,
