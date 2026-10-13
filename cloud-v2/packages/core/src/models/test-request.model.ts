@@ -18,6 +18,7 @@ const schema = new Schema({
   hostId: {type: String, required: function(this: {fleetSelection?: unknown}) {return !this.fleetSelection;}, immutable: true},
   fleetSelection: {type: Schema.Types.Mixed, immutable: true},
   fleetSelectionSha256: {type: String, immutable: true},
+  fleetPreparationStatus: {type: Schema.Types.Mixed},
   fleetPreparation: {type: Schema.Types.Mixed, immutable: true},
   fleetInputSha256: {type: String, immutable: true},
   fleetDeadline: {type: Date, immutable: true},

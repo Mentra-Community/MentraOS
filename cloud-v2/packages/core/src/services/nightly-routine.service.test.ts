@@ -834,3 +834,11 @@ test("completion scans advance past failing batches and wrap to retry them", asy
     expect(query).toHaveBeenCalledTimes(5);
   } finally {query.mockRestore(); complete.mockRestore();}
 });
+
+test('unbound permanent source failures settle nightly members through their cancellation fence', async () => {
+ const state=fixture(),{plan}=await state.service.start(occurrence);
+ for(const member of plan.members){const row=state.requestRows.get(member.requestId);state.requestRows.set(member.requestId,{...row,fleetBinding:undefined,state:'terminal',terminalStatus:'not-applicable',fleetCancellation:{requestedAt:new Date().toISOString(),reason:'Routine does not support selected platform.'}})}
+ const result=await state.service.snapshot(plan);
+ expect(result.status).toBe('incomplete');expect(result.members.every(member=>member.status==='incomplete')).toBe(true);
+ expect(result.members[0]!.unavailableReason).toContain('does not support selected platform');
+});

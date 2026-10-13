@@ -28,7 +28,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
     return {...base, reason: 'Stored request identity is unavailable.'};
   const selected = selection.data;
   const item: PendingQueueItem = {...base, routineId: selected.routineId, platform: selected.platform, build: selected.build,
-    reason: row.preparation?.reason ?? row.fleetDispatch?.error,
+    reason: row.fleetPreparationStatus?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error,
     ...(row.fleetBinding ? {assignment: {hostId: row.fleetBinding.hostId, laneId: row.fleetBinding.laneId}} : {})};
   let requirements;
   if (row.fleetPreparation) {
