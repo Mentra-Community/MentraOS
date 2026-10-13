@@ -359,6 +359,21 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     expect(await identity("user_01API")).toMatchObject({claimedBy: await mentraUser("supa-api")})
   })
 
+  test("concurrent first requests with one token all see the memberships the first of them claims", async () => {
+    await seedWorkspace("ws_c")
+    await seedPending("ws_c", "user_01CONC", "developer")
+    await seedIdentity("user_01CONC", "conc@studio.example")
+    const token = await coreAccessToken({sub: "supa-conc", email: "conc@studio.example", emailVerified: true, clientId: "mentra-cli"})
+
+    const replies = await Promise.all(Array.from({length: 6}, () => bearerRequest("/api/workspaces", token)))
+
+    for (const reply of replies) {
+      expect(reply.status).toBe(200)
+      const items = ((await reply.json()) as {items: Array<{workspaceId: string}>}).items
+      expect(items.map(item => item.workspaceId)).toEqual(["ws_c"])
+    }
+  })
+
   test("the Store's first request for a developer, through the signed service API, claims their memberships", async () => {
     await seedWorkspace("ws_store")
     await seedPending("ws_store", "user_01SVC", "owner")

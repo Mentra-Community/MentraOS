@@ -10,7 +10,7 @@
  *  - at their first Core access token a Core process resolves
  *    (`claimLegacyIdentitiesOnce`, from `principalFromToken`: Core's API bearers
  *    and the Store's signed service API), checked at most once per ten minutes per
- *    person in a process.
+ *    person in a process; a request arriving while that check runs waits for it.
  * The phone's token exchange never claims. An unverified email claims nothing; a
  * Private Cloud provider's email outside its verified domains is unverified.
  *
@@ -354,6 +354,8 @@ export async function claimLegacyIdentities(input: ClaimInput): Promise<{claimed
 }
 
 const recentChecks = new RecentChecks(RECHECK_AFTER_MS, MAX_REMEMBERED)
+/** Bearer-path checks running now, by person. */
+const inFlightChecks = new Map<string, Promise<void>>()
 
 /**
  * The claim on the bearer path: skipped when this Core process checked the same person in the last
@@ -362,16 +364,26 @@ const recentChecks = new RecentChecks(RECHECK_AFTER_MS, MAX_REMEMBERED)
  */
 export async function claimLegacyIdentitiesOnce(input: ClaimInput): Promise<void> {
   if (input?.emailVerified !== true || !isId(input.mentraUserId) || !normalizeEmail(input.email)) return
-  if (!recentChecks.begin(input.mentraUserId)) return
-  try {
-    await claimLegacyIdentities(input)
-  } catch (err) {
-    recentChecks.forget(input.mentraUserId)
-    logger.error(
-      {mentraUserId: input.mentraUserId, errorName: (err as Error)?.name, error: (err as Error)?.message},
-      "could not claim Store-imported memberships",
-    )
-  }
+  const mentraUserId = input.mentraUserId
+  // A request arriving while another one's check runs waits for it, so it sees what that one claims.
+  const running = inFlightChecks.get(mentraUserId)
+  if (running) return running
+  if (!recentChecks.begin(mentraUserId)) return
+  const check = (async () => {
+    try {
+      await claimLegacyIdentities(input)
+    } catch (err) {
+      recentChecks.forget(mentraUserId)
+      logger.error(
+        {mentraUserId, errorName: (err as Error)?.name, error: (err as Error)?.message},
+        "could not claim Store-imported memberships",
+      )
+    } finally {
+      inFlightChecks.delete(mentraUserId)
+    }
+  })()
+  inFlightChecks.set(mentraUserId, check)
+  return check
 }
 
 /** The claim after a sign-in at Core's sign-in server: Core's startup registers it (`registerAfterSignInHook`). */
