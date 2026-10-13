@@ -4,18 +4,16 @@
  * A stored login whose access token expires within 60 seconds is refreshed
  * first. The sign-in server rotates refresh tokens and ends the grant when a
  * spent one is presented again, so two commands must never refresh the same
- * login at once: a refresh holds a lock file, and a command that waited for it
- * reads the login again and uses the refreshed tokens. The rotated refresh
+ * login at once: a refresh holds a lock (`file-lock.ts`), and a command that
+ * waited for it reads the login again and uses the refreshed tokens. The rotated refresh
  * token is stored before the new access token is used. A refused refresh
  * token clears the login (`SessionExpiredError`).
  */
 
-import {mkdirSync, rmSync, statSync} from "node:fs"
-
 import {refreshLoginToken, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
+import {withFileLock} from "./file-lock"
 import {
-  cliHome,
   clearCredentials,
   isStoredLogin,
   loadCredentials,
@@ -28,10 +26,10 @@ import {
 
 /** Refresh when the access token has less than this left. */
 export const REFRESH_MARGIN_MS = 60_000
-/** A lock older than this was left by a command that died; it is taken over. */
+/** A refresh lock its holder stopped touching this long ago was left by a command that died. */
 const LOCK_STALE_MS = 30_000
-/** How long a command waits for another one's refresh. */
-const LOCK_WAIT_MS = 20_000
+/** How long a command waits for another one's refresh: longer than its two 15-second requests. */
+const LOCK_WAIT_MS = 45_000
 
 export function needsRefresh(credentials: CliCredentials, now = Date.now()): boolean {
   const expiresAt = Date.parse(credentials.expiresAt)
@@ -63,33 +61,14 @@ export async function loadFreshCredentials(target: CliTarget): Promise<CommandCr
   })
 }
 
-async function withRefreshLock<T>(target: CliTarget, work: () => Promise<T>): Promise<T> {
-  mkdirSync(cliHome(), {recursive: true, mode: 0o700})
-  const lock = refreshLockPath(target)
-  const deadline = Date.now() + LOCK_WAIT_MS
-  for (;;) {
-    try {
-      mkdirSync(lock)
-      break
-    } catch (error) {
-      if ((error as {code?: string})?.code !== "EEXIST") throw error
-      let stale = false
-      try {
-        stale = Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS
-      } catch {
-        // Released meanwhile: try again.
-      }
-      if (stale) {
-        rmSync(lock, {recursive: true, force: true})
-        continue
-      }
-      if (Date.now() > deadline) throw new Error("Another mentra command is refreshing this sign-in. Try again in a moment.")
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-  }
-  try {
-    return await work()
-  } finally {
-    rmSync(lock, {recursive: true, force: true})
-  }
+function withRefreshLock<T>(target: CliTarget, work: () => Promise<T>): Promise<T> {
+  return withFileLock(
+    refreshLockPath(target),
+    {
+      staleMs: LOCK_STALE_MS,
+      waitMs: LOCK_WAIT_MS,
+      busyMessage: "Another mentra command is refreshing this sign-in. Try again in a moment.",
+    },
+    work,
+  )
 }
