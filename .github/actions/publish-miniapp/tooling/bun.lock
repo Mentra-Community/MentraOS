@@ -4,23 +4,23 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@mentra/cli": "file:vendor/mentra-cli-2.0.0-dev.1-036fc98cd5b7.tgz",
-        "@mentra/miniapp-cli": "file:vendor/mentra-miniapp-cli-0.1.0-dev.2-036fc98cd5b7.tgz",
+        "@mentra/cli": "file:vendor/mentra-cli-2.0.0-dev.2-4ce1f2d5e98b.tgz",
+        "@mentra/miniapp-cli": "file:vendor/mentra-miniapp-cli-0.1.0-dev.2-4ce1f2d5e98b.tgz",
         "jszip": "3.10.1",
       },
     },
   },
   "overrides": {
-    "@mentra/miniapp-cli": "file:./vendor/mentra-miniapp-cli-0.1.0-dev.2-036fc98cd5b7.tgz",
+    "@mentra/miniapp-cli": "file:./vendor/mentra-miniapp-cli-0.1.0-dev.2-4ce1f2d5e98b.tgz",
   },
   "packages": {
     "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
 
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
 
-    "@mentra/cli": ["@mentra/cli@vendor/mentra-cli-2.0.0-dev.1-036fc98cd5b7.tgz", { "dependencies": { "@mentra/miniapp-cli": "0.1.0-dev.2", "commander": "^14.0.2", "jszip": "^3.10.1", "qrcode": "^1.5.4" }, "bin": { "mentra": "./src/index.ts" } }, "sha512-LGZPaJM/xycYyts0KHU+xTkL4CmUDTvAjj3vULscrczM0pgMPE/hDS7hE/6cP53HA2zxA25Fgqke3FLYAE7/nQ=="],
+    "@mentra/cli": ["@mentra/cli@vendor/mentra-cli-2.0.0-dev.2-4ce1f2d5e98b.tgz", { "dependencies": { "@mentra/miniapp-cli": "0.1.0-dev.2", "commander": "^14.0.2", "jszip": "^3.10.1", "openid-client": "6.8.8", "qrcode": "^1.5.4" }, "bin": { "mentra": "./src/index.ts" } }, "sha512-kMkn/P173RS80JPZrK2obn4uCST3BsTUZcOxzUbQzAMFm4YPEuoy6CuH5kXsuwXTX1Be9ekfs09IsY2CrhcABg=="],
 
-    "@mentra/miniapp-cli": ["@mentra/miniapp-cli@./vendor/mentra-miniapp-cli-0.1.0-dev.2-036fc98cd5b7.tgz", { "dependencies": { "@clack/prompts": "^1.2.0", "jszip": "^3.10.1", "qrcode": "^1.5.4", "typescript": "^5.0.0" }, "bin": { "mentra-miniapp": "./src/index.ts" } }, "sha512-IJl3WiU9/xNGjwClf1j5ZwFkT/Pv2KxSsNIau1jMhhgYJXAdi+rHFi9rPh0l/LdmmC6Q9ZrSW39mlManIWcakA=="],
+    "@mentra/miniapp-cli": ["@mentra/miniapp-cli@./vendor/mentra-miniapp-cli-0.1.0-dev.2-4ce1f2d5e98b.tgz", { "dependencies": { "@clack/prompts": "^1.2.0", "jszip": "^3.10.1", "qrcode": "^1.5.4", "typescript": "^5.0.0" }, "bin": { "mentra-miniapp": "./src/index.ts" } }, "sha512-CsvkNuugFdrPjDBfuRm7PNLyXVSHU2kV7NEREVxVXalLehHECpBsxVyz9L/9AoORZse13GqIiViLhDky+41ARg=="],
 
     "ansi-regex": ["ansi-regex@5.0.1", "", {}, "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="],
 
@@ -62,11 +62,17 @@
 
     "isarray": ["isarray@1.0.0", "", {}, "sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ=="],
 
+    "jose": ["jose@6.2.12", "", {}, "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw=="],
+
     "jszip": ["jszip@3.10.1", "", { "dependencies": { "lie": "~3.3.0", "pako": "~1.0.2", "readable-stream": "~2.3.6", "setimmediate": "^1.0.5" } }, "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g=="],
 
     "lie": ["lie@3.3.0", "", { "dependencies": { "immediate": "~3.0.5" } }, "sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ=="],
 
     "locate-path": ["locate-path@5.0.0", "", { "dependencies": { "p-locate": "^4.1.0" } }, "sha512-t7hw9pI+WvuwNJXwk5zVHpyhIqzg2qTlklJOf0mVxGSbe3Fp2VieZcduNYjaLDoy6p9uGpQEGWG87WpMKlNq8g=="],
+
+    "oauth4webapi": ["oauth4webapi@3.8.8", "", {}, "sha512-8N28E+a/oxfXWBgOMt+ZP/JUf/XR+IFbvkAEPP3gznXOMv9BpAAwiIj0TFNz3tGTPc0ZQ8zmWBNgN1nAys0gng=="],
+
+    "openid-client": ["openid-client@6.8.8", "", { "dependencies": { "jose": "^6.2.12", "oauth4webapi": "^3.8.8" } }, "sha512-ZsucJA5Ad04Uv7YN4ql+s4GXNmb9uAYQwyJTsJx7CH/MX3JZioLE2pVKi1SC+YrbSLA4Px3Gi30dMjgOZtb6pA=="],
 
     "p-limit": ["p-limit@2.3.0", "", { "dependencies": { "p-try": "^2.0.0" } }, "sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w=="],
 
