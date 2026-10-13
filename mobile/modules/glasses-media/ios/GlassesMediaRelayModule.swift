@@ -23,7 +23,9 @@ public final class GlassesMediaRelayModule: Module {
                 self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
                     switch result {
                     case let .success(address): promise.resolve(address)
-                    case let .failure(error): promise.reject(error)
+                    case let .failure(error):
+                        let failure = HotspotJoinFailure(error)
+                        promise.reject(Exception(name: "HotspotJoinFailure", description: failure.message, code: failure.code))
                     }
                 }
             }
