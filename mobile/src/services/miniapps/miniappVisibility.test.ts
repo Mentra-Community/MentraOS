@@ -1,7 +1,7 @@
 import {Platform} from "react-native"
 import {SETTINGS, engine} from "@mentra/engine"
 import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
-import {appRegistry} from "@mentra/engine-host-internal"
+import {appRegistry, type MiniappReleaseIdentity} from "@mentra/engine-host-internal"
 import {shouldHideMiniapp, shouldSkipMiniappInstall} from "./miniappVisibility"
 import {deploymentStore} from "@/services/deployment/store"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
@@ -38,6 +38,7 @@ describe("live iOS miniapp visibility policy", () => {
       manifest: {
         ...consumer.manifest,
         features: {...consumer.manifest.features, nativeMeetings: true},
+        systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
         miniapps: {
           configuration: {},
           managed: [
@@ -58,7 +59,7 @@ describe("live iOS miniapp visibility policy", () => {
       deploymentOrigin: workspace.workspaceOrigin,
       bundleSha256: "a".repeat(64),
     }
-    const release = jest.fn((): typeof identity | null => null)
+    const release = jest.fn((_packageName: string, _version: string): MiniappReleaseIdentity | null => null)
     appRegistry.getReleaseIdentity = release
     appRegistry.getInstalledVersions = jest.fn(() => ["2.1.29"])
     expect(shouldSkipMiniappInstall(mentraCallPackageName)).toBe(false)
@@ -68,11 +69,22 @@ describe("live iOS miniapp visibility policy", () => {
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(true)
+    // Super Mode does not admit a developer build the workspace has not allowed.
     await engine.settings.set(SETTINGS.super_mode.key, true)
+    expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
+    await engine.settings.set(SETTINGS.super_mode.key, false)
+    // A release-QR install of Call is a developer build too.
+    release.mockImplementation((_packageName, version) =>
+      version === "2.2.0" ? {source: "direct_download"} : identity,
+    )
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.2.0")).toBe(true)
+    workspace.manifest.systemMiniapps.approvedPackageNamesOverride = ["com.mentra.settings", "com.mentra.miniappdev"]
     expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(false)
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.2.0")).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
-    await engine.settings.set(SETTINGS.super_mode.key, false)
+    release.mockReturnValue(identity)
+    workspace.manifest.systemMiniapps.approvedPackageNamesOverride = ["com.mentra.settings"]
     for (const mismatch of [
       {deploymentId: "another-workspace"},
       {deploymentOrigin: "https://another.example"},

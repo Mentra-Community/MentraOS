@@ -7,7 +7,7 @@ import {spacing} from "@/theme/spacing"
 
 let mockDeployment = {
   kind: "consumer" as "consumer" | "workspace",
-  manifest: {displayName: "Mentra"},
+  manifest: {displayName: "Mentra", systemMiniapps: {approvedPackageNamesOverride: null as string[] | null}},
   workspaceOrigin: "https://workspace.example.test",
 }
 let mockUser = {name: "Test User", email: "user@example.test", provider: "email", createdAt: "2026-01-01"}
@@ -74,7 +74,7 @@ jest.mock("@/components/ui/Spacer", () => ({
 beforeEach(() => {
   mockDeployment = {
     kind: "consumer",
-    manifest: {displayName: "Mentra"},
+    manifest: {displayName: "Mentra", systemMiniapps: {approvedPackageNamesOverride: null}},
     workspaceOrigin: "https://workspace.example.test",
   }
   mockUser = {name: "Test User", email: "user@example.test", provider: "email", createdAt: "2026-01-01"}
@@ -140,6 +140,17 @@ test("preserves workspace details and rounds the sole workspace account action",
     borderRadius: spacing.s4,
   })
   expectBottomSpacing()
+})
+
+test.each([
+  [null, true],
+  [["com.mentra.settings", "com.mentra.miniappdev"], true],
+  [["com.mentra.settings"], false],
+])("shows Miniapp Developer only where the deployment approves it (%j)", (approved, shown) => {
+  mockDeployment.manifest.systemMiniapps.approvedPackageNamesOverride = approved
+  render(<MainSettingsPage />)
+
+  expect(screen.queryByRole("button", {name: "settings:miniappDeveloperSettings"}) !== null).toBe(shown)
 })
 
 test("leaves additional space below the version on the main Settings screen", () => {

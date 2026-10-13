@@ -1,6 +1,7 @@
 import {afterEach, describe, expect, test} from "bun:test"
 
 import {
+  assertMiniappDevelopmentAllowed,
   configure,
   getConfigValues,
   getMiniappConfiguration,
@@ -9,6 +10,7 @@ import {
   isInstalledMiniappAllowed,
   isLocalMiniappPackageAllowed,
   isMiniappAvailable,
+  isMiniappDevelopmentAllowed,
   isOfflineSystemMiniappAllowed,
   resetForTests,
   start,
@@ -80,12 +82,16 @@ describe("deployment feature policy", () => {
     ).toBe(false)
   })
 
-  test("admits a developer build only in super mode, and only for a managed package", () => {
+  test.each([
+    [["com.mentra.settings"], false],
+    [["com.mentra.settings", "com.mentra.miniappdev"], true],
+    [null, true],
+  ])("admits developer builds of any package only where the developer tools are approved (%j)", (approved, allowed) => {
     configure({
       auth: {},
       config: {
         localMiniappPolicy: {
-          systemPackageNames: ["com.mentra.settings"],
+          systemPackageNames: approved,
           managed: [
             {
               packageName: "com.example.call",
@@ -99,15 +105,18 @@ describe("deployment feature policy", () => {
       },
     })
 
-    expect(isDevMiniappAllowed("com.example.call", true)).toBe(true)
-    expect(isDevMiniappAllowed("com.example.call", false)).toBe(false)
-    expect(isDevMiniappAllowed("com.example.other", true)).toBe(false)
-    expect(isDevMiniappAllowed("com.mentra.settings", true)).toBe(false)
+    expect(isMiniappDevelopmentAllowed()).toBe(allowed)
+    expect(isDevMiniappAllowed("com.example.call")).toBe(allowed)
+    expect(isDevMiniappAllowed("com.example.other")).toBe(allowed)
+    expect(isInstalledMiniappAllowed("com.example.other", "1.0.0", {source: "direct_download"})).toBe(allowed)
+    if (allowed) expect(() => assertMiniappDevelopmentAllowed()).not.toThrow()
+    else expect(() => assertMiniappDevelopmentAllowed()).toThrow("does not allow miniapp development")
   })
 
-  test("keeps consumer developer builds independent of super mode", () => {
+  test("allows consumer developer builds", () => {
     configure({auth: {}})
-    expect(isDevMiniappAllowed("com.example.call", false)).toBe(true)
+    expect(isMiniappDevelopmentAllowed()).toBe(true)
+    expect(isDevMiniappAllowed("com.example.call")).toBe(true)
   })
 
   test("applies a live Super Mode gate to listing, cached releases and direct/dev launches", () => {
@@ -118,7 +127,7 @@ describe("deployment feature policy", () => {
       isLocalMiniappPackageAllowed(packageName),
       isOfflineSystemMiniappAllowed(packageName),
       isInstalledMiniappAllowed(packageName, "1.0.18", {source: "bundled_asset"}),
-      isDevMiniappAllowed(packageName, true),
+      isDevMiniappAllowed(packageName),
     ]
     expect(check()).toEqual([false, false, false, false])
     expect(isLocalMiniappPackageAllowed("com.mentra.notes")).toBe(true)
@@ -157,12 +166,11 @@ describe("deployment feature policy", () => {
     })
     expect(isInstalledMiniappAllowed(packageName, "1.0.18", identity)).toBe(false)
     expect(isOfflineSystemMiniappAllowed(packageName)).toBe(false)
-    expect(isDevMiniappAllowed(packageName, true)).toBe(false)
+    expect(isDevMiniappAllowed(packageName)).toBe(false)
     allowed = true
     expect(isInstalledMiniappAllowed(packageName, "1.0.18", identity)).toBe(true)
     expect(isInstalledMiniappAllowed(packageName, "1.0.17", identity)).toBe(false)
-    expect(isDevMiniappAllowed(packageName, false)).toBe(false)
-    expect(isDevMiniappAllowed(packageName, true)).toBe(true)
+    expect(isDevMiniappAllowed(packageName)).toBe(true)
   })
 })
 
@@ -200,7 +208,6 @@ describe("Store-updated bundled releases", () => {
     expect(
       isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {...identity, storePackageName: "com.other.store"}),
     ).toBe(false)
-    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {source: "direct_download"})).toBe(false)
   })
 
   test("do not bypass an excluded package or an organization pin", () => {
