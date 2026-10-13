@@ -238,6 +238,7 @@ function AdminPage() {
 
   const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
+    fleet: { title: "Fleet", body: "How the Mentra App, miniapps and glasses are used across this organization." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },

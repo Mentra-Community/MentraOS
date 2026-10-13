@@ -164,7 +164,8 @@ person.
 (`organization.incidents.read`), support profiles
 (`organization.supportProfiles.read`), test runs, the routine catalog and
 system health (`organization.testing.read`, and `organization.testing.manage`
-to write). `/api/admin/me` answers any caller with its capabilities. The Store
+to write). `/api/admin/me` answers any caller with its capabilities and whether
+Fleet is installed on this Core (`fleet.installed`). The Store
 calls Core through a signed service API ([Store integration](store-integration.md)).
 
 ## Configuration
