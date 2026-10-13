@@ -1022,8 +1022,20 @@ describe("re-running apply carries access removals made in the Store", () => {
 
     expect(report.removedMemberships).toEqual(
       [
-        {orgId: ORG_ACME, membershipId: `wm_${devHex}`, revokedCredentialIds: [keys.dev.row.keyId]},
-        {orgId: ORG_ACME, membershipId: undated!.membershipId, revokedCredentialIds: []},
+        {
+          orgId: ORG_ACME,
+          membershipId: `wm_${devHex}`,
+          replacedByMembershipId: null,
+          movedCredentialIds: [],
+          revokedCredentialIds: [keys.dev.row.keyId],
+        },
+        {
+          orgId: ORG_ACME,
+          membershipId: undated!.membershipId,
+          replacedByMembershipId: null,
+          movedCredentialIds: [],
+          revokedCredentialIds: [],
+        },
       ].sort((a, b) => (a.membershipId < b.membershipId ? -1 : 1)),
     )
     expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${devHex}`}).lean()).toMatchObject({
@@ -1082,23 +1094,39 @@ describe("re-running apply carries access removals made in the Store", () => {
     })
   })
 
-  test("a person removed and re-added in the Store gets their new membership in place of the old one", async () => {
+  test("a person removed and re-added in the Store gets their new membership in place of the old one, keeping their keys and invitations", async () => {
+    // The person sent an invitation that is still pending in the Store.
+    await sourceDb()
+      .collection("developer_org_invitations")
+      .updateOne({invitationId: invitationIds.acmeAdmin}, {$set: {invitedByUserId: U.acmeDev}})
     await run({apply: true})
     const devHex = await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")
+    expect(await validateCredentialToken(keys.dev.token)).not.toBeNull()
     await sourceDb()
       .collection("developer_org_memberships")
       .updateOne({orgId: ORG_ACME, userId: U.acmeDev}, {$set: {status: "removed"}})
     const {insertedId} = await sourceDb()
       .collection("developer_org_memberships")
       .insertOne(membership({orgId: ORG_ACME, userId: U.acmeDev, role: "admin", email: "dev@acme.example"}))
+    const replacementId = `wm_${String(insertedId)}`
+    const removal = {
+      orgId: ORG_ACME,
+      membershipId: `wm_${devHex}`,
+      replacedByMembershipId: replacementId,
+      movedCredentialIds: [keys.dev.row.keyId],
+      revokedCredentialIds: [],
+    }
 
+    const dry = await withReadOnlyTarget(target => run({target}))
+    expect(dry.removedMemberships).toEqual([removal])
     const report = await run({apply: true})
+    expect(report).toEqual({...dry, mode: "apply"})
 
     expect(report.pendingCollisions).toEqual([])
     expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${devHex}`}).lean()).toMatchObject({
       status: "ended",
     })
-    const readded = (await WorkspaceMembershipModel.findOne({membershipId: `wm_${String(insertedId)}`}).lean())!
+    const readded = (await WorkspaceMembershipModel.findOne({membershipId: replacementId}).lean())!
     expect(readded).toMatchObject({
       status: "active",
       role: "admin",
@@ -1108,6 +1136,70 @@ describe("re-running apply carries access removals made in the Store", () => {
     const revision = (await WorkspaceModel.findOne({workspaceId: ORG_ACME}).lean())!.authorizationRevision
     expect(revision).toBeGreaterThan(0)
     expect(readded.roleHistory as unknown).toEqual([{role: "admin", from: readded.startedAt, authorizationRevision: revision}])
+
+    // The key the Store still has live keeps working, now under the new membership, and the
+    // person's pending invitation stays acceptable.
+    expect(await validateCredentialToken(keys.dev.token)).not.toBeNull()
+    expect(await AccessCredentialModel.findOne({credentialId: keys.dev.row.keyId}).lean()).toMatchObject({
+      createdByMembershipId: replacementId,
+      revokedAt: null,
+    })
+    expect(await WorkspaceInvitationModel.findOne({invitationId: invitationIds.acmeAdmin}).lean()).toMatchObject({
+      status: "pending",
+      invitedByMembershipId: replacementId,
+    })
+    const replaced = await WorkspaceAuditEventModel.findOne({
+      action: "membership.replaced",
+      "target.membershipId": `wm_${devHex}`,
+    }).lean()
+    expect(replaced?.actor).toEqual({kind: "system"})
+    expect(replaced?.after).toEqual({
+      replacedByMembershipId: replacementId,
+      repointedCredentialIds: [keys.dev.row.keyId],
+      repointedInvitationIds: [invitationIds.acmeAdmin],
+    })
+    const removedEvent = await WorkspaceAuditEventModel.findOne({
+      action: "membership.removed",
+      "target.membershipId": `wm_${devHex}`,
+    }).lean()
+    expect(removedEvent?.after).toMatchObject({revokedCredentialIds: [], revokedInvitationIds: []})
+
+    // Settled: a third run changes nothing.
+    const settled = await snapshotTarget()
+    const third = await run({apply: true})
+    expect(third.removedMemberships).toEqual([])
+    expect(await snapshotTarget()).toEqual(settled)
+  })
+
+  test("a key the Store revoked is not moved to the replacement membership", async () => {
+    await run({apply: true})
+    const devHex = await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")
+    const revokedAt = at("2026-10-05T09:00:00.000Z")
+    await sourceDb().collection("developer_org_api_keys").updateOne({keyId: keys.dev.row.keyId}, {$set: {revokedAt}})
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .updateOne({orgId: ORG_ACME, userId: U.acmeDev}, {$set: {status: "removed"}})
+    const {insertedId} = await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_ACME, userId: U.acmeDev, role: "member", email: "dev@acme.example"}))
+
+    const report = await run({apply: true})
+
+    expect(report.revokedCredentials).toEqual([{orgId: ORG_ACME, credentialId: keys.dev.row.keyId}])
+    expect(report.removedMemberships).toEqual([
+      {
+        orgId: ORG_ACME,
+        membershipId: `wm_${devHex}`,
+        replacedByMembershipId: `wm_${String(insertedId)}`,
+        movedCredentialIds: [],
+        revokedCredentialIds: [],
+      },
+    ])
+    expect(await validateCredentialToken(keys.dev.token)).toBeNull()
+    expect(await AccessCredentialModel.findOne({credentialId: keys.dev.row.keyId}).lean()).toMatchObject({
+      createdByMembershipId: `wm_${devHex}`,
+      revokedAt,
+    })
   })
 
   test("a membership that collides with an unclaimed one is reported and the rest of the org still imports", async () => {
@@ -1319,7 +1411,15 @@ describe("re-running apply never leaves a workspace without an owner", () => {
 
     expect(report).toEqual({...dry, mode: "apply"})
     expect(report.keptLastOwners).toEqual([{orgId: ORG_ACME, membershipId: ownerId, userId: U.acmeOwner}])
-    expect(report.removedMemberships).toEqual([{orgId: ORG_ACME, membershipId: devId, revokedCredentialIds: [keys.dev.row.keyId]}])
+    expect(report.removedMemberships).toEqual([
+      {
+        orgId: ORG_ACME,
+        membershipId: devId,
+        replacedByMembershipId: null,
+        movedCredentialIds: [],
+        revokedCredentialIds: [keys.dev.row.keyId],
+      },
+    ])
     expect(await WorkspaceMembershipModel.findOne({membershipId: ownerId}).lean()).toMatchObject({status: "active", role: "owner"})
     expect(await WorkspaceMembershipModel.findOne({membershipId: devId}).lean()).toMatchObject({status: "ended"})
     expect(await countActiveOwners(ORG_ACME)).toBe(1)
@@ -1337,7 +1437,15 @@ describe("re-running apply never leaves a workspace without an owner", () => {
     await recoverOwnership({kind: "system"}, ORG_ACME, "mu_new_owner")
     const after = await run({apply: true})
     expect(after.keptLastOwners).toEqual([])
-    expect(after.removedMemberships).toEqual([{orgId: ORG_ACME, membershipId: ownerId, revokedCredentialIds: [ownerKey.row.keyId]}])
+    expect(after.removedMemberships).toEqual([
+      {
+        orgId: ORG_ACME,
+        membershipId: ownerId,
+        replacedByMembershipId: null,
+        movedCredentialIds: [],
+        revokedCredentialIds: [ownerKey.row.keyId],
+      },
+    ])
     expect(await countActiveOwners(ORG_ACME)).toBe(1)
     expect(await validateCredentialToken(ownerKey.token)).toBeNull()
   })

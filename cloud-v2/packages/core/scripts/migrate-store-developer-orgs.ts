@@ -28,7 +28,12 @@
  *  - A Store membership that is gone or no longer active, whose Core membership is
  *    still unclaimed (nobody has signed in with it), is ended as `removed` and the
  *    keys it created are revoked, as `endMembership` does (`removedMemberships`,
- *    one `membership.removed` event each, as the system). The synthesized owner
+ *    one `membership.removed` event each, as the system). When the Store replaced
+ *    it with another active membership of the same person (removed and re-added,
+ *    or another of their rows now ranks first), the person keeps what they made:
+ *    its live keys and pending invitations move to the replacement first, as a
+ *    claim's merge does (`movedCredentialIds`, `replacedByMembershipId`, and a
+ *    `membership.replaced` event). The synthesized owner
  *    (`wm_owner_<orgId>`) counts as gone once the Store no longer gives that person
  *    access to the org at all.
  *  - A Store invitation that is no longer pending, and is still pending in Core, is
@@ -112,6 +117,7 @@ import {WorkspaceMembershipModel} from "../src/models/workspace-membership.model
 import {WorkspaceModel, type WorkspaceRow} from "../src/models/workspace.model"
 import {recordWorkspaceEvent} from "../src/services/workspaces/audit.service"
 import {markRevoked} from "../src/services/workspaces/credential.service"
+import {repointCredentials, repointInvitations} from "../src/services/workspaces/membership-claim.service"
 import {
   bumpRevision,
   endMembership,
@@ -255,8 +261,18 @@ export type MigrationReport = {
   skippedWorkspaces: Array<{orgId: string; status: string}>
   /** Live Core credentials revoked because their Store key is revoked. */
   revokedCredentials: Array<{orgId: string; credentialId: string}>
-  /** Unclaimed imported memberships ended because their Store membership is gone, with the keys they took along. */
-  removedMemberships: Array<{orgId: string; membershipId: string; revokedCredentialIds: string[]}>
+  /**
+   * Unclaimed imported memberships ended because their Store membership is gone. When the Store
+   * replaced it with another membership of the same person, its live keys move to that one
+   * (`movedCredentialIds`); otherwise they are revoked with it (`revokedCredentialIds`).
+   */
+  removedMemberships: Array<{
+    orgId: string
+    membershipId: string
+    replacedByMembershipId: string | null
+    movedCredentialIds: string[]
+    revokedCredentialIds: string[]
+  }>
   /** Pending Core invitations revoked because their Store invitation is no longer pending. */
   revokedInvitations: Array<{orgId: string; invitationId: string}>
   /** Claimed (signed-in) memberships whose Store membership is gone: reported, never changed. */
@@ -677,7 +693,12 @@ type Reconciliation = {
   /** Set when the Core workspace exists but is not active: the org is skipped whole. */
   skippedStatus: string | null
   revokeCredentials: Array<{credentialId: string; revokedAt: Date}>
-  endMemberships: Array<{membershipId: string; revokedCredentialIds: string[]}>
+  endMemberships: Array<{
+    membershipId: string
+    replacedByMembershipId: string | null
+    movedCredentialIds: string[]
+    revokedCredentialIds: string[]
+  }>
   revokeInvitationIds: string[]
   claimedDrift: Array<{membershipId: string; mentraUserId: string}>
   collisions: Array<{membershipId: string; userId: string; skippedCredentialIds: string[]}>
@@ -779,6 +800,8 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
   }
 
   let remaining = target.memberships
+  let ending: TargetMembership[] = []
+  let endingCredentials: (membershipId: string) => string[] = () => []
   // Removals only apply to a workspace an earlier run imported.
   if (target.workspaceStatus === "active") {
     const ownerId = `wm_owner_${plan.orgId}`
@@ -842,18 +865,12 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
       }
     }
     const kept = new Set(result.keptLastOwners.map(entry => entry.membershipId))
-    result.endMemberships = toEnd
-      .filter(membership => !kept.has(membership.membershipId))
-      .map(membership => ({
-        membershipId: membership.membershipId,
-        revokedCredentialIds: target.liveCredentials
-          .filter(
-            credential =>
-              credential.createdByMembershipId === membership.membershipId && !alreadyRevoked.has(credential.credentialId),
-          )
-          .map(credential => credential.credentialId)
-          .sort(compareStrings),
-      }))
+    ending = toEnd.filter(membership => !kept.has(membership.membershipId))
+    endingCredentials = (membershipId: string) =>
+      target.liveCredentials
+        .filter(credential => credential.createdByMembershipId === membershipId && !alreadyRevoked.has(credential.credentialId))
+        .map(credential => credential.credentialId)
+        .sort(compareStrings)
 
     result.revokeInvitationIds = target.pendingInvitationIds
       .filter(id => {
@@ -893,6 +910,29 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
       credential => !skippedCredentials.has(credential.credentialId) && !target.existingCredentialIds.has(credential.credentialId),
     ),
   }
+
+  // A membership the Store replaced with another one of the same person (removed and re-added, or
+  // another of their rows now ranks first) hands its live keys and pending invitations to that one,
+  // as a claim's merge does, when it is active once this run is done. Otherwise they end with it.
+  const activeAfter = new Set([
+    ...remaining.map(membership => membership.membershipId),
+    ...result.insert.memberships.map(membership => membership.membershipId),
+  ])
+  result.endMemberships = ending.map(membership => {
+    const replacement = plan.memberships.find(
+      planned =>
+        planned.sourceUserId === membership.pendingWorkosUserId &&
+        planned.membershipId !== membership.membershipId &&
+        activeAfter.has(planned.membershipId),
+    )
+    const credentialIds = endingCredentials(membership.membershipId)
+    return {
+      membershipId: membership.membershipId,
+      replacedByMembershipId: replacement?.membershipId ?? null,
+      movedCredentialIds: replacement ? credentialIds : [],
+      revokedCredentialIds: replacement ? [] : credentialIds,
+    }
+  })
   return result
 }
 
@@ -1164,11 +1204,23 @@ async function applyRemovals(
     if (row) await markRevoked(session, row, SYSTEM_ACTOR, revokedAt)
   }
 
-  for (const {membershipId} of reconciliation.endMemberships) {
+  for (const {membershipId, replacedByMembershipId} of reconciliation.endMemberships) {
     const membership = await WorkspaceMembershipModel.findOne({membershipId, workspaceId, status: "active"})
       .session(session)
       .lean<MembershipRow>()
     if (!membership) continue
+    if (replacedByMembershipId) {
+      // The replacement is inserted later in this transaction, if it is new.
+      const repointedCredentialIds = await repointCredentials(session, membership, replacedByMembershipId)
+      const repointedInvitationIds = await repointInvitations(session, membership, replacedByMembershipId)
+      await recordWorkspaceEvent(session, {
+        workspaceId,
+        action: "membership.replaced",
+        actor: SYSTEM_ACTOR,
+        target: {membershipId, mentraUserId: null, email: membership.email ?? null},
+        after: {replacedByMembershipId, repointedCredentialIds, repointedInvitationIds},
+      })
+    }
     await endMembership(session, {
       workspace: workspace!,
       actor: SYSTEM_ACTOR,

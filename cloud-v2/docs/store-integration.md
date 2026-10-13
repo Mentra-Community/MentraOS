@@ -153,7 +153,7 @@ before the Store starts deferring to Core.
 | `counts` | Organizations, memberships, invitations and keys imported (rows an earlier run imported count again), and `skippedKeys`: every key not imported, each named once in `malformedKeys`, `keysWithoutCreator` or `pendingCollisions`. |
 | `targetCompared` | Whether Core was read. The fields below compare the Store with Core and are empty when it was not. |
 | `skippedWorkspaces` | Organizations whose workspace was deleted in Core: nothing is imported or changed, and nothing else in the report counts them. |
-| `revokedCredentials`, `revokedInvitations`, `removedMemberships` | Access the Store removed, carried into Core, each audited as the system. |
+| `revokedCredentials`, `revokedInvitations`, `removedMemberships` | Access the Store removed, carried into Core, each audited as the system. A removed membership the Store replaced with another of the same person (removed and re-added) hands its live keys and pending invitations to the replacement (`movedCredentialIds`). |
 | `claimedMembershipDrift` | Claimed memberships the Store removed, left for an admin to act on in Core. |
 | `keptLastOwners` | Unclaimed Owner memberships the Store removed, kept because the workspace would have no other Owner. An Organization Admin decides in Core; a later run ends them once the workspace has another Owner. |
 | `pendingCollisions` | Memberships not imported because the person already holds an unclaimed one in that workspace, with the keys bound to them. |

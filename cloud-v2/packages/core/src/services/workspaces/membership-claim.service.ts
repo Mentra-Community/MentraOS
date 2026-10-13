@@ -229,7 +229,7 @@ export async function repointCredentials(
 }
 
 /** Move the pending invitations an ended duplicate sent to the surviving membership, returning their ids. */
-async function repointInvitations(
+export async function repointInvitations(
   session: ClientSession,
   duplicate: {membershipId: string; workspaceId: string},
   keptMembershipId: string,
