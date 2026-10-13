@@ -1,7 +1,7 @@
 import {expect,test} from 'bun:test';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
-import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,RerunPreviewMembers,TestRerunPage,RunRerunLinks} from './test-reruns';
+import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,RerunPreviewMembers,TestRerunPage,RunRerunLinks,RunLatestStatus} from './test-reruns';
 import type {RerunPlan} from '../../../../packages/core/src/types/test-rerun.types';
 import {TestSuitePage} from './test-suites';
 const attempt={attemptId:'request',requestId:'request',attemptNumber:1,status:'pass',publicationComplete:false,parent:{suiteId:'nightly'},memberId:'item',rerunId:'repair',build:{headSha:'b'.repeat(40),channel:'dev' as const,repository:'Mentra-Community/MentraOS',source:{channel:'dev' as const,buildRunId:123,publicationAttempt:1}}};
@@ -64,3 +64,11 @@ test('older history loading and errors keep disclosure, previous attempts and la
  expect(view(null,false,undefined,olderEmpty)).toBe('');
  expect(view(null)).toContain('Older attempts');
 });
+
+
+test('opening a failed successor shows its own failure even after a later passing successor',()=>{
+ const client=new QueryClient(); client.setQueryData(['rerun-lineage','failed-current'],{lineage:{parent:{requestId:'root'},memberId:'root'}})
+ client.setQueryData(['rerun-history','root','root',null],{original:{...attempt,status:'pass',publicationComplete:true,attemptNumber:0},attempts:[{...attempt,status:'pass',publicationComplete:true}],nextBefore:null})
+ const html=render(<RunLatestStatus requestId="failed-current" original="failed"/>,client)
+ expect(html).toContain('title="This run"');expect(html).toContain('>Failed</span>');expect(html.match(/>Passed<\/span>/g)).toHaveLength(2)
+})

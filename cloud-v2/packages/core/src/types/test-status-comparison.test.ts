@@ -1,5 +1,5 @@
 import {expect,test} from 'bun:test'
-import {comparedSuiteCounts,observedTestStatus,testStatusCounts} from './test-status-comparison'
+import {comparedSuiteCounts,observedTestStatus,testStatusCounts,suiteDisplayStatus} from './test-status-comparison'
 import type {RerunAttempt} from './test-rerun.types'
 
 test('latest counts include every original member and keep skipped, pending and incomplete distinct',()=>{
@@ -12,4 +12,13 @@ test('latest counts include every original member and keep skipped, pending and 
  expect(comparedSuiteCounts(members,latest).latest.failed).toBe(1)
  expect(testStatusCounts([{status:'cancelled',publicationComplete:false},{status:'running',publicationComplete:false}])).toMatchObject({failed:0,incomplete:1,pending:1})
  expect(observedTestStatus({status:'pass',publicationComplete:false})).toBe('publishing')
+})
+
+
+test('terminal evidence failure and unfinished publication have distinct presentation',()=>{
+ expect(observedTestStatus({status:'pass',publicationComplete:false,evidenceStatus:'failed'})).toBe('evidence-failed')
+ expect(observedTestStatus({status:'pass',publicationComplete:false,evidenceStatus:'complete'})).toBe('publishing')
+ expect(observedTestStatus({status:'pass',publicationComplete:false,publicationFailed:true})).toBe('evidence-failed')
+ expect(testStatusCounts([{status:'pass',publicationComplete:false,evidenceStatus:'failed'}])).toMatchObject({failed:1,pending:0})
+ expect(suiteDisplayStatus('failed',0)).toBe('incomplete');expect(suiteDisplayStatus('failed',1)).toBe('failed');expect(suiteDisplayStatus('running',0)).toBe('running')
 })

@@ -17,7 +17,7 @@ test("suite link survives as a validated distinct URL", () => {
 test("suite shows missing routines and links to published recordings", () => {
   const client = new QueryClient(); client.setQueryData(["test-suite-summary", suite.suiteId], suite);
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
-  expect(html).toContain("1/2 passed"); expect(html).toContain("Did not run");
+  expect(html).toContain("0/1 failed, 1 skipped"); expect(html).toContain("Did not run");
   expect(html).toContain("/?testRun=run-one"); expect(html).toContain("Incomplete: ota");
 });
 test("recent suite link opens aggregate", () => {
@@ -128,7 +128,7 @@ test("missing results make the completed suite incomplete without red in detail 
 test("actual failures stay red and incomplete routines have their own neutral summary", () => {
   const html = renderSuite({...suite, failedRoutines: ["ota", "call"], members: [...suite.members,
     {...suite.members[0]!, memberId: "call", routineId: "call", status: "failed"}]});
-  expect(html).toContain("bg-red-100 text-red-800");
+  expect(html).toContain("text-[#cf222e]");
   expect(html).toContain('text-red-700">Failed: call');
   expect(html).toContain('text-[#68746d]">Incomplete: ota');
 });
@@ -154,18 +154,18 @@ test.each([false, undefined])("a passed run with unpublished evidence stays neut
     members: [suite.members[0]!, {...suite.members[1]!, status: "pass", publicationComplete, runId: "uploading-run"}]};
   const before = JSON.stringify(value);
   const html = renderSuite(value);
-  expect(html).toContain("1/2 passed with complete evidence");
+  expect(html).toContain("0/2 failed, 1 pending");
   expect(html).toContain("1 passed · evidence pending");
   expect(html).toContain("text-[#656d76]");
-  expect(html).toContain(">Evidence pending</span>");
+  expect(html).toContain(">Publishing</span>");
   expect(html.match(/>Passed<\/span>/g)).toHaveLength(1);
   expect(html).toContain('href="/?testRun=uploading-run"');
   const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [value]});
   const recent = renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>);
-  expect(recent).toContain("1/2 passed with complete evidence · 1 passed with pending evidence");
+  expect(recent).toContain("0/2 failed, 1 pending");
   expect(JSON.stringify(value)).toBe(before);
   const published = renderSuite({...value, passed: 2, members: value.members.map(member => ({...member, publicationComplete: true}))});
-  expect(published).toContain("2/2 passed with complete evidence");
+  expect(published).toContain("0/2 failed");
   expect(published).not.toContain("Passed · evidence pending");
 });
 

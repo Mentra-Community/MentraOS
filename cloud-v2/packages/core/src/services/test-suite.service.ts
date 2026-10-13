@@ -485,7 +485,7 @@ export class TestSuiteService {
         hostId: run.hostId, laneId: run.laneId,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
-        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
+        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run), evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
     });
     const requests = await boundSuiteRequests(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
     const rejections = suiteRejections(requests);

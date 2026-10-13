@@ -4,6 +4,7 @@ import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-hi
 import {laneHistoryHref} from "../lib/lane-links";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {testRunLocation} from "../lib/test-run-links";
+import {suiteDisplayStatus} from "../../../../packages/core/src/types/test-status-comparison";
 import {OriginalLatestStatus, SuiteCountComparison} from "./test-status-comparison";
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from "./ui/table";
 
@@ -86,8 +87,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
     : routines.find(routine => routine.routineId === entry.routineId && routine.platform === entry.platform)?.definition.title ?? readable(entry.routineId);
   const duration = entry.finishedAt ? runDuration(entry.startedAt, entry.finishedAt) : elapsedDuration(now - Date.parse(entry.startedAt));
   const lanes = suite ? entry.lanes ?? [] : [{hostId: entry.hostId, laneId: entry.laneId}];
-  const outcome = suite && entry.outcome === "failed" && entry.failedCount === 0 ? "incomplete"
-    : suite ? entry.outcome : runDisplayStatus(entry.outcome, entry.evidenceStatus, entry.uploadsComplete);
+  const outcome = suite ? suiteDisplayStatus(entry.outcome, entry.failedCount) : runDisplayStatus(entry.outcome, entry.evidenceStatus, entry.uploadsComplete);
   const rerunCount = entry.rerunCount ?? 0;
   return <TableRow className={suite ? SUITE_ROW : undefined}>
     <TableCell><StartedAt value={entry.startedAt}/></TableCell>

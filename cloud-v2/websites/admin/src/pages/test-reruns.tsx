@@ -122,7 +122,8 @@ export function RunLatestStatus({requestId, original}: {requestId: string; origi
  const suiteId="suiteId" in parent?parent.suiteId:undefined, originalRequestId="requestId" in parent?parent.requestId:undefined
  const history=useQuery({queryKey:["rerun-history",suiteId??originalRequestId,memberId,null],enabled:!!lineage.data,
   queryFn:()=>api<AttemptHistoryData>(`/api/admin/test-runs/reruns/${suiteId?`suite/${encodeURIComponent(suiteId)}/members/${encodeURIComponent(memberId)}`:`request/${encodeURIComponent(originalRequestId!)}`}/history`),refetchInterval:15000})
- return <><OriginalLatestStatus original={history.data?observedTestStatus(history.data.original):original} latest={history.data?.attempts[0]}/>
+ return <>{value && <span className="mb-1 block" title="This run"><HistoryStatus outcome={original}/></span>}
+  <OriginalLatestStatus original={history.data?observedTestStatus(history.data.original):original} latest={history.data?.attempts[0]}/>
   {(lineage.error||history.error)&&<span className="block text-xs text-[#656d76]">Latest unavailable</span>}</>
 }
 

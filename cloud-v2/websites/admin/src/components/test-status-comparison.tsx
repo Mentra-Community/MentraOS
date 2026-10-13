@@ -3,7 +3,7 @@ import type {RerunAttempt} from '../../../../packages/core/src/types/test-rerun.
 import {observedTestStatus, type TestStatusCounts} from '../../../../packages/core/src/types/test-status-comparison'
 import {HistoryStatus} from './test-history-table'
 
-export function OriginalLatestStatus({original, latest}: {original: string; latest?: Pick<RerunAttempt, 'status' | 'publicationComplete'> | null}) {
+export function OriginalLatestStatus({original, latest}: {original: string; latest?: Pick<RerunAttempt, 'status' | 'publicationComplete' | 'evidenceStatus' | 'publicationFailed'> | null}) {
   return <span className="inline-flex flex-wrap items-center gap-1.5" title={latest ? 'Original → Latest' : 'Original result'}>
     <HistoryStatus outcome={original}/>{latest && <><ArrowRight aria-label="to latest" className="size-3.5 text-[#656d76]"/>
       <HistoryStatus outcome={observedTestStatus(latest)}/></>}

@@ -159,7 +159,8 @@ export class TestRerunService {
       result.definitionRevision !== input.data.definitionRevision || requestInputDigest(result.routineSource ?? null) !== requestInputDigest(input.data.routineSource ?? null) || requestInputDigest(result.build) !== requestInputDigest(input.data.build)))
       throw new TestRunError(503, "Rerun result differs from its admitted app or definition");
     return {...identity, requestId, status: result?.outcome ?? request.terminalStatus ?? request.state,
-      publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete", build: input.data.build, definitionRevision: input.data.definitionRevision,
+      publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete",
+      ...(result ? {evidenceStatus: result.evidenceStatus} : {}), ...(job.publicationFailure ? {publicationFailed: true} : {}), build: input.data.build, definitionRevision: input.data.definitionRevision,
       ...(result ? {runId: result.runId, startedAt: result.startedAt, finishedAt: result.finishedAt} : {}),
       ...(!result && request.publicationFailure ? {reason: `Publication failed: ${request.publicationFailure.message}`} : request.hostRejection ? {reason: request.hostRejection.reason} : {})};
   }

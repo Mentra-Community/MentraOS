@@ -16,3 +16,9 @@ test('suite comparison excludes skips and zero known failures still shows unfini
  expect(html).toContain('1/26 failed, 1 skipped');expect(html).toContain('0/26 failed, 1 skipped, 2 pending, 1 incomplete')
  expect(html).toContain('Original → Latest');expect(html).not.toContain('3 passing')
 })
+
+
+test('failed evidence is red rather than a never-ending publishing state',()=>{
+ const html=renderToStaticMarkup(<OriginalLatestStatus original="failed" latest={{status:'pass',publicationComplete:false,evidenceStatus:'failed'}}/>)
+ expect(html).toContain('Evidence failed');expect(html).not.toContain('Publishing');expect(html).toContain('text-[#cf222e]')
+})

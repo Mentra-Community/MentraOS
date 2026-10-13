@@ -11,14 +11,14 @@ import {api} from "../lib/api";
 import {runDuration} from "../lib/run-duration";
 import {frameworkIdentitySchema} from "../../../../packages/core/src/types/framework-request.types";
 import {OriginalLatestStatus, SuiteCountComparison} from "../components/test-status-comparison";
-import {comparedSuiteCounts} from "../../../../packages/core/src/types/test-status-comparison";
+import {comparedSuiteCounts, suiteDisplayStatus, observedTestStatus, testStatusCounts} from "../../../../packages/core/src/types/test-status-comparison";
 import {CopyRerunLabel} from '../components/copy-rerun-label';
 
 export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
   build: {headSha: string; release?: string; producerUrl?: string};
   outcome: "running" | "passed" | "failed"; passed: number; failedRoutines: string[];
-  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; hostId?: string; laneId?: string; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string; unavailableReason?: string; rejectedAt?: string}[];
+  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; hostId?: string; laneId?: string; publicationComplete?: boolean; evidenceStatus?: 'complete' | 'failed'; publicationFailed?: boolean; runId?: string; startedAt?: string; finishedAt?: string; unavailableReason?: string; rejectedAt?: string}[];
 }
 export function readSuiteId(search: string) {
   const query = new URLSearchParams(search);
@@ -30,12 +30,6 @@ const isFailure = (status: string) => ["failed", "setup-failed", "teardown-faile
 const pendingPassCount = (suite: TestSuiteResult) => suite.members.filter(member => member.status === "pass" && member.publicationComplete !== true).length;
 const memberStatus = (member: TestSuiteResult["members"][number]) => member.status === "pass" ? member.publicationComplete === true ? "Passed" : "Passed · evidence pending"
   : member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status;
-function suitePresentation(suite: TestSuiteResult) {
-  if (suite.outcome === "passed") return {label: "All passed", color: "bg-green-100 text-green-800"};
-  if (suite.members.some(member => isFailure(member.status))) return {label: "Failures", color: "bg-red-100 text-red-800"};
-  if (suite.outcome === "running") return {label: "In progress", color: "bg-blue-100 text-blue-800"};
-  return {label: "Incomplete", color: "bg-gray-100 text-[#68746d]"};
-}
 export function TestSuitePage({suiteId}: {suiteId: string}) {
   const result = useQuery({queryKey: ["test-suite-summary", suiteId],
     queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}/summary`),
@@ -46,7 +40,6 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   if (result.isPending) return <LoadingIndicator label="Loading test suite" />;
   if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><TestingButton onClick={() => result.refetch()}>Try again</TestingButton></div>;
   const suite = result.data!;
-  const presentation = suitePresentation(suite);
   const comparisons = comparedSuiteCounts(suite.members.map(member => ({...member, publicationComplete: member.publicationComplete === true})),
     new Map(progress.data?.members.flatMap(member => member.latest ? [[member.memberId, member.latest] as const] : []) ?? []));
   const members = [...suite.members].sort((a, b) => {
@@ -79,7 +72,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
       <div><h2 className="text-xl font-bold">{suite.channel === "dev" ? "Dev" : suite.channel} {suite.trigger} test suite</h2>
         <p className="mt-1 text-sm text-[#68746d]">{suite.build.release ?? suite.build.headSha.slice(0, 10)} · {suite.build.headSha.slice(0, 10)}</p></div>
-      <div className="space-y-2 text-right"><HistoryStatus outcome={suite.outcome}/>
+      <div className="space-y-2 text-right"><HistoryStatus outcome={suiteDisplayStatus(suite.outcome, comparisons.original.failed)}/>
         <div><SuiteCountComparison original={comparisons.original} latest={comparisons.hasReruns ? comparisons.latest : undefined}/></div></div>
     </div>
     <p className="mt-3 text-xs text-[#747780]">{pendingPassCount(suite) > 0 && `${pendingPassCount(suite)} passed · evidence pending`}</p>
@@ -105,7 +98,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
           <td className="whitespace-nowrap tabular-nums">{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td>
           <td><TestLaneBadges lanes={member.hostId && member.laneId ? [{hostId: member.hostId, laneId: member.laneId}] : []}/></td>
           <td className="whitespace-nowrap text-xs" title={suite.build.headSha}>{suite.build.release ?? suite.build.headSha.slice(0, 10)}</td>
-          <td><OriginalLatestStatus original={member.status === "pass" && member.publicationComplete !== true ? "publishing" : member.status} latest={latestAttempt(member.memberId)}/>
+          <td><OriginalLatestStatus original={observedTestStatus({...member, publicationComplete: member.publicationComplete === true})} latest={latestAttempt(member.memberId)}/>
             {member.status === "not-run" && <span className="sr-only">Did not run</span>}
             {member.unavailableReason && <details className="mt-2 min-w-40 max-w-xs text-xs text-[#747780]"><summary className="cursor-pointer">Failure reason</summary><p className="mt-2 break-words">{member.unavailableReason}</p></details>}
           </td>
@@ -127,7 +120,6 @@ export function RecentTestSuites() {
   return <section className={panel}><h2 className="text-xl font-bold">Recent test suites</h2><p className="my-2 text-sm text-[#68746d]">One dispatched job, with all of its routine results.</p>
     {result.data.suites.map(suite => <a key={suite.suiteId} className="flex justify-between gap-4 border-b py-3 last:border-0" href={`/?testSuite=${encodeURIComponent(suite.suiteId)}`}>
       <span>{suite.channel} · {suite.trigger} · {suite.build.release ?? suite.build.headSha.slice(0, 10)}<span className="ml-3 text-xs text-[#68746d]">{new Date(suite.startedAt).toLocaleString()}</span></span>
-      <span className={`rounded-lg px-2 py-1 ${suitePresentation(suite).color}`}>{suitePresentation(suite).label} · {suite.passed}/{suite.members.length} passed with complete evidence
-        {pendingPassCount(suite) > 0 && ` · ${pendingPassCount(suite)} passed with pending evidence`}</span></a>)}
+      <span className="space-y-1 text-right"><HistoryStatus outcome={suiteDisplayStatus(suite.outcome, testStatusCounts(suite.members.map(member=>({...member,publicationComplete:member.publicationComplete===true}))).failed)}/><span className="block"><SuiteCountComparison original={testStatusCounts(suite.members.map(member=>({...member,publicationComplete:member.publicationComplete===true})))}/></span></span></a>)}
   </section>;
 }

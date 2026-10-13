@@ -304,3 +304,10 @@ test('batch latest status uses attempt number and never the last passing attempt
  const attempt=[...latest.values()][0]!;expect(attempt.attemptNumber).toBe(2);expect(attempt.status).toBe('failed');expect(attempt.requestId).toBe(second.plan.members[0]!.requestId)
  const progress=await f.service.progress('nightly');expect(progress.members.find(member=>member.memberId==='member-21')!.latest).toEqual(attempt)
 })
+
+
+test('latest attempt retains terminal evidence failure separately from upload pending',async()=>{
+ const f=fixture(),preview=await f.preview('evidence-status',{memberIds:['member-20']});await f.service.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest})
+ f.complete(preview.plan.members[0]!.requestId,'pass','failed')
+ const latest=await f.service.latestAttempts([{parent:{suiteId:'nightly'},memberId:'member-20'}]);expect([...latest.values()][0]).toMatchObject({status:'pass',publicationComplete:false,evidenceStatus:'failed'})
+})
