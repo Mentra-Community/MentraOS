@@ -24,6 +24,18 @@ public interface INetworkManager {
     void stopHotspot();
 
     /**
+     * Stop and verify native AP cleanup before replacing this APK. Runs on the OTA worker, never
+     * the main looper, and fails within the shared hotspot deadline.
+     */
+    void stopHotspotAndAwaitDisabled() throws Exception;
+
+    /** Restore admission owned by a pending APK replacement without repeating native cleanup. */
+    void retainHotspotReplacement();
+
+    /** Release APK replacement's hotspot admission barrier after definitive abandonment. */
+    void abandonHotspotReplacement();
+
+    /**
      * Check if the device is currently connected to a WiFi network
      *
      * @return true if connected to WiFi, false otherwise

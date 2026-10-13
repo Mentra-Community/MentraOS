@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.network.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -8,13 +9,17 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.content.Context;
 import android.os.Looper;
+
 import androidx.test.core.app.ApplicationProvider;
+
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
-import java.time.Duration;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
+
+import java.time.Duration;
 
 @RunWith(RobolectricTestRunner.class)
 public class BaseNetworkManagerHotspotActivityTest {
@@ -50,8 +55,8 @@ public class BaseNetworkManagerHotspotActivityTest {
         manager.markStopped();
         manager.markStopped();
 
-        verify(listener, times(1)).onHotspotStateChanged(true);
-        verify(listener, times(1)).onHotspotStateChanged(false);
+        verify(listener, times(1)).onHotspotStateChanged(argThat(state -> state.enabled()));
+        verify(listener, times(1)).onHotspotStateChanged(argThat(state -> !state.enabled()));
         assertThat(manager.isHotspotEnabled()).isFalse();
     }
 

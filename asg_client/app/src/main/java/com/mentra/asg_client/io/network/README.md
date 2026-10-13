@@ -41,7 +41,7 @@ The main interface that defines network management operations:
 Interface for receiving network state change notifications:
 
 - `onWifiStateChanged(boolean isConnected)` - WiFi connection state changes
-- `onHotspotStateChanged(boolean isEnabled)` - Hotspot state changes
+- `onHotspotStateChanged(HotspotState state)` - Hotspot state changes
 - `onWifiCredentialsReceived(String ssid, String password, String authToken)` - Credentials received
 
 ### **BaseNetworkManager**
@@ -114,8 +114,8 @@ networkManager.addWifiListener(new NetworkStateListener() {
     }
 
     @Override
-    public void onHotspotStateChanged(boolean isEnabled) {
-        Log.d("Network", "Hotspot enabled: " + isEnabled);
+    public void onHotspotStateChanged(HotspotState state) {
+        Log.d("Network", "Hotspot enabled: " + state.enabled());
     }
 
     @Override

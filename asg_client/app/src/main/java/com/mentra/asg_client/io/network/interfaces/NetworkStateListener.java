@@ -1,23 +1,24 @@
 package com.mentra.asg_client.io.network.interfaces;
 
-/**
- * Interface for receiving notifications about network state changes.
- */
+/** Interface for receiving notifications about network state changes. */
 public interface NetworkStateListener {
     /**
      * Called when the WiFi state changes
+     *
      * @param isConnected true if connected to WiFi, false otherwise
      */
     void onWifiStateChanged(boolean isConnected);
-    
+
     /**
      * Called when the hotspot state changes
-     * @param isEnabled true if the hotspot is enabled, false otherwise
+     *
+     * @param state committed enablement and credentials from the same lifecycle transition
      */
-    void onHotspotStateChanged(boolean isEnabled);
-    
+    void onHotspotStateChanged(HotspotState state);
+
     /**
      * Called when WiFi credentials are received through the hotspot setup
+     *
      * @param ssid The SSID of the network
      * @param password The password for the network
      * @param authToken Optional authentication token
@@ -26,7 +27,8 @@ public interface NetworkStateListener {
 
     /**
      * Called when a hotspot error occurs (e.g., failed to read SSID after retries)
+     *
      * @param errorMessage Description of the error
      */
     void onHotspotError(String errorMessage);
-} 
+}

@@ -90,6 +90,15 @@ public class AsgConstants {
     /** Canonical network interface used by the Mentra Live WiFi hotspot. */
     public static final String MENTRA_LIVE_HOTSPOT_INTERFACE = "ap0";
 
+    /** SystemUI receiver that owns the K900 vendor hotspot across ASG process restarts. */
+    public static final String K900_SYSTEM_UI_RECEIVER = "com.android.systemui.CTReceiver";
+
+    /** Android's hidden FLAG_RECEIVER_INCLUDE_BACKGROUND for privileged SystemUI commands. */
+    public static final int K900_INCLUDE_BACKGROUND_RECEIVERS = 0x00400000;
+
+    /** Native WifiManager AP state after Android has stopped the access point. */
+    public static final int WIFI_AP_STATE_DISABLED = 11;
+
     /** SmartXY setting containing the Mentra Live hotspot SSID. */
     public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
 

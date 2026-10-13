@@ -46,6 +46,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
@@ -130,6 +131,7 @@ public class OtaHelper {
 
     // Provider for phone connection status and messaging
     private PhoneConnectionProvider phoneConnectionProvider;
+    private volatile INetworkManager networkManager;
 
     // Session manager for persisting OTA state across APK restarts
     private volatile OtaSessionManager sessionManager;
@@ -252,11 +254,23 @@ public class OtaHelper {
         }
 
         phoneConnectionProvider = null;
+        networkManager = null;
         // Recovery reconciliation may outlive this service. The application context remains
         // safe to retain until a new helper adopts the in-flight transaction or it settles.
     }
 
     // ========== Phone Connection Provider Methods ==========
+
+    /** Share the service's existing network owner for destructive APK downgrade cleanup. */
+    public void setNetworkManager(INetworkManager manager) {
+        synchronized (OtaHelper.class) {
+            networkManager = manager;
+            // The constructor restores pending transaction ownership across both service
+            // recreation and process death. A fresh manager must restore that admission
+            // before phone/MCU commands, without another stop of an accepted transaction.
+            if (manager != null && handoffOwner == this) manager.retainHotspotReplacement();
+        }
+    }
 
     /**
      * Set the phone connection provider for phone-controlled OTA updates.
@@ -1397,7 +1411,14 @@ public class OtaHelper {
                     return false;
                 }
             }
-            if (!startRecoveryReconciliation()) return false;
+            if (!ready.active && !prepareNetworkForDowngrade()) {
+                isUpdating = false;
+                return false;
+            }
+            if (!startRecoveryReconciliation()) {
+                abandonDowngradeNetworkPreparation();
+                return false;
+            }
             if (!ready.active) {
                 Intent handoff = RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
                 handoff.putExtra(AsgConstants.EXTRA_RECOVERY_REQUEST_ID, mDowngradeRequestId);
@@ -1415,9 +1436,32 @@ public class OtaHelper {
             synchronized (OtaHelper.class) {
                 if (handoffOwner == this) { scheduleRecoveryReconcile(); return true; }
             }
+            abandonDowngradeNetworkPreparation();
             isUpdating = false;
             return false;
         }
+    }
+
+    boolean prepareNetworkForDowngrade() {
+        var network = networkManager;
+        try {
+            if (network == null) throw new IllegalStateException("Service network owner is unavailable");
+            // Recovery already has all verified bytes. A destructive downgrade kills ASG and
+            // erases its state, so release its SystemUI AP before uninstalling this owner.
+            network.stopHotspotAndAwaitDisabled();
+            return true;
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            abandonDowngradeNetworkPreparation();
+            lastApkFailureErrorCode = "downgrade_hotspot_cleanup_failed";
+            Log.e(TAG, "Refusing downgrade handoff before native hotspot cleanup", e);
+            return false;
+        }
+    }
+
+    private void abandonDowngradeNetworkPreparation() {
+        var network = networkManager;
+        if (network != null) network.abandonHotspotReplacement();
     }
 
     /** Adopt a snapshot without staging again if recovery finishes between query and adoption. */
@@ -1441,7 +1485,11 @@ public class OtaHelper {
         mDowngradeWaitStarted = SystemClock.elapsedRealtime();
         currentUpdateType = "apk";
         currentUpdateStage = "install";
-        synchronized (OtaHelper.class) { handoffOwner = this; }
+        synchronized (OtaHelper.class) {
+            handoffOwner = this;
+            var network = networkManager;
+            if (network != null) network.retainHotspotReplacement();
+        }
         scheduleRecoveryReconcile();
         sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
         return true;
@@ -1541,6 +1589,7 @@ public class OtaHelper {
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
                     return;
                 }
+                abandonDowngradeNetworkPreparation();
                 handoffOwner = null;
                 if (handoffWatchdog != null) HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
                 handoffWatchdog = null;
