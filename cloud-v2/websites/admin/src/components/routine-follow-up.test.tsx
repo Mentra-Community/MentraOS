@@ -136,14 +136,39 @@ test('lost mutation response retries exactly the saved revision and command', as
   } finally {await act(async () => view?.unmount()); cache.clear(); globalThis.fetch = originalFetch}
 })
 
-test('a normal passing original hides the inapplicable failure card without an alarm', async () => {
+test('a normal passing original never queries the disabled case API or shows failure controls', async () => {
   const {act, create} = await import('react-test-renderer')
-  const originalFetch = globalThis.fetch, cache = client()
-  globalThis.fetch = (async (_input: unknown) => Response.json({message: 'Original occurrence did not fail'}, {status: 409})) as typeof fetch
+  const originalFetch = globalThis.fetch, cache = client(), urls:string[]=[]
+  globalThis.fetch = (async (input: unknown) => {const url=String(input);urls.push(url);return url.endsWith('/lineage')
+    ? Response.json({lineage:null,original:null}) : Response.json({message:'Routine case API disabled'},{status:503})}) as typeof fetch
   let view!: import('react-test-renderer').ReactTestRenderer
   try {
-    await act(async () => {view = create(<QueryClientProvider client={cache}><RoutineFollowUp requestId="passed-original" failed/></QueryClientProvider>); await new Promise(resolve => setTimeout(resolve, 20))})
+    await act(async () => {view = create(<QueryClientProvider client={cache}><RoutineFollowUp requestId="passed-original" failed={false}/></QueryClientProvider>); await new Promise(resolve => setTimeout(resolve, 20))})
     await act(async () => {await new Promise(resolve => setTimeout(resolve, 20))})
     expect(view.toJSON()).toBeNull()
+    expect(urls).toEqual(['/api/admin/test-runs/reruns/request/passed-original/lineage'])
   } finally {await act(async () => view?.unmount()); cache.clear(); globalThis.fetch = originalFetch}
+})
+
+test('a passing successor retains its failed original follow-up and explicitly reports case unavailability', async () => {
+  const {act,create}=await import('react-test-renderer')
+  const originalFetch=globalThis.fetch,cache=client(),urls:string[]=[]
+  cache.setQueryData(['rerun-lineage','passed-successor'],{lineage:{parent:{requestId:'original-0'},memberId:'member-0'}})
+  let disabled=false
+  globalThis.fetch=(async(input:unknown)=>{const url=String(input);urls.push(url);return url.endsWith('/lineage')
+    ? Response.json({lineage:{parent:{requestId:'original-0'},memberId:'member-0'}})
+    : disabled?Response.json({message:'Routine case API disabled'},{status:503}):Response.json({followUps:[row()]})}) as typeof fetch
+  let view!:import('react-test-renderer').ReactTestRenderer
+  try {
+    await act(async()=>{view=create(<QueryClientProvider client={cache}><RoutineFollowUp requestId="passed-successor" failed={false}/></QueryClientProvider>);await new Promise(resolve=>setTimeout(resolve,20))})
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))})
+    expect(view.root.findAllByProps({'aria-label':'Failure follow-up'})).toHaveLength(1)
+    expect(JSON.stringify(view.toJSON())).toContain('Wi-Fi used the wrong interface')
+    expect(urls).toContain(`${base}/original/passed-successor`)
+    disabled=true
+    await act(async()=>{await cache.invalidateQueries({queryKey:['routine-follow-up','passed-successor']});await new Promise(resolve=>setTimeout(resolve,20))})
+    expect(JSON.stringify(view.toJSON())).toContain('Follow-up unavailable: ')
+    expect(JSON.stringify(view.toJSON())).toContain('Routine case API disabled')
+    expect(JSON.stringify(view.toJSON())).not.toContain('Unassigned')
+  } finally {await act(async()=>view?.unmount());cache.clear();globalThis.fetch=originalFetch}
 })

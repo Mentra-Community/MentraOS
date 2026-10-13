@@ -3,7 +3,7 @@ import {useInfiniteQuery, useMutation, useQuery, useQueryClient} from '@tanstack
 import {RefreshCw} from 'lucide-react'
 import type {CaseMutation, CaseOccurrence, CasePr, FailureFollowUp, RoutineCase} from '../../../../packages/core/src/types/routine-case.types'
 import type {CaseFollowUpSummary, RoutineFixDelta, RoutineFixInclusion} from '../../../../packages/core/src/types/routine-fix-provenance.types'
-import type {RerunAttempt} from '../../../../packages/core/src/types/test-rerun.types'
+import type {RerunAttempt, RerunPlan} from '../../../../packages/core/src/types/test-rerun.types'
 import {observedTestStatus} from '../../../../packages/core/src/types/test-status-comparison'
 import {ApiError, api} from '../lib/api'
 import {runDuration} from '../lib/run-duration'
@@ -86,10 +86,12 @@ function useCaseUpdate(row: CaseView, requestId: string) {
 }
 export function RoutineFollowUp({requestId, failed}: {requestId: string; failed: boolean}) {
   const refresh = useFollowUpRefresh(requestId)
-  const query = useQuery({queryKey: ['routine-follow-up', requestId], queryFn: () => api<{followUps: CaseView[]}>(`${base}/original/${encodeURIComponent(requestId)}`), enabled: failed, retry: false, staleTime: 30000})
+  const lineage = useQuery({queryKey: ['rerun-lineage', requestId], queryFn: () => api<{lineage: {parent: RerunPlan['parent']; memberId: string} | null}>(`/api/admin/test-runs/reruns/request/${encodeURIComponent(requestId)}/lineage`), enabled: !failed, retry: false})
+  const applicable = failed || !!lineage.data?.lineage
+  const query = useQuery({queryKey: ['routine-follow-up', requestId], queryFn: () => api<{followUps: CaseView[]}>(`${base}/original/${encodeURIComponent(requestId)}`), enabled: applicable, retry: false, staleTime: 30000})
   const [editing, setEditing] = useState(false)
   const create = useMutation({mutationFn: (body: {requestId: string; mutationId: string}) => api<FailureFollowUp>(base, {method: 'POST', body}), onSuccess: () => {refresh(); setEditing(true)}})
-  if (!failed) return null
+  if (!applicable) return null
   if (query.isPending) return <LoadingIndicator inline label="Loading follow-up" className="py-2"/>
   if (query.error instanceof ApiError && query.error.status === 409) return null
   if (query.error) return <p className={muted}>Follow-up unavailable: {query.error.message}</p>

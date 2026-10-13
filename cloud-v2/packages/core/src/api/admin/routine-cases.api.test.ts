@@ -2,6 +2,8 @@ import {expect,test} from 'bun:test'
 import {Hono} from 'hono'
 import {createRoutineCaseApi} from './routine-cases.api'
 import type {AppEnv} from '../../types/hono.types'
+import {OriginalNotFailedError} from '../../services/routine-case-original.service'
+import {TestRunError} from '../../services/test-result-error'
 const id='mfc_'+'a'.repeat(64)
 test('Admin mutation actor is authenticated identity and attempts require the case occurrence, never an arbitrary outside run',async()=>{
  const calls:any[]=[],originals={async original(requestId:string){return{rootKey:requestId}}},service={assertAvailable(){},async create(...args:any[]){calls.push(args);return{case:{caseId:id}}},async detail(){return{case:{occurrences:[{occurrenceId:'owned',original:{requestId:'original'},rootKey:'root'}],intendedFixes:[],prObservations:[]}}}}
@@ -20,4 +22,15 @@ test('suite followup rendering uses one bounded compact projection lookup for al
   (async (roots:string[])=>{calls.push(roots);return new Map(roots.map(key=>[key,{caseId:'case'}]))}) as any)
  const response=await app.request('/suite/suite');expect(response.status).toBe(200);expect(calls).toHaveLength(1);expect(calls[0]).toHaveLength(2)
  expect(((await response.json()) as {members:unknown[]}).members).toHaveLength(2)
+})
+
+test('original applicability precedes case availability and a failed root keeps its disabled-API error',async()=>{
+ const availability:string[]=[],originals={async original(requestId:string){if(requestId==='passing-original')throw new OriginalNotFailedError();return{rootKey:'failed-root'}}}
+ const service={assertAvailable(){availability.push('checked');throw new TestRunError(503,'Routine case API disabled')}}
+ const app=createRoutineCaseApi(originals as any,service as any)
+ expect((await app.request('/original/passing-original')).status).toBe(409)
+ expect(availability).toHaveLength(0)
+ const failed=await app.request('/original/passing-linked-successor')
+ expect(failed.status).toBe(503);expect(await failed.json()).toMatchObject({message:'Routine case API disabled'})
+ expect(availability).toHaveLength(1)
 })

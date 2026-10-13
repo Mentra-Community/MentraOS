@@ -31,8 +31,8 @@ export function createRoutineCaseApi(originals = new RoutineCaseOriginalService(
     return c.json({members: roots.map(row => ({memberId: row.memberId, followUp: summaries.get(row.key) ?? null}))})
   })
   app.get('/original/:requestId', async c => {
-    service.assertAvailable()
     const occurrence = await originals.original(frameworkIdentitySchema.parse(c.req.param('requestId')))
+    service.assertAvailable()
     return c.json({followUps: await service.summaries([occurrence.rootKey])})
   })
   app.post('/', frameworkBodyLimit(8192), async c => {
