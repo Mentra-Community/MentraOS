@@ -6,6 +6,7 @@ import {TestRunError} from './test-result-error'
 import {routineFixComponents, type RoutineFixInput} from '../types/routine-fix-provenance.types'
 
 type PrObservation = z.infer<typeof casePrObservationSchema>
+/** Inputs are the newest recorded requests first, so the bounded comparison budget covers current verification first. */
 export interface CasePrReadOptions {inputs: RoutineFixInput[]; deadline: number; previous?: PrObservation; comparisonBudget?: {remaining: number}}
 export interface CasePrReader {observe(pr: CasePr, options?: CasePrReadOptions): Promise<PrObservation>}
 /** Read-only, repository-scoped use of the existing testing GitHub App. Stored observations never imply deployment. */

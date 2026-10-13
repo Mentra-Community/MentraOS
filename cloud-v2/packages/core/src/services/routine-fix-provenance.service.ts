@@ -34,8 +34,11 @@ export class RoutineFixProvenanceService {
  }
  /** Explicit PR refresh uses at most the ten most recent recorded verification identities. History reads never call GitHub. */
  async recordedInputs(occurrences:CaseOccurrence[]):Promise<RoutineFixInput[]> {
-  const ids=[...new Set(occurrences.flatMap(value=>[...value.verificationRequestIds,...(value.closure?.requestId?[value.closure.requestId]:[])]))].slice(-10)
-  const inputs=await Promise.all(ids.map(async id=>{try{const input=await this.input(id);return input.observed?input:null}
+  const ids=[...new Set(occurrences.flatMap(value=>[...value.verificationRequestIds,...(value.closure?.requestId?[value.closure.requestId]:[])]))]
+  if(!ids.length)return[]
+  const latest=await TestRequestModel.find({requestId:{$in:ids}}).select({requestId:1,_id:0}).sort({createdAt:-1,requestId:-1}).limit(10)
+   .read('primary').readConcern('majority').setOptions({maxTimeMS:5000,timeoutMS:5000}).lean()
+  const inputs=await Promise.all(latest.map(async row=>{try{const input=await this.input(row.requestId);return input.observed?input:null}
    catch{return null /* Unavailable or changed evidence cannot establish inclusion. */}}))
   return inputs.filter((input):input is RoutineFixInput=>input!==null)
  }

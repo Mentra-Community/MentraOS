@@ -38,3 +38,17 @@ test('explicit refresh comparison inventory is deduplicated and capped',async()=
  const observation=await reader.observe(pr,{inputs,deadline:at+20000})
  expect(comparisons).toBe(10);expect(observation.inclusions).toHaveLength(10);expect(observation.inclusions?.every(value=>value.state==='not-included')).toBe(true)
 })
+
+test('bounded framework comparisons prioritize newest recorded input before older component pairs',async()=>{
+ const harness={repository:'Mentra-Community/Mentra-Automated-Testing' as const,number:10},revisions:string[]=[]
+ const reader=new RoutineCasePrReader({async token(){return'token'}}as any,(async(url:string)=>{
+  if(url.includes('/compare/')){revisions.push(url.split('...')[1].split('?')[0]);return Response.json({status:'ahead',base_commit:{sha:head}})}
+  return Response.json(url.includes('/reviews')?[]:{number:10,state:'open',merged_at:null,head:{sha:head}})
+ })as typeof fetch,()=>at)
+ const newestFirst=Array.from({length:10},(_,i)=>({...tested,routine:{...tested.routine,revision:(20-i).toString(16).padStart(40,'0')},
+  framework:{...tested.framework!,revision:(40-i).toString(16).padStart(40,'0')}}))
+ const observation=await reader.observe(harness,{inputs:newestFirst,deadline:at+20000})
+ expect(revisions).toHaveLength(10)
+ expect(revisions.slice(0,2)).toEqual([newestFirst[0].routine.revision,newestFirst[0].framework.revision])
+ expect(observation.inclusions?.slice(0,2).map(value=>value.state)).toEqual(['included','included'])
+})

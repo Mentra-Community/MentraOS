@@ -12,7 +12,7 @@ const chain=(row:unknown)=>({read(){return this},readConcern(){return this},setO
 const observed=()=>({...input,hostId:'air',frameworkBinding:testFrameworkBinding()})
 function fixture(fleet=false){
  const requests=new Map<string,any>(['original','attempt'].map(requestId=>{
-  const row:any={requestId,hostId:'air',input:structuredClone(input),inputSha256:requestInputDigest(input),state:'terminal'}
+  const row:any={requestId,hostId:'air',input:structuredClone(input),inputSha256:requestInputDigest(input),state:'terminal',createdAt:requestId==='original'?0:1}
   if(fleet){
    // Ordinary nightly intake freezes the commit first; source preparation fills its bundle before binding.
    const selection={requestId,routineId:input.routineId,platform:input.platform,routineRevision:input.definitionRevision,source,build}
@@ -23,10 +23,17 @@ function fixture(fleet=false){
   return[requestId,row]
  }))
  const mock=spyOn(TestRequestModel,'findOne').mockImplementation(({requestId}:any)=>chain(requests.get(requestId)) as any)
+ const selections:any[]=[],inventory=spyOn(TestRequestModel,'find').mockImplementation(((filter:any)=>{
+  selections.push(filter)
+  return{...chain(null),select(){return this},sort(){return this},limit(){return this},async lean(){
+   return filter.requestId.$in.map((id:string)=>requests.get(id)).filter(Boolean)
+    .sort((a:any,b:any)=>b.createdAt-a.createdAt||b.requestId.localeCompare(a.requestId)).slice(0,10).map(({requestId}:any)=>({requestId}))
+  }}as any
+ })as any)
  const results=new Map(['original','attempt'].map(id=>[id,observed()]))
  const calls:any[]=[],service=new RoutineFixProvenanceService({async history(...args:any[]){calls.push(args);return{attempts:[{requestId:'attempt',status:'failed',attemptNumber:2}],nextBefore:2}}} as any,
   {async summary(id:string){if(!results.has(id))throw new TestRunError(404,'Not yet published');return results.get(id)}} as any)
- return{requests,results,calls,service,restore:()=>mock.mockRestore()}
+ return{requests,results,calls,selections,service,restore:()=>{mock.mockRestore();inventory.mockRestore()}}
 }
 test('bounded linked history compares accepted inputs and published framework binding without selecting a convenient pass',async()=>{
  const f=fixture()
@@ -70,5 +77,20 @@ test('recorded verification refresh ignores unavailable/changed inputs and never
   expect(await f.service.recordedInputs([{...occurrence,verificationRequestIds:['attempt','attempt','unavailable']}])).toHaveLength(1)
   f.requests.get('attempt').inputSha256='0'.repeat(64)
   expect(await f.service.recordedInputs([{...occurrence,verificationRequestIds:['attempt']}])).toEqual([])
+ }finally{f.restore()}
+})
+
+test('recorded refresh selects case-wide request recency rather than occurrence storage order',async()=>{
+ const f=fixture()
+ try{
+  const older=Array.from({length:10},(_,i)=>`older-${i}`)
+  for(const [i,id]of older.entries()){
+   f.requests.set(id,{...structuredClone(f.requests.get('attempt')),requestId:id,createdAt:i+10});f.results.set(id,observed())
+  }
+  f.requests.get('attempt').createdAt=100
+  const inputs=await f.service.recordedInputs([{...occurrence,verificationRequestIds:['attempt']},{...occurrence,verificationRequestIds:older}])
+  expect(inputs.map(input=>input.requestId)).toEqual(['attempt',...older.slice(1).reverse()])
+  expect(f.selections[0]).toEqual({requestId:{$in:['attempt',...older]}})
+  expect(f.calls).toEqual([])
  }finally{f.restore()}
 })
