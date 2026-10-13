@@ -5,7 +5,9 @@
  * first. The sign-in server rotates refresh tokens and ends the grant when a
  * spent one is presented again, so two commands must never refresh the same
  * login at once: a refresh holds a lock (`file-lock.ts`), and a command that
- * waited for it reads the login again and uses the refreshed tokens. Every
+ * waited for it reads the login again and uses the refreshed tokens. A command
+ * paused long enough to lose the lock does not spend the refresh token, and a
+ * refresh stores its result only over the login it started from. Every
  * other change to a stored login (a new sign-in, selecting a workspace, signing
  * out) takes the same lock and starts from the login as stored then, so none
  * undoes a refresh and no refresh brings back a login that was replaced or
@@ -16,7 +18,7 @@
 
 import {refreshLoginToken, revokeLogin, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
-import {withFileLock} from "./file-lock"
+import {withFileLock, type FileLease} from "./file-lock"
 import {
   clearCredentials,
   isStoredLogin,
@@ -33,6 +35,7 @@ import {
 export const REFRESH_MARGIN_MS = 60_000
 /** A refresh lock its holder stopped touching this long ago was left by a command that died. */
 const LOCK_STALE_MS = 30_000
+const LOST_LOCK = "Another mentra command took over refreshing this sign-in. Try again in a moment."
 /** How long a command waits for another one's refresh: longer than its two 15-second requests. */
 const LOCK_WAIT_MS = 45_000
 
@@ -50,10 +53,12 @@ export function needsRefresh(credentials: CliCredentials, now = Date.now()): boo
 export async function loadFreshCredentials(target: CliTarget): Promise<CommandCredentials | null> {
   const credentials = await loadCredentials(target)
   if (!credentials || !isStoredLogin(credentials) || !needsRefresh(credentials)) return credentials
-  return withRefreshLock(target, async () => {
+  return withRefreshLock(target, async lease => {
     // Another command may have refreshed (or cleared) the login while this one waited.
     const current = await loadStoredLogin(target)
     if (!current || !needsRefresh(current)) return current
+    // Paused past the lock's stale age, this command may have lost it: never spend the refresh token then.
+    if (!lease.held()) throw new Error(LOST_LOCK)
     let refreshed: CliCredentials
     try {
       refreshed = await refreshLoginToken(current)
@@ -61,6 +66,10 @@ export async function loadFreshCredentials(target: CliTarget): Promise<CommandCr
       if (error instanceof SessionExpiredError) await clearCredentials(target)
       throw error
     }
+    // Stored only over the login this refresh started from: a command that took the lock meanwhile
+    // and stored its own result keeps it.
+    const stored = await loadStoredLogin(target)
+    if (stored && stored.refreshToken !== current.refreshToken) return stored
     await saveCredentials(refreshed)
     return refreshed
   })
@@ -105,7 +114,7 @@ export function signOut(target: CliTarget): Promise<{signedIn: boolean; confirme
   })
 }
 
-function withRefreshLock<T>(target: CliTarget, work: () => Promise<T>): Promise<T> {
+function withRefreshLock<T>(target: CliTarget, work: (lease: FileLease) => Promise<T>): Promise<T> {
   return withFileLock(
     refreshLockPath(target),
     {

@@ -123,6 +123,27 @@ test("a holder whose lock was taken over does not release its successor's lock",
   expect(existsSync(lock)).toBe(false)
 })
 
+test("a holder can tell when its lock was taken over while it was paused", async () => {
+  const slow: FileLockOptions = {staleMs: 200, waitMs: 5_000, busyMessage: "busy", heartbeatMs: 60_000}
+  let release = () => {}
+  let successor: Promise<void> | undefined
+  await withFileLock(lock, slow, async lease => {
+    expect(lease.held()).toBe(true)
+    // Paused past staleMs (no heartbeat ran): another command takes over.
+    const then = new Date(Date.now() - 5_000)
+    utimesSync(join(lock, "holder"), then, then)
+    let taken = false
+    successor = withFileLock(lock, slow, async () => {
+      taken = true
+      await new Promise<void>(resolve => (release = resolve))
+    })
+    while (!taken) await sleep(10)
+    expect(lease.held()).toBe(false)
+  })
+  release()
+  await successor
+})
+
 test("a command gives up waiting for a busy lock after waitMs", async () => {
   let release = () => {}
   const holding = withFileLock(lock, options, () => new Promise<void>(resolve => (release = resolve)))

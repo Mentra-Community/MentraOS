@@ -48,6 +48,16 @@ export interface FileLockOptions {
   tombstoneMs?: number
 }
 
+/** What `work` is told about its lock. */
+export interface FileLease {
+  /**
+   * Whether this command still holds the lock. A holder paused past `staleMs` (a suspended
+   * computer, a stopped process) can lose it to another command; check before acting on what the
+   * lock protects.
+   */
+  held(): boolean
+}
+
 /** A lock as one inspection found it. */
 export interface InspectedLock {
   holder: string
@@ -62,7 +72,11 @@ const DEFAULT_TOMBSTONE_MS = 10 * 60_000
 const LOCK_IN_THE_WAY = new Set(["ENOTEMPTY", "EEXIST", "EPERM", "EACCES", "EBUSY"])
 
 /** Run `work` holding the lock at `path`, waiting for (or taking over) another command's. */
-export async function withFileLock<T>(path: string, options: FileLockOptions, work: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(
+  path: string,
+  options: FileLockOptions,
+  work: (lease: FileLease) => Promise<T>,
+): Promise<T> {
   mkdirSync(dirname(path), {recursive: true, mode: 0o700})
   clearLeftovers(path, options.tombstoneMs ?? DEFAULT_TOMBSTONE_MS)
   const deadline = Date.now() + options.waitMs
@@ -91,7 +105,8 @@ export async function withFileLock<T>(path: string, options: FileLockOptions, wo
   )
   heartbeat.unref()
   try {
-    return await work()
+    const ours = holder
+    return await work({held: () => readHolder(path) === ours})
   } finally {
     clearInterval(heartbeat)
     closeSync(fd)

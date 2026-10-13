@@ -152,6 +152,19 @@ test("a new sign-in stored during a refresh of the previous one is not overwritt
   expect((await loadStoredLogin(target))!.refreshToken).toBe("new-refresh")
 })
 
+test("a refresh never overwrites a login another command stored while it was in flight", async () => {
+  await storedLogin(30_000)
+  idp.refreshDelayMs = 300
+  const refreshing = loadFreshCredentials(target)
+  await Bun.sleep(80)
+  // A command that took over the lock (this one looked stale) stored its own result meanwhile.
+  const other = {...(await loadStoredLogin(target))!, token: "other-access", refreshToken: "other-refresh"}
+  await saveCredentials(other)
+  const result = (await refreshing) as CliCredentials
+  expect(result.refreshToken).toBe("other-refresh")
+  expect((await loadStoredLogin(target))!.refreshToken).toBe("other-refresh")
+})
+
 test("a refused refresh token says Session expired and clears the login", async () => {
   const login = await storedLogin(30_000)
   // Spend the stored refresh token elsewhere first, so presenting it again ends the grant.
