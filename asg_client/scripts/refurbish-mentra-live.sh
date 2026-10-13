@@ -238,7 +238,7 @@ case "$SELECTED_MODEL" in
     exit 11
     ;;
 esac
-pin_adb_transport "$SELECTED_TRANSPORT"
+pin_adb_transport "$SELECTED_TRANSPORT" "$SELECTED_SERIAL"
 ADB=(adb)
 
 if "${ADB[@]}" shell pm list packages -e 2>/dev/null | tr -d '\r' | grep -Fqx "package:$DEV_PKG"; then

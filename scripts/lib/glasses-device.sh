@@ -134,13 +134,24 @@ device_cid() {
   adb -t "$transport" shell cat /sys/block/mmcblk0/device/cid </dev/null 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]'
 }
 
-# Rewrite later adb calls onto one transport. Child processes inherit PATH.
+# Rewrite later adb calls onto one device. Child processes inherit PATH.
+# Pin by serial whenever one is stable across reboots; the adb server reassigns
+# transport_id when the glasses drop and return, so a transport is only a last
+# resort for placeholder/duplicate serials.
 pin_adb_transport() {
   local transport="$1"
-  local real dir
+  local serial="${2:-}"
+  local real dir selector_flag selector_value
   real="$(command -v adb)"
   [ -n "$real" ] || return 1
   [ -n "$transport" ] || return 1
+  if [ -n "$serial" ] && [ "$serial" != "$PLACEHOLDER_ADB_SERIAL" ]; then
+    selector_flag="-s"
+    selector_value="$serial"
+  else
+    selector_flag="-t"
+    selector_value="$transport"
+  fi
   dir="${STOCK_UPDATE_ADB_BIN:-$(mktemp -d "${TMPDIR:-/tmp}/mentra-adb.XXXXXX")}"
   mkdir -p "$dir"
   cat > "$dir/adb" << EOF
@@ -157,12 +168,21 @@ for arg in "\$@"; do
   esac
   args+=("\$arg")
 done
-exec $(printf '%q' "$real") -t $(printf '%q' "$transport") "\${args[@]}"
+exec $(printf '%q' "$real") $selector_flag $(printf '%q' "$selector_value") "\${args[@]}"
 EOF
   chmod +x "$dir/adb"
   export PATH="$dir:$PATH"
-  export ADB_TRANSPORT="$transport"
-  unset ANDROID_SERIAL ADB_SERIAL || true
+  if [ "$selector_flag" = "-s" ]; then
+    export ANDROID_SERIAL="$selector_value"
+    unset ADB_TRANSPORT || true
+  else
+    export ADB_TRANSPORT="$transport"
+    unset ANDROID_SERIAL ADB_SERIAL || true
+  fi
+  # Reboot waits read $SERIAL to tell USB from Wi-Fi ADB and run under `set -u`;
+  # keep it populated even when we had to fall back to a transport_id.
+  SERIAL="$serial"
+  export SERIAL
   ADB=(adb)
 }
 

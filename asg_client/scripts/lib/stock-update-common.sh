@@ -281,6 +281,19 @@ preserve_newer_stock_update() {
   echo "Stored a verified recovery copy at $PRESERVED_STOCK_APK_DEVICE_PATH."
 }
 
+# Stop and disable the launchers that compete for HOME before any firmware
+# mutation. Left enabled, the third-party launcher, com.mentra.recovery, or the
+# legacy OTA updater can retake HOME or interrupt the BES window while stock
+# ASG, MTK, and the compatibility bridge run.
+disable_competing_launchers() {
+  "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am force-stop "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+}
+
 enable_stock_runtime() {
   local resolved_home
   if ! "${ADB[@]}" shell pm path "$STOCK_PKG" 2>/dev/null | tr -d '\r' | grep -q '^package:'; then
@@ -962,6 +975,26 @@ run_stock_firmware_update() {
       || fail "Could not recover a safe stock ASG from the interrupted firmware update"
     enable_stock_runtime \
       || fail "Recovered the stock ASG package, but could not activate its launcher"
+  elif [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
+    # A previous run uninstalled the bridge and fell back to the built-in stock
+    # but died before restoring the newer stock it had set aside. The bridge is
+    # gone, so the block above is skipped; restore the preserved copy here.
+    if [[ "$INITIAL_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+      && [ "$INITIAL_STOCK_VERSION_CODE" -ge "$PRESERVED_STOCK_VERSION_CODE" ]; then
+      echo "Installed stock ASG $INITIAL_STOCK_VERSION_CODE is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; discarding the recovery copy."
+      clear_preserved_stock_update
+    else
+      echo "A previous firmware run left stock ASG ${INITIAL_STOCK_VERSION_CODE:-unknown} behind. Restoring preserved stock ASG $PRESERVED_STOCK_VERSION_CODE before anything else."
+      DEVICE_MUTATED=true
+      "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null \
+        || fail "Could not restore the stock ASG preserved by an interrupted firmware update"
+      INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+      [ "$INITIAL_STOCK_VERSION_CODE" = "$PRESERVED_STOCK_VERSION_CODE" ] \
+        || fail "Restored stock ASG is ${INITIAL_STOCK_VERSION_CODE:-unknown}, not preserved $PRESERVED_STOCK_VERSION_CODE"
+      clear_preserved_stock_update
+      enable_stock_runtime \
+        || fail "Restored the preserved stock ASG, but could not activate its launcher"
+    fi
   fi
 
   INITIAL_MTK="$("${ADB[@]}" shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
@@ -1005,6 +1038,8 @@ run_stock_firmware_update() {
     echo "MTK plan is ready ($MTK_PLAN_RESULT)."
   fi
   echo "All OTA artifacts are downloaded and verified."
+
+  disable_competing_launchers
 
   if [ "$ASG_ACTION" = "install" ] || [ "$ASG_ACTION" = "replace" ]; then
     DEVICE_MUTATED=true
