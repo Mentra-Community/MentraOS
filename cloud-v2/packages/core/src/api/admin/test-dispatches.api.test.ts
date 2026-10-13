@@ -32,12 +32,13 @@ function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0
    admitted = {requestId,hostId,input,inputSha256:requestInputDigest(input),state:"queued"}; return admitted;}} as unknown as TestRequestService;
   const definitions = {
     getCurrent: async () => {throw new Error("Must not select the old published definition");},
-    getExact: async () => ({
+    getExact: async (_id: string, platform: string) => platform === "android" ? null : ({
       routineId: selection.routineId,
       platform: selection.platform,
       definitionRevision: revision,
       routineSource: testRoutineSource(revision),
       definition: {
+        platforms: ["ios-on-mac"],
         minimumRoutineApiVersion: 1,
         resourceRequirements: [{kind: "app", capabilities: []}, {kind: "recorder", capabilities: []}],
         execution: {resourceKinds: ["app", "recorder"], policy: {estimatedOutputBytes: 100}},
@@ -129,12 +130,13 @@ function glassesFixture(
   const row: StoredRequest = {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}; admitted.set(requestId, row); return row;}} as unknown as TestRequestService;
   const definitions = {
     getCurrent: async () => {throw new Error("Must not select the old published definition");},
-    getExact: async () => ({
+    getExact: async (_id: string, platform: string) => platform === "android" ? null : ({
       routineId: selected.routineId,
       platform: selected.platform,
       definitionRevision: revision,
       routineSource: testRoutineSource(revision),
       definition: {
+        platforms: ["ios-on-mac"],
         minimumRoutineApiVersion: 1,
         resourceRequirements: [{kind:"app",capabilities:[]},{kind:"recorder",capabilities:[]},{kind:"glasses",capabilities:["glasses-ble"]}],
         glasses: {models: ["mentra-live"], ...(startSoftware ? {startSoftware} : {})},
