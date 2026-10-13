@@ -275,3 +275,15 @@ test('GitHub whole-second terminal receipt matches the retained millisecond inte
     expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(0)
   }
 })
+
+test('rerun authority follows the last actual label applier rather than unrelated PR event actors', async()=>{
+ const label='rerun:gallery:r:original',pr={number:12,state:'open',head:{sha:head,ref:'feature',repo:{full_name:ROUTINE_CHECK_REPOSITORY}},base:{ref:'dev'},labels:[{name:label}]}
+ const f=fixture(call=>reply(call.path==='pulls/12'?pr:call.path.startsWith('issues/')?[
+  {event:'labeled',label:{name:label},actor:{login:'writer'}},
+  {event:'unlabeled',label:{name:label},actor:{login:'writer'}},
+  {event:'labeled',label:{name:label},actor:{login:'triage-user'}},
+  {event:'head_ref_force_pushed',actor:{login:'writer'}},
+ ]:[pr]))
+ expect((await f.github.context(12)).labelActors).toEqual({[label]:'triage-user'})
+ expect(f.calls.filter(call=>call.path.startsWith('issues/')).map(call=>call.path)).toEqual(['issues/12/events?per_page=100&page=1'])
+})

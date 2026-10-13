@@ -22,8 +22,6 @@ const digest = (value: unknown) => requestInputDigest(value)
 export const prRoutineGateId = (headSha: string) => `pr-check-${createHash('sha256').update(`${ROUTINE_CHECK_REPOSITORY}:${headSha}`).digest('hex')}`
 const selectionKey = (context: PrRoutineContext) => digest({number: context.number, headSha: context.headSha,
   baseRef: context.baseRef, sameRepository: context.sameRepository, labels: context.labels, peers: context.peers})
-const requestedCoverage = ({peers, actor, ...context}: PrRoutineContext) => context
-const sameRequestedCoverage = (a: PrRoutineContext, b: PrRoutineContext) => digest(requestedCoverage(a)) === digest(requestedCoverage(b))
 const externalId = (gate: Pick<PrRoutineCheck, 'gateId' | 'coverageGeneration' | 'attempt'>) =>
   `${gate.gateId}:${gate.coverageGeneration}:${gate.attempt.generation}`
 const iso = (time: number) => new Date(time).toISOString()
@@ -223,8 +221,8 @@ export class PrRoutineCheckService {
       gate.selectionError = 'Routine selection is invalid or exceeds 30 routines.'; return
     }
     const members: PrRoutineMember[] = []
-    if (linkedLabels.length && (!context.actor || !await this.github.permission(context.actor))) {
-      gate.selectionError = 'Linked verification requires a repository writer to apply the rerun labels.'; return
+    for (const label of linkedLabels) if (!context.labelActors?.[label] || !await this.github.permission(context.labelActors[label]!)) {
+      gate.selectionError = 'Linked verification requires a repository writer to apply the rerun labels; reapply a label whose authority is unavailable.'; return
     }
     for (const label of linkedLabels) {
       const {target, member} = await this.references.resolve(label)
@@ -421,7 +419,7 @@ export class PrRoutineCheckService {
           member.linkedPreview ??= {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}`}
           const preview = await this.reruns.preview({rerunId: member.linkedPreview.id, parent: member.linkedTarget!.parent,
             selection: {memberIds: [member.linkedTarget!.memberId]}, source: member.linkedSource, deadline: attempt.deadline,
-            reason: `Verify fix in ${ROUTINE_CHECK_REPOSITORY}#${gate.context.number}`}, gate.context.actor ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check')
+            reason: `Verify fix in ${ROUTINE_CHECK_REPOSITORY}#${gate.context.number}`}, gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check')
           const selected = preview.plan.members[0]!
           member.linkedPreview.digest = preview.previewDigest; member.requestId = selected.requestId; member.selection = selected.selection;
           member.requestDeadline = preview.plan.deadline ?? attempt.deadline; member.originalRequestId = selected.originalRequestId
@@ -549,8 +547,6 @@ export class PrRoutineCheckService {
       let context = gate.context
       try {
         context = await this.github.context(gate.context.number)
-        const authority = suppliedContext ?? gate.context
-        if (authority.actor && sameRequestedCoverage(authority, context)) context.actor = authority.actor
       } catch (error) {if (!gate.attempt.cancellation) throw error}
       if (context.headSha !== gate.headSha || !context.open) {
         gate.attempt.cancellation ??= {kind: context.open ? 'superseded' : 'closed', requestedAt: iso(this.now())}

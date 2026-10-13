@@ -22,7 +22,7 @@ function fixture() {
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, lostRerunCommit = false, failedAdmission: string | undefined
   const gates = new Map<string, PrRoutineCheckRow>(), suites = new Map<string, any>(), requests = new Map<string, any>(), runs = new Map<string, any>(), reruns = new Map<string, RerunRecord>(), claims = new Set<string>()
   const submitted: string[] = [], cancelled: string[] = []
-  const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12], actor: 'operator'}
+  const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12], labelActors: {}}
   const ids = (filter: any) => filter.requestId?.$in ?? []
   mocks.push(spyOn(TestSuiteModel, 'findOne').mockImplementation((filter: any) => query(() => suites.get(filter.suiteId) ?? null) as any))
   mocks.push(spyOn(TestSuiteModel, 'create').mockImplementation((async (rows: any[]) => {const row = rows[0]; if (suites.has(row.suiteId)) throw Object.assign(Error('duplicate'), {code: 11000}); suites.set(row.suiteId, structuredClone(row)); return rows}) as any))
@@ -59,7 +59,7 @@ function fixture() {
   const rerun = new TestRerunService(store, suite, jobs as any, requestReader as any, results as any, () => now)
   const references = new PrRerunReferenceService({async suites(ref) {return [...suites.keys()].filter(id => matchesLabelReference(ref, id))},
     async requests(ref) {return [...requests.keys()].filter(id => matchesLabelReference(ref, id))}}, rerun)
-  const createService = () => new PrRoutineCheckService(rows, {async context() {return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
+  const createService = () => new PrRoutineCheckService(rows, {async context() {return {...structuredClone(context),labelActors:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,'operator']))}}, async permission() {return true}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
     {async catalog(revision) {return {routineRevision: revision!, routines: ['one','two'].map(routineId => ({routineId, platforms: ['android']}))}}},
     {async getExact(id: string) {const definition = {id, title: id, steps: [{id: 'observe', instruction: 'Observe'}], platforms: ['android']}; return {definition, definitionSha256: requestInputDigest(definition)} as any}},
     {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references)

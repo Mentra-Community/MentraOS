@@ -41,7 +41,7 @@ export function createPrRoutineCheckApi(service = new PrRoutineCheckService(), a
       const pr = payload.pull_request
       return c.json(await service.intake(pr.number, deliveryId.data, digest, {number: pr.number, headSha: pr.head.sha,
         headRef: pr.head.ref, baseRef: pr.base.ref, sameRepository: pr.head.repo?.full_name === ROUTINE_CHECK_REPOSITORY,
-        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(isRoutineCheckLabel).sort(), peers: [], actor: payload.sender.login}))
+        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(isRoutineCheckLabel).sort(), peers: []}))
     }
     if (event === 'check_run' && (payload.action === 'rerequested' ||
         payload.action === 'requested_action' && payload.requested_action?.identifier === ROUTINE_RERUN_ACTION.identifier)) {
