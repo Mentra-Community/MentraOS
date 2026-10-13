@@ -5,7 +5,7 @@ import {join} from "node:path"
 
 import {refreshTokenGrant} from "openid-client"
 
-import {ensureOidcClient, SessionExpiredError} from "./api"
+import {ensureOidcClient, revokeLogin, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
 import {clearCredentials, loadStoredLogin, saveCredentials, type CliCredentials} from "./credentials"
 import {loopbackLogin} from "./loopback-login"
@@ -178,6 +178,20 @@ test("a refresh that finishes after the login was signed out (by a command that 
   // The tokens it obtained are revoked, not left live.
   expect(idp.revocations).toHaveLength(1)
   expect(idp.refreshTokenActive(idp.revocations[0]!.token)).toBe(false)
+})
+
+test("a refused refresh does not clear a login another command stored meanwhile", async () => {
+  const original = await storedLogin(30_000)
+  idp.refreshDelayMs = 300
+  const refreshing = loadFreshCredentials(target)
+  await Bun.sleep(80)
+  // Another command (this one looked stale) signed in again, and the old grant ended.
+  const other = {...original, token: "other-access", refreshToken: "other-refresh"}
+  await saveCredentials(other)
+  await revokeLogin(original)
+  const result = (await refreshing) as CliCredentials
+  expect(result.refreshToken).toBe("other-refresh")
+  expect((await loadStoredLogin(target))!.refreshToken).toBe("other-refresh")
 })
 
 test("a refused refresh token says Session expired and clears the login", async () => {

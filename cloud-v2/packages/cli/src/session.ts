@@ -63,7 +63,13 @@ export async function loadFreshCredentials(target: CliTarget): Promise<CommandCr
     try {
       refreshed = await refreshLoginToken(current)
     } catch (error) {
-      if (error instanceof SessionExpiredError) await clearCredentials(target)
+      if (error instanceof SessionExpiredError) {
+        // Cleared only if it is still the login that was refused: a command that took the lock
+        // meanwhile and stored another keeps it.
+        const stored = await loadStoredLogin(target)
+        if (stored && stored.refreshToken !== current.refreshToken) return stored
+        if (stored) await clearCredentials(target)
+      }
       throw error
     }
     // Stored only over the login this refresh started from. A command that took the lock meanwhile
