@@ -115,10 +115,12 @@ export class RoutineCaseService {
   private async persist(previous: RoutineCase | null, next: RoutineCase, mutationId: string, digest: string,
     actor: CaseActor, kind: CaseActivity['kind'], changed: string[], grouping?: string, allowExpired = false, acquiring = false) {
     const who = actorId(actor)
+    next.prObservations = next.prObservations.filter(observation => next.intendedFixes.some(pr => pr.repository === observation.repository && pr.number === observation.number))
     for (const pr of next.intendedFixes) if (!previous?.intendedFixes.some(old => old.repository === pr.repository && old.number === pr.number)) {
       const observation = await this.prs.observe(pr)
       next.prObservations = [...next.prObservations.filter(old => old.repository !== pr.repository || old.number !== pr.number), observation]
     }
+    next = routineCaseSchema.parse(next)
     const detail = await this.archive.write({mutationId, actor: who, at: next.updatedAt, previous, next, ...(grouping ? {grouping} : {})})
     const event: CaseActivity = {caseId: next.caseId, revision: next.revision, mutationId, digest, actor: who,
       at: next.updatedAt, kind, changed, detail}

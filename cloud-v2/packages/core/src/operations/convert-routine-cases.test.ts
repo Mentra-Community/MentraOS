@@ -35,3 +35,10 @@ test('bad graph refuses all target writes; exact conversion retries do not overw
  const next={...out.cases[0]!,revision:8,owner:'new-current-owner'}
  await expect(convertRoutineCases(inventory,drain,archive(),{async read(){return next},async insert(){throw Error('must not overwrite')}})).rejects.toThrow('never overwrite')
 })
+
+test('a linked occurrence naming an absent branch is never silently omitted',async()=>{
+ const bad=structuredClone(inventory);bad.occurrences.push({...structuredClone(bad.occurrences[0]!),runId:'orphan',miniCase:{caseId:id,branchKey:'9'.repeat(64),anchorRunId:'orphan'}})
+ const writes:unknown[]=[]
+ await expect(convertRoutineCases(bad,drain,archive(),{async read(){return null},async insert(row){writes.push(row)}})).rejects.toThrow('absent canonical case')
+ expect(writes).toHaveLength(0)
+})

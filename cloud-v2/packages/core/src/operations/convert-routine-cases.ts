@@ -29,6 +29,7 @@ export interface CaseConversionTarget {read(id:string):Promise<RoutineCase|null>
 /** Finite, operator-reviewed conversion only. All old documents and exact settlement evidence are preserved in R2. */
 export async function convertRoutineCases(raw:unknown, rawDrain:unknown, archive:CaseDetailArchive, target?:CaseConversionTarget) {
   const input=caseConversionInventorySchema.parse(raw),drain=drainSchema.parse(rawDrain),cases:RoutineCase[]=[],retained=new Set<string>()
+  const consumed=new Set<string>()
   const sourceCases=new Map((raw as {cases:Array<{caseId:string}>}).cases.map(row=>[row.caseId,row]))
   const sourceRuns=new Map((raw as {occurrences:Array<{runId:string}>}).occurrences.map(row=>[row.runId,row]))
   const byRun=new Map(input.occurrences.map(run=>[run.runId,run])), linked=input.occurrences.filter(run=>run.miniCase)
@@ -53,6 +54,8 @@ export async function convertRoutineCases(raw:unknown, rawDrain:unknown, archive
       }
       if(!references.length)throw Error('Canonical branch has no retained occurrence reference')
       for(const run of references) {
+        if(consumed.has(run.runId))throw Error('Canonical occurrence is attached more than once')
+        consumed.add(run.runId)
         if(run.miniCase!.anchorRunId!==b.runId||!run.routineFailure)throw Error('Occurrence anchor/intake is contradictory')
         const i=run.routineFailure.intake,s=i.source
         if(!s)throw Error('Linked original source is unavailable; conversion requires its retained source correction')
@@ -67,7 +70,7 @@ export async function convertRoutineCases(raw:unknown, rawDrain:unknown, archive
       createdAt:old.createdAt,updatedAt:new Date(drain.observedAt).toISOString(),archive:full})
     cases.push(converted)
   }
-  if(linked.some(run=>!input.cases.some(row=>row.caseId===run.miniCase!.caseId)))throw Error('Occurrence points to absent canonical case')
+  if(linked.some(run=>!consumed.has(run.runId)))throw Error('Occurrence points to absent canonical case')
   const unassigned=await archive.write({schemaVersion:1,inbox:input.occurrences.filter(run=>!run.miniCase).map(run=>sourceRuns.get(run.runId)),drain:rawDrain})
   // Validate the entire finite graph before any target write. No partial write can be caused by a later malformed reference.
   for(const converted of cases) {

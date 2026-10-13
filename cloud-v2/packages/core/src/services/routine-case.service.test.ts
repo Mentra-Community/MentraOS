@@ -85,3 +85,13 @@ test('default unavailable service does not access the old store or infer it was 
  const f=fixture(),service=new RoutineCaseService({get(){throw Error('must not read')} } as any,{} as any)
  await expect(service.detail('mfc_'+'a'.repeat(64))).rejects.toThrow('old-writer drain')
 })
+
+test('replacing intended PRs filters current observations and validates the final stored payload',async()=>{
+ const f=fixture(),a=await f.service.create(occurrence(),randomUUID(),operator),id=a.case.caseId
+ const references=(start:number)=>Array.from({length:20},(_,i)=>({repository:'Mentra-Community/MentraOS' as const,number:start+i}))
+ const first=await f.service.update(id,update(0,{intendedFixes:references(1)}),operator)
+ expect(first.case.prObservations).toHaveLength(20)
+ const second=await f.service.update(id,update(1,{intendedFixes:references(21)}),operator)
+ expect(second.case.prObservations).toHaveLength(20);expect(second.case.prObservations.every(pr=>pr.number>=21)).toBe(true)
+ expect(routineCaseSchema.safeParse(f.rows.get(id)).success).toBe(true)
+})
