@@ -32,6 +32,7 @@ import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mo
 import {
   isLocalMongoUrl,
   MigrationError,
+  databaseIdentity,
   migrateStoreDeveloperOrgs,
   openSourceConnection,
   parseArgs,
@@ -908,6 +909,22 @@ describe("re-running apply", () => {
       createdByMembershipId: `wm_${adminHex}`,
       createdByMentraUserId: "mu_admin",
     })
+  })
+
+  test("a server that cannot say which cluster it belongs to has no identity, so an apply refuses it", async () => {
+    /** A connection whose server answers `hello` with `answer` and cannot read `config.version`. */
+    const answering = (answer: Record<string, unknown>) =>
+      ({
+        name: "store",
+        db: {admin: () => ({command: async () => answer})},
+        getClient: () => ({
+          db: () => ({collection: () => ({findOne: () => Promise.reject(new Error("not authorized on config"))})}),
+        }),
+      }) as unknown as Parameters<typeof databaseIdentity>[0]
+    // A router's process id names the router, not the cluster.
+    expect(await databaseIdentity(answering({msg: "isdbgrid", topologyVersion: {processId: "router-1"}}))).toBeNull()
+    expect(await databaseIdentity(answering({}))).toBeNull()
+    expect(await databaseIdentity(answering({setName: "rs0", hosts: ["B:27017", "a:27017"]}))).toBe("replica-set rs0 a:27017,b:27017/store")
   })
 
   test("refuses a source that is the target under another spelling of its host, before writing anything", async () => {

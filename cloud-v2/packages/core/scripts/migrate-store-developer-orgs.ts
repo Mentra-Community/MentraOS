@@ -1058,9 +1058,16 @@ async function prepareTarget(source: Connection): Promise<void> {
   if (target.readyState !== 1) {
     throw new MigrationError("--apply needs the default mongoose connection connected to the target database")
   }
-  if (source === target || (await databaseIdentity(source)) === (await databaseIdentity(target))) {
-    throw new MigrationError("the source and the target are the same database")
+  if (source === target) throw new MigrationError("the source and the target are the same database")
+  const [sourceIdentity, targetIdentity] = [await databaseIdentity(source), await databaseIdentity(target)]
+  if (!sourceIdentity || !targetIdentity) {
+    // Without a stable identity two routers of one cluster would look different: refuse rather than risk it.
+    throw new MigrationError(
+      `cannot tell whether the source and the target are different databases: the ${sourceIdentity ? "target" : "source"} ` +
+        "did not identify its replica set, cluster or server (a sharded cluster needs config.version readable); nothing was written",
+    )
   }
+  if (sourceIdentity === targetIdentity) throw new MigrationError("the source and the target are the same database")
   for (const model of TARGET_MODELS) {
     await model.createCollection()
     await model.createIndexes()
@@ -1334,9 +1341,11 @@ async function applyRemovals(
 /**
  * Which database `connection` reached, as the server sees it, so two spellings of one host (or two
  * members of one replica set) compare equal: its replica set (name and members), a sharded cluster's
- * id, or else its server process; and the database name. Asking needs no privileges.
+ * id (from `config.version`), or a standalone server's process; and the database name. Null when the
+ * server gives none of these, for example a sharded cluster whose `config.version` cannot be read:
+ * a router's own process id would not identify the cluster.
  */
-async function databaseIdentity(connection: Connection): Promise<string> {
+export async function databaseIdentity(connection: Connection): Promise<string | null> {
   const admin = connection.db!.admin()
   type Hello = {setName?: string; hosts?: string[]; msg?: string; topologyVersion?: {processId?: unknown}}
   const hello = (await admin.command({hello: 1}).catch(() => admin.command({isMaster: 1}))) as Hello
@@ -1350,9 +1359,11 @@ async function databaseIdentity(connection: Connection): Promise<string> {
       .collection("version")
       .findOne({}, {projection: {clusterId: 1}})
       .catch(() => null)
-    server = version?.clusterId ? `cluster ${String(version.clusterId)}` : `process ${String(hello.topologyVersion?.processId)}`
+    if (!version?.clusterId) return null
+    server = `cluster ${String(version.clusterId)}`
   } else {
-    server = `process ${String(hello.topologyVersion?.processId ?? `${connection.host}:${connection.port}`)}`
+    if (!hello.topologyVersion?.processId) return null
+    server = `process ${String(hello.topologyVersion.processId)}`
   }
   return `${server}/${connection.name}`
 }
