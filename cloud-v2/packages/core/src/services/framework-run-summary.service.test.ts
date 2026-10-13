@@ -76,7 +76,7 @@ test('historical payloads without provenance project without changing bytes or i
     const history = new TestHistoryService({summaries: async () => new Map()}, async () => [[{
       historyKind: 'run', historyId: old.requestId, historyStartedAt: new Date(old.startedAt), requestId: old.requestId,
       payloadSha256, summaryProjection: projection, uploadsComplete: true,
-    }], []]);
+    }], []], {async latestAttempts() {return new Map()}});
     expect((await history.list()).entries[0]).toMatchObject({kind: 'run', runId: old.requestId, outcome: 'pass'});
     expect((await history.list()).entries[0]).not.toHaveProperty('frameworkBinding');
   } finally {find.mockRestore(); update.mockRestore();}
