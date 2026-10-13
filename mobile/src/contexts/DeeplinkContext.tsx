@@ -72,6 +72,12 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
   {
+    // Open the existing controls without enabling Super Mode or changing settings.
+    pattern: "/miniapps/settings/super",
+    handler: () => {useNavigationStore.getState().push("/miniapps/settings/super")},
+    requiresAuth: true,
+  },
+  {
     pattern: "/miniapps/settings/:section",
     handler: (url: string, params: Record<string, string>) => {
       const {section} = params
