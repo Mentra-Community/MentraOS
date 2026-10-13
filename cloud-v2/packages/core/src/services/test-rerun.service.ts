@@ -12,6 +12,7 @@ import {TestSuiteService} from "./test-suite.service";
 import {RoutineJobService} from "./routine-job.service";
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from "../types/routine-job.types";
 import {TestRequestService, requestInputDigest, isExecutableRequest} from "./test-request.service";
+import {readAcceptedRoutineRequest} from './routine-request-input';
 import {FrameworkResultService, frameworkResultSummaryFields, readFrameworkResultSummary, nativeRunFilter} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 
@@ -61,7 +62,7 @@ export const testRerunRepository: RerunRepository = {
 };
 export type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
   routineSource?: z.infer<typeof frameworkRequestInputSchema>['routineSource'];
-  routineRevision?: string;
+  routineRevision?: string; evidenceStatus?: 'complete'|'failed';
   build?: z.infer<typeof frameworkRequestInputSchema>['build']; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string};
 const terminal = (status: string) => (rerunTerminalStatuses as readonly string[]).includes(status);
 export const rerunRootKey = (parent: RerunPlan["parent"], memberId: string) => requestInputDigest({parent, memberId});
@@ -117,50 +118,25 @@ export class TestRerunService {
       : !isExecutableRequest(request) || request.inputSha256 !== requestInputDigest(recordedInput))))
       throw new TestRunError(503, 'Rerun request differs from its frozen provenance');
     const job = request as unknown as StoredRoutineJob;
-    if (job.fleetSelection) {
-      const parsed = portableRoutineSelectionSchema.safeParse(job.fleetSelection);
-      if (!parsed.success || requestInputDigest(parsed.data) !== job.fleetSelectionSha256
-        || selection && requestInputDigest(parsed.data) !== requestInputDigest(selection))
-        throw new TestRunError(503, 'Rerun request differs from its frozen selection');
-      if (!job.fleetBinding) return {...identity, requestId, status: job.fleetCancellation ? 'not-run' : job.state,
-        publicationComplete: false, build: parsed.data.build, definitionRevision: parsed.data.routineRevision,
-        ...(job.fleetCancellation ? {reason: job.fleetCancellation.reason} : {})};
-      const bound = routineDispatchIntentSchema.safeParse(job.dispatchIntent);
-      if (!bound.success || requestInputDigest(bound.data) !== job.dispatchIntentSha256 || request.hostId !== job.fleetBinding.hostId
-        || bound.data.laneId !== job.fleetBinding.laneId) throw new TestRunError(503, 'Rerun binding provenance is unavailable');
-      const {laneId: _lane, routineSource: boundSource, ...boundSelection} = bound.data;
-      const {routineSource: frozenSource, ...expectedSelection} = parsed.data;
-      if (requestInputDigest(boundSelection) !== requestInputDigest(expectedSelection) || frozenSource && requestInputDigest(boundSource) !== requestInputDigest(frozenSource)
-        || job.fleetPreparation && requestInputDigest(boundSource) !== requestInputDigest(job.fleetPreparation.routineSource))
-        throw new TestRunError(503, 'Rerun binding differs from its frozen selection');
-      intent = bound.data;
-    }
-    if (!isExecutableRequest(request)) {
-      const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
-      if (!intent.success || requestInputDigest(intent.data) !== request.dispatchIntentSha256)
-        throw new TestRunError(503, 'Rerun preparation provenance is unavailable');
-      return {...identity, requestId, status: request.terminalStatus ?? request.state, publicationComplete: false,
-        build: intent.data.build, definitionRevision: intent.data.routineRevision,
-        ...(request.preparationRejection ? {reason: request.preparationRejection.reason, preparationDisposition: request.preparationRejection.disposition} : {})};
-    }
-    const input = (request.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(request.input);
-    if (!input.success || requestInputDigest(input.data) !== request.inputSha256 || intent &&
-      (input.data.routineId !== intent.routineId || input.data.platform !== intent.platform ||
-        input.data.definitionRevision !== intent.routineRevision || input.data.laneId !== intent.laneId ||
-        input.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion ||
-        intent.routineSource && requestInputDigest(input.data.routineSource ?? null) !== requestInputDigest(intent.routineSource) ||
-        requestInputDigest(input.data.build) !== requestInputDigest(intent.build)))
-      throw new TestRunError(503, "Rerun request differs from its frozen input");
+    const accepted = readAcceptedRoutineRequest(request);
+    if (selection && (!job.fleetSelection || requestInputDigest(accepted.selection) !== requestInputDigest(selection)))
+      throw new TestRunError(503, 'Rerun request differs from its frozen selection');
+    if (!accepted.ready) return {...identity, requestId, status: request.terminalStatus ?? request.state,
+      publicationComplete: false, build: accepted.input.build, definitionRevision: accepted.input.routineRevision,
+      ...(job.fleetCancellation ? {status: 'not-run', reason: job.fleetCancellation.reason} : {}),
+      ...('preparationRejection' in request && request.preparationRejection ? {reason: request.preparationRejection.reason, preparationDisposition: request.preparationRejection.disposition} : {})};
+    if (!isExecutableRequest(request)) throw new TestRunError(503, 'Rerun executable request is unavailable');
+    const input = accepted.input;
     let result: Awaited<ReturnType<FrameworkResultService["summary"]>> | undefined;
     try {const read = observed ? observed.results.get(requestId) : await this.results.summary(requestId); if (read instanceof Error) throw read; result = read;} catch (error) {
       if (!(error instanceof TestRunError && error.status === 404)) throw error;
     }
-    if (result && (job.fleetSelection && (result.hostId !== request.hostId || result.laneId !== input.data.laneId) || result.routineId !== input.data.routineId || result.platform !== input.data.platform ||
-      result.definitionRevision !== input.data.definitionRevision || requestInputDigest(result.routineSource ?? null) !== requestInputDigest(input.data.routineSource ?? null) || requestInputDigest(result.build) !== requestInputDigest(input.data.build)))
+    if (result && (job.fleetSelection && (result.hostId !== request.hostId || result.laneId !== input.laneId) || result.routineId !== input.routineId || result.platform !== input.platform ||
+      result.definitionRevision !== input.definitionRevision || requestInputDigest(result.routineSource ?? null) !== requestInputDigest(input.routineSource ?? null) || requestInputDigest(result.build) !== requestInputDigest(input.build)))
       throw new TestRunError(503, "Rerun result differs from its admitted app or definition");
     return {...identity, requestId, status: result?.outcome ?? request.terminalStatus ?? request.state,
       publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete",
-      ...(result ? {evidenceStatus: result.evidenceStatus} : {}), ...(job.publicationFailure ? {publicationFailed: true} : {}), build: input.data.build, definitionRevision: input.data.definitionRevision,
+      ...(result ? {evidenceStatus: result.evidenceStatus} : {}), ...(job.publicationFailure ? {publicationFailed: true} : {}), build: input.build, definitionRevision: input.definitionRevision,
       ...(result ? {runId: result.runId, startedAt: result.startedAt, finishedAt: result.finishedAt} : {}),
       ...(!result && request.publicationFailure ? {reason: `Publication failed: ${request.publicationFailure.message}`} : request.hostRejection ? {reason: request.hostRejection.reason} : {})};
   }

@@ -12,6 +12,8 @@ import {runDuration} from "../lib/run-duration";
 import {frameworkIdentitySchema} from "../../../../packages/core/src/types/framework-request.types";
 import {OriginalLatestStatus, SuiteCountComparison} from "../components/test-status-comparison";
 import {comparedSuiteCounts, suiteDisplayStatus, observedTestStatus, testStatusCounts} from "../../../../packages/core/src/types/test-status-comparison";
+import {CompactFollowUp} from '../components/routine-follow-up';
+import type {CaseFollowUpSummary} from '../../../../packages/core/src/types/routine-fix-provenance.types';
 import {CopyRerunLabel} from '../components/copy-rerun-label';
 
 export interface TestSuiteResult {
@@ -35,6 +37,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   const result = useQuery({queryKey: ["test-suite-summary", suiteId],
     queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}/summary`),
     refetchInterval: query => query.state.data?.outcome === "running" ? 15000 : false});
+  const followUps = useQuery({queryKey: ['suite-follow-ups', suiteId], queryFn: () => api<{members: {memberId: string; followUp: CaseFollowUpSummary | null}[]}>(`/api/admin/test-runs/follow-ups/suite/${encodeURIComponent(suiteId)}`), retry: false, staleTime: 30000});
   const [dispatchMembers,setDispatchMembers] = useState<string[] | null>(null);
   const progress = useQuery({queryKey:["rerun-progress",suiteId],
     queryFn:()=>api<{members:{memberId:string;latest:RerunAttempt|null}[];children:{rerunId:string;reason:string}[]}>(`/api/admin/test-runs/reruns/suite/${encodeURIComponent(suiteId)}/progress`),refetchInterval:15000});
@@ -101,6 +104,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
           <td className="whitespace-nowrap text-xs" title={suite.build.headSha}>{suite.build.release ?? suite.build.headSha.slice(0, 10)}</td>
           <td><OriginalLatestStatus original={observedTestStatus({...member, publicationComplete: member.publicationComplete === true})} latest={latestAttempt(member.memberId)}/>
             {member.status === "not-run" && <span className="sr-only">Did not run</span>}
+            {followUps.data?.members.find(row => row.memberId === member.memberId)?.followUp && <CompactFollowUp row={followUps.data.members.find(row => row.memberId === member.memberId)!.followUp!}/>}
             {member.unavailableReason && <details className="mt-2 min-w-40 max-w-xs text-xs text-[#747780]"><summary className="cursor-pointer">Failure reason</summary><p className="mt-2 break-words">{member.unavailableReason}</p></details>}
           </td>
           <td><TestingButton variant="ghost" size="icon-sm" title="Rerun" aria-label={`Rerun ${member.routineId} (${member.platform})`} disabled={!canRerun(member)}

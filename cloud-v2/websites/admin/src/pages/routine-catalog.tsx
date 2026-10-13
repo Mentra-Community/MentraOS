@@ -3,6 +3,7 @@ import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
+import {RoutineFollowUp} from '../components/routine-follow-up';
 import {RunRerunLinks, RunLatestStatus} from "./test-reruns";
 import {CopyRerunLabel} from '../components/copy-rerun-label';
 import {useEffect, useId, useRef, useState} from "react";
@@ -369,6 +370,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <p className="mt-3 text-sm">Execution: {outcome === "pass" ? "Passed" : outcome.replaceAll("-", " ")}</p>
       <p className="mt-3 text-sm"><BuildIdentity build={run.build} /></p>
       <RunRerunLinks requestId={run.requestId}/>
+      <RoutineFollowUp requestId={run.requestId} failed={!!failureSummary}/>
       <CopyRerunLabel routineId={run.routineId} kind="r" targetId={run.requestId}/>
       <details className="mt-3 border-t border-[#eceeeb] pt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Run provenance</summary>
         <dl className="mt-3 space-y-2 break-words"><div>Run <code>{actualRunId}</code> · Request <code>{run.requestId}</code></div>

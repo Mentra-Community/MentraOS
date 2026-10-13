@@ -88,7 +88,14 @@ or invalid label reports a refusal instead of guessing another test.
 
 Keep the original failed run, screenshots and incident report in the PR evidence.
 State whether the change fixes app code, routine code or framework code, and
-link the resulting verification attempt. A passing latest attempt does not erase
+link the resulting verification attempt. A labelled rerun attaches the fixing PR as
+an intended fix on the existing failure follow-up; it does not infer a diagnosis.
+Inspect the follow-up's recorded owner, cause and intended PRs before duplicating
+work. `Failed → Passed` describes original and latest outcomes; recorded stage
+and PR merge state are separate. Exact app artifact or routine bundle identity
+can establish component inclusion; a mobile PR artifact does not establish
+Cloud V2 deployment. Record unavailable backend or hardware observations.
+A passing latest attempt does not erase
 the original failure. There is no fixed number of passing attempts required by
 this employee workflow; follow any separately assigned verification policy.
 

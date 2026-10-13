@@ -23,7 +23,8 @@ function fixture() {
   let labelActor = "operator", labelEvent = 1, mayWrite = true
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, lostRerunCommit = false, lostPreviewCheckpoint = false, failedAdmission: string | undefined
   const gates = new Map<string, PrRoutineCheckRow>(), suites = new Map<string, any>(), requests = new Map<string, any>(), runs = new Map<string, any>(), reruns = new Map<string, RerunRecord>(), claims = new Set<string>()
-  const submitted: string[] = [], cancelled: string[] = []
+  const submitted: string[] = [], cancelled: string[] = [], followUpCalls: Array<{requestId:string;actor:string;pr:unknown}> = []
+  let failFollowUp=false
   const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12], labelActors: {}}
   const ids = (filter: any) => filter.requestId?.$in ?? []
   mocks.push(spyOn(TestSuiteModel, 'findOne').mockImplementation((filter: any) => query(() => suites.get(filter.suiteId) ?? null) as any))
@@ -64,10 +65,10 @@ function fixture() {
   const createService = () => new PrRoutineCheckService(rows, {async context() {return {...structuredClone(context),labelActors:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelActor])),labelEvents:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelEvent]))}}, async permission() {return mayWrite}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
     {async catalog(revision) {return {routineRevision: revision!, routines: ['one','two'].map(routineId => ({routineId, platforms: ['android']}))}}},
     {async getExact(id: string) {const definition = {id, title: id, steps: [{id: 'observe', instruction: 'Observe'}], platforms: ['android']}; return {definition, definitionSha256: requestInputDigest(definition)} as any}},
-    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references)
+    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references,{async attach(requestId,pr,actor){followUpCalls.push({requestId,pr,actor});if(failFollowUp)throw Error('case archive unavailable');return{caseId:'mfc_'+'1'.repeat(64)}}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {authority(actor: string, event: number, write: boolean) {labelActor=actor;labelEvent=event;mayWrite=write}, get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
+  return {followUpCalls,failFollowUp(value:boolean){failFollowUp=value},authority(actor: string, event: number, write: boolean) {labelActor=actor;labelEvent=event;mayWrite=write}, get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
     async start() {await service.intake(12,'event','c'.repeat(64)); for (let i=0;i<6;i++) {now+=30000; await service.tick()}},
     async drain(count=3) {for (let i=0;i<count;i++) {now+=30000; await service.tick()}},
     control(deliveryId: string) {const gate = gates.get(gateId)!.payload; return {deliveryId, digest: 'c'.repeat(64), gateId, checkId: 99, externalId: gate.checkExternalId, headSha: context.headSha, kind: 'rerun' as const, actor: 'operator'}},
@@ -250,6 +251,7 @@ test('tagged suite rerun becomes the existing check and preserves original sourc
  const label=(await f.references.copy('one','s',originalSuite)).label;
  f.context.labels=[label];await f.service.intake(12,'tagged-suite','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId, structuredClone(f.context));await f.drain(5);
  const member=f.gate().attempt.members[0]!;
+ expect(member.followUp).toEqual({caseId:'mfc_'+'1'.repeat(64)});expect(f.followUpCalls[0]).toEqual({requestId:originalIds[0],pr:{repository:'Mentra-Community/MentraOS',number:12},actor:'operator'});
  expect(member.linkedTarget).toMatchObject({parent:{suiteId:originalSuite},memberId:'one.android'});
  expect(member.selection!.routineRevision).toBe('a'.repeat(40));expect(member.selection!.source.channel).toBe('pr');
  expect(member.requestId).toMatch(/^rerun-/);expect(f.gate().attempt.suiteId).toBeUndefined();
@@ -335,6 +337,19 @@ test('lost tagged child checkpoint renews only a positively expired unaccepted p
  expect(f.reruns.get(preview.rerunId)!.state).toBe('preview');expect([...f.reruns.values()].filter(row=>row.state==='accepted')).toHaveLength(1);
  expect(f.gate().attempt.members[0]!.status).toBe('running');expect(f.gate().attempt.members[0]!.linkedPreview!.renewals).toBe(1);
 });
+
+test('intended-fix outage keeps the preview identity and independent jobs moving until association is recorded',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain()
+ const suiteId=f.gate().attempt.suiteId!,original=f.gate().attempt.members[0]!.requestId!
+ f.context.labels=[(await f.references.copy('one','s',suiteId)).label,'routine:two'];f.failFollowUp(true)
+ await f.service.intake(12,'case-outage','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(12)
+ const member=f.gate().attempt.members.find(row=>row.linkedTarget)!,retained=member.requestId!
+ expect(retained).toMatch(/^rerun-/);expect(f.requests.has(retained)).toBe(false)
+ expect(member.waitReason).toContain('intended fix');expect(f.gate().attempt.members.find(row=>!row.linkedTarget)?.originalRequestId).toBeDefined()
+ f.restart();f.failFollowUp(false);await f.drain(3)
+ expect(f.gate().attempt.members.find(row=>row.linkedTarget)!.requestId).toBe(retained);expect(f.requests.has(retained)).toBe(true)
+ expect(f.followUpCalls.every(row=>row.requestId===original)).toBe(true)
+})
 
 test('mixed labelled linked and ordinary coverage omits only request identity from finite selection deduplication',async()=>{
  const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain()

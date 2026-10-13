@@ -107,6 +107,8 @@ test('historical recorded runs render unknown provenance without fabricating ide
   expect(html).toContain('Framework provenance unknown')
   expect(html).toContain('Routine bundle provenance unknown')
   expect(html).not.toContain('Routine API 1')
+  expect(html).not.toContain('Loading follow-up')
+  expect(html).not.toContain('Failure follow-up')
   expect(run).not.toHaveProperty('routineSource')
   expect(run).not.toHaveProperty('frameworkBinding')
 })

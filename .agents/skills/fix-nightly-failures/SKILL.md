@@ -67,6 +67,12 @@ failing source with current source before fixing it. Reuse the relevant diagnosi
 mechanics in `fix-routine-failure`; this suite's completion boundary takes
 precedence over that skill's deployment/rerun loop.
 
+Inspect each original's canonical follow-up and existing intended fixing PRs
+before creating another owner or repair. Use `fix-routine-failure`'s authenticated
+revision-fenced facade for durable diagnosis; keep this task ledger as a small
+progress receipt, not a competing cause/claim store. Original → latest result
+comparisons do not replace recorded classification or verification provenance.
+
 Group failures when evidence demonstrates the same cause in a shared provider or
 action at compatible source/build and triggering conditions. Matching wording
 alone is insufficient. A suspected shared cause can have one diagnosis owner,

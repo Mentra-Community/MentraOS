@@ -6,7 +6,7 @@ import {TestRunError} from './test-result-error'
 export interface CaseWriteFence {owner: string; tokenSha256: string; generation: number; branchKey: string; anchorRunId: string; now: number; allowExpired?: boolean}
 export interface RoutineCaseRepository {
   get(id: string): Promise<RoutineCase | null>
-  byRoots(keys: string[]): Promise<RoutineCase[]>
+  byRoots(keys: string[], deadline?: number): Promise<RoutineCase[]>
   operation(id: string): Promise<CaseActivity | null>
   activity(id: string, before: number, limit: number): Promise<CaseActivity[]>
   commit(previous: RoutineCase | null, next: RoutineCase, event: CaseActivity, fence?: CaseWriteFence): Promise<boolean>
@@ -21,10 +21,12 @@ const read = (row: {payload?: unknown; revision?: unknown; generation?: unknown}
 export const routineCaseRepository: RoutineCaseRepository = {
   async get(caseId) {return read(await RoutineCaseModel.findOne({caseId}).read('primary').readConcern('majority')
     .setOptions({maxTimeMS: 5000}).lean())},
-  async byRoots(rootKeys) {
+  async byRoots(rootKeys, deadline = Date.now() + 5000) {
     if (rootKeys.length > 100) throw new TestRunError(400, 'Too many original occurrences')
+    const timeoutMS = deadline - Date.now()
+    if (timeoutMS <= 0) throw new TestRunError(503, 'Canonical case projection deadline elapsed')
     return (await RoutineCaseModel.find({rootKeys: {$in: rootKeys}}).limit(100).read('primary').readConcern('majority')
-      .setOptions({maxTimeMS: 5000}).lean()).map(row => read(row)!)
+      .setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean()).map(row => read(row)!)
   },
   async operation(mutationId) {return await RoutineCaseActivityModel.findOne({mutationId}).select({_id: 0})
     .read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean() as CaseActivity | null},

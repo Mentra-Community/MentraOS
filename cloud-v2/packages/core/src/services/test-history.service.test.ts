@@ -1,3 +1,5 @@
+import {routineCaseRepository} from './routine-case.repository';
+import {rerunRootKey} from './test-rerun.service';
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
@@ -69,7 +71,8 @@ test("history hides accepted reruns by default and validates the explicit toggle
   const queries = testHistoryQueries(null, 2);
   const rerunLookup = queries.runs.find(stage => "$lookup" in stage && stage.$lookup.from === TestRerunModel.collection.name);
   expect(rerunLookup).toMatchObject({$lookup: {localField: "requestId", foreignField: "plan.members.requestId",
-    pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}]}});
+    let: {requestId: "$requestId"}}});
+  expect((rerunLookup as any).$lookup.pipeline.at(-1)).toEqual({$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId", rootKey: "$member.rootKey"}});
   const summary = queries.runs.find(stage => "$project" in stage) as any;
   expect(summary.$project.historySuppressed.$or).toContainEqual({$gt: [{$size: "$historyReruns"}, 0]});
   const shown = testHistoryQueries(null, 2, true).runs.find(stage => "$project" in stage) as any;
@@ -735,6 +738,23 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       await expect(new TestHistoryService(summaries).list()).rejects.toMatchObject({status: 503});
       expect(commands).toBe(1);
     } finally {aggregate.mockRestore(); clock.mockRestore();}
+  });
+
+  test("linked history rows use the accepted original root for canonical follow-up lookup", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+    const childId = "follow-up-linked-child", rootKey = rerunRootKey({suiteId: "failed-suite"}, "failed-member");
+    await saveRun(run(childId));
+    await TestRerunModel.collection.insertOne({rerunId: "follow-up-linked", state: "accepted", plan: {
+      parent: {suiteId: "failed-suite"}, members: [{requestId: childId, memberId: "failed-member", rootKey}],
+    }});
+    const enabled = process.env.ROUTINE_CASE_API_ENABLED; process.env.ROUTINE_CASE_API_ENABLED = "true";
+    const calls: string[][] = [], read = spyOn(routineCaseRepository, 'byRoots').mockImplementation(async keys => {calls.push(keys); return []});
+    try {
+      const history = new TestHistoryService(undefined, undefined, {async latestAttempts(){return new Map()}});
+      const page = await history.list({includeReruns: "true"});
+      expect(page.entries[0]).toMatchObject({kind: "run", requestId: childId, rerun: {rootKey}});
+      expect(calls).toEqual([[rootKey]]);
+    } finally {read.mockRestore(); if(enabled===undefined)delete process.env.ROUTINE_CASE_API_ENABLED; else process.env.ROUTINE_CASE_API_ENABLED=enabled;}
   });
 
   test("native history exhausts a short page without scanning retained legacy results", async () => {
