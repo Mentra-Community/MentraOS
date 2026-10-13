@@ -191,14 +191,25 @@ describe("stored logins", () => {
 
   test("a login written to the file while the keychain failed is not shadowed by an older keychain login", async () => {
     const target = store(DEFAULT_STORE_URL)
-    await saveCredentials(login(target, {refreshToken: "older", storedAt: "2026-10-01T00:00:00.000Z"}))
+    await saveCredentials(login(target, {refreshToken: "older"}))
     useKeychain(false)
-    expect(await saveCredentials(login(target, {refreshToken: "newer", storedAt: "2026-10-02T00:00:00.000Z"}))).toBe("file")
+    expect(await saveCredentials(login(target, {refreshToken: "newer"}))).toBe("file")
     useKeychain(true)
     expect((await loadStoredLogin(target))?.refreshToken).toBe("newer")
     // Saving again with the keychain back moves the login there and drops the file.
-    await saveCredentials(login(target, {refreshToken: "newest", storedAt: "2026-10-03T00:00:00.000Z"}))
+    await saveCredentials(login(target, {refreshToken: "newest"}))
     expect((await loadStoredLogin(target))?.refreshToken).toBe("newest")
+  })
+
+  test("a workspace selection saved to the file, with the same login, is not lost to the keychain copy", async () => {
+    const target = store(DEFAULT_STORE_URL)
+    const stored = login(target, {workspaceId: "ws_1"})
+    await saveCredentials(stored)
+    useKeychain(false)
+    // Same login, same sign-in time: only the selection differs.
+    expect(await saveCredentials({...stored, workspaceId: "ws_2"})).toBe("file")
+    useKeychain(true)
+    expect((await loadStoredLogin(target))?.workspaceId).toBe("ws_2")
   })
 
   test("a write the keychain refuses removes the older keychain login it would otherwise leave behind", async () => {

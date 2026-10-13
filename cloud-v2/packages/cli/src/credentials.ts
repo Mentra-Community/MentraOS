@@ -82,7 +82,8 @@ export function cliHome(): string {
 /** Store `credentials` for their target. Returns where they went. */
 export async function saveCredentials(credentials: CliCredentials): Promise<"keychain" | "file"> {
   const target = targetOf(credentials)
-  const payload = JSON.stringify(credentials)
+  // Every write is dated, so a read can tell the newer of a keychain and a file login apart.
+  const payload = JSON.stringify({...credentials, storedAt: new Date().toISOString()})
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
       await Bun.secrets.set({service: SERVICE, name: credentialName(target), value: payload})
@@ -142,7 +143,9 @@ export async function loadStoredLogin(target: CliTarget): Promise<CliCredentials
     // An unreadable file reads as signed out.
   }
   if (fromKeychain && fromFile) {
-    return Date.parse(fromFile.storedAt) > Date.parse(fromKeychain.storedAt) ? fromFile : fromKeychain
+    // A keychain write removes the file, so a file beside a keychain login is the later write; a
+    // keychain login dated later (written after the file by a CLI that could not remove it) wins.
+    return Date.parse(fromKeychain.storedAt) > Date.parse(fromFile.storedAt) ? fromKeychain : fromFile
   }
   return fromKeychain ?? fromFile
 }
