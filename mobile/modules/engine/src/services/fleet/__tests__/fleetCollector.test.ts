@@ -1311,17 +1311,6 @@ describe("a second pair of the same model", () => {
     expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
   })
 
-  test("a connection that drops to connecting with the glasses' identity wiped is not the pair that was there", () => {
-    start()
-    connectLive()
-    advance(10_000)
-    glassesStore.setState({connection: {state: "connecting"}, ...{deviceModel: "", serialNumber: ""}})
-    advance(5_000)
-    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
-    fleetEvents.photo({operationId: "req-y", stage: "requested"})
-    expect(ofKind("photo_operation")).toHaveLength(0)
-  })
-
   test("the same pair coming back is the same device", () => {
     start()
     connectLive(LIVE_B)
@@ -1341,6 +1330,80 @@ describe("a second pair of the same model", () => {
     glassesStore.setState({serialNumber: ""}) // the same pair, the serial gone blank mid-connection
     fleetEvents.photo({operationId: "req-s", stage: "requested"})
     expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "SN-ARRIVED"})
+  })
+})
+
+describe("a disconnect in the order the native layer does it", () => {
+  /**
+   * `DeviceManager.disconnect()` clears the glasses' identity field by field while the connection still says
+   * connected, and only then sets it to disconnected; the store sees each step as an update of its own.
+   */
+  function nativeDisconnect(steps: {between?: () => void} = {}) {
+    glassesStore.setState({deviceModel: ""})
+    steps.between?.()
+    glassesStore.setState({serialNumber: ""})
+    glassesStore.setState({bluetoothMacAddress: "", leftMacAddress: "", bluetoothName: ""})
+    glassesStore.setState({connection: {state: "disconnected"}})
+  }
+
+  test("the connection's session, a photo failing at the disconnect and the snapshot are against the departing pair", () => {
+    start()
+    connectLive()
+    advance(30_000) // a connection of 30 s, not yet checkpointed
+    nativeDisconnect({
+      between: () => fleetEvents.photo({operationId: "req-d", stage: "failed", failedStage: "requested"}),
+    })
+    fleetEvents.photo({operationId: "req-d2", stage: "failed", failedStage: "requested"})
+    advance(5_000)
+
+    const departing = {kind: "serial", manufacturer: "Mentra", product: "Mentra Live", serial: "SN-LIVE-1"}
+    const session = checkpoints()
+      .flatMap((c) => c.payload.sessions)
+      .find((entry) => entry.activity === "glasses_connection")
+    expect(session).toMatchObject({elapsedMs: 30_000, ended: true, deviceBinding: departing})
+    expect(ofKind("photo_operation").map((photo) => photo.deviceBinding)).toEqual([departing, departing] as never)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.deviceBinding).toEqual(departing as never)
+    expect(latest.payload.glasses).toMatchObject({model: "Mentra Live", connection: {state: "disconnected"}})
+  })
+
+  test("a checkpoint that falls due while the identity is cleared but the glasses still connected is still theirs", () => {
+    start()
+    connectLive()
+    glassesStore.setState({deviceModel: "", serialNumber: ""}) // a slow teardown: connected, identity already gone
+    advance(60_000)
+    const checkpoint = checkpoints().at(-1) as Kind<"usage_checkpoint">
+    expect(entry(checkpoint, "glasses_connection")).toMatchObject({
+      elapsedMs: 60_000,
+      deviceBinding: {kind: "serial", serial: "SN-LIVE-1"},
+    })
+    expect(snapshots().at(-1)?.deviceBinding).toMatchObject({serial: "SN-LIVE-1"})
+  })
+
+  test("the other order, disconnected first and the identity cleared after, is the same", () => {
+    start()
+    connectLive()
+    advance(30_000)
+    glassesStore.setState({connection: {state: "disconnected"}})
+    glassesStore.setState({deviceModel: "", serialNumber: ""})
+    advance(5_000)
+    const session = checkpoints()
+      .flatMap((c) => c.payload.sessions)
+      .find((entry) => entry.activity === "glasses_connection")
+    expect(session).toMatchObject({elapsedMs: 30_000, ended: true, deviceBinding: {serial: "SN-LIVE-1"}})
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.connection.state).toBe("disconnected")
+  })
+
+  test("the next connection still starts from nothing", () => {
+    start()
+    connectLive()
+    nativeDisconnect()
+    advance(5_000)
+    glassesStore.setState({connection: {state: "connecting"}}) // another pair, not yet identified
+    advance(5_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
+    fleetEvents.photo({operationId: "req-n", stage: "requested"})
+    expect(ofKind("photo_operation")).toHaveLength(0)
   })
 })
 
@@ -1381,6 +1444,47 @@ describe("simulated glasses", () => {
       expect(record.capabilities).not.toContain("glasses_battery")
       expect(record.capabilities).not.toContain("glasses_versions")
     }
+  })
+
+  test("real glasses replaced by simulated ones in a single update are no longer reported", () => {
+    start()
+    connectLive()
+    advance(60_000) // the real pair is reported
+    glassesStore.setState({...SIMULATED}) // one update: the store now says simulated glasses, connected
+    advance(5_000)
+    fleetEvents.photo({operationId: "req-sim2", stage: "requested"})
+    collector.flushCheckpoint()
+
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.payload.glasses).toBeUndefined()
+    expect(latest.deviceBinding).toBeUndefined()
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    // The real pair's session ended when they went; nothing afterwards is glasses.
+    const sessions = checkpoints().flatMap((c) => c.payload.sessions.filter((e) => e.activity === "glasses_connection"))
+    expect(sessions.at(-1)?.ended).toBe(true)
+    const after = (checkpoints().at(-1) as Kind<"usage_checkpoint">).payload.sessions
+    expect(after.some((e) => e.activity === "glasses_connection")).toBe(false)
+    expect((checkpoints().at(-1) as Kind<"usage_checkpoint">).capabilities).not.toContain("glasses_battery")
+    expect(
+      JSON.stringify(
+        all().filter((r) => r.kind !== "usage_checkpoint" && Date.parse(r.observedAt) > clock.wall - 5_000),
+      ),
+    ).not.toContain("SN-LIVE-1")
+  })
+
+  test("the simulated glasses' battery is not kept for the real pair that follows", () => {
+    start()
+    glassesStore.setState({...SIMULATED, batteryLevel: 33})
+    advance(5_000)
+    disconnectLive()
+    connectLive({batteryLevel: 33}) // the same number by chance: it must still be dated when the real pair showed it
+    const connectedAt = clock.wall
+    advance(15 * 60_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.battery).toMatchObject({
+      state: "measured",
+      level: 33,
+      observedAt: iso(connectedAt),
+    })
   })
 
   test("switching to real glasses afterwards is an ordinary connection", () => {

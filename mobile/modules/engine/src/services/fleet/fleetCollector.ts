@@ -393,14 +393,20 @@ class CollectorRun {
   private trackGlasses(wall: number): void {
     const s = useGlassesStore.getState()
     const state = mapConnection(s.connection.state)
-    if (state !== this.connection.state) this.connection = {state, observedAt: wall}
-    // What was remembered describes glasses that are gone. Once something is connecting or connected, a store that
-    // names no model has not identified them yet, so nothing is attributed to the pair that was last here.
-    if (state !== "disconnected" && !text(s.deviceModel)) this.known = null
-    // A battery value in the store is only believed while the glasses are connected; afterwards the last reading
+    if (state !== this.connection.state) {
+      // Glasses that start connecting are not assumed to be the pair that was last here: a new connection is
+      // identified afresh, from what the glasses say, before anything is attributed to a device. Only a new
+      // connection forgets: while one is tearing down the native layer clears the identity (model first) before it
+      // reports disconnected, and the departing pair is still the pair its last records are about.
+      if (this.connection.state === "disconnected") this.known = null
+      this.connection = {state, observedAt: wall}
+    }
+    const simulated = isSimulatedGlasses(s.deviceModel)
+    // A battery value in the store is only believed while real glasses are connected; afterwards the last reading
     // keeps the time it was seen.
     if (
       s.connection.state === "connected" &&
+      !simulated &&
       (!this.battery || this.battery.level !== s.batteryLevel || this.battery.charging !== s.charging)
     ) {
       this.battery = {level: s.batteryLevel, charging: s.charging, observedAt: wall}
@@ -412,7 +418,11 @@ class CollectorRun {
     const model = text(s.deviceModel)
     if (!model) return
     const binding = glassesBinding(s, this.phoneId)
-    if (!binding) return
+    if (!binding) {
+      // The store names glasses that are no device (the simulated ones): the pair remembered before is not them.
+      this.known = null
+      return
+    }
     const peripheral = glassesPeripheral(s)
     // What was learned about the pair before this carries over only if it is the same pair: the same address or
     // name, or the same serial. A second pair of the same model starts from nothing.
