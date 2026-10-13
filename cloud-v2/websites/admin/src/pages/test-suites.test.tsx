@@ -214,3 +214,20 @@ test("suite presentation requests the compact summary rather than full dispatch 
   expect(query?.options.queryFn?.toString()).toContain("/summary");
   expect(client.getQueryCache().find({queryKey: ["test-suite", "pending-suite"]})).toBeUndefined();
 });
+
+test('nightly frozen evidence failure displays a red failure instead of publishing', async () => {
+  const {nightlySuiteProjection} = await import('../../../../packages/core/src/services/test-suite.service');
+  const base = {...suite, members: suite.members.map((member, index) => ({...member, requestId: `request-${index}`}))};
+  const plan = {occurrenceId: 'nightly-evidence', suiteId: base.suiteId, startedAt: base.startedAt, trigger: 'nightly' as const,
+    suite: base, members: base.members.map(member => ({...member, requestId: member.requestId!, routineRevision: 'b'.repeat(40), definitionRevision: 'b'.repeat(40)}))};
+  const frozen = {...plan, expectedCount: 2, passed: 1, status: 'failed', finishedAt: base.finishedAt,
+    members: plan.members.map((member, index) => ({...member, status: index === 0 ? 'pass' : 'cancelled', publicationComplete: false,
+      evidenceStatus: index === 0 ? 'failed' as const : 'complete' as const}))};
+  const projected = nightlySuiteProjection(base as any, plan as any, frozen as any);
+  const client = new QueryClient(); client.setQueryData(['test-suite-summary', base.suiteId], projected);
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={base.suiteId}/></QueryClientProvider>);
+  expect(html).toContain('Evidence failed');
+  expect(html).toContain('1/2 failed');
+  expect(html).not.toContain('Publishing');
+  expect(html).not.toContain('pending');
+});

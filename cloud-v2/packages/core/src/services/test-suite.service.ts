@@ -89,6 +89,7 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
+      ...(receipt.evidenceStatus ? {evidenceStatus: receipt.evidenceStatus} : {}),
       ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
   });

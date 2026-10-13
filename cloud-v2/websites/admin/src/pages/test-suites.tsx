@@ -26,9 +26,10 @@ export function readSuiteId(search: string) {
   return query.getAll("testSuite").length === 1 && id && frameworkIdentitySchema.safeParse(id).success ? id : null;
 }
 const panel = TESTING_PANEL;
-const isFailure = (status: string) => ["failed", "setup-failed", "teardown-failed"].includes(status);
-const pendingPassCount = (suite: TestSuiteResult) => suite.members.filter(member => member.status === "pass" && member.publicationComplete !== true).length;
-const memberStatus = (member: TestSuiteResult["members"][number]) => member.status === "pass" ? member.publicationComplete === true ? "Passed" : "Passed · evidence pending"
+const isFailure = (status: string) => ["failed", "setup-failed", "teardown-failed", "evidence-failed"].includes(status);
+const pendingPassCount = (suite: TestSuiteResult) => suite.members.filter(member => observedTestStatus({...member, publicationComplete: member.publicationComplete === true}) === 'publishing').length;
+const observedMemberStatus = (member: TestSuiteResult["members"][number]) => observedTestStatus({...member, publicationComplete: member.publicationComplete === true});
+const memberStatus = (member: TestSuiteResult["members"][number]) => observedMemberStatus(member) === 'evidence-failed' ? 'Evidence failed' : member.status === "pass" ? member.publicationComplete === true ? "Passed" : "Passed · evidence pending"
   : member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status;
 export function TestSuitePage({suiteId}: {suiteId: string}) {
   const result = useQuery({queryKey: ["test-suite-summary", suiteId],
@@ -55,8 +56,8 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     return !!observed && (rerunTerminalStatuses as readonly string[]).includes(member.status) &&
       (!observed.latest || (rerunTerminalStatuses as readonly string[]).includes(observed.latest.status));
   };
-  const rerunnableFailures = members.filter(member => isFailure(member.status) && canRerun(member));
-  const failedRoutines = [...new Set(members.filter(member => isFailure(member.status)).map(member => member.routineId))];
+  const rerunnableFailures = members.filter(member => isFailure(observedMemberStatus(member)) && canRerun(member));
+  const failedRoutines = [...new Set(members.filter(member => isFailure(observedMemberStatus(member))).map(member => member.routineId))];
   const incompleteRoutines = suite.failedRoutines.filter(id => !failedRoutines.includes(id));
   if (suite.members.length < 2) {
     const member = suite.members[0];
