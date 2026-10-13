@@ -12,6 +12,10 @@ const mockSetPendingRoute = jest.fn()
 const mockGetSession = jest.fn()
 const mockIncidentRequest = jest.fn()
 const mockLoadAuthoringMiniapp = jest.fn()
+const mockPublishPermissionStatus = jest.fn()
+jest.mock("@/services/permissionStatusRequest", () => ({
+  publishPermissionStatusRequest: (...args: unknown[]) => mockPublishPermissionStatus(...args),
+}))
 jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
   loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
 }))
@@ -147,6 +151,19 @@ it("removes its native URL subscription on unmount", () => {
 
 const incidentUrl =
   "com.mentra://test/submit-incident-report?alert_id=run-1&failure_code=ota_failed&failure_message=failed%20%26%20stopped"
+
+it("handles passive permission status without auth, modal, or navigation", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  const url = "com.mentra://test/permissions?request_id=read-1"
+  await act(async () => { await processUrl(url) })
+  expect(mockPublishPermissionStatus).toHaveBeenCalledWith(url)
+  expect(mockGetSession).not.toHaveBeenCalled()
+  expect(mockIncidentRequest).not.toHaveBeenCalled()
+  expect(mockSetPendingRoute).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+})
 
 it("still defers a protected home link to sign-in without running its handler", async () => {
   render(

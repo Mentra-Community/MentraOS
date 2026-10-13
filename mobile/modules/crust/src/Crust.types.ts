@@ -150,3 +150,27 @@ export type CrustViewProps = {
   onLoad: (event: {nativeEvent: OnLoadEventPayload}) => void
   style?: StyleProp<ViewStyle>
 }
+
+/** Passive OS observations for the currently executing Mentra App. */
+export type AppPermissionStatus = {
+  rawStatus: string | null
+  status: "granted" | "denied" | "blocked" | "unavailable" | "unknown"
+}
+
+export type AppPermissionSnapshot = {
+  schemaVersion: 1
+  observedAt: string
+  identity: {
+    pid: number
+    uid: number
+    bundleId: string
+    bundlePath: string
+    executablePath: string
+    version: string
+    build: string
+  }
+  locationServicesEnabled: boolean
+  permissions: Record<"location" | "camera" | "microphone" | "bluetooth" | "localNetwork", AppPermissionStatus>
+}
+
+export type AppPermissionReceipt = AppPermissionSnapshot & {requestId: string}

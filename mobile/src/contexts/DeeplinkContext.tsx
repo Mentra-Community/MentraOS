@@ -9,6 +9,7 @@ import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
+import {publishPermissionStatusRequest} from "@/services/permissionStatusRequest"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -470,6 +471,19 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
     routes: [
+      {
+        pattern: "/test/permissions",
+        requiresAuth: false,
+        handler: async (url: string) => {
+          try {
+            await publishPermissionStatusRequest(url)
+          } catch (error) {
+            // Supporting diagnostics only. The fixed app-owned file is the
+            // authoritative receipt; absence must remain unknown to the host.
+            console.error("PERMISSION_STATUS_UNAVAILABLE", error instanceof Error ? error.message : String(error))
+          }
+        },
+      },
       {
         pattern: "/test/submit-incident-report",
         handler: (url: string) => {
