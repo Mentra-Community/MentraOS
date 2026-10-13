@@ -499,6 +499,8 @@ describe("dry run", () => {
       skippedWorkspaces: [],
       revokedCredentials: [],
       removedMemberships: [],
+      demotedMemberships: [],
+      roleDrift: [],
       revokedInvitations: [],
       claimedMembershipDrift: [],
       pendingCollisions: [],
@@ -1385,6 +1387,97 @@ describe("keys that are not imported", () => {
     const report = await run()
     expect(report.malformedKeys).toEqual([])
     expect(report.counts.credentials + report.counts.skippedKeys).toBe(await sourceKeyCount(report))
+  })
+})
+
+// --- Roles changed in the Store --------------------------------------------
+
+describe("re-running apply carries demotions made in the Store", () => {
+  const setStoreRole = (orgId: string, userId: string, role: string) =>
+    sourceDb().collection("developer_org_memberships").updateMany({orgId, userId, status: {$ne: "removed"}}, {$set: {role}})
+
+  test("a member demoted in the Store before signing in is demoted in Core, audited as the system", async () => {
+    await run({apply: true})
+    const adminId = `wm_${await sourceMembershipHex(U.acmeAdmin, ORG_ACME, "admin")}`
+    await setStoreRole(ORG_ACME, U.acmeAdmin, "member")
+
+    const before = await snapshotTarget()
+    const dry = await withReadOnlyTarget(target => run({target}))
+    expect(dry.demotedMemberships).toEqual([{orgId: ORG_ACME, membershipId: adminId, fromRole: "admin", toRole: "developer"}])
+    expect(dry.roleDrift).toEqual([])
+    expect(await snapshotTarget()).toEqual(before)
+
+    const applied = await run({apply: true})
+    expect(applied).toEqual({...dry, mode: "apply"})
+    const revision = (await WorkspaceModel.findOne({workspaceId: ORG_ACME}).lean())!.authorizationRevision
+    expect(revision).toBe(1)
+    const demoted = (await WorkspaceMembershipModel.findOne({membershipId: adminId}).lean())!
+    expect(demoted.role).toBe("developer")
+    expect((demoted.roleHistory as Array<{role: string; authorizationRevision: number}>).map(entry => [entry.role, entry.authorizationRevision])).toEqual([
+      ["admin", 0],
+      ["developer", revision],
+    ])
+    const event = await WorkspaceAuditEventModel.findOne({action: "membership.role_changed", "target.membershipId": adminId}).lean()
+    expect(event).toMatchObject({actor: {kind: "system"}, before: {role: "admin"}, after: {role: "developer"}})
+
+    // Settled: a third run changes nothing.
+    const settled = await snapshotTarget()
+    const third = await run({apply: true})
+    expect(third.demotedMemberships).toEqual([])
+    expect(await snapshotTarget()).toEqual(settled)
+  })
+
+  test("a role the Store raised, a role Core changed since, and a signed-in member's role are reported, not changed", async () => {
+    await run({apply: true})
+    const adminId = `wm_${await sourceMembershipHex(U.acmeAdmin, ORG_ACME, "admin")}`
+    const devId = `wm_${await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")}`
+    const undated = (await WorkspaceMembershipModel.findOne({pendingWorkosUserId: U.acmeUndated}).lean())!
+    // An Organization Admin made the admin an owner in Core; then the Store demoted them to member.
+    await WorkspaceMembershipModel.updateOne(
+      {membershipId: adminId},
+      {$set: {role: "owner"}, $push: {roleHistory: {role: "owner", from: NOW, authorizationRevision: 0}}},
+    )
+    await setStoreRole(ORG_ACME, U.acmeAdmin, "member")
+    // The Store raised a member to admin.
+    await setStoreRole(ORG_ACME, U.acmeDev, "admin")
+    // A member signed in to Core (claimed), then the Store raised them.
+    await WorkspaceMembershipModel.updateOne(
+      {membershipId: undated.membershipId},
+      {$set: {mentraUserId: "mu_UNDATED"}, $unset: {pendingWorkosUserId: 1}},
+    )
+    await setStoreRole(ORG_ACME, U.acmeUndated, "admin")
+
+    const before = await snapshotTarget()
+    const report = await run({apply: true})
+
+    expect(report.demotedMemberships).toEqual([])
+    expect(report.roleDrift).toEqual(
+      [
+        {orgId: ORG_ACME, membershipId: adminId, coreRole: "owner", storeRole: "developer", reason: "changed_in_core"},
+        {orgId: ORG_ACME, membershipId: devId, coreRole: "developer", storeRole: "admin", reason: "raised_in_store"},
+        {orgId: ORG_ACME, membershipId: undated.membershipId, coreRole: "developer", storeRole: "admin", reason: "claimed"},
+      ].sort((a, b) => (a.membershipId < b.membershipId ? -1 : 1)),
+    )
+    expect(await snapshotTarget()).toEqual(before)
+  })
+
+  test("an ownership handed over in the Store keeps the Core owner: the demotion is kept and the promotion reported", async () => {
+    await run({apply: true})
+    const ownerId = `wm_${await sourceMembershipHex(U.acmeOwner, ORG_ACME, "owner")}`
+    const adminId = `wm_${await sourceMembershipHex(U.acmeAdmin, ORG_ACME, "admin")}`
+    await setStoreRole(ORG_ACME, U.acmeOwner, "admin")
+    await setStoreRole(ORG_ACME, U.acmeAdmin, "owner")
+
+    const report = await run({apply: true})
+
+    // A run only carries reductions, so the new owner stays an admin in Core, and lowering the old
+    // owner would leave the workspace without one.
+    expect(report.demotedMemberships).toEqual([])
+    expect(report.keptLastOwners).toEqual([{orgId: ORG_ACME, membershipId: ownerId, userId: U.acmeOwner}])
+    expect(report.roleDrift).toEqual([
+      {orgId: ORG_ACME, membershipId: adminId, coreRole: "admin", storeRole: "owner", reason: "raised_in_store"},
+    ])
+    expect((await WorkspaceMembershipModel.findOne({membershipId: ownerId}).lean())!.role).toBe("owner")
   })
 })
 

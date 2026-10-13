@@ -38,13 +38,19 @@
  *    access to the org at all.
  *  - A Store invitation that is no longer pending, and is still pending in Core, is
  *    revoked in Core (`revokedInvitations`, one `invitation.revoked` event each).
+ *  - A role the Store lowered, on a membership still unclaimed whose role Core has
+ *    not changed since the import (its only role history entry), is lowered in Core
+ *    (`demotedMemberships`, one `membership.role_changed` event each, as the system).
+ *    Any other difference between the Store's role and Core's is reported and left
+ *    alone (`roleDrift`): the person has signed in, Core changed the role, or the
+ *    Store gives more than Core.
  *  - A claimed membership (the person has signed in) is never changed: drift on one
  *    is reported (`claimedMembershipDrift`) for an admin to act on in Core.
- *  - A run never leaves a workspace without an owner. When ending the unclaimed
- *    memberships the Store removed would leave none (no other active owner,
+ *  - A run never leaves a workspace without an owner. When ending or lowering the
+ *    unclaimed memberships the Store removed or demoted would leave none (no other active owner,
  *    claimed or pending, and no new owner imported by this run; a deleted
  *    account's owner membership does not count), every owner membership it
- *    would end is kept instead and reported (`keptLastOwners`), for an
+ *    would end or lower is kept instead and reported (`keptLastOwners`), for an
  *    Organization Admin to decide in Core. The next run ends it once Core has
  *    another owner.
  * Run apply again immediately before the Store cutover so Core is current.
@@ -106,7 +112,7 @@
  * The report goes to stdout and everything else to stderr, so stdout can be piped.
  */
 
-import type {WorkspaceRole} from "@mentra/workspace-contract"
+import {roleAtLeast, type WorkspaceRole} from "@mentra/workspace-contract"
 import mongoose, {type AnyBulkWriteOperation, type ClientSession, type Connection, type Model} from "mongoose"
 import {withTransaction} from "../src/connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../src/models/access-credential.model"
@@ -273,6 +279,15 @@ export type MigrationReport = {
     movedCredentialIds: string[]
     revokedCredentialIds: string[]
   }>
+  /** Unclaimed imported memberships whose role the Store lowered since the last run: lowered in Core. */
+  demotedMemberships: Array<{orgId: string; membershipId: string; fromRole: string; toRole: string}>
+  /**
+   * Memberships whose Store role differs from Core's and that a run leaves alone, for an Organization
+   * Admin: the person has signed in (`claimed`), Core changed the role since the import
+   * (`changed_in_core`), or the Store gives more than Core (`raised_in_store`; a run only carries
+   * reductions).
+   */
+  roleDrift: Array<{orgId: string; membershipId: string; coreRole: string; storeRole: string; reason: RoleDriftReason}>
   /** Pending Core invitations revoked because their Store invitation is no longer pending. */
   revokedInvitations: Array<{orgId: string; invitationId: string}>
   /** Claimed (signed-in) memberships whose Store membership is gone: reported, never changed. */
@@ -412,6 +427,8 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     skippedWorkspaces: [],
     revokedCredentials: [],
     removedMemberships: [],
+    demotedMemberships: [],
+    roleDrift: [],
     revokedInvitations: [],
     claimedMembershipDrift: [],
     pendingCollisions: [],
@@ -668,7 +685,16 @@ function malformedReason(row: SourceApiKey): MalformedKeyReason | null {
 
 // --- Compare with the target ------------------------------------------------
 
-type TargetMembership = {membershipId: string; mentraUserId: string | null; pendingWorkosUserId: string | null; role: string}
+type TargetMembership = {
+  membershipId: string
+  mentraUserId: string | null
+  pendingWorkosUserId: string | null
+  role: string
+  /** Whether Core changed the role since the membership was imported. */
+  roleChangedInCore: boolean
+}
+
+type RoleDriftReason = "claimed" | "changed_in_core" | "raised_in_store"
 
 /** What the target holds for one org, read before anything is written. */
 type TargetState = {
@@ -700,6 +726,8 @@ type Reconciliation = {
     revokedCredentialIds: string[]
   }>
   revokeInvitationIds: string[]
+  demotions: Array<{membershipId: string; fromRole: WorkspaceRole; toRole: WorkspaceRole}>
+  roleDrift: Array<{membershipId: string; coreRole: string; storeRole: string; reason: RoleDriftReason}>
   claimedDrift: Array<{membershipId: string; mentraUserId: string}>
   collisions: Array<{membershipId: string; userId: string; skippedCredentialIds: string[]}>
   keptLastOwners: Array<{membershipId: string; userId: string}>
@@ -722,7 +750,7 @@ async function readTargetState(
       collection(WorkspaceMembershipModel)
         .find(
           {workspaceId, status: "active"},
-          {...options, projection: {membershipId: 1, mentraUserId: 1, pendingWorkosUserId: 1, role: 1}},
+          {...options, projection: {membershipId: 1, mentraUserId: 1, pendingWorkosUserId: 1, role: 1, roleHistory: 1}},
         )
         .toArray(),
       collection(AccessCredentialModel)
@@ -755,6 +783,8 @@ async function readTargetState(
     mentraUserId: stringOrNull(row.mentraUserId),
     pendingWorkosUserId: stringOrNull(row.pendingWorkosUserId),
     role: String(row.role),
+    // An imported membership starts with one role history entry; anything else is Core's doing.
+    roleChangedInCore: !(Array.isArray(row.roleHistory) && row.roleHistory.length === 1 && row.roleHistory[0]?.role === row.role),
   }))
   const ownerUserIds = active.flatMap(row => (row.role === "owner" && row.mentraUserId ? [row.mentraUserId] : []))
   const deletedOwners = ownerUserIds.length
@@ -790,6 +820,8 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
     revokeCredentials: [],
     endMemberships: [],
     revokeInvitationIds: [],
+    demotions: [],
+    roleDrift: [],
     claimedDrift: [],
     collisions: [],
     keptLastOwners: [],
@@ -842,13 +874,37 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
       }
     }
 
+    // Roles: a role the Store lowered on a membership nobody has claimed, and Core has not changed since
+    // the import, is lowered in Core; any other difference is reported and left alone.
+    const plannedById = new Map(plan.memberships.map(membership => [membership.membershipId, membership]))
+    for (const membership of remaining) {
+      const planned = plannedById.get(membership.membershipId)
+      if (!planned || planned.role === membership.role) continue
+      const lowered = !roleAtLeast(planned.role, membership.role as WorkspaceRole)
+      const reason: RoleDriftReason | null = membership.mentraUserId
+        ? "claimed"
+        : membership.roleChangedInCore
+          ? "changed_in_core"
+          : lowered
+            ? null
+            : "raised_in_store"
+      if (reason) {
+        result.roleDrift.push({membershipId: membership.membershipId, coreRole: membership.role, storeRole: planned.role, reason})
+      } else {
+        result.demotions.push({membershipId: membership.membershipId, fromRole: membership.role as WorkspaceRole, toRole: planned.role})
+      }
+    }
+    const roleAfter = (membership: TargetMembership) =>
+      result.demotions.find(demotion => demotion.membershipId === membership.membershipId)?.toRole ?? membership.role
+
     // Never leave the workspace without an owner: count who would still hold it after this run.
-    if (toEnd.some(membership => membership.role === "owner")) {
+    const ownerDemotions = result.demotions.filter(demotion => demotion.fromRole === "owner")
+    if (toEnd.some(membership => membership.role === "owner") || ownerDemotions.length > 0) {
       const pendingAfter = pendingUsersOf(remaining)
       const liveOwners =
         remaining.filter(
           membership =>
-            membership.role === "owner" &&
+            roleAfter(membership) === "owner" &&
             !(membership.mentraUserId && target.deletedOwnerUserIds.has(membership.mentraUserId)),
         ).length +
         plan.memberships.filter(
@@ -862,8 +918,15 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
           result.keptLastOwners.push({membershipId: membership.membershipId, userId: membership.pendingWorkosUserId!})
           remaining.push(membership)
         }
+        for (const demotion of ownerDemotions) {
+          const membership = remaining.find(candidate => candidate.membershipId === demotion.membershipId)!
+          result.keptLastOwners.push({membershipId: demotion.membershipId, userId: membership.pendingWorkosUserId!})
+        }
+        result.demotions = result.demotions.filter(demotion => demotion.fromRole !== "owner")
       }
     }
+    result.demotions.sort((a, b) => compareStrings(a.membershipId, b.membershipId))
+    result.keptLastOwners.sort((a, b) => compareStrings(a.membershipId, b.membershipId))
     const kept = new Set(result.keptLastOwners.map(entry => entry.membershipId))
     ending = toEnd.filter(membership => !kept.has(membership.membershipId))
     endingCredentials = (membershipId: string) =>
@@ -975,6 +1038,8 @@ function recordOrg(report: MigrationReport, plan: OrgPlan, result: Reconciliatio
   if (!result) return
   for (const {credentialId} of result.revokeCredentials) report.revokedCredentials.push({orgId, credentialId})
   for (const entry of result.endMemberships) report.removedMemberships.push({orgId, ...entry})
+  for (const entry of result.demotions) report.demotedMemberships.push({orgId, ...entry})
+  for (const entry of result.roleDrift) report.roleDrift.push({orgId, ...entry})
   for (const invitationId of result.revokeInvitationIds) report.revokedInvitations.push({orgId, invitationId})
   for (const entry of result.claimedDrift) report.claimedMembershipDrift.push({orgId, ...entry})
   for (const entry of collisions) report.pendingCollisions.push({orgId, ...entry})
@@ -1045,7 +1110,7 @@ async function importOrg(plan: OrgPlan, log: (message: string) => void): Promise
           ],
           {session},
         )
-      } else if (decided.endMemberships.length > 0 || insert.memberships.length > 0) {
+      } else if (decided.endMemberships.length > 0 || decided.demotions.length > 0 || insert.memberships.length > 0) {
         workspace = await bumpRevision(session, orgId, undefined)
       } else if (
         decided.revokeCredentials.length + decided.revokeInvitationIds.length + insert.invitations.length + insert.credentials.length >
@@ -1170,11 +1235,15 @@ async function importOrg(plan: OrgPlan, log: (message: string) => void): Promise
   const removals = [
     reconciliation.revokeCredentials.length && `${reconciliation.revokeCredentials.length} key(s) revoked`,
     reconciliation.endMemberships.length && `${reconciliation.endMemberships.length} membership(s) removed`,
+    reconciliation.demotions.length && `${reconciliation.demotions.length} role(s) lowered`,
     reconciliation.revokeInvitationIds.length && `${reconciliation.revokeInvitationIds.length} invitation(s) revoked`,
   ].filter(Boolean)
   if (removals.length > 0) log(`${orgId}: carried from the Store: ${removals.join(", ")}`)
   if (reconciliation.claimedDrift.length > 0) {
     log(`${orgId}: ${reconciliation.claimedDrift.length} signed-in membership(s) no longer in the Store were left as they are`)
+  }
+  if (reconciliation.roleDrift.length > 0) {
+    log(`${orgId}: ${reconciliation.roleDrift.length} role(s) differ from the Store and were left as they are`)
   }
   if (reconciliation.collisions.length > 0) {
     log(`${orgId}: ${reconciliation.collisions.length} membership(s) skipped: the person already has an unclaimed one`)
@@ -1187,9 +1256,9 @@ async function importOrg(plan: OrgPlan, log: (message: string) => void): Promise
 
 /**
  * Carry the Store's access removals into Core inside the org's transaction, as the system: revoke
- * keys, end unclaimed memberships (with the keys they created) and revoke invitations, recording an
- * audit event for each. The caller has already written the workspace document; `workspace` is the
- * bumped row when memberships end.
+ * keys, end unclaimed memberships (with the keys they created, unless they move to a replacement),
+ * lower roles and revoke invitations, recording an audit event for each. The caller has already
+ * written the workspace document; `workspace` is the bumped row when memberships end or change role.
  */
 async function applyRemovals(
   session: ClientSession,
@@ -1227,6 +1296,23 @@ async function applyRemovals(
       membership,
       reason: "removed",
       action: "membership.removed",
+    })
+  }
+
+  for (const {membershipId, fromRole, toRole} of reconciliation.demotions) {
+    const changed = await WorkspaceMembershipModel.findOneAndUpdate(
+      {membershipId, workspaceId, status: "active", role: fromRole, mentraUserId: null},
+      {$set: {role: toRole}, $push: {roleHistory: roleEntry(toRole, new Date(), workspace!.authorizationRevision)}},
+      {session},
+    ).lean<MembershipRow>()
+    if (!changed) continue
+    await recordWorkspaceEvent(session, {
+      workspaceId,
+      action: "membership.role_changed",
+      actor: SYSTEM_ACTOR,
+      target: {membershipId, mentraUserId: null, email: changed.email ?? null},
+      before: {role: fromRole},
+      after: {role: toRole},
     })
   }
 

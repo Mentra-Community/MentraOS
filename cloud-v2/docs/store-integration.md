@@ -154,8 +154,10 @@ before the Store starts deferring to Core.
 | `targetCompared` | Whether Core was read. The fields below compare the Store with Core and are empty when it was not. |
 | `skippedWorkspaces` | Organizations whose workspace was deleted in Core: nothing is imported or changed, and nothing else in the report counts them. |
 | `revokedCredentials`, `revokedInvitations`, `removedMemberships` | Access the Store removed, carried into Core, each audited as the system. A removed membership the Store replaced with another of the same person (removed and re-added) hands its live keys and pending invitations to the replacement (`movedCredentialIds`). |
+| `demotedMemberships` | Unclaimed memberships whose role the Store lowered, and Core had not changed since the import: lowered in Core, audited as the system. |
+| `roleDrift` | Memberships whose Store role differs from Core's and that the run leaves alone, with why: `claimed` (the person signed in), `changed_in_core`, or `raised_in_store` (a run only carries reductions). |
 | `claimedMembershipDrift` | Claimed memberships the Store removed, left for an admin to act on in Core. |
-| `keptLastOwners` | Unclaimed Owner memberships the Store removed, kept because the workspace would have no other Owner. An Organization Admin decides in Core; a later run ends them once the workspace has another Owner. |
+| `keptLastOwners` | Unclaimed Owner memberships the Store removed or demoted, kept because the workspace would have no other Owner. An Organization Admin decides in Core; a later run ends them once the workspace has another Owner. |
 | `pendingCollisions` | Memberships not imported because the person already holds an unclaimed one in that workspace, with the keys bound to them. |
 | `duplicateMemberships` | People with several active memberships in one organization; the highest role was kept. |
 
