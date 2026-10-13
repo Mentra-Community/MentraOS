@@ -1,4 +1,5 @@
 import {z} from 'zod'
+import {isRoutineCheckLabel} from '../types/pr-rerun-label.types'
 import {TestRunGithubApp} from './test-run-github-app'
 import {readTestMetadata} from './test-builds.service'
 import {TestRunError} from './test-result-error'
@@ -51,7 +52,7 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
         .map(row => row.number))
       if (rows.length < 100) return {number: pr.number, headSha: pr.head.sha, baseRef: pr.base.ref,
         headRef: pr.head.ref, sameRepository: pr.head.repo?.full_name === ROUTINE_CHECK_REPOSITORY,
-        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(value => value.startsWith('routine:')).sort(),
+        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(isRoutineCheckLabel).sort(),
         peers: [...new Set(peers)].sort((a, b) => a - b)}
     }
     throw new TestRunError(503, 'PR contexts exceed the bounded ownership inventory')

@@ -11,6 +11,8 @@ import {requestInputDigest} from './test-request.service'
 import {testRoutineSource} from '../testing/framework-fixtures'
 import type {PrRoutineCheckRepository} from './pr-routine-check.repository'
 import type {PrRoutineCheckRow, PrRoutineContext} from '../types/pr-routine-check.types'
+import {PrRerunReferenceService} from './pr-rerun-reference.service'
+import {matchesLabelReference} from '../types/pr-rerun-label.types'
 
 const mocks: Array<{mockRestore(): void}> = []
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore()})
@@ -20,7 +22,7 @@ function fixture() {
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, lostRerunCommit = false, failedAdmission: string | undefined
   const gates = new Map<string, PrRoutineCheckRow>(), suites = new Map<string, any>(), requests = new Map<string, any>(), runs = new Map<string, any>(), reruns = new Map<string, RerunRecord>(), claims = new Set<string>()
   const submitted: string[] = [], cancelled: string[] = []
-  const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12]}
+  const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true, sameRepository: true, labels: ['routine:one', 'routine:two'], peers: [12], actor: 'operator'}
   const ids = (filter: any) => filter.requestId?.$in ?? []
   mocks.push(spyOn(TestSuiteModel, 'findOne').mockImplementation((filter: any) => query(() => suites.get(filter.suiteId) ?? null) as any))
   mocks.push(spyOn(TestSuiteModel, 'create').mockImplementation((async (rows: any[]) => {const row = rows[0]; if (suites.has(row.suiteId)) throw Object.assign(Error('duplicate'), {code: 11000}); suites.set(row.suiteId, structuredClone(row)); return rows}) as any))
@@ -55,13 +57,15 @@ function fixture() {
   }
   const suite = new TestSuiteService(), results = {async summary(id: string) {const run=runs.get(id)?.payload; if(!run) throw new TestRunError(404, 'no published result'); return {...run,runId:id,outcome:run.result.test==='passed'?'pass':'failed',uploadsComplete:true,evidenceStatus:'complete'}}}, requestReader = {async get(id: string) {return requests.get(id) ?? null}}
   const rerun = new TestRerunService(store, suite, jobs as any, requestReader as any, results as any, () => now)
+  const references = new PrRerunReferenceService({async suites(ref) {return [...suites.keys()].filter(id => matchesLabelReference(ref, id))},
+    async requests(ref) {return [...requests.keys()].filter(id => matchesLabelReference(ref, id))}}, rerun)
   const createService = () => new PrRoutineCheckService(rows, {async context() {return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
     {async catalog(revision) {return {routineRevision: revision!, routines: ['one','two'].map(routineId => ({routineId, platforms: ['android']}))}}},
     {async getExact(id: string) {const definition = {id, title: id, steps: [{id: 'observe', instruction: 'Observe'}], platforms: ['android']}; return {definition, definitionSha256: requestInputDigest(definition)} as any}},
-    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}})
+    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references)
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, restart() {service=createService()}, loseRerunCommit() {lostRerunCommit=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
+  return {get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
     async start() {await service.intake(12,'event','c'.repeat(64)); for (let i=0;i<6;i++) {now+=30000; await service.tick()}},
     async drain(count=3) {for (let i=0;i<count;i++) {now+=30000; await service.tick()}},
     control(deliveryId: string) {const gate = gates.get(gateId)!.payload; return {deliveryId, digest: 'c'.repeat(64), gateId, checkId: 99, externalId: gate.checkExternalId, headSha: context.headSha, kind: 'rerun' as const, actor: 'operator'}},
@@ -236,4 +240,34 @@ test('cancel immediately after native rerun acceptance retains the predecessor o
  expect(f.gate().attempt.deadline).not.toBe(f.requests.get(originalIds[0]!)!.fleetDeadline.toISOString());
  await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator'); await f.drain();
  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.reruns.size).toBe(0); expect(f.requests.size).toBe(2);
+})
+
+test('tagged suite rerun becomes the existing check and preserves original source and verdict across restart', async () => {
+ const f=fixture();await f.start();const originalIds=f.gate().attempt.members.map(member=>member.requestId!);
+ for (const id of originalIds) f.publishFailed(id);await f.drain();const originalSuite=f.gate().attempt.suiteId!;
+ const label=(await f.references.copy('one','s',originalSuite)).label;
+ f.context.labels=[label];await f.service.intake(12,'tagged-suite','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId, structuredClone(f.context));await f.drain(5);
+ const member=f.gate().attempt.members[0]!;
+ expect(member.linkedTarget).toMatchObject({parent:{suiteId:originalSuite},memberId:'one.android'});
+ expect(member.selection!.routineRevision).toBe('a'.repeat(40));expect(member.selection!.source.channel).toBe('pr');
+ expect(member.requestId).toMatch(/^rerun-/);expect(f.gate().attempt.suiteId).toBeUndefined();
+ const accepted=member.requestId!;f.restart();await f.drain(2);expect(f.gate().attempt.members[0]!.requestId).toBe(accepted);
+ expect(new Set(f.submitted.filter(id=>id===accepted)).size).toBe(1);
+ f.publishPass(accepted);await f.drain();expect(f.gate().attempt.conclusion).toBe('success');
+ expect((await f.suite.detail(originalSuite)).members.map(member=>member.status)).toEqual(['failed','failed']);
+ await f.service.control(f.control('tagged-rerun-control'));await f.drain();
+ const next=f.gate().attempt.members[0]!.requestId!;expect(next).not.toBe(accepted);expect(f.gate().attempt.members[0]!.selection!.build).toEqual(member.selection!.build);
+})
+
+test('individual successor label stays in its original suite and outside reruns cannot qualify or be cancelled', async () => {
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ const originalSuite=f.gate().attempt.suiteId!;const first=await f.rerun.preview({rerunId:'outside-initial',parent:{suiteId:originalSuite},selection:{memberIds:['one.android']},reason:'Manual verification'},'employee');
+ await f.rerun.submit({rerunId:first.rerunId,previewDigest:first.previewDigest});const earlier=first.plan.members[0]!.requestId;f.publishFailed(earlier);
+ f.context.labels=[(await f.references.copy('one','r',earlier)).label];await f.service.intake(12,'tagged-individual','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId, structuredClone(f.context));await f.drain(5);
+ const owned=f.gate().attempt.members[0]!.requestId!;expect(f.gate().attempt.members[0]!.linkedTarget!.parent).toEqual({suiteId:originalSuite});
+ f.publishFailed(owned);await f.drain();const outside=await f.rerun.preview({rerunId:'outside-later',parent:{suiteId:originalSuite},selection:{memberIds:['one.android']},reason:'Other employee'},'employee');
+ await f.rerun.submit({rerunId:outside.rerunId,previewDigest:outside.previewDigest});const foreign=outside.plan.members[0]!.requestId;f.publishPass(foreign);
+ await f.drain();expect(f.gate().attempt.conclusion).toBe('failure');expect(f.gate().attempt.members[0]!.requestId).toBe(owned);
+ f.gate().attempt.conclusion=undefined;await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000003',coverageGeneration:2,attemptGeneration:1},'admin:operator');await f.drain();
+ expect(f.cancelled).not.toContain(foreign);expect(f.cancelled).not.toContain(earlier);
 })

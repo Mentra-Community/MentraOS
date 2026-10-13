@@ -257,20 +257,20 @@ test('coverage replacement settles never-admitted members but keeps mixed admitt
   }
 })
 
-test('cancellation failure on one linked child does not starve the other children or original', async () => {
+test('cancellation ignores unrelated descendants and still cancels its owned request', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!;
   for (const child of ['child-a', 'child-b']) f.requests.set(child, {requestId: child, fleetBinding: {hostId: 'testing-air-1'}, state: 'running'});
   f.history([{requestId: 'child-a', attemptNumber: 1}, {requestId: 'child-b', attemptNumber: 2}]); f.failCancellation('child-a');
   await f.service.control(control(f, 'cancel-independent-children', 'cancel')); await f.drain(1);
-  expect(f.cancellations).toContain('child-a'); expect(f.cancellations).toContain('child-b'); expect(f.cancellations).toContain(requestId);
+  expect(f.cancellations).not.toContain('child-a'); expect(f.cancellations).not.toContain('child-b'); expect(f.cancellations).toContain(requestId);
   expect(f.gate().attempt.conclusion).toBeUndefined(); expect(f.gate().attempt.members[0]!.settled).toBe(false);
 })
-test('cancel reaches linked child and requires its independent custody receipt', async () => {
+test('foreign running rerun does not block cancellation of a settled check', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f)
   f.requests.set('child', {requestId: 'child', fleetBinding: {hostId: 'testing-air-1'}, state: 'running'})
   f.history([{requestId: 'child', attemptNumber: 1}]); f.gate().attempt.conclusion = undefined
   await f.service.control(control(f, 'cancel-linked', 'cancel')); await f.drain(1)
-  expect(f.cancellations).toContain('child'); expect(f.gate().attempt.conclusion).toBeUndefined()
+  expect(f.cancellations).not.toContain('child'); expect(f.gate().attempt.conclusion).toBe('cancelled')
   f.requests.get('child').dispatchCompletion = {disposition: 'clean'}
   await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
 })

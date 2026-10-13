@@ -40,7 +40,7 @@ test('signed PR intake acknowledges after durable persistence without waiting fo
   let received: any[] = []
   const app = createPrRoutineCheckApi({async intake(...value: any[]) {received = value; return {accepted: true}}} as any,
     {applicationId: 17, installationId: 19} as any, () => secret)
-  const body = JSON.stringify({repository: {full_name: 'Mentra-Community/MentraOS'}, installation: {id: 19}, sender: {login: 'employee'}, action: 'opened', pull_request: {number: 12, state: 'open', head: {sha: 'a'.repeat(40), ref: 'feature', repo: {full_name: 'Mentra-Community/MentraOS'}}, base: {ref: 'dev'}, labels: [{name: 'routine:login'}, {name: 'bug'}]}})
+  const body = JSON.stringify({repository: {full_name: 'Mentra-Community/MentraOS'}, installation: {id: 19}, sender: {login: 'employee'}, action: 'opened', pull_request: {number: 12, state: 'open', head: {sha: 'a'.repeat(40), ref: 'feature', repo: {full_name: 'Mentra-Community/MentraOS'}}, base: {ref: 'dev'}, labels: [{name: 'routine:login'}, {name: 'rerun:login:r:original'}, {name: 'bug'}]}})
   expect((await app.request('/webhook', {method: 'POST', body, headers: {'x-github-event': 'pull_request', 'x-github-delivery': 'event-pr', 'x-hub-signature-256': sign(body)}})).status).toBe(200)
-  expect(received[3]).toMatchObject({headSha: 'a'.repeat(40), labels: ['routine:login'], peers: []})
+  expect(received[3]).toMatchObject({headSha: 'a'.repeat(40), labels: ['rerun:login:r:original', 'routine:login'], peers: [], actor: 'employee'})
 })
