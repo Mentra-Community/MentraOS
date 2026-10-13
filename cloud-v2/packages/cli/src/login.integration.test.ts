@@ -255,6 +255,65 @@ describe("a stored login", () => {
     expect(readdirSync(home()).filter(name => name.endsWith(".json"))).toEqual([])
   })
 
+  test("a Store refusal of an access token whose sign-in has ended ends the login at that request", async () => {
+    const shop = store()
+    await login({MENTRA_STORE_URL: shop.url})
+    const before = storedLogin()
+    // "Log out everywhere": the grant is gone, so its access token and refresh token are both refused,
+    // although the access token has not expired.
+    await fetch(`${idp.issuer}/revoke`, {
+      method: "POST",
+      body: new URLSearchParams({token: before.refreshToken!, client_id: "mentra-cli"}),
+    })
+    const seen = shop.requests.length
+    const tokenRequests = idp.requests.filter(request => request === "POST /token").length
+    const result = await cli(["workspace", "show"], {MENTRA_STORE_URL: shop.url})
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain("Session expired. Run `mentra login`.")
+    expect(readdirSync(home()).filter(name => name.endsWith(".json"))).toEqual([])
+    // One refused request, one refused refresh, and no retry.
+    expect(shop.requests.slice(seen)).toEqual([
+      {method: "GET", path: "/api/console/auth/me", authorization: `Bearer ${before.token}`, workspaceId: "ws_1"},
+    ])
+    expect(idp.requests.filter(request => request === "POST /token").length - tokenRequests).toBe(1)
+    expect(idp.refreshes).toBe(0)
+  })
+
+  test("a Store refusal of an access token whose sign-in is still live refreshes the login and retries once", async () => {
+    const shop = store()
+    await login({MENTRA_STORE_URL: shop.url})
+    const before = storedLogin()
+    idp.refuseAccessToken(before.token!)
+    const seen = shop.requests.length
+    const result = await cli(["workspace", "show"], {MENTRA_STORE_URL: shop.url})
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain("Package prefix: com.example")
+    const after = storedLogin()
+    expect(idp.refreshes).toBe(1)
+    expect(after.token).not.toBe(before.token)
+    expect(after.refreshToken).not.toBe(before.refreshToken)
+    // Only the first request carried the refused token; the retry and every later request carry the new one.
+    const requests = shop.requests.slice(seen)
+    expect(requests.map(request => [request.path, request.authorization])).toEqual([
+      ["/api/console/auth/me", `Bearer ${before.token}`],
+      ["/api/console/auth/me", `Bearer ${after.token}`],
+      ["/api/console/publishing-profile", `Bearer ${after.token}`],
+    ])
+  })
+
+  test("a refused MENTRA_CLI_TOKEN is reported, not refreshed", async () => {
+    const shop = store({workspaceKeys: ["msk_ci_key"]})
+    const result = await cli(["workspace", "show"], {
+      MENTRA_STORE_URL: shop.url,
+      MENTRA_CLI_TOKEN: "msk_revoked_key",
+      MENTRA_CLI_WORKSPACE_ID: "ws_1",
+    })
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain("unauthorized")
+    expect(shop.requests).toHaveLength(1)
+    expect(idp.requests).toEqual([])
+  })
+
   test("logout revokes the refresh token at the revocation endpoint and prints Signed out; the old refresh token then fails (L09)", async () => {
     const shop = store()
     await login({MENTRA_STORE_URL: shop.url})

@@ -17,6 +17,12 @@ export interface StoreCredentials {
   token: string;
   storeUrl: string;
   workspaceId?: string | null;
+  /**
+   * A stored login's way back from a refused access token: called when the Store answers 401 to
+   * `refused`, for the access token to retry with, or null when there is none. It throws
+   * `SessionExpiredError` when the sign-in has ended. `MENTRA_CLI_TOKEN` has none.
+   */
+  renewToken?: (refused: string) => Promise<string | null>;
 }
 
 /** What a Core request needs (Core mode). */
@@ -315,7 +321,18 @@ export class WorkspaceSelectionRequiredError extends Error {
 }
 
 async function storeRequest<T>(credentials: StoreCredentials, path: string, init?: RequestInit): Promise<T> {
-  const response = await storeFetch(credentials, path, init);
+  let response = await storeFetch(credentials, path, init);
+  if (response.status === 401 && credentials.renewToken) {
+    // Core no longer accepts this access token (the person's sign-ins were revoked, for example):
+    // renew it, which ends the login when its grant is gone too, and retry once.
+    const token = await credentials.renewToken(credentials.token);
+    if (token && token !== credentials.token) {
+      await response.body?.cancel();
+      // The command's later requests carry the renewed token too.
+      credentials.token = token;
+      response = await storeFetch(credentials, path, init);
+    }
+  }
   if (!response.ok) throw await storeError(credentials, response);
   // A DELETE answers 204 with nothing to parse.
   if (response.status === 204) return undefined as T;

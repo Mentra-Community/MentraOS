@@ -75,6 +75,8 @@ export interface FakeOidcIssuer {
   denyInBrowser(authorizationUrl: string, error?: string): Promise<{status: number; text: string}>
   /** The person an access token belongs to, or null when it is unknown or its grant has ended. */
   accessTokenOwner(token: string): FakePerson | null
+  /** Stop accepting one access token while its grant stays live (as Core refuses one issued before a revocation). */
+  refuseAccessToken(token: string): void
   /** Whether a refresh token would still be accepted. */
   refreshTokenActive(token: string): boolean
   stop(): void
@@ -322,6 +324,9 @@ export async function startFakeOidcIssuer(options: {
     accessTokenOwner(token) {
       const grant = grants.get(accessTokens.get(token) ?? "")
       return grant && !grant.ended ? grant.person : null
+    },
+    refuseAccessToken(token) {
+      accessTokens.delete(token)
     },
     refreshTokenActive(token) {
       const refreshToken = refreshTokens.get(token)

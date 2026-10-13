@@ -46,7 +46,7 @@ import {
 } from "./credentials";
 import { loopbackLogin } from "./loopback-login";
 import { openBrowser } from "./open-browser";
-import { loadFreshCredentials, selectWorkspace, signOut, storeLogin } from "./session";
+import { loadFreshCredentials, renewRefusedLogin, selectWorkspace, signOut, storeLogin } from "./session";
 import { verifyPackedBundle } from "./validate-bundle";
 import { registerStoreCommands } from "./store-commands";
 
@@ -745,8 +745,15 @@ async function requireStoreCredentials(): Promise<StoreSession | null> {
     );
     return null;
   }
-  const creds = await loadSession(config.target);
-  return creds ? { ...creds, storeUrl: config.target.url } : null;
+  const target = config.target;
+  const creds = await loadSession(target);
+  if (!creds) return null;
+  const session: StoreSession = { ...creds, storeUrl: target.url };
+  if (isStoredLogin(creds)) {
+    session.renewToken = async refused =>
+      (await renewRefusedLogin(target, creds.mentraUserId, refused))?.token ?? null;
+  }
+  return session;
 }
 
 function readManifest(cwd: string): Record<string, unknown> {
