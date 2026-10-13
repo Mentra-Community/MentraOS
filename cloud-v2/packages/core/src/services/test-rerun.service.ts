@@ -314,6 +314,17 @@ export class TestRerunService {
     await this.jobs.cancelFrozen(member.selection, parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt) + 3 * 3600_000).toISOString(), {reason});
     return true;
   }
+  /** Fence this plan's own selected jobs, including a preview whose child checkpoint was lost. */
+  async cancelPlan(rerunId: string, reason: string): Promise<boolean> {
+    if (!frameworkIdentitySchema.safeParse(rerunId).success) throw new TestRunError(400, 'Invalid linked plan identity');
+    const stored = await this.store.get(rerunId);
+    if (!stored) return false;
+    const row = verified(stored), parsed = rerunPlanSchema.safeParse(row.plan);
+    if (!parsed.success) throw new TestRunError(503, 'Linked cancellation provenance is unavailable');
+    const deadline = parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt ?? row.plan.createdAt) + 3 * 3600_000).toISOString();
+    for (const member of parsed.data.members) await this.jobs.cancelFrozen(member.selection, deadline, {reason});
+    return true;
+  }
   async detail(id: string) {
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid rerun identity");
     const stored = await this.store.get(id);

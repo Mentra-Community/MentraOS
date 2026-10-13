@@ -80,7 +80,7 @@ export class PrRoutineCheckService {
     private readonly requests: Pick<TestRequestService, 'get'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, 'summary'> = new FrameworkResultService(),
     private readonly suites: Pick<TestSuiteService, 'create' | 'bind' | 'complete'> = new TestSuiteService(),
-    private readonly reruns: Pick<TestRerunService, 'preview' | 'submit' | 'history' | 'detail' | 'cancelRequest'> = new TestRerunService(),
+    private readonly reruns: Pick<TestRerunService, 'preview' | 'submit' | 'history' | 'detail' | 'cancelRequest' | 'cancelPlan'> = new TestRerunService(),
     private readonly hosts: Pick<TestHostStateService, 'get'> = new TestHostStateService(),
     private readonly now: () => number = Date.now,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
@@ -307,6 +307,11 @@ export class PrRoutineCheckService {
       const reason = `PR routine check ${attempt.cancellation!.kind}`
       if (!await this.reruns.cancelRequest(requestId, reason)) await this.jobs.cancel(requestId, {reason})
     }
+    // The preview intent is saved before preview creation; recover it even if its child checkpoint was lost.
+    for (const member of attempt.members.filter(member => member.linkedPreview && !member.selection && !member.settled))
+      await contain(member, async () => {await this.reruns.cancelPlan(member.linkedPreview!.id, `PR routine check ${attempt.cancellation!.kind}`)})
+    for (const group of attempt.rerun?.groups ?? [])
+      await contain(attempt.members.find(member => group.memberIds.includes(member.memberId))!, async () => {await this.reruns.cancelPlan(group.id, `PR routine check ${attempt.cancellation!.kind}`)})
     await Promise.all(attempt.members.filter(member => member.requestId && !member.settled).map(member => contain(member, async () => {
       try {
         // A retained preview or uncertain original admission can still be submitted later; fence its exact ID first.
@@ -360,7 +365,11 @@ export class PrRoutineCheckService {
           }
           continue
         }
-        if (member.linkedTarget) {member.linkedSource = eligible[0].source; changed = true; continue}
+        if (member.linkedTarget) {
+          member.linkedSource = eligible[0].source
+          member.linkedPreview = {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}`}
+          changed = true; continue
+        }
         member.requestId = id(gate, member.memberId)
         member.requestDeadline = attempt.deadline
         member.selection = await this.jobs.freezeSelection({requestId: member.requestId, routineId: member.routineId,
@@ -411,33 +420,52 @@ export class PrRoutineCheckService {
     }
     return false
   }
+  /** Preview creates no jobs. Save its exact child identities before admission can have effects. */
+  private async prepareLinkedAdmissions(gate: PrRoutineCheck) {
+    const attempt = gate.attempt
+    let changed = false
+    for (const member of this.selectedLinkedMembers(attempt)) {
+      if (!member.linkedSource || member.selection || member.status === 'not-run') continue
+      member.linkedPreview ??= {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}`}
+      try {
+        const preview = await this.reruns.preview({rerunId: member.linkedPreview.id, parent: member.linkedTarget!.parent,
+          selection: {memberIds: [member.linkedTarget!.memberId]}, source: member.linkedSource, deadline: attempt.deadline,
+          reason: `Verify fix in ${ROUTINE_CHECK_REPOSITORY}#${gate.context.number}`}, gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check')
+        const selected = preview.plan.members[0]!
+        member.linkedPreview.digest = preview.previewDigest; member.requestId = selected.requestId; member.selection = selected.selection
+        member.requestDeadline = preview.plan.deadline ?? attempt.deadline; member.originalRequestId = selected.originalRequestId
+        changed = true
+      } catch (error) {
+        member.status = 'admission pending'; member.settled = false
+        member.waitReason = error instanceof TestRunError && error.status === 409 ? 'Waiting for the original lineage to settle' : 'Linked verification admission unavailable'
+      }
+    }
+    return changed
+  }
+  private selectedLinkedMembers(attempt: PrRoutineAttempt) {
+    return attempt.members.filter(member => member.linkedTarget && (!attempt.rerun || attempt.rerun.memberIds.includes(member.memberId)))
+  }
   private async admit(gate: PrRoutineCheck) {
     const attempt = gate.attempt
-    for (const member of attempt.members.filter(member => member.linkedTarget)) {
-        if (!member.linkedSource || member.status === 'not-run') continue
-        try {
-          member.linkedPreview ??= {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}`}
-          const preview = await this.reruns.preview({rerunId: member.linkedPreview.id, parent: member.linkedTarget!.parent,
-            selection: {memberIds: [member.linkedTarget!.memberId]}, source: member.linkedSource, deadline: attempt.deadline,
-            reason: `Verify fix in ${ROUTINE_CHECK_REPOSITORY}#${gate.context.number}`}, gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check')
-          const selected = preview.plan.members[0]!
-          member.linkedPreview.digest = preview.previewDigest; member.requestId = selected.requestId; member.selection = selected.selection;
-          member.requestDeadline = preview.plan.deadline ?? attempt.deadline; member.originalRequestId = selected.originalRequestId
-          await this.reruns.submit({rerunId: preview.rerunId, previewDigest: preview.previewDigest})
-          await this.observe(member)
-        } catch (error) {
-          member.status = 'admission pending'; member.settled = false
-          member.waitReason = error instanceof TestRunError && error.status === 409 ? 'Waiting for the original lineage to settle' : 'Linked verification admission unavailable'
-          if (member.linkedPreview && error instanceof TestRunError && error.status === 409) {
-            try {
-              const retained = await this.reruns.detail(member.linkedPreview.id)
-              if (retained.state === 'preview' && this.now() - Date.parse(retained.createdAt) >= 600_000 && (member.linkedPreview.renewals ?? 0) < 20) {
-                const renewals = (member.linkedPreview.renewals ?? 0) + 1
-                member.linkedPreview = {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}:preview:${renewals}`, renewals}
-              }
-            } catch { /* An uncertain accepted plan retains its identity. */ }
-          }
+    for (const member of this.selectedLinkedMembers(attempt)) {
+      if (!member.selection || !member.linkedPreview?.digest || member.status === 'not-run') continue
+      try {
+        await this.reruns.submit({rerunId: member.linkedPreview.id, previewDigest: member.linkedPreview.digest})
+        await this.observe(member)
+      } catch (error) {
+        member.status = 'admission pending'; member.settled = false
+        member.waitReason = error instanceof TestRunError && error.status === 409 ? 'Waiting for the original lineage to settle' : 'Linked verification admission unavailable'
+        if (error instanceof TestRunError && error.status === 409) {
+          try {
+            const retained = await this.reruns.detail(member.linkedPreview.id)
+            if (retained.state === 'preview' && this.now() - Date.parse(retained.createdAt) >= 600_000 && (member.linkedPreview.renewals ?? 0) < 20) {
+              const renewals = (member.linkedPreview.renewals ?? 0) + 1
+              member.linkedPreview = {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}:preview:${renewals}`, renewals}
+              delete member.selection; delete member.requestId; delete member.requestDeadline
+            }
+          } catch { /* An uncertain accepted plan retains its identity. */ }
         }
+      }
     }
     attempt.members = attempt.members.filter(member => member.linkedTarget || member.originalRequestId || !attempt.members.some(value =>
       value.linkedTarget && value.selection && member.selection &&
@@ -467,25 +495,26 @@ export class PrRoutineCheckService {
   }
   private async rerun(gate: PrRoutineCheck) {
     const attempt = gate.attempt, plan = attempt.rerun!
-    let unavailable = false
+    let unavailable = false, prepared = false
     // Existing linked history owns every real retry. Never manufacture an original for a failed admission.
     const selected = attempt.members.filter(member => plan.memberIds.includes(member.memberId)), admitted = selected.filter(member => !member.linkedTarget && plan.linkedMemberIds?.includes(member.memberId))
     if (admitted.length) {
+      const preparingGroups = !plan.groups
       plan.groups ??= [...(attempt.suiteId && admitted.some(member => member.suiteBound) ? [{id: plan.id, parent: {suiteId: attempt.suiteId}, memberIds: admitted.filter(member => member.suiteBound).map(member => member.memberId)}] : []),
         ...admitted.filter(member => !attempt.suiteId || !member.suiteBound).map(member => ({id: `${plan.id}-${digest(member.memberId)}`, parent: {requestId: member.originalRequestId!}, memberIds: [member.memberId]}))]
+      if (preparingGroups) return true
       for (const group of plan.groups) {
         try {
           if (!group.previewDigest) {
             const preview = await this.reruns.preview({rerunId: group.id, parent: group.parent, deadline: attempt.deadline,
               selection: {memberIds: 'suiteId' in group.parent ? group.memberIds : [group.parent.requestId]},
               reason: 'GitHub routine check re-run'}, gate.controls.at(-1)!.actor)
-            group.previewDigest = preview.previewDigest
+            group.previewDigest = preview.previewDigest; prepared = true
             for (const value of preview.plan.members) {
               const member = admitted.find(member => 'suiteId' in group.parent ? member.memberId === value.memberId : member.originalRequestId === value.memberId)!
               member.requestId = value.requestId; member.requestDeadline = preview.plan.deadline ?? attempt.deadline; member.selection = value.selection; member.status = 'admission pending'; member.settled = false; member.publicationComplete = false
             }
           }
-          await this.reruns.submit({rerunId: group.id, previewDigest: group.previewDigest})
         } catch (error) {
           unavailable = true
           for (const member of admitted.filter(member => group.memberIds.includes(member.memberId))) {member.settled = false; member.status = 'admission pending'}
@@ -515,10 +544,31 @@ export class PrRoutineCheckService {
       member.status = member.selection ? 'admission pending' : 'waiting for app build'
       delete member.waitReason; delete member.progress
     }
-    if (await this.freezeAdmissions(gate)) return
+    if (await this.freezeAdmissions(gate)) return true
+    if (await this.prepareLinkedAdmissions(gate)) return true
+    // Previewed groups were prepared above; their child identities need a durable check checkpoint too.
+    if (prepared) return true
+    for (const group of plan.groups ?? []) {
+      if (!group.previewDigest) continue
+      try {await this.reruns.submit({rerunId: group.id, previewDigest: group.previewDigest})}
+      catch (error) {
+        unavailable = true
+        if (error instanceof TestRunError && error.status === 409) {
+          try {
+            const retained = await this.reruns.detail(group.id)
+            if (retained.state === 'preview' && this.now() - Date.parse(retained.createdAt) >= 600_000 && (group.previewAttempt ?? 0) < 20) {
+              group.previewAttempt = (group.previewAttempt ?? 0) + 1
+              const base = 'suiteId' in group.parent ? plan.id : `${plan.id}-${digest(group.memberIds[0])}`
+              group.id = `${base}:preview:${group.previewAttempt}`; delete group.previewDigest
+            }
+          } catch { /* Unknown acceptance keeps the exact identity. */ }
+        }
+      }
+    }
     await this.admit(gate)
     for (const member of attempt.members) await this.observe(member)
     if (unavailable) throw new TestRunError(503, 'Linked admission is unavailable; independent members continue and retained plans will retry')
+    return false
   }
   async reconcile(gateId: string, suppliedContext?: PrRoutineContext) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
@@ -601,9 +651,10 @@ export class PrRoutineCheckService {
           if (gate.selectionError) {gate.attempt.conclusion = 'failure'; gate.attempt.finishedAt = iso(this.now())}
           else if (!gate.attempt.members.length) {gate.attempt.conclusion = 'success'; gate.attempt.finishedAt = iso(this.now())}
           else if (predecessorsSettled && !gate.retired.some(attempt => attempt.cancellation && attempt.members.some(member => !member.settled))) {
-            if (gate.attempt.rerun) {await this.rerun(gate); if (await this.dispatchBuilds(row, gate)) return false} else {
+            if (gate.attempt.rerun) {if (await this.rerun(gate)) return this.rows.save(row, gate, new Date(this.now())); if (await this.dispatchBuilds(row, gate)) return false} else {
               if (await this.freezeAdmissions(gate)) return this.rows.save(row, gate, new Date(this.now()))
               if (await this.dispatchBuilds(row, gate)) return false
+              if (await this.prepareLinkedAdmissions(gate)) return this.rows.save(row, gate, new Date(this.now()))
               await this.admit(gate)
             }
             if (gate.attempt.members.every(member => member.settled && terminalStatuses.includes(member.status) &&

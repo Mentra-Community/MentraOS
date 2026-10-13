@@ -162,7 +162,7 @@ test('artifact override is optional; default reuses original while a new rerun m
  await f.service.submit({rerunId:p.rerunId,previewDigest:p.previewDigest});f.complete(p.plan.members[0]!.requestId);
  const replacement={...input,rerunId:'replacement',source:{...source,buildRunId:456}};
  const next=await f.service.preview(replacement,'admin');expect(next.plan.members[0]!.selection.build.source).toEqual(replacement.source);expect(next.plan.members[0]!.attemptNumber).toBe(2);
- delete (f.members[21] as any).build;f.requests.get('original-21').input={...nativeInput,build:{...nativeInput.build,source:undefined}};f.requests.get('original-21').inputSha256='bad';await expect(f.service.preview({...input,rerunId:'missing',selection:{memberIds:['member-21']}},'admin')).rejects.toThrow('provenance');
+ delete (f.members[21] as any).build;f.requests.get('original-21').input={...nativeInput,build:{...nativeInput.build,source:undefined}};f.requests.get('original-21').inputSha256='bad';await expect(f.service.preview({...input,rerunId:'missing',selection:{memberIds:['member-21']}},'admin')).rejects.toThrow('integrity');
 });
 
 test('child batches use acceptance time with stable pagination rather than arbitrary IDs',async()=>{
@@ -286,3 +286,14 @@ test('recorded accepted history keeps ordinary cancellation only for a positivel
  f.requests.delete(member.requestId);
  await expect(f.service.cancelRequest(member.requestId,'Cancel recorded child')).rejects.toThrow('current linked selection');
 })
+
+test('plan cancellation fences unaccepted children without claiming their predecessors and refuses tampered provenance', async () => {
+ const f=fixture(); const preview=await f.service.preview({rerunId:'cancel-unaccepted-plan',parent:{suiteId:'suite-1'},selection:{memberIds:['member-20']},reason:'Cancel retained intent'},'employee');
+ expect(f.rows.get(preview.rerunId)!.state).toBe('preview');
+ expect(await f.service.cancelPlan(preview.rerunId,'Cancel requested check')).toBe(true);
+ expect(f.requests.get(preview.plan.members[0]!.requestId)?.fleetCancellation).toBeDefined();
+ expect(f.rows.get(preview.rerunId)!.state).toBe('preview');
+ expect(await f.service.cancelPlan('not-created','Cancel absent intent')).toBe(false);
+ f.rows.get(preview.rerunId)!.plan.members[0]!.selection.routineId='tampered';
+ await expect(f.service.cancelPlan(preview.rerunId,'Cancel corrupt intent')).rejects.toThrow('integrity');
+});
