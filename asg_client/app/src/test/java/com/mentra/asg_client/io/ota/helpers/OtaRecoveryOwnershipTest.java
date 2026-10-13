@@ -70,6 +70,41 @@ public class OtaRecoveryOwnershipTest {
         assertSame(helper, get("handoffOwner"));
         verify(network, never()).abandonHotspotReplacement();
     }
+
+    @Test public void serviceRecreationRestoresHotspotAdmissionUntilAuthenticatedIdle() throws Exception {
+        assertTrue(helper.persistPendingDowngrade());
+        helper.cleanup();
+        helper = new OtaHelper(RuntimeEnvironment.getApplication(), mock(IBesOtaRegistry.class));
+        INetworkManager replacement = mock(INetworkManager.class);
+        helper.setNetworkManager(replacement);
+        verify(replacement).retainHotspotReplacement();
+        verify(replacement, never()).stopHotspotAndAwaitDisabled();
+        helper.applyRecoveryStatus(null);
+        Bundle busy = new Bundle(); busy.putBoolean("busy", true);
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(busy));
+        verify(replacement, never()).abandonHotspotReplacement();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        verify(replacement).abandonHotspotReplacement();
+    }
+
+    @Test public void processRestartRestoresHotspotAdmissionFromPendingTransactionOnly() throws Exception {
+        assertTrue(helper.persistPendingDowngrade());
+        helper.cleanup();
+        set("handoffOwner", null, null);
+        set("isUpdating", null, false);
+        helper = new OtaHelper(RuntimeEnvironment.getApplication(), mock(IBesOtaRegistry.class));
+        INetworkManager replacement = mock(INetworkManager.class);
+        helper.setNetworkManager(replacement);
+        verify(replacement).retainHotspotReplacement();
+        verify(replacement, never()).stopHotspotAndAwaitDisabled();
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(new Bundle()));
+        verify(replacement).abandonHotspotReplacement();
+        helper.cleanup();
+        helper = new OtaHelper(RuntimeEnvironment.getApplication(), mock(IBesOtaRegistry.class));
+        INetworkManager settled = mock(INetworkManager.class);
+        helper.setNetworkManager(settled);
+        verifyNoInteractions(settled);
+    }
     @Test public void adoptionDoesNotDownloadAgainIfTransactionFinishesAfterSnapshot() throws Exception {
         OtaHelper original = helper;
         helper = spy(helper);

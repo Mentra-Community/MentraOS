@@ -74,6 +74,8 @@ public final class ServiceInitializer {
             @NonNull IBesOtaRegistry besOtaRegistry,
             @NonNull Set<CommandProtocolDetector.ProtocolDetectionStrategy> protocolStrategies) {
         android.content.Context context = service;
+        // Restore any durable downgrade admission before transport or command consumers bind.
+        otaHelper.setNetworkManager(network);
 
         // Transport and network are constructed by the vendor wiring layer and passed in — both
         // go to CommunicationManager and AsgClientServiceManager so neither holds a circular
@@ -101,7 +103,6 @@ public final class ServiceInitializer {
         this.responseBuilder = new ResponseBuilder();
         OtaCommandHandler otaCommandHandler =
                 new OtaCommandHandler(otaHelper, communicationManager);
-        otaHelper.setNetworkManager(network);
         otaHelper.setPhoneConnectionProvider((CommunicationManager) communicationManager);
 
         // Create the peripheral event bus and register all MCU event subscribers. Inbound BES/MCU

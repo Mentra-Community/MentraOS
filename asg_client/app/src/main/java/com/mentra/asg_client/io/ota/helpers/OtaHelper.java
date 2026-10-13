@@ -263,7 +263,13 @@ public class OtaHelper {
 
     /** Share the service's existing network owner for destructive APK downgrade cleanup. */
     public void setNetworkManager(INetworkManager manager) {
-        networkManager = manager;
+        synchronized (OtaHelper.class) {
+            networkManager = manager;
+            // The constructor restores pending transaction ownership across both service
+            // recreation and process death. A fresh manager must restore that admission
+            // before phone/MCU commands, without another stop of an accepted transaction.
+            if (manager != null && handoffOwner == this) manager.retainHotspotReplacement();
+        }
     }
 
     /**
@@ -1479,7 +1485,11 @@ public class OtaHelper {
         mDowngradeWaitStarted = SystemClock.elapsedRealtime();
         currentUpdateType = "apk";
         currentUpdateStage = "install";
-        synchronized (OtaHelper.class) { handoffOwner = this; }
+        synchronized (OtaHelper.class) {
+            handoffOwner = this;
+            var network = networkManager;
+            if (network != null) network.retainHotspotReplacement();
+        }
         scheduleRecoveryReconcile();
         sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
         return true;

@@ -335,6 +335,19 @@ public class K900NetworkManagerHotspotLifecycleTest {
         assertThat(manager.isHotspotEnabled()).isTrue();
     }
 
+    @Test
+    public void restoredReplacementAdmissionBlocksStartsWithoutRepeatingNativeStop() {
+        manager.retainHotspotReplacement();
+        manager.startHotspot();
+        advance(1000);
+        assertThat(commands()).isEmpty();
+        manager.abandonHotspotReplacement();
+        manager.startHotspot();
+        advance(500);
+        assertThat(commands()).extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false, true);
+    }
+
     private void advance(long millis) {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(millis));
     }

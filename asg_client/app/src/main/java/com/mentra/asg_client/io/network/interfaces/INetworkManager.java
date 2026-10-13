@@ -29,6 +29,9 @@ public interface INetworkManager {
      */
     void stopHotspotAndAwaitDisabled() throws Exception;
 
+    /** Restore admission owned by a pending APK replacement without repeating native cleanup. */
+    void retainHotspotReplacement();
+
     /** Release APK replacement's hotspot admission barrier after definitive abandonment. */
     void abandonHotspotReplacement();
 

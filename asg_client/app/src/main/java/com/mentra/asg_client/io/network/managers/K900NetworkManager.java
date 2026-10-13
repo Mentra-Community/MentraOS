@@ -598,6 +598,13 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     @Override
+    public void retainHotspotReplacement() {
+        synchronized (mHotspotLock) {
+            mHotspotReplacementPrepared = true;
+        }
+    }
+
+    @Override
     public void abandonHotspotReplacement() {
         synchronized (mHotspotLock) {
             mHotspotReplacementPrepared = false;
