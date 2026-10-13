@@ -143,6 +143,30 @@ test('producer reconciliation uses exact operation/title/repository and refuses 
   expect(capped.calls).toHaveLength(5)
 })
 
+test('first routine intake adopts its exact existing native PR producer instead of dispatching another build', async () => {
+  const operation = 'c'.repeat(64), context: PrRoutineContext = {number: 12, headSha: head, baseRef: 'dev', headRef: 'feature', sameRepository: true, open: true, labels: [], peers: [12]}
+  const row = {id: 44, display_title: 'Native PR build', path: '.github/workflows/mentra-asg-client-build.yml',
+    event: 'pull_request', head_sha: head, head_branch: 'feature', status: 'in_progress', conclusion: null,
+    repository: {full_name: ROUTINE_CHECK_REPOSITORY}, head_repository: {full_name: ROUTINE_CHECK_REPOSITORY},
+    pull_requests: [{number: 12, head: {sha: head}, base: {ref: 'dev'}}]}
+  for (const status of ['queued', 'in_progress', 'completed']) {
+    const f = fixture(call => reply({workflow_runs: call.path.includes('event=workflow_dispatch') ? [] :
+      [{...row, status, conclusion: status === 'completed' ? 'success' : null}]}))
+    expect(await f.github.producer('asg', context, operation)).toEqual({id: 44, failed: false})
+    expect(f.calls).toHaveLength(2)
+    expect(f.calls.every(call => call.method === 'GET')).toBe(true)
+  }
+  const failed = fixture(call => reply({workflow_runs: call.path.includes('event=workflow_dispatch') ? [] : [{...row, status: 'completed', conclusion: 'failure'}]}))
+  expect(await failed.github.producer('asg', context, operation)).toBeUndefined() // A requested rerun can build after native CI failed.
+  for (const changed of [{head_sha: otherHead}, {event: 'push'}, {head_repository: {full_name: 'someone/fork'}},
+    {pull_requests: [{number: 13, head: {sha: head}, base: {ref: 'dev'}}]},
+    {pull_requests: [{number: 12, head: {sha: head}, base: {ref: 'staging'}}]}]) {
+    const f = fixture(call => reply({workflow_runs: call.path.includes('event=workflow_dispatch') ? [] : [{...row, ...changed}]}))
+    expect(await f.github.producer('asg', context, operation)).toBeUndefined()
+    expect(f.calls.every(call => call.method === 'GET')).toBe(true)
+  }
+})
+
 // GitHub retains omitted terminal fields on PATCH and a conclusion keeps the run completed.
 function nativeFixture() {
   const checks: Array<ReturnType<typeof check>> = []

@@ -371,15 +371,14 @@ export class PrRoutineCheckService {
     for (const platform of ['asg', 'android', 'ios-on-mac'] as const) {
       const dispatch = gate.buildRequests?.[platform]
       if (!dispatch || !gate.attempt.members.some(member => !member.selection && !member.settled && (platform === 'asg' || member.platform === platform))) continue
-      if (dispatch.operationId) {
-        const receipt = await this.github.producer(platform, gate.context, dispatch.operationId)
-        if (receipt) {
-          dispatch.state = 'answered'; dispatch.runId = receipt.id; delete dispatch.error; delete dispatch.absenceObservedAt
-          if (receipt.failed) for (const member of gate.attempt.members.filter(member => !member.selection && (platform === 'asg' || member.platform === platform))) {
-            member.status = 'not-run'; member.settled = true; member.waitReason = `${platform === 'asg' ? 'Glasses' : 'App'} build failed or was cancelled`
-          }
-          continue
+      dispatch.operationId ??= digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: gate.attempt.generation, platform})
+      const receipt = await this.github.producer(platform, gate.context, dispatch.operationId)
+      if (receipt) {
+        dispatch.state = 'answered'; dispatch.runId = receipt.id; delete dispatch.error; delete dispatch.absenceObservedAt
+        if (receipt.failed) for (const member of gate.attempt.members.filter(member => !member.selection && (platform === 'asg' || member.platform === platform))) {
+          member.status = 'not-run'; member.settled = true; member.waitReason = `${platform === 'asg' ? 'Glasses' : 'App'} build failed or was cancelled`
         }
+        continue
       }
       if (dispatch.state !== 'intended') {
         // Two complete, separated absence reads after the 20s POST budget recover a crash before the call.
@@ -390,7 +389,6 @@ export class PrRoutineCheckService {
         dispatch.state = 'intended'
       }
       if ((dispatch.attempts ?? 0) >= 20 || dispatch.lastAttemptAt && this.now() - Date.parse(dispatch.lastAttemptAt) < 30_000) continue
-      dispatch.operationId ??= digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: gate.attempt.generation, platform})
       dispatch.state = 'uncertain'; dispatch.attempts = (dispatch.attempts ?? 0) + 1; dispatch.lastAttemptAt = iso(this.now()); delete dispatch.absenceObservedAt
       if (!await this.rows.save(row, gate, new Date(this.now()))) return true
       let state: 'intended' | 'uncertain' | 'answered' = 'answered'

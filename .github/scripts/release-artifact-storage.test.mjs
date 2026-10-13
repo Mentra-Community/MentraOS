@@ -223,6 +223,31 @@ test("concurrent publishers preserve both artifact records through conditional i
   )
 })
 
+test("exact PR ASG artifacts reject replacement before storage access", async (t) => {
+  const options = await fixture(t)
+  for (const name of ['asg-pr-12-source-digest.apk', 'ota-pr-12-source.json']) {
+    await assert.rejects(publishR2Artifact({...options, release: {...release, tag_name: 'pr-builds'}, name,
+      replace: true}), /cannot be replaced/)
+  }
+  assert.equal(options.store.uploads, 0)
+})
+
+test("concurrent PR manifest publishers cannot replace the first committed different bytes", async (t) => {
+  const options = await fixture(t)
+  const second = path.join(path.dirname(options.file), 'other.json')
+  await writeFile(second, 'different signed APK manifest')
+  const scope = {...options, release: {...release, tag_name: 'pr-builds'}, name: 'ota-pr-12-source.json'}
+  const results = await Promise.allSettled([publishR2Artifact(scope), publishR2Artifact({...scope, file: second})])
+  assert.equal(results.filter(row => row.status === 'fulfilled').length, 1)
+  assert.equal(results.filter(row => row.status === 'rejected').length, 1)
+  const committed = await options.store.head(artifactKey(repository, 'pr-builds', scope.name))
+  const winner = results.find(row => row.status === 'fulfilled').value
+  assert.equal(`sha256:${committed.Metadata.sha256}`, winner.digest)
+  const old = committed.Metadata.sha256
+  await assert.rejects(publishR2Artifact({...scope, file: old === await sha256File(second) ? options.file : second}), /overwrite immutable/)
+  assert.equal((await options.store.head(artifactKey(repository, 'pr-builds', scope.name))).Metadata.sha256, old)
+})
+
 test("an upload-completion response lost after commit reconciles and publishes verified bytes", async (t) => {
   const options = await fixture(t)
   const upload = options.store.upload.bind(options.store)

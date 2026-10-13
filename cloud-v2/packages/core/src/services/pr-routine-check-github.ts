@@ -128,9 +128,31 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
           row.repository.full_name === ROUTINE_CHECK_REPOSITORY && row.head_repository.full_name === ROUTINE_CHECK_REPOSITORY) matches.push(row)
       }
       if (matches.length > 1) throw new TestRunError(409, 'Producer dispatch receipts are ambiguous')
-      if (rows.length < 100) return matches[0] ? {id: matches[0].id, failed: matches[0].status === 'completed' && matches[0].conclusion !== 'success'} : undefined
+      if (rows.length < 100) {
+        if (matches[0]) return {id: matches[0].id, failed: matches[0].status === 'completed' && matches[0].conclusion !== 'success'}
+        break
+      }
+      if (page === 5) throw new TestRunError(503, 'Producer history exceeds its bounded reconciliation inventory')
     }
-    throw new TestRunError(503, 'Producer history exceeds its bounded reconciliation inventory')
+    // The native PR event already builds this exact source. Adopt it instead of
+    // dispatching an overlapping compilation just because a routine label was added.
+    const nativeSchema = schema.extend({head_sha: sha, pull_requests: z.array(z.object({number: positive,
+      head: z.object({sha}), base: z.object({ref: z.string()})}))})
+    for (let page = 1; page <= 5; page++) {
+      const rows = z.object({workflow_runs: z.array(nativeSchema).max(100)}).parse(await this.api(
+        `actions/workflows/${name}/runs?event=pull_request&head_sha=${context.headSha}&per_page=100&page=${page}`, {}, 'source', deadline)).workflow_runs
+      const eligible = rows.filter(row => row.path === `.github/workflows/${name}` && row.event === 'pull_request' &&
+        row.head_sha === context.headSha && row.repository.full_name === ROUTINE_CHECK_REPOSITORY &&
+        row.head_repository.full_name === ROUTINE_CHECK_REPOSITORY &&
+        row.pull_requests.some(pr => pr.number === context.number && pr.head.sha === context.headSha && pr.base.ref === context.baseRef) &&
+        (row.status !== 'completed' || row.conclusion === 'success'))
+      if (eligible.length) {
+        const selected = eligible.sort((a, b) => b.id - a.id)[0]!
+        return {id: selected.id, failed: selected.status === 'completed' && selected.conclusion !== 'success'}
+      }
+      if (rows.length < 100) return undefined
+    }
+    throw new TestRunError(503, 'Native producer history exceeds its bounded reconciliation inventory')
   }
   async requestBuild(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
     if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')

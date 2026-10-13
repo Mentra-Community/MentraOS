@@ -324,6 +324,15 @@ test('late producer acknowledgement adopts exact run and failed requested produc
   expect(f.buildCalls).toEqual(['asg']); expect(f.gate().attempt.members[0]!.status).toBe('not-run')
   expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.gate().buildRequests!.asg!.runId).toBe(71)
 })
+
+test('initial routine intake adopts an existing native producer without another dispatch across restart', async () => {
+  const f = fixture(); f.receipt({id: 71, failed: false}); await f.intake(); await f.drain(4)
+  expect(f.buildCalls).toHaveLength(0)
+  expect(f.gate().buildRequests!.asg).toMatchObject({state: 'answered', runId: 71})
+  f.restart(); await f.drain(3)
+  expect(f.buildCalls).toHaveLength(0)
+  expect(f.gate().attempt.members[0]!.settled).toBe(false)
+})
 test('delivery outage cannot starve timeout, head supersession or linked cancellation custody', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!
   f.outage(); const pending = routineCheckPayload(f.gate(), f.now)
