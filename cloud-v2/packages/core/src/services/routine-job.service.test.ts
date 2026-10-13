@@ -22,6 +22,8 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async get(id){return row?.requestId===id?copy(row):null},async insert(value){if(row)throw Object.assign(Error('duplicate'),{code:11000});row=copy(value)},
     async prepare(id,digest,prepared,inputSha256,now){if(!row||row.requestId!==id||row.state!=='awaiting-source'||row.fleetSelectionSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,fleetPreparation:copy(prepared),fleetInputSha256:inputSha256,state:'awaiting-runner'};return copy(row)},
+    async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
+      row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run'}:{})};return copy(row)},
     async bind(id,digest,binding,intent,now){if(!row||row.requestId!==id||row.state!=='awaiting-runner'||row.fleetBinding||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,hostId:binding.hostId,fleetBinding:copy(binding),dispatchIntent:copy(intent),dispatchIntentSha256:requestInputDigest(intent),state:'preparing'};return copy(row)},
     async dispatch(id,previous,value){if(!row||requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null)||row.fleetCancellation||row.fleetBinding)return null;row={...row,fleetDispatch:copy(value)};return copy(row)},
@@ -522,4 +524,49 @@ test('publication report rejects unknown codes and requires positive result look
  for(const change of [{status:500},{operation:'asset-upload'},{code:'unknown'},{message:'x'.repeat(1025)},{rejectedAt:'invalid'}])
   await expect(f.service.complete(selection.requestId,'mini',{...completion,publicationFailure:{...publicationFailure,...change}})).rejects.toThrow();
  f.rows.hasResult=undefined;await expect(f.service.complete(selection.requestId,'mini',{...completion,publicationFailure})).rejects.toThrow('lookup is unavailable');
+});
+
+
+test('offline preparation reports retain exact workflow and cannot overwrite prepared or terminal work', async () => {
+  const f=fixture();await f.service.submit(selection)
+  await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'99'})
+  const status={inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'99',phase:'Git blobs',code:'source-unavailable',retryable:true}
+  await f.service.preparationStatus(selection.requestId,status)
+  expect(await f.service.observation(selection.requestId)).toMatchObject({state:'awaiting-source',waitingReason:'Routine source preparation failed during Git blobs; retrying the same request.'})
+  await expect(f.service.preparationStatus(selection.requestId,{...status,inputSha256:'f'.repeat(64)})).rejects.toThrow('exact workflow')
+  await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'100'})
+  await f.service.preparationStatus(selection.requestId,{...status,retryable:false,code:'source-invalid'})
+  expect(f.row!.state).toBe('awaiting-source')
+  await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'98'})
+  await f.service.preparationStatus(selection.requestId,{...status,actionsRunId:'100',phase:'routine description',code:'not-applicable',retryable:false})
+  expect(f.row).toMatchObject({state:'terminal',terminalStatus:'not-applicable'})
+  expect((await f.service.observation(selection.requestId)).terminal).toBe(true)
+})
+
+test('known exact iOS-only source is refused before Android insertion while unknown source is allowed', async () => {
+  const f=fixture();
+  (f.service as any).definitions={async getExact(_id:string,platform:string){return platform==='ios-on-mac'?{definition:{platforms:['ios-on-mac']}}:null}};
+  await expect(f.service.submit(selection)).rejects.toThrow('does not support android');
+  expect(f.row).toBeNull();
+  const unknown=fixture();expect((await unknown.service.submit(selection)).state).toBe('awaiting-source');
+});
+test('completed preparation retries end after twenty deliveries rather than waiting until the deadline', async () => {
+  const f=fixture();await f.service.submit(selection);
+  await f.rows.dispatch!(selection.requestId,undefined,{attempts:20,lastAttemptAt:'2026-10-07T23:59:00.000Z'});
+  (f.service as any).actionsTransport={async dispatch(){throw Error('No twenty-first attempt')},async runs(){return [{actionsRunId:'100',status:'completed',conclusion:'failure'}]},async cancel(){}};
+  const observed=await f.service.observation(selection.requestId);
+  expect(observed).toMatchObject({terminal:true,state:'terminal',terminalStatus:'not-run'});
+  expect(observed.waitingReason).toContain('exhausted 20');
+});
+
+test('preparation status database write fences source, custody, deadline and newest numeric workflow', async () => {
+ const original=TestRequestModel.collection.findOneAndUpdate;
+ const cas=mock(async()=>null);TestRequestModel.collection.findOneAndUpdate=cas as any;
+ const now=new Date('2026-10-08T00:00:00Z'),value={inputSha256:'a'.repeat(64),actionsRunId:'100',phase:'Git blobs' as const,code:'source-unavailable' as const,retryable:true,reason:'Retry',observedAt:now.toISOString()};
+ try {
+  await routineJobRepository.preparationStatus!('job-one',value,now);
+  expect(cas.mock.calls[0]![0]).toMatchObject({requestId:'job-one',fleetSelectionSha256:value.inputSha256,state:'awaiting-source',fleetPreparation:{$exists:false},fleetBinding:{$exists:false},fleetCancellation:{$exists:false},fleetDeadline:{$gt:now},'fleetActions.actionsRunId':'100'});
+  expect(cas.mock.calls[0]![0].$expr).toEqual({$eq:[{$max:{$map:{input:'$fleetActions',as:'action',in:{$toDecimal:'$$action.actionsRunId'}}}},{$toDecimal:{$literal:'100'}}]});
+  expect(cas.mock.calls[0]![1]).toEqual({$set:{fleetPreparationStatus:value,updatedAt:now}});
+ }finally{TestRequestModel.collection.findOneAndUpdate=original}
 });

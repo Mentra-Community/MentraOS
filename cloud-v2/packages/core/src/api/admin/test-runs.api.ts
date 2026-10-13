@@ -91,7 +91,7 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
         definitionRevision: selected.routineRevision, ...(selected.routineSource ? {routineSource: selected.routineSource} : {}),
         minimumFrameworkVersion: selected.minimumFrameworkVersion, build: selected.build, state: fleet.state,
         terminalStatus: fleet.terminalStatus, createdAt: fleet.createdAt?.toISOString(),
-        reason: fleet.fleetCancellation?.reason ?? fleet.fleetDispatch?.error ?? (fleet.state === 'awaiting-source' ?
+        reason: fleet.fleetCancellation?.reason ?? fleet.fleetPreparationStatus?.reason ?? fleet.fleetDispatch?.error ?? (fleet.state === 'awaiting-source' ?
           'Preparing the exact routine source.' : 'Awaiting a compatible testing runner.'),
         ...(fleet.fleetCancellation ? {cancellationRequested: true, cancellationAcknowledged: true} : {}),
         actionsRuns: fleet.fleetActions ?? []};
