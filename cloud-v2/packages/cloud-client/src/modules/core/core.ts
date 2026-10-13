@@ -108,9 +108,10 @@ export class Core {
   readonly fleet: {
     /**
      * Rejects only for an authentication failure (`AuthExpiredError`, or an `HttpError` with status 401) or an abort.
-     * Every other result, including any network or unexpected failure, is a `FleetReportOutcome`.
+     * Every other result, including any network or unexpected failure, is a `FleetReportOutcome`. `opts.bearer` sends
+     * that Core token instead of the token source's.
      */
-    report(batch: FleetReport, opts?: { signal?: AbortSignal }): Promise<FleetReportOutcome>;
+    report(batch: FleetReport, opts?: { signal?: AbortSignal; bearer?: string }): Promise<FleetReportOutcome>;
   };
 
   constructor(deps: CoreDeps) {

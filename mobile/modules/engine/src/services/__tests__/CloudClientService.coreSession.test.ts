@@ -23,9 +23,18 @@ const B = "user-b"
 
 type TokenMode = "ok" | "hang" | Error
 
+/** A Core access token for an account: a JWT whose `sub` is the account (unsigned; the client never verifies it). */
+function tokenFor(account: string | null): string {
+  const claims = Buffer.from(JSON.stringify({sub: account ?? "", tenant_id: "tenant", exp: 4_102_444_800}))
+  return `eyJhbGciOiJub25lIn0.${claims.toString("base64url")}.signature`
+}
+
 /** A Core token source: whose token it hands out, and how the next request for one goes. */
 class FakeAuth {
+  /** The account the client's stored token belongs to (what `identity` reads). */
   account: string | null = nextAccount
+  /** Hands out another account's token than `identity` reports, to tell the two apart. */
+  issueAs: string | null | undefined = undefined
   mode: TokenMode = nextTokenMode
   private holding = false
   private pending: Array<() => void> = []
@@ -35,7 +44,7 @@ class FakeAuth {
     if (this.mode === "hang") await new Promise<void>((resolve) => this.pending.push(resolve))
     if (this.mode instanceof Error) throw this.mode
     this.holding = true
-    return `token-of-${this.account}`
+    return tokenFor(this.issueAs === undefined ? this.account : this.issueAs)
   })
 
   /** Lets the token requests waiting in "hang" mode finish, in the mode now set. */
@@ -223,7 +232,26 @@ describe("sending a Fleet batch as an account", () => {
     const signal = new AbortController().signal
     const outcome = await cloudClientService.core.fleet.reportAs({coreUrl: CORE_X, mentraUserId: A}, BATCH, {signal})
     expect(outcome).toEqual(ACK)
-    expect(reportOf(latest())).toHaveBeenCalledWith(BATCH, {signal})
+    // The token whose account was checked is the token sent.
+    expect(reportOf(latest())).toHaveBeenCalledWith(BATCH, {signal, bearer: tokenFor(A)})
+  })
+
+  test("checks the account of the very token it sends, not what the client reports afterwards", async () => {
+    cloudClientService.init()
+    await settle()
+    latest().auth.issueAs = B
+    expect(await cloudClientService.core.fleet.reportAs({coreUrl: CORE_X, mentraUserId: A}, BATCH)).toEqual({
+      kind: "session_changed",
+    })
+    expect(reportOf(latest())).not.toHaveBeenCalled()
+  })
+
+  test("an equivalent spelling of the Core URL is the same Core", async () => {
+    cloudClientService.init()
+    await settle()
+    const sameCore = "HTTPS://Core.X.Example:443/"
+    expect(await cloudClientService.core.fleet.reportAs({coreUrl: sameCore, mentraUserId: A}, BATCH)).toEqual(ACK)
+    expect(reportOf(latest())).toHaveBeenCalledTimes(1)
   })
 
   test("refuses, sending nothing, for another Core", async () => {

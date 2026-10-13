@@ -82,14 +82,19 @@ export class Fleet {
    *
    * The request is sent idempotently, so the HTTP client retries a transient network failure before the body is
    * read; that is safe because Fleet records are idempotent by ID.
+   *
+   * `opts.bearer` sends exactly that Core token instead of asking the token source, for a caller that has already
+   * checked whose token it is.
    */
-  async report(batch: FleetReport, opts?: {signal?: AbortSignal}): Promise<FleetReportOutcome> {
+  async report(batch: FleetReport, opts?: {signal?: AbortSignal; bearer?: string}): Promise<FleetReportOutcome> {
     const signal = opts?.signal
+    const bearer = opts?.bearer
     let body: unknown
     try {
       body = await this.http.post<unknown>(FLEET_REPORT_PATH, batch, {
         idempotent: true,
         ...(signal ? {signal} : {}),
+        ...(bearer ? {bearer} : {}),
       })
     } catch (error) {
       // The caller stopped the request: that is its answer, whatever the transport happened to report.

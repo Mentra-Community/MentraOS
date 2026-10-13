@@ -30,6 +30,7 @@
  * records and removes what an empty partition no longer needs.
  */
 import {FLEET_LIMITS, type FleetRecord} from "@mentra/cloud-protocol"
+import {normalizeCoreUrl} from "./coreUrl"
 import {getFleetStore} from "./fleetStorage"
 import {sha256HexOfText, utf8ByteLength} from "./utf8"
 
@@ -104,28 +105,6 @@ interface LossRecord extends FleetLosses {
   updatedAt: number
 }
 const EMPTY_LOSSES: LossRecord = {dropped: 0, expired: 0, from: null, to: null, updatedAt: 0}
-
-const DEFAULT_PORTS: Record<string, string> = {http: "80", https: "443"}
-const URL_PARTS = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i
-
-/**
- * One spelling per Core: lower-case scheme and host, no default port, no trailing slash, no query or fragment.
- * Hand-written so the partition key never depends on a runtime's URL implementation.
- */
-function normalizeCoreUrl(coreUrl: string): string {
-  const trimmed = coreUrl.trim()
-  const parts = URL_PARTS.exec(trimmed)
-  if (!parts) return trimmed.replace(/\/+$/, "").toLowerCase()
-  const scheme = parts[1].toLowerCase()
-  const authority = parts[2]
-  const at = authority.lastIndexOf("@")
-  const userInfo = at >= 0 ? authority.slice(0, at + 1) : ""
-  const hostAndPort = /^(.*?)(?::(\d*))?$/.exec(authority.slice(at + 1).toLowerCase())
-  const host = hostAndPort?.[1] ?? ""
-  const port = hostAndPort?.[2] ?? ""
-  const keptPort = port === "" || port === DEFAULT_PORTS[scheme] ? "" : `:${port}`
-  return `${scheme}://${userInfo}${host}${keptPort}${parts[3].replace(/\/+$/, "")}`
-}
 
 /** The partition for an account on a Core: sha256 hex of `${normalizedCoreUrl}|${mentraUserId}`. */
 export function partitionKey(coreUrl: string, mentraUserId: string): string {

@@ -98,6 +98,26 @@ describe("Fleet.report request", () => {
     expect(post).toHaveBeenCalledWith(PATH, batch, {idempotent: true, signal: controller.signal})
   })
 
+  test("passes a caller's bearer through to the HTTP client", async () => {
+    const post = mock(async () => ack)
+    const fleet = new Fleet({post} as unknown as HttpClient)
+
+    await fleet.report(batch, {bearer: "checked-token"})
+
+    expect(post).toHaveBeenCalledWith(PATH, batch, {idempotent: true, bearer: "checked-token"})
+  })
+
+  test("sends the caller's bearer, not one from the token source", async () => {
+    const {fetch, calls} = answering(() => json(200, ack))
+    const getToken = mock(async () => "token-source-token")
+
+    await fleetWith(fetch, getToken).report(batch, {bearer: "checked-token"})
+
+    const [, init] = calls.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer checked-token")
+    expect(getToken).not.toHaveBeenCalled()
+  })
+
   test("sends a JSON body with the Core bearer token to the Fleet path", async () => {
     const {fetch, calls} = answering(() => json(200, ack))
 

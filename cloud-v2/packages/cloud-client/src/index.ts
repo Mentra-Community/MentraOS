@@ -44,6 +44,10 @@ export {
   SessionRevocationError,
 } from "./errors";
 
+// Reads a Core token's claims (`sub` is the Mentra user ID) without verifying it; the cloud verifies every call.
+export { decodeClaims } from "./modules/auth/jwt";
+export type { JwtClaims } from "./modules/auth/jwt";
+
 // The logging hook a host can implement to route library logs.
 export { noopLogger } from "./logger";
 export type { Logger } from "./logger";

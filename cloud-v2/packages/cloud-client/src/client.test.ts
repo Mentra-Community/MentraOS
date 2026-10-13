@@ -544,3 +544,12 @@ function testJwt(claims: Record<string, unknown>): string {
 function base64UrlJson(value: unknown): string {
   return btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 }
+
+describe("package root", () => {
+  test("exports decodeClaims, which reads a token's claims without verifying it", async () => {
+    const {decodeClaims} = await import("./index")
+    const payload = Buffer.from(JSON.stringify({sub: "user-a", tenant_id: "mentra", exp: 1})).toString("base64url")
+    expect(decodeClaims(`header.${payload}.signature`)).toMatchObject({sub: "user-a", tenant_id: "mentra"})
+    expect(() => decodeClaims("not-a-jwt")).toThrow()
+  })
+})

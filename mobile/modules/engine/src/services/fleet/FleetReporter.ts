@@ -104,7 +104,8 @@ type GapPayload = Extract<FleetRecord, {kind: "coverage_gap"}>["payload"]
 
 /** One account on one Core, from the start of its collection to the end. */
 interface Run {
-  readonly session: {coreUrl: string; mentraUserId: string}
+  /** Who the run sends as. The Core URL follows the client's spelling of the same Core. */
+  session: {coreUrl: string; mentraUserId: string}
   readonly partition: string
   readonly collectorSessionId: string
   /** Aborted when the run ends, which abandons its request in flight. */
@@ -119,6 +120,8 @@ interface Run {
   /** Failed attempts since the last answer: the n of the backoff. */
   failures: number
   batchLimit: number
+  /** Below every batch size Core refused in this run: the limit never grows back to a size that was refused. */
+  batchCap: number
   batchRefusalLogged: boolean
 }
 
@@ -189,6 +192,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       uploading: false,
       failures: 0,
       batchLimit: MAX_BATCH_RECORDS,
+      batchCap: MAX_BATCH_RECORDS,
       batchRefusalLogged: false,
     }
     run = r
@@ -219,7 +223,11 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       return
     }
     const partition = partitionKey(session.coreUrl, user)
-    if (run?.partition === partition) return
+    if (run?.partition === partition) {
+      // The same Core, maybe spelled differently by a rebuilt client: send as the client spells it now.
+      if (run.session.coreUrl !== session.coreUrl) run.session = {coreUrl: session.coreUrl, mentraUserId: user}
+      return
+    }
     endRun("account_changed")
     if (partition === notInstalled) return
     beginRun({coreUrl: session.coreUrl, mentraUserId: user}, partition)
@@ -402,11 +410,12 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
         }
       }
     }
-    // An answer that settles nothing is no answer.
-    if (removed.length === 0 && !retryable) return failed(r, null)
+    // An answer that settles nothing is no answer, and one that only says "retry" is a failure to deliver: neither
+    // resets the backoff, or a Core answering retryable to everything would get a full batch every 30 s forever.
+    if (removed.length === 0) return failed(r, retryable ? retryAfterSeconds : null)
 
     r.failures = 0
-    r.batchLimit = Math.min(MAX_BATCH_RECORDS, r.batchLimit * 2)
+    r.batchLimit = Math.min(r.batchCap, r.batchLimit * 2)
     const at = now()
     queue.remove(r.partition, removed)
     for (const record of rejected) recordRejected(r, record, at)
@@ -423,15 +432,21 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     return queue.size(r.partition) >= UPLOAD_NOW_RECORDS ? AT_ONCE : AFTER_INTERVAL
   }
 
-  /** Too large, or refused as a batch: halve it. A single record still refused goes, with a gap over its time. */
+  /**
+   * Too large, or refused as a batch: halve it, and never grow back to this size in this run (a proxy's body limit
+   * would otherwise refuse every other request). A single record still refused goes, with a gap over its time.
+   */
   function shrink(r: Run, records: FleetRecord[]): Next {
     if (records.length > 1) {
+      r.batchCap = Math.min(r.batchCap, records.length - 1)
       r.batchLimit = Math.max(1, Math.floor(records.length / 2))
       return AT_ONCE
     }
     const [record] = records
     queue.remove(r.partition, [record.recordId])
     recordRejected(r, record, now())
+    // The refusals that narrowed the batch down to this record may have been this record's, not the batch size's.
+    r.batchCap = MAX_BATCH_RECORDS
     console.warn("FleetReporter: Core refused a single record; it was removed")
     // Halving cannot help any further. Wait before the next record, so a Core that refuses every batch cannot
     // empty the queue at once.

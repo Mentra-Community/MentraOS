@@ -695,6 +695,35 @@ describe("backing off", () => {
     expect(await untilNextCall()).toBe(30 * SECOND)
   })
 
+  test("an answer where every record is retryable keeps backing off, without resetting the exponent", async () => {
+    reporter.start()
+    const records = observe(3)
+    core.respond = (rs) =>
+      answer(
+        rs,
+        rs.map(() => "retryable" as const),
+      )
+    await advance(MINUTE)
+    expect(await untilNextCall()).toBe(30 * SECOND)
+    expect(await untilNextCall()).toBe(60 * SECOND)
+    core.respond = (rs) =>
+      answer(
+        rs,
+        rs.map(() => ({status: "retryable" as const, retryAfterSeconds: 45})),
+      )
+    expect(await untilNextCall()).toBe(120 * SECOND)
+    core.respond = (rs) =>
+      answer(
+        rs,
+        rs.map(() => "retryable" as const),
+      )
+    expect(await untilNextCall()).toBe(45 * SECOND)
+    // The Retry-After answer did not reset the exponent either: n is 4 by now.
+    expect(await untilNextCall()).toBe(16 * 30 * SECOND)
+    expect(core.calls.every((call) => call.records.length === 3)).toBe(true)
+    expect(ids(queued(CORE_X, A))).toEqual(ids(records))
+  })
+
   test("forbidden keeps the queue and waits about 30 minutes", async () => {
     random = () => 0
     reporter.start()
@@ -746,18 +775,28 @@ describe("backing off", () => {
 })
 
 describe("batch size", () => {
-  test("a 413 halves the batch until it fits, and the size grows back", async () => {
+  test("a 413 halves the batch until it fits, and the batch never grows back to a refused size", async () => {
     reporter.start()
     const records = observe(8)
-    core.respond = (rs) => (rs.length > 2 ? {kind: "batch_too_large"} : acceptAll(rs))
+    const refused: number[] = []
+    core.respond = (rs) => {
+      if (rs.length <= 2) return acceptAll(rs)
+      refused.push(rs.length)
+      return {kind: "batch_too_large"}
+    }
     await advance(MINUTE)
     expect(core.calls.map((call) => call.records.length)).toEqual([8, 4, 2])
     await advance(10 * MINUTE)
-    // Each success doubles the limit again (2 -> 4), which this Core refuses once more.
-    expect(core.calls.map((call) => call.records.length).slice(3)).toEqual([4, 2, 4, 2, 2])
+    // Growth stays below each refused size: 3 (below 4) is tried once and refused, then 2 holds for the 6 left.
+    expect(core.calls.map((call) => call.records.length).slice(3)).toEqual([3, 1, 2, 2, 1])
     expect(queued(CORE_X, A)).toEqual([])
+    const later = observe(6)
+    const callsBefore = core.calls.length
+    await advance(10 * MINUTE)
+    expect(core.calls.slice(callsBefore).map((call) => call.records.length)).toEqual([2, 2, 2])
+    expect(refused).toEqual([8, 4, 3])
     expect(new Set(core.sent.filter((c) => c.records.length <= 2).flatMap((c) => ids(c.records)))).toEqual(
-      new Set(ids(records)),
+      new Set(ids([...records, ...later])),
     )
   })
 
@@ -796,6 +835,10 @@ describe("batch size", () => {
       expect(left[1]).toMatchObject({payload: {reason: "record_rejected", from: bad.observedAt, to: bad.observedAt}})
       await advance(5 * MINUTE)
       expect(queued(CORE_X, A)).toEqual([])
+      // The refusals were that record's, not the batch size's: batches grow again once it is gone.
+      observe(4)
+      await advance(MINUTE)
+      expect(core.calls.at(-1)!.records).toHaveLength(4)
       const logged = warn.mock.calls.filter((args) => args.join(" ").includes("invalid_batch"))
       expect(logged).toHaveLength(1)
     } finally {
@@ -960,6 +1003,25 @@ describe("account isolation", () => {
     await settle()
     expect(collector.runs).toHaveLength(1)
     expect(collector.stops).toEqual([])
+  })
+
+  test("a client rebuilt with another spelling of the same Core URL keeps the run and keeps uploading", async () => {
+    reporter.start()
+    observe(1)
+    await advance(MINUTE)
+    expect(core.calls).toHaveLength(1)
+    const sameCore = "HTTPS://core.X.example:443/"
+    expect(partitionKey(sameCore, A)).toBe(partitionKey(CORE_X, A))
+    reconnectTo(sameCore)
+    await settle()
+    expect(collector.runs).toHaveLength(1)
+    expect(collector.stops).toEqual([])
+    const records = observe(2)
+    await advance(MINUTE)
+    // Sent as the client now spells its Core, so the guard (which here compares spellings exactly) lets it through.
+    expect(core.sent.at(-1)!.as).toEqual({coreUrl: sameCore, mentraUserId: A})
+    expect(ids(core.sent.at(-1)!.records)).toEqual(ids(records))
+    expect(queued(CORE_X, A)).toEqual([])
   })
 
   test("when the client turns out to speak for another account, nothing is sent and the reporter switches", async () => {

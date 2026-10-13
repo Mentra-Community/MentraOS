@@ -14,7 +14,7 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import {AuthExpiredError, DEFAULT_REFRESH_TOKEN_KEY, HttpError} from "@mentra/cloud-client"
+import {AuthExpiredError, DEFAULT_REFRESH_TOKEN_KEY, HttpError, decodeClaims} from "@mentra/cloud-client"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {FleetReportOutcome, SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
@@ -41,6 +41,7 @@ import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
+import {sameCoreUrl} from "./fleet/coreUrl"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -137,6 +138,16 @@ const coreSessionListeners = new Set<(change: CoreSessionChange) => void>()
 function tokenAccount(c: CloudClient): string | null {
   try {
     return c.auth.identity.mentraUserId || null
+  } catch {
+    return null
+  }
+}
+
+/** The Core account a Core access token belongs to (its `sub`), or null if it is not a readable token. */
+function accountOfToken(token: string): string | null {
+  try {
+    const sub = decodeClaims(token).sub
+    return typeof sub === "string" && sub ? sub : null
   } catch {
     return null
   }
@@ -952,10 +963,11 @@ export const cloudClientService = {
       },
 
       /**
-       * Sends a Fleet batch as `expected` and only as it. The current client must have been built for
-       * `expected.coreUrl` and, once its Core token is current, hold a token of `expected.mentraUserId`; both are
-       * checked right before the request, with nothing awaited in between. Otherwise nothing is sent and the answer
-       * is `session_changed`. Never builds a client.
+       * Sends a Fleet batch as `expected` and only as it. The current client must have been built for the same Core
+       * as `expected.coreUrl` (compared the way Fleet partitions compare Core URLs, so another spelling of one Core
+       * is that Core), and the Core token it hands out now must belong to `expected.mentraUserId`. That token is
+       * then the request's bearer: the account checked is the account of the token sent, with nothing awaited in
+       * between. Otherwise nothing is sent and the answer is `session_changed`. Never builds a client.
        *
        * An authentication failure force-refreshes the token once and answers `unauthorized`. Rejects only when
        * `opts.signal` is aborted.
@@ -967,21 +979,20 @@ export const cloudClientService = {
       ): Promise<FleetSendOutcome> {
         const signal = opts?.signal
         const c = client
-        if (!c?.core || clientCoreUrl !== expected.coreUrl) return SESSION_CHANGED
+        if (!c?.core || !clientCoreUrl || !sameCoreUrl(clientCoreUrl, expected.coreUrl)) return SESSION_CHANGED
+        let token: string
         try {
-          await c.auth.getCoreToken()
+          token = await c.auth.getCoreToken()
         } catch (err) {
           if (signal?.aborted) throw abortError(signal)
           if (c !== client) return SESSION_CHANGED
           return isAuthFailure(err) ? refreshAfterAuthFailure(c) : {kind: "unavailable", retryAfterSeconds: null}
         }
         if (signal?.aborted) throw abortError(signal)
-        // The token was just made current (good for at least another minute), so the request below carries the
-        // token checked here.
         const core = c.core
-        if (c !== client || !core || tokenAccount(c) !== expected.mentraUserId) return SESSION_CHANGED
+        if (c !== client || !core || accountOfToken(token) !== expected.mentraUserId) return SESSION_CHANGED
         try {
-          return await core.fleet.report(batch, signal ? {signal} : undefined)
+          return await core.fleet.report(batch, {bearer: token, ...(signal ? {signal} : {})})
         } catch (err) {
           if (!signal?.aborted && isAuthFailure(err)) return refreshAfterAuthFailure(c)
           throw err
