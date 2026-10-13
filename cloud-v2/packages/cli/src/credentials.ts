@@ -1,216 +1,193 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+/**
+ * @fileoverview The CLI's stored sign-in, one per target.
+ *
+ * A `mentra login` is stored in the OS keychain (`Bun.secrets`), or, where no
+ * keychain is available, in a mode-0600 file under `MENTRA_CLI_HOME` (default
+ * `~/.mentra/cli-v2`). A login belongs to the Store (or, in Core mode, the
+ * Core) it was made for; selecting another target never forwards its tokens.
+ *
+ * `MENTRA_CLI_TOKEN` replaces the stored login for every command, for
+ * automation with a workspace key (`msk_…`); `MENTRA_CLI_WORKSPACE_ID`
+ * optionally selects its workspace.
+ *
+ * A record without the fields of a login (for example one stored by an older
+ * CLI) reads as signed out.
+ */
 
-const SERVICE = "mentra-cli-v2";
-const LEGACY_NAME = "credentials";
-const MENTRA_DIR = join(homedir(), ".mentra");
-const CREDS_DIR = join(MENTRA_DIR, "cli-v2");
-const LEGACY_CREDS_FILE = join(CREDS_DIR, "credentials.json");
-const SIGNING_KEY_SERVICE = "mentra-cli-v2-signing";
+import {existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync} from "node:fs"
+import {homedir} from "node:os"
+import {join, resolve} from "node:path"
 
-export type CliJwk = Record<string, unknown> & {
-  kty?: string;
-  crv?: string;
-  x?: string;
-  d?: string;
-};
+import {normalizeUrl, type CliTarget} from "./config"
 
+const SERVICE = "mentra-store-cli"
+
+/** A `mentra login`, as stored. */
 export interface CliCredentials {
-  token: string;
-  refreshToken?: string;
-  workosUserId: string;
-  email: string;
-  organizationId?: string | null;
-  authenticationMethod?: string;
-  coreUrl: string;
-  storedAt: string;
-  expiresAt?: string;
+  /** The Core access token. */
+  token: string
+  refreshToken: string
+  /** When `token` expires (ISO 8601). */
+  expiresAt: string
+  /** The Core user: the ID token's `sub`. */
+  mentraUserId: string
+  email: string | null
+  /** The sign-in server that issued the tokens. */
+  issuer: string
+  /** The CLI client they were issued to; a refresh uses the same one. */
+  clientId: string
+  /** The Store this login is for. Absent in Core mode. */
+  storeUrl?: string
+  /** The Core this login is for, in Core mode. Absent against a Store. */
+  coreUrl?: string
+  /** The workspace the CLI acts in: sent as `x-mentra-workspace-id`. */
+  workspaceId?: string | null
+  storedAt: string
 }
 
-export interface CliSigningKey {
-  coreUrl: string;
-  signingKeyId: string;
-  publicKeyJwk: CliJwk;
-  privateKeyJwk: CliJwk;
-  createdAt: string;
+/** `MENTRA_CLI_TOKEN`, which replaces the stored login. */
+export interface TokenCredentials {
+  fromEnvironment: true
+  token: string
+  storeUrl?: string
+  coreUrl?: string
+  workspaceId?: string | null
 }
 
+/** What a command acts with. */
+export type CommandCredentials = CliCredentials | TokenCredentials
+
+export function isStoredLogin(credentials: CommandCredentials): credentials is CliCredentials {
+  return !("fromEnvironment" in credentials)
+}
+
+/** The target a login was made for. */
+export function targetOf(credentials: {storeUrl?: string; coreUrl?: string}): CliTarget {
+  if (credentials.coreUrl) return {kind: "core", url: normalizeUrl(credentials.coreUrl)}
+  if (credentials.storeUrl) return {kind: "store", url: normalizeUrl(credentials.storeUrl)}
+  throw new Error("These credentials name no Store or Core")
+}
+
+/** The fields that name `target` on credentials. */
+export function targetFields(target: CliTarget): {storeUrl: string} | {coreUrl: string} {
+  return target.kind === "store" ? {storeUrl: target.url} : {coreUrl: target.url}
+}
+
+/** Where the CLI keeps files: `MENTRA_CLI_HOME`, default `~/.mentra/cli-v2`. */
+export function cliHome(): string {
+  const configured = process.env.MENTRA_CLI_HOME?.trim()
+  return configured ? resolve(configured) : join(homedir(), ".mentra", "cli-v2")
+}
+
+/** Store `credentials` for their target. Returns where they went. */
 export async function saveCredentials(credentials: CliCredentials): Promise<"keychain" | "file"> {
-  const payload = JSON.stringify(credentials);
-  const name = credentialName(credentials.coreUrl);
-
+  const target = targetOf(credentials)
+  const payload = JSON.stringify(credentials)
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
-      await Bun.secrets.set({
-        service: SERVICE,
-        name,
-        value: payload,
-      });
-      return "keychain";
+      await Bun.secrets.set({service: SERVICE, name: credentialName(target), value: payload})
+      // A file left from a time without a keychain must not outlive this login.
+      rmSync(credentialsFile(target), {force: true})
+      return "keychain"
     }
   } catch {
-    // Fall through to file storage.
+    // No usable keychain: fall through to the file.
   }
-
-  mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(credentialsFile(credentials.coreUrl), `${payload}\n`, { mode: 0o600 });
-  return "file";
+  const path = credentialsFile(target)
+  mkdirSync(cliHome(), {recursive: true, mode: 0o700})
+  // Written whole and renamed into place, so a reader never sees a partial login.
+  const temporary = `${path}.${process.pid}.tmp`
+  writeFileSync(temporary, `${payload}\n`, {mode: 0o600})
+  renameSync(temporary, path)
+  return "file"
 }
 
-export async function loadCredentials(coreUrl?: string): Promise<CliCredentials | null> {
-  const targetCoreUrl = coreUrl ? normalizeCoreUrl(coreUrl) : undefined;
-  if (process.env.MENTRA_CLI_TOKEN) {
+/** What a command acts with against `target`: `MENTRA_CLI_TOKEN` when set, else the stored login. */
+export async function loadCredentials(target: CliTarget): Promise<CommandCredentials | null> {
+  const token = process.env.MENTRA_CLI_TOKEN?.trim()
+  if (token) {
     return {
-      token: process.env.MENTRA_CLI_TOKEN,
-      workosUserId: process.env.MENTRA_CLI_WORKOS_USER_ID || "unknown",
-      email: process.env.MENTRA_CLI_EMAIL || "unknown",
-      organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
-      coreUrl: targetCoreUrl || process.env.MENTRA_CORE_URL || "http://localhost:3000",
-      storedAt: new Date().toISOString(),
-    };
+      fromEnvironment: true,
+      token,
+      ...targetFields(target),
+      workspaceId: process.env.MENTRA_CLI_WORKSPACE_ID?.trim() || undefined,
+    }
   }
+  return loadStoredLogin(target)
+}
 
-  const scoped = targetCoreUrl ? await loadScopedCredentials(targetCoreUrl) : null;
-  if (scoped) return scoped;
-
+/** The login stored for `target`, ignoring `MENTRA_CLI_TOKEN`; null when there is none. */
+export async function loadStoredLogin(target: CliTarget): Promise<CliCredentials | null> {
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
-      const value = await Bun.secrets.get({
-        service: SERVICE,
-        name: LEGACY_NAME,
-      });
-      if (value) {
-        const legacy = JSON.parse(value) as CliCredentials;
-        if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return legacy;
-      }
+      const value = await Bun.secrets.get({service: SERVICE, name: credentialName(target)})
+      if (value) return storedLogin(value, target)
     }
   } catch {
-    // Fall through.
+    // Fall through to the file.
   }
-
   try {
-    if (existsSync(LEGACY_CREDS_FILE)) {
-      const legacy = JSON.parse(readFileSync(LEGACY_CREDS_FILE, "utf8")) as CliCredentials;
-      if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return legacy;
-    }
+    const path = credentialsFile(target)
+    if (existsSync(path)) return storedLogin(readFileSync(path, "utf8"), target)
   } catch {
-    // Treat corrupt credentials as logged out.
+    // An unreadable file reads as signed out.
   }
-
-  return null;
+  return null
 }
 
-export async function clearCredentials(coreUrl?: string): Promise<void> {
-  const targetCoreUrl = coreUrl ? normalizeCoreUrl(coreUrl) : undefined;
-
+/** Remove the login stored for `target`, from the keychain and the file. */
+export async function clearCredentials(target: CliTarget): Promise<void> {
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
-      await Bun.secrets.set({
-        service: SERVICE,
-        name: targetCoreUrl ? credentialName(targetCoreUrl) : LEGACY_NAME,
-        value: "",
-      });
+      const name = credentialName(target)
+      if (typeof Bun.secrets.delete === "function") await Bun.secrets.delete({service: SERVICE, name})
+      else await Bun.secrets.set({service: SERVICE, name, value: ""})
     }
   } catch {
-    // Ignore keychain failures; remove file fallback below.
+    // Remove the file even when the keychain is unavailable.
   }
-
-  const path = targetCoreUrl ? credentialsFile(targetCoreUrl) : LEGACY_CREDS_FILE;
-  if (existsSync(path)) {
-    rmSync(path);
-  }
+  rmSync(credentialsFile(target), {force: true})
 }
 
-export async function saveSigningKey(key: CliSigningKey): Promise<"keychain" | "file"> {
-  const payload = JSON.stringify(key);
-  const name = credentialName(key.coreUrl);
+function nonEmpty(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0
+}
 
+/** A stored record as a login for `target`, or null when it is not one. */
+function storedLogin(value: string, target: CliTarget): CliCredentials | null {
+  let parsed: Record<string, unknown>
   try {
-    if (typeof Bun !== "undefined" && Bun.secrets) {
-      await Bun.secrets.set({
-        service: SIGNING_KEY_SERVICE,
-        name,
-        value: payload,
-      });
-      return "keychain";
-    }
+    parsed = JSON.parse(value) as Record<string, unknown>
   } catch {
-    // Fall through to file storage.
+    return null
   }
-
-  mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(signingKeyFile(key.coreUrl), `${payload}\n`, { mode: 0o600 });
-  return "file";
-}
-
-export async function loadSigningKey(coreUrl: string): Promise<CliSigningKey | null> {
-  const targetCoreUrl = normalizeCoreUrl(coreUrl);
+  if (!parsed || typeof parsed !== "object") return null
+  const fields = ["token", "refreshToken", "expiresAt", "mentraUserId", "issuer", "clientId", "storedAt"] as const
+  if (!fields.every(field => nonEmpty(parsed[field]))) return null
+  const url = target.kind === "store" ? parsed.storeUrl : parsed.coreUrl
+  const other = target.kind === "store" ? parsed.coreUrl : parsed.storeUrl
+  if (!nonEmpty(url) || other !== undefined) return null
   try {
-    if (typeof Bun !== "undefined" && Bun.secrets) {
-      const value = await Bun.secrets.get({
-        service: SIGNING_KEY_SERVICE,
-        name: credentialName(targetCoreUrl),
-      });
-      if (value) return JSON.parse(value) as CliSigningKey;
-    }
+    if (normalizeUrl(url) !== target.url) return null
   } catch {
-    // Fall through.
+    return null
   }
-
-  try {
-    const path = signingKeyFile(targetCoreUrl);
-    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliSigningKey;
-  } catch {
-    // Treat corrupt key storage as missing.
-  }
-
-  return null;
+  return {...(parsed as unknown as CliCredentials), ...targetFields(target)}
 }
 
-async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | null> {
-  try {
-    if (typeof Bun !== "undefined" && Bun.secrets) {
-      const value = await Bun.secrets.get({
-        service: SERVICE,
-        name: credentialName(coreUrl),
-      });
-      if (value) return JSON.parse(value) as CliCredentials;
-    }
-  } catch {
-    // Fall through.
-  }
-
-  try {
-    const path = credentialsFile(coreUrl);
-    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as CliCredentials;
-  } catch {
-    // Treat corrupt credentials as logged out.
-  }
-
-  return null;
+function credentialKey(target: CliTarget): string {
+  return Buffer.from(target.url).toString("base64url")
 }
 
-function credentialName(coreUrl: string): string {
-  return `credentials:${credentialKey(coreUrl)}`;
+function credentialName(target: CliTarget): string {
+  return target.kind === "store" ? `credentials:${credentialKey(target)}` : `core-credentials:${credentialKey(target)}`
 }
 
-function credentialsFile(coreUrl: string): string {
-  return join(CREDS_DIR, `credentials-${credentialKey(coreUrl)}.json`);
+function credentialsFile(target: CliTarget): string {
+  return join(cliHome(), `${target.kind}-credentials-${credentialKey(target)}.json`)
 }
 
-function signingKeyFile(coreUrl: string): string {
-  return join(CREDS_DIR, `signing-key-${credentialKey(coreUrl)}.json`);
-}
-
-function credentialKey(coreUrl: string): string {
-  return Buffer.from(normalizeCoreUrl(coreUrl)).toString("base64url");
-}
-
-function normalizeCoreUrl(coreUrl: string): string {
-  const url = new URL(coreUrl);
-  url.pathname = url.pathname.replace(/\/+$/, "");
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/, "");
+/** The lock a refresh of `target`'s login holds, so two commands never spend one refresh token twice. */
+export function refreshLockPath(target: CliTarget): string {
+  return join(cliHome(), `${target.kind}-refresh-${credentialKey(target)}.lock`)
 }

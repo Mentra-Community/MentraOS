@@ -2,9 +2,9 @@
 
 Each Core runs its own sign-in server, an OpenID Connect provider built on
 panva's [`oidc-provider`](https://github.com/panva/node-oidc-provider). It is the
-one place Mentra's websites sign in: the admin portal and the workspace portal
-today, and the Developer Console and the `mentra` CLI as they adopt it. Every
-token a website or the CLI holds is issued by Core.
+one place Mentra's websites and the `mentra` CLI sign in: the admin portal, the
+workspace portal and the CLI today, and the Developer Console as it adopts it.
+Every token a website or the CLI holds is issued by Core.
 
 Behind the sign-in server, one identity provider checks who the person is:
 
@@ -152,6 +152,34 @@ consent screen.
   characters. A client whose secret is unset is unknown.
 - Redirect URIs match exactly and are HTTPS, except the CLI's loopback URIs (and
   loopback HTTP on an undeployed Core).
+
+### The CLI
+
+The `mentra` CLI signs in on a loopback port, the first free one of 53682, 53683
+and 53684, so its client registers all three:
+
+```json
+{"clientId": "mentra-cli", "kind": "cli",
+ "redirectUris": ["http://127.0.0.1:53682/callback", "http://127.0.0.1:53683/callback",
+                  "http://127.0.0.1:53684/callback"]}
+```
+
+The CLI is a native client, and the sign-in server follows RFC 8252 for its
+loopback redirects: a redirect to a registered loopback URI on another port is
+accepted.
+
+The CLI takes its issuer and client ID from `MENTRA_CLI_OIDC_ISSUER` and
+`MENTRA_CLI_CLIENT_ID` on the developer's machine when both are set. Otherwise
+it asks the service it targets:
+
+- a Mentra Miniapp Store answers `GET /api/console/auth/cli-config` with its
+  Core's issuer and CLI client;
+- a Core without a Store (a Private Cloud) answers `GET /api/cli/config`.
+
+`GET /api/cli/config` is unauthenticated and answers `{issuer, clientId}`: the
+issuer, and the `cli` client's ID. It answers 404
+`{error: "not_configured"}` when the sign-in server is off or no `cli` client is
+registered. Both answers are `no-store`.
 
 ## The portals
 

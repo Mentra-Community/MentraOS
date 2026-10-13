@@ -14,6 +14,8 @@
  *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
  *                                 unauthenticated (called from customer apps)
  *   /api/agent/reports/*        — read-only private dev-agent access
+ *   /api/cli/config             — the issuer and client ID the `mentra` CLI signs
+ *                                 in with, unauthenticated
  *   /api/admin/auth/*, /api/portal/auth/*
  *                               — portal sign-in (the deployment's identity provider)
  *   /api/admin/*                — the admin portal's API (capability-gated), incl.
@@ -67,6 +69,7 @@ import clientMiniapps from "./client/miniapps.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
+import cliApi from "./cli/cli.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
 import internalWorkspaces from "./internal/workspaces.api";
@@ -130,6 +133,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
   app.route("/api/agent/reports", reportAgent);
+  app.route("/api/cli", cliApi);
   // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
   app.use(
     "/api/internal/workspaces/*",
