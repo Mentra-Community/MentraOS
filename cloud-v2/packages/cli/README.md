@@ -1,11 +1,12 @@
 # @mentra/cli
 
-The Mentra developer CLI — the `mentra` command. Build, publish, and manage
-Mentra miniapps against the independently deployed Mentra Miniapp Store.
+The Mentra developer CLI, the `mentra` command. Build, publish and manage Mentra
+miniapps in the Mentra Miniapp Store.
 
 It wraps [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli)
-(the `dev` / `build` / `pack` author flow) and adds account and store operations:
-`login`, `whoami`, `workspace`, `miniapps`, `releases`, and `publish`.
+(the `dev` / `build` / `pack` author flow) and adds account and Store operations:
+`login`, `whoami`, `workspace`, `miniapps`, `releases`, `listing`, `tokens` and
+`publish`.
 
 > **Bun-only.** This CLI ships as TypeScript and runs under [Bun](https://bun.sh)
 > (`#!/usr/bin/env bun`). Use `bun` / `bunx`, not `npx`/Node.
@@ -26,14 +27,121 @@ bunx @mentra/cli@dev --help
 ## Common commands
 
 ```bash
-mentra login              # sign in to the Mentra Developer Console
-mentra dev                # local dev server; the phone runs it as the manifest package
-mentra build              # build the current miniapp
-mentra pack               # build and pack locally (use --sign to sign)
+mentra login               # sign in to Mentra in your browser
+mentra whoami              # who you are signed in as, and where
+mentra dev                 # local dev server; the phone runs it as the manifest package
+mentra build               # build the current miniapp
+mentra pack                # build and pack locally (use --sign to sign)
 mentra publish --no-submit # build and upload an unsigned draft
-mentra miniapps list      # miniapps owned by your workspace
-mentra releases submit    # submit an uploaded release for review
+mentra miniapps list       # miniapps owned by your workspace
+mentra releases submit     # submit an uploaded release for review
+mentra logout              # sign out on this computer
 ```
+
+Run `mentra <command> --help` for the full option set.
+
+## Sign in
+
+```bash
+mentra login
+```
+
+`mentra login` opens your browser at Mentra's sign-in page. When you have
+signed in, the browser returns to the CLI on this computer, which listens on
+`http://127.0.0.1:53682` (or 53683 or 53684 when that port is busy) only while
+it waits. The CLI always prints the sign-in URL too, so you can open it yourself.
+
+The CLI keeps your login in the OS keychain. Where there is no keychain, it uses
+a file only you can read (mode `0600`) in `~/.mentra/cli-v2`, or in
+`MENTRA_CLI_HOME` when set. It renews the login as you use it; after a long
+break, or when your sessions were ended from your Mentra account, run
+`mentra login` again.
+
+```bash
+mentra whoami   # email, Core user ID, sign-in server, Store or Core, workspace, expiry
+mentra logout
+```
+
+`mentra logout` ends this login at Mentra's sign-in server and deletes it from
+this computer. It prints `Signed out`, or `Signed out locally; server sign-out
+not confirmed` when the sign-in server could not confirm it; the login is
+deleted from this computer either way. Your logins on other computers and the
+Developer Console stay signed in.
+
+### Without a local browser
+
+On a machine without a browser, for example over SSH, run:
+
+```bash
+mentra login --no-browser
+```
+
+The CLI prints the sign-in URL and the loopback port it is waiting on. Open the
+URL in a browser on a computer that can reach that port. Over SSH, forward the
+port when you connect, then open the URL in your local browser:
+
+```bash
+ssh -L 53682:127.0.0.1:53682 you@build-server
+```
+
+If the CLI reports another port (53683 or 53684), forward that one instead.
+
+### Automation
+
+For CI and other automation, set `MENTRA_CLI_TOKEN` to a workspace key
+(`msk_...`, created with `mentra tokens create` or in the Developer Console). It
+replaces the login for every command; nothing is stored. A workspace key already
+carries its workspace. With another kind of token, `MENTRA_CLI_WORKSPACE_ID`
+selects the workspace.
+
+## Which Store or Core
+
+The CLI works with the production Mentra Miniapp Store,
+`https://api.apps.mentraglass.com`. To use another Store, for example one running
+locally:
+
+```sh
+mentra --store-url http://localhost:3003 login
+mentra --store-url http://localhost:3003 publish --no-submit
+```
+
+`MENTRA_STORE_URL` is the equivalent environment setting. Each Store has its own
+login; switching Store never sends another Store's tokens.
+
+A Mentra Private Cloud has no Store. Point the CLI at its Core with
+`--core-url` (or `MENTRA_CORE_URL`) to sign in there:
+
+```sh
+mentra --core-url https://mentra.example.com login
+mentra --core-url https://mentra.example.com admin me   # your organization capabilities
+```
+
+Only `login`, `logout`, `whoami` and `admin me` work against a Core; the other
+commands need a Mentra Miniapp Store and say so. Set a Store or a Core, not both.
+
+The CLI asks the Store (or the Core) which Mentra sign-in server and CLI client
+to use. To set them yourself, set both `MENTRA_CLI_OIDC_ISSUER` and
+`MENTRA_CLI_CLIENT_ID`.
+
+| Setting | Meaning |
+| --- | --- |
+| `--store-url`, `MENTRA_STORE_URL` | The Mentra Miniapp Store. Default `https://api.apps.mentraglass.com`. |
+| `--core-url`, `MENTRA_CORE_URL` | A Core without a Store (a Mentra Private Cloud). |
+| `MENTRA_CLI_OIDC_ISSUER`, `MENTRA_CLI_CLIENT_ID` | The sign-in server and CLI client, instead of asking the Store or Core. |
+| `MENTRA_CLI_TOKEN` | A workspace key that replaces the login, for automation. |
+| `MENTRA_CLI_WORKSPACE_ID` | The workspace for a run with `MENTRA_CLI_TOKEN`. |
+| `MENTRA_CLI_HOME` | Where the CLI keeps files. Default `~/.mentra/cli-v2`. |
+| `MENTRA_CONSOLE_URL` | The Developer Console named in messages. Default `https://console.mentraglass.com`. |
+
+URLs must be HTTPS; plain HTTP is accepted only for `127.0.0.1`, `localhost`
+and `[::1]`.
+
+In the MentraOS repository, `bun run mentra` runs this CLI against the production
+Store. `bun run mentra:dev` uses the development Store, `bun run mentra:staging`
+the staging Core (which has no Store) and `bun run mentra:local` a Store on
+`localhost:3003`.
+
+## Workspaces
 
 The CLI keeps publishing scoped to one workspace: a group of people who share
 miniapps, credentials, and a package prefix. `mentra login` selects your workspace
@@ -63,10 +171,7 @@ mentra workspace set-prefix com.example
 ```
 
 `mentra workspace show` says "not set" while a workspace has no prefix, and "not
-visible to your role" to a member, who cannot publish. `MENTRA_CLI_WORKSPACE_ID` selects a
-workspace for a run that authenticates with `MENTRA_CLI_TOKEN`. A workspace
-credential (`msk_...`) already carries its workspace, so CI that publishes with
-one needs no selection.
+visible to your role" to a member, who cannot publish.
 
 ## Optional publisher signatures
 
@@ -112,8 +217,8 @@ exactly as it does for an installed one.
 
 ## Stable and beta releases
 
-Release tracks are independent of the selected Core environment. `stable` is
-the default; use `beta` for an opt-in preview release:
+`stable` is the default release track; use `beta` for an opt-in preview
+release:
 
 ```bash
 mentra publish --track beta
@@ -124,29 +229,6 @@ Each upload is permanently assigned to one track. Admin review publishes it to
 that track's independent active slot. Store users remain on stable unless they
 opt into beta for that miniapp. If no beta is currently published, the Store serves
 stable without discarding their beta preference.
-
-The CLI targets one production Store, currently at
-`https://store.dev.us-west-2.mentraglass.com`. The hostname is temporary;
-`@dev` and `@beta` npm tags describe tool release channels, not Store catalogs.
-Changing `MENTRA_CORE_URL` does not change the Store or its login.
-
-For an explicitly local or self-hosted Store:
-
-```sh
-mentra --store-url http://localhost:3003 login
-mentra --store-url http://localhost:3003 publish --no-submit
-```
-
-`MENTRA_STORE_URL` is the equivalent environment setting. Logins are scoped to
-the selected Store; changing it requires that Store's own login. This release
-requires signing in again after the older Core-scoped CLI. Publisher signing
-keys remain in their existing package-scoped keychain/file storage.
-The CLI discovers the selected Store's public WorkOS client id automatically.
-Only `MENTRA_WORKOS_CLIENT_ID` explicitly overrides it; generic Core WorkOS
-settings are ignored. Repository `bun run mentra` uses this same default. The
-older `mentra:dev`, `mentra:staging`, and `mentra:prod` shortcuts are aliases for
-that command; `mentra:local` explicitly selects localhost:3003. No Doppler session
-is needed to run the developer CLI.
 
 Upload builds an unsigned bundle, then `--no-submit` keeps it as a draft. Edit
 its listing through the CLI or Developer Console. Public releases require staff approval
@@ -229,10 +311,3 @@ mentra admin reject RELEASE_ID --notes "Reason"
 mentra admin publish RELEASE_ID
 mentra releases publish com.example.myminiapp RELEASE_ID
 ```
-
-The source in PR #3743 requires new npm releases: `@mentra/miniapp-cli` base
-`0.1.0-dev.2` and `@mentra/cli` base `2.0.0-dev.1`. The existing Developer Tools
-release workflow publishes them in dependency order after the PR lands; older
-npm versions do not implement this Store routing and unsigned publishing flow.
-
-Run `mentra <command> --help` for the full option set.

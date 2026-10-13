@@ -1,41 +1,28 @@
+/**
+ * @fileoverview The CLI's requests: sign-in at Core's sign-in server (an
+ * OpenID Connect provider; the CLI is its public client), the Mentra Miniapp
+ * Store's console and admin APIs, and, in Core mode, Core's own API.
+ *
+ * Store requests carry `Authorization: Bearer <Core access token or
+ * MENTRA_CLI_TOKEN>` and the selected workspace as `x-mentra-workspace-id`.
+ */
+
 import type { CredentialView, PrincipalResponse, WorkspaceDetail } from "@mentra/workspace-contract";
-import type { CliConfig } from "./config";
+import * as client from "openid-client";
+import { isLoopbackHttp, type CliTarget } from "./config";
 import type { CliCredentials } from "./credentials";
 
-const DEVICE_AUTH_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
-
-export interface DeviceAuthorizationResponse {
-  device_code: string;
-  user_code: string;
-  verification_uri: string;
-  verification_uri_complete: string;
-  expires_in: number;
-  interval: number;
+/** What a Store request needs: the bearer, the Store, and the workspace it acts in. */
+export interface StoreCredentials {
+  token: string;
+  storeUrl: string;
+  workspaceId?: string | null;
 }
 
-export interface LoginTokenResponse {
-  access_token: string;
-  refresh_token?: string;
-  token_type?: "Bearer";
-  expires_in?: number;
-  authentication_method?: string;
-  organization_id?: string | null;
-  user: {
-    id: string;
-    email: string;
-    first_name?: string | null;
-    last_name?: string | null;
-  };
-}
-
-export interface PendingDeviceAuthorization {
-  status: "pending";
-  interval?: number;
-}
-
-export interface SlowDownDeviceAuthorization {
-  status: "slow_down";
-  interval?: number;
+/** What a Core request needs (Core mode). */
+export interface CoreCredentials {
+  token: string;
+  coreUrl: string;
 }
 
 export interface DeveloperApp {
@@ -114,40 +101,40 @@ export interface StoreListing extends StoreListingInput {
   assets: StoreAsset[];
 }
 
-export function getListing(credentials: CliCredentials, packageName: string): Promise<{listing: StoreListing}> {
+export function getListing(credentials: StoreCredentials, packageName: string): Promise<{listing: StoreListing}> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing`);
 }
 
-export function updateListing(credentials: CliCredentials, packageName: string, input: StoreListingInput): Promise<{listing: StoreListing}> {
+export function updateListing(credentials: StoreCredentials, packageName: string, input: StoreListingInput): Promise<{listing: StoreListing}> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing`, {method: "PUT", body: JSON.stringify(input)});
 }
 
-export function uploadListingAsset(credentials: CliCredentials, packageName: string, input: {role: StoreAsset["role"]; fileName: string; contentType: string; base64: string}): Promise<{asset: StoreAsset}> {
+export function uploadListingAsset(credentials: StoreCredentials, packageName: string, input: {role: StoreAsset["role"]; fileName: string; contentType: string; base64: string}): Promise<{asset: StoreAsset}> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing/assets`, {method: "POST", body: JSON.stringify(input)});
 }
 
-export function deleteListingAsset(credentials: CliCredentials, packageName: string, assetId: string): Promise<{ok: true}> {
+export function deleteListingAsset(credentials: StoreCredentials, packageName: string, assetId: string): Promise<{ok: true}> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/listing/assets/${encodeURIComponent(assetId)}`, {method: "DELETE"});
 }
 
-export function publishRelease(credentials: CliCredentials, packageName: string, releaseId: string): Promise<{release: DeveloperRelease}> {
+export function publishRelease(credentials: StoreCredentials, packageName: string, releaseId: string): Promise<{release: DeveloperRelease}> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/releases/${encodeURIComponent(releaseId)}/publish`, {method: "POST"});
 }
 
-export function reviewRelease(credentials: CliCredentials, releaseId: string, action: "approve" | "reject" | "publish", notes?: string): Promise<{release: DeveloperRelease}> {
+export function reviewRelease(credentials: StoreCredentials, releaseId: string, action: "approve" | "reject" | "publish", notes?: string): Promise<{release: DeveloperRelease}> {
   return storeRequest(credentials, `/api/admin/submissions/${encodeURIComponent(releaseId)}/${action}`, {method: "POST", body: JSON.stringify({notes})});
 }
 
-export function createPublishingToken(credentials: CliCredentials, packageName: string, name: string): Promise<{token: {id: string; value: string; permissions: string[]}}> {
+export function createPublishingToken(credentials: StoreCredentials, packageName: string, name: string): Promise<{token: {id: string; value: string; permissions: string[]}}> {
   return storeRequest(credentials, `/api/admin/apps/${encodeURIComponent(packageName)}/publishing-tokens`, {method: "POST", body: JSON.stringify({name})});
 }
 
-export function listWorkspaceCredentials(credentials: CliCredentials, workspaceId: string): Promise<{ items: CredentialView[] }> {
+export function listWorkspaceCredentials(credentials: StoreCredentials, workspaceId: string): Promise<{ items: CredentialView[] }> {
   return storeRequest(credentials, `/api/console/workspaces/${encodeURIComponent(workspaceId)}/credentials`);
 }
 
 export function createWorkspaceCredential(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
   workspaceId: string,
   input: { name: string; packageNames?: string[]; expiresAt?: string },
 ): Promise<{ credential: CredentialView; token: string }> {
@@ -157,7 +144,7 @@ export function createWorkspaceCredential(
   });
 }
 
-export function revokeWorkspaceCredential(credentials: CliCredentials, workspaceId: string, credentialId: string): Promise<void> {
+export function revokeWorkspaceCredential(credentials: StoreCredentials, workspaceId: string, credentialId: string): Promise<void> {
   return storeRequest(
     credentials,
     `/api/console/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(credentialId)}`,
@@ -165,81 +152,40 @@ export function revokeWorkspaceCredential(credentials: CliCredentials, workspace
   );
 }
 
-export async function startLogin(config: CliConfig): Promise<DeviceAuthorizationResponse> {
-  await ensureWorkosClientId(config);
-  const body = new URLSearchParams({ client_id: config.workosClientId });
-  const response = await fetch(`${config.workosApiBaseUrl}/user_management/authorize/device`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json" },
-    body,
-  });
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return (await response.json()) as DeviceAuthorizationResponse;
-}
-
-export async function pollLoginToken(
-  config: CliConfig,
-  deviceCode: string,
-): Promise<LoginTokenResponse | PendingDeviceAuthorization | SlowDownDeviceAuthorization> {
-  await ensureWorkosClientId(config);
-  const body = new URLSearchParams({
-    grant_type: DEVICE_AUTH_GRANT_TYPE,
-    device_code: deviceCode,
-    client_id: config.workosClientId,
-  });
-  const response = await fetch(`${config.workosApiBaseUrl}/user_management/authenticate`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json" },
-    body,
-  });
-  if (response.status === 400 || response.status === 403) {
-    const result = (await response.json().catch(() => ({}))) as { error?: string; error_description?: string };
-    if (result.error === "authorization_pending") return { status: "pending" };
-    if (result.error === "slow_down") return { status: "slow_down" };
-    throw new Error(result.error_description || result.error || `HTTP ${response.status}`);
-  }
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return (await response.json()) as LoginTokenResponse;
-}
-
-export async function refreshLoginToken(
-  config: CliConfig,
-  refreshToken: string,
-  organizationId?: string | null,
-): Promise<LoginTokenResponse> {
-  await ensureWorkosClientId(config);
-  const body: Record<string, string> = {
-    client_id: config.workosClientId,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-  };
-  if (organizationId) body.organization_id = organizationId;
-
-  const response = await fetch(`${config.workosApiBaseUrl}/user_management/authenticate`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "accept": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return (await response.json()) as LoginTokenResponse;
-}
-
-export async function listApps(credentials: CliCredentials): Promise<{ apps: DeveloperApp[] }> {
+export async function listApps(credentials: StoreCredentials): Promise<{ apps: DeveloperApp[] }> {
   return storeRequest(credentials, "/api/console/apps");
 }
 
+/** The Store's `/api/admin/me`: the signed-in Store administrator. */
 export async function getAdminMe(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
 ): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
   return storeRequest(credentials, "/api/admin/me");
 }
 
-export async function getConsoleSession(credentials: CliCredentials): Promise<ConsoleSessionResponse> {
+/** What Core's `/api/admin/me` answers: who the token is and the organization capabilities it holds. */
+export interface CoreAdminMe {
+  authenticated: true;
+  user: { mentraUserId: string; email: string | null; isOrganizationAdmin: boolean } | null;
+  credential: { credentialId: string; credentialKind: "workspace" | "organization"; label: string } | null;
+  organization: { capabilities: string[] };
+}
+
+/** Core's `/api/admin/me` (Core mode). */
+export async function getCoreAdminMe(credentials: CoreCredentials): Promise<CoreAdminMe> {
+  const response = await fetch(`${credentials.coreUrl}/api/admin/me`, {
+    headers: { accept: "application/json", authorization: `Bearer ${credentials.token}` },
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return (await response.json()) as CoreAdminMe;
+}
+
+export async function getConsoleSession(credentials: StoreCredentials): Promise<ConsoleSessionResponse> {
   return storeRequest(credentials, "/api/console/auth/me");
 }
 
 /** Create a workspace. The caller becomes its owner. */
-export async function createWorkspace(credentials: CliCredentials, name: string): Promise<WorkspaceDetail> {
+export async function createWorkspace(credentials: StoreCredentials, name: string): Promise<WorkspaceDetail> {
   // Creating is not scoped to a workspace, so a stale selection must not ride along.
   return storeRequest({ ...credentials, workspaceId: null }, "/api/console/workspaces", {
     method: "POST",
@@ -248,7 +194,7 @@ export async function createWorkspace(credentials: CliCredentials, name: string)
 }
 
 /** The package prefix of the workspace the credentials select (`x-mentra-workspace-id`). */
-export async function getPublishingProfile(credentials: CliCredentials): Promise<PublishingProfile> {
+export async function getPublishingProfile(credentials: StoreCredentials): Promise<PublishingProfile> {
   return storeRequest(credentials, "/api/console/publishing-profile");
 }
 
@@ -258,7 +204,7 @@ export async function getPublishingProfile(credentials: CliCredentials): Promise
  * failure of the command.
  */
 export async function readPublishingProfile(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
 ): Promise<{ state: "set"; profile: PublishingProfile } | { state: "not_set" } | { state: "hidden" }> {
   try {
     return { state: "set", profile: await getPublishingProfile(credentials) };
@@ -269,7 +215,7 @@ export async function readPublishingProfile(
   }
 }
 
-export async function setPackagePrefix(credentials: CliCredentials, packagePrefix: string): Promise<PublishingProfile> {
+export async function setPackagePrefix(credentials: StoreCredentials, packagePrefix: string): Promise<PublishingProfile> {
   return storeRequest(credentials, "/api/console/publishing-profile", {
     method: "PUT",
     body: JSON.stringify({ packagePrefix }),
@@ -281,7 +227,7 @@ export async function setPackagePrefix(credentials: CliCredentials, packagePrefi
  * reports as active, else the caller's only workspace. With several and none selected the caller
  * must choose (`WorkspaceSelectionRequiredError`).
  */
-export async function resolveWorkspaceId(credentials: CliCredentials): Promise<string> {
+export async function resolveWorkspaceId(credentials: StoreCredentials): Promise<string> {
   if (credentials.workspaceId) return credentials.workspaceId;
   const session = await getConsoleSession(credentials);
   const workspaceId = session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
@@ -293,7 +239,7 @@ export async function resolveWorkspaceId(credentials: CliCredentials): Promise<s
 }
 
 export async function createApp(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
   input: { packageName: string; displayName: string; description?: string | null },
 ): Promise<{ app: DeveloperApp }> {
   return storeRequest(credentials, "/api/console/apps", {
@@ -302,21 +248,21 @@ export async function createApp(
   });
 }
 
-export async function deleteApp(credentials: CliCredentials, packageName: string): Promise<{ ok: true }> {
+export async function deleteApp(credentials: StoreCredentials, packageName: string): Promise<{ ok: true }> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}`, {
     method: "DELETE",
   });
 }
 
 export async function listReleases(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
   packageName: string,
 ): Promise<{ releases: DeveloperRelease[] }> {
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(packageName)}/releases`);
 }
 
 export async function createRelease(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
   input: {
     packageName: string;
     version: string;
@@ -340,7 +286,7 @@ export async function createRelease(
 }
 
 export async function submitRelease(
-  credentials: CliCredentials,
+  credentials: StoreCredentials,
   input: {
     packageName: string;
     releaseId: string;
@@ -368,7 +314,7 @@ export class WorkspaceSelectionRequiredError extends Error {
   }
 }
 
-async function storeRequest<T>(credentials: CliCredentials, path: string, init?: RequestInit): Promise<T> {
+async function storeRequest<T>(credentials: StoreCredentials, path: string, init?: RequestInit): Promise<T> {
   const response = await storeFetch(credentials, path, init);
   if (!response.ok) throw await storeError(credentials, response);
   // A DELETE answers 204 with nothing to parse.
@@ -376,7 +322,7 @@ async function storeRequest<T>(credentials: CliCredentials, path: string, init?:
   return (await response.json()) as T;
 }
 
-function storeFetch(credentials: CliCredentials, path: string, init?: RequestInit): Promise<Response> {
+function storeFetch(credentials: StoreCredentials, path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${credentials.storeUrl}${path}`, {
     ...init,
     headers: {
@@ -401,7 +347,7 @@ export class StoreRequestError extends Error {
   }
 }
 
-async function storeError(credentials: CliCredentials, response: Response): Promise<Error> {
+async function storeError(credentials: StoreCredentials, response: Response): Promise<Error> {
   const body = await errorBody(response);
   if (response.status === 409 && body.error === "workspace_selection_required") {
     return new WorkspaceSelectionRequiredError(await availableWorkspaces(credentials));
@@ -410,7 +356,7 @@ async function storeError(credentials: CliCredentials, response: Response): Prom
 }
 
 /** Best effort: the instruction is still useful without the ids, so a failed lookup must not replace it. */
-async function availableWorkspaces(credentials: CliCredentials): Promise<CliWorkspace[]> {
+async function availableWorkspaces(credentials: StoreCredentials): Promise<CliWorkspace[]> {
   try {
     const response = await storeFetch(credentials, "/api/console/auth/me");
     return response.ok ? ((await response.json()) as ConsoleSessionResponse).workspaces : [];
@@ -419,21 +365,170 @@ async function availableWorkspaces(credentials: CliCredentials): Promise<CliWork
   }
 }
 
-async function ensureWorkosClientId(config: CliConfig): Promise<void> {
-  if (config.workosClientId) return;
+// --- Sign-in at Core's sign-in server ---------------------------------------------
 
-  const response = await fetch(`${config.storeUrl}/api/console/auth/cli-config`, {
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) throw new Error(await errorMessage(response));
-  const body = (await response.json()) as { workosClientId?: unknown };
-  if (typeof body.workosClientId !== "string" || !body.workosClientId.trim()) {
-    throw new Error("The Mentra Miniapp Store did not provide a WorkOS client id for CLI login");
+/** The algorithm Core's sign-in server signs ID tokens with. */
+const ID_TOKEN_ALG = "EdDSA";
+/** Seconds the CLI waits for the sign-in server before giving up on a request. */
+const OIDC_TIMEOUT_SEC = 15;
+
+/** Where `ensureOidcClient` finds the sign-in server and the CLI client. */
+export interface OidcClientSettings {
+  /** The issuer and client ID, when known (`MENTRA_CLI_OIDC_ISSUER` and `MENTRA_CLI_CLIENT_ID`, or a stored login's). */
+  oidcIssuer?: string;
+  cliClientId?: string;
+  /** Asked for both otherwise: a Store's `/api/console/auth/cli-config`, or Core's `/api/cli/config`. */
+  target?: CliTarget;
+}
+
+/** What a Store's `/api/console/auth/cli-config` and Core's `/api/cli/config` answer. */
+export interface CliSignInConfig {
+  issuer: string;
+  clientId: string;
+}
+
+/** The sign-in server refused the stored login's refresh token; the person must sign in again. */
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("Session expired. Run `mentra login`.");
+    this.name = "SessionExpiredError";
   }
-  // Cache the public client id on this command's config so polling does not
-  // refetch the Store every interval. Environment overrides still win for local or
-  // non-Mentra deployments.
-  config.workosClientId = body.workosClientId.trim();
+}
+
+/**
+ * The CLI as a public client (`none`) of its sign-in server: discovery from
+ * the issuer, EdDSA ID tokens whose signatures are checked against the
+ * issuer's key set. Plain HTTP only for a loopback issuer.
+ */
+export async function ensureOidcClient(settings: OidcClientSettings): Promise<client.Configuration> {
+  const explicit = { issuer: settings.oidcIssuer?.trim() ?? "", clientId: settings.cliClientId?.trim() ?? "" };
+  if (Boolean(explicit.issuer) !== Boolean(explicit.clientId)) {
+    throw new Error("Set both MENTRA_CLI_OIDC_ISSUER and MENTRA_CLI_CLIENT_ID, or neither.");
+  }
+  let signIn: CliSignInConfig;
+  if (explicit.issuer) signIn = explicit;
+  else if (settings.target) signIn = await fetchCliSignInConfig(settings.target);
+  else throw new Error("No sign-in server is configured. Run `mentra login`.");
+
+  const issuer = issuerUrl(signIn.issuer);
+  const config = await client.discovery(
+    issuer,
+    signIn.clientId,
+    { id_token_signed_response_alg: ID_TOKEN_ALG },
+    client.None(),
+    {
+      execute: [...(isLoopbackHttp(issuer) ? [client.allowInsecureRequests] : []), client.enableNonRepudiationChecks],
+      timeout: OIDC_TIMEOUT_SEC,
+    },
+  );
+  config.timeout = OIDC_TIMEOUT_SEC;
+  return config;
+}
+
+/** Ask the target which sign-in server and CLI client to use. */
+export async function fetchCliSignInConfig(target: CliTarget): Promise<CliSignInConfig> {
+  const url = target.kind === "store" ? `${target.url}/api/console/auth/cli-config` : `${target.url}/api/cli/config`;
+  const where = target.kind === "store" ? "The Mentra Miniapp Store" : "This Core";
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "application/json" } });
+  } catch (error) {
+    throw new Error(`Could not reach ${target.url}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) {
+    const body = await errorBody(response);
+    if (body.error === "not_configured") throw new Error(`${where} at ${target.url} does not offer CLI sign-in.`);
+    throw new Error(`${where} at ${target.url} did not provide CLI sign-in settings: ${errorText(body, response.status)}`);
+  }
+  const body = (await response.json().catch(() => ({}))) as Partial<CliSignInConfig>;
+  if (typeof body.issuer !== "string" || !body.issuer || typeof body.clientId !== "string" || !body.clientId) {
+    throw new Error(`${where} at ${target.url} did not provide CLI sign-in settings.`);
+  }
+  return { issuer: body.issuer, clientId: body.clientId };
+}
+
+function issuerUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`The sign-in issuer is not a URL: ${value}`);
+  }
+  if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !isLoopbackHttp(url))) {
+    throw new Error(`The sign-in issuer must be an HTTPS URL (plain HTTP only on this machine): ${value}`);
+  }
+  return url;
+}
+
+/**
+ * Exchange the stored login's refresh token for new tokens. The sign-in
+ * server rotates refresh tokens, so the result's `refreshToken` replaces the
+ * stored one before its `token` is used. A refused refresh token
+ * (`invalid_grant`) is a `SessionExpiredError`.
+ */
+export async function refreshLoginToken(credentials: CliCredentials): Promise<CliCredentials> {
+  const config = await ensureOidcClient({ oidcIssuer: credentials.issuer, cliClientId: credentials.clientId });
+  let tokens: Awaited<ReturnType<typeof client.refreshTokenGrant>>;
+  try {
+    tokens = await client.refreshTokenGrant(config, credentials.refreshToken);
+  } catch (error) {
+    if (error instanceof client.ResponseBodyError && error.error === "invalid_grant") throw new SessionExpiredError();
+    throw new Error(`Could not refresh the sign-in: ${describeOidcError(error)}`);
+  }
+  const claims = tokens.claims();
+  // A refresh continues one person's login.
+  if (claims && claims.sub !== credentials.mentraUserId) throw new SessionExpiredError();
+  const storedAt = new Date();
+  return {
+    ...credentials,
+    token: tokens.access_token,
+    refreshToken: tokens.refresh_token ?? credentials.refreshToken,
+    expiresAt: new Date(expiresAtMs(tokens, storedAt.getTime())).toISOString(),
+    email: typeof claims?.email === "string" ? claims.email : credentials.email,
+    storedAt: storedAt.toISOString(),
+  };
+}
+
+/**
+ * Revoke this login's refresh token at the sign-in server's revocation
+ * endpoint. Confirmed only when the server answered 200. This ends only this
+ * login: the person's other CLI logins and the Developer Console keep theirs.
+ */
+export async function revokeLogin(credentials: CliCredentials): Promise<{ confirmed: boolean }> {
+  try {
+    const config = await ensureOidcClient({ oidcIssuer: credentials.issuer, cliClientId: credentials.clientId });
+    if (!config.serverMetadata().revocation_endpoint) return { confirmed: false };
+    await client.tokenRevocation(config, credentials.refreshToken, { token_type_hint: "refresh_token" });
+    return { confirmed: true };
+  } catch {
+    return { confirmed: false };
+  }
+}
+
+/** When the access token in `tokens` expires, in epoch milliseconds. */
+export function expiresAtMs(tokens: { expiresIn(): number | undefined; access_token: string }, now = Date.now()): number {
+  const expiresIn = tokens.expiresIn();
+  if (typeof expiresIn === "number") return now + expiresIn * 1000;
+  const exp = jwtExpiry(tokens.access_token);
+  // Unknown: treat as expired, so the next command refreshes it.
+  return exp ? exp * 1000 : now;
+}
+
+function jwtExpiry(token: string): number {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { exp?: unknown };
+    return typeof payload.exp === "number" ? payload.exp : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** A short, printable reason for an openid-client failure. */
+export function describeOidcError(error: unknown): string {
+  if (error instanceof client.ResponseBodyError) return error.error;
+  if (error instanceof client.AuthorizationResponseError) return error.error;
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 type ErrorBody = { error?: string; error_description?: string };

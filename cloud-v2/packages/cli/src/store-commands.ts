@@ -15,13 +15,13 @@ import {
   updateListing,
   uploadListingAsset,
   type StoreAsset,
+  type StoreCredentials,
   type StoreListingInput,
 } from "./api";
-import type { CliCredentials } from "./credentials";
 
-export function registerStoreCommands(program: Command, requireCredentials: () => Promise<CliCredentials | null>) {
+export function registerStoreCommands(program: Command, requireCredentials: () => Promise<StoreCredentials | null>) {
   const run =
-    (action: (creds: CliCredentials, ...args: any[]) => Promise<void>) =>
+    (action: (creds: StoreCredentials, ...args: any[]) => Promise<void>) =>
     async (...args: any[]) => {
       try {
         const creds = await requireCredentials();

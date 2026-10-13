@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { Command } from "commander";
 import {
   buildProduction as buildMiniappProduction,
   createAndSavePackageSigningKey,
@@ -11,6 +10,7 @@ import {
   pack as packMiniapp,
   publisherKeyFingerprint,
 } from "@mentra/miniapp-cli";
+import { Command, Option } from "commander";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -19,142 +19,158 @@ import {
   createRelease,
   createWorkspace,
   deleteApp,
+  ensureOidcClient,
   getAdminMe,
   getConsoleSession,
+  getCoreAdminMe,
   listApps,
   listReleases,
-  pollLoginToken,
   publishRelease,
   readPublishingProfile,
-  refreshLoginToken,
   resolveWorkspaceId,
+  revokeLogin,
+  SessionExpiredError,
   setPackagePrefix,
-  startLogin,
   submitRelease,
   type CliWorkspace,
   type ConsoleSessionResponse,
+  type StoreCredentials,
 } from "./api";
-import { getConfig } from "./config";
-import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
+import { getConfig, targetLabel, type CliConfig, type CliTarget } from "./config";
+import {
+  clearCredentials,
+  cliHome,
+  isStoredLogin,
+  loadStoredLogin,
+  saveCredentials,
+  targetFields,
+  type CliCredentials,
+  type CommandCredentials,
+} from "./credentials";
+import { loopbackLogin } from "./loopback-login";
 import { openBrowser } from "./open-browser";
+import { loadFreshCredentials } from "./session";
 import { verifyPackedBundle } from "./validate-bundle";
 import { registerStoreCommands } from "./store-commands";
+
+/** Credentials for a Store command: a stored login or `MENTRA_CLI_TOKEN`, with the Store they go to. */
+type StoreSession = CommandCredentials & StoreCredentials;
 
 const program = new Command();
 const CLI_VERSION = (
   JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
 ).version;
 
-program.name("mentra").description("Mentra developer CLI").version(CLI_VERSION)
-  .option("--store-url <url>", "use an explicit local or self-hosted Store")
-  .hook("preAction", command => {
-    const storeUrl = command.opts().storeUrl;
-    if (storeUrl) process.env.MENTRA_STORE_URL = storeUrl;
+program
+  .name("mentra")
+  .description("Mentra developer CLI")
+  .version(CLI_VERSION)
+  .option("--store-url <url>", "use this Mentra Miniapp Store (MENTRA_STORE_URL)")
+  .option("--core-url <url>", "use a Core without a Store, such as a Mentra Private Cloud (MENTRA_CORE_URL)")
+  .hook("preAction", (command) => {
+    const { storeUrl, coreUrl } = command.opts<{ storeUrl?: string; coreUrl?: string }>();
+    if (storeUrl && coreUrl) {
+      console.error("Use either --store-url or --core-url, not both.");
+      process.exit(1);
+    }
+    // A flag replaces the environment's choice for this run.
+    if (storeUrl) {
+      process.env.MENTRA_STORE_URL = storeUrl;
+      delete process.env.MENTRA_CORE_URL;
+    }
+    if (coreUrl) {
+      process.env.MENTRA_CORE_URL = coreUrl;
+      delete process.env.MENTRA_STORE_URL;
+    }
   });
 
 program
   .command("login")
-  .description("Sign in to Mentra Developer Console")
-  .option("--no-open", "print the login URL without opening a browser")
-  .action(async (options: { open: boolean }) => {
-    const config = getConfig();
-    let challenge;
+  .description("Sign in to Mentra in your browser")
+  .option("--no-browser", "print the sign-in URL instead of opening a browser (for SSH, forward the port it names)")
+  .addOption(new Option("--no-open", "same as --no-browser").hideHelp())
+  .action(async (options: { browser: boolean; open: boolean }) => {
     try {
-      challenge = await startLogin(config);
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exitCode = 1;
-      return;
-    }
-
-    console.log("Sign in to Mentra Developer Console");
-    console.log("");
-    console.log(`Open: ${challenge.verification_uri_complete}`);
-    console.log(`Code: ${challenge.user_code}`);
-    console.log("");
-
-    if (options.open) {
-      const opened = await openBrowser(challenge.verification_uri_complete);
-      if (!opened) console.log("Could not open a browser automatically.");
-    }
-
-    const deadline = Date.now() + challenge.expires_in * 1000;
-    process.stdout.write("Waiting for browser approval");
-
-    while (Date.now() < deadline) {
-      const token = await pollLoginToken(config, challenge.device_code);
-      if ("status" in token) {
-        if (token.status === "slow_down") {
-          await sleep(challenge.interval * 1000);
-        }
+      const config = getConfig();
+      const oidc = await ensureOidcClient(config);
+      const result = await loopbackLogin(oidc, {
+        openBrowser: options.browser && options.open ? openBrowser : async () => false,
+        print: (line) => console.log(line),
+      });
+      const credentials: CliCredentials = {
+        token: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresAt: new Date(result.expiresAt).toISOString(),
+        mentraUserId: result.subject,
+        email: result.email,
+        issuer: oidc.serverMetadata().issuer,
+        clientId: oidc.clientMetadata().client_id,
+        ...targetFields(config.target),
+        storedAt: new Date().toISOString(),
+      };
+      let storage = await saveCredentials(credentials);
+      if (config.target.kind === "core") {
+        console.log(`Signed in as ${result.email ?? result.subject}`);
+        console.log(`Core: ${config.target.url}`);
       } else {
-        process.stdout.write("\n");
-        const storedAt = new Date();
-        const expiresAt =
-          typeof token.expires_in === "number"
-            ? new Date(storedAt.getTime() + token.expires_in * 1000)
-            : expiresAtFromToken(token.access_token)
-              ? new Date(expiresAtFromToken(token.access_token)! * 1000)
-              : undefined;
-        const credentials: CliCredentials = {
-          token: token.access_token,
-          refreshToken: token.refresh_token,
-          workosUserId: token.user.id,
-          email: token.user.email,
-          organizationId: token.organization_id,
-          authenticationMethod: token.authentication_method,
-          storeUrl: config.storeUrl,
-          storedAt: storedAt.toISOString(),
-          expiresAt: expiresAt?.toISOString(),
-        };
-        let availableWorkspaceCount = 0;
-        try {
-          const session = await getConsoleSession(credentials);
-          availableWorkspaceCount = session.workspaces.length;
-          credentials.workspaceId =
-            session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
-        } catch {
-          // Authentication still succeeded. The first Store command will report
-          // any connectivity or workspace-selection problem explicitly.
-        }
-        const storage = await saveCredentials(credentials);
-        console.log(`Signed in as ${token.user.email}`);
-        if (token.organization_id) console.log(`WorkOS organization: ${token.organization_id}`);
-        if (credentials.workspaceId) console.log(`Workspace: ${credentials.workspaceId}`);
-        if (availableWorkspaceCount > 1 && !credentials.workspaceId) {
-          console.log("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
-        }
-        console.log(`Credentials stored in ${storage === "keychain" ? "OS keychain" : "~/.mentra/cli-v2"}`);
-        return;
+        storage = (await announceStoreLogin(credentials, config.target.url)) ?? storage;
       }
-
-      process.stdout.write(".");
-      await sleep(challenge.interval * 1000);
+      console.log(`Credentials stored in ${storage === "keychain" ? "the OS keychain" : cliHome()}`);
+    } catch (error) {
+      fail(error);
     }
-
-    process.stdout.write("\n");
-    console.error("Login timed out. Run `mentra login` to try again.");
-    process.exitCode = 1;
   });
+
+/**
+ * After a Store login: say who the Store sees, and select the workspace when
+ * the Store reports one active or the person has only one. Returns where the
+ * login was stored again, when it was.
+ */
+async function announceStoreLogin(
+  credentials: CliCredentials,
+  storeUrl: string,
+): Promise<"keychain" | "file" | null> {
+  let session: ConsoleSessionResponse;
+  try {
+    session = await getConsoleSession({ ...credentials, storeUrl });
+  } catch (error) {
+    // Signed in all the same; the first Store command reports the problem again.
+    console.log(`Signed in as ${credentials.email ?? credentials.mentraUserId}`);
+    console.error(`Could not reach the Mentra Miniapp Store at ${storeUrl}: ${message(error)}`);
+    return null;
+  }
+  const workspaceId =
+    session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
+  const storage = workspaceId ? await saveCredentials({ ...credentials, workspaceId }) : null;
+  console.log(`Signed in as ${session.user.email}`);
+  if (workspaceId) console.log(`Workspace: ${workspaceId}`);
+  if (session.workspaces.length > 1 && !workspaceId) {
+    console.log("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
+  }
+  return storage;
+}
 
 program
   .command("whoami")
-  .description("Show the current CLI login")
+  .description("Show the current sign-in")
   .action(async () => {
-    const config = getConfig();
-    const creds = await loadFreshCredentials(config);
-    if (!creds) {
-      console.error("Not signed in. Run `mentra login`.");
-      process.exitCode = 1;
-      return;
+    try {
+      const config = getConfig();
+      const creds = await loadSession(config.target);
+      if (!creds) return;
+      if (isStoredLogin(creds)) {
+        console.log(`Email: ${creds.email ?? "unknown"}`);
+        console.log(`Core user: ${creds.mentraUserId}`);
+        console.log(`Issuer: ${creds.issuer}`);
+      } else {
+        console.log("Signed in with MENTRA_CLI_TOKEN");
+      }
+      console.log(`${targetLabel(config.target)}: ${config.target.url}`);
+      if (creds.workspaceId) console.log(`Workspace: ${creds.workspaceId}`);
+      if (isStoredLogin(creds)) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
+    } catch (error) {
+      fail(error);
     }
-
-    console.log(`Email: ${creds.email}`);
-    console.log(`WorkOS user: ${creds.workosUserId}`);
-    if (creds.organizationId) console.log(`WorkOS organization: ${creds.organizationId}`);
-    if (creds.workspaceId) console.log(`Workspace: ${creds.workspaceId}`);
-    console.log(`Store: ${creds.storeUrl}`);
-    if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
 
 const workspace = program.command("workspace").description("Manage the active workspace");
@@ -163,7 +179,7 @@ workspace
   .command("list")
   .description("List workspaces available to this account")
   .action(async () => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -186,10 +202,13 @@ workspace
   .argument("<workspaceId>", "workspace id from `mentra workspace list`")
   .description("Select the workspace used by future CLI commands")
   .action(async (workspaceId: string) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
+      if (!isStoredLogin(creds)) {
+        throw new Error("MENTRA_CLI_TOKEN is set: select its workspace with MENTRA_CLI_WORKSPACE_ID instead.");
+      }
       const session = await getConsoleSession(creds);
       const selected = session.workspaces.find(candidate => candidate.workspaceId === workspaceId);
       if (!selected) throw new Error("You do not have access to that workspace");
@@ -204,7 +223,7 @@ workspace
   .command("show")
   .description("Show the active workspace and its publishing profile")
   .action(async () => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -226,7 +245,7 @@ workspace
       } else if (profile.state === "not_set" || !profile.profile.packagePrefix) {
         console.log("Package prefix: not set");
         console.log(
-          "Set one with `mentra workspace set-prefix <prefix>` (for example com.example) or in the Developer Console.",
+          `Set one with \`mentra workspace set-prefix <prefix>\` (for example com.example) or in the Developer Console at ${getConfig().consoleUrl}.`,
         );
       } else {
         console.log(`Package prefix: ${profile.profile.packagePrefix}`);
@@ -242,7 +261,7 @@ workspace
   .argument("<prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
   .description("Set the package prefix of the active workspace")
   .action(async (prefix: string) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -260,15 +279,16 @@ workspace
   .option("--package-prefix <prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
   .description("Create a workspace and make it the active one")
   .action(async (name: string, options: { packagePrefix?: string }) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
       const created = await createWorkspace(creds, name);
       // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
       const next = {...creds, workspaceId: created.workspaceId};
-      await saveCredentials(next);
+      if (isStoredLogin(next)) await saveCredentials(next);
       console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
+      if (!isStoredLogin(next)) console.log(`Set MENTRA_CLI_WORKSPACE_ID=${created.workspaceId} to use it with MENTRA_CLI_TOKEN.`);
       if (options.packagePrefix) {
         try {
           const profile = await setPackagePrefix(next, options.packagePrefix);
@@ -349,7 +369,7 @@ miniapps
   .command("list")
   .description("List miniapps owned by the active workspace")
   .action(async () => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -376,7 +396,7 @@ miniapps
   .option("--description <description>", "short miniapp description")
   .description("Reserve a miniapp package name")
   .action(async (packageName: string, options: { name: string; description?: string }) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -396,7 +416,7 @@ miniapps
   .argument("<packageName>", "package name to archive")
   .description("Archive a miniapp package record")
   .action(async (packageName: string) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -415,7 +435,7 @@ releases
   .description("List releases for a miniapp")
   .option("--json", "print machine-readable JSON")
   .action(async (packageName: string, options: { json?: boolean }) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -446,7 +466,7 @@ releases
   .option("--json", "print machine-readable JSON")
   .description("Show release state and review feedback")
   .action(async (packageName: string, releaseId: string | undefined, options: { json?: boolean }) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
     try {
       const { releases: releaseList } = await listReleases(creds, packageName);
@@ -473,7 +493,7 @@ releases
   .argument("<releaseId>", "release id")
   .description("Submit an uploaded release for admin review")
   .action(async (packageName: string, releaseId: string) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     try {
@@ -488,12 +508,21 @@ const admin = program.command("admin").description("Internal Mentra admin operat
 
 admin
   .command("me")
-  .description("Show the current admin identity")
+  .description("Show who you are signed in as and what you may administer")
   .action(async () => {
-    const creds = await requireCredentials();
-    if (!creds) return;
-
     try {
+      const config = getConfig();
+      if (config.target.kind === "core") {
+        const creds = await loadSession(config.target);
+        if (!creds) return;
+        const me = await getCoreAdminMe({token: creds.token, coreUrl: config.target.url});
+        console.log(`Signed in as: ${me.user?.email ?? me.credential?.label ?? "unknown"}`);
+        console.log(`Organization capabilities: ${me.organization.capabilities.join(", ") || "none"}`);
+        console.log(`Core: ${config.target.url}`);
+        return;
+      }
+      const creds = await requireStoreCredentials();
+      if (!creds) return;
       const me = await getAdminMe(creds);
       console.log(`Admin: ${me.user?.email ?? "unknown"}`);
       console.log(`Store: ${creds.storeUrl}`);
@@ -571,7 +600,7 @@ program
     track: string;
     json?: boolean;
   }) => {
-    const creds = await requireCredentials();
+    const creds = await requireStoreCredentials();
     if (!creds) return;
 
     const cwd = resolve(options.cwd);
@@ -664,86 +693,63 @@ program
 
 program
   .command("logout")
-  .description("Clear the current CLI login")
+  .description("Sign out: revoke this login at the sign-in server and delete it from this computer")
   .action(async () => {
-    await clearCredentials(getConfig().storeUrl);
-    console.log("Logged out");
+    try {
+      const target = getConfig().target;
+      const stored = await loadStoredLogin(target);
+      let confirmed = false;
+      try {
+        if (stored) confirmed = (await revokeLogin(stored)).confirmed;
+      } finally {
+        // Deleted even when the sign-in server could not be reached.
+        await clearCredentials(target);
+      }
+      if (!stored) console.log("Not signed in");
+      else console.log(confirmed ? "Signed out" : "Signed out locally; server sign-out not confirmed");
+    } catch (error) {
+      fail(error);
+    }
   });
 
-registerStoreCommands(program, requireCredentials);
+registerStoreCommands(program, requireStoreCredentials);
 await program.parseAsync();
 
-async function requireCredentials(): Promise<CliCredentials | null> {
-  const config = getConfig();
-  const creds = await loadFreshCredentials(config);
-  if (!creds) {
+/**
+ * What a command acts with against `target`, refreshed when needed. Prints
+ * why and sets a failing exit code when there is nothing to act with.
+ */
+async function loadSession(target: CliTarget): Promise<CommandCredentials | null> {
+  try {
+    const creds = await loadFreshCredentials(target);
+    if (creds) return creds;
     console.error("Not signed in. Run `mentra login`.");
-    process.exitCode = 1;
-    return null;
-  }
-  return creds;
-}
-
-async function loadFreshCredentials(config = getConfig()): Promise<CliCredentials | null> {
-  const creds = await loadCredentials(config.storeUrl);
-  if (!creds) return null;
-  if (!shouldRefresh(creds)) return creds;
-
-  if (!creds.refreshToken) {
-    console.error("Session expired. Run `mentra login`.");
-    process.exitCode = 1;
-    return null;
-  }
-
-  try {
-    const refreshed = await refreshLoginToken(
-      {...config, storeUrl: creds.storeUrl},
-      creds.refreshToken,
-      creds.organizationId,
-    );
-    const storedAt = new Date();
-    const expiresAt =
-      typeof refreshed.expires_in === "number"
-        ? new Date(storedAt.getTime() + refreshed.expires_in * 1000)
-        : expiresAtFromToken(refreshed.access_token)
-          ? new Date(expiresAtFromToken(refreshed.access_token)! * 1000)
-          : undefined;
-    const nextCredentials: CliCredentials = {
-      token: refreshed.access_token,
-      refreshToken: refreshed.refresh_token ?? creds.refreshToken,
-      workosUserId: refreshed.user.id,
-      email: refreshed.user.email,
-      organizationId: refreshed.organization_id,
-      workspaceId: creds.workspaceId,
-      authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
-      storeUrl: creds.storeUrl,
-      storedAt: storedAt.toISOString(),
-      expiresAt: expiresAt?.toISOString(),
-    };
-    await saveCredentials(nextCredentials);
-    return {...nextCredentials, storeUrl: creds.storeUrl};
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+    console.error(error instanceof SessionExpiredError ? error.message : message(error));
+  }
+  process.exitCode = 1;
+  return null;
+}
+
+/** Credentials for a command that needs a Mentra Miniapp Store. */
+async function requireStoreCredentials(): Promise<StoreSession | null> {
+  let config: CliConfig;
+  try {
+    config = getConfig();
+  } catch (error) {
+    fail(error);
     return null;
   }
-}
-
-function shouldRefresh(creds: CliCredentials): boolean {
-  const expiresAtMs = creds.expiresAt ? Date.parse(creds.expiresAt) : expiresAtFromToken(creds.token) * 1000;
-  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0) return false;
-  return expiresAtMs - Date.now() < 60_000;
-}
-
-function expiresAtFromToken(token: string): number {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as {
-      exp?: unknown;
-    };
-    return typeof payload.exp === "number" ? payload.exp : 0;
-  } catch {
-    return 0;
+  if (config.target.kind !== "store") {
+    fail(
+      new Error(
+        "This command needs a Mentra Miniapp Store. MENTRA_CORE_URL (or --core-url) selects a Core without a Store, where only login, logout, whoami and admin me work.",
+      ),
+    );
+    return null;
   }
+  const creds = await loadSession(config.target);
+  return creds ? { ...creds, storeUrl: config.target.url } : null;
 }
 
 function readManifest(cwd: string): Record<string, unknown> {
@@ -765,7 +771,7 @@ function stringField(manifest: Record<string, unknown>, field: string): string {
 }
 
 async function ensureMiniappRecord(
-  creds: CliCredentials,
+  creds: StoreCredentials,
   input: { packageName: string; displayName: string; description?: string | null },
 ): Promise<void> {
   try {
@@ -786,7 +792,7 @@ async function ensureMiniappRecord(
 }
 
 /** The workspace commands act in: the saved selection, else the Store's active one, else the account's only one. */
-function activeWorkspace(creds: CliCredentials, session: ConsoleSessionResponse): CliWorkspace | null {
+function activeWorkspace(creds: StoreCredentials, session: ConsoleSessionResponse): CliWorkspace | null {
   const id =
     creds.workspaceId ??
     session.activeWorkspaceId ??
@@ -794,11 +800,11 @@ function activeWorkspace(creds: CliCredentials, session: ConsoleSessionResponse)
   return session.workspaces.find(candidate => candidate.workspaceId === id) ?? null;
 }
 
-function fail(error: unknown): void {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function fail(error: unknown): void {
+  console.error(message(error));
+  process.exitCode = 1;
 }

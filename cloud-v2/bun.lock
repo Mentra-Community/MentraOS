@@ -20,7 +20,7 @@
     },
     "packages/cli": {
       "name": "@mentra/cli",
-      "version": "2.0.0-dev.1",
+      "version": "2.0.0-dev.2",
       "bin": {
         "mentra": "./src/index.ts",
       },
@@ -28,6 +28,7 @@
         "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
         "commander": "^14.0.2",
         "jszip": "^3.10.1",
+        "openid-client": "6.8.8",
         "qrcode": "^1.5.4",
       },
       "devDependencies": {

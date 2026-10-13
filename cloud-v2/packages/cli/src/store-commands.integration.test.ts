@@ -214,6 +214,8 @@ console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.j
           // A stored login replaces the environment token, as for someone who ran `mentra login`.
           MENTRA_CLI_TOKEN: storedLogin ? "" : "fixture-token",
           MENTRA_CLI_WORKSPACE_ID: "",
+          MENTRA_CLI_HOME: join(cwd, "cli-home"),
+          MENTRA_CORE_URL: "",
           MENTRA_STORE_URL: `http://127.0.0.1:${server.port}`,
           MENTRA_MINIAPP_SIGNING_KEY_JSON: "must-not-be-used",
           ...env,
@@ -243,18 +245,21 @@ console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.j
     workspaceHeaders,
     env,
     /** Act as a person who has run `mentra login`, optionally with a workspace already selected. */
-    signIn: (workspaceId?: string, organizationId?: string) => {
+    signIn: (workspaceId?: string) => {
       storedLogin = true;
       writeFileSync(
         loginPath,
         JSON.stringify({
           token: "fixture-token",
-          workosUserId: "workos_user",
+          refreshToken: "fixture-refresh",
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          mentraUserId: "mentra_user",
           email: "dev@example.test",
+          issuer: "https://account.example.test",
+          clientId: "mentra-cli",
           storeUrl: `http://127.0.0.1:${server.port}`,
           storedAt: new Date().toISOString(),
           ...(workspaceId ? { workspaceId } : {}),
-          ...(organizationId ? { organizationId } : {}),
         }),
       );
     },
@@ -411,13 +416,22 @@ test("workspace use stores the selection, which later commands send", async () =
   expect(whoami.stdout).toContain("Workspace: ws_2");
 });
 
-test("whoami labels the WorkOS organization id as WorkOS's, not as the Core organization", async () => {
+test("whoami shows the person, the Store and the selected workspace", async () => {
   const f = await fixture(undefined, false, ["ws_1"]);
-  f.signIn("ws_1", "org_workos_fixture");
+  f.signIn("ws_1");
   const whoami = await f.cli("whoami");
   expect(whoami.code).toBe(0);
-  expect(whoami.stdout).toContain("WorkOS organization: org_workos_fixture\n");
-  expect(whoami.stdout).not.toMatch(/^Organization:/m);
+  expect(whoami.stdout).toContain("Email: dev@example.test\n");
+  expect(whoami.stdout).toContain("Core user: mentra_user\n");
+  expect(whoami.stdout).toContain("Workspace: ws_1\n");
+});
+
+test("workspace use with MENTRA_CLI_TOKEN points at MENTRA_CLI_WORKSPACE_ID instead of storing anything", async () => {
+  const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
+  const result = await f.cli("workspace", "use", "ws_2");
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("MENTRA_CLI_WORKSPACE_ID");
+  expect(existsSync(join(f.cwd, "stored-login.json"))).toBe(false);
 });
 
 test("workspace use refuses a workspace the caller does not belong to", async () => {

@@ -4,24 +4,27 @@ import {
   createRelease,
   createWorkspace,
   createWorkspaceCredential,
+  ensureOidcClient,
   getConsoleSession,
   getPublishingProfile,
   listWorkspaceCredentials,
+  refreshLoginToken,
   resolveWorkspaceId,
+  revokeLogin,
   revokeWorkspaceCredential,
+  SessionExpiredError,
   setPackagePrefix,
-  startLogin,
   WorkspaceSelectionRequiredError,
   type CliWorkspace,
 } from "./api";
-import type { CliConfig } from "./config";
+import type { CliCredentials } from "./credentials";
+import { loopbackLogin } from "./loopback-login";
+import { startFakeOidcIssuer, type FakeOidcIssuer } from "./testing/fake-oidc-issuer";
+import { expectLoopbackPortsFree } from "./testing/loopback";
 
 const credentials = {
   token: "token",
-  workosUserId: "user",
-  email: "developer@example.com",
   storeUrl: "https://store.example.test",
-  storedAt: new Date(0).toISOString(),
 };
 
 // `mock.restore()` only reverts spies; it leaves a plain `globalThis.fetch = ...`
@@ -74,37 +77,181 @@ describe("createRelease", () => {
   });
 });
 
-describe("startLogin", () => {
-  test("discovers the public WorkOS client id from the selected Store", async () => {
-    const config: CliConfig = {
-          storeUrl: "https://store.example.test",
-      consoleUrl: "https://console.example.test",
-      workosClientId: "",
-      workosApiBaseUrl: "https://api.workos.test",
+/** A Store or Core answering only its CLI sign-in settings, recording what it was asked. */
+function signInSettingsServer(path: string, answer: () => Response) {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url);
+      requests.push(url.pathname);
+      return url.pathname === path ? answer() : new Response("not found", { status: 404 });
+    },
+  });
+  return { url: `http://127.0.0.1:${server.port}`, requests, stop: () => server.stop(true) };
+}
+
+describe("ensureOidcClient", () => {
+  let idp: FakeOidcIssuer;
+  const stops: Array<() => void> = [];
+  afterEach(() => {
+    for (const stop of stops.splice(0)) stop();
+  });
+
+  async function issuer() {
+    idp = await startFakeOidcIssuer({ publicClientId: "mentra-cli" });
+    stops.push(() => idp.stop());
+    return idp;
+  }
+
+  test("uses MENTRA_CLI_OIDC_ISSUER and MENTRA_CLI_CLIENT_ID when both are set, without asking the Store", async () => {
+    await issuer();
+    const store = signInSettingsServer("/api/console/auth/cli-config", () => Response.json({ issuer: "unused", clientId: "unused" }));
+    stops.push(store.stop);
+    const config = await ensureOidcClient({
+      oidcIssuer: idp.issuer,
+      cliClientId: "mentra-cli",
+      target: { kind: "store", url: store.url },
+    });
+    expect(config.serverMetadata().issuer).toBe(idp.issuer);
+    expect(config.clientMetadata()).toMatchObject({ client_id: "mentra-cli", id_token_signed_response_alg: "EdDSA" });
+    expect(store.requests).toEqual([]);
+  });
+
+  test("asks the Store's /api/console/auth/cli-config otherwise", async () => {
+    await issuer();
+    const store = signInSettingsServer("/api/console/auth/cli-config", () =>
+      Response.json({ issuer: idp.issuer, clientId: "mentra-cli" }),
+    );
+    stops.push(store.stop);
+    const config = await ensureOidcClient({ oidcIssuer: "", cliClientId: "", target: { kind: "store", url: store.url } });
+    expect(config.serverMetadata().revocation_endpoint).toBe(`${idp.issuer}/revoke`);
+    expect(config.clientMetadata().client_id).toBe("mentra-cli");
+    expect(store.requests).toEqual(["/api/console/auth/cli-config"]);
+  });
+
+  test("Core mode resolves the issuer from Core's /api/cli/config", async () => {
+    await issuer();
+    const core = signInSettingsServer("/api/cli/config", () => Response.json({ issuer: idp.issuer, clientId: "mentra-cli" }));
+    stops.push(core.stop);
+    const config = await ensureOidcClient({ target: { kind: "core", url: core.url } });
+    expect(config.serverMetadata().issuer).toBe(idp.issuer);
+    expect(core.requests).toEqual(["/api/cli/config"]);
+  });
+
+  test("a Core without CLI sign-in says so", async () => {
+    const core = signInSettingsServer("/api/cli/config", () =>
+      Response.json({ error: "not_configured", error_description: "off" }, { status: 404 }),
+    );
+    stops.push(core.stop);
+    await expect(ensureOidcClient({ target: { kind: "core", url: core.url } })).rejects.toThrow(
+      `This Core at ${core.url} does not offer CLI sign-in.`,
+    );
+  });
+
+  test("only one of the two variables is refused", async () => {
+    await expect(ensureOidcClient({ oidcIssuer: "https://account.example.test", cliClientId: "" })).rejects.toThrow(
+      "Set both MENTRA_CLI_OIDC_ISSUER and MENTRA_CLI_CLIENT_ID, or neither.",
+    );
+  });
+
+  test("a plain-HTTP issuer off this machine is refused before any request", async () => {
+    const store = signInSettingsServer("/api/console/auth/cli-config", () =>
+      Response.json({ issuer: "http://account.example.test", clientId: "mentra-cli" }),
+    );
+    stops.push(store.stop);
+    await expect(ensureOidcClient({ target: { kind: "store", url: store.url } })).rejects.toThrow("must be an HTTPS URL");
+  });
+});
+
+describe("refresh and revocation", () => {
+  let idp: FakeOidcIssuer;
+  afterEach(async () => {
+    idp?.stop();
+    await expectLoopbackPortsFree();
+  });
+
+  async function signedIn(): Promise<CliCredentials> {
+    idp = await startFakeOidcIssuer({ publicClientId: "mentra-cli" });
+    const config = await ensureOidcClient({ oidcIssuer: idp.issuer, cliClientId: "mentra-cli" });
+    let browser: Promise<unknown> | undefined;
+    const result = await loopbackLogin(config, {
+      openBrowser: async (url) => {
+        browser = idp.approveInBrowser(url, { sub: "mu_1", email: "ada@example.com" });
+        return true;
+      },
+      print: () => {},
+    });
+    await browser;
+    return {
+      token: result.accessToken,
+      refreshToken: result.refreshToken,
+      expiresAt: new Date(result.expiresAt).toISOString(),
+      mentraUserId: result.subject,
+      email: result.email,
+      issuer: idp.issuer,
+      clientId: "mentra-cli",
+      storeUrl: "https://store.example.test",
+      storedAt: new Date().toISOString(),
     };
-    const requests: string[] = [];
-    globalThis.fetch = mock(async (url: string | URL | Request) => {
-      requests.push(String(url));
-      if (String(url).endsWith("/api/console/auth/cli-config")) {
-        return Response.json({ workosClientId: "client_public_123" });
-      }
-      return Response.json({
-        device_code: "device",
-        user_code: "USER-CODE",
-        verification_uri: "https://login.example.test/device",
-        verification_uri_complete: "https://login.example.test/device?code=USER-CODE",
-        expires_in: 600,
-        interval: 5,
-      });
-    }) as unknown as typeof fetch;
+  }
 
-    await startLogin(config);
+  test("refresh rotates the refresh token", async () => {
+    const login = await signedIn();
+    const refreshed = await refreshLoginToken(login);
+    expect(refreshed.token).not.toBe(login.token);
+    expect(refreshed.refreshToken).not.toBe(login.refreshToken);
+    expect(refreshed).toMatchObject({ mentraUserId: "mu_1", email: "ada@example.com", storeUrl: login.storeUrl });
+    expect(idp.refreshTokenActive(login.refreshToken)).toBe(false);
+    expect(idp.refreshTokenActive(refreshed.refreshToken)).toBe(true);
+    expect(idp.accessTokenOwner(refreshed.token)).toMatchObject({ sub: "mu_1" });
+  });
 
-    expect(requests).toEqual([
-      "https://store.example.test/api/console/auth/cli-config",
-      "https://api.workos.test/user_management/authorize/device",
-    ]);
-    expect(config.workosClientId).toBe("client_public_123");
+  test("reusing a spent refresh token is a session expiry and ends the grant", async () => {
+    const login = await signedIn();
+    const refreshed = await refreshLoginToken(login);
+    const error = await refreshLoginToken(login).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SessionExpiredError);
+    expect((error as Error).message).toBe("Session expired. Run `mentra login`.");
+    expect(idp.refreshTokenActive(refreshed.refreshToken)).toBe(false);
+  });
+
+  test("revokeLogin revokes the refresh token at the revocation endpoint, which then fails (L09)", async () => {
+    const login = await signedIn();
+    expect(await revokeLogin(login)).toEqual({ confirmed: true });
+    expect(idp.revocations).toEqual([{ token: login.refreshToken, hint: "refresh_token", clientId: "mentra-cli" }]);
+    await expect(refreshLoginToken(login)).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+
+  test("revokeLogin ends only this login", async () => {
+    const first = await signedIn();
+    const idpForBoth = idp;
+    const config = await ensureOidcClient({ oidcIssuer: idp.issuer, cliClientId: "mentra-cli" });
+    let browser: Promise<unknown> | undefined;
+    const second = await loopbackLogin(config, {
+      openBrowser: async (url) => {
+        browser = idpForBoth.approveInBrowser(url, { sub: "mu_1" });
+        return true;
+      },
+      print: () => {},
+    });
+    await browser;
+    expect(await revokeLogin(first)).toEqual({ confirmed: true });
+    expect(idp.refreshTokenActive(second.refreshToken)).toBe(true);
+  });
+
+  test("revokeLogin is not confirmed when the revocation endpoint fails", async () => {
+    const login = await signedIn();
+    idp.failRevocation = true;
+    expect(await revokeLogin(login)).toEqual({ confirmed: false });
+    expect(idp.refreshTokenActive(login.refreshToken)).toBe(true);
+  });
+
+  test("revokeLogin is not confirmed when the sign-in server cannot be reached", async () => {
+    const login = await signedIn();
+    idp.stop();
+    expect(await revokeLogin(login)).toEqual({ confirmed: false });
   });
 });
 
