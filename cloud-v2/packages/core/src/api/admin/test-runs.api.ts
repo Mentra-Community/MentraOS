@@ -1,3 +1,4 @@
+import {createRoutineCaseApi} from './routine-cases.api'
 import {LaneControlsService} from '../../services/lane-controls.service'
 import {TestPendingQueueService} from "../../services/test-pending-queue.service";
 import {z} from "zod";
@@ -32,6 +33,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     return c.json({error: "test_results_unavailable"}, 503);
   });
   const suites = new TestSuiteService();
+  app.route("/follow-ups", createRoutineCaseApi());
   app.route("/reruns", createTestRerunRoutes(undefined, "admin"));
   app.get('/rerun-label', async c => {
     const input = z.object({routineId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/),

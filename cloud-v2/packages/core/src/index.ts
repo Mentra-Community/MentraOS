@@ -16,6 +16,7 @@
  * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
  */
 
+import {ensureRoutineCaseIndexes} from './models/routine-case.model'
 import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
@@ -60,6 +61,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   assertOrganizationConfiguration()
   await connectMongo(mongoUrl)
   try {
+    if (process.env.ROUTINE_CASE_API_ENABLED === 'true') await ensureRoutineCaseIndexes()
     await runStartupMigrations()
     // Refuse sign-in configuration that is incomplete or would let one source
     // vouch for another's people. With none of it set, Core starts as before.
