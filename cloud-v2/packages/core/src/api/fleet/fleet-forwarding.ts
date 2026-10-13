@@ -53,9 +53,9 @@
  * seconds.
  *
  * What Fleet receives. Core copies the method, the query, the body and the `content-type` and
- * `accept` headers. Every other inbound header is dropped, so nothing the caller sent under
- * `x-mentra-*`, `authorization` or `cookie` reaches Fleet. Core then adds, with `<ts>` the request
- * time in milliseconds:
+ * `accept` headers (the UI asset route copies two others, below). Every other inbound header is
+ * dropped, so nothing the caller sent under `x-mentra-*`, `authorization` or `cookie` reaches Fleet.
+ * Core then adds, with `<ts>` the request time in milliseconds:
  *
  *  - `x-mentra-service: core`, `x-mentra-service-timestamp: <ts>` and `x-mentra-service-signature`:
  *    `signServiceRequest` from `@mentra/workspace-contract/server` over `<ts>`, the method, the
@@ -81,9 +81,44 @@
  * Request bodies are treated as UTF-8 text (the Fleet API is JSON): the signature covers the text
  * and the same bytes are sent. The path Core signs is the path and query of the URL it sends, taken
  * from the same URL object.
+ *
+ * Fleet UI assets. `GET` and `HEAD` `/api/admin/fleet/ui/<rest>` -> `${CLOUD_CORE_FLEET_URL}/v1/admin/ui/<rest>`
+ * have a route of their own, ahead of the forwarder and behind the same admin gates. It relays the module
+ * the admin portal imports (`ui/entry.js`) through Core, so that it loads from the portal's own origin under
+ * `script-src 'self'`, and what it relays therefore runs there. The rules differ from the JSON routes':
+ *  - any other method is 405 (`Allow: GET, HEAD`). The forwarder refuses every other spelling of the `ui`
+ *    segment (`UI`, `//ui`), so nothing under it is ever relayed by the JSON rules;
+ *  - Fleet receives `if-none-match` and `if-modified-since` from the caller and no other header of theirs,
+ *    plus Core's `accept-encoding: identity` (outside the signature) so the bytes Core relays are the bytes
+ *    Fleet sent. The request is signed and carries the principal like any other;
+ *  - the caller gets `content-type`, `etag`, `last-modified`, `cache-control` and `vary` (added to any `Vary`
+ *    already on the response), and `content-length` only for an identity-encoded answer (`fetch` has decoded
+ *    any other, so the length Fleet declared is not the caller's), and `x-request-id` as above. Core adds
+ *    `x-content-type-options: nosniff` and `cross-origin-resource-policy: same-origin` to every answer of
+ *    the route, its own refusals included;
+ *  - the content type is checked first, for an error answer too: `text/javascript`, `application/javascript`,
+ *    `text/css`, `image/png|jpeg|webp|gif|avif`, `font/woff2|woff` and `application/json` are relayed as
+ *    Fleet sent them. `image/svg+xml` is relayed under Core's own `content-security-policy: default-src 'none';
+ *    style-src 'unsafe-inline'`, which replaces any Fleet sent. Anything else, `text/html` above all, is a 503
+ *    `fleet_unavailable`; so is an answer with no content type, unless it declares an empty body. A 204, 205 or
+ *    304 has no representation, so it is relayed with its validators and is not checked;
+ *  - the size is `CLOUD_CORE_FLEET_MAX_ASSET_BYTES` (default 25 MiB), not the JSON routes' response cap. An
+ *    answer that declares a length over it, a HEAD's included, is a 503 and its body is never read. Every
+ *    other body is streamed through a byte-counting `TransformStream` and never buffered whole. The status
+ *    cannot change once the headers are out, so an answer that declares no length (or a wrong one) and then
+ *    passes the cap is cut off instead: the caller's stream errors after at most the cap's bytes, and Core
+ *    ends its request to Fleet (aborts it: cancelling the body alone does not always close the connection),
+ *    so the rest is not downloaded. The same ends a stream when Fleet stalls past `CLOUD_CORE_FLEET_TIMEOUT_MS`
+ *    (it covers the whole read) or the caller goes away. The server under Core decides what the caller's
+ *    HTTP stack sees of such an error; Bun 1.3.10 ends the chunked response cleanly instead of resetting the
+ *    connection, so Fleet should always declare its assets' length, which makes an oversized one a clean 503;
+ *  - everything else (not installed, misconfigured, unsafe path, 5xx, redirect, a 401 turned into a 403, a
+ *    network error, a timeout before the headers) and its logging are the forwarder's. A stream cut short
+ *    is logged once more, at warn for the cap or the timeout and at debug for the caller leaving, with a
+ *    `reason` and no content.
  */
 
-import {createLogger} from "@mentra/cloud-shared"
+import {createLogger, type Logger} from "@mentra/cloud-shared"
 import {
   FORWARDED_PRINCIPAL_HEADERS,
   FORWARDING_SERVICE,
@@ -96,7 +131,7 @@ import {Hono, type Handler, type MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
 import type {StatusCode} from "hono/utils/http-status"
 import {ulid} from "ulid"
-import {fleetConfig, fleetLimits} from "../../services/fleet/fleet-config"
+import {fleetConfig, fleetLimits, type FleetConfig, type FleetLimits} from "../../services/fleet/fleet-config"
 import {phoneEmail} from "../../services/fleet/phone-email"
 import type {UserPrincipal} from "../../services/signin/principal.service"
 import {organizationCapabilities} from "../../services/workspaces/authorization.service"
@@ -117,6 +152,37 @@ const PASSED_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after"]
 const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304])
 
 const REQUEST_ID_HEADER = "x-request-id"
+
+/** The first path segment under the admin mount that holds Fleet's UI assets. */
+const UI_ASSET_SEGMENT = "ui"
+
+/** The only inbound headers the asset route copies upstream: a browser revalidating what it has cached. */
+const ASSET_REQUEST_HEADERS = ["if-none-match", "if-modified-since"] as const
+
+/**
+ * The upstream headers the asset route copies back, besides `content-type` (checked first), `content-length`
+ * (identity encoding only), `vary` (appended to the context's) and `x-request-id`.
+ */
+const ASSET_RESPONSE_HEADERS = ["etag", "last-modified", "cache-control"] as const
+
+/** What the asset route relays: what a page loads from its own origin. Anything else, `text/html` first, is refused. */
+const ASSET_CONTENT_TYPES: ReadonlySet<string> = new Set([
+  "text/javascript",
+  "application/javascript",
+  "text/css",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "font/woff2",
+  "font/woff",
+  "application/json",
+])
+
+/** SVG can carry script, so it is relayed only under Core's own policy, which allows none. */
+const SVG_CONTENT_TYPE = "image/svg+xml"
+const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'"
 
 type Audience = "client" | "admin"
 
@@ -272,23 +338,139 @@ const limitBody: MiddlewareHandler<AppEnv> = (c, next) => {
   })(c, next)
 }
 
+/** A Fleet that is installed and usable. */
+type ReadyFleet = Extract<FleetConfig, {state: "ready"}>
+
+/** What a forwarded request has settled before anything is read, signed or sent. */
+interface Admitted {
+  caller: Caller
+  fleet: ReadyFleet
+  limits: FleetLimits
+  /** The path after the mount prefix, as received. */
+  suffix: string
+  /** The query as received, with its "?" (or ""). */
+  query: string
+}
+
+/**
+ * What every forwarded route settles first, in this order: who is calling, whether Fleet is installed
+ * and usable, then the path. Returns the answer Core gives when a step refuses, or what the route may send.
+ */
+function admit(c: AppContext, audience: Audience): Admitted | Response {
+  const caller = callerOf(c, audience)
+  if (caller instanceof Response) return caller
+
+  const fleet = fleetConfig()
+  if (fleet.state === "not_installed") return c.json({error: "fleet_not_installed"}, 404)
+  if (fleet.state === "misconfigured") return unavailable(c)
+  const limits = fleetLimits()
+
+  const {path, query} = rawPathAndQuery(c.req.url)
+  const prefix = MOUNT_PREFIX[audience]
+  const suffix = path.slice(prefix.length)
+  if (!path.startsWith(prefix) || (suffix !== "" && !suffix.startsWith("/"))) {
+    return c.json({error: "not_found"}, 404)
+  }
+  if (!isSafeSuffix(suffix)) return c.json({error: "invalid_path"}, 400)
+  return {caller, fleet, limits, suffix, query}
+}
+
+/** Whether a path is under Fleet's UI assets, however its first segment is cased or spaced from the mount. */
+function isUiAssetPath(suffix: string): boolean {
+  const first = suffix.split("/").find(segment => segment !== "")
+  // `isSafeSuffix` has already decoded every segment once, so this cannot throw.
+  return first !== undefined && decodeURIComponent(first).toLowerCase() === UI_ASSET_SEGMENT
+}
+
+/** A request as sent to Fleet: the one URL that is signed and sent, with the headers that carry the signatures. */
+interface SignedRequest {
+  target: URL
+  headers: Headers
+  requestId: string
+}
+
+/**
+ * The request to send for `admitted`: Fleet's URL for the path, the inbound headers named in `copy` (and no
+ * others), and Core's signatures and request id. The signature covers the method, the path and query of that
+ * URL, and `body`.
+ */
+async function signRequest(
+  c: AppContext,
+  admitted: Admitted,
+  request: {method: string; body: string; copy: readonly string[]},
+): Promise<SignedRequest> {
+  const {caller, fleet, suffix, query} = admitted
+  const principal = await principalOf(caller)
+  // The one URL that is signed and sent, so the signature covers exactly the path and query on the wire.
+  const target = upstreamTarget(fleet.baseUrl, caller.audience, suffix, query)
+  const timestampMs = Date.now()
+  const requestId = c.get("reqId") ?? ulid()
+
+  const headers = new Headers()
+  for (const name of request.copy) {
+    const value = c.req.header(name)
+    if (value) headers.set(name, value)
+  }
+  headers.set(SERVICE_HEADERS.service, FORWARDING_SERVICE)
+  headers.set(SERVICE_HEADERS.timestamp, String(timestampMs))
+  headers.set(
+    SERVICE_HEADERS.signature,
+    signServiceRequest({
+      secret: fleet.secret,
+      method: request.method,
+      pathWithQuery: target.pathname + target.search,
+      body: request.body,
+      timestampMs,
+    }),
+  )
+  const signed = signForwardedPrincipal({secret: fleet.secret, timestampMs, principal})
+  headers.set(FORWARDED_PRINCIPAL_HEADERS.principal, signed.principal)
+  headers.set(FORWARDED_PRINCIPAL_HEADERS.principalSignature, signed.principalSignature)
+  headers.set(REQUEST_ID_HEADER, requestId)
+  return {target, headers, requestId}
+}
+
+/** The request's logger: the one `requestContext` bound to the request id, or Core's own when there is none. */
+function requestLogger(c: AppContext, requestId: string): Logger {
+  return c.get("logger") ?? logger.child({reqId: requestId})
+}
+
+/** What one forwarded request came to. `reason` names what failed, never what was said. */
+interface Outcome {
+  status: number
+  upstreamStatus: number | null
+  upstreamRequestId: string | null
+  reason?: string
+}
+
+/** The log line for a forwarded request, once: `{reqId, upstreamRequestId, status, ms}` and nothing else of it. */
+function outcomeLogger(log: Logger, audience: Audience): (outcome: Outcome) => void {
+  const started = performance.now()
+  return outcome => {
+    const fields = {audience, ...outcome, ms: Math.round(performance.now() - started)}
+    // A success is routine (debug). An answer Fleet gave that is not one (a 403 for a signature it
+    // refused, a 429, a 404) is relayed as it is and logged at info, so it shows at the production log
+    // level. What Core could not relay as Fleet said it (a failure, a redirect, an oversized body, a 401
+    // turned into a 403, no answer at all) is a warning.
+    const relayedAsIs = outcome.status === outcome.upstreamStatus
+    const success = outcome.status >= 200 && outcome.status < 300
+    const level = !relayedAsIs ? "warn" : success || outcome.status === 304 ? "debug" : "info"
+    log[level](fields, "Fleet request forwarded")
+  }
+}
+
+/** An upstream status Core does not relay: a failure, or a redirect it never follows (it relays a 304). */
+function isNotRelayed(status: number): boolean {
+  return status >= 500 || (status >= 300 && status < 400 && status !== 304)
+}
+
 function forward(audience: Audience): Handler<AppEnv> {
   return async c => {
-    const caller = callerOf(c, audience)
-    if (caller instanceof Response) return caller
-
-    const fleet = fleetConfig()
-    if (fleet.state === "not_installed") return c.json({error: "fleet_not_installed"}, 404)
-    if (fleet.state === "misconfigured") return unavailable(c)
-    const limits = fleetLimits()
-
-    const {path, query} = rawPathAndQuery(c.req.url)
-    const prefix = MOUNT_PREFIX[audience]
-    const suffix = path.slice(prefix.length)
-    if (!path.startsWith(prefix) || (suffix !== "" && !suffix.startsWith("/"))) {
-      return c.json({error: "not_found"}, 404)
-    }
-    if (!isSafeSuffix(suffix)) return c.json({error: "invalid_path"}, 400)
+    const admitted = admit(c, audience)
+    if (admitted instanceof Response) return admitted
+    const {caller, limits} = admitted
+    // The UI assets have their own route and rules; however a path spells `ui`, it is not forwarded as JSON.
+    if (audience === "admin" && isUiAssetPath(admitted.suffix)) return c.json({error: "not_found"}, 404)
 
     let body = ""
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
@@ -302,53 +484,9 @@ function forward(audience: Audience): Handler<AppEnv> {
       }
     }
 
-    const principal = await principalOf(caller)
-    // The one URL that is signed and sent, so the signature covers exactly the path and query on the wire.
-    const target = upstreamTarget(fleet.baseUrl, audience, suffix, query)
     const method = c.req.method
-    const timestampMs = Date.now()
-    const requestId = c.get("reqId") ?? ulid()
-
-    const headers = new Headers()
-    for (const name of FORWARDED_REQUEST_HEADERS) {
-      const value = c.req.header(name)
-      if (value) headers.set(name, value)
-    }
-    headers.set(SERVICE_HEADERS.service, FORWARDING_SERVICE)
-    headers.set(SERVICE_HEADERS.timestamp, String(timestampMs))
-    headers.set(
-      SERVICE_HEADERS.signature,
-      signServiceRequest({
-        secret: fleet.secret,
-        method,
-        pathWithQuery: target.pathname + target.search,
-        body,
-        timestampMs,
-      }),
-    )
-    const signed = signForwardedPrincipal({secret: fleet.secret, timestampMs, principal})
-    headers.set(FORWARDED_PRINCIPAL_HEADERS.principal, signed.principal)
-    headers.set(FORWARDED_PRINCIPAL_HEADERS.principalSignature, signed.principalSignature)
-    headers.set(REQUEST_ID_HEADER, requestId)
-
-    const log = c.get("logger") ?? logger.child({reqId: requestId})
-    const started = performance.now()
-    const logged = (outcome: {
-      status: number
-      upstreamStatus: number | null
-      upstreamRequestId: string | null
-      reason?: string
-    }) => {
-      const fields = {audience, ...outcome, ms: Math.round(performance.now() - started)}
-      // A success is routine (debug). An answer Fleet gave that is not one (a 403 for a signature it
-      // refused, a 429, a 404) is relayed as it is and logged at info, so it shows at the production log
-      // level. What Core could not relay as Fleet said it (a failure, a redirect, an oversized body, a 401
-      // turned into a 403, no answer at all) is a warning.
-      const relayedAsIs = outcome.status === outcome.upstreamStatus
-      const success = outcome.status >= 200 && outcome.status < 300
-      const level = !relayedAsIs ? "warn" : success || outcome.status === 304 ? "debug" : "info"
-      log[level](fields, "Fleet request forwarded")
-    }
+    const {target, headers, requestId} = await signRequest(c, admitted, {method, body, copy: FORWARDED_REQUEST_HEADERS})
+    const logged = outcomeLogger(requestLogger(c, requestId), caller.audience)
 
     let status: number
     let payload: Uint8Array<ArrayBuffer> | null = null
@@ -366,7 +504,7 @@ function forward(audience: Audience): Handler<AppEnv> {
       status = upstream.status
       upstreamHeaders = upstream.headers
       const upstreamRequestId = upstreamHeaders.get(REQUEST_ID_HEADER)
-      if (status >= 500 || (status >= 300 && status < 400 && status !== 304)) {
+      if (isNotRelayed(status)) {
         // Not an answer Core relays: a failure, or a redirect it never follows.
         await upstream.body?.cancel()
         logged({status: 503, upstreamStatus: status, upstreamRequestId})
@@ -414,6 +552,179 @@ function forward(audience: Audience): Handler<AppEnv> {
   }
 }
 
+/** A content-length that is a plain count of bytes, or null when there is none (or it is not one). */
+function declaredLength(headers: Headers): number | null {
+  const raw = headers.get("content-length")?.trim()
+  return raw !== undefined && /^\d{1,15}$/.test(raw) ? Number(raw) : null
+}
+
+/** The media type of a `content-type`: lowercase, no parameters (`Text/JavaScript; charset=x` is `text/javascript`). */
+function mediaType(contentType: string | null): string {
+  return (contentType ?? "").split(";", 1)[0]!.trim().toLowerCase()
+}
+
+/** Whether the body is sent as it is (no content-encoding), so a declared length is the length of what is relayed. */
+function isIdentityEncoded(headers: Headers): boolean {
+  const encoding = headers.get("content-encoding")?.trim().toLowerCase()
+  return !encoding || encoding === "identity"
+}
+
+/** The error that ends an asset stream which passed the cap. */
+class AssetOverCap extends Error {
+  constructor() {
+    super("Fleet asset is over the size cap")
+    this.name = "AssetOverCap"
+  }
+}
+
+/** Why an asset stream ended early: the cap, the timeout, or anything else (the caller leaving, Fleet resetting). */
+function streamEndReason(err: unknown): "asset_over_cap" | "timeout" | "aborted" {
+  if (err instanceof AssetOverCap) return "asset_over_cap"
+  return err instanceof Error && err.name === "TimeoutError" ? "timeout" : "aborted"
+}
+
+/**
+ * Counts the bytes that pass through and errors the stream on the one that takes the total past `limit`,
+ * before it is passed on: no more than `limit` bytes ever leave. The error runs backwards through
+ * `pipeTo`, which cancels the upstream body, so the rest of an oversized asset is not read.
+ */
+function byteCounter(limit: number): Transformer<Uint8Array, Uint8Array> {
+  let total = 0
+  return {
+    transform(chunk, controller) {
+      total += chunk.byteLength
+      if (total > limit) throw new AssetOverCap()
+      controller.enqueue(chunk)
+    },
+  }
+}
+
+/**
+ * The Fleet UI asset route: `GET` and `HEAD` `/api/admin/fleet/ui/<rest>` to `/v1/admin/ui/<rest>`, behind
+ * the admin gates. See "Fleet UI assets" in the file header for the rules; this builds the answer through
+ * the context, like `forward`, so the caller's rotated session cookie survives.
+ */
+function forwardAsset(): Handler<AppEnv> {
+  return async c => {
+    const admitted = admit(c, "admin")
+    if (admitted instanceof Response) return admitted
+    const {limits} = admitted
+
+    const method = c.req.method
+    const signed = await signRequest(c, admitted, {method, body: "", copy: ASSET_REQUEST_HEADERS})
+    // Not covered by the signature. The bytes Core relays are the bytes Fleet sent, so the length it declares
+    // is the length of what the caller gets; a Fleet that encodes anyway is handled below.
+    signed.headers.set("accept-encoding", "identity")
+    const log = requestLogger(c, signed.requestId)
+    const logged = outcomeLogger(log, "admin")
+
+    // Core ends the request itself when it stops reading: cancelling a response body does not always close
+    // the connection (Bun's `fetch` keeps downloading), aborting the request always does.
+    const stop = new AbortController()
+    let upstream: Response
+    try {
+      // One signal covers the wait for the answer and the whole read of the body, which is relayed as it arrives.
+      upstream = await fetch(signed.target, {
+        method,
+        headers: signed.headers,
+        redirect: "manual",
+        signal: AbortSignal.any([AbortSignal.timeout(limits.timeoutMs), stop.signal]),
+      })
+    } catch (err) {
+      logged({
+        status: 503,
+        upstreamStatus: null,
+        upstreamRequestId: null,
+        reason: err instanceof Error ? err.name : "unknown",
+      })
+      return unavailable(c)
+    }
+
+    const status = upstream.status
+    const upstreamRequestId = upstream.headers.get(REQUEST_ID_HEADER)
+    /** Core's 503 instead of the answer: the request is ended and its body is never read. */
+    const refuse = async (reason: string | null, retryAfter: string | null = null) => {
+      stop.abort()
+      await upstream.body?.cancel().catch(() => {})
+      logged({status: 503, upstreamStatus: status, upstreamRequestId, ...(reason ? {reason} : {})})
+      return unavailable(c, retryAfter)
+    }
+
+    if (isNotRelayed(status)) {
+      return refuse(null, status >= 500 ? validRetryAfter(upstream.headers.get("retry-after")) : null)
+    }
+
+    // A 204, 205 or 304 has no representation, so there is no content type to check and no length to relay.
+    const hasRepresentation = !NULL_BODY_STATUSES.has(status)
+    const declared = declaredLength(upstream.headers)
+    const contentType = upstream.headers.get("content-type")
+    let contentSecurityPolicy: string | null = null
+    if (hasRepresentation) {
+      const type = mediaType(contentType)
+      if (type === SVG_CONTENT_TYPE) contentSecurityPolicy = SVG_CONTENT_SECURITY_POLICY
+      // An answer with no content type is allowed only when it has no body either (a bare 404).
+      else if (!ASSET_CONTENT_TYPES.has(type) && !(contentType === null && declared === 0)) {
+        return refuse("content_type_not_allowed")
+      }
+      // A HEAD is held to the same size as the GET it describes. An answer that declares more than the cap is
+      // refused here, before any of it is read; only one that does not (or lies) is cut off mid-stream.
+      if (declared !== null && declared > limits.maxAssetBytes) return refuse("asset_over_cap")
+    }
+
+    // Never a raw `Response` (see `forward`): the answer is built through the context.
+    for (const name of ASSET_RESPONSE_HEADERS) {
+      const value = upstream.headers.get(name)
+      if (value) c.header(name, value)
+    }
+    const vary = upstream.headers.get("vary")
+    // Appended: a middleware ahead of this route may have set its own `Vary`, such as `Origin`.
+    if (vary) c.header("vary", vary, {append: true})
+    if (hasRepresentation) {
+      if (contentType) c.header("content-type", contentType)
+      if (contentSecurityPolicy) c.header("content-security-policy", contentSecurityPolicy)
+      // `fetch` has already decoded an encoded body, so only an identity-encoded answer's length is the caller's.
+      if (declared !== null && isIdentityEncoded(upstream.headers)) c.header("content-length", String(declared))
+    }
+    // Replaces the id `requestContext` set: the caller gets Fleet's when Fleet returned one.
+    c.header(REQUEST_ID_HEADER, upstreamRequestId || signed.requestId)
+    // A 401 from Core means "sign in again" to every client; Fleet's never does, so it is relayed as a 403.
+    const relayed = (status === 401 ? 403 : status) as StatusCode
+    logged({status: relayed, upstreamStatus: status, upstreamRequestId})
+
+    if (method === "HEAD" || !hasRepresentation || !upstream.body) {
+      await upstream.body?.cancel().catch(() => {})
+      return c.newResponse(null, relayed)
+    }
+
+    // The status is final once the headers are out, so a body that passes the cap (no length, or a wrong
+    // one) cannot become a 503: it ends in an error instead, and the request to Fleet is ended. The same
+    // happens when the caller goes away or Fleet stalls past the timeout.
+    const counted = new TransformStream<Uint8Array, Uint8Array>(byteCounter(limits.maxAssetBytes))
+    upstream.body.pipeTo(counted.writable).catch((err: unknown) => {
+      stop.abort()
+      const reason = streamEndReason(err)
+      // The caller going away mid-download is routine; Fleet outlasting the timeout or the cap is not.
+      log[reason === "aborted" ? "debug" : "warn"](
+        {audience: "admin", status: relayed, upstreamStatus: status, upstreamRequestId, reason},
+        "Fleet asset stream ended early",
+      )
+    })
+    return c.newResponse(counted.readable, relayed)
+  }
+}
+
+/** Core's security headers on every answer of the asset route, its own refusals included. */
+const assetResponseHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
+  c.header("x-content-type-options", "nosniff")
+  c.header("cross-origin-resource-policy", "same-origin")
+  await next()
+}
+
+const methodNotAllowed: Handler<AppEnv> = c => {
+  c.header("allow", "GET, HEAD")
+  return c.json({error: "method_not_allowed"}, 405)
+}
+
 /**
  * The phone's gate: its Core access token (`userAuth`). `userAuth` answers a missing or invalid token
  * as an OAuth error (400); on Fleet's routes the phone is told what every other caller is, 401, so it
@@ -446,4 +757,9 @@ clientFleetApi.all("/*", limitBody, forward("client"))
  */
 export const adminFleetApi = new Hono<AppEnv>()
 adminFleetApi.use("*", requireUserPrincipal("admin"), requireOrganizationCapability("organization.fleet.administer"))
+// The UI assets, ahead of the JSON forwarder and behind the gates above: GET and HEAD stream the asset, any
+// other method is a 405. Only the asset route may answer under `ui`; the forwarder refuses it.
+adminFleetApi.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
+adminFleetApi.on(["GET", "HEAD"], `/${UI_ASSET_SEGMENT}/*`, forwardAsset())
+adminFleetApi.all(`/${UI_ASSET_SEGMENT}/*`, methodNotAllowed)
 adminFleetApi.all("/*", limitBody, forward("admin"))

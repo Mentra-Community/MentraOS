@@ -13,8 +13,9 @@
  * when unverified) and its body bytes and request id round-trip; an Organization Admin session reaches
  * `/v1/admin` with the organization scope whatever the request asks for; workspace keys, operator keys
  * and people without the Fleet capability never reach Fleet; a phone token is no admin credential and an
- * admin cookie is no phone token; and Core signs the exact bytes it sends, which the fake Fleet shows by
- * refusing a request changed after Core signed it.
+ * admin cookie is no phone token; Fleet's UI module (`/api/admin/fleet/ui/*`) streams through the same
+ * session, behind the same gates, and keeps the session cookie Core rotated; and Core signs the exact
+ * bytes it sends, which the fake Fleet shows by refusing a request changed after Core signed it.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
  * `MONGO_URL`) and asserts the live connection is on that database before any destructive call. The
@@ -91,6 +92,7 @@ const TEST_ENV: Record<string, string | undefined> = {
   CLOUD_CORE_ENABLED_FEATURES: undefined,
   CLOUD_CORE_FLEET_MAX_BODY_BYTES: undefined,
   CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: undefined,
+  CLOUD_CORE_FLEET_MAX_ASSET_BYTES: undefined,
   CLOUD_CORE_FLEET_TIMEOUT_MS: undefined,
   CONSOLE2_URL: undefined,
   CLOUD_CORE_WORKSPACE_CREATION: undefined,
@@ -660,6 +662,143 @@ describe("an Organization Admin", () => {
     for (const via of ["session", "bearer"] as const) {
       const reply = await fromPerson(claimed, "GET", "/overview", {via})
       expect([via, reply.status]).toEqual([via, 403])
+    }
+    expect(received).toHaveLength(0)
+  })
+})
+
+// --- Fleet's UI module -----------------------------------------------------
+
+describe("Fleet's UI module", () => {
+  const JS = "text/javascript; charset=utf-8"
+
+  test("an Organization Admin's session fetches it as a verified user, GET and HEAD, with Core's security headers", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+
+    const get = await fromPerson(admin, "GET", "/ui/entry.js?v=1")
+    const head = await fromPerson(admin, "HEAD", "/ui/entry.js?v=1")
+
+    // The fake Fleet answers 403 for anything whose signatures do not verify, so a 200 is a verified request.
+    expect(get.status).toBe(200)
+    expect(head.status).toBe(200)
+    expect(head.text).toBe("")
+    const echo = get.json as Echo
+    expect(echo.method).toBe("GET")
+    expect(echo.pathWithQuery).toBe("/v1/admin/ui/entry.js?v=1")
+    expect(echo.principal).toEqual({
+      kind: "user",
+      mentraUserId: admin.mentraUserId,
+      email: ADMIN_EMAIL,
+      emailVerified: true,
+      isOrganizationAdmin: true,
+      organizationCapabilities: [...ORGANIZATION_CAPABILITIES],
+      scope: {kind: "organization"},
+    })
+    expect(received.map(call => call.method)).toEqual(["GET", "HEAD"])
+    for (const reply of [get, head]) {
+      expect(reply.headers.get("x-content-type-options")).toBe("nosniff")
+      expect(reply.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+    }
+    // Nothing of the portal session goes to Fleet.
+    for (const call of received) {
+      expect(call.headers.get("cookie")).toBeNull()
+      expect(call.headers.get("authorization")).toBeNull()
+    }
+  })
+
+  test("a 3 MiB module streams through a session due for rotation intact, and the rotated cookie reaches the browser", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const old = await staleSession(admin)
+    const bytes = new Uint8Array(3 * 1024 * 1024)
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + (i >> 8)) & 0xff
+    answer = () => new Response(bytes, {headers: {"content-type": JS, "etag": '"entry-v1"', "cache-control": "no-cache"}})
+
+    const response = await app.request(`${ADMIN_ORIGIN}/api/admin/fleet/ui/entry.js`, {headers: {cookie: `${ADMIN_COOKIE}=${old}`}})
+    const body = new Uint8Array(await response.arrayBuffer())
+
+    expect(response.status).toBe(200)
+    expect(Buffer.from(body).equals(Buffer.from(bytes))).toBe(true)
+    expect(response.headers.get("content-type")).toBe(JS)
+    expect(response.headers.get("etag")).toBe('"entry-v1"')
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+    const rotated = cookieValue(response, ADMIN_COOKIE)
+    expect(rotated).toBeTruthy()
+    expect(rotated).not.toBe(old)
+    expect(response.headers.getSetCookie().filter(line => line.startsWith(`${ADMIN_COOKIE}=`))).toHaveLength(1)
+    const row = await BrowserSessionModel.findOne({tokenHash: sha256Hex(rotated!)}).lean()
+    expect(row?.previousTokenHash).toBe(sha256Hex(old))
+
+    // What Core signed is what the fake Fleet would have verified.
+    const [call] = received
+    expect(call.pathWithQuery).toBe("/v1/admin/ui/entry.js")
+    const principal = verifyForwardedPrincipal(
+      {method: call.method, pathWithQuery: call.pathWithQuery, body: call.body, headers: call.headers},
+      [SECRET],
+    )
+    expect(principal).toMatchObject({kind: "user", mentraUserId: admin.mentraUserId, scope: {kind: "organization"}})
+  })
+
+  test("so does it on every other answer Fleet can give for the module", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const answers: Record<string, [() => Response, number]> = {
+      "a 304": [() => new Response(null, {status: 304, headers: {etag: '"entry-v1"'}}), 304],
+      "a 404": [() => Response.json({error: "nope"}, {status: 404}), 404],
+      "Fleet's 401 (relayed as 403)": [() => Response.json({error: "no"}, {status: 401}), 403],
+      "a 500 (answered 503)": [() => Response.json({error: "down"}, {status: 500}), 503],
+      "html (answered 503)": [() => new Response("<script>x()</script>", {headers: {"content-type": "text/html"}}), 503],
+      "a svg": [() => new Response("<svg/>", {headers: {"content-type": "image/svg+xml"}}), 200],
+    }
+
+    for (const [name, [reply, status]] of Object.entries(answers)) {
+      answer = reply
+      const old = await staleSession(admin)
+
+      const response = await app.request(`${ADMIN_ORIGIN}/api/admin/fleet/ui/entry.js`, {headers: {cookie: `${ADMIN_COOKIE}=${old}`}})
+      await response.arrayBuffer()
+
+      expect([name, response.status]).toEqual([name, status])
+      const rotated = cookieValue(response, ADMIN_COOKIE)
+      expect([name, !!rotated, rotated !== old]).toEqual([name, true, true])
+    }
+  })
+
+  test("html is never relayed from the portal's origin, whatever the status", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+
+    for (const status of [200, 404]) {
+      answer = () => new Response("<script>steal()</script>", {status, headers: {"content-type": "text/html; charset=utf-8"}})
+      const reply = await fromPerson(admin, "GET", "/ui/page.html")
+      expect([status, reply.status, reply.json]).toEqual([status, 503, {error: "fleet_unavailable"}])
+      expect(reply.text.includes("steal")).toBe(false)
+    }
+  })
+
+  test("it has the Fleet gates: keys, a member, a phone token and nobody never reach Fleet, and only GET and HEAD are allowed", async () => {
+    const keys = [await workspaceKey(), await operatorKey(["organization.testing.read", "organization.incidents.read"])]
+    const member = await person("ws-owner")
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const phone = await phoneSession("e")
+
+    for (const method of ["GET", "HEAD"]) {
+      for (const token of keys) {
+        const reply = await send(method, "/api/admin/fleet/ui/entry.js", {headers: {authorization: `Bearer ${token}`}})
+        expect([token.slice(0, 4), method, reply.status]).toEqual([token.slice(0, 4), method, 403])
+      }
+      for (const via of ["session", "bearer"] as const) {
+        const reply = await fromPerson(member, method, "/ui/entry.js", {via})
+        expect([via, method, reply.status]).toEqual([via, method, 403])
+      }
+      const phoneReply = await send(method, "/api/admin/fleet/ui/entry.js", {headers: {authorization: `Bearer ${phone.token}`}})
+      expect([method, phoneReply.status]).toEqual([method, 401])
+      const nobody = await send(method, "/api/admin/fleet/ui/entry.js")
+      expect([method, nobody.status]).toEqual([method, 401])
+    }
+    expect(received).toHaveLength(0)
+
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const reply = await fromPerson(admin, method, "/ui/entry.js", {body: "{}"})
+      expect([method, reply.status, reply.json]).toEqual([method, 405, {error: "method_not_allowed"}])
+      expect(reply.headers.get("allow")).toBe("GET, HEAD")
     }
     expect(received).toHaveLength(0)
   })

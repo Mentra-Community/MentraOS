@@ -40,6 +40,7 @@ const ENV_KEYS = [
   "CLOUD_CORE_FLEET_SECRET",
   "CLOUD_CORE_FLEET_MAX_BODY_BYTES",
   "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES",
+  "CLOUD_CORE_FLEET_MAX_ASSET_BYTES",
   "CLOUD_CORE_FLEET_TIMEOUT_MS",
   "CLOUD_CORE_ENABLED_FEATURES",
   "CLOUD_CORE_ENVIRONMENT",
@@ -1224,6 +1225,798 @@ describe("a cookie the request already set", () => {
   })
 })
 
+describe("Fleet UI assets", () => {
+  // `/api/admin/fleet/ui/<rest>` is the browser-loadable module the admin portal imports. It has its own
+  // route ahead of the JSON forwarder: GET and HEAD only, the body streamed under a byte cap, and a
+  // content-type allowlist, because what it relays runs in the portal's origin.
+  const ENTRY = "/ui/entry.js"
+  const JS = "text/javascript; charset=utf-8"
+  const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'"
+  const ROTATED = "__Host-mentra_admin_session=rotated-value; Path=/; HttpOnly; Secure; SameSite=Lax"
+
+  /** Bytes that differ from position to position, so a dropped, repeated or reordered chunk shows. */
+  function patterned(length: number): Uint8Array<ArrayBuffer> {
+    const bytes = new Uint8Array(length)
+    for (let i = 0; i < length; i++) bytes[i] = (i * 31 + (i >> 8)) & 0xff
+    return bytes
+  }
+
+  /** What reaches a caller: how many bytes arrived before the body ended, and how it ended (null: cleanly). */
+  async function drain(response: Response): Promise<{received: number; error: unknown}> {
+    const reader = response.body!.getReader()
+    let received = 0
+    try {
+      for (;;) {
+        const {done, value} = await reader.read()
+        if (done) return {received, error: null}
+        received += value.byteLength
+      }
+    } catch (error) {
+      return {received, error}
+    }
+  }
+
+  /** An upstream body that counts what was pulled from it and whether it was cancelled. Nothing is pulled until it is read. */
+  function watchedBody(chunkBytes: number, chunks = Number.POSITIVE_INFINITY) {
+    const state = {pulled: 0, cancelled: false}
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (state.pulled >= chunks) return controller.close()
+          state.pulled++
+          controller.enqueue(new Uint8Array(chunkBytes).fill(97))
+        },
+        cancel() {
+          state.cancelled = true
+        },
+      },
+      {highWaterMark: 0},
+    )
+    return {body, state}
+  }
+
+  /** A body that never ends, for the stub server to send: it pauses between chunks so the server stays responsive. */
+  function endlessBody(chunkBytes: number, onCancel: () => void = () => {}) {
+    return new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        controller.enqueue(new Uint8Array(chunkBytes).fill(97))
+        await Bun.sleep(1)
+      },
+      cancel: onCancel,
+    })
+  }
+
+  async function eventually(condition: () => boolean, ms = 3000): Promise<boolean> {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (condition()) return true
+      await Bun.sleep(5)
+    }
+    return condition()
+  }
+
+  /** Core's `fetch` to Fleet answers with `response` (the stub server cannot show what was read from a body). */
+  function fleetAnswers(response: Response) {
+    return spyOn(globalThis, "fetch").mockResolvedValue(response)
+  }
+
+  const organizationAdmin = () => as("organization-admin", person(true))
+
+  test("a 3 MiB JS asset streams intact, with its etag and nosniff", async () => {
+    configure()
+    const bytes = patterned(3 * 1024 * 1024)
+    respond = () =>
+      new Response(bytes, {
+        headers: {
+          "content-type": JS,
+          "etag": '"entry-v1"',
+          "last-modified": "Tue, 13 Oct 2026 10:00:00 GMT",
+          "cache-control": "public, max-age=3600",
+          "vary": "Accept-Encoding",
+          "x-request-id": "fleet-asset-1",
+        },
+      })
+
+    const response = await admin(organizationAdmin(), `${ENTRY}?v=2`)
+
+    expect(response.status).toBe(200)
+    expect(Buffer.from(await response.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true)
+    expect(response.headers.get("content-type")).toBe(JS)
+    expect(response.headers.get("etag")).toBe('"entry-v1"')
+    expect(response.headers.get("last-modified")).toBe("Tue, 13 Oct 2026 10:00:00 GMT")
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600")
+    expect(response.headers.get("vary")).toBe("Accept-Encoding")
+    expect(response.headers.get("content-length")).toBe(String(bytes.byteLength))
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+    expect(response.headers.get("x-request-id")).toBe("fleet-asset-1")
+    // Only SVG gets a content-security-policy from Core.
+    expect(response.headers.get("content-security-policy")).toBeNull()
+    expect(calls).toHaveLength(1)
+    expect(calls[0].method).toBe("GET")
+    expect(calls[0].pathWithQuery).toBe("/v1/admin/ui/entry.js?v=2")
+    expect(serviceSignatureVerifies(calls[0])).toBe(true)
+    expect(principalSignatureVerifies(calls[0])).toBe(true)
+    expect(decodePrincipal(calls[0].headers.get(FLEET_HEADERS.principal))).toMatchObject({
+      kind: "user",
+      mentraUserId: "mu_1",
+      scope: {kind: "organization"},
+    })
+  })
+
+  test("the asset limit is CLOUD_CORE_FLEET_MAX_ASSET_BYTES, not the response limit of the JSON routes", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16"})
+    respond = () => new Response(patterned(1024), {headers: {"content-type": JS}})
+
+    const asset = await admin(organizationAdmin(), ENTRY)
+    const json = await admin(organizationAdmin(), "/overview")
+
+    expect(asset.status).toBe(200)
+    expect((await asset.arrayBuffer()).byteLength).toBe(1024)
+    // The same 1 KiB on a JSON route is over its own cap of 16.
+    expect(json.status).toBe(503)
+  })
+
+  test("only the revalidation headers go upstream, and the caller's own credentials never do", async () => {
+    configure()
+
+    await admin(organizationAdmin(), ENTRY, {
+      headers: {
+        "if-none-match": '"entry-v1"',
+        "if-modified-since": "Tue, 13 Oct 2026 10:00:00 GMT",
+        "range": "bytes=0-9",
+        "if-range": '"entry-v1"',
+        "accept": "text/html",
+        "cookie": "__Host-mentra_admin_session=a-session",
+        "authorization": "Bearer caller-token",
+        "x-mentra-principal": "forged",
+        "x-mentra-service-signature": "forged",
+      },
+    })
+
+    expect(calls).toHaveLength(1)
+    const upstreamHeaders = calls[0].headers
+    expect(upstreamHeaders.get("if-none-match")).toBe('"entry-v1"')
+    expect(upstreamHeaders.get("if-modified-since")).toBe("Tue, 13 Oct 2026 10:00:00 GMT")
+    for (const name of ["range", "if-range", "cookie", "authorization", "x-test-principal"]) {
+      expect([name, upstreamHeaders.get(name)]).toEqual([name, null])
+    }
+    // The only accept Fleet sees is none from the caller: not the browser's `text/html`.
+    expect(upstreamHeaders.get("accept")).not.toBe("text/html")
+    // What Fleet is sent is still signed by Core alone.
+    expect(upstreamHeaders.get("x-mentra-principal")).not.toBe("forged")
+    expect(principalSignatureVerifies(calls[0])).toBe(true)
+    expect(serviceSignatureVerifies(calls[0])).toBe(true)
+    // The bytes Core relays are the bytes Fleet sent: it asks for no content-encoding.
+    expect(upstreamHeaders.get("accept-encoding")).toBe("identity")
+  })
+
+  test("if-none-match round-trips to a 304 with no body, and so does if-modified-since", async () => {
+    configure()
+    respond = request =>
+      request.headers.get("if-none-match") === '"entry-v1"' || request.headers.get("if-modified-since")
+        ? new Response(null, {
+            status: 304,
+            headers: {
+              "etag": '"entry-v1"',
+              "last-modified": "Tue, 13 Oct 2026 10:00:00 GMT",
+              "cache-control": "public, max-age=3600",
+              "vary": "Accept-Encoding",
+              "content-length": "9999",
+              "content-type": "text/html",
+            },
+          })
+        : new Response(patterned(100), {headers: {"content-type": JS, "etag": '"entry-v1"'}})
+
+    const byEtag = await admin(organizationAdmin(), ENTRY, {headers: {"if-none-match": '"entry-v1"'}})
+    const byDate = await admin(organizationAdmin(), ENTRY, {headers: {"if-modified-since": "Tue, 13 Oct 2026 10:00:00 GMT"}})
+    const fresh = await admin(organizationAdmin(), ENTRY)
+
+    for (const response of [byEtag, byDate]) {
+      expect(response.status).toBe(304)
+      expect(await response.text()).toBe("")
+      expect(response.headers.get("etag")).toBe('"entry-v1"')
+      expect(response.headers.get("last-modified")).toBe("Tue, 13 Oct 2026 10:00:00 GMT")
+      expect(response.headers.get("cache-control")).toBe("public, max-age=3600")
+      expect(response.headers.get("vary")).toBe("Accept-Encoding")
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+      // A 304 has no representation: no length, and no content-type to check or relay.
+      expect(response.headers.get("content-length")).toBeNull()
+      expect(response.headers.get("content-type")).toBeNull()
+    }
+    expect(calls[0].headers.get("if-none-match")).toBe('"entry-v1"')
+    expect(calls[1].headers.get("if-modified-since")).toBe("Tue, 13 Oct 2026 10:00:00 GMT")
+    expect(fresh.status).toBe(200)
+    expect((await fresh.arrayBuffer()).byteLength).toBe(100)
+  })
+
+  test("an answer that crosses the cap is cut off: a declared length is a 503 before any of it is read", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
+    const {body, state} = watchedBody(512)
+    const fetched = fleetAnswers(new Response(body, {headers: {"content-type": JS, "content-length": "1025"}}))
+
+    const response = await admin(organizationAdmin(), ENTRY)
+    fetched.mockRestore()
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error: "fleet_unavailable"})
+    expect(state.pulled).toBe(0)
+    expect(state.cancelled).toBe(true)
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+  })
+
+  test("an answer exactly at the cap passes, declared or not", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
+    respond = () => new Response(patterned(1024), {headers: {"content-type": JS}})
+    const declared = await admin(organizationAdmin(), ENTRY)
+    expect(declared.status).toBe(200)
+    expect((await declared.arrayBuffer()).byteLength).toBe(1024)
+
+    const {body} = watchedBody(256, 4)
+    const fetched = fleetAnswers(new Response(body, {headers: {"content-type": JS}}))
+    const undeclared = await admin(organizationAdmin(), ENTRY)
+    fetched.mockRestore()
+    expect(undeclared.status).toBe(200)
+    expect(undeclared.headers.get("content-length")).toBeNull()
+    expect(await drain(undeclared)).toEqual({received: 1024, error: null})
+  })
+
+  test("an answer with no length, or a wrong one, is counted as it streams: it is cut off and the upstream body is cancelled", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "64"})
+    // Endless, and it declares no length: only a counter can stop it.
+    const {body, state} = watchedBody(8)
+    const fetched = fleetAnswers(new Response(body, {headers: {"content-type": JS, "etag": '"x"'}}))
+
+    const response = await admin(organizationAdmin(), ENTRY)
+    fetched.mockRestore()
+    // The status went out with the headers, so it cannot change: 200, then the body ends in an error.
+    expect(response.status).toBe(200)
+    const {received, error} = await drain(response)
+
+    expect(error).toBeInstanceOf(Error)
+    // Never more than the cap reaches the caller...
+    expect(received).toBeLessThanOrEqual(64)
+    // ...the upstream was told to stop...
+    expect(await eventually(() => state.cancelled)).toBe(true)
+    // ...and it was not read to the end (it has no end): a handful of chunks past the cap at most.
+    expect(state.pulled).toBeLessThan(20)
+    // The cut-off is logged as a warning, naming the reason and nothing of the body.
+    expect(await eventually(() => logs.some(line => line.level === "warn" && line.fields.reason === "asset_over_cap"))).toBe(true)
+  })
+
+  test("a real upstream that keeps streaming past the cap has its connection closed", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: String(256 * 1024)})
+    let sent = 0
+    let cancelled = false
+    const chunk = patterned(64 * 1024)
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            sent++
+            controller.enqueue(chunk)
+            await Bun.sleep(1)
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        {headers: {"content-type": "text/css"}},
+      )
+
+    const response = await admin(organizationAdmin(), "/ui/entry.css")
+    const {received, error} = await drain(response)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(received).toBeLessThanOrEqual(256 * 1024)
+    expect(await eventually(() => cancelled)).toBe(true)
+    // It had no end: had Core read it to the end this test would not finish.
+    expect(sent).toBeLessThan(2000)
+  })
+
+  test("a body that decodes to more than the cap is cut off, whatever length the encoded one declared", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
+    const encoded = Bun.gzipSync(new Uint8Array(100_000))
+    expect(encoded.byteLength).toBeLessThan(1024)
+    respond = () =>
+      new Response(encoded, {headers: {"content-type": JS, "content-encoding": "gzip", "content-length": String(encoded.byteLength)}})
+
+    const response = await admin(organizationAdmin(), ENTRY)
+
+    expect(response.status).toBe(200)
+    const {received, error} = await drain(response)
+    expect(error).toBeInstanceOf(Error)
+    expect(received).toBeLessThanOrEqual(1024)
+  })
+
+  test("content-length passes only for an identity-encoded answer; the encoding itself is never relayed", async () => {
+    configure()
+    const plain = patterned(5000)
+    const encoded = Bun.gzipSync(plain)
+    respond = request =>
+      new URL(request.url).pathname.endsWith("gz.js")
+        ? new Response(encoded, {headers: {"content-type": JS, "content-encoding": "gzip"}})
+        : new Response(plain, {headers: {"content-type": JS, "content-encoding": "identity"}})
+
+    const identity = await admin(organizationAdmin(), "/ui/plain.js")
+    const gzipped = await admin(organizationAdmin(), "/ui/gz.js")
+
+    expect(identity.headers.get("content-length")).toBe("5000")
+    expect(Buffer.from(await identity.arrayBuffer()).equals(Buffer.from(plain))).toBe(true)
+    // Core's own fetch has decoded the body, so the declared length is the encoded one and is not the caller's.
+    expect(gzipped.headers.get("content-length")).toBeNull()
+    expect(gzipped.headers.get("content-encoding")).toBeNull()
+    expect(Buffer.from(await gzipped.arrayBuffer()).equals(Buffer.from(plain))).toBe(true)
+  })
+
+  test("the content types allowed are scripts, styles, images, fonts and JSON", async () => {
+    configure()
+    const allowed = [
+      "text/javascript",
+      "text/javascript; charset=utf-8",
+      "application/javascript",
+      "TEXT/JavaScript; Charset=UTF-8",
+      "text/css",
+      "text/css; charset=utf-8",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+      "image/avif",
+      "font/woff2",
+      "font/woff",
+      "application/json",
+      "application/json; charset=utf-8",
+    ]
+    for (const type of allowed) {
+      respond = () => new Response(patterned(32), {headers: {"content-type": type}})
+      const response = await admin(organizationAdmin(), "/ui/asset")
+      expect([type, response.status]).toEqual([type, 200])
+      // Relayed as Fleet sent it.
+      expect([type, response.headers.get("content-type")]).toEqual([type, type])
+      expect((await response.arrayBuffer()).byteLength).toBe(32)
+    }
+  })
+
+  test("text/html and every other content type is a 503 and none of the body reaches the caller", async () => {
+    configure()
+    const refused = [
+      "text/html",
+      "text/html; charset=utf-8",
+      "TEXT/HTML",
+      "application/xhtml+xml",
+      "text/plain",
+      "text/xml",
+      "application/xml",
+      "application/octet-stream",
+      "application/wasm",
+      "application/pdf",
+      "image/x-icon",
+      "image/svg+xml-compressed",
+      "text/javascript-evil",
+      "multipart/form-data; boundary=x",
+      "",
+    ]
+    for (const type of refused) {
+      respond = () => new Response("<script>steal()</script>", {headers: type ? {"content-type": type} : {}})
+      const response = await admin(organizationAdmin(), "/ui/page")
+      const text = await response.text()
+      expect([type, response.status]).toEqual([type, 503])
+      expect([type, JSON.parse(text)]).toEqual([type, {error: "fleet_unavailable"}])
+      expect([type, response.headers.get("content-type")]).toEqual([type, "application/json"])
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+    }
+
+    // An error answer is held to the same list: a text/html 404 is not relayed either.
+    respond = () => new Response("<h1>Not found</h1>", {status: 404, headers: {"content-type": "text/html"}})
+    expect((await admin(organizationAdmin(), "/ui/missing.js")).status).toBe(503)
+    // A content type Fleet did not send at all is not a type that is allowed, unless the answer is empty.
+    respond = () => new Response(new Uint8Array([1, 2, 3]))
+    const typeless = await admin(organizationAdmin(), "/ui/typeless")
+    expect(typeless.status).toBe(503)
+  })
+
+  test("a 404 or a 403 from Fleet passes through as JSON, and an empty one with no content type does too", async () => {
+    configure()
+    respond = () => Response.json({error: "not_found"}, {status: 404, headers: {"cache-control": "no-store"}})
+    const missing = await admin(organizationAdmin(), "/ui/missing.js")
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({error: "not_found"})
+    expect(missing.headers.get("cache-control")).toBe("no-store")
+    expect(missing.headers.get("x-content-type-options")).toBe("nosniff")
+
+    respond = () => new Response(new Uint8Array(0), {status: 404})
+    const empty = await admin(organizationAdmin(), "/ui/missing.js")
+    expect(empty.status).toBe(404)
+    expect(await empty.text()).toBe("")
+  })
+
+  test("SVG is relayed with Core's content-security-policy, whatever Fleet sent", async () => {
+    configure()
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>steal()</script></svg>'
+    respond = () =>
+      new Response(svg, {
+        headers: {"content-type": "image/svg+xml", "content-security-policy": "default-src *", "etag": '"s1"'},
+      })
+
+    const get = await admin(organizationAdmin(), "/ui/logo.svg")
+    const head = await admin(organizationAdmin(), "/ui/logo.svg", {method: "HEAD"})
+
+    for (const response of [get, head]) {
+      expect(response.status).toBe(200)
+      expect(response.headers.get("content-type")).toBe("image/svg+xml")
+      expect(response.headers.get("content-security-policy")).toBe(SVG_CSP)
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+      expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+    }
+    expect(await get.text()).toBe(svg)
+    expect(await head.text()).toBe("")
+
+    // Variants of the type are SVG too.
+    respond = () => new Response(svg, {headers: {"content-type": "Image/SVG+XML; charset=utf-8"}})
+    expect((await admin(organizationAdmin(), "/ui/logo.svg")).headers.get("content-security-policy")).toBe(SVG_CSP)
+  })
+
+  test("a HEAD gets the status and headers a GET would, with no body", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "4096"})
+    const bytes = patterned(2048)
+    respond = request =>
+      new Response(request.method === "HEAD" ? null : bytes, {
+        headers: {"content-type": JS, "etag": '"entry-v1"', "content-length": String(bytes.byteLength)},
+      })
+
+    const head = await admin(organizationAdmin(), ENTRY, {method: "HEAD"})
+
+    expect(head.status).toBe(200)
+    expect(await head.text()).toBe("")
+    expect(head.headers.get("content-type")).toBe(JS)
+    expect(head.headers.get("etag")).toBe('"entry-v1"')
+    expect(head.headers.get("content-length")).toBe("2048")
+    expect(head.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(calls).toHaveLength(1)
+    expect(calls[0].method).toBe("HEAD")
+    expect(serviceSignatureVerifies(calls[0])).toBe(true)
+
+    // The same rules as a GET: a HEAD whose GET would be refused is refused.
+    respond = () => new Response(null, {headers: {"content-type": JS, "content-length": "4097"}})
+    expect((await admin(organizationAdmin(), ENTRY, {method: "HEAD"})).status).toBe(503)
+    respond = () => new Response(null, {headers: {"content-type": "text/html"}})
+    expect((await admin(organizationAdmin(), ENTRY, {method: "HEAD"})).status).toBe(503)
+  })
+
+  test("any other method is a 405 that allows GET and HEAD, and nothing is forwarded", async () => {
+    configure()
+    const fetched = spyOn(globalThis, "fetch")
+
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+      const response = await admin(organizationAdmin(), ENTRY, {method, body: method === "POST" ? "{}" : undefined})
+      expect([method, response.status]).toEqual([method, 405])
+      expect([method, response.headers.get("allow")]).toEqual([method, "GET, HEAD"])
+      expect(await response.json()).toEqual({error: "method_not_allowed"})
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff")
+    }
+
+    expect(fetched).not.toHaveBeenCalled()
+    fetched.mockRestore()
+    expect(calls).toHaveLength(0)
+  })
+
+  test("the admin gates apply to ui/*: a person without the capability, a key, a phone token and nobody are refused before Fleet", async () => {
+    configure()
+    const member = as("member", person(false))
+    const workspaceKey = as("workspace-key", key("workspace", ["miniapps.publish"]))
+    const operatorKey = as("operator-key", key("organization", [...OPERATOR_KEY_SCOPES]))
+    const claimingKey = as("claiming-key", key("organization", ["organization.fleet.administer"]))
+    const fetched = spyOn(globalThis, "fetch")
+
+    for (const method of ["GET", "HEAD", "POST", "DELETE"]) {
+      for (const name of [member, workspaceKey, operatorKey, claimingKey]) {
+        const response = await admin(name, ENTRY, {method})
+        expect([method, name, response.status]).toEqual([method, name, 403])
+      }
+      // An unsafe request with no bearer is refused as cross-origin (403) before it is asked who it is (401).
+      const nobody = (await admin(null, ENTRY, {method})).status
+      const refusals = method === "GET" || method === "HEAD" ? [401] : [401, 403]
+      expect([method, refusals.includes(nobody)]).toEqual([method, true])
+      const phoneToken = await root.request(`http://localhost/api/admin/fleet${ENTRY}`, {
+        method,
+        headers: {authorization: "Bearer phone:mu_phone"},
+      })
+      expect([method, phoneToken.status]).toEqual([method, 401])
+    }
+
+    expect(fetched).not.toHaveBeenCalled()
+    fetched.mockRestore()
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a person without the capability gets 403 on ui/entry.js even when Fleet is not installed", async () => {
+    const member = as("member", person(false))
+
+    const response = await admin(member, ENTRY)
+
+    expect(response.status).toBe(403)
+    expect(((await response.json()) as {error: string}).error).toBe("forbidden")
+  })
+
+  test("it is not installed (404), misconfigured (503), or given an unsafe path (400), as the JSON routes are", async () => {
+    const portalAdmin = organizationAdmin()
+    expect(await (await admin(portalAdmin, ENTRY)).json()).toEqual({error: "fleet_not_installed"})
+    process.env.CLOUD_CORE_FLEET_URL = upstreamUrl()
+    const misconfigured = await admin(portalAdmin, ENTRY)
+    expect([misconfigured.status, await misconfigured.json()]).toEqual([503, {error: "fleet_unavailable"}])
+
+    configure()
+    const unsafe = [
+      "/ui/../entry.js",
+      "/ui/./entry.js",
+      "/ui/%2e%2e/entry.js",
+      "/ui/.%2E/entry.js",
+      "/ui/a%2fb.js",
+      "/ui/a%5cb.js",
+      "/ui/a\\b.js",
+      "/ui/%252e%252e/x",
+      "/ui/a%252fb",
+      "/ui/a%00b",
+      "/ui/%zz",
+    ]
+    for (const rest of unsafe) {
+      const response = await root.fetch(rawUrlRequest(`http://localhost/api/admin/fleet${rest}`, {"x-test-principal": portalAdmin}))
+      expect([rest, response.status]).toEqual([rest, 400])
+      expect(await response.json()).toEqual({error: "invalid_path"})
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("the path and query go upstream as received, under /v1/admin/ui, and are signed as sent", async () => {
+    configure()
+
+    await admin(organizationAdmin(), "/ui/chunks/chart-1a2b3c.js?x=a%20b&y=")
+    await admin(organizationAdmin(), "/ui/")
+    await admin(organizationAdmin(), "/ui")
+
+    expect(calls.map(call => call.pathWithQuery)).toEqual([
+      "/v1/admin/ui/chunks/chart-1a2b3c.js?x=a%20b&y=",
+      "/v1/admin/ui/",
+      "/v1/admin/ui",
+    ])
+    for (const call of calls) expect(serviceSignatureVerifies(call)).toBe(true)
+  })
+
+  test("no spelling of ui reaches the JSON forwarder, whose answers are not held to the asset rules", async () => {
+    configure()
+    const fetched = spyOn(globalThis, "fetch")
+    const rawRequest = (path: string) =>
+      rawUrlRequest(`http://localhost/api/admin/fleet${path}`, {"x-test-principal": organizationAdmin()})
+
+    for (const path of ["/UI/entry.js", "/Ui/entry.js", "//ui/entry.js", "/%55i/../x", "/ui/entry.js"]) {
+      const response = await root.fetch(rawRequest(path))
+      // Either the asset route's own answer or Core's refusal; never the JSON route's forward of a ui path.
+      if (path === "/ui/entry.js") expect([path, response.status]).toEqual([path, 200])
+      else expect([path, [400, 404].includes(response.status)]).toEqual([path, true])
+    }
+    fetched.mockRestore()
+    expect(calls.map(call => call.pathWithQuery)).toEqual(["/v1/admin/ui/entry.js"])
+
+    // A path that only starts with the letters is an ordinary one.
+    await admin(organizationAdmin(), "/uikit/x")
+    expect(calls.at(-1)?.pathWithQuery).toBe("/v1/admin/uikit/x")
+  })
+
+  test("a failing or unreachable Fleet is a 503, a 401 is a 403, and a redirect is not followed", async () => {
+    configure()
+    for (const status of [500, 502, 503]) {
+      respond = () => new Response("<html>internal</html>", {status, headers: {"content-type": "text/html", "retry-after": "17"}})
+      const response = await admin(organizationAdmin(), ENTRY)
+      expect([status, response.status]).toEqual([status, 503])
+      expect([status, response.headers.get("retry-after")]).toEqual([status, "17"])
+      expect(await response.json()).toEqual({error: "fleet_unavailable"})
+    }
+
+    respond = () => new Response(null, {status: 302, headers: {location: "https://elsewhere.example/entry.js", "retry-after": "17"}})
+    const redirected = await admin(organizationAdmin(), ENTRY)
+    expect(redirected.status).toBe(503)
+    expect(redirected.headers.get("retry-after")).toBeNull()
+    expect(calls).toHaveLength(4)
+
+    respond = () => Response.json({error: "x"}, {status: 401})
+    const unauthorized = await admin(organizationAdmin(), ENTRY)
+    expect(unauthorized.status).toBe(403)
+    expect(await unauthorized.json()).toEqual({error: "x"})
+
+    const fetched = spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("connection refused"))
+    const unreachable = await admin(organizationAdmin(), ENTRY)
+    fetched.mockRestore()
+    expect(unreachable.status).toBe(503)
+    expect(await unreachable.json()).toEqual({error: "fleet_unavailable"})
+  })
+
+  test("an upstream that does not answer within the timeout is a 503, and one that stalls mid-body ends the body", async () => {
+    configure({CLOUD_CORE_FLEET_TIMEOUT_MS: "150"})
+    respond = () => new Promise<Response>(() => {})
+    const started = Date.now()
+    const silent = await admin(organizationAdmin(), ENTRY)
+    expect(silent.status).toBe(503)
+    expect(Date.now() - started).toBeLessThan(3000)
+
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(patterned(100))
+            // Never closed: the headers arrive, the body never finishes.
+          },
+        }),
+        {headers: {"content-type": JS}},
+      )
+    const stalled = await admin(organizationAdmin(), ENTRY)
+    expect(stalled.status).toBe(200)
+    const {received, error} = await drain(stalled)
+    expect(error).toBeInstanceOf(Error)
+    expect(received).toBeLessThanOrEqual(100)
+    expect(Date.now() - started).toBeLessThan(3000)
+    // Fleet outlasting the timeout is a warning that names the reason, not the caller going away.
+    expect(await eventually(() => logs.some(line => line.level === "warn" && line.fields.reason === "timeout"))).toBe(true)
+  })
+
+  test("a caller that goes away mid-download ends the request to Fleet, quietly", async () => {
+    configure()
+    let cancelled = false
+    respond = () => new Response(endlessBody(1024, () => (cancelled = true)), {headers: {"content-type": JS}})
+
+    const response = await admin(organizationAdmin(), ENTRY)
+    const reader = response.body!.getReader()
+    await reader.read()
+    await reader.cancel(new Error("navigated away"))
+
+    expect(await eventually(() => cancelled)).toBe(true)
+    expect(await eventually(() => logs.some(line => line.level === "debug" && line.fields.reason === "aborted"))).toBe(true)
+    expect(logs.some(line => line.level === "warn")).toBe(false)
+  })
+
+  test("the default cap is 25 MiB, and an unusable value does not lift it", async () => {
+    const CAP = 25 * 1024 * 1024
+    for (const value of [undefined, "0", "-5", "abc", "1.5", ""]) {
+      configure(value === undefined ? {} : {CLOUD_CORE_FLEET_MAX_ASSET_BYTES: value})
+      const fetched = fleetAnswers(new Response(null, {headers: {"content-type": JS, "content-length": String(CAP + 1)}}))
+      const over = await admin(organizationAdmin(), ENTRY, {method: "HEAD"})
+      fetched.mockRestore()
+      expect([value, over.status]).toEqual([value, 503])
+    }
+
+    configure()
+    respond = () => new Response(new Uint8Array(CAP), {headers: {"content-type": JS}})
+    const atCap = await admin(organizationAdmin(), ENTRY)
+    expect(atCap.status).toBe(200)
+    expect((await atCap.arrayBuffer()).byteLength).toBe(CAP)
+  })
+
+  test("logs once per asset request without a body, header, query or secret, and says why a stream was cut", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "1024"})
+    respond = () => new Response(patterned(100), {headers: {"content-type": JS, "etag": '"etag-secret"', "x-request-id": "fleet-9"}})
+    const withContext = new Hono<AppEnv>()
+    withContext.use("/api/*", requestContext)
+    withContext.route("/", root)
+
+    const response = await withContext.request("http://localhost/api/admin/fleet/ui/entry.js?token=query-secret", {
+      headers: {"x-test-principal": organizationAdmin(), "x-request-id": "req-asset", "cookie": "cookie-secret"},
+    })
+    await response.arrayBuffer()
+
+    const forwarded = logs.filter(line => line.message.includes("Fleet"))
+    expect(forwarded).toHaveLength(1)
+    expect(forwarded[0].level).toBe("debug")
+    expect(forwarded[0].fields).toEqual({
+      reqId: "req-asset",
+      audience: "admin",
+      upstreamRequestId: "fleet-9",
+      upstreamStatus: 200,
+      status: 200,
+      ms: expect.any(Number),
+    })
+
+    // Refusals carry a reason that names no content.
+    respond = () => new Response("<h1>secret page</h1>", {headers: {"content-type": "text/html"}})
+    await admin(organizationAdmin(), "/ui/page?token=query-secret")
+    respond = () => new Response(null, {headers: {"content-type": JS, "content-length": "2048"}})
+    await admin(organizationAdmin(), "/ui/page?token=query-secret", {method: "HEAD"})
+    const refusals = logs.filter(line => line.message.includes("Fleet") && line.fields.status === 503)
+    expect(refusals.map(line => [line.level, line.fields.reason])).toEqual([
+      ["warn", "content_type_not_allowed"],
+      ["warn", "asset_over_cap"],
+    ])
+
+    const everything = JSON.stringify(logs)
+    for (const secret of [SECRET, "query-secret", "cookie-secret", "etag-secret", "secret page", "text/html"]) {
+      expect([secret, everything.includes(secret)]).toEqual([secret, false])
+    }
+  })
+
+  describe("a cookie the request already set", () => {
+    // `principalAuth` rotates the portal session before the handler runs; the asset route answers through the
+    // context for the same reason the JSON route does, or the Organization Admin is signed out a minute later.
+    test("survives every answer of the asset route, relayed or its own, and a stream cut off after its headers", async () => {
+      configure({CLOUD_CORE_FLEET_MAX_ASSET_BYTES: "64"})
+      const organization = organizationAdmin()
+      const html = () => new Response("<h1>x</h1>", {headers: {"content-type": "text/html"}})
+      const answers: Record<string, [() => Response | Promise<Response>, Init?]> = {
+        "200 with every passed header": [
+          () =>
+            new Response(patterned(32), {
+              headers: {"content-type": JS, "etag": '"e"', "last-modified": "Tue, 13 Oct 2026 10:00:00 GMT", "cache-control": "no-cache", "vary": "Accept-Encoding", "x-request-id": "f-1"},
+            }),
+        ],
+        "an svg": [() => new Response("<svg/>", {headers: {"content-type": "image/svg+xml"}})],
+        "304": [() => new Response(null, {status: 304, headers: {etag: '"e"'}})],
+        "HEAD": [() => new Response(null, {headers: {"content-type": JS, "content-length": "32"}}), {method: "HEAD"}],
+        "404": [() => Response.json({error: "nope"}, {status: 404})],
+        "an upstream 401, relayed as 403": [() => Response.json({error: "x"}, {status: 401})],
+        "an upstream 500, answered 503": [() => Response.json({error: "x"}, {status: 500, headers: {"retry-after": "30"}})],
+        "an upstream redirect, answered 503": [() => new Response(null, {status: 302, headers: {location: "/x"}})],
+        "text/html, answered 503": [html],
+        "a declared length over the cap, answered 503": [() => new Response("x".repeat(65), {headers: {"content-type": JS}})],
+        "a stream cut off after its headers": [() => new Response(endlessBody(16), {headers: {"content-type": JS}})],
+        "a request that never gets an answer": [() => new Promise<Response>(() => {})],
+        "a method that is not allowed": [() => html(), {method: "POST", body: "{}"}],
+      }
+
+      for (const [name, [reply, init]] of Object.entries(answers)) {
+        respond = reply
+        process.env.CLOUD_CORE_FLEET_TIMEOUT_MS = name === "a request that never gets an answer" ? "100" : "10000"
+
+        const response = await admin(organization, ENTRY, {...init, headers: {"x-test-set-cookie": ROTATED}})
+        expect([name, response.headers.getSetCookie()]).toEqual([name, [ROTATED]])
+        await response.body?.cancel().catch(() => {})
+      }
+    })
+
+    test("survives Core's own answers before anything is forwarded", async () => {
+      const organization = organizationAdmin()
+      const headers = {"x-test-set-cookie": ROTATED}
+      const cookies = async (response: Promise<Response> | Response) => (await response).headers.getSetCookie()
+
+      // Not installed, misconfigured.
+      expect(await cookies(admin(organization, ENTRY, {headers}))).toEqual([ROTATED])
+      process.env.CLOUD_CORE_FLEET_URL = upstreamUrl()
+      expect(await cookies(admin(organization, ENTRY, {headers}))).toEqual([ROTATED])
+      // Ready: a refused path.
+      configure()
+      const unsafe = rawUrlRequest("http://localhost/api/admin/fleet/ui/a/../b", {...headers, "x-test-principal": organization})
+      expect(await cookies(root.fetch(unsafe))).toEqual([ROTATED])
+    })
+
+    test("is not mistaken for Fleet's: a Set-Cookie from Fleet never reaches the caller", async () => {
+      configure()
+      respond = () => new Response("{}", {headers: {"content-type": "application/json", "set-cookie": "fleet=1; Path=/"}})
+
+      const response = await admin(organizationAdmin(), "/ui/manifest.json", {headers: {"x-test-set-cookie": ROTATED}})
+
+      expect(response.headers.getSetCookie()).toEqual([ROTATED])
+    })
+
+    test("leaves what an earlier middleware set on the context in place: its Vary, and Fleet's request id replaces the earlier one", async () => {
+      configure()
+      respond = () => new Response("{}", {headers: {"content-type": JS, "vary": "Accept-Encoding", "x-request-id": "fleet-own-id"}})
+      const withContext = new Hono<AppEnv>()
+      withContext.use("/api/*", requestContext)
+      withContext.use("/api/*", async (c, next) => {
+        c.header("vary", "Origin", {append: true})
+        await next()
+      })
+      withContext.route("/", root)
+
+      const response = await withContext.request("http://localhost/api/admin/fleet/ui/entry.js", {
+        headers: {"x-test-principal": organizationAdmin(), "x-test-set-cookie": ROTATED, "x-request-id": "caller-id"},
+      })
+
+      expect(response.status).toBe(200)
+      expect(response.headers.get("vary")?.split(/,\s*/).sort()).toEqual(["Accept-Encoding", "Origin"])
+      expect(response.headers.get("x-request-id")).toBe("fleet-own-id")
+      expect(response.headers.getSetCookie()).toEqual([ROTATED])
+    })
+  })
+})
+
 describe("configuration", () => {
   test("not configured is a 404 fleet_not_installed on both surfaces, once the caller is authenticated", async () => {
     const organizationAdmin = as("organization-admin", person(true))
@@ -1665,9 +2458,11 @@ describe("who may call", () => {
     bare.route("/api/client/fleet", clientFleetApi)
     bare.route("/api/admin", adminApi)
 
-    for (const path of ["/api/client/fleet/devices", "/api/admin/fleet/devices"]) {
-      const response = await bare.request(`http://localhost${path}`)
-      expect([path, response.status]).toEqual([path, 401])
+    for (const path of ["/api/client/fleet/devices", "/api/admin/fleet/devices", "/api/admin/fleet/ui/entry.js"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const response = await bare.request(`http://localhost${path}`, {method})
+        expect([method, path, response.status]).toEqual([method, path, 401])
+      }
     }
     expect(calls).toHaveLength(0)
   })
