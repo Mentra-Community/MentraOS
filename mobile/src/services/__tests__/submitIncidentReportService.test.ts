@@ -285,9 +285,27 @@ it("includes settings preparation in the one deadline and never submits after a 
   expect(jest.getTimerCount()).toBe(0)
 })
 
-it("retains the created report link when submission is still pending at the deadline", async () => {
+it("retains the created report and observed receipts when upload is still pending at the deadline", async () => {
   jest.useFakeTimers()
   let signal!: AbortSignal
+  const partial = {
+    reportId: "rep_created",
+    state: "timed-out" as const,
+    logCollection: {
+      glasses: {
+        state: "received" as const,
+        artifactId: "art_glasses",
+        requestedAt: "2026-10-13T00:00:00Z",
+        deadlineAt: "2026-10-13T00:02:00Z",
+      },
+    },
+  }
+  jest.mocked(reports.waitForCollection).mockImplementationOnce(
+    (_id, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(new ReportCollectionError(partial)), {once: true})
+      }),
+  )
   jest.mocked(submitAutomaticReport).mockImplementationOnce((_input, options) => {
     options!.onCreated("rep_created")
     signal = options!.signal
@@ -299,17 +317,17 @@ it("retains the created report link when submission is still pending at the dead
       report_id: "rep_created",
       incident_id: "rep_created",
       status: "failed",
-      collection: {reportId: "rep_created", state: "timed-out"},
+      collection: partial,
     },
   })
   await jest.advanceTimersByTimeAsync(120_000)
   await rejected
   expect(signal.aborted).toBe(true)
-  expect(reports.waitForCollection).not.toHaveBeenCalled()
+  expect(reports.waitForCollection).toHaveBeenCalledTimes(1)
   expect(jest.getTimerCount()).toBe(0)
 })
 
-it("uses only the remaining budget after slow submission instead of adding a fresh wait", async () => {
+it("starts receipt observation at creation without renewing its deadline after slow submission", async () => {
   jest.useFakeTimers()
   jest.mocked(submitAutomaticReport).mockImplementationOnce(
     (_input, options) =>
@@ -323,7 +341,7 @@ it("uses only the remaining budget after slow submission instead of adding a fre
   await pending
   expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
     sources: ["phone", "glasses", "glasses_firmware"],
-    timeoutMs: 20_000,
+    timeoutMs: 120_000,
     signal: expect.any(AbortSignal),
   })
   expect(jest.getTimerCount()).toBe(0)
@@ -351,4 +369,28 @@ it("runs on React Native signals without throwIfAborted", async () => {
     return {status: "submitted", reportId: "rep_test", reportStatus: "ready"}
   })
   await expect(submitIncidentReport({failure_code: "rn_signal"})).resolves.toMatchObject({status: "filed"})
+})
+
+it("rejects expiry during collection with partial receipts and no unhandled rejection", async () => {
+  jest.useFakeTimers()
+  const partial = {reportId: "rep_test", state: "timed-out" as const, logCollection: {}}
+  jest.mocked(reports.waitForCollection).mockImplementationOnce(
+    (_id, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(new ReportCollectionError(partial)), {once: true})
+      }),
+  )
+  const unhandled = jest.fn()
+  process.on("unhandledRejection", unhandled)
+  try {
+    const pending = submitIncidentReport({failure_code: "collection_deadline"})
+    const rejected = expect(pending).rejects.toMatchObject({result: {report_id: "rep_test", collection: partial}})
+    await jest.advanceTimersByTimeAsync(120_000)
+    await rejected
+    expect(unhandled).not.toHaveBeenCalled()
+    expect(reports.waitForCollection).toHaveBeenCalledTimes(1)
+    expect(jest.getTimerCount()).toBe(0)
+  } finally {
+    process.removeListener("unhandledRejection", unhandled)
+  }
 })

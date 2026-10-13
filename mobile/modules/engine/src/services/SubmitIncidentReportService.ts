@@ -84,6 +84,7 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
 
   const throttleKey = [source, failureCode, scenarioName || "unknown", alertId || "unknown"].join("|")
   let reportId: string | undefined
+  let collectionOutcome: Promise<{collection?: ReportCollectionResult; error?: unknown}> | undefined
   const controller = new AbortController()
   const deadlineAt = Date.now() + AUTOMATED_INCIDENT_TIMEOUT_MS
   let timer: number | undefined
@@ -108,6 +109,21 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
       // selection that never completed pairing has no glasses logs to collect.
       const identity = projectPairingIdentity()
       const sources = requiredDeviceReportLogSources(identity)
+      const observeCreatedReport = (createdId: string) => {
+        reportId = createdId
+        // One observer starts at creation, so its validated receipts survive
+        // expiry during phone upload, status writes or finalization.
+        collectionOutcome ??= reports
+          .waitForCollection(createdId, {
+            sources: [...sources],
+            timeoutMs: Math.max(1, deadlineAt - Date.now()),
+            signal: controller.signal,
+          })
+          .then(
+            (collection) => ({collection}),
+            (error: unknown) => ({error}),
+          )
+      }
       const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
       const submitResult = await submitAutomaticReport(
         {
@@ -127,41 +143,41 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
         },
         {
           signal: controller.signal,
-          onCreated: (createdId) => {
-            reportId = createdId
-          },
+          onCreated: observeCreatedReport,
         },
       )
 
-      return {submitResult, sources}
+      if (submitResult.status === "submitted") observeCreatedReport(submitResult.reportId)
+      return submitResult
     }
-    // Only preparation races the outer deadline. Collection owns its safe
-    // last snapshot and rejects on the same signal, retaining partial receipts.
-    const {submitResult, sources} = await Promise.race([prepare(), expired])
+    // Uploads and validated receipt observation share the same deadline.
+    // Rejection handlers are attached when both operations are created.
+    const submitResult = await Promise.race([prepare(), expired])
     const result = toAutomaticReportSubmissionStatus(submitResult)
     if (result.status !== "filed" && !reportId) {
       logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
       throw new IncidentReportError(logIncidentResult({alertId, testRunId, failureCode, scenarioName, result}))
     }
     if (result.status === "filed") reportId = result.reportId
+    const outcome = await collectionOutcome!
+    if (outcome.error) throw outcome.error
+    const collection = outcome.collection!
     assertReportNotAborted(controller.signal)
-    const collection = await reports.waitForCollection(reportId!, {
-      sources: [...sources],
-      timeoutMs: Math.max(1, deadlineAt - Date.now()),
-      signal: controller.signal,
-    })
     logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
     const receipt = logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, reportId, collection})
     if (result.status !== "filed") throw new IncidentReportError(receipt)
     return receipt
   } catch (error) {
     if (error instanceof IncidentReportError) throw error
+    const observed = await collectionOutcome
+    const collectionError = observed?.error instanceof ReportCollectionError ? observed.error : error
     const collection =
-      error instanceof ReportCollectionError
-        ? error.collection
+      observed?.collection ??
+      (collectionError instanceof ReportCollectionError
+        ? collectionError.collection
         : reportId
-          ? {reportId, state: "unavailable" as const, logCollection: {}}
-          : undefined
+        ? {reportId, state: "unavailable" as const, logCollection: {}}
+        : undefined)
     const result: AutomaticReportSubmissionStatus = {
       status: "failed",
       error: reportId ? "Required incident log collection did not complete" : "Incident report submission failed",

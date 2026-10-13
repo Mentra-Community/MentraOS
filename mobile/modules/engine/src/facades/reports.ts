@@ -224,36 +224,21 @@ async function submitReportInternal(
   let reportStatus: ReportStatus
   let artifactsComplete = true
   try {
-    const res =
+    const payload: SubmitReportInput =
       input.kind === "feedback"
-        ? await cloudClientService.core.reports.submit(
-            {
-              kind: "feedback",
-              feedback: input.feedback,
-              context,
-            },
-            signal,
-          )
+        ? {kind: "feedback", feedback: input.feedback, context}
         : input.kind === "bug"
-          ? await cloudClientService.core.reports.submit(
-              {
-                kind: "bug",
-                trigger: input.trigger,
-                report: input.report,
-                context,
-              },
-              signal,
-            )
-          : await cloudClientService.core.reports.submit(
-              {
-                kind: "automatic",
-                ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
-                trigger: input.trigger,
-                report: input.report,
-                context,
-              },
-              signal,
-            )
+          ? {kind: "bug", trigger: input.trigger, report: input.report, context}
+          : {
+              kind: "automatic",
+              ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
+              trigger: input.trigger,
+              report: input.report,
+              context,
+            }
+    const res = signal
+      ? await cloudClientService.core.reports.submit(payload, signal)
+      : await cloudClientService.core.reports.submit(payload)
     reportId = res.reportId
     options?.onCreated(reportId)
     assertReportNotAborted(signal)
