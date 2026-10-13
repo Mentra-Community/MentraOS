@@ -473,6 +473,10 @@ jobs:
         working-directory: ./mobile
         run: bun install --frozen-lockfile
 
+      - name: Test packaged PR compilation provenance
+        if: steps.select-apk.outputs.reused != 'true'
+        run: node --test mobile/scripts/app-config-pr-build.test.mjs
+
       - name: Install Android toolchain with download retries
         if: steps.select-apk.outputs.reused != 'true'
         run: node .github/scripts/install-android-sdk.mjs --mobile mobile

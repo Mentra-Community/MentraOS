@@ -96,7 +96,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             mentraPrBuild: {
               schemaVersion: 1,
               mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
-              mobileSourceCommit: process.env.GITHUB_SHA,
+              // Explicit PR builds check out a merge revision while GITHUB_SHA
+              // still names the trusted workflow ref. Both PR producers supply
+              // the actual compilation revision separately.
+              mobileSourceCommit: process.env.MENTRA_PR_BUILD_SHA,
               // Expo's config serializer transforms nested nulls; keep the
               // unconfigured intermediate explicit until CI packages its pin.
               otaManifestUrl: "",
