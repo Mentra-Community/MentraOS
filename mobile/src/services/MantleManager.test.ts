@@ -715,6 +715,24 @@ describe("MantleManager", () => {
     }
   })
 
+  it("never installs a bundled release over an open miniapp", async () => {
+    const deployment = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    const originalVersions = appRegistry.getInstalledVersions
+    const originalInstall = appRegistry.installFromLocalZip
+    const install = jest.fn()
+    Object.assign(appRegistry, {getInstalledVersions: () => ["0.9.0"], installFromLocalZip: install})
+    ;(miniappLauncher.isRunning as jest.Mock).mockReturnValueOnce(true)
+    const asset = {name: "com.mentra.notes-1.0.0.zip", downloadAsync: jest.fn()} as unknown as Asset
+    try {
+      await (mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}).installBundledMiniapp(asset)
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      Object.assign(appRegistry, {getInstalledVersions: originalVersions, installFromLocalZip: originalInstall})
+      deployment.mockRestore()
+    }
+  })
+
   it("keeps a consumer's QR development build instead of installing the bundled release over it", async () => {
     const devRecords = getDevAppRecords as jest.Mock
     devRecords.mockReturnValue([{packageName: "com.mentra.notes"}])

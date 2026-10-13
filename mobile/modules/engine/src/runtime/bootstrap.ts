@@ -242,30 +242,53 @@ export function configure(opts: IslandConfigureOptions): void {
     console.warn("engine.configure() called after engine.start(); ignored — stop() the runtime before reconfiguring")
     return
   }
-  const localMiniappAllowlist = opts.config?.localMiniappAllowlist
-  const localMiniappPolicy = opts.config?.localMiniappPolicy
   options = {
     ...opts,
-    config: opts.config
-      ? {
-          ...opts.config,
-          localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
-            ? Object.freeze([...localMiniappAllowlist])
-            : localMiniappAllowlist,
-          localMiniappPolicy: localMiniappPolicy
-            ? Object.freeze({
-                systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
-                  ? Object.freeze([...localMiniappPolicy.systemPackageNames])
-                  : null,
-                managed: Object.freeze(
-                  localMiniappPolicy.managed.map((entry) =>
-                    Object.freeze({...entry, sha256: entry.sha256.toLowerCase()}),
-                  ),
-                ),
-              })
-            : undefined,
-        }
+    config: opts.config ? {...opts.config, ...frozenMiniappPolicy(opts.config)} : undefined,
+  }
+}
+
+function frozenMiniappPolicy(
+  config: Pick<IslandConfigValues, "localMiniappAllowlist" | "localMiniappPolicy">,
+): Pick<IslandConfigValues, "localMiniappAllowlist" | "localMiniappPolicy"> {
+  const {localMiniappAllowlist, localMiniappPolicy} = config
+  return {
+    localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
+      ? Object.freeze([...localMiniappAllowlist])
+      : localMiniappAllowlist,
+    localMiniappPolicy: localMiniappPolicy
+      ? Object.freeze({
+          systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
+            ? Object.freeze([...localMiniappPolicy.systemPackageNames])
+            : null,
+          managed: Object.freeze(
+            localMiniappPolicy.managed.map((entry) => Object.freeze({...entry, sha256: entry.sha256.toLowerCase()})),
+          ),
+        })
       : undefined,
+  }
+}
+
+/** A workspace's miniapp catalog: the releases it manages, its allowlist and miniapp configuration. */
+export type MiniappPolicy = Pick<
+  IslandConfigValues,
+  "localMiniappAllowlist" | "localMiniappPolicy" | "miniappConfiguration"
+>
+
+/**
+ * Replace the workspace's miniapp catalog on a running runtime, as
+ * `updateUiSeams` does for UI seams. Installs, launches and miniapp
+ * configuration read it when they run. Everything else stays as configured:
+ * endpoints, auth and feature switches belong to the started session.
+ */
+export function updateMiniappPolicy(policy: MiniappPolicy): void {
+  if (!options?.config) {
+    console.warn("engine.updateMiniappPolicy() called before engine.configure(); ignored")
+    return
+  }
+  options = {
+    ...options,
+    config: {...options.config, ...frozenMiniappPolicy(policy), miniappConfiguration: policy.miniappConfiguration},
   }
 }
 

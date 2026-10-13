@@ -12,6 +12,31 @@ Every active deployment has a schema-v1 `DeploymentManifest`:
   Consumer environment variables do not change these defaults. The cached source
   manifest remains unchanged when debugging.
 
+## Workspace manifest refresh
+
+Each launch re-reads the selected workspace's manifest (`refresh.ts`) beside the
+boot version check, so miniapps and features an administrator adds reach the
+phone without a new sign-in. While the app runs, `workspaceManifestScheduler`
+checks again on the Store's cadence: when the app comes to the foreground, when
+the cloud reconnects, and every 15 minutes (`MaintenanceSchedulerCore`, shared
+with the Store update scheduler).
+
+- Launch waits up to 3 seconds for it, so Engine starts from the new manifest.
+- When Engine is already running (it arrived later, or an Android warm relaunch
+  or background recovery started Engine), the session takes the manifest's
+  miniapp catalog and presentation now. `MantleManager.applyDeploymentUpdate()`
+  hands Engine the catalog (`engine.updateMiniappPolicy`) and re-syncs managed
+  miniapps. A new version of an installed miniapp goes through the Store's
+  release installer: an idle one updates; an open one asks first, and "Not now"
+  waits until it closes. A removed miniapp that is open goes when it closes.
+- Everything else (feature switches, OTA, telemetry, glasses and system-miniapp
+  policy) is saved and applies when Engine next starts. Runtime only serves what
+  its manifest enables, so a switch turned off is already enforced there.
+- The stored Entra account and Cloud session belong to the deployment ID, Core,
+  Runtime and `auth`. A manifest that changes any of these is not adopted; the person
+  selects the workspace again.
+- A failed or invalid fetch keeps the saved manifest.
+
 `debugOverrides.ts` resolves the selected manifest with the active Core/Runtime
 overrides. `cloudClient.ts` adapts that effective manifest for the engine. Login's
 Core requests, boot's Runtime version check, Debug Settings, startup, and manual

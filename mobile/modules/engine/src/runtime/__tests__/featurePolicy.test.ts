@@ -2,6 +2,8 @@ import {afterEach, describe, expect, test} from "bun:test"
 
 import {
   configure,
+  getConfigValues,
+  getMiniappConfiguration,
   isDevMiniappAllowed,
   isFeatureEnabled,
   isInstalledMiniappAllowed,
@@ -9,6 +11,8 @@ import {
   isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
   resetForTests,
+  start,
+  updateMiniappPolicy,
 } from "../bootstrap"
 
 describe("deployment feature policy", () => {
@@ -215,5 +219,58 @@ describe("Store-updated bundled releases", () => {
     expect(isMiniappAvailable("com.mentra.store")).toBe(false)
     expect(isMiniappAvailable("com.mentra.store", "background")).toBe(true)
     expect(isMiniappAvailable("com.mentra.notes")).toBe(true)
+  })
+})
+
+describe("updateMiniappPolicy", () => {
+  afterEach(() => resetForTests())
+
+  const acme = (packageName: string, sha256: string) => ({
+    packageName,
+    version: "1.0.0",
+    sha256,
+    deploymentId: "acme",
+    deploymentOrigin: "https://acme.example",
+  })
+  const managedInstall = (packageName: string, bundleSha256: string) =>
+    isInstalledMiniappAllowed(packageName, "1.0.0", {
+      source: "deployment_manifest",
+      bundleSha256,
+      deploymentId: "acme",
+      deploymentOrigin: "https://acme.example",
+    })
+
+  test("admits a newly managed miniapp on a running runtime and keeps the session's other settings", async () => {
+    configure({
+      auth: {},
+      config: {
+        coreUrl: "https://core.acme.example",
+        localMiniappPolicy: {systemPackageNames: ["com.mentra.settings"], managed: [acme("com.mentra.call", "aa")]},
+        features: {cloudSpeech: true, navigation: false},
+      },
+    })
+    await start()
+    expect(managedInstall("com.mentra.enterprise", "bb")).toBe(false)
+
+    updateMiniappPolicy({
+      localMiniappPolicy: {
+        systemPackageNames: ["com.mentra.settings"],
+        managed: [acme("com.mentra.call", "aa"), acme("com.mentra.enterprise", "BB")],
+      },
+      miniappConfiguration: {"com.mentra.enterprise": {backendUrl: "https://backend.acme.example"}},
+    })
+
+    expect(managedInstall("com.mentra.enterprise", "bb")).toBe(true)
+    expect(managedInstall("com.mentra.call", "aa")).toBe(true)
+    expect(getMiniappConfiguration("com.mentra.enterprise")).toEqual({backendUrl: "https://backend.acme.example"})
+    // Endpoints and feature switches belong to the started session.
+    expect(getConfigValues().coreUrl).toBe("https://core.acme.example")
+    expect(isFeatureEnabled("cloudSpeech")).toBe(true)
+    expect(isFeatureEnabled("navigation")).toBe(false)
+  })
+
+  test("is ignored before configure()", () => {
+    updateMiniappPolicy({localMiniappAllowlist: ["com.mentra.settings"]})
+    expect(getConfigValues().localMiniappAllowlist).toBeUndefined()
   })
 })

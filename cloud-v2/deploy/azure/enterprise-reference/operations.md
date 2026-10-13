@@ -254,11 +254,12 @@ It then removes the prior version owned by that deployment. Removing the entry
 from the manifest removes that deployment-owned install. Unrelated local and
 SYSTEM installs are never adopted or deleted.
 
-In v1, the Mentra App resolves the remote manifest when the workspace is
-selected and then uses that validated snapshot on later boots. To apply a
-changed managed list, the employee uses the workspace-change flow and selects
-the same workspace again. Automatic background manifest refresh is a later
-delivery feature; Runtime minimum-version policy remains live and independent.
+The Mentra App resolves the remote manifest when the workspace is selected and
+re-reads it each time the app opens and every 15 minutes while it runs, so a
+changed managed list installs then.
+An open miniapp asks the employee before it updates, and a removed one goes when
+it closes.
+Runtime minimum-version policy remains live and independent.
 
 The reference Mentra Cloud image does not contain customer miniapp ZIPs. Put them in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` when producing the

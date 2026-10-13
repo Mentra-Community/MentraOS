@@ -17,12 +17,16 @@ jest.mock("@/contexts/DeeplinkContext", () => ({useDeeplink: () => ({processUrl:
 jest.mock("@/contexts/ThemeContext", () => ({useAppTheme: () => ({theme: {colors: {}}})}))
 jest.mock("@/services/deployment", () => ({
   ...jest.requireActual("@/services/deployment/store"),
+  ...jest.requireActual("@/services/deployment/refresh"),
   useDeployment: () => ({activeDeployment: mockDeployment, selectionResolved: true}),
 }))
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: () => ({replaceAll: mockReplaceAll, setAnimation: jest.fn()})},
 }))
-jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {init: jest.fn()}}))
+jest.mock("@/services/MantleManager", () => ({
+  __esModule: true,
+  default: {init: jest.fn(), isInitialized: () => false, applyDeploymentUpdate: jest.fn()},
+}))
 jest.mock("@/utils/cloudVersion", () => ({fetchMinimumClientVersion: jest.fn()}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))

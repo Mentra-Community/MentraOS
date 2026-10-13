@@ -1,10 +1,35 @@
 import {useAppStatusStore} from "../stores/apps"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
-import appRegistry, {type InstallBundleOptions} from "./AppRegistry"
+import appRegistry, {type InstallBundleOptions, type LocalZipInstallOptions} from "./AppRegistry"
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
 import {miniappLauncher} from "./MiniappLauncher"
 import {canShowRunningUpdatePrompt, emitRunningUpdateFailed, requestRunningUpdatePrompt} from "./runningUpdatePrompt"
+
+/**
+ * A release archive: a URL the installer downloads, or a ZIP its caller already
+ * downloaded and verified (a workspace's managed release).
+ */
+export type MiniappReleaseArchive =
+  | string
+  | ({localZipPath: string} & Pick<LocalZipInstallOptions, "adoptIdenticalInstalledVersion">)
+
+type ArchiveInstaller = (options: InstallBundleOptions) => Promise<void>
+
+function archiveInstaller(archive: MiniappReleaseArchive): ArchiveInstaller {
+  return async (options) => {
+    const result =
+      typeof archive === "string"
+        ? await appRegistry.installFromUrl(archive, options)
+        : await appRegistry.installFromLocalZip(archive.localZipPath, {
+            ...options,
+            ...(archive.adoptIdenticalInstalledVersion !== undefined
+              ? {adoptIdenticalInstalledVersion: archive.adoptIdenticalInstalledVersion}
+              : {}),
+          })
+    if (result.is_error()) throw result.error
+  }
+}
 
 export interface ReleaseInstallOptions extends InstallBundleOptions {
   expectedPackageName: string
@@ -37,8 +62,8 @@ export class MiniappInstallCancelledError extends Error {
 }
 
 /**
- * Shared release installation for QR and Store callers. The caller authorizes
- * the source; the archive goes through the one AppRegistry installer, which
+ * Shared release installation for QR, Store and workspace callers. The caller
+ * authorizes the source; the archive goes through the one AppRegistry installer, which
  * binds it to the expected package and version and applies the signer and
  * version rules again inside its serialized transaction.
  *
@@ -50,9 +75,13 @@ export class MiniappInstallCancelledError extends Error {
  *   verify and unpack first, then ask; on Update the miniapp closes, the
  *   release commits, and the miniapp reopens.
  */
-export async function installMiniappRelease(bundleUrl: string, options: ReleaseInstallOptions): Promise<void> {
+export async function installMiniappRelease(
+  archive: MiniappReleaseArchive,
+  options: ReleaseInstallOptions,
+): Promise<void> {
   const {onlyIfStopped, askIfRunning, isCancelled, ...requestedOptions} = options
   const packageName = options.expectedPackageName
+  const install = archiveInstaller(archive)
   const assertCurrent = () => {
     if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
   }
@@ -78,8 +107,7 @@ export async function installMiniappRelease(bundleUrl: string, options: ReleaseI
         // A dev probe or snapshot started before this release must not
         // reactivate development code after it commits.
         invalidateDevSnapshotRequests(packageName)
-        const result = await appRegistry.installFromUrl(bundleUrl, installOptions)
-        if (result.is_error()) throw result.error
+        await install(installOptions)
       }),
     )
     await useAppStatusStore.getState().refresh()
@@ -89,9 +117,9 @@ export async function installMiniappRelease(bundleUrl: string, options: ReleaseI
   assertStillInstalled(packageName)
   try {
     if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
-      await installRunningUpdate(bundleUrl, installOptions, packageName, options.expectedVersion, isCancelled)
+      await installRunningUpdate(install, installOptions, packageName, options.expectedVersion, isCancelled)
     } else {
-      await installIdleUpdate(bundleUrl, installOptions, packageName)
+      await installIdleUpdate(install, installOptions, packageName)
     }
   } catch (error) {
     if (error instanceof MiniappRunningError) markMiniappUpdateDeferred(packageName)
@@ -107,24 +135,27 @@ function assertStillInstalled(packageName: string): void {
   }
 }
 
-function installIdleUpdate(bundleUrl: string, options: InstallBundleOptions, packageName: string): Promise<void> {
+function installIdleUpdate(
+  install: ArchiveInstaller,
+  options: InstallBundleOptions,
+  packageName: string,
+): Promise<void> {
   return miniappLauncher.installWhenIdle(packageName, (reserveActivation) =>
-    useAppStatusStore.getState().runUpdate(packageName, async () => {
-      const result = await appRegistry.installFromUrl(bundleUrl, {
+    useAppStatusStore.getState().runUpdate(packageName, () =>
+      install({
         ...options,
         beforeActivate: () => {
           options.beforeActivate?.()
           assertStillInstalled(packageName)
           reserveActivation()
         },
-      })
-      if (result.is_error()) throw result.error
-    }),
+      }),
+    ),
   )
 }
 
 async function installRunningUpdate(
-  bundleUrl: string,
+  install: ArchiveInstaller,
   options: InstallBundleOptions,
   packageName: string,
   version: string,
@@ -146,7 +177,7 @@ async function installRunningUpdate(
   let stopped: {reopen: boolean} | undefined
   let failure: unknown
   try {
-    const result = await appRegistry.installFromUrl(bundleUrl, {
+    await install({
       ...options,
       whenStaged: async () => {
         assertCurrent()
@@ -178,7 +209,6 @@ async function installRunningUpdate(
         if (miniappLauncher.isRunning(packageName)) throw new Error(`${packageName} did not stop for its update`)
       },
     })
-    if (result.is_error()) throw result.error
     committed = true
   } catch (error) {
     failure = error
