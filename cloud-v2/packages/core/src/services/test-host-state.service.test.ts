@@ -12,42 +12,53 @@ function fixture() {
     reads = 0,
     writeAttempts = 0,
     failedWrites = 0
+  const readProjections: Array<Record<string, number> | undefined> = [], writeProjections: Array<Record<string, number> | undefined> = []
+  const project = (value: Record<string, any> | null, fields?: Record<string, number>) => value &&
+    (fields ? structuredClone(Object.fromEntries(Object.entries(value).filter(([key]) => fields[key]))) : structuredClone(value))
   let beforeWrite: ((change: Record<string, any>) => void | Promise<void>) | undefined
-  const find = spyOn(TestHostStateModel, "findOne").mockImplementation((() => ({
-    lean: async () => {
-      reads++
-      return row && structuredClone(row)
-    },
-  })) as any)
+  const find = spyOn(TestHostStateModel, "findOne").mockImplementation((() => {
+    let fields: Record<string, number> | undefined
+    const query = {
+      select(value: Record<string, number>) {fields = value; return query},
+      lean: async () => {
+        reads++
+        readProjections.push(fields)
+        return project(row, fields)
+      },
+    }; return query}) as any)
   const update = spyOn(TestHostStateModel, "findOneAndUpdate").mockImplementation(((
     filter: Record<string, unknown>,
     change: {$set: Record<string, any>},
     options: {upsert: boolean},
-  ) => ({
-    lean: async () => {
-      writeAttempts++
-      await beforeWrite?.(change.$set)
-      if (failedWrites > 0) {
-        failedWrites--
-        return null
-      }
-      if (
-        row &&
-        Object.entries(filter).some(([key, value]) =>
-          typeof value === "object" && value !== null && "$exists" in value
-            ? (row![key] !== undefined) !== (value as {$exists: boolean}).$exists
-            : row![key] !== value,
-        )
-      ) {
-        if (options.upsert) throw Object.assign(new Error('Duplicate host identity'), {code: 11000})
-        return null
-      }
-      if (!row && !options.upsert) return null
-      row = {...row, ...change.$set}
-      writes++
-      return {...row}
-    },
-  })) as any)
+  ) => {
+    let fields: Record<string, number> | undefined
+    const query = {
+      select(value: Record<string, number>) {fields = value; return query},
+      lean: async () => {
+        writeAttempts++
+        await beforeWrite?.(change.$set)
+        if (failedWrites > 0) {
+          failedWrites--
+          return null
+        }
+        if (
+          row &&
+          Object.entries(filter).some(([key, value]) =>
+            typeof value === "object" && value !== null && "$exists" in value
+              ? (row![key] !== undefined) !== (value as {$exists: boolean}).$exists
+              : row![key] !== value,
+          )
+        ) {
+          if (options.upsert) throw Object.assign(new Error('Duplicate host identity'), {code: 11000})
+          return null
+        }
+        if (!row && !options.upsert) return null
+        row = {...row, ...change.$set}
+        writes++
+        writeProjections.push(fields)
+        return project(row, fields)
+      },
+    }; return query}) as any)
   return {
     service: new TestHostStateService(() => now),
     advance: (ms: number) => (now += ms),
@@ -57,6 +68,7 @@ function fixture() {
     failWrites: (count: number) => {failedWrites = count},
     beforeWrite: (hook: typeof beforeWrite) => {beforeWrite = hook},
     row: () => row!,
+    readProjections, writeProjections,
     stop: () => {
       find.mockRestore()
       update.mockRestore()
@@ -377,6 +389,30 @@ const observation = (sequence: number, extra: Record<string, unknown> = {}) => (
     nextAction: "Wait for active executor",
   },
   ...extra,
+})
+
+test('heartbeat and updater acknowledgements preserve large diagnostics without returning them from Mongo', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(1, 1), 'mini')
+    const diagnostics = {retained: 'x'.repeat(180_000)}
+    Object.assign(f.row(), {unrelatedDiagnostics: diagnostics})
+    f.readProjections.length = 0; f.writeProjections.length = 0
+    expect(await f.service.report(accepted(1, 2), 'mini')).toEqual({hostId: 'mini', incarnation: 'boot-1',
+      incarnationGeneration: 1, sequence: 2})
+    expect(await f.service.reportDeployment(observation(1), 'mini')).toEqual({hostId: 'mini', generation: 1, sequence: 1})
+    expect(f.readProjections).toHaveLength(2); expect(f.writeProjections).toHaveLength(2)
+    for (const fields of [...f.readProjections, ...f.writeProjections]) {
+      expect(fields).toBeDefined()
+      expect(fields).not.toHaveProperty('snapshot')
+      expect(fields).not.toHaveProperty('unrelatedDiagnostics')
+      const selected = Object.fromEntries(Object.entries(f.row()).filter(([key]) => fields?.[key]))
+      expect(JSON.stringify(selected).length).toBeLessThan(2048)
+    }
+    expect(f.row().unrelatedDiagnostics).toEqual(diagnostics)
+    expect(f.row().frameworkHistory).toHaveLength(1)
+    expect((await f.service.get('mini'))!.frameworkBinding).toEqual(binding(1))
+  } finally {f.stop()}
 })
 
 for (const updaterFirst of [true, false]) {

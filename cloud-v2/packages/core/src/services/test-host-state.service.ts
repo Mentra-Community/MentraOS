@@ -202,6 +202,9 @@ const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequenc
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
 })
+// Host snapshots contain repair diagnostics; reporting needs only their accepted cursor and history.
+const reportingStateProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
+  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1} as const
 async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
   // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -229,7 +232,7 @@ export class TestHostStateService {
         .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
       if (!request) throw new TestRunError(409, 'Routine progress differs from its authenticated accepted request')
     }
-    const current = await TestHostStateModel.findOne({hostId}).lean()
+    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection).lean()
     if (current) {
       if (
         snapshot.incarnationGeneration === current.incarnationGeneration &&
@@ -349,7 +352,7 @@ export class TestHostStateService {
           },
         },
         {upsert: !current, new: true, writeConcern: testWriteConcern},
-      ).lean()
+      ).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1}).lean()
       if (!saved) return undefined
       return {
         hostId,
@@ -394,7 +397,7 @@ export class TestHostStateService {
   private async reportDeploymentObservation(observation: z.infer<typeof updaterDeploymentSchema>, hostId: string) {
     if (observation.hostId !== hostId)
       throw new TestRunError(409, "Deployment observation differs from authenticated host")
-    const current = await TestHostStateModel.findOne({hostId}).lean()
+    const current = await TestHostStateModel.findOne({hostId}).select(reportingStateProjection).lean()
     if (!current) throw new TestRunError(409, "Controller host enrollment must exist before updater observations")
     if (
       observation.generation < (current.deploymentGeneration ?? 0) ||
@@ -429,7 +432,7 @@ export class TestHostStateService {
         },
       },
       {new: true, writeConcern: testWriteConcern},
-    ).lean()
+    ).select({deploymentGeneration: 1, deploymentSequence: 1}).lean()
     if (!saved) return undefined
     return {hostId, generation: saved.deploymentGeneration ?? 0, sequence: saved.deploymentSequence ?? 0}
   }
