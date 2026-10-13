@@ -1,3 +1,4 @@
+import {PrRoutineCaseService,type PrRoutineCaseAttacher} from './pr-routine-case.service'
 import {createHash} from 'node:crypto'
 import {ROUTINE_CHECK_NAME, ROUTINE_CHECK_REPOSITORY, ROUTINE_RERUN_ACTION, type CheckPayload, type PrRoutineAttempt,
   type PrRoutineCheck, type PrRoutineCheckRow, type PrRoutineContext, type PrRoutineMember} from '../types/pr-routine-check.types'
@@ -19,6 +20,7 @@ import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-rout
 import {PrRerunReferenceService} from './pr-rerun-reference.service'
 
 const digest = (value: unknown) => requestInputDigest(value)
+const selectionDigest = ({requestId: _requestId, ...selected}: NonNullable<PrRoutineMember['selection']>) => digest(selected)
 export const prRoutineGateId = (headSha: string) => `pr-check-${createHash('sha256').update(`${ROUTINE_CHECK_REPOSITORY}:${headSha}`).digest('hex')}`
 const selectionKey = (context: PrRoutineContext) => digest({number: context.number, headSha: context.headSha,
   baseRef: context.baseRef, sameRepository: context.sameRepository, labels: context.labels, peers: context.peers, labelEvents: context.labelEvents ?? {}, labelActors: context.labelActors ?? {}})
@@ -53,7 +55,7 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
     const stage = member.settled ? member.status : stale ? 'Progress unavailable' : progress!.phase.replace(/-/g, ' ')
     const original = member.linkedTarget ? `${adminBase()}/?${'suiteId' in member.linkedTarget.parent ? 'testSuite=' + encodeURIComponent(member.linkedTarget.parent.suiteId) : 'testRun=' + encodeURIComponent(member.linkedTarget.parent.requestId)}` : undefined
     const result = member.requestId ? `${adminBase()}/?testRun=${encodeURIComponent(member.requestId)}` : undefined
-    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor(((stale ? Date.parse(progress.observedAt) : now) - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
+    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor(((stale ? Date.parse(progress.observedAt) : now) - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
   })
   const coverage = attempt.members.length ? `Selected ${attempt.members.length} routine/platform member(s) at ${gate.routineRevision ?? 'pending source'}.`
     : gate.selectionError ?? gate.selectionWait ?? (gate.context.labels.length ? 'Preparing selected routine coverage.' : 'No routine tests requested.')
@@ -84,7 +86,8 @@ export class PrRoutineCheckService {
     private readonly hosts: Pick<TestHostStateService, 'get'> = new TestHostStateService(),
     private readonly now: () => number = Date.now,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
-    private readonly references: Pick<PrRerunReferenceService, 'resolve'> = new PrRerunReferenceService()) {}
+    private readonly references: Pick<PrRerunReferenceService, 'resolve'> = new PrRerunReferenceService(),
+    private readonly followUps: PrRoutineCaseAttacher = new PrRoutineCaseService()) {}
   private attempt(generation: number): PrRoutineAttempt {
     const acceptedAt = iso(this.now())
     return {generation, acceptedAt, deadline: iso(this.now() + 3 * 3600_000), members: []}
@@ -439,6 +442,17 @@ export class PrRoutineCheckService {
         if (error instanceof TestRunError && error.status === 409 && await this.renewLinkedPreview(gate, member)) changed = true
       }
     }
+    for (const member of this.selectedLinkedMembers(attempt)) {
+      if (!member.selection || !member.originalRequestId || member.followUp) continue
+      try {
+        const actor = gate.context.labelActors?.[member.linkedTarget!.labels[0]!] ?? gate.controls.at(-1)?.actor ?? 'GitHub routine check'
+        const attached = await this.followUps.attach(member.originalRequestId, {repository: ROUTINE_CHECK_REPOSITORY, number: gate.context.number}, actor)
+        member.followUp = attached.caseId ? {caseId: attached.caseId} : {state: attached.unavailable ? 'unavailable' : 'not-required'}
+        delete member.waitReason; changed = true
+      } catch {
+        member.waitReason = 'Recording the intended fix is unavailable; the retained request will retry'
+      }
+    }
     return changed
   }
   private async renewLinkedPreview(gate: PrRoutineCheck, member: PrRoutineMember) {
@@ -458,7 +472,7 @@ export class PrRoutineCheckService {
   private async admit(gate: PrRoutineCheck) {
     const attempt = gate.attempt
     for (const member of this.selectedLinkedMembers(attempt)) {
-      if (!member.selection || !member.linkedPreview?.digest || member.status === 'not-run') continue
+      if (!member.selection || !member.linkedPreview?.digest || !member.followUp || member.status === 'not-run') continue
       try {
         await this.reruns.submit({rerunId: member.linkedPreview.id, previewDigest: member.linkedPreview.digest})
         await this.observe(member)
@@ -470,7 +484,7 @@ export class PrRoutineCheckService {
     }
     attempt.members = attempt.members.filter(member => member.linkedTarget || member.originalRequestId || !attempt.members.some(value =>
       value.linkedTarget && value.selection && member.selection &&
-      digest({...value.selection, requestId: undefined}) === digest({...member.selection, requestId: undefined})))
+      selectionDigest(value.selection) === selectionDigest(member.selection)))
     if (attempt.members.filter(member => !member.linkedTarget).length < 2) delete attempt.suiteId
     // Create the original group after exact-input deduplication, never rewrite an existing suite's membership.
     if (!attempt.rerun && !attempt.members.some(member => !member.linkedTarget && attempt.members.some(value =>

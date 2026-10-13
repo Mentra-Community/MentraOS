@@ -1,4 +1,5 @@
 import type {PipelineStage} from "mongoose";
+import {readCaseFollowUpSummaries} from './routine-case-projection.service';
 import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestRequestModel} from "../models/test-request.model";
@@ -228,6 +229,20 @@ export class TestHistoryService {
       logger.warn({err: error}, 'Latest linked statuses unavailable; original outcomes remain readable');
       for (const entry of originals) entry.latestUnavailable = true;
     }
+    const roots: Array<{entry: TestHistoryEntry; key: string}> = [];
+    for (const entry of enriched) {
+      if (entry.kind === 'run') roots.push({entry, key: rerunRootKey({requestId: entry.requestId}, entry.requestId)});
+      else if (entry.kind === 'suite') {const suite = suiteSummaries.get(entry.suiteId);
+        if (suite && !(suite instanceof Error)) for (const member of suite.members) roots.push({entry, key: rerunRootKey({suiteId: entry.suiteId}, member.memberId)});
+      }
+    }
+    try {
+      const summaries = await readCaseFollowUpSummaries(roots.map(row => row.key));
+      for (const {entry, key} of roots) {const followUp = summaries.get(key); if (!followUp) continue;
+        if (entry.kind === 'run') entry.followUp = followUp;
+        else if (entry.kind === 'suite') {entry.followUps ??= []; if (!entry.followUps.some(row => row.caseId === followUp.caseId)) entry.followUps.push(followUp);}
+      }
+    } catch { /* Follow-up availability never changes independent original result visibility. */ }
     return {entries: enriched, nextCursor};
   }
 }

@@ -18,6 +18,7 @@ export type PrRoutineMember = {
   status: string; publicationComplete: boolean; settled: boolean; progress?: RoutineProgress;
   laneLabel?: string; waitReason?: string; containmentPending?: boolean;
   linkedTarget?: PrLinkedTarget; linkedSource?: TestBuildSource;
+  followUp?: {caseId:string} | {state:'not-required'|'unavailable'};
   linkedPreview?: {id: string; digest?: string; renewals?: number};
 }
 export type PrRoutineAttempt = {

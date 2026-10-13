@@ -61,7 +61,7 @@ export const testRerunRepository: RerunRepository = {
 };
 export type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
   routineSource?: z.infer<typeof frameworkRequestInputSchema>['routineSource'];
-  routineRevision?: string;
+  routineRevision?: string; evidenceStatus?: 'complete'|'failed';
   build?: z.infer<typeof frameworkRequestInputSchema>['build']; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string};
 const terminal = (status: string) => (rerunTerminalStatuses as readonly string[]).includes(status);
 export const rerunRootKey = (parent: RerunPlan["parent"], memberId: string) => requestInputDigest({parent, memberId});

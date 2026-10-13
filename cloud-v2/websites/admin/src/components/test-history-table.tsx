@@ -5,6 +5,7 @@ import {laneHistoryHref} from "../lib/lane-links";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {testRunLocation} from "../lib/test-run-links";
 import {suiteDisplayStatus} from "../../../../packages/core/src/types/test-status-comparison";
+import {CompactFollowUp} from './routine-follow-up';
 import {OriginalLatestStatus, SuiteCountComparison} from "./test-status-comparison";
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from "./ui/table";
 
@@ -107,6 +108,8 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
     <TableCell><HistoryBuild build={suite ? {...entry.build, channel: entry.channel} : entry.build}/></TableCell>
     <TableCell className="min-w-40">
       {suite ? <HistoryStatus outcome={outcome}/> : <OriginalLatestStatus original={outcome} latest={entry.latest}/>}
+      {entry.kind === "run" && entry.followUp && <CompactFollowUp row={entry.followUp}/>}
+      {entry.kind === "suite" && entry.followUps?.map(row => <CompactFollowUp key={row.caseId} row={row}/>)}
       {entry.latestUnavailable && <p className={MUTED}>Latest unavailable</p>}
       {suite ? <p className={MUTED}>{entry.comparison ? <SuiteCountComparison original={entry.comparison.original} latest={entry.comparison.latest}/>
         : `${entry.failedCount}/${entry.expectedCount - (entry.skipped ?? 0)} failed${entry.skipped ? `, ${entry.skipped} skipped` : ''}`}</p>

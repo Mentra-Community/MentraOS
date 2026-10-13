@@ -14,6 +14,7 @@ import type {CaseVerificationReader} from './routine-case.service'
 
 const requestSchema = z.object({requestId: z.string(), runId: z.string().optional(), input: z.unknown().optional(), inputSha256: z.string().optional(),
   fleetSelection: z.unknown().optional(), fleetSelectionSha256: z.string().optional(), dispatchIntent: z.unknown().optional(), dispatchIntentSha256: z.string().optional()})
+export class OriginalNotFailedError extends TestRunError {constructor(){super(409, 'Follow-up requires the failed original occurrence')}}
 /** Resolve the existing original lineage first; a successor never becomes a new standalone occurrence. */
 export class RoutineCaseOriginalService implements CaseVerificationReader {
   constructor(private readonly reruns = new TestRerunService(), private readonly results = new FrameworkResultService(),
@@ -32,8 +33,8 @@ export class RoutineCaseOriginalService implements CaseVerificationReader {
     const parent = lineage.lineage?.parent ?? (lineage.original ? {suiteId: lineage.original.suiteId} : {requestId: incoming.requestId})
     const memberId = lineage.lineage?.memberId ?? lineage.original?.memberId ?? incoming.requestId
     const member = (await this.reruns.originalMembers(parent)).find(value => value.memberId === memberId)
-    if (!member?.requestId || !['failed', 'setup-failed', 'teardown-failed'].includes(member.status))
-      throw new TestRunError(409, 'Follow-up requires the failed original occurrence')
+    if (!member?.requestId || !['failed', 'setup-failed', 'teardown-failed'].includes(member.status) && member.evidenceStatus !== 'failed')
+      throw new OriginalNotFailedError()
     const request = await this.request(member.requestId)
     const selected = request.fleetSelection !== undefined ? portableRoutineSelectionSchema.parse(request.fleetSelection)
       : request.input !== undefined ? recordedFrameworkRequestInputSchema.parse(request.input) : routineDispatchIntentSchema.parse(request.dispatchIntent)
