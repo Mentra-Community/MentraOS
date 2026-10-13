@@ -17,11 +17,13 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
+import {Platform} from "react-native"
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import {waitForOtaInternet} from "./OtaInternetRecovery"
 import {submitOtaFailureReport, type OtaFailureReason} from "./OtaFailureReportService"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
@@ -217,6 +219,7 @@ class OtaInstallCoordinator {
   private errorMsg = ""
   private reportAttemptId = `${Date.now()}-0`
   private reportAttemptSequence = 0
+  private finishCompletion: {attemptId: string; deviceRevision: number; promise: Promise<void>} | null = null
   private versionChangeReconnected = false
   private sawReconnectEdge = false
   private continueButtonDisabled = false
@@ -489,7 +492,39 @@ class OtaInstallCoordinator {
    * stays in the screen): clear the selected update, and after an APK step
    * clear the stale build number so the next check re-reads version_info.
    */
-  async finish(): Promise<void> {
+  finish(): Promise<void> {
+    const deviceRevision = otaDeviceSessionRevision()
+    const attemptId = this.reportAttemptId
+    const existing = this.finishCompletion
+    if (existing?.attemptId === attemptId && existing.deviceRevision === deviceRevision) return existing.promise
+
+    const usedHotspot = this.selectedTransport === "hotspot" || this.hotspotManifestUrl !== null
+    let resolve!: () => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<void>((done, failed) => {
+      resolve = done
+      reject = failed
+    })
+    const completion = {attemptId, deviceRevision, promise}
+    // Publish before cleanup notifies subscribers, so every completion caller
+    // shares this install's teardown and single Internet recovery deadline.
+    this.finishCompletion = completion
+    const isCurrent = () =>
+      this.finishCompletion === completion &&
+      this.reportAttemptId === attemptId &&
+      otaDeviceSessionRevision() === deviceRevision
+    void (async () => {
+      await this.cleanupFinishedInstall()
+      // Recovery does not imply request success: the final check owns its result.
+      if (usedHotspot && Platform.OS === "android") await waitForOtaInternet(isCurrent)
+    })().then(resolve, (error) => {
+      if (this.finishCompletion === completion) this.finishCompletion = null
+      reject(error)
+    })
+    return promise
+  }
+
+  private async cleanupFinishedInstall(): Promise<void> {
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
       this.observedTransport = null
@@ -499,8 +534,6 @@ class OtaInstallCoordinator {
     if (this.apkStepSeen) {
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
     }
-    // The post-install check needs internet again. Do not let callers leave the
-    // terminal screen while Android still owns the no-internet hotspot route.
     await this.teardownHotspotTransport()
   }
 
@@ -512,7 +545,10 @@ class OtaInstallCoordinator {
    */
   async discard(): Promise<void> {
     const deviceRevision = otaDeviceSessionRevision()
-    await this.finish()
+    // Abandonment has no final Internet check. Cancel any pending recovery and
+    // wait only for local transport cleanup before leaving the install screen.
+    this.finishCompletion = null
+    await this.cleanupFinishedInstall()
     if (deviceRevision !== otaDeviceSessionRevision()) return
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
@@ -598,6 +634,7 @@ class OtaInstallCoordinator {
   // --- internal state plumbing ---
 
   private resetSessionState(): void {
+    this.finishCompletion = null
     this.errorMsg = ""
     this.versionChangeReconnected = false
     this.sawReconnectEdge = false
