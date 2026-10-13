@@ -387,6 +387,20 @@ export class TestHostStateService {
         }
       : null
   }
+  /** Run details need one lane's observation, never the host's repair history or diagnostics. */
+  async progressObservation(hostId: string, laneId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({'snapshot.incarnation': 1, 'snapshot.sequence': 1,
+      'snapshot.lanes.id': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, receivedAt: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean()
+    const parsed = z.object({incarnation: frameworkIdentitySchema, sequence: z.number().int().nonnegative().safe(),
+      lanes: z.array(z.object({id: frameworkIdentitySchema, activity: laneActivitySchema.optional(),
+        progress: routineProgressSchema.optional()})).max(100)}).safeParse(row?.snapshot)
+    const receivedAt = z.date().safeParse(row?.receivedAt)
+    if (!parsed.success || !receivedAt.success) return null
+    const lane = parsed.data.lanes.find(value => value.id === laneId)
+    return lane ? {incarnation: parsed.data.incarnation, sequence: parsed.data.sequence,
+      receivedAt: receivedAt.data.toISOString(), lane} : null
+  }
   async reportDeployment(input: unknown, hostId: string) {
     const observation = updaterDeploymentSchema.parse(input)
     return retryHostStateWrite(

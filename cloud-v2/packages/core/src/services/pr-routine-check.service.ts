@@ -18,6 +18,7 @@ import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {PrBuildDispatchFailure, GithubPrRoutineChecks, type PrRoutineGithub} from './pr-routine-check-github'
 import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-routine-check.repository'
 import {PrRerunReferenceService} from './pr-rerun-reference.service'
+import {matchingRoutineProgress} from '../types/routine-progress.types'
 
 const digest = (value: unknown) => requestInputDigest(value)
 const selectionDigest = ({requestId: _requestId, ...selected}: NonNullable<PrRoutineMember['selection']>) => digest(selected)
@@ -284,12 +285,8 @@ export class PrRoutineCheckService {
     delete member.progress
     const input = frameworkRequestInputSchema.safeParse(request.input)
     if (request.hostId && request.inputSha256 && input.success) {
-      const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId), progress = lane?.progress
-      if (host && progress && lane!.activity?.owner.kind === 'run' && lane!.activity.owner.id === member.requestId &&
-          progress.requestId === member.requestId && progress.requestDigest === request.inputSha256 &&
-          progress.ownerGeneration === lane!.activity.generation && progress.controllerIncarnation === host.incarnation &&
-          progress.sequence === host.sequence && (progress.totalSteps === member.stepIds.length || progress.phase === 'preparation' && progress.totalSteps === 0) &&
-          (!progress.currentStep || member.stepIds[progress.currentStep.index] === progress.currentStep.id)) member.progress = progress
+      const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId)
+      if (host && lane) member.progress = matchingRoutineProgress(host, lane, request, member.stepIds)
     }
   }
   private async latestMembers(attempt: PrRoutineAttempt) {

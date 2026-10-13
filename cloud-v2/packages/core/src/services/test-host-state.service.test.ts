@@ -5,6 +5,27 @@ import {TestRequestModel} from '../models/test-request.model'
 import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
 import {routineProgressSchema} from '../types/routine-progress.types'
 
+test('run progress lookup selects only one lane snapshot and uses a bounded consistent read', async () => {
+  const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
+  const snapshot = {incarnation: 'boot-one', sequence: 7, lanes: [{id: 'phone', resources: [{id: 'private'}]}]};
+  const find = spyOn(TestHostStateModel, 'findOne').mockImplementation(((filter: unknown) => {
+    filters.push(filter);
+    const query = {select(value: unknown) {selections.push(value); return query},
+      read(value: unknown) {settings.push(value); return query}, readConcern(value: unknown) {settings.push(value); return query},
+      setOptions(value: unknown) {settings.push(value); return query}, async lean() {return {snapshot, receivedAt: new Date('2026-10-03T01:00:00Z')}}};
+    return query;
+  }) as never);
+  try {
+    expect(await new TestHostStateService().progressObservation('host-one', 'phone')).toEqual({
+      incarnation: 'boot-one', sequence: 7, receivedAt: '2026-10-03T01:00:00.000Z', lane: {id: 'phone'},
+    });
+    expect(filters).toEqual([{hostId: 'host-one'}]);
+    expect(selections).toEqual([{'snapshot.incarnation': 1, 'snapshot.sequence': 1, 'snapshot.lanes.id': 1,
+      'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, receivedAt: 1, _id: 0}]);
+    expect(settings).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
+  } finally {find.mockRestore()}
+})
+
 function fixture() {
   let row: Record<string, any> | null = null,
     now = Date.parse("2026-10-03T01:00:00Z"),

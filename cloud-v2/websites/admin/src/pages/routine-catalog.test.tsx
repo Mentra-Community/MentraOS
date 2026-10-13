@@ -17,6 +17,7 @@ import {
   matchesCatalogSearch,
   matchesHistorySearch,
   routineCatalogOverviewQuery,
+  requestLiveStatus,
   matchesStepSearch,
   recordingOffset,
   testHistoryListPath,
@@ -27,6 +28,57 @@ import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
 import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
+
+test('active run page shows current phase, completed count and named steps before final publication', () => {
+  const now = new Date().toISOString(), requestId = 'active-miniapps';
+  const client = new QueryClient();
+  client.setQueryData(['framework-run', requestId], {kind: 'request', request: {
+    requestId, hostId: 'testing-pro-1', routineId: 'miniapps', platform: 'android', laneId: 'phone', state: 'accepted',
+    definitionRevision: 'a'.repeat(40), build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    live: {title: 'Open and close miniapps', receivedAt: now, observationAgeMs: 0, progress: {phase: 'test', currentStep: {id: 'close', index: 1},
+      completedSteps: 1, totalSteps: 3, startedAt: now, observedAt: now},
+      steps: [{id: 'open', instruction: 'Open miniapp'}, {id: 'close', instruction: 'Close miniapp'}, {id: 'home', instruction: 'Verify Home'}]},
+  }});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(html).toContain('Open and close miniapps: In progress');
+  expect(html).toContain('Running test');
+  expect(html).toContain('1/3 steps completed');
+  expect(html).toContain('Completed'); expect(html).toContain('Pending');
+  expect(html).toContain('aria-current="step"');
+  expect(html).toContain('Close miniapp');
+  expect(html).toContain('Final result and evidence are pending.');
+  expect(html).not.toContain('No routine result has been published.');
+  expect(html).not.toContain('Passed'); expect(html).not.toContain('<video');
+  const cached = client.getQueryData<{kind: 'request'; request: {live: {observationAgeMs: number}}}>(['framework-run', requestId])!;
+  cached.request.live.observationAgeMs = 61_000;
+  client.setQueryData(['framework-run', requestId], cached);
+  const stale = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(stale).toContain('Progress unavailable');
+  expect(stale).toContain('Last observed');
+  expect(stale).not.toContain('animate-spin');
+  expect(stale).not.toContain('>Running<');
+  expect(stale).not.toContain('miniapps: In progress');
+})
+
+test('stale live observations freeze elapsed time and stop claiming a currently running step', () => {
+  const request = {live: {receivedAt: '2026-10-03T00:02:00Z', observationAgeMs: 0, progress: {phase: 'routine-teardown', startedAt: '2026-10-03T00:00:00Z',
+    observedAt: '2026-10-03T00:02:00Z'}}} as Parameters<typeof requestLiveStatus>[0];
+  const received = Date.parse('2026-10-03T00:02:00Z');
+  expect(requestLiveStatus(request, received + 60_000, received)).toEqual({stale: false, phase: 'Routine cleanup', elapsed: '3m 00s'});
+  expect(requestLiveStatus(request, received + 61_000, received)).toEqual({stale: true, phase: 'Routine cleanup', elapsed: '2m 00s'});
+  expect(requestLiveStatus({} as Parameters<typeof requestLiveStatus>[0])).toBeNull();
+})
+
+test('controller and browser clock offsets cannot mark fresh heartbeats stale or extend stopped activity', () => {
+  for (const controllerOffset of [-120_000, 120_000]) for (const browserOffset of [-120_000, 120_000]) {
+    const server = Date.parse('2026-10-03T01:00:00Z'), browser = server + browserOffset;
+    const request = {live: {receivedAt: new Date(server).toISOString(), observationAgeMs: 2000,
+      progress: {phase: 'test', startedAt: new Date(server + controllerOffset - 30_000).toISOString(),
+        observedAt: new Date(server + controllerOffset).toISOString()}}} as Parameters<typeof requestLiveStatus>[0];
+    expect(requestLiveStatus(request, browser, browser)).toEqual({stale: false, phase: 'Running test', elapsed: '32s'});
+    expect(requestLiveStatus(request, browser + 90_000, browser)).toEqual({stale: true, phase: 'Running test', elapsed: '30s'});
+  }
+})
 
 test('run page separates actual Harness diagnostic actions/time from teardown failures and resource readiness', () => {
   const fixture = lifecycleRuns.find(fixture => fixture.scenario === 'cleaned-provider-error')!;

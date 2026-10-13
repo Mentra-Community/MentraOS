@@ -11,6 +11,30 @@ import {TestRunError} from "../../services/test-result-error";
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type StoredPreparingRequest, type TestRequestRepository} from "../../services/test-request.service";
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
+import {TestRequestProgressService} from '../../services/test-request-progress.service';
+
+test('the ordinary run detail carries live progress until its published result replaces the request', async () => {
+  const input = {routineSource: testRoutineSource(), routineId: 'miniapps', definitionRevision: 'a'.repeat(40), platform: 'android',
+    laneId: 'phone', resources: [], build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
+  const row = {requestId: 'active-request', hostId: 'pro', input, inputSha256: requestInputDigest(input), state: 'accepted' as const};
+  const live = {title: 'Miniapps', steps: [{id: 'open', instruction: 'Open miniapp'}], progress: {phase: 'test'}};
+  const detail = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new TestRunError(404, 'pending'));
+  const byRequest = spyOn(FrameworkResultService.prototype, 'detail').mockRejectedValue(new TestRunError(404, 'pending'));
+  const requests = spyOn(TestRequestService.prototype, 'get').mockResolvedValue(row);
+  const progress = spyOn(TestRequestProgressService.prototype, 'get').mockResolvedValue(live as never);
+  try {
+    const app = createTestRunAdminApi();
+    expect(await (await app.request('/active-request')).json()).toMatchObject({kind: 'request', request: {live}});
+    expect(progress).toHaveBeenCalledWith(row);
+    progress.mockRejectedValueOnce(new Error('Host observation unavailable'));
+    const unavailable = await app.request('/active-request');
+    expect(unavailable.status).toBe(200);
+    expect(await unavailable.json()).toMatchObject({kind: 'request', request: {state: 'accepted', liveUnavailable: true}});
+    progress.mockClear(); byRequest.mockResolvedValue({run: {requestId: 'active-request'}, outcome: 'pass'} as never);
+    expect(await (await app.request('/active-request')).json()).toMatchObject({kind: 'run', outcome: 'pass'});
+    expect(progress).not.toHaveBeenCalled();
+  } finally {detail.mockRestore(); byRequest.mockRestore(); requests.mockRestore(); progress.mockRestore();}
+});
 
 test("mounted lane run history forwards host, lane and pagination at the collection URL", async () => {
   const calls: Record<string, string>[] = [];
