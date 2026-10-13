@@ -9,7 +9,7 @@ export const ROUTINE_RERUN_ACTION = {label: 'Re-run routines', description: 'Run
 export type CheckConclusion = 'success' | 'failure' | 'cancelled' | 'timed_out'
 export type PrRoutineContext = {
   number: number; headSha: string; baseRef: string; headRef: string; sameRepository: boolean;
-  open: boolean; labels: string[]; peers: number[]; labelActors?: Record<string, string>
+  open: boolean; labels: string[]; peers: number[]; labelActors?: Record<string, string>; labelEvents?: Record<string, number>
 }
 export type PrRoutineMember = {
   memberId: string; routineId: string; platform: 'android' | 'ios-on-mac';

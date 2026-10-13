@@ -21,7 +21,7 @@ import {PrRerunReferenceService} from './pr-rerun-reference.service'
 const digest = (value: unknown) => requestInputDigest(value)
 export const prRoutineGateId = (headSha: string) => `pr-check-${createHash('sha256').update(`${ROUTINE_CHECK_REPOSITORY}:${headSha}`).digest('hex')}`
 const selectionKey = (context: PrRoutineContext) => digest({number: context.number, headSha: context.headSha,
-  baseRef: context.baseRef, sameRepository: context.sameRepository, labels: context.labels, peers: context.peers})
+  baseRef: context.baseRef, sameRepository: context.sameRepository, labels: context.labels, peers: context.peers, labelEvents: context.labelEvents ?? {}, labelActors: context.labelActors ?? {}})
 const externalId = (gate: Pick<PrRoutineCheck, 'gateId' | 'coverageGeneration' | 'attempt'>) =>
   `${gate.gateId}:${gate.coverageGeneration}:${gate.attempt.generation}`
 const iso = (time: number) => new Date(time).toISOString()
@@ -438,9 +438,21 @@ export class PrRoutineCheckService {
       } catch (error) {
         member.status = 'admission pending'; member.settled = false
         member.waitReason = error instanceof TestRunError && error.status === 409 ? 'Waiting for the original lineage to settle' : 'Linked verification admission unavailable'
+        if (error instanceof TestRunError && error.status === 409 && await this.renewLinkedPreview(gate, member)) changed = true
       }
     }
     return changed
+  }
+  private async renewLinkedPreview(gate: PrRoutineCheck, member: PrRoutineMember) {
+    if (!member.linkedPreview) return false
+    try {
+      const retained = await this.reruns.detail(member.linkedPreview.id)
+      if (retained.state !== 'preview' || this.now() - Date.parse(retained.createdAt) < 600_000 || (member.linkedPreview.renewals ?? 0) >= 20) return false
+      const renewals = (member.linkedPreview.renewals ?? 0) + 1
+      member.linkedPreview = {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: gate.attempt.generation, member: member.memberId})}:preview:${renewals}`, renewals}
+      delete member.selection; delete member.requestId; delete member.requestDeadline
+      return true
+    } catch {return false} // Unknown acceptance retains the same identity.
   }
   private selectedLinkedMembers(attempt: PrRoutineAttempt) {
     return attempt.members.filter(member => member.linkedTarget && (!attempt.rerun || attempt.rerun.memberIds.includes(member.memberId)))
@@ -455,16 +467,7 @@ export class PrRoutineCheckService {
       } catch (error) {
         member.status = 'admission pending'; member.settled = false
         member.waitReason = error instanceof TestRunError && error.status === 409 ? 'Waiting for the original lineage to settle' : 'Linked verification admission unavailable'
-        if (error instanceof TestRunError && error.status === 409) {
-          try {
-            const retained = await this.reruns.detail(member.linkedPreview.id)
-            if (retained.state === 'preview' && this.now() - Date.parse(retained.createdAt) >= 600_000 && (member.linkedPreview.renewals ?? 0) < 20) {
-              const renewals = (member.linkedPreview.renewals ?? 0) + 1
-              member.linkedPreview = {id: `pr-linked-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: attempt.generation, member: member.memberId})}:preview:${renewals}`, renewals}
-              delete member.selection; delete member.requestId; delete member.requestDeadline
-            }
-          } catch { /* An uncertain accepted plan retains its identity. */ }
-        }
+        if (error instanceof TestRunError && error.status === 409) await this.renewLinkedPreview(gate, member)
       }
     }
     attempt.members = attempt.members.filter(member => member.linkedTarget || member.originalRequestId || !attempt.members.some(value =>
@@ -614,6 +617,7 @@ export class PrRoutineCheckService {
         if (saved) await this.deliver(gateId)
         return saved
       }
+      gate.context = context
       for (const retired of gate.retired.filter(attempt => attempt.cancellation)) {
         if (retired.members.some(member => !member.settled)) await this.cancel(retired)
         await this.completeOriginalSuite(gate, retired)

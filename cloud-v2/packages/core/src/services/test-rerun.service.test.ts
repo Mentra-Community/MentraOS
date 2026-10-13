@@ -294,6 +294,6 @@ test('plan cancellation fences unaccepted children without claiming their predec
  expect(f.requests.get(preview.plan.members[0]!.requestId)?.fleetCancellation).toBeDefined();
  expect(f.rows.get(preview.rerunId)!.state).toBe('preview');
  expect(await f.service.cancelPlan('not-created','Cancel absent intent')).toBe(false);
- f.rows.get(preview.rerunId)!.plan.members[0]!.selection.routineId='tampered';
+ const member=f.rows.get(preview.rerunId)!.plan.members[0]!; if (!('selection' in member)) throw Error('Expected current portable selection'); member.selection.routineId='tampered';
  await expect(f.service.cancelPlan(preview.rerunId,'Cancel corrupt intent')).rejects.toThrow('integrity');
 });

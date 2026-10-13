@@ -19,6 +19,7 @@ afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore()})
 const query = (read: () => unknown) => ({select() {return this}, limit() {return this}, read() {return this}, readConcern() {return this}, setOptions() {return this}, async lean() {return structuredClone(read())}})
 
 function fixture() {
+  let labelActor = "operator", labelEvent = 1, mayWrite = true
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, lostRerunCommit = false, lostPreviewCheckpoint = false, failedAdmission: string | undefined
   const gates = new Map<string, PrRoutineCheckRow>(), suites = new Map<string, any>(), requests = new Map<string, any>(), runs = new Map<string, any>(), reruns = new Map<string, RerunRecord>(), claims = new Set<string>()
   const submitted: string[] = [], cancelled: string[] = []
@@ -59,13 +60,13 @@ function fixture() {
   const rerun = new TestRerunService(store, suite, jobs as any, requestReader as any, results as any, () => now)
   const references = new PrRerunReferenceService({async suites(ref) {return [...suites.keys()].filter(id => matchesLabelReference(ref, id))},
     async requests(ref) {return [...requests.keys()].filter(id => matchesLabelReference(ref, id))}}, rerun)
-  const createService = () => new PrRoutineCheckService(rows, {async context() {return {...structuredClone(context),labelActors:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,'operator']))}}, async permission() {return true}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
+  const createService = () => new PrRoutineCheckService(rows, {async context() {return {...structuredClone(context),labelActors:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelActor])),labelEvents:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelEvent]))}}, async permission() {return mayWrite}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
     {async catalog(revision) {return {routineRevision: revision!, routines: ['one','two'].map(routineId => ({routineId, platforms: ['android']}))}}},
     {async getExact(id: string) {const definition = {id, title: id, steps: [{id: 'observe', instruction: 'Observe'}], platforms: ['android']}; return {definition, definitionSha256: requestInputDigest(definition)} as any}},
     {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references)
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
+  return {authority(actor: string, event: number, write: boolean) {labelActor=actor;labelEvent=event;mayWrite=write}, get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
     async start() {await service.intake(12,'event','c'.repeat(64)); for (let i=0;i<6;i++) {now+=30000; await service.tick()}},
     async drain(count=3) {for (let i=0;i<count;i++) {now+=30000; await service.tick()}},
     control(deliveryId: string) {const gate = gates.get(gateId)!.payload; return {deliveryId, digest: 'c'.repeat(64), gateId, checkId: 99, externalId: gate.checkExternalId, headSha: context.headSha, kind: 'rerun' as const, actor: 'operator'}},
@@ -312,4 +313,24 @@ test('tagged submit retains durable request identity if the following check comm
  await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000005',coverageGeneration:2,attemptGeneration:1},'admin:operator');
  f.restart(); await f.drain(1); expect(f.cancelled).toContain(retained); expect(f.gate().attempt.conclusion).toBeUndefined();
  f.settle(); await f.drain(); expect(f.gate().attempt.conclusion).toBe('cancelled');
+});
+
+
+test('same-label reapplication changes authority generation and cannot retain another employee approval',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ f.context.labels=[(await f.references.copy('one','s',f.gate().attempt.suiteId!)).label];await f.service.intake(12,'authority-start','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(6);
+ const accepted=f.gate().attempt.members[0]!.requestId!;f.publishPass(accepted);await f.drain();expect(f.gate().attempt.conclusion).toBe('success');
+ f.authority('triage-user',2,false);await f.service.reconcile(f.gate().gateId);await f.drain(3);
+ expect(f.gate().coverageGeneration).toBe(3);expect(f.gate().selectionError).toContain('repository writer');expect(f.gate().attempt.conclusion).toBe('failure');
+ f.authority('operator',3,true);await f.service.reconcile(f.gate().gateId);await f.drain(6);
+ expect(f.gate().coverageGeneration).toBe(4);expect(f.gate().selectionError).toBeUndefined();expect(f.gate().attempt.members[0]!.requestId).not.toBe(accepted);
+});
+
+test('lost tagged child checkpoint renews only a positively expired unaccepted preview',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ f.context.labels=[(await f.references.copy('one','s',f.gate().attempt.suiteId!)).label];await f.service.intake(12,'expired-checkpoint','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(2);
+ f.losePreviewCheckpoint();await f.drain(1);const preview=[...f.reruns.values()][0]!;expect(preview.state).toBe('preview');
+ f.advance(11*60000);f.restart();await f.drain(5);
+ expect(f.reruns.get(preview.rerunId)!.state).toBe('preview');expect([...f.reruns.values()].filter(row=>row.state==='accepted')).toHaveLength(1);
+ expect(f.gate().attempt.members[0]!.status).toBe('running');expect(f.gate().attempt.members[0]!.linkedPreview!.renewals).toBe(1);
 });
