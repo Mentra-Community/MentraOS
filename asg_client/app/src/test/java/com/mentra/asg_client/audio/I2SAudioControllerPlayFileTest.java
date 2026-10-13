@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.robolectric.Shadows.shadowOf;
@@ -24,9 +25,13 @@ import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.junit.After;
 import org.junit.Before;
@@ -393,6 +398,228 @@ public class I2SAudioControllerPlayFileTest {
         assertThat(I2SAudioController.prepStopDelayMs(700)).isZero();
         assertThat(I2SAudioController.prepStopDelayMs(899)).isEqualTo(241);
         assertThat(I2SAudioController.prepStopDelayMs(1000)).isEqualTo(140);
+    }
+
+    @Test
+    public void playAssetAndAwait_onMain_returnsWithoutBlocking() throws Exception {
+        controller = controllerWithStubAssets();
+        long started = System.nanoTime();
+        controller.playAssetAndAwait(AudioAssets.VIDEO_RECORDING_START, 5_000L);
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofMillis(500));
+    }
+
+    @Test
+    public void playAssetAndAwait_missingAsset_returnsWithoutHanging() throws Exception {
+        Context context = mock(Context.class);
+        AssetManager assets = mock(AssetManager.class);
+        when(context.getApplicationContext()).thenReturn(context);
+        when(context.getAssets()).thenReturn(assets);
+        when(assets.openFd(anyString())).thenThrow(new IOException("missing"));
+        controller = new I2SAudioController(context);
+
+        AtomicBoolean done = new AtomicBoolean();
+        Thread worker = new Thread(() -> {
+            controller.playAssetAndAwait("missing.wav", 2_000L);
+            done.set(true);
+        });
+        long started = System.nanoTime();
+        worker.start();
+        pumpUntilDone(worker, 1_500L);
+        assertThat(worker.isAlive()).isFalse();
+        assertThat(done).isTrue();
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofMillis(1_000));
+    }
+
+    @Test
+    @Config(sdk = 28)
+    public void playAssetAndAwait_completionUnblocks() throws Exception {
+        controller = controllerWithStubAssets();
+        AtomicBoolean done = new AtomicBoolean();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            Thread worker = startAwait(done);
+            MediaPlayer player = awaitPlayer(players);
+            ArgumentCaptor<MediaPlayer.OnCompletionListener> completion =
+                    ArgumentCaptor.forClass(MediaPlayer.OnCompletionListener.class);
+            verify(player, timeout(2_000)).setOnCompletionListener(completion.capture());
+            completion.getValue().onCompletion(player);
+            worker.join(2_000L);
+            assertThat(done).isTrue();
+        }
+    }
+
+    @Test
+    @Config(sdk = 28)
+    public void playAssetAndAwait_stopPlaybackUnblocks() throws Exception {
+        controller = controllerWithStubAssets();
+        AtomicBoolean done = new AtomicBoolean();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            Thread worker = startAwait(done);
+            awaitPlayer(players);
+            controller.stopPlayback();
+            worker.join(2_000L);
+            assertThat(done).isTrue();
+        }
+    }
+
+    @Test
+    @Config(sdk = 28)
+    public void playAssetAndAwait_readyFailureUnblocks() throws Exception {
+        I2sReadyGate.setSupported(true);
+        controller = controllerWithStubAssets();
+        AtomicBoolean done = new AtomicBoolean();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            Thread worker = startAwait(done);
+            long waiting = System.currentTimeMillis() + 2_000L;
+            while (worker.getState() != Thread.State.TIMED_WAITING
+                    && System.currentTimeMillis() < waiting) {
+                pumpMain();
+            }
+            int requestId = awaitI2sRequest();
+            I2sReadyGate.onResponse(requestId, false);
+            shadowOf(Looper.getMainLooper()).idle();
+            worker.join(2_000L);
+            assertThat(done).isTrue();
+            assertThat(players.constructed()).isNotEmpty();
+        } finally {
+            I2sReadyGate.setSupported(false);
+        }
+    }
+
+    @Test
+    @Config(sdk = 28)
+    public void replacingPlayer_doesNotCompleteTheNewWait() throws Exception {
+        controller = controllerWithStubAssets();
+        AtomicBoolean firstDone = new AtomicBoolean();
+        AtomicBoolean secondDone = new AtomicBoolean();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            Thread first = startAwait(firstDone);
+            MediaPlayer firstPlayer = awaitPlayer(players);
+            ArgumentCaptor<MediaPlayer.OnCompletionListener> firstCompletion =
+                    ArgumentCaptor.forClass(MediaPlayer.OnCompletionListener.class);
+            verify(firstPlayer, timeout(2_000)).setOnCompletionListener(firstCompletion.capture());
+
+            Thread second = startAwait(secondDone);
+            long deadline = System.currentTimeMillis() + 2_000L;
+            while (players.constructed().size() < 2 && System.currentTimeMillis() < deadline) {
+                pumpMain();
+            }
+            assertThat(players.constructed()).hasSize(2);
+            MediaPlayer secondPlayer = players.constructed().get(1);
+            ArgumentCaptor<MediaPlayer.OnCompletionListener> secondCompletion =
+                    ArgumentCaptor.forClass(MediaPlayer.OnCompletionListener.class);
+            verify(secondPlayer, timeout(2_000)).setOnCompletionListener(secondCompletion.capture());
+
+            first.join(2_000L);
+            assertThat(firstDone).isTrue();
+            firstCompletion.getValue().onCompletion(firstPlayer);
+            assertThat(secondDone).isFalse();
+
+            secondCompletion.getValue().onCompletion(secondPlayer);
+            second.join(2_000L);
+            assertThat(secondDone).isTrue();
+        }
+    }
+
+    @Test
+    public void playAssetAndAwait_i2sOpenFailureUnblocks() throws Exception {
+        AssetManager assets = mock(AssetManager.class);
+        AssetFileDescriptor descriptor = mock(AssetFileDescriptor.class);
+        when(assets.openFd(anyString())).thenReturn(descriptor);
+        when(descriptor.getFileDescriptor()).thenReturn(new FileDescriptor());
+        Context context = new ContextWrapper(app) {
+            @Override
+            public Context getApplicationContext() {
+                return this;
+            }
+
+            @Override
+            public AssetManager getAssets() {
+                return assets;
+            }
+
+            @Override
+            public android.content.ComponentName startForegroundService(Intent intent) {
+                throw new IllegalStateException("i2s unavailable");
+            }
+
+            @Override
+            public android.content.ComponentName startService(Intent intent) {
+                throw new IllegalStateException("i2s unavailable");
+            }
+        };
+        controller = new I2SAudioController(context);
+        AtomicBoolean done = new AtomicBoolean();
+        Thread worker = startAwait(done);
+        pumpUntilDone(worker, 1_500L);
+        assertThat(worker.isAlive()).isFalse();
+        assertThat(done).isTrue();
+    }
+
+    @Test
+    public void playAssetClaimingBridge_opensI2sWhenExternalAudioIsPlaying() throws Exception {
+        controller = controllerWithStubAssets();
+        I2SAudioController.setExternalAudioPlaying(true);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            controller.playAssetClaimingBridge(AudioAssets.VIDEO_RECORDING_START);
+            assertThat(I2SAudioController.isExternalAudioPlaying()).isFalse();
+            assertThat(playingFlags(drainStartedServices())).containsExactly(true);
+            assertThat(players.constructed()).isNotEmpty();
+        }
+    }
+
+    private final AtomicReference<String> awaitTrace = new AtomicReference<>("");
+
+    private Thread startAwait(AtomicBoolean done) {
+        Thread worker = new Thread(() -> {
+            try {
+                awaitTrace.set("looper=" + Looper.myLooper());
+                controller.playAssetAndAwait(AudioAssets.VIDEO_RECORDING_START, 3_000L);
+                done.set(true);
+                awaitTrace.set(awaitTrace.get() + " returned");
+            } catch (Throwable t) {
+                awaitTrace.set(awaitTrace.get() + " threw " + t);
+            }
+        });
+        worker.start();
+        return worker;
+    }
+
+    private MediaPlayer awaitPlayer(MockedConstruction<MediaPlayer> players) throws Exception {
+        long deadline = System.currentTimeMillis() + 2_000L;
+        while (players.constructed().isEmpty() && System.currentTimeMillis() < deadline) {
+            pumpMain();
+        }
+        assertThat(players.constructed())
+                .as(awaitTrace.get())
+                .isNotEmpty();
+        return players.constructed().get(0);
+    }
+
+    private int awaitI2sRequest() throws Exception {
+        long deadline = System.currentTimeMillis() + 2_000L;
+        while (System.currentTimeMillis() < deadline) {
+            for (Intent intent : drainStartedServices()) {
+                if (AsgClientService.ACTION_I2S_AUDIO_STATE.equals(intent.getAction())) {
+                    return intent.getIntExtra(AsgConstants.EXTRA_I2S_REQUEST_ID, 0);
+                }
+            }
+            pumpMain();
+        }
+        throw new AssertionError("I2S open was not requested");
+    }
+
+    private void pumpUntilDone(Thread worker, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (worker.isAlive() && System.currentTimeMillis() < deadline) {
+            pumpMain();
+        }
+        worker.join(200L);
+    }
+
+    /** The cue worker blocks in service startup until the main looper runs. */
+    private void pumpMain() throws Exception {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(20));
+        Thread.sleep(10);
     }
 
     /**

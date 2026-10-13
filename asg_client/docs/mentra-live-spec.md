@@ -135,6 +135,8 @@ Every camera-button press should still be forwarded to the phone as a `button_pr
 
 Mentra Live supports camera/microphone live streaming paths from `asg_client`, including RTMP, SRT, and WHIP services. Streaming behavior must coordinate camera ownership, microphone foreground-service requirements, reconnect/keep-alive handling, and privacy LED state.
 
+RTMP and SRT play the recording-started cue to completion before `startStream` opens the microphone, the same order as video recording. WHIP capture uses a send-only media-route audio device, with hardware echo cancellation and noise suppression only when the stream config asks for them, and speaker playout muted. The WHIP live cue claims the I2S bridge so a muted playout track cannot skip the I2S-ready wait. WHIP's microphone is already open at that moment.
+
 Camera FOV synchronization is idempotent against the last successfully submitted hardware crop,
 not just saved preferences. Startup, persistent settings, and temporary override leases use the
 same gate. An unchanged crop never restarts the HAL. A changed crop is rejected as `camera_busy`

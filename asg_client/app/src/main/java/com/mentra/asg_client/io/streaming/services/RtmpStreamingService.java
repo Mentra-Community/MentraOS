@@ -39,6 +39,7 @@ import com.mentra.asg_client.io.streaming.events.StreamingCommand;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
 import com.mentra.asg_client.io.streaming.StreamCallbackScope;
+import com.mentra.asg_client.io.streaming.StreamStartCue;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.audio.AudioAssets;
@@ -533,11 +534,7 @@ public class RtmpStreamingService extends Service {
                             Log.d(TAG, "📹 Recording LED turned ON for livestream");
                         }
 
-                        // Play stream start sound
-                        if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
-                            mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
-                            Log.d(TAG, "🔊 Stream start sound played");
-                        }
+                        // The start cue already finished before capture opened.
 
                         // Start battery monitoring
                         startBatteryMonitoring();
@@ -1041,34 +1038,26 @@ public class RtmpStreamingService extends Service {
                 }
             };
 
-            // Start the RTMP stream
-            mStreamer.startStream(mRtmpUrl, streamContinuation);
+            // The cue worker calls startStream only after the ding finishes.
+            StreamStartCue.handoff(
+                    mLifecycleHandler,
+                    mHardwareManager,
+                    mSoundEnabled,
+                    () -> {
+                        synchronized (mStateLock) {
+                            return mStreamState == StreamState.STARTING
+                                    && mPublisherCallbacks.isCurrent(startGeneration);
+                        }
+                    },
+                    () -> {
+                        try {
+                            mStreamer.startStream(mRtmpUrl, streamContinuation);
+                        } catch (Exception e) {
+                            reportStartFailure(e);
+                        }
+                    });
         } catch (Exception e) {
-            String errorMsg = "Failed to start streaming: " + e.getMessage();
-            Log.e(TAG, errorMsg, e);
-
-            // Check if this is a camera access issue due to power policy
-            if (e.getMessage() != null && e.getMessage().contains("CAMERA_DISABLED") &&
-                e.getMessage().contains("disabled by policy")) {
-                Log.w(TAG, "Camera disabled by power policy - likely screen is off during reconnection");
-                errorMsg = "Camera disabled by power policy (screen off) - " + e.getMessage();
-            }
-
-            synchronized (mStateLock) {
-                mStreamState = StreamState.IDLE;
-                mIsStreaming = false;
-            }
-            EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
-            if (sStatusCallback != null) {
-                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
-            }
-
-            // Report stream start failure
-            StreamingReporting.reportStreamStartFailure(RtmpStreamingService.this,
-                mRtmpUrl, e.getMessage(), e);
-
-            // Schedule reconnect on exception
-            scheduleReconnect("start_exception");
+            reportStartFailure(e);
         }
     }
 
@@ -1095,11 +1084,37 @@ public class RtmpStreamingService extends Service {
         forceStopStreamingInternal(false);
     }
 
-    /**
-     * Force stop streaming and clean up all resources
-     * This method performs a complete cleanup regardless of current state
-     */
+    /** Surface, encoder, and publisher failures share one reconnect path. */
+    private void reportStartFailure(Exception e) {
+        String errorMsg = "Failed to start streaming: " + e.getMessage();
+        Log.e(TAG, errorMsg, e);
+
+        // Check if this is a camera access issue due to power policy
+        if (e.getMessage() != null && e.getMessage().contains("CAMERA_DISABLED") &&
+            e.getMessage().contains("disabled by policy")) {
+            Log.w(TAG, "Camera disabled by power policy - likely screen is off during reconnection");
+            errorMsg = "Camera disabled by power policy (screen off) - " + e.getMessage();
+        }
+
+        synchronized (mStateLock) {
+            mStreamState = StreamState.IDLE;
+            mIsStreaming = false;
+        }
+        EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
+        if (sStatusCallback != null) {
+            sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
+        }
+
+        StreamingReporting.reportStreamStartFailure(RtmpStreamingService.this,
+            mRtmpUrl, e.getMessage(), e);
+
+        scheduleReconnect("start_exception");
+    }
+
     private void forceStopStreamingInternal(boolean preserveSession) {
+        if (mHardwareManager != null) {
+            mHardwareManager.stopAudioPlayback();
+        }
         final long stopGeneration = mPublisherCallbacks.advance();
         mAwaitingPublisherRecovery = false;
         Log.d(TAG, "Force stopping stream and cleaning up resources (preserveSession=" + preserveSession + ")");

@@ -8,7 +8,9 @@ import android.app.Application;
 import android.content.ContextWrapper;
 import android.os.Handler;
 import android.os.Looper;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.streaming.StreamCallbackScope;
+import com.mentra.asg_client.io.streaming.StreamStartCue;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
 import io.github.thibaultbee.streampack.ext.rtmp.streamers.CameraRtmpLiveStreamer;
 import io.github.thibaultbee.streampack.ext.srt.streamers.CameraSrtLiveStreamer;
@@ -18,6 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import kotlin.ResultKt;
 import kotlin.coroutines.Continuation;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -30,6 +34,17 @@ import org.robolectric.annotation.LooperMode;
 @Config(application = Application.class, sdk = 33)
 @LooperMode(LooperMode.Mode.PAUSED)
 public class PublisherReconnectLifecycleTest {
+    @Before
+    public void runStartCueInline() {
+        // startStream is posted after the cue worker. These tests need that callback inline.
+        StreamStartCue.setWorkerForTest(Runnable::run);
+    }
+
+    @After
+    public void resetStartCueWorker() {
+        StreamStartCue.setWorkerForTest(null);
+    }
+
     private Field field(Object service, String name) throws Exception {
         Field field = service.getClass().getDeclaredField(name);
         field.setAccessible(true);
@@ -65,7 +80,9 @@ public class PublisherReconnectLifecycleTest {
         List<Runnable> callbacks = new ArrayList<>();
         Object service = service(srt, new StreamCallbackScope(callbacks::add));
         StreamingStatusCallback status = mock(StreamingStatusCallback.class);
+        IHardwareManager hardware = mock(IHardwareManager.class);
         set(service, "sStatusCallback", status);
+        set(service, "mHardwareManager", hardware);
         RuntimeException failure = new RuntimeException("publisher cleanup failed");
         if (srt) {
             CameraSrtLiveStreamer publisher = mock(CameraSrtLiveStreamer.class);
@@ -89,6 +106,7 @@ public class PublisherReconnectLifecycleTest {
         try {
             invoke(service, "forceStopStreamingInternal", boolean.class, true);
             callbacks.forEach(Runnable::run);
+            verify(hardware).stopAudioPlayback();
             verify(status, times(3)).onStreamError(anyString(), eq("owned-stream"), eq(true));
             verify(status, never()).onStreamError(anyString(), anyString());
             verify(status, never()).onStreamStopped(anyString());

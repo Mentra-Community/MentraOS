@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.media.AudioAttributes;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -20,6 +21,7 @@ import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.streaming.StreamTelemetryPolicy;
+import com.mentra.asg_client.io.streaming.WhipCaptureAudio;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -63,6 +65,7 @@ import org.webrtc.SurfaceTextureHelper;
 import org.webrtc.VideoCapturer;
 import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
+import org.webrtc.audio.JavaAudioDeviceModule;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -554,6 +557,9 @@ public class WhipStreamingService extends Service {
   }
 
   private void stopStreaming(boolean forReconnect) {
+    if (mHardwareManager != null) {
+      mHardwareManager.stopAudioPlayback();
+    }
     if (!forReconnect) mSessionGeneration++;
     boolean hasWebRtcResources = hasWebRtcResources();
     synchronized (mStateLock) {
@@ -670,13 +676,35 @@ public class WhipStreamingService extends Service {
     // makes the network monitor skip it entirely so gathering completes as soon as the real
     // network interface's candidates (including srflx) are ready.
     factoryOptions.networkIgnoreMask = PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK;
-    mPeerConnectionFactory = PeerConnectionFactory.builder()
-        .setOptions(factoryOptions)
-        .setVideoEncoderFactory(
-            new HardwareFirstVideoEncoderFactory(mEglBase.getEglBaseContext()))
-        .setVideoDecoderFactory(
-            new DefaultVideoDecoderFactory(mEglBase.getEglBaseContext()))
-        .createPeerConnectionFactory();
+    WhipCaptureAudio capture = WhipCaptureAudio.fromConfig(mStreamConfig);
+    JavaAudioDeviceModule adm = null;
+    try {
+      adm = JavaAudioDeviceModule.builder(this)
+          .setAudioSource(capture.audioSource)
+          .setAudioAttributes(new AudioAttributes.Builder()
+              .setUsage(capture.usage)
+              .setContentType(capture.contentType)
+              .build())
+          .setUseHardwareAcousticEchoCanceler(capture.hardwareAcousticEchoCanceler)
+          .setUseHardwareNoiseSuppressor(capture.hardwareNoiseSuppressor)
+          .createAudioDeviceModule();
+      // Mute before the factory takes the module so playout never opens the voice route.
+      adm.setSpeakerMute(capture.speakerMuted);
+      mPeerConnectionFactory = PeerConnectionFactory.builder()
+          .setOptions(factoryOptions)
+          .setAudioDeviceModule(adm)
+          .setVideoEncoderFactory(
+              new HardwareFirstVideoEncoderFactory(mEglBase.getEglBaseContext()))
+          .setVideoDecoderFactory(
+              new DefaultVideoDecoderFactory(mEglBase.getEglBaseContext()))
+          .createPeerConnectionFactory();
+    } finally {
+      // The factory keeps its own native ref. releaseWebRtc() disposes the factory and must
+      // not release this Java ref again.
+      if (adm != null) {
+        adm.release();
+      }
+    }
 
     Log.d(TAG, "PeerConnectionFactory created");
   }
@@ -1084,7 +1112,7 @@ public class WhipStreamingService extends Service {
     Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
         + firstVideoCodecFromSdp(answerSdp));
     if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
-      mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
+      mHardwareManager.playAudioAssetClaimingBridge(AudioAssets.VIDEO_RECORDING_START);
     }
     if (mIsReconnecting) {
       int attempt = mReconnectAttempts;

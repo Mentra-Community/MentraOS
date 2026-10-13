@@ -19,6 +19,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -44,6 +46,10 @@ public class I2SAudioController {
     private Runnable idleClose;
     private long playbackGeneration;
     private long overlayPlaybackGeneration;
+    /** Waiter for the primary asset currently playing. Signaled on the main thread. */
+    private CountDownLatch primaryAwait;
+    /** Waiter installed by {@link #playAssetAndAwait} before the next primary play adopts it. */
+    private CountDownLatch pendingPrimaryAwait;
 
     // Track if WE are actively controlling I2S (to prevent receiver feedback loop)
     private static volatile boolean isControllingI2S = false;
@@ -63,6 +69,57 @@ public class I2SAudioController {
 
     public synchronized void playAsset(String assetName, float playbackVolume) {
         playAssetTracked(assetName, playbackVolume);
+    }
+
+    /**
+     * Play a primary asset and block until playback finishes, fails, or {@code timeoutMs} elapses.
+     * Refuses to block the main looper, because I2S readiness is delivered there.
+     */
+    public void playAssetAndAwait(String assetName, long timeoutMs) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(TAG, "playAssetAndAwait refused on the main thread for " + assetName);
+            return;
+        }
+        CountDownLatch latch = new CountDownLatch(1);
+        synchronized (this) {
+            // stopPlayback() releases this latch even if it runs before the posted setup.
+            releasePendingAwait();
+            pendingPrimaryAwait = latch;
+        }
+        // MediaPlayer and the I2S ready gate both run on the main looper. The caller waits off
+        // that thread so a ready callback, completion, or stopPlayback can release the latch.
+        cameraAudioHandler.post(() -> {
+            synchronized (I2SAudioController.this) {
+                if (pendingPrimaryAwait != latch) {
+                    return;
+                }
+                try {
+                    playPrimaryAsset(assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
+                } finally {
+                    if (pendingPrimaryAwait == latch) {
+                        pendingPrimaryAwait = null;
+                        latch.countDown();
+                    }
+                }
+            }
+        });
+        try {
+            if (!latch.await(Math.max(0L, timeoutMs), TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "I2S cue wait elapsed for " + assetName);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Play a primary asset as our own I2S cue. An in-process playout track must not make
+     * {@code ensureI2sOpen} skip the readiness gate.
+     */
+    public synchronized void playAssetClaimingBridge(String assetName) {
+        isControllingI2S = true;
+        externalAudioPlaying = false;
+        playPrimaryAsset(assetName, AsgConstants.AUDIO_PLAYBACK_VOLUME);
     }
 
     /** Play a primary asset and return a token that owns that exact playback. */
@@ -296,11 +353,13 @@ public class I2SAudioController {
         isControllingI2S = true;
 
         stopCurrentPlayer();
+        adoptPendingAwait();
 
         boolean i2sStarted = ensureI2sOpen();
         Log.i(TAG, "I2S start for " + logName + " notifyI2SState=" + i2sStarted);
         if (!i2sStarted) {
             Log.w(TAG, "Failed to start I2S path; skipping playback of " + logName);
+            signalPrimaryAwait();
             refreshControlFlag();
             return;
         }
@@ -324,6 +383,7 @@ public class I2SAudioController {
                             mp.release();
                             closeI2SIfIdle();
                             refreshControlFlag();
+                            signalPrimaryAwait();
                         }
                     });
             trackedPlayer.setOnErrorListener(
@@ -344,6 +404,7 @@ public class I2SAudioController {
                             mp.release();
                             closeI2SIfIdle();
                             refreshControlFlag();
+                            signalPrimaryAwait();
                             return true;
                         }
                     });
@@ -361,6 +422,7 @@ public class I2SAudioController {
             }
             closeI2SIfIdle();
             refreshControlFlag();
+            signalPrimaryAwait();
         }
     }
 
@@ -368,6 +430,7 @@ public class I2SAudioController {
         ++playbackGeneration;
         isControllingI2S = true;
         stopCurrentPlayer();
+        releasePendingAwait();
         stopOverlayPlayers();
         closeI2sNow();
         refreshControlFlag();
@@ -408,7 +471,32 @@ public class I2SAudioController {
         return externalAudioPlaying;
     }
 
+    private void adoptPendingAwait() {
+        if (pendingPrimaryAwait != null) {
+            primaryAwait = pendingPrimaryAwait;
+            pendingPrimaryAwait = null;
+        }
+    }
+
+    private void signalPrimaryAwait() {
+        CountDownLatch latch = primaryAwait;
+        primaryAwait = null;
+        if (latch != null) {
+            latch.countDown();
+        }
+    }
+
+    /** Releases a cue wait that has not yet been adopted by playback. */
+    private void releasePendingAwait() {
+        CountDownLatch pending = pendingPrimaryAwait;
+        pendingPrimaryAwait = null;
+        if (pending != null) {
+            pending.countDown();
+        }
+    }
+
     private void stopCurrentPlayer() {
+        signalPrimaryAwait();
         if (mediaPlayer != null) {
             MediaPlayer playerToStop = mediaPlayer;
             mediaPlayer = null;
@@ -492,6 +580,7 @@ public class I2SAudioController {
         finishCameraOverlay(token);
         closeI2SIfIdle();
         refreshControlFlag();
+        signalPrimaryAwait();
     }
 
     private boolean ensureI2sOpen() {
@@ -550,6 +639,7 @@ public class I2SAudioController {
         player.release();
         closeI2SIfIdle();
         refreshControlFlag();
+        signalPrimaryAwait();
     }
 
     private void configurePlayer(MediaPlayer player, float playbackVolume) {

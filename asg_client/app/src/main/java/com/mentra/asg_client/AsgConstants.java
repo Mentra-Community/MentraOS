@@ -35,6 +35,13 @@ public class AsgConstants {
     /** Bound a missing readiness reply without playing into a closed BES input. */
     public static final long I2S_READY_TIMEOUT_MS = 1500L;
 
+    /**
+     * Bound the livestream start cue so a missed completion cannot pin the publisher.
+     * Includes the I2S ready timeout plus time for the short recording-started asset.
+     * {@code stopAudioPlayback()} releases the wait early.
+     */
+    public static final long STREAM_START_CUE_WAIT_MS = I2S_READY_TIMEOUT_MS + 1000L;
+
     /** Compatibility only for BES firmware without the readiness acknowledgement. */
     public static final long I2S_LEGACY_SETTLE_MS = 250L;
 

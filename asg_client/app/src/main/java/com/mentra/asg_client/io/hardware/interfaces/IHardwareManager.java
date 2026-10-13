@@ -126,6 +126,26 @@ public interface IHardwareManager {
     void playAudioAsset(String assetName);
 
     /**
+     * Play an asset and block until it finishes, fails, or {@code timeoutMs} elapses.
+     *
+     * <p>Callers must not be on the main looper. Implementations with no player return immediately.
+     *
+     * @param assetName Name of the asset in the application's assets directory
+     * @param timeoutMs Maximum time to wait, in milliseconds
+     */
+    default void playAudioAssetAndAwait(String assetName, long timeoutMs) {}
+
+    /**
+     * Play an asset while claiming the I2S bridge, so an in-process playout track is not treated
+     * as external audio. The call itself does not block.
+     *
+     * @param assetName Name of the asset in the application's assets directory
+     */
+    default void playAudioAssetClaimingBridge(String assetName) {
+        playAudioAsset(assetName);
+    }
+
+    /**
      * Play a primary audio asset and return a token identifying that exact playback.
      *
      * <p>Implementations that do not support tracked playback return {@code 0}.
