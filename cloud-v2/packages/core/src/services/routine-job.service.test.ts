@@ -561,7 +561,7 @@ test('completed preparation retries end after twenty deliveries rather than wait
 
 test('preparation status database write fences source, custody, deadline and newest numeric workflow', async () => {
  const original=TestRequestModel.collection.findOneAndUpdate;
- const cas=mock(async()=>null);TestRequestModel.collection.findOneAndUpdate=cas as any;
+ const cas=mock(async(_filter:any,_update:any,_options:any)=>null);TestRequestModel.collection.findOneAndUpdate=cas as any;
  const now=new Date('2026-10-08T00:00:00Z'),value={inputSha256:'a'.repeat(64),actionsRunId:'100',phase:'Git blobs' as const,code:'source-unavailable' as const,retryable:true,reason:'Retry',observedAt:now.toISOString()};
  try {
   await routineJobRepository.preparationStatus!('job-one',value,now);
