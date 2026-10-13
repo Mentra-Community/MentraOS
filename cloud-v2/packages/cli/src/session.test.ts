@@ -9,7 +9,7 @@ import {ensureOidcClient, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
 import {loadStoredLogin, saveCredentials, type CliCredentials} from "./credentials"
 import {loopbackLogin} from "./loopback-login"
-import {loadFreshCredentials} from "./session"
+import {loadFreshCredentials, selectWorkspace, signOut, storeLogin} from "./session"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
 import {expectLoopbackPortsFree, freeLoopbackPorts} from "./testing/loopback"
 
@@ -104,6 +104,44 @@ test("concurrent commands refresh once and share the result", async () => {
   const refreshTokens = new Set(results.map(result => (result as CliCredentials).refreshToken))
   expect(refreshTokens.size).toBe(1)
   expect(idp.refreshTokenActive([...refreshTokens][0]!)).toBe(true)
+})
+
+test("signing out waits for a running refresh, revokes the refresh token it produced, and nothing restores the login", async () => {
+  await storedLogin(30_000)
+  idp.refreshDelayMs = 300
+  const refreshing = loadFreshCredentials(target)
+  await Bun.sleep(80) // the refresh holds the lock now
+  const signedOut = await signOut(target)
+  const refreshed = (await refreshing) as CliCredentials
+  expect(signedOut).toEqual({signedIn: true, confirmed: true})
+  expect(await loadStoredLogin(target)).toBeNull()
+  expect(idp.refreshTokenActive(refreshed.refreshToken)).toBe(false)
+  expect(await signOut(target)).toEqual({signedIn: false, confirmed: false})
+})
+
+test("selecting a workspace keeps the tokens a concurrent refresh rotated", async () => {
+  const login = await storedLogin(30_000)
+  idp.refreshDelayMs = 300
+  const refreshing = loadFreshCredentials(target)
+  await Bun.sleep(80)
+  expect(await selectWorkspace(target, "ws_2")).not.toBeNull()
+  const refreshed = (await refreshing) as CliCredentials
+  const stored = (await loadStoredLogin(target))!
+  expect(stored.workspaceId).toBe("ws_2")
+  expect(stored.refreshToken).toBe(refreshed.refreshToken)
+  expect(stored.refreshToken).not.toBe(login.refreshToken)
+  expect(idp.refreshTokenActive(stored.refreshToken)).toBe(true)
+})
+
+test("a new sign-in stored during a refresh of the previous one is not overwritten by it", async () => {
+  const previous = await storedLogin(30_000)
+  idp.refreshDelayMs = 300
+  const refreshing = loadFreshCredentials(target)
+  await Bun.sleep(80)
+  const next: CliCredentials = {...previous, token: "new-access", refreshToken: "new-refresh", expiresAt: new Date(Date.now() + 3_600_000).toISOString()}
+  await storeLogin(next)
+  await refreshing
+  expect((await loadStoredLogin(target))!.refreshToken).toBe("new-refresh")
 })
 
 test("a refused refresh token says Session expired and clears the login", async () => {

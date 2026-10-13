@@ -65,6 +65,8 @@ export interface FakeOidcIssuer {
   readonly requests: string[]
   /** Answer the revocation endpoint with 503. */
   failRevocation: boolean
+  /** Delay before the token endpoint answers a refresh, in ms (widens refresh races). */
+  refreshDelayMs: number
   /** Sign `person` in and follow the redirect to the client's callback, as a browser would. */
   approveInBrowser(authorizationUrl: string, person: FakePerson): Promise<{status: number; text: string}>
   /** Decline the sign-in (`error=access_denied` by default) and follow the redirect. */
@@ -110,6 +112,7 @@ export async function startFakeOidcIssuer(options: {
     authorizationRequests: [] as URL[],
     requests: [] as string[],
     failRevocation: false,
+    refreshDelayMs: 0,
   }
 
   let issuer = ""
@@ -175,6 +178,7 @@ export async function startFakeOidcIssuer(options: {
       return issueTokens(grants.get(pending.grantId)!, pending.nonce)
     }
     if (grantType === "refresh_token") {
+      if (state.refreshDelayMs > 0) await Bun.sleep(state.refreshDelayMs)
       const presented = refreshTokens.get(form.get("refresh_token") ?? "")
       const grant = presented ? grants.get(presented.grantId) : undefined
       if (!presented || !grant || grant.ended) return tokenError("invalid_grant")
@@ -275,6 +279,12 @@ export async function startFakeOidcIssuer(options: {
     },
     get failRevocation() {
       return state.failRevocation
+    },
+    get refreshDelayMs() {
+      return state.refreshDelayMs
+    },
+    set refreshDelayMs(value: number) {
+      state.refreshDelayMs = value
     },
     set failRevocation(value: boolean) {
       state.failRevocation = value

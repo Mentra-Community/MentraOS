@@ -5,12 +5,16 @@
  * first. The sign-in server rotates refresh tokens and ends the grant when a
  * spent one is presented again, so two commands must never refresh the same
  * login at once: a refresh holds a lock (`file-lock.ts`), and a command that
- * waited for it reads the login again and uses the refreshed tokens. The rotated refresh
+ * waited for it reads the login again and uses the refreshed tokens. Every
+ * other change to a stored login (a new sign-in, selecting a workspace, signing
+ * out) takes the same lock and starts from the login as stored then, so none
+ * undoes a refresh and no refresh brings back a login that was replaced or
+ * signed out. The rotated refresh
  * token is stored before the new access token is used. A refused refresh
  * token clears the login (`SessionExpiredError`).
  */
 
-import {refreshLoginToken, SessionExpiredError} from "./api"
+import {refreshLoginToken, revokeLogin, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
 import {withFileLock} from "./file-lock"
 import {
@@ -20,6 +24,7 @@ import {
   loadStoredLogin,
   refreshLockPath,
   saveCredentials,
+  targetOf,
   type CliCredentials,
   type CommandCredentials,
 } from "./credentials"
@@ -58,6 +63,39 @@ export async function loadFreshCredentials(target: CliTarget): Promise<CommandCr
     }
     await saveCredentials(refreshed)
     return refreshed
+  })
+}
+
+/** Store a new sign-in, replacing its target's login once no refresh of that login is running. */
+export function storeLogin(credentials: CliCredentials): Promise<"keychain" | "file"> {
+  return withRefreshLock(targetOf(credentials), () => saveCredentials(credentials))
+}
+
+/**
+ * Select `workspaceId` on `target`'s login as it is stored now, with whatever tokens a refresh rotated
+ * meanwhile. Null when signed out.
+ */
+export function selectWorkspace(target: CliTarget, workspaceId: string): Promise<"keychain" | "file" | null> {
+  return withRefreshLock(target, async () => {
+    const current = await loadStoredLogin(target)
+    return current ? saveCredentials({...current, workspaceId}) : null
+  })
+}
+
+/**
+ * Sign out of `target`: once no refresh is running, revoke the stored login's refresh token at the
+ * sign-in server and delete the login, even when the server cannot be reached.
+ */
+export function signOut(target: CliTarget): Promise<{signedIn: boolean; confirmed: boolean}> {
+  return withRefreshLock(target, async () => {
+    const stored = await loadStoredLogin(target)
+    let confirmed = false
+    try {
+      if (stored) confirmed = (await revokeLogin(stored)).confirmed
+    } finally {
+      await clearCredentials(target)
+    }
+    return {signedIn: stored !== null, confirmed}
   })
 }
 

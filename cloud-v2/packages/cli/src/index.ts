@@ -28,7 +28,6 @@ import {
   publishRelease,
   readPublishingProfile,
   resolveWorkspaceId,
-  revokeLogin,
   SessionExpiredError,
   setPackagePrefix,
   submitRelease,
@@ -38,18 +37,16 @@ import {
 } from "./api";
 import { getConfig, targetLabel, type CliConfig, type CliTarget } from "./config";
 import {
-  clearCredentials,
   cliHome,
   isStoredLogin,
-  loadStoredLogin,
-  saveCredentials,
   targetFields,
+  targetOf,
   type CliCredentials,
   type CommandCredentials,
 } from "./credentials";
 import { loopbackLogin } from "./loopback-login";
 import { openBrowser } from "./open-browser";
-import { loadFreshCredentials } from "./session";
+import { loadFreshCredentials, selectWorkspace, signOut, storeLogin } from "./session";
 import { verifyPackedBundle } from "./validate-bundle";
 import { registerStoreCommands } from "./store-commands";
 
@@ -108,7 +105,7 @@ program
         ...targetFields(config.target),
         storedAt: new Date().toISOString(),
       };
-      let storage = await saveCredentials(credentials);
+      let storage = await storeLogin(credentials);
       if (config.target.kind === "core") {
         console.log(`Signed in as ${result.email ?? result.subject}`);
         console.log(`Core: ${config.target.url}`);
@@ -141,7 +138,7 @@ async function announceStoreLogin(
   }
   const workspaceId =
     session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
-  const storage = workspaceId ? await saveCredentials({ ...credentials, workspaceId }) : null;
+  const storage = workspaceId ? await selectWorkspace(targetOf(credentials), workspaceId) : null;
   console.log(`Signed in as ${session.user.email}`);
   if (workspaceId) console.log(`Workspace: ${workspaceId}`);
   if (session.workspaces.length > 1 && !workspaceId) {
@@ -212,7 +209,7 @@ workspace
       const session = await getConsoleSession(creds);
       const selected = session.workspaces.find(candidate => candidate.workspaceId === workspaceId);
       if (!selected) throw new Error("You do not have access to that workspace");
-      await saveCredentials({...creds, workspaceId: selected.workspaceId});
+      if (!(await selectWorkspace(targetOf(creds), selected.workspaceId))) throw new Error("Not signed in. Run `mentra login`.");
       console.log(`Using ${selected.name} (${selected.workspaceId})`);
     } catch (error) {
       fail(error);
@@ -286,7 +283,7 @@ workspace
       const created = await createWorkspace(creds, name);
       // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
       const next = {...creds, workspaceId: created.workspaceId};
-      if (isStoredLogin(next)) await saveCredentials(next);
+      if (isStoredLogin(next)) await selectWorkspace(targetOf(next), created.workspaceId);
       console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
       if (!isStoredLogin(next)) console.log(`Set MENTRA_CLI_WORKSPACE_ID=${created.workspaceId} to use it with MENTRA_CLI_TOKEN.`);
       if (options.packagePrefix) {
@@ -696,16 +693,9 @@ program
   .description("Sign out: revoke this login at the sign-in server and delete it from this computer")
   .action(async () => {
     try {
-      const target = getConfig().target;
-      const stored = await loadStoredLogin(target);
-      let confirmed = false;
-      try {
-        if (stored) confirmed = (await revokeLogin(stored)).confirmed;
-      } finally {
-        // Deleted even when the sign-in server could not be reached.
-        await clearCredentials(target);
-      }
-      if (!stored) console.log("Not signed in");
+      // After any refresh another command is running; deleted even when the sign-in server cannot be reached.
+      const {signedIn, confirmed} = await signOut(getConfig().target);
+      if (!signedIn) console.log("Not signed in");
       else console.log(confirmed ? "Signed out" : "Signed out locally; server sign-out not confirmed");
     } catch (error) {
       fail(error);
