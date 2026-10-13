@@ -89,6 +89,7 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
+      ...(receipt.evidenceStatus ? {evidenceStatus: receipt.evidenceStatus} : {}),
       ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
   });
@@ -185,6 +186,7 @@ const compactNightlyMember = {
   hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
   unavailableReason: "$$member.unavailableReason", rejectedAt: "$$member.rejectedAt",
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
+  evidenceStatus: "$$member.evidenceStatus",
   runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
   build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}},
     in: {$cond: [{$eq: [{$ifNull: ["$$build", null]}, null]}, "$$REMOVE",
@@ -201,7 +203,7 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
   hostId?: string; laneId?: string; portable?: boolean; binding?: NightlyPlan["members"][number]["binding"]; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
-  status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
+  status?: string; publicationComplete?: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
   finishedAt?: string; expectedCount?: number; members: CompactNightlyMember[]}
@@ -238,6 +240,8 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || !expected.portable && expected.laneId !== receipt.laneId || receipt.preparedLaneId && receipt.preparedLaneId !== (expected.portable ? receipt.binding?.laneId : expected.laneId)
       || !["pass", "failed", "setup-failed", "teardown-failed", "cancelled", "incomplete", "not-run", ...(!result.finishedAt ? ["waiting"] : [])].includes(receipt.status ?? "")
       || typeof receipt.publicationComplete !== "boolean"
+      || receipt.evidenceStatus !== undefined && !['complete', 'failed'].includes(receipt.evidenceStatus)
+      || receipt.publicationComplete && receipt.evidenceStatus === 'failed'
       || ["pass", "failed", "setup-failed", "teardown-failed", "cancelled"].includes(receipt.status ?? "") && !receipt.runId
       || receipt.runId && (!expected.build || !(expected.portable ? receipt.binding?.hostId : expected.hostId) || !(expected.portable ? receipt.binding?.laneId : expected.laneId))
       || expected.portable && receipt.binding && (!routineJobBindingSchema.safeParse(receipt.binding).success || receipt.binding.jobId !== expected.requestId || receipt.binding.requestId !== expected.requestId
@@ -250,7 +254,7 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       observedAt: result.finishedAt, unassigned: !!expected!.portable && !receipt!.binding && !receipt!.hostId
         && !receipt!.runId && ["incomplete", "not-run"].includes(receipt!.status!)});
     return {...member, requestId: expected!.requestId, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
-      publicationComplete: receipt!.publicationComplete, ...(unavailableReason ? {unavailableReason} : {}),
+      publicationComplete: receipt!.publicationComplete, ...(receipt!.evidenceStatus ? {evidenceStatus: receipt!.evidenceStatus} : {}), ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt!.rejectedAt ? {rejectedAt: receipt!.rejectedAt} : {}), ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
       ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
       ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
@@ -485,7 +489,7 @@ export class TestSuiteService {
         hostId: run.hostId, laneId: run.laneId,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
-        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
+        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run), evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
     });
     const requests = await boundSuiteRequests(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
     const rejections = suiteRejections(requests);

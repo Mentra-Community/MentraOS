@@ -842,3 +842,23 @@ test('unbound permanent source failures settle nightly members through their can
  expect(result.status).toBe('incomplete');expect(result.members.every(member=>member.status==='incomplete')).toBe(true);
  expect(result.members[0]!.unavailableReason).toContain('does not support selected platform');
 });
+
+test('nightly terminal evidence failures survive the frozen receipt and compact suite projection', async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  state.resultRows.set(plan.members[0]!.requestId, {...publishedResult(plan.members[0]!, true), evidenceStatus: 'failed'});
+  state.resultRows.set(plan.members[1]!.requestId, publishedResult(plan.members[1]!, true));
+  const frozen = await state.service.complete(occurrence.occurrenceId);
+  expect(frozen).toMatchObject({status: 'failed', passed: 1, members: [
+    {status: 'pass', publicationComplete: false, evidenceStatus: 'failed'},
+    {status: 'pass', publicationComplete: true, evidenceStatus: 'complete'}]});
+  // Restart does not reinterpret this original result from later evidence reads.
+  state.resultRows.clear();
+  expect(await state.service.detail(occurrence.occurrenceId)).toEqual(frozen);
+  const {nightlySuiteProjection} = await import('./test-suite.service');
+  const projected = nightlySuiteProjection(structuredClone(plan.suite!), structuredClone(plan), structuredClone(frozen));
+  expect(projected.members[0]).toMatchObject({status: 'pass', publicationComplete: false, evidenceStatus: 'failed'});
+  const {testStatusCounts, observedTestStatus} = await import('../types/test-status-comparison');
+  expect(observedTestStatus({...projected.members[0]!, publicationComplete: false})).toBe('evidence-failed');
+  expect(testStatusCounts(projected.members.map(member => ({...member, publicationComplete: member.publicationComplete === true}))))
+    .toEqual({failed: 1, total: 2, skipped: 0, pending: 0, incomplete: 0});
+});

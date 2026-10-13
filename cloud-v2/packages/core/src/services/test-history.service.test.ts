@@ -114,23 +114,23 @@ test("history suite summaries retain the reader's frozen failed outcome and decl
     finishedAt: "2026-10-03T19:01:00Z", outcome: "failed", passed: 1, build: {headSha: "a".repeat(40), release: "dev.42"},
     members: [{memberId: "published", routineId: "notes-phone", platform: "ios-on-mac", status: "pass"}, {memberId: "unstarted", routineId: "camera", platform: "android", status: "not-run"}]} as any;
   const rows: StoredHistoryRow[] = [{historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt)}];
-  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], rows]);
+  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], rows], {async latestAttempts() {return new Map()}});
   expect(await service.list()).toEqual({entries: [{kind: "suite", suiteId: suite.suiteId, channel: "dev", trigger: "nightly",
     startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, skipped: 1, expectedCount: 2, build: suite.build,
-    rerunCount: 0, failedCount: 0, lanes: [], members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
+    rerunCount: 0, failedCount: 0, comparison: {original: {failed: 0, total: 1, skipped: 1, pending: 1, incomplete: 0}}, lanes: [], members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
 });
 
 test("suite history retains accepted job count and exact distinct host/lane pairs", async () => {
   const suite = {suiteId: "suite:lanes", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T19:00:00Z",
     outcome: "running", passed: 0, build: {headSha: "a".repeat(40)}, members: [
-      {routineId: "notes", platform: "ios-on-mac", hostId: "mini", dispatchIntent: {laneId: "mac"}},
-      {routineId: "settings", platform: "ios-on-mac", hostId: "mini", laneId: "mac"},
-      {routineId: "camera", platform: "android", hostId: "other", laneId: "android"},
-      {routineId: "historical", platform: "android"},
+      {memberId: "notes", routineId: "notes", status: "pending", platform: "ios-on-mac", hostId: "mini", dispatchIntent: {laneId: "mac"}},
+      {memberId: "settings", routineId: "settings", status: "pending", platform: "ios-on-mac", hostId: "mini", laneId: "mac"},
+      {memberId: "camera", routineId: "camera", status: "pending", platform: "android", hostId: "other", laneId: "android"},
+      {memberId: "historical", routineId: "historical", status: "pending", platform: "android"},
     ]} as any;
   const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [
     {historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 5},
-  ]]);
+  ]], {async latestAttempts() {return new Map()}});
   expect((await service.list()).entries[0]).toMatchObject({kind: "suite", rerunCount: 5,
     lanes: [{hostId: "mini", laneId: "mac"}, {hostId: "other", laneId: "android"}],
     members: [{routineId: "notes", hostId: "mini", laneId: "mac"}, {routineId: "settings", hostId: "mini", laneId: "mac"},
@@ -152,7 +152,7 @@ test("one unavailable row preserves its page slot and cursor without failing nei
   const service = new TestHistoryService(summaryReader(async id => {
     if (id === suite.suiteId) return suite;
     throw new TestRunError(404, "missing");
-  }), async () => [[], rows]);
+  }), async () => [[], rows], {async latestAttempts() {return new Map()}});
   const page = await service.list({limit: "2"});
   expect(page.entries[0]!.kind).toBe("suite");
   expect(page.entries[1]).toEqual({kind: "unavailable", sourceKind: "suite", id: "suite:b",
@@ -776,4 +776,65 @@ test("optional PR metadata failure and timeout preserve readable entries", async
   for (const error of [new Error("lookup failed"), Object.assign(new Error("timed out"), {code: 50})]) {
     expect(await enrichHistoryPrBuilds(entries, async () => {throw error;}, new Map([[suite.suiteId, suite]]))).toBe(entries);
   }
+});
+
+test('history batches latest linked status projections and preserves original suite failures',async()=>{
+ const suite={suiteId:'comparison-suite',channel:'dev',trigger:'nightly',startedAt:'2026-10-12T10:00:00Z',outcome:'failed',passed:1,build:{headSha:'a'.repeat(40)},members:[
+  {memberId:'first',routineId:'one',platform:'android',status:'failed',publicationComplete:true},
+  {memberId:'second',routineId:'two',platform:'android',status:'pass',publicationComplete:true}]}
+ let calls=0
+ const service=new TestHistoryService(summaryReader(async()=>suite),async()=>[[],[{historyKind:'suite',historyId:suite.suiteId,historyStartedAt:new Date(suite.startedAt),rerunCount:1}]],{async latestAttempts(ids){calls++;expect(ids).toEqual([{parent:{suiteId:suite.suiteId},memberId:'first'},{parent:{suiteId:suite.suiteId},memberId:'second'}]);const {rerunRootKey}=await import('./test-rerun.service');return new Map([[rerunRootKey({suiteId:suite.suiteId},'first'),{attemptId:'latest',attemptNumber:1,parent:{suiteId:suite.suiteId},memberId:'first',status:'pass',publicationComplete:true}]])}})
+ expect((await service.list()).entries[0]).toMatchObject({outcome:'failed',failedCount:1,comparison:{original:{failed:1,total:2},latest:{failed:0,total:2,pending:0}}});expect(calls).toBe(1)
+})
+
+
+test('accepted suite reruns are visible before any child is admitted', async () => {
+  const suite = {suiteId: 'waiting-suite', channel: 'dev', trigger: 'nightly', startedAt: '2026-10-12T10:00:00Z',
+    outcome: 'failed', passed: 0, build: {headSha: 'a'.repeat(40)}, members: [
+      {memberId: 'original', routineId: 'one', platform: 'android', status: 'failed', publicationComplete: true}]};
+  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [{historyKind: 'suite',
+    historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 0}]], {async latestAttempts(ids) {
+    expect(ids).toEqual([{parent: {suiteId: suite.suiteId}, memberId: 'original'}]);
+    const {rerunRootKey} = await import('./test-rerun.service');
+    return new Map([[rerunRootKey({suiteId: suite.suiteId}, 'original'), {attemptId: 'accepted', attemptNumber: 1,
+      parent: {suiteId: suite.suiteId}, memberId: 'original', status: 'queued', publicationComplete: false}]]);
+  }});
+  expect((await service.list()).entries[0]).toMatchObject({rerunCount: 0, outcome: 'failed',
+    comparison: {original: {failed: 1, total: 1}, latest: {failed: 0, total: 1, pending: 1}}});
+});
+
+test('accepted standalone reruns are visible before any child is admitted', async () => {
+  const payload = frameworkRunSchema.parse({schemaVersion: 1, routineSource: testRoutineSource('b'.repeat(40)),
+    frameworkBinding: testFrameworkBinding(), hostId: 'mini', requestId: 'original', routineId: 'notes',
+    definitionRevision: 'b'.repeat(40), platform: 'ios-on-mac', laneId: 'mac',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'a'.repeat(40)},
+    startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [],
+    result: {runId: 'original', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'passed'}, test: 'passed',
+      steps: [{id: 'required', status: 'passed', durationMs: 1}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
+      timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 1, testMs: 1, teardownMs: 1}}});
+  const digest = requestInputDigest(payload);
+  const service = new TestHistoryService(summaryReader(async () => {throw new Error('no suite');}), async () => [[{
+    historyKind: 'run', historyId: 'original', historyStartedAt: new Date(payload.startedAt), requestId: 'original',
+    payloadSha256: digest, uploadsComplete: true, rerunCount: 0,
+    summaryProjection: createFrameworkRunSummaryProjection(payload, digest)}], []], {async latestAttempts(ids) {
+    expect(ids).toEqual([{parent: {requestId: 'original'}, memberId: 'original'}]);
+    const {rerunRootKey} = await import('./test-rerun.service');
+    return new Map([[rerunRootKey({requestId: 'original'}, 'original'), {attemptId: 'accepted', attemptNumber: 1,
+      parent: {requestId: 'original'}, memberId: 'original', status: 'queued', publicationComplete: false}]]);
+  }});
+  expect((await service.list()).entries[0]).toMatchObject({kind: 'run', rerunCount: 0, outcome: 'pass', latest: {status: 'queued'}});
+});
+
+test('suite history projects original evidence failure and incomplete coverage without reruns', async () => {
+  const suite = {suiteId: 'evidence-suite', channel: 'dev', trigger: 'nightly', startedAt: '2026-10-12T10:00:00Z',
+    outcome: 'failed', passed: 0, build: {headSha: 'a'.repeat(40)}, members: [
+      {memberId: 'evidence', routineId: 'one', platform: 'android', status: 'pass', evidenceStatus: 'failed', publicationComplete: false},
+      {memberId: 'publishing', routineId: 'two', platform: 'android', status: 'pass', publicationComplete: false},
+      {memberId: 'cancelled', routineId: 'three', platform: 'android', status: 'cancelled', publicationComplete: false}]};
+  const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [{historyKind: 'suite',
+    historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 0}]], {async latestAttempts() {return new Map()}});
+  expect((await service.list()).entries[0]).toMatchObject({rerunCount: 0, outcome: 'failed', failedCount: 1,
+    comparison: {original: {failed: 1, total: 3, skipped: 0, pending: 1, incomplete: 1}}});
+  expect((await service.list()).entries[0]).not.toHaveProperty('comparison.latest');
 });
