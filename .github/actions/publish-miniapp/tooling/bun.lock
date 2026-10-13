@@ -4,23 +4,23 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@mentra/cli": "file:vendor/mentra-cli-2.0.0-dev.2-39488559bbe8.tgz",
-        "@mentra/miniapp-cli": "file:vendor/mentra-miniapp-cli-0.1.0-dev.2-39488559bbe8.tgz",
+        "@mentra/cli": "file:vendor/mentra-cli-2.0.0-dev.2-8a4fd70913be.tgz",
+        "@mentra/miniapp-cli": "file:vendor/mentra-miniapp-cli-0.1.0-dev.2-8a4fd70913be.tgz",
         "jszip": "3.10.1",
       },
     },
   },
   "overrides": {
-    "@mentra/miniapp-cli": "file:./vendor/mentra-miniapp-cli-0.1.0-dev.2-39488559bbe8.tgz",
+    "@mentra/miniapp-cli": "file:./vendor/mentra-miniapp-cli-0.1.0-dev.2-8a4fd70913be.tgz",
   },
   "packages": {
     "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
 
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
 
-    "@mentra/cli": ["@mentra/cli@vendor/mentra-cli-2.0.0-dev.2-39488559bbe8.tgz", { "dependencies": { "@mentra/miniapp-cli": "0.1.0-dev.2", "commander": "^14.0.2", "jszip": "^3.10.1", "openid-client": "6.8.8", "qrcode": "^1.5.4" }, "bin": { "mentra": "./src/index.ts" } }, "sha512-2gu7yiRSDCIbW90u/UIc/dooUXK89xNapYvezgw/AUOsYz+hkNAMDE/H7r15RdeNoxLmgMmPrypt0/vUJL2OOA=="],
+    "@mentra/cli": ["@mentra/cli@vendor/mentra-cli-2.0.0-dev.2-8a4fd70913be.tgz", { "dependencies": { "@mentra/miniapp-cli": "0.1.0-dev.2", "commander": "^14.0.2", "jszip": "^3.10.1", "openid-client": "6.8.8", "qrcode": "^1.5.4" }, "bin": { "mentra": "./src/index.ts" } }, "sha512-RQd55OL5/huw95B6wU0HXyIgSy58M/mkTk0vjnzlQjacaqI2uEeIm6f+/+0GbqtADcDHGpR7XGfK/O6ZGFRSFA=="],
 
-    "@mentra/miniapp-cli": ["@mentra/miniapp-cli@./vendor/mentra-miniapp-cli-0.1.0-dev.2-39488559bbe8.tgz", { "dependencies": { "@clack/prompts": "^1.2.0", "jszip": "^3.10.1", "qrcode": "^1.5.4", "typescript": "^5.0.0" }, "bin": { "mentra-miniapp": "./src/index.ts" } }, "sha512-CsvkNuugFdrPjDBfuRm7PNLyXVSHU2kV7NEREVxVXalLehHECpBsxVyz9L/9AoORZse13GqIiViLhDky+41ARg=="],
+    "@mentra/miniapp-cli": ["@mentra/miniapp-cli@./vendor/mentra-miniapp-cli-0.1.0-dev.2-8a4fd70913be.tgz", { "dependencies": { "@clack/prompts": "^1.2.0", "jszip": "^3.10.1", "qrcode": "^1.5.4", "typescript": "^5.0.0" }, "bin": { "mentra-miniapp": "./src/index.ts" } }, "sha512-CsvkNuugFdrPjDBfuRm7PNLyXVSHU2kV7NEREVxVXalLehHECpBsxVyz9L/9AoORZse13GqIiViLhDky+41ARg=="],
 
     "ansi-regex": ["ansi-regex@5.0.1", "", {}, "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="],
 
