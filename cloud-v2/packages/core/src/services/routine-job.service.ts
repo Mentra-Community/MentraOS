@@ -58,7 +58,8 @@ export const routineJobRepository: RoutineJobRepository = {
       'fleetActions.actionsRunId': value.actionsRunId,
       $expr: {$eq: [{$max: {$map: {input: '$fleetActions', as: 'action', in: {$toDecimal: '$$action.actionsRunId'}}}}, {$toDecimal: {$literal: value.actionsRunId}}]}},
       {$set: {fleetPreparationStatus: value, updatedAt: now,
-        ...(!value.retryable ? {state: 'terminal', terminalStatus: value.code === 'not-applicable' ? 'not-applicable' : 'not-run'} : {})}},
+        ...(!value.retryable ? {state: 'terminal', terminalStatus: value.code === 'not-applicable' ? 'not-applicable' : 'not-run',
+          fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}} : {})}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async exhaustPreparation(requestId, completedRunIds, now) {

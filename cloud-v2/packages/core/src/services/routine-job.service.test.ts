@@ -24,7 +24,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
       row={...row,fleetPreparation:copy(prepared),fleetInputSha256:inputSha256,state:'awaiting-runner'};return copy(row)},
     async exhaustPreparation(id,completed,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.fleetDispatch?.attempts!==20||row.fleetActions?.some(run=>!completed.includes(run.actionsRunId)))return null;row={...row,state:'terminal',terminalStatus:'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}};return copy(row)},
     async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
-      row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run'}:{})};return copy(row)},
+      row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}}:{})};return copy(row)},
     async bind(id,digest,binding,intent,now){if(!row||row.requestId!==id||row.state!=='awaiting-runner'||row.fleetBinding||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,hostId:binding.hostId,fleetBinding:copy(binding),dispatchIntent:copy(intent),dispatchIntentSha256:requestInputDigest(intent),state:'preparing'};return copy(row)},
     async dispatch(id,previous,value){if(!row||requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null)||row.fleetCancellation||row.fleetBinding)return null;row={...row,fleetDispatch:copy(value)};return copy(row)},
@@ -540,7 +540,7 @@ test('offline preparation reports retain exact workflow and cannot overwrite pre
   expect(f.row!.state).toBe('awaiting-source')
   await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'98'})
   await f.service.preparationStatus(selection.requestId,{...status,actionsRunId:'100',phase:'routine description',code:'not-applicable',retryable:false})
-  expect(f.row).toMatchObject({state:'terminal',terminalStatus:'not-applicable'})
+  expect(f.row).toMatchObject({state:'terminal',terminalStatus:'not-applicable',fleetCancellation:{reason:'Routine new-routine does not support android.'}})
   expect((await f.service.observation(selection.requestId)).terminal).toBe(true)
 })
 
@@ -595,4 +595,13 @@ test('twenty failed deliveries with no created workflow terminate after the abse
  expect((await f.service.observation(selection.requestId)).terminal).toBe(false);
  f.advance(61_000);
  expect(await f.service.observation(selection.requestId)).toMatchObject({terminal:true,terminalStatus:'not-run',waitingReason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'});
+});
+
+test('permanent preparation reports use the settled fence consumed by rerun readers', async () => {
+ const f=fixture();await f.service.submit(selection);await f.service.actions(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'100'});
+ await f.service.preparationStatus(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,actionsRunId:'100',phase:'routine description',code:'not-applicable',retryable:false});
+ const {TestRerunService}=await import('./test-rerun.service');
+ const reruns=new TestRerunService(undefined,undefined,undefined,{async get(){return f.row as any},async prepare(){throw Error('No admission')}});
+ const attempt=await (reruns as any).requestAttempt(selection.requestId,{parent:{kind:'request',requestId:selection.requestId},memberId:selection.requestId,attemptNumber:1,attemptId:'attempt'});
+ expect(attempt).toMatchObject({status:'not-run',publicationComplete:false,reason:'Routine new-routine does not support android.'});
 });
