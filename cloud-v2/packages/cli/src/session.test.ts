@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, expect, spyOn, test} from "bun:test"
-import {existsSync, mkdtempSync, readdirSync, rmSync} from "node:fs"
+import {existsSync, mkdtempSync, readdirSync, rmSync, utimesSync} from "node:fs"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 
@@ -7,7 +7,7 @@ import {refreshTokenGrant} from "openid-client"
 
 import {ensureOidcClient, revokeLogin, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
-import {clearCredentials, loadStoredLogin, saveCredentials, type CliCredentials} from "./credentials"
+import {clearCredentials, loadStoredLogin, refreshLockPath, saveCredentials, type CliCredentials} from "./credentials"
 import {loopbackLogin} from "./loopback-login"
 import {loadFreshCredentials, selectWorkspace, signOut, storeLogin} from "./session"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
@@ -192,6 +192,19 @@ test("a refused refresh does not clear a login another command stored meanwhile"
   const result = (await refreshing) as CliCredentials
   expect(result.refreshToken).toBe("other-refresh")
   expect((await loadStoredLogin(target))!.refreshToken).toBe("other-refresh")
+})
+
+test("a sign-out that lost the lock while paused leaves the login another command stored", async () => {
+  const original = await storedLogin(3_600_000)
+  // While its revocation is answered, this command is paused past the stale age and another signs in.
+  idp.beforeRevocation = async () => {
+    idp.beforeRevocation = null
+    const then = new Date(Date.now() - 120_000)
+    utimesSync(join(refreshLockPath(target), "holder"), then, then)
+    await storeLogin({...original, token: "other-access", refreshToken: "other-refresh"})
+  }
+  expect((await signOut(target)).signedIn).toBe(true)
+  expect((await loadStoredLogin(target))?.refreshToken).toBe("other-refresh")
 })
 
 test("a refused refresh token says Session expired and clears the login", async () => {

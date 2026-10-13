@@ -100,9 +100,9 @@ export function selectWorkspace(
   workspaceId: string,
   chosenFor: {mentraUserId: string},
 ): Promise<"keychain" | "file" | null> {
-  return withRefreshLock(target, async () => {
+  return withRefreshLock(target, async lease => {
     const current = await loadStoredLogin(target)
-    if (!current || current.mentraUserId !== chosenFor.mentraUserId) return null
+    if (!current || current.mentraUserId !== chosenFor.mentraUserId || !lease.held()) return null
     return saveCredentials({...current, workspaceId})
   })
 }
@@ -112,13 +112,16 @@ export function selectWorkspace(
  * sign-in server and delete the login, even when the server cannot be reached.
  */
 export function signOut(target: CliTarget): Promise<{signedIn: boolean; confirmed: boolean}> {
-  return withRefreshLock(target, async () => {
+  return withRefreshLock(target, async lease => {
     const stored = await loadStoredLogin(target)
     let confirmed = false
     try {
       if (stored) confirmed = (await revokeLogin(stored)).confirmed
     } finally {
-      await clearCredentials(target)
+      // Deleted only while this command still holds the lock and the login is the one it revoked: a
+      // command that took over while this one was paused may have stored another sign-in.
+      const now = await loadStoredLogin(target)
+      if (lease.held() && (now?.refreshToken ?? null) === (stored?.refreshToken ?? null)) await clearCredentials(target)
     }
     return {signedIn: stored !== null, confirmed}
   })

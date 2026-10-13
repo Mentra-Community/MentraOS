@@ -67,6 +67,8 @@ export interface FakeOidcIssuer {
   failRevocation: boolean
   /** Delay before the token endpoint answers a refresh, in ms (widens refresh races). */
   refreshDelayMs: number
+  /** Run before the revocation endpoint answers (to act while a client waits on it). */
+  beforeRevocation: (() => Promise<void>) | null
   /** Sign `person` in and follow the redirect to the client's callback, as a browser would. */
   approveInBrowser(authorizationUrl: string, person: FakePerson): Promise<{status: number; text: string}>
   /** Decline the sign-in (`error=access_denied` by default) and follow the redirect. */
@@ -113,6 +115,7 @@ export async function startFakeOidcIssuer(options: {
     requests: [] as string[],
     failRevocation: false,
     refreshDelayMs: 0,
+    beforeRevocation: null as (() => Promise<void>) | null,
   }
 
   let issuer = ""
@@ -198,6 +201,7 @@ export async function startFakeOidcIssuer(options: {
     const form = new URLSearchParams(await request.text())
     const presented = form.get("token") ?? ""
     state.revocations.push({token: presented, hint: form.get("token_type_hint"), clientId: form.get("client_id")})
+    if (state.beforeRevocation) await state.beforeRevocation()
     if (state.failRevocation) return new Response("unavailable", {status: 503})
     if (form.get("client_id") !== options.publicClientId) return tokenError("invalid_client", 401)
     const refreshToken = refreshTokens.get(presented)
@@ -279,6 +283,12 @@ export async function startFakeOidcIssuer(options: {
     },
     get failRevocation() {
       return state.failRevocation
+    },
+    get beforeRevocation() {
+      return state.beforeRevocation
+    },
+    set beforeRevocation(value: (() => Promise<void>) | null) {
+      state.beforeRevocation = value
     },
     get refreshDelayMs() {
       return state.refreshDelayMs
