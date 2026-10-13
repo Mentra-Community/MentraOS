@@ -20,13 +20,11 @@ import * as jose from "jose"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
-import {DeveloperOrgApiKeyModel} from "../packages/core/src/models/developer-org-api-key.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
 import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
 import {
   createPortalSession,
@@ -37,6 +35,7 @@ import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-toke
 import {sha256Hex} from "../packages/core/src/services/signin/random"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {legacyAdminKey, legacyKeys} from "./support/legacy-admin-key"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
   coreAccessToken,
@@ -77,7 +76,7 @@ beforeAll(async () => {
   await connectMongo(databaseUrl)
   assertConnectedTo(databaseUrl, UserModel.db.name)
   verified = true
-  await Promise.all([UserModel.syncIndexes(), BrowserSessionModel.syncIndexes(), DeveloperOrgApiKeyModel.syncIndexes()])
+  await Promise.all([UserModel.syncIndexes(), BrowserSessionModel.syncIndexes()])
   for (const model of WORKSPACE_MODELS) {
     await model.createCollection()
     await model.syncIndexes()
@@ -99,7 +98,7 @@ beforeEach(async () => {
   await Promise.all([
     UserModel.deleteMany({}),
     BrowserSessionModel.deleteMany({}),
-    DeveloperOrgApiKeyModel.deleteMany({}),
+    legacyKeys().deleteMany({}),
     ...WORKSPACE_MODELS.map(model => model.deleteMany({})),
   ])
   resetIdpTokenCaches()
@@ -236,15 +235,15 @@ describe("Organization Admins (L06)", () => {
 
 describe("admin keys keep working", () => {
   test("an existing allowlisted admin key reads incidents once Core converts it at startup", async () => {
-    const key = await new DeveloperApiKeyService().create("org_ops", "incident reader", "seed", "local")
-    process.env.CLOUD_CORE_ADMIN_EMAILS = `${ADMIN_EMAIL},api-key@${key.id}.local`
-    expect((await convertLegacyAdminKeys()).converted).toEqual([key.id])
-    const reports = await adminReports({authorization: `Bearer ${key.value}`})
+    const key = await legacyAdminKey({orgId: "org_ops", name: "incident reader"})
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${ADMIN_EMAIL},api-key@${key.keyId}.local`
+    expect((await convertLegacyAdminKeys()).converted).toEqual([key.keyId])
+    const reports = await adminReports({authorization: `Bearer ${key.token}`})
     expect(reports.status).toBe(200)
-    const me = await adminMe({authorization: `Bearer ${key.value}`})
+    const me = await adminMe({authorization: `Bearer ${key.token}`})
     expect(me.status).toBe(200)
     const body = (await me.json()) as {credential: {credentialId: string; credentialKind: string}; organization: {capabilities: string[]}}
-    expect(body.credential).toMatchObject({credentialId: key.id, credentialKind: "organization"})
+    expect(body.credential).toMatchObject({credentialId: key.keyId, credentialKind: "organization"})
     expect(body.organization.capabilities.sort()).toEqual([
       "organization.incidents.read",
       "organization.supportProfiles.read",
@@ -254,20 +253,20 @@ describe("admin keys keep working", () => {
   })
 
   test("a key that is not allowlisted is no principal, and neither is an invalid one", async () => {
-    const key = await new DeveloperApiKeyService().create("org_ops", "not admin", "seed", "local")
+    const key = await legacyAdminKey({orgId: "org_ops", name: "not admin"})
     expect((await convertLegacyAdminKeys()).converted).toEqual([])
-    expect((await adminReports({authorization: `Bearer ${key.value}`})).status).toBe(401)
+    expect((await adminReports({authorization: `Bearer ${key.token}`})).status).toBe(401)
     expect((await adminReports({authorization: "Bearer msk_local_01ABC.secret"})).status).toBe(401)
     expect((await adminReports({authorization: "Bearer mak_local_01ABC.secret"})).status).toBe(401)
   })
 
   test("a key gets 403 on the enterprise portal API and the workspace API, which are for people", async () => {
-    const key = await new DeveloperApiKeyService().create("org_ops", "key", "seed", "local")
-    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.id}.local`
+    const key = await legacyAdminKey({orgId: "org_ops", name: "key"})
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.keyId}.local`
     await convertLegacyAdminKeys()
-    expect((await portalMe({authorization: `Bearer ${key.value}`})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
+    expect((await portalMe({authorization: `Bearer ${key.token}`})).status).toBe(403)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: {authorization: `Bearer ${key.token}`}})).status).toBe(403)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: {authorization: `Bearer ${key.token}`}})).status).toBe(403)
   })
 })
 

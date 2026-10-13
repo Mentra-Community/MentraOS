@@ -455,7 +455,7 @@ describe("createHttpClient", () => {
       new Response(
         JSON.stringify({
           code: "NOT_FOUND",
-          message: "bundle missing",
+          message: "report missing",
         }),
         { status: 404, headers: { "Content-Type": "application/json" } },
       )) as unknown as typeof fetch;
@@ -463,7 +463,7 @@ describe("createHttpClient", () => {
     try {
       const http = createHttpClient({ baseUrl: "https://core.test", logger });
       try {
-        await http.get("/api/client/miniapps/demo/bundle");
+        await http.get("/api/client/reports/rep_demo");
         throw new Error("expected request to fail");
       } catch (err) {
         expect(err).toBeInstanceOf(HttpError);
@@ -471,7 +471,7 @@ describe("createHttpClient", () => {
         expect(httpError.status).toBe(404);
         expect(httpError.code).toBe("NOT_FOUND");
         expect(httpError.message).toBe(
-          "HTTP 404 on GET /api/client/miniapps/demo/bundle: bundle missing",
+          "HTTP 404 on GET /api/client/reports/rep_demo: report missing",
         );
       }
     } finally {

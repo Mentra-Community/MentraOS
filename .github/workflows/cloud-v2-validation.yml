@@ -11,6 +11,7 @@ on:
       - "sdk/miniapp-cli/**"
       - ".dockerignore"
       - ".github/workflows/cloud-v2-validation.yml"
+      - ".github/scripts/no-workos.test.mjs"
   workflow_dispatch:
 
 concurrency:
@@ -63,6 +64,9 @@ jobs:
         working-directory: sdk
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Keep WorkOS out of Cloud V2
+        run: node --test .github/scripts/no-workos.test.mjs
+
       - name: Test enterprise deployment helpers
         working-directory: cloud-v2
         run: |
@@ -109,7 +113,6 @@ jobs:
       - name: Typecheck websites
         working-directory: cloud-v2
         run: |
-          bun run typecheck:console
           bun run typecheck:admin
           bun run typecheck:portal
           bun run typecheck:account
@@ -117,7 +120,6 @@ jobs:
       - name: Build websites
         working-directory: cloud-v2
         run: |
-          bun run build:console
           bun run build:admin
           bun run build:portal
           bun run build:account
@@ -203,7 +205,8 @@ jobs:
             tests/legacy-admin-keys.integration.test.ts \
             tests/account-deletion.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
-            tests/legacy-identity-claim.integration.test.ts
+            tests/legacy-identity-claim.integration.test.ts \
+            tests/legacy-miniapp-registry.integration.test.ts
 
       - name: Show Mongo logs after a failure
         if: failure()

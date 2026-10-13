@@ -788,7 +788,7 @@ type TargetState = {
   deletedOwnerUserIds: Set<string>
   /**
    * WorkOS users, among the owners waiting for their person (in Core or planned), whom a person can still
-   * take up memberships for (the same rule as Core's last-owner guard, `claimableWorkosUserIds`).
+   * take up memberships for (the same rule as Core's last-owner guard, `claimableLegacyUserIds`).
    */
   claimableOwnerWorkosUserIds: Set<string>
   /** The workspace's live (not revoked) credentials. */
@@ -906,7 +906,7 @@ async function readTargetState(
         )
         .toArray()
     : []
-  // Read raw (a dry run's connection is read-only), the same rule as `claimableWorkosUserIds`.
+  // Read raw (a dry run's connection is read-only), the same rule as `claimableLegacyUserIds`.
   const waitingOwners = [
     ...active.flatMap(row => (row.role === "owner" && !row.mentraUserId && row.pendingWorkosUserId ? [row.pendingWorkosUserId] : [])),
     ...plan.memberships.flatMap(membership => (membership.role === "owner" ? [membership.sourceUserId] : [])),

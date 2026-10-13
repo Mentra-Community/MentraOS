@@ -30,11 +30,9 @@ import {
   mongoReadinessCheck,
 } from "../packages/core/src/connections/mongo.connection";
 import { BrowserSessionModel } from "../packages/core/src/models/browser-session.model";
-import { DeveloperOrgApiKeyModel } from "../packages/core/src/models/developer-org-api-key.model";
 import { EnterpriseOrgModel } from "../packages/core/src/models/enterprise-org.model";
 import { TrustedIssuerModel } from "../packages/core/src/models/trusted-issuer.model";
 import { OemModel } from "../packages/core/src/models/oem.model";
-import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
 import { convertLegacyAdminKeys } from "../packages/core/src/services/workspaces/legacy-admin-keys";
 import {
   EnterpriseService,
@@ -44,6 +42,7 @@ import {
   createPortalSession,
   readPortalSession,
 } from "../packages/core/src/services/signin/browser-session.service";
+import { legacyAdminKey, legacyKeys } from "./support/legacy-admin-key";
 import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 import {
   ADMIN_COOKIE,
@@ -71,7 +70,6 @@ beforeAll(async () => {
     EnterpriseOrgModel.syncIndexes(),
     TrustedIssuerModel.syncIndexes(),
     BrowserSessionModel.syncIndexes(),
-    DeveloperOrgApiKeyModel.syncIndexes(),
   ]);
   enterprise = new EnterpriseService();
 });
@@ -92,7 +90,7 @@ beforeEach(async () => {
     TrustedIssuerModel.deleteMany({}),
     OemModel.deleteMany({}),
     BrowserSessionModel.deleteMany({}),
-    DeveloperOrgApiKeyModel.deleteMany({}),
+    legacyKeys().deleteMany({}),
   ]);
 });
 
@@ -296,12 +294,12 @@ describe("enterprise portal API on Core users", () => {
 
   test("a key gets 403 and the admin portal's cookie gets 401", async () => {
     // An admin API key, converted to an operator key at startup: a principal, but not a person.
-    const key = await new DeveloperApiKeyService().create("org_x", "ci", "seed", "local");
+    const key = await legacyAdminKey({orgId: "org_x", name: "ci"});
     const restoreAllowlist = process.env.CLOUD_CORE_ADMIN_EMAILS;
-    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.id}.local`;
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.keyId}.local`;
     try {
-      expect((await convertLegacyAdminKeys()).converted).toEqual([key.id]);
-      const keyed = await app.request(`${PORTAL_ORIGIN}/api/portal/org`, { headers: { authorization: `Bearer ${key.value}` } });
+      expect((await convertLegacyAdminKeys()).converted).toEqual([key.keyId]);
+      const keyed = await app.request(`${PORTAL_ORIGIN}/api/portal/org`, { headers: { authorization: `Bearer ${key.token}` } });
       expect(keyed.status).toBe(403);
     } finally {
       if (restoreAllowlist === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;

@@ -22,12 +22,10 @@ import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/co
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
-import {DeveloperOrgApiKeyModel} from "../packages/core/src/models/developer-org-api-key.model"
 import {LoginTransactionModel} from "../packages/core/src/models/login-transaction.model"
 import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
-import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
 import {stopOidcBridge} from "../packages/core/src/services/oidc/bridge"
 import {ensureOidcCollections} from "../packages/core/src/services/oidc/mongo-adapter"
 import {resetUpstreamCaches} from "../packages/core/src/services/oidc/upstream"
@@ -42,6 +40,7 @@ import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/l
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {resetCoreKeyCaches} from "./support/key-caches"
+import {legacyAdminKey, legacyKeys} from "./support/legacy-admin-key"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {routeOriginsToApp} from "./support/oidc-harness"
 import {
@@ -87,7 +86,6 @@ beforeAll(async () => {
     BrowserSessionModel.syncIndexes(),
     LoginTransactionModel.syncIndexes(),
     AuthRateLimitModel.syncIndexes(),
-    DeveloperOrgApiKeyModel.syncIndexes(),
     SigninIdentityModel.syncIndexes(),
     ensureOidcCollections(),
   ])
@@ -115,7 +113,7 @@ async function clean() {
     BrowserSessionModel.deleteMany({}),
     LoginTransactionModel.deleteMany({}),
     AuthRateLimitModel.deleteMany({}),
-    DeveloperOrgApiKeyModel.deleteMany({}),
+    legacyKeys().deleteMany({}),
     AccessCredentialModel.deleteMany({}),
     WorkspaceAuditEventModel.deleteMany({}),
     SigninIdentityModel.deleteMany({}),
@@ -386,11 +384,11 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     expect(sameOrigin.status).not.toBe(401)
 
     // An operator key (here an admin key converted at startup) with the testing scope writes from anywhere.
-    const key = await new DeveloperApiKeyService().create("org_admin_keys", "ops", "seed", "local")
-    const restore = applyEnv({CLOUD_CORE_ADMIN_EMAILS: `${ADMIN_EMAIL},api-key@${key.id}.local`})
+    const key = await legacyAdminKey({orgId: "org_admin_keys", name: "ops"})
+    const restore = applyEnv({CLOUD_CORE_ADMIN_EMAILS: `${ADMIN_EMAIL},api-key@${key.keyId}.local`})
     try {
       await convertLegacyAdminKeys()
-      const bearer = await app.request(`${ADMIN_ORIGIN}/api/admin/test-dispatches/picker`, {method: "POST", headers: {authorization: `Bearer ${key.value}`, origin: "https://evil.example", "content-type": "application/json"}, body: "{}"})
+      const bearer = await app.request(`${ADMIN_ORIGIN}/api/admin/test-dispatches/picker`, {method: "POST", headers: {authorization: `Bearer ${key.token}`, origin: "https://evil.example", "content-type": "application/json"}, body: "{}"})
       expect(bearer.status).not.toBe(403)
       expect(bearer.status).not.toBe(401)
     } finally {

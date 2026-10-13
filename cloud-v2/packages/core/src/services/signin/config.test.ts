@@ -166,7 +166,7 @@ describe("refusals name the field", () => {
     expect(await refusal()).toContain("Mentra domain")
   })
 
-  test.each([["mentra"], ["workos"]])("reserved tenant %s", async tenantId => {
+  test.each([["mentra"]])("reserved tenant %s", async tenantId => {
     providers(entra({tenantId}))
     expect(await refusal()).toContain("reserved")
   })

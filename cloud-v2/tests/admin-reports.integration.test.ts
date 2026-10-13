@@ -83,8 +83,6 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { DeveloperOrgApiKeyModel } from "../packages/core/src/models/developer-org-api-key.model";
-import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
 import { AccessCredentialModel } from "../packages/core/src/models/access-credential.model";
 import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-audit-event.model";
 import { WorkspaceModel } from "../packages/core/src/models/workspace.model";
@@ -92,6 +90,7 @@ import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-
 import { convertLegacyAdminKeys } from "../packages/core/src/services/workspaces/legacy-admin-keys";
 import { createWorkspace } from "../packages/core/src/services/workspaces/workspace.service";
 import { createWorkspaceCredential } from "../packages/core/src/services/workspaces/credential.service";
+import { legacyAdminKey, legacyKeyAddress } from "./support/legacy-admin-key";
 import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 import { resetCoreKeyCaches } from "./support/key-caches";
 
@@ -120,7 +119,6 @@ beforeAll(async () => {
     RefreshTokenModel.syncIndexes(),
     SeenJtiModel.syncIndexes(),
     RevokedJtiModel.syncIndexes(),
-    DeveloperOrgApiKeyModel.syncIndexes(),
     ...[AccessCredentialModel, WorkspaceAuditEventModel, WorkspaceModel, WorkspaceMembershipModel].map(async model => {
       await model.createCollection();
       await model.syncIndexes();
@@ -132,15 +130,14 @@ beforeAll(async () => {
   expect(exchanged.status).toBe(200);
   userAccessToken = ((await exchanged.json()) as { access_token: string }).access_token;
 
-  const apiKeys = new DeveloperApiKeyService();
-  const adminKey = await apiKeys.create("org_admin_reports_test", "admin", "user_admin", "local");
-  const nonAdminKey = await apiKeys.create("org_admin_reports_test", "plain", "user_plain", "local");
-  adminBearer = adminKey.value!;
-  nonAdminBearer = nonAdminKey.value!;
-  adminEmail = `api-key@${adminKey.id}.local`;
+  const adminKey = await legacyAdminKey({ orgId: "org_admin_reports_test", name: "admin" });
+  const nonAdminKey = await legacyAdminKey({ orgId: "org_admin_reports_test", name: "plain" });
+  adminBearer = adminKey.token;
+  nonAdminBearer = nonAdminKey.token;
+  adminEmail = legacyKeyAddress(adminKey);
   // What Core's startup does for an allowlisted admin key: it becomes an operator key with the same token.
   process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
-  expect((await convertLegacyAdminKeys()).converted).toEqual([adminKey.id]);
+  expect((await convertLegacyAdminKeys()).converted).toEqual([adminKey.keyId]);
 
   // A workspace key (`msk_`), which holds no organization capability.
   const owner = { kind: "user" as const, mentraUserId: "mu_reports_owner", email: "owner@example.test", emailVerified: true, isOrganizationAdmin: false };

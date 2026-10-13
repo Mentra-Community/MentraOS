@@ -17,8 +17,7 @@
  *    standing in that workspace (an Organization Admin acts as its owner);
  *  - `/organization`: the organization API (every workspace, ownership
  *    recovery, operator keys), for people holding the organization capability;
- *  - Core's built-in Store administration (`preinstalled.api.ts`): an
- *    Organization Admin who is a person.
+ *  - `/audit-log`: an Organization Admin who is a person.
  *
  * An Organization Admin holds every organization capability; an operator key
  * holds only the scopes it was created with; a workspace key holds none.
@@ -34,7 +33,7 @@ import {principalAuth, principalLabel, requireOrganizationCapability} from "../m
 import {createOrganizationApi} from "../organization/organization.api"
 import {createPortalAuthApi} from "../signin/portal-auth.api"
 import {createWorkspacesApi} from "../workspaces/workspaces.api"
-import builtInStore from "./preinstalled.api"
+import auditLog from "./audit-log.api"
 import reports from "./reports.api"
 import {createRoutineCatalogApi} from "./routine-catalog.api"
 import {createRoutinePreferencesApi} from "./routine-preferences.api"
@@ -122,6 +121,6 @@ app.route("/test-runs", testRuns)
 app.route("/routine-catalog", createRoutineCatalogApi())
 app.route("/routines", createRoutinePreferencesApi())
 app.route("/", testDispatches)
-app.route("/", builtInStore)
+app.route("/", auditLog)
 
 export default app
