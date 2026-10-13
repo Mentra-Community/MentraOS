@@ -720,10 +720,21 @@ describe("export-legacy-browser-identities", () => {
 
     expect(report).toEqual({
       mode: "dry-run",
-      counts: {workosUsers: 5, verified: 2, inserted: 2, updated: 0, unchanged: 0, skippedUnverified: 1, notFound: 1, alreadyClaimed: 1},
+      counts: {
+        workosUsers: 5,
+        verified: 2,
+        inserted: 2,
+        updated: 0,
+        unchanged: 0,
+        removed: 0,
+        skippedUnverified: 1,
+        notFound: 1,
+        alreadyClaimed: 1,
+      },
       skippedUnverified: ["user_01B"],
       notFound: ["user_01C"],
       alreadyClaimed: ["user_01F"],
+      removed: [],
     })
     // Only the WorkOS users with active pending memberships or enterprise ownership, and never a claimed one.
     expect(workos.requests.map(request => request.url)).toEqual(
@@ -758,6 +769,33 @@ describe("export-legacy-browser-identities", () => {
     expect(changed.counts).toMatchObject({inserted: 0, updated: 1, unchanged: 1})
     expect((await identity("user_01A")).email).toBe("a.new@studio.example")
     expect(await identity("user_01F")).toMatchObject({email: "f@studio.example", claimedBy: "mu_F"})
+  })
+
+  test("an unclaimed identity whose email WorkOS no longer verifies, or whose user WorkOS no longer knows, is removed", async () => {
+    await seedExportSource()
+    await exportLegacyBrowserIdentities({apply: true, apiKey: "sk_test_export", fetch: workosStub(WORKOS_USERS).stub})
+    expect((await rows()).map(row => row.workosUserId)).toEqual(["user_01A", "user_01E", "user_01F"])
+    // WorkOS now reports user_01A's address unverified (it may have changed hands), and no longer knows user_01E.
+    const later = {user_01A: {email: "a@studio.example", email_verified: false}, user_01B: WORKOS_USERS.user_01B}
+
+    const target = await openSourceConnection(databaseUrl)
+    let dry
+    try {
+      dry = await exportLegacyBrowserIdentities({apply: false, target, apiKey: "sk_test_export", fetch: workosStub(later).stub})
+    } finally {
+      await target.close()
+    }
+    expect(dry.removed).toEqual(["user_01A", "user_01E"])
+    expect(dry.counts).toMatchObject({removed: 2, verified: 0})
+    expect((await rows()).map(row => row.workosUserId)).toEqual(["user_01A", "user_01E", "user_01F"])
+
+    const applied = await exportLegacyBrowserIdentities({apply: true, apiKey: "sk_test_export", fetch: workosStub(later).stub})
+    expect(applied).toEqual({...dry, mode: "apply"})
+    // Nobody can claim with the stale address; the claimed identity is untouched.
+    expect((await rows()).map(row => row.workosUserId)).toEqual(["user_01F"])
+    await expect(
+      claimLegacyIdentities({mentraUserId: "mu_A", email: "a@studio.example", emailVerified: true}),
+    ).resolves.toEqual({claimedIdentities: 0})
   })
 
   test("a WorkOS answer it cannot use stops the export before anything is written; a rate limit is retried", async () => {

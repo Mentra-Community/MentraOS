@@ -26,7 +26,9 @@
  *
  * It is idempotent: rows are keyed on the WorkOS user id, an unchanged row is not
  * written, an unclaimed row whose email WorkOS changed is updated, and an identity
- * someone has claimed is neither asked about again nor changed. WorkOS is read for
+ * someone has claimed is neither asked about again nor changed. An unclaimed row
+ * whose email WorkOS no longer reports verified, or whose user WorkOS no longer
+ * knows, is removed (`removed`), so a stale address claims nothing. WorkOS is read for
  * every user before anything is written, so a WorkOS failure (anything but a user
  * it does not know, after retrying rate limits and server errors) stops the export
  * with nothing written.
@@ -79,6 +81,7 @@ export type ExportReport = {
     inserted: number
     updated: number
     unchanged: number
+    removed: number
     skippedUnverified: number
     notFound: number
     alreadyClaimed: number
@@ -89,6 +92,8 @@ export type ExportReport = {
   notFound: string[]
   /** WorkOS users whose identity a person has already claimed: left as they are. */
   alreadyClaimed: string[]
+  /** Unclaimed identities removed because WorkOS no longer verifies the email or knows the user. */
+  removed: string[]
 }
 
 export type ExportOptions = {
@@ -140,6 +145,7 @@ export async function exportLegacyBrowserIdentities(options: ExportOptions): Pro
       inserted: 0,
       updated: 0,
       unchanged: 0,
+      removed: 0,
       skippedUnverified: 0,
       notFound: 0,
       alreadyClaimed: 0,
@@ -147,10 +153,13 @@ export async function exportLegacyBrowserIdentities(options: ExportOptions): Pro
     skippedUnverified: [],
     notFound: [],
     alreadyClaimed: [],
+    removed: [],
   }
 
   // Ask WorkOS about everyone first: a failure stops the export before anything is written.
   const writes: Array<{workosUserId: string; email: string; insert: boolean}> = []
+  // Unclaimed identities WorkOS no longer vouches for: nobody may claim with them.
+  const removals: string[] = []
   for (const workosUserId of workosUserIds) {
     const known = existing.get(workosUserId)
     if (known?.claimed) {
@@ -160,11 +169,13 @@ export async function exportLegacyBrowserIdentities(options: ExportOptions): Pro
     const user = await readWorkosUser(workosUserId, options)
     if (!user) {
       report.notFound.push(workosUserId)
+      if (known) removals.push(workosUserId)
       continue
     }
     const email = typeof user.email === "string" ? user.email.trim().toLowerCase() : ""
     if (user.email_verified !== true || !email) {
       report.skippedUnverified.push(workosUserId)
+      if (known) removals.push(workosUserId)
       continue
     }
     report.counts.verified += 1
@@ -203,8 +214,17 @@ export async function exportLegacyBrowserIdentities(options: ExportOptions): Pro
     }
     report.counts[result.upsertedCount === 1 ? "inserted" : "updated"] += 1
   }
+  for (const workosUserId of removals) {
+    // Never an identity someone has claimed meanwhile.
+    if (options.apply) {
+      const result = await LegacyBrowserIdentityModel.deleteOne({workosUserId, claimedAt: null})
+      if (result.deletedCount !== 1) continue
+    }
+    report.removed.push(workosUserId)
+  }
+  report.counts.removed = report.removed.length
   log(
-    `${report.counts.workosUsers} WorkOS user(s): ${report.counts.verified} verified, ` +
+    `${report.counts.workosUsers} WorkOS user(s): ${report.counts.verified} verified, ${report.counts.removed} removed, ` +
       `${report.counts.skippedUnverified} unverified, ${report.counts.notFound} not found, ${report.counts.alreadyClaimed} already claimed`,
   )
   return report

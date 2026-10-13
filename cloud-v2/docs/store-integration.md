@@ -177,7 +177,9 @@ it. The dry run, the report on stdout and the `--apply` guard work as for the
 import. The report counts the users and lists, by WorkOS user ID only, those
 skipped as unverified, those WorkOS does not know, and those already claimed.
 Running it again writes nothing that has not changed and never touches a
-claimed identity. A WorkOS failure stops it before anything is written.
+claimed identity. It removes an unclaimed identity whose email WorkOS no longer
+reports verified, or whose user WorkOS no longer knows (`removed`), so a stale
+address claims nothing. A WorkOS failure stops it before anything is written.
 
 ### The claim
 
