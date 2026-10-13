@@ -22,6 +22,7 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import {waitForOtaInternet} from "./OtaInternetRecovery"
 import {submitOtaFailureReport, type OtaFailureReason} from "./OtaFailureReportService"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
@@ -490,6 +491,8 @@ class OtaInstallCoordinator {
    * clear the stale build number so the next check re-reads version_info.
    */
   async finish(): Promise<void> {
+    const deviceRevision = otaDeviceSessionRevision()
+    const usedHotspot = this.selectedTransport === "hotspot" || this.hotspotManifestUrl !== null
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
       this.observedTransport = null
@@ -502,6 +505,7 @@ class OtaInstallCoordinator {
     // The post-install check needs internet again. Do not let callers leave the
     // terminal screen while Android still owns the no-internet hotspot route.
     await this.teardownHotspotTransport()
+    if (usedHotspot) await waitForOtaInternet(() => deviceRevision === otaDeviceSessionRevision())
   }
 
   /**
