@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
 // Mock module dependencies BEFORE importing the coordinator.
 
@@ -48,6 +48,7 @@ mock.module("../GlassesReadiness", () => ({
 }))
 
 const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
+const {fleetEvents} = await import("../fleet/fleetEvents")
 
 beforeEach(() => {
   Object.assign(bluetoothSdk, {
@@ -568,4 +569,137 @@ test.each(["heavy", "", "HIGH", null, 1])("rejects compression %p before allocat
   await expect(new PhonePhotoCoordinator().takePhoto("com.a", {compress} as never)).rejects.toThrow("Invalid photo compression")
   expect(startManagedPhoto).not.toHaveBeenCalled()
   expect(requestPhotoNative).not.toHaveBeenCalled()
+})
+
+describe("Fleet photo events", () => {
+  type PhotoEvent = Parameters<typeof fleetEvents.photo>[0]
+  let events: PhotoEvent[]
+  let stopListening: () => void
+
+  beforeEach(() => {
+    events = []
+    stopListening = fleetEvents.subscribe({photo: (event) => events.push(event)})
+  })
+  afterEach(() => stopListening())
+
+  test("a photo that arrives is requested, then captured, under the managed request ID", async () => {
+    const coord = new PhonePhotoCoordinator()
+    await coord.takePhoto("com.a", {})
+    expect(events).toEqual([
+      {operationId: "rq-test-1", stage: "requested"},
+      {operationId: "rq-test-1", stage: "captured"},
+    ])
+  })
+
+  test("the request is reported before the glasses are asked", async () => {
+    let seenWhenAsked: string[] = []
+    requestPhotoNative.mockImplementationOnce(async () => {
+      seenWhenAsked = events.map((event) => event.stage)
+      return undefined
+    })
+    await new PhonePhotoCoordinator().takePhoto("com.a", {})
+    expect(seenWhenAsked).toEqual(["requested"])
+  })
+
+  test("the glasses' own upload confirmation is a capture, even before the ready push", async () => {
+    awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+    requestPhotoNative.mockImplementationOnce(async (request: unknown) => ({
+      state: "success",
+      requestId: (request as {requestId: string}).requestId,
+    }))
+    await new PhonePhotoCoordinator().takePhoto("com.a", {})
+    expect(events.map((event) => event.stage)).toEqual(["requested", "captured"])
+  })
+
+  test("a photo that fails after it was requested says so, once", async () => {
+    awaitManagedPhotoReady.mockRejectedValueOnce(new Error("push channel died"))
+    await expectPhotoError(new PhonePhotoCoordinator().takePhoto("com.a", {}))
+    expect(events).toEqual([
+      {operationId: "rq-test-1", stage: "requested"},
+      {operationId: "rq-test-1", stage: "failed", failedStage: "requested"},
+    ])
+  })
+
+  test("a Bluetooth failure is a failed photo", async () => {
+    awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+    requestPhotoNative.mockRejectedValueOnce(new Error("BLE down"))
+    await expectPhotoError(new PhonePhotoCoordinator().takePhoto("com.a", {}))
+    expect(events.map((event) => event.stage)).toEqual(["requested", "failed"])
+  })
+
+  test("a Bluetooth command that throws on the spot is a failed photo, once", async () => {
+    requestPhotoNative.mockImplementationOnce((() => {
+      throw new Error("bridge not ready")
+    }) as never)
+    const error = await expectPhotoError(new PhonePhotoCoordinator().takePhoto("com.a", {}))
+    expect(error.code).toBe("BLE_SEND_FAILED")
+    expect(events).toEqual([
+      {operationId: "rq-test-1", stage: "requested"},
+      {operationId: "rq-test-1", stage: "failed", failedStage: "requested"},
+    ])
+  })
+
+  test("an error the glasses report is a failed photo", async () => {
+    awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+    const coord = new PhonePhotoCoordinator()
+    const photo = coord.takePhoto("com.a", {})
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    coord.handlePhotoError("rq-test-1", "BATTERY_LOW", "Battery too low")
+    await expectPhotoError(photo)
+    expect(events).toEqual([
+      {operationId: "rq-test-1", stage: "requested"},
+      {operationId: "rq-test-1", stage: "failed", failedStage: "requested"},
+    ])
+  })
+
+  test("the pipeline watchdog is a failed photo", async () => {
+    awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+    const timeouts: Array<{callback: () => void; delay: number}> = []
+    const spy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+      timeouts.push({callback, delay})
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    }) as never)
+    try {
+      const photo = new PhonePhotoCoordinator().takePhoto("com.a", {})
+      for (let tick = 0; tick < 5; tick += 1) await Promise.resolve()
+      timeouts.find((timeout) => timeout.delay === CAPTURE_PIPELINE_TIMEOUT_MS)?.callback()
+      const error = await expectPhotoError(photo)
+      expect(error.code).toBe("CAPTURE_TIMEOUT")
+    } finally {
+      spy.mockRestore()
+    }
+    expect(events.map((event) => event.stage)).toEqual(["requested", "failed"])
+  })
+
+  test("a photo that never got a request ID reports nothing", async () => {
+    startManagedPhoto.mockRejectedValueOnce(new Error("cloud down"))
+    await expectPhotoError(new PhonePhotoCoordinator().takePhoto("com.a", {}))
+    expect(events).toEqual([])
+  })
+
+  test("a photo refused before it starts reports nothing", async () => {
+    glassesState = {connection: {state: "disconnected"}}
+    await expectPhotoError(new PhonePhotoCoordinator().takePhoto("com.a", {}))
+    expect(events).toEqual([])
+  })
+
+  test("a reporter that fails changes nothing about a photo, for better or worse", async () => {
+    stopListening()
+    stopListening = fleetEvents.subscribe({
+      photo: () => {
+        throw new Error("fleet is broken")
+      },
+    })
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const coord = new PhonePhotoCoordinator()
+      const result = await coord.takePhoto("com.a", {})
+      expect(result.requestId).toBe("rq-test-1")
+      awaitManagedPhotoReady.mockRejectedValueOnce(Object.assign(new Error("late"), {code: "PHOTO_TIMEOUT"}))
+      const error = await expectPhotoError(coord.takePhoto("com.a", {}))
+      expect(error.code).toBe("PHOTO_TIMEOUT")
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

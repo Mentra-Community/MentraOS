@@ -21,6 +21,7 @@ import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
 import localDisplayManager from "../services/LocalDisplayManager"
+import {fleetEvents} from "../services/fleet/fleetEvents"
 import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
@@ -39,6 +40,12 @@ export interface StartOptions {
   skipNavigation?: boolean
   /** Present the app after launch checks, before bundle loading and runtime startup. */
   onAccepted?: () => void | Promise<void>
+  /**
+   * Who started the miniapp, for Fleet's launch record: `"user"` for a person's own choice (a tap on Home, a pick
+   * from the glasses menu), `"automatic"` for everything else. It is the default, and it changes nothing about the
+   * launch.
+   */
+  trigger?: "user" | "automatic"
 }
 
 export interface AppStoreHooks {
@@ -294,6 +301,36 @@ function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): b
   )
 }
 
+/**
+ * Tells Fleet how each start attempt went, around the launch and without touching it: the result, or the failure it
+ * throws, is returned as the launch gave it. Re-opening a miniapp that is already running starts nothing and is not
+ * reported. Fleet's `launch` never throws.
+ */
+function reportingLaunches(
+  launch: (app: ClientApp, opts?: StartOptions) => Promise<boolean>,
+): (app: ClientApp, opts?: StartOptions) => Promise<boolean> {
+  return async (clientApp, opts) => {
+    const alreadyRunning = useAppStatusStore
+      .getState()
+      .apps.some((a) => a.packageName === clientApp.packageName && a.running)
+    let started = false
+    try {
+      started = await launch(clientApp, opts)
+      return started
+    } finally {
+      if (!alreadyRunning) {
+        fleetEvents.launch({
+          packageName: clientApp.packageName,
+          miniappName: clientApp.name,
+          versionName: clientApp.version,
+          start: opts?.trigger ?? "automatic",
+          outcome: started ? "started" : "failed",
+        })
+      }
+    }
+  }
+}
+
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
   updatingPackages: new Set(),
@@ -343,7 +380,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
   },
 
-  start: async (clientApp: ClientApp, opts?: StartOptions) => {
+  start: reportingLaunches(async (clientApp: ClientApp, opts?: StartOptions) => {
     const state = get()
     const packageName = clientApp.packageName
     if (!isMiniappAvailable(packageName)) return false
@@ -475,7 +512,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
 
     return true
-  },
+  }),
 
   stop: async (packageName: string) => {
     const state = get()
@@ -661,7 +698,13 @@ useSettingsStore.subscribe(
 // ---------------------------------------------------------------------------
 
 export const useApps = () => useAppStatusStore((state) => state.apps)
-export const useStart = () => useAppStatusStore((state) => state.start)
+
+/** `start` for a person's own action (a tap on Home): the launch is reported as a user start unless the caller says otherwise. */
+const startForUser: AppStatusState["start"] = (app, opts) =>
+  useAppStatusStore.getState().start(app, {...opts, trigger: opts?.trigger ?? "user"})
+
+/** The start function for UI the user acts in. Automatic and system callers use the store's `start` directly. */
+export const useStart = () => startForUser
 export const useStop = () => useAppStatusStore((state) => state.stop)
 export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
 export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)
