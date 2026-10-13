@@ -21,6 +21,11 @@
  * the token a person or a key presented to it. Phone tokens, ID tokens,
  * miniapp tokens and tokens from another issuer are refused.
  *
+ * A person resolved from a Core access token first claims the Store-imported
+ * memberships waiting under their verified email (`claimLegacyIdentitiesOnce`:
+ * at most once per ten minutes per person in a process, and a failure never
+ * fails the request), so their first Core or Store request already sees them.
+ *
  * A person's Organization Admin status is evaluated on every request from the
  * verified email (`isOrganizationAdminEmail`), so an allowlist change applies
  * on the next request. Signing in grants no organization capability by itself.
@@ -33,6 +38,7 @@ import {getCookie} from "hono/cookie"
 import type {AppEnv} from "../../types/hono.types"
 import {isOrganizationAdminEmail} from "../admin-email-policy"
 import {isCredentialToken, validateCredentialToken} from "../workspaces/credential.service"
+import {claimLegacyIdentitiesOnce} from "../workspaces/membership-claim.service"
 import {readPortalSession, type PortalKind} from "./browser-session.service"
 import {verifyCoreAccessToken} from "../oidc/core-access-token"
 import {portalSite, setPortalSessionCookie} from "./portal-signin.service"
@@ -77,7 +83,13 @@ export async function principalFromToken(token: string): Promise<CorePrincipal |
   if (!trimmed) return null
   if (isCredentialToken(trimmed)) return validateCredentialToken(trimmed)
   const identity = await verifyCoreAccessToken(trimmed)
-  return identity ? userPrincipal(identity, "bearer") : null
+  if (!identity) return null
+  await claimLegacyIdentitiesOnce({
+    mentraUserId: identity.mentraUserId,
+    email: identity.email,
+    emailVerified: identity.emailVerified,
+  })
+  return userPrincipal(identity, "bearer")
 }
 
 /**

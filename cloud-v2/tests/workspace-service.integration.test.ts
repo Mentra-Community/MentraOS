@@ -14,11 +14,14 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/workspace-service.integration.test.ts`
  */
 
+import {createHash} from "node:crypto"
+
 import {afterAll, beforeAll, beforeEach, describe, expect, test} from "bun:test"
 import type {Model} from "mongoose"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
@@ -31,6 +34,7 @@ import {
   recordWorkspaceEvent,
   redactSecrets,
 } from "../packages/core/src/services/workspaces/audit.service"
+import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {workspaceCreationPolicy} from "../packages/core/src/services/workspaces/organization"
 import {
   changeRole,
@@ -393,6 +397,111 @@ describe("deleted accounts", () => {
     expect(await countActiveOwners(ws)).toBe(2)
     await leaveWorkspace(user("mu_owner"), ws)
     expect(await countActiveOwners(ws)).toBe(1)
+  })
+})
+
+describe("memberships imported from the Store, pending their person's first sign-in", () => {
+  /** A membership imported under a WorkOS user id, with no Core user yet. */
+  async function addPending(workspaceId: string, workosUserId: string, role: string, fields: Record<string, unknown> = {}) {
+    return addMember(workspaceId, "unused", role, {
+      mentraUserId: null,
+      pendingWorkosUserId: workosUserId,
+      email: `${workosUserId}@example.test`,
+      ...fields,
+    })
+  }
+
+  test("are listed with the other members, and count as owners for the last-owner guard", async () => {
+    const ws = await newWorkspace()
+    const pendingOwner = await addPending(ws, "user_owner", "owner")
+    await addPending(ws, "user_dev", "developer")
+
+    expect((await listMembers(ws)).map(row => [row.mentraUserId ?? null, row.pendingWorkosUserId ?? null, row.role])).toEqual([
+      ["mu_owner", null, "owner"],
+      [null, "user_owner", "owner"],
+      [null, "user_dev", "developer"],
+    ])
+    // Nobody can take that ownership up yet (no legacy identity to claim it): the signed-in owner is
+    // the only one who counts, and may not leave.
+    expect(await countActiveOwners(ws)).toBe(1)
+    await expectError(() => leaveWorkspace(user("mu_owner"), ws), "last_owner", 409)
+    // Once a verified email can claim it, someone holds it: the signed-in owner may leave.
+    await LegacyBrowserIdentityModel.create({workosUserId: "user_owner", email: "owner@studio.example"})
+    expect(await countActiveOwners(ws)).toBe(2)
+    await leaveWorkspace(user("mu_owner"), ws)
+    expect(await countActiveOwners(ws)).toBe(1)
+
+    // A pending owner who is the last owner is guarded like any other.
+    const revision = await revisionOf(ws)
+    await expectError(() => removeMember(orgAdmin, ws, pendingOwner, revision), "last_owner", 409)
+    await expectError(() => changeRole(orgAdmin, ws, pendingOwner, "admin", revision), "last_owner", 409)
+    expect(await countActiveOwners(ws)).toBe(1)
+  })
+
+  test("a pending owner nobody can claim is no owner: removing it is allowed while a signed-in owner remains", async () => {
+    const ws = await newWorkspace()
+    const unclaimable = await addPending(ws, "user_gone", "owner")
+    expect(await countActiveOwners(ws)).toBe(1)
+    await removeMember(orgAdmin, ws, unclaimable, await revisionOf(ws))
+    expect(await WorkspaceMembershipModel.findOne({membershipId: unclaimable}).lean()).toMatchObject({status: "ended"})
+    expect(await countActiveOwners(ws)).toBe(1)
+  })
+
+  test("an admin changes a pending member's role and removes them, with their keys, audited without a user id", async () => {
+    const ws = await newWorkspace()
+    const admin = user("mu_admin")
+    await addMember(ws, "mu_admin", "admin")
+    const pending = await addPending(ws, "user_dev", "developer")
+    const key = await seedCredential(ws, pending)
+
+    await changeRole(admin, ws, pending, "member", await revisionOf(ws))
+    const changed = (await WorkspaceMembershipModel.findOne({membershipId: pending}).lean())!
+    expect(changed).toMatchObject({role: "member", mentraUserId: null, pendingWorkosUserId: "user_dev"})
+    expect(changed.roleHistory.map(entry => entry.role)).toEqual(["developer", "member"])
+
+    await removeMember(admin, ws, pending, await revisionOf(ws))
+    expect(await WorkspaceMembershipModel.findOne({membershipId: pending}).lean()).toMatchObject({
+      status: "ended",
+      endedReason: "removed",
+    })
+    expect(await revokedAtOf(key)).toBeInstanceOf(Date)
+    const events = await WorkspaceAuditEventModel.find({workspaceId: ws, "target.membershipId": pending})
+      .sort({eventId: 1})
+      .lean()
+    expect(events.map(event => [event.action, event.target])).toEqual([
+      ["membership.role_changed", {membershipId: pending, mentraUserId: null, email: "user_dev@example.test"}],
+      ["membership.removed", {membershipId: pending, mentraUserId: null, email: "user_dev@example.test"}],
+    ])
+  })
+
+  test("a key created by a pending membership validates until the membership ends", async () => {
+    const ws = await newWorkspace()
+    const pending = await addPending(ws, "user_dev", "developer")
+    const secret = "s".repeat(43)
+    const credentialId = "01HZPEND1NGKEY000000000000"
+    await AccessCredentialModel.create({
+      credentialId,
+      prefix: "msk",
+      credentialKind: "workspace",
+      workspaceId: ws,
+      name: "CI",
+      env: "local",
+      hash: createHash("sha256").update(secret).digest("hex"),
+      last4: secret.slice(-4),
+      scopes: ["miniapps.publish"],
+      createdByMembershipId: pending,
+    })
+    const token = `msk_local_${credentialId}.${secret}`
+    const saved = process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
+    process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS = "local"
+    try {
+      expect(await validateCredentialToken(token)).toMatchObject({workspaceId: ws, scopes: ["miniapps.publish"]})
+      await removeMember(orgAdmin, ws, pending, await revisionOf(ws))
+      expect(await validateCredentialToken(token)).toBeNull()
+    } finally {
+      if (saved === undefined) delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
+      else process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS = saved
+    }
   })
 })
 

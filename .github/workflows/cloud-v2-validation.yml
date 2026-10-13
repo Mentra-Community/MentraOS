@@ -184,6 +184,7 @@ jobs:
             tests/oidc-provider.integration.test.ts \
             tests/oidc-clients.integration.test.ts \
             tests/oidc-interaction.integration.test.ts \
+            tests/cli-login.integration.test.ts \
             tests/signin-sessions.integration.test.ts \
             tests/portal-signin.integration.test.ts \
             tests/principal-auth.integration.test.ts \
@@ -200,7 +201,9 @@ jobs:
             tests/admin-capabilities.integration.test.ts \
             tests/workspaces-internal-api.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
-            tests/account-deletion.integration.test.ts
+            tests/account-deletion.integration.test.ts \
+            tests/migrate-store-developer-orgs.integration.test.ts \
+            tests/legacy-identity-claim.integration.test.ts
 
       - name: Show Mongo logs after a failure
         if: failure()

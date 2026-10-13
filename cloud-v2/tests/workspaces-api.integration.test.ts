@@ -853,8 +853,44 @@ describe("members", () => {
       ws.memberMembershipId,
     ])
     for (const item of reply.json.items) {
-      expect(Object.keys(item).sort()).toEqual(["email", "membershipId", "mentraUserId", "role", "startedAt"].sort())
+      expect(Object.keys(item).sort()).toEqual(["email", "membershipId", "mentraUserId", "pending", "role", "startedAt"].sort())
+      expect(item.pending).toBe(false)
       expect(Number.isNaN(Date.parse(item.startedAt))).toBe(false)
+    }
+  })
+
+  test("a member imported from the Store who has not signed in yet is listed as pending, with no user id", async () => {
+    const ws = await newWorkspace()
+    const startedAt = new Date("2026-01-05T10:00:00.000Z")
+    await WorkspaceMembershipModel.create({
+      membershipId: "wm_imported_pending",
+      workspaceId: ws.workspaceId,
+      mentraUserId: null,
+      pendingWorkosUserId: "user_01PENDING",
+      email: "dev@acme.example",
+      role: "developer",
+      roleHistory: [{role: "developer", from: startedAt, authorizationRevision: 0}],
+      status: "active",
+      startedAt,
+    })
+
+    for (const [base, as] of [
+      ["/api/workspaces", ws.owner],
+      ["/api/admin/workspaces", await session("admin", await person("orgadmin", {email: ADMIN_EMAIL}))],
+    ] as const) {
+      const reply = await call("GET", `${base}/${ws.workspaceId}/members`, {as})
+      expect(reply.status).toBe(200)
+      const pending = reply.json.items.find((item: any) => item.membershipId === "wm_imported_pending")
+      // The WorkOS id is the Store's identifier, never shown.
+      expect(pending).toEqual({
+        membershipId: "wm_imported_pending",
+        mentraUserId: null,
+        email: "dev@acme.example",
+        role: "developer",
+        startedAt: startedAt.toISOString(),
+        pending: true,
+      })
+      expect(reply.json.items.filter((item: any) => item.pending)).toHaveLength(1)
     }
   })
 

@@ -2,9 +2,9 @@
 
 Each Core runs its own sign-in server, an OpenID Connect provider built on
 panva's [`oidc-provider`](https://github.com/panva/node-oidc-provider). It is the
-one place Mentra's websites sign in: the admin portal and the workspace portal
-today, and the Developer Console and the `mentra` CLI as they adopt it. Every
-token a website or the CLI holds is issued by Core.
+one place Mentra's websites and the `mentra` CLI sign in: the admin portal, the
+workspace portal, the Developer Console and the CLI. Every token a website or the
+CLI holds is issued by Core.
 
 Behind the sign-in server, one identity provider checks who the person is:
 
@@ -152,6 +152,57 @@ consent screen.
   characters. A client whose secret is unset is unknown.
 - Redirect URIs match exactly and are HTTPS, except the CLI's loopback URIs (and
   loopback HTTP on an undeployed Core).
+
+### The CLI
+
+The `mentra` CLI signs in on a loopback port, the first free one of 53682, 53683
+and 53684, so its client registers all three:
+
+```json
+{"clientId": "mentra-cli", "kind": "cli",
+ "redirectUris": ["http://127.0.0.1:53682/callback", "http://127.0.0.1:53683/callback",
+                  "http://127.0.0.1:53684/callback"]}
+```
+
+The CLI is a native client, and the sign-in server follows RFC 8252 for its
+loopback redirects: a redirect to a registered loopback URI on another port is
+accepted.
+
+The CLI takes its issuer and client ID from `MENTRA_CLI_OIDC_ISSUER` and
+`MENTRA_CLI_CLIENT_ID` on the developer's machine when both are set. Otherwise
+it asks the service it targets:
+
+- a Mentra Miniapp Store answers `GET /api/console/auth/cli-config` with its
+  Core's issuer and CLI client;
+- a Core without a Store (a Private Cloud) answers `GET /api/cli/config`.
+
+`GET /api/cli/config` is unauthenticated and answers `{issuer, clientId}`: the
+issuer, and the `cli` client's ID. It answers 404
+`{error: "not_configured"}` when the sign-in server is off or no `cli` client is
+registered. Both answers are `no-store`.
+
+### The Developer Console
+
+The Developer Console is a confidential client of the Core whose Store runs it;
+the Store backend is its server side. Register it with the Console's callback:
+
+```json
+{"clientId": "mentra-console", "kind": "console",
+ "secretEnv": "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
+ "redirectUris": ["https://console.mentraglass.com/api/console/auth/callback"]}
+```
+
+The Store holds the same client ID and secret, the issuer and the Console's
+origin. It runs the code flow with S256 PKCE, `state` and `nonce`, redeems the
+code with `client_secret_post`, and keeps the person's access and refresh tokens
+encrypted on its side, behind the Console's own `__Host-` session cookie. On
+every Console request the Store hands the access token to Core's service API
+(`POST /api/internal/workspaces/principal`), so a revocation here ends the
+Console session on its next request. The Store refreshes the token before it
+expires, one refresh at a time per session, since a reused refresh token ends
+the grant. Signing out of the Console revokes its refresh token at
+`/oidc/token/revocation`; the end-session endpoint is offered for the sign-in
+site itself. See [Store integration](store-integration.md).
 
 ## The portals
 

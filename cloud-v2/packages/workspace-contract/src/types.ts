@@ -141,13 +141,18 @@ export interface WorkspaceDetail extends WorkspaceSummary {
   organizationAdmin?: boolean
 }
 
-/** One row of a workspace's member list. `email` is display-only and never an authorization. */
+/**
+ * One row of a workspace's member list. `email` is display-only and never an authorization. `pending`
+ * marks a membership imported from the Store whose person has not signed in yet: it has no
+ * `mentraUserId` until they do, and holds its role meanwhile.
+ */
 export interface MemberView {
   membershipId: string
-  mentraUserId: string
+  mentraUserId: string | null
   email: string | null
   role: WorkspaceRole
   startedAt: string
+  pending: boolean
 }
 
 /** A pending invitation as listed to administrators. It never carries the token or its hash. */

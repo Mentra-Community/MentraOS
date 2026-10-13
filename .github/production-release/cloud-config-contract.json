@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-12.3",
+  "contractVersion": "2026-10-12.4",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -161,10 +161,11 @@
     "CLOUD_CORE_LOCAL_STORAGE_DIR",
     "CLOUD_CORE_WEB_CLIENT_IDS",
     "CLOUD_STORAGE_LOCAL_DIR",
-    "MENTRA_CLI_EMAIL",
-    "MENTRA_CLI_ORGANIZATION_ID",
+    "MENTRA_CLI_CLIENT_ID",
+    "MENTRA_CLI_HOME",
+    "MENTRA_CLI_OIDC_ISSUER",
     "MENTRA_CLI_TOKEN",
-    "MENTRA_CLI_WORKOS_USER_ID",
+    "MENTRA_CLI_WORKSPACE_ID",
     "MENTRA_TOKEN"
   ],
   "optional": [
@@ -234,7 +235,7 @@
     "MENTRA_CORE_URL",
     "MENTRA_JWKS_URLS",
     "MENTRA_MINIAPP_TOKEN_TTL_SEC",
-    "MENTRA_WORKOS_CLIENT_ID",
+    "MENTRA_STORE_URL",
     "NIGHTLY_ROUTINE_LANES",
     "POD_ID",
     "PORT",
@@ -262,7 +263,6 @@
     "TEST_RUN_GITHUB_APP_PRIVATE_KEY",
     "TEST_RUN_GITHUB_INSTALLATION_ID",
     "TEST_RUN_INGEST_TOKEN",
-    "WORKER_ID",
-    "WORKOS_API_BASE_URL"
+    "WORKER_ID"
   ]
 }

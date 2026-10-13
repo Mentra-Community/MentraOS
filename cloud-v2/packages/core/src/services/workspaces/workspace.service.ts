@@ -49,6 +49,7 @@ import {
   type WorkspaceMembershipEndedReason,
   type WorkspaceMembershipRow,
 } from "../../models/workspace-membership.model"
+import {LegacyBrowserIdentityModel} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
@@ -127,7 +128,7 @@ export async function getActiveMembership(workspaceId: string, mentraUserId: str
   return WorkspaceMembershipModel.findOne({workspaceId, mentraUserId, status: "active"}).lean<MembershipRow>()
 }
 
-/** Active memberships, oldest first. */
+/** Active memberships, oldest first, imported ones still waiting for their person's first sign-in included. */
 export async function listMembers(workspaceId: string): Promise<MembershipRow[]> {
   return WorkspaceMembershipModel.find({workspaceId, status: "active"})
     .sort({startedAt: 1, _id: 1})
@@ -135,21 +136,58 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
 }
 
 /**
+ * Which of `workosUserIds` a person can still take up memberships for: their legacy identity is not
+ * claimed yet, or is claimed by an account that is not deleted (it takes up what waits at its next
+ * sign-in). Without an identity, or claimed by a deleted account, nobody ever will.
+ */
+export async function claimableWorkosUserIds(workosUserIds: string[], session?: ClientSession): Promise<Set<string>> {
+  if (workosUserIds.length === 0) return new Set()
+  const identities = await LegacyBrowserIdentityModel.find({workosUserId: {$in: workosUserIds}})
+    .select({_id: 0, workosUserId: 1, claimedBy: 1})
+    .session(session ?? null)
+    .lean<Array<{workosUserId: string; claimedBy?: string | null}>>()
+  const claimants = identities.flatMap(identity => (isId(identity.claimedBy) ? [identity.claimedBy] : []))
+  const deleted = new Set(
+    claimants.length
+      ? (
+          await UserModel.find({mentraUserId: {$in: claimants}, supportTelemetryDeletedAt: {$ne: null}})
+            .select({_id: 0, mentraUserId: 1})
+            .session(session ?? null)
+            .lean<Array<{mentraUserId: string}>>()
+        ).map(user => user.mentraUserId)
+      : [],
+  )
+  return new Set(
+    identities
+      .filter(identity => !isId(identity.claimedBy) || !deleted.has(identity.claimedBy))
+      .map(identity => identity.workosUserId),
+  )
+}
+
+/**
  * The workspace's active owners who can still act: a deleted account's owner membership never
  * counts (its deletion ends it, and Core finishes an interrupted deletion itself), so the last-owner
- * guard cannot rest on an owner nobody can sign in as.
+ * guard cannot rest on an owner nobody can sign in as. An imported owner membership still waiting
+ * for its person counts while it can still be taken up (`claimableWorkosUserIds`); otherwise (no
+ * identity was exported, it was removed because WorkOS stopped verifying the address, or the account
+ * that claimed it is deleted) nobody ever will, so it does not count.
  */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
   const owners = await WorkspaceMembershipModel.find({workspaceId, role: "owner", status: "active"})
-    .select({_id: 0, mentraUserId: 1})
+    .select({_id: 0, mentraUserId: 1, pendingWorkosUserId: 1})
     .session(session ?? null)
-    .lean<Array<{mentraUserId: string}>>()
-  if (owners.length === 0) return 0
-  const deleted = await UserModel.countDocuments({
-    mentraUserId: {$in: owners.map(owner => owner.mentraUserId)},
-    supportTelemetryDeletedAt: {$ne: null},
-  }).session(session ?? null)
-  return owners.length - deleted
+    .lean<Array<{mentraUserId?: string | null; pendingWorkosUserId?: string | null}>>()
+  const userIds = owners.flatMap(owner => (isId(owner.mentraUserId) ? [owner.mentraUserId] : []))
+  const waitingFor = owners.flatMap(owner =>
+    !isId(owner.mentraUserId) && isId(owner.pendingWorkosUserId) ? [owner.pendingWorkosUserId] : [],
+  )
+  const deleted = userIds.length
+    ? await UserModel.countDocuments({mentraUserId: {$in: userIds}, supportTelemetryDeletedAt: {$ne: null}}).session(
+        session ?? null,
+      )
+    : 0
+  const claimable = await claimableWorkosUserIds(waitingFor, session)
+  return userIds.length - deleted + waitingFor.filter(workosUserId => claimable.has(workosUserId)).length
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -576,11 +614,16 @@ export async function requireMembershipManager(
 
 /**
  * Refuse removing or demoting `owner` when it is the workspace's last live owner. A deleted account's
- * owner membership is no live owner: removing or demoting it is always allowed (and it never counts
- * toward the others, `countActiveOwners`).
+ * owner membership, and an imported one nobody can claim, are no live owners: removing or demoting
+ * them is always allowed (and they never count toward the others, `countActiveOwners`).
  */
 async function assertNotLastOwner(session: ClientSession, workspaceId: string, owner: MembershipRow): Promise<void> {
   if (await isDeletedAccountId(owner.mentraUserId, session)) return
+  // An imported owner nobody can claim is no owner either (`countActiveOwners`).
+  if (!isId(owner.mentraUserId)) {
+    const waitingFor = isId(owner.pendingWorkosUserId) ? [owner.pendingWorkosUserId] : []
+    if ((await claimableWorkosUserIds(waitingFor, session)).size === 0) return
+  }
   if ((await countActiveOwners(workspaceId, session)) <= 1) {
     fail("last_owner", "a workspace must keep at least one owner")
   }

@@ -317,10 +317,12 @@ function workspaceRole(body: JsonObject): WorkspaceRole {
 function memberView(row: MembershipRow): MemberView {
   return {
     membershipId: row.membershipId,
-    mentraUserId: row.mentraUserId,
+    mentraUserId: row.mentraUserId ?? null,
     email: row.email ?? null,
     role: row.role as WorkspaceRole,
     startedAt: row.startedAt.toISOString(),
+    // Imported from the Store and not yet claimed: the person has no Core user here until they sign in.
+    pending: !row.mentraUserId,
   }
 }
 

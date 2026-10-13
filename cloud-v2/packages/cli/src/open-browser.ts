@@ -12,9 +12,11 @@ export async function openBrowser(url: string): Promise<boolean> {
 
   return new Promise((resolve) => {
     let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
     const done = (ok: boolean) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       resolve(ok);
     };
 
@@ -35,7 +37,9 @@ export async function openBrowser(url: string): Promise<boolean> {
     // don't block the login flow waiting for exit: assume success once a short
     // window passes without an error/early failure so polling can start.
     child.on("close", (code) => done(code === 0));
-    const timer = setTimeout(() => done(true), 500);
-    if (typeof timer.unref === "function") timer.unref();
+    // Keep this bounded wait referenced: login is awaiting this promise and
+    // has not started polling yet. Unref'ing both the child and the timer can
+    // let the CLI exit silently before it receives browser approval.
+    timer = setTimeout(() => done(true), 500);
   });
 }

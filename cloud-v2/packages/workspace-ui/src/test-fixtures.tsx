@@ -61,13 +61,13 @@ export function organizationAdminDetail(): WorkspaceDetail {
   return { ...detailFor("owner"), membership: null };
 }
 
-const START = "2026-09-01T10:00:00.000Z";
+export const START = "2026-09-01T10:00:00.000Z";
 
 export const OTHER_MEMBERS: MemberView[] = [
-  { membershipId: "wm_owner", mentraUserId: "u_1", email: "olivia@acme.test", role: "owner", startedAt: START },
-  { membershipId: "wm_admin", mentraUserId: "u_2", email: "adam@acme.test", role: "admin", startedAt: START },
-  { membershipId: "wm_dev", mentraUserId: "u_3", email: "dana@acme.test", role: "developer", startedAt: START },
-  { membershipId: "wm_member", mentraUserId: "u_4", email: "max@acme.test", role: "member", startedAt: START },
+  { membershipId: "wm_owner", mentraUserId: "u_1", email: "olivia@acme.test", role: "owner", startedAt: START, pending: false },
+  { membershipId: "wm_admin", mentraUserId: "u_2", email: "adam@acme.test", role: "admin", startedAt: START, pending: false },
+  { membershipId: "wm_dev", mentraUserId: "u_3", email: "dana@acme.test", role: "developer", startedAt: START, pending: false },
+  { membershipId: "wm_member", mentraUserId: "u_4", email: "max@acme.test", role: "member", startedAt: START, pending: false },
 ];
 
 /** The member list as the viewer sees it: the others plus the viewer's own row when they are a member. */
@@ -79,6 +79,7 @@ export function membersFor(viewer: WorkspaceDetail): MemberView[] {
     email: "sam@acme.test",
     role: viewer.membership.role,
     startedAt: START,
+    pending: false,
   };
   return [self, ...OTHER_MEMBERS];
 }
