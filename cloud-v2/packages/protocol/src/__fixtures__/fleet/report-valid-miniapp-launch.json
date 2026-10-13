@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-launch-0001",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 1,
+      "observedAt": "2026-10-13T11:02:10Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "miniapp_launch",
+      "payload": {
+        "packageName": "com.acme.inventory",
+        "miniappName": "Acme Inventory",
+        "versionName": "2.0.1",
+        "start": "user",
+        "outcome": "started"
+      }
+    }
+  ]
+}
