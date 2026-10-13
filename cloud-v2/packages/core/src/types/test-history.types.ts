@@ -30,7 +30,7 @@ export type TestHistoryEntry = ({kind: "run"; latest?: import("./test-rerun.type
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
   startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"] & {repository?: string; prNumber?: number};
   /** Unique submitted routine attempts across accepted reruns, independent of pagination and batch count. */
-  rerunCount: number; failedCount: number; comparison?: {original: import("./test-status-comparison").TestStatusCounts; latest: import("./test-status-comparison").TestStatusCounts}; latestUnavailable?: boolean; lanes: {hostId: string; laneId: string}[];
+  rerunCount: number; failedCount: number; comparison?: {original: import("./test-status-comparison").TestStatusCounts; latest?: import("./test-status-comparison").TestStatusCounts}; latestUnavailable?: boolean; lanes: {hostId: string; laneId: string}[];
   members?: (Pick<TestSuite["members"][number], "routineId" | "platform"> & {laneId?: string; hostId?: string})[];
 } | {kind: "unavailable"; sourceKind: "run" | "suite"; id: string; startedAt: string; message: "Details unavailable."};
 export interface TestHistoryPage {entries: TestHistoryEntry[]; nextCursor: string | null}

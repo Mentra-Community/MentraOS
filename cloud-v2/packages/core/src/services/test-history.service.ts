@@ -12,7 +12,7 @@ import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage, TestHistoryOrigin} from "../types/test-history.types";
 import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
 import {TestRerunService, rerunRootKey} from "./test-rerun.service";
-import {comparedSuiteCounts} from "../types/test-status-comparison";
+import {comparedSuiteCounts, testStatusCounts} from "../types/test-status-comparison";
 import {TestRunError} from "./test-result-error";
 import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
@@ -177,12 +177,13 @@ export class TestHistoryService {
           return {routineId: member.routineId, platform: member.platform,
             ...(laneId ? {laneId} : {}), ...(source.hostId ? {hostId: source.hostId} : {})};
         });
+        const original = testStatusCounts(suite.members.map(member => ({...member, publicationComplete: member.publicationComplete === true})));
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
           outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
           skipped: suite.members.filter(member => member.status === "not-run").length,
           rerunCount: row.rerunCount ?? 0,
-          failedCount: suite.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length,
+          failedCount: original.failed, comparison: {original},
           lanes: [...new Map(members.flatMap(member => member.hostId && member.laneId
             ? [[JSON.stringify([member.hostId, member.laneId]), {hostId: member.hostId, laneId: member.laneId}] as const] : [])).values()]
             .sort((a, b) => a.hostId.localeCompare(b.hostId) || a.laneId.localeCompare(b.laneId)), members};
@@ -203,7 +204,8 @@ export class TestHistoryService {
         .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1})
         .limit(ids.length + 1).read("primary").readConcern("majority").setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean();
     }, suiteSummaries);
-    const originals = enriched.filter(entry => entry.kind !== 'unavailable' && (entry.rerunCount ?? 0) > 0);
+    // Acceptance is independent of child admission. A queued accepted rerun is already the latest attempt.
+    const originals = enriched.filter(entry => entry.kind !== 'unavailable');
     const identities = originals.flatMap<Parameters<TestRerunService["latestAttempts"]>[0][number]>(entry => entry.kind === 'run' ? [{parent: {requestId: entry.requestId}, memberId: entry.requestId}]
       : entry.kind === 'suite' ? (suiteSummaries.get(entry.suiteId) as Exclude<SuiteSummaryRead, Error> | undefined)?.members.map(member => ({parent: {suiteId: entry.suiteId}, memberId: member.memberId})) ?? [] : []);
     try {
@@ -224,7 +226,7 @@ export class TestHistoryService {
       }
     } catch (error) {
       logger.warn({err: error}, 'Latest linked statuses unavailable; original outcomes remain readable');
-      for (const entry of originals) if (entry.kind !== 'unavailable') entry.latestUnavailable = true;
+      for (const entry of originals) entry.latestUnavailable = true;
     }
     return {entries: enriched, nextCursor};
   }
