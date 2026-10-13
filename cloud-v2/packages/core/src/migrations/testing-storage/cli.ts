@@ -5,11 +5,11 @@ import mongoose from 'mongoose';
 import {requestInputDigest} from '../../services/test-request.service';
 import {createRecordedFrameworkRunSummaryProjection} from '../../services/framework-run-summary.service';
 import {writeRunEnvelope, verifyRunEnvelope, readStoredRun} from '../../services/framework-run-detail.service';
-import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, routineCollectionManifestSchema, readRoutineCollection} from '../../services/routine-definition-detail.service';
+import {readRoutineDefinition, writeRecordedRoutineDefinition, routineCollectionDetailSchema, routineCollectionManifestSchema, readRoutineCollection} from '../../services/routine-definition-detail.service';
 import {TestingDetailStorage} from '../../services/testing-detail-storage.service';
 import {reportNativeSnapshotSchema, expandNativeReportSnapshot} from '../../services/report-native-detail.service';
 import {frameworkRunOutcome, frameworkEvidenceComplete, recordedFrameworkRunSchema} from '../../types/framework-run.types';
-import {routineEnrollmentSchema} from '../../types/routine-definition.types';
+import {recordedRoutineEnrollmentSchema} from '../../types/routine-definition.types';
 
 const [operation, directoryArgument, ...flags] = process.argv.slice(2);
 if (!['plan', 'export', 'verify', 'apply', 'verify-applied'].includes(operation ?? '') || !directoryArgument)
@@ -135,9 +135,9 @@ try {
           recordedPassingExample: frameworkRunOutcome(payload) === 'pass' && frameworkEvidenceComplete(payload) && !!payload.recordingAssetId,
           ...(payload.recordingAssetId ? {recordingAssetId: payload.recordingAssetId} : {})}; removed = ['payload'];
       } else if (row.collection === 'routine_definitions') {
-        const input = routineEnrollmentSchema.parse({routineId: doc.routineId, platform: doc.platform, definitionRevision: doc.definitionRevision,
-          definitionSha256: doc.definitionSha256, routineSource: doc.routineSource, definition: doc.definition});
-        const {detail, card} = await writeRoutineDefinition(input, details); update = {detail, card}; removed = ['definition'];
+        const input = recordedRoutineEnrollmentSchema.parse({routineId: doc.routineId, platform: doc.platform, definitionRevision: doc.definitionRevision,
+          definitionSha256: doc.definitionSha256, ...(doc.routineSource ? {routineSource: doc.routineSource} : {}), definition: doc.definition});
+        const {detail, card} = await writeRecordedRoutineDefinition(input, details); update = {detail, card}; removed = ['definition'];
       } else if (row.collection === 'routine_collections') {
         const definitions = [], references = [];
         for (const member of doc.members) {
@@ -149,18 +149,18 @@ try {
             if (found.definitionSha256 !== member.definitionSha256) throw Error('Collection exact member digest differs');
             definitions.push(found);
             references.push({routineId: found.routineId, platform: found.platform, definitionRevision: found.definitionRevision,
-              definitionSha256: found.definitionSha256, routineSource: found.routineSource, detail: definition.detail});
+              definitionSha256: found.definitionSha256, ...(found.routineSource ? {routineSource: found.routineSource} : {}), detail: definition.detail});
             continue;
           }
-          const found = routineEnrollmentSchema.parse({routineId: definition.routineId, platform: definition.platform,
+          const found = recordedRoutineEnrollmentSchema.parse({routineId: definition.routineId, platform: definition.platform,
             definitionRevision: definition.definitionRevision, definitionSha256: definition.definitionSha256,
-            definition: definition.definition, routineSource: definition.routineSource});
+            definition: definition.definition, ...(definition.routineSource ? {routineSource: definition.routineSource} : {})});
           if (found.definitionSha256 !== member.definitionSha256) throw Error('Collection exact member digest differs');
           definitions.push(found);
           const exported = JSON.parse(await readFile(receiptPath(source), 'utf8'));
           if (exported.scopeSha256 !== scopeSha256 || exported.sourceSha256 !== source.bsonSha256) throw Error('Collection definition receipt differs');
           references.push({routineId: found.routineId, platform: found.platform, definitionRevision: found.definitionRevision,
-            definitionSha256: found.definitionSha256, routineSource: found.routineSource, detail: exported.update.detail});
+            definitionSha256: found.definitionSha256, ...(found.routineSource ? {routineSource: found.routineSource} : {}), detail: exported.update.detail});
         }
         const collection = routineCollectionDetailSchema.parse({commit: doc.commit, version: doc.version, definitions});
         if (requestInputDigest(collection) !== doc.manifestSha256) throw Error('Collection original manifest differs');

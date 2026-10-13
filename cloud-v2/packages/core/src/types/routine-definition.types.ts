@@ -91,6 +91,22 @@ export const routineEnrollmentSchema = z.object({
 });
 export type RoutineEnrollment = z.infer<typeof routineEnrollmentSchema>;
 
+/** Exact recorded source for history; executable admission separately requires routineEnrollmentSchema. */
+export const recordedRoutineDefinitionSchema = z.object({
+  id, title: text, purpose: text, platforms: z.array(routinePlatformSchema).min(1).max(2),
+  setup: z.array(action).max(500).optional(), steps: z.array(action).min(1).max(500), teardown: z.array(action).max(500).optional(),
+  source: z.object({repository: z.string(), revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string()}).passthrough(),
+}).passthrough();
+export const recordedRoutineEnrollmentSchema = z.object({
+  routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), definition: recordedRoutineDefinitionSchema,
+  routineSource: routineSourceRefSchema.optional(),
+}).strict().superRefine((row, ctx) => {
+  if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision || !row.definition.platforms.includes(row.platform))
+    ctx.addIssue({code: 'custom', message: 'Recorded definition identity differs'});
+});
+export type RecordedRoutineEnrollment = z.infer<typeof recordedRoutineEnrollmentSchema>;
+
 /** Card metadata only. Full definitions and source verification belong to detail and dispatch. */
 export const routineCardDefinitionSchema = z.object({
   routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),

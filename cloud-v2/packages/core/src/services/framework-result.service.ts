@@ -255,7 +255,8 @@ export class FrameworkResultService {
 
   private async describe(stored: StoredFrameworkRun | null, includeFailureScreens: boolean) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
-    const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
+    const run = recordedFrameworkRunSchema.parse(stored.payload), definition = this.definition === definitionFor
+      ? await new RoutineDefinitionService().getRecordedExact(run.routineId, run.platform, run.definitionRevision) : await this.definition(run);
     const read = (asset: RecordedFrameworkRun['assets'][number], signal: AbortSignal) =>
       this.mediaByRun(run.result.runId, asset.id, new Request('http://localhost/frozen-failure-diagnostic', {signal}));
     const [failureScreens, incidentReportId] = includeFailureScreens ? await Promise.all([

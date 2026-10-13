@@ -4,7 +4,7 @@ import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutineCollectionModel} from '../models/routine-collection.model';
 import {RoutineWorkModel} from '../models/routine-work.model';
 import {authoringJobViewSchema} from '../types/routine-work.types';
-import {routineEnrollmentSchema, routineCardDefinitionSchema, type RoutineEnrollment, type RoutineCardDefinition} from "../types/routine-definition.types";
+import {routineEnrollmentSchema, routineCardDefinitionSchema, type RoutineEnrollment, type RecordedRoutineEnrollment, type RoutineCardDefinition} from "../types/routine-definition.types";
 import {requestInputDigest} from "./test-request.service";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService} from './routine-merge-eligibility.service';
@@ -85,7 +85,7 @@ const mongoRepository: RoutineDefinitionRepository = {
     if (rows.length !== latest.members.length || rows.some((row, index) => row.routineId !== latest.members[index]?.routineId ||
       row.platform !== latest.members[index]?.platform || row.definitionSha256 !== latest.members[index]?.definitionSha256))
       throw new RoutineDefinitionConflict('Published collection members differ');
-    return rows;
+    return rows.map(row => routineEnrollmentSchema.parse(row));
   },
   async getCurrent(routineId, platform) {
     return (await this.current()).find(row => row.routineId === routineId && row.platform === platform) ?? null;
@@ -114,7 +114,7 @@ const mongoRepository: RoutineDefinitionRepository = {
       ...(ordinaryOnly ? {ordinaryEnrolledAt: {$exists: true}} : {})})
       .read('primary').readConcern('majority').lean();
     if (!row) return null;
-    return readRoutineDefinition(row);
+    return routineEnrollmentSchema.parse(await readRoutineDefinition(row));
   },
 };
 export class RoutineDefinitionService {
@@ -185,5 +185,10 @@ export class RoutineDefinitionService {
   getCurrent(routineId: string, platform: string) {return this.repository.getCurrent(routineId, platform);}
   getExact(routineId: string, platform: string, revision: string, ordinaryOnly = false) {
     return this.repository.getExact(routineId, platform, revision, ordinaryOnly);
+  }
+  /** Display original steps without claiming an old definition implements the installed executable API. */
+  async getRecordedExact(routineId: string, platform: string, definitionRevision: string): Promise<RecordedRoutineEnrollment | null> {
+    const row = await RoutineDefinitionModel.findOne({routineId, platform, definitionRevision}).read('primary').readConcern('majority').lean();
+    return row ? readRoutineDefinition(row) : null;
   }
 }

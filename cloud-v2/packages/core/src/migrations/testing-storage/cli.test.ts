@@ -7,6 +7,11 @@ import {randomUUID, createHash} from 'node:crypto';
 import {lifecycleRuns} from '../../testing/framework-lifecycle.fixture';
 import {testRoutineSource} from '../../testing/framework-fixtures';
 import {requestInputDigest} from '../../services/test-request.service';
+import {readRoutineDefinition} from '../../services/routine-definition-detail.service';
+import {TestingDetailStorage} from '../../services/testing-detail-storage.service';
+import {StorageService} from '../../services/storage/storage.service';
+import {LocalStorageProvider} from '../../services/storage/providers/local-storage.provider';
+import {routineEnrollmentSchema} from '../../types/routine-definition.types';
 
 const local = process.env.TESTING_STORAGE_MONGO_URI;
 (local ? test : test.skip)('finite cutover preserves complete bytes and recovers a lost local acknowledgement, rejecting an unapproved delta', async () => {
@@ -25,6 +30,11 @@ const local = process.env.TESTING_STORAGE_MONGO_URI;
     source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40), path: 'routines/nav/routine.ts'}};
   const enrollment = {routineId: 'nav', platform: 'android', definitionRevision: 'a'.repeat(40), definitionSha256: requestInputDigest(definition),
     routineSource: testRoutineSource('a'.repeat(40)), definition};
+  const {minimumRoutineApiVersion: _api, resourceRequirements: _resources, ...oldDefinition} = definition;
+  const recordedDefinition = {...oldDefinition, id: 'recorded-nav', requires: ['no-glasses'],
+    source: {...oldDefinition.source, revision: 'c'.repeat(40), path: 'routines/recorded-nav/routine.ts'}};
+  const recorded = {routineId: 'recorded-nav', platform: 'android', definitionRevision: 'c'.repeat(40),
+    definitionSha256: requestInputDigest(recordedDefinition), definition: recordedDefinition};
   const reportId = 'rep_ORIGINAL', artifactId = 'art_ORIGINAL', date = new Date('2026-10-05T12:00:00Z');
   await client.connect(); const db = client.db(dbName);
   const exec = async (command: string, ...flags: string[]) => {
@@ -40,9 +50,13 @@ const local = process.env.TESTING_STORAGE_MONGO_URI;
       originalFailures: ['do-not-alter'], outcome: 'failed'});
     await db.collection('test_assets').insertOne({runId, assetId: 'failure', storageKey: 'original/unchanged', sha256: run.assets[0]!.sha256, sizeBytes: bytes.length});
     await db.collection('routine_definitions').insertOne({...enrollment, ordinaryEnrolledAt: date});
+    await db.collection('routine_definitions').insertOne({...recorded, ordinaryEnrolledAt: date});
     const collection = {commit: enrollment.definitionRevision, version: 22, definitions: [enrollment]};
     await db.collection('routine_collections').insertOne({commit: collection.commit, version: 22, manifestSha256: requestInputDigest(collection),
       members: [{routineId: 'nav', platform: 'android', definitionSha256: enrollment.definitionSha256}]});
+    const recordedCollection = {commit: recorded.definitionRevision, version: 21, definitions: [recorded]};
+    await db.collection('routine_collections').insertOne({commit: recordedCollection.commit, version: 21,
+      manifestSha256: requestInputDigest(recordedCollection), members: [{routineId: recorded.routineId, platform: 'android', definitionSha256: recorded.definitionSha256}]});
     await db.collection('reports').insertOne({reportId, mentraUserId: 'trusted-user', artifacts: [{artifactId, createdAt: date,
       type: 'state_snapshot', source: 'framework-diagnostic', filename: 'failure.json', contentType: 'application/json', sizeBytes: bytes.length}]});
     await db.collection('report_assets').insertOne({reportId, mentraUserId: 'trusted-user', artifactId, sourceTestRunId: runId,
@@ -61,7 +75,7 @@ const local = process.env.TESTING_STORAGE_MONGO_URI;
     expect((await exec('plan', `--backup-directory=${backup}`)).code).not.toBe(0);
     await writeFile(join(backup, 'full-restore-verification.private.json'), JSON.stringify(fullReceipt));
     expect((await exec('plan', `--backup-directory=${backup}`)).code).toBe(0);
-    expect((await exec('export')).code).toBe(0);
+    const exported = await exec('export'); expect(exported.errors).toBe(''); expect(exported.code).toBe(0);
     const verification = await exec('verify'); expect(verification.errors).toBe(''); expect(verification.code).toBe(0);
     const scope = JSON.parse(await readFile(join(operation, 'scope.private.json'), 'utf8')), digest = requestInputDigest(scope);
     expect((await exec('apply', '--frozen', '--approved-scope-sha256=wrong')).code).not.toBe(0);
@@ -108,6 +122,12 @@ const local = process.env.TESTING_STORAGE_MONGO_URI;
     expect(await db.collection('test_assets').countDocuments()).toBe(0);
     expect(await db.collection('report_assets').countDocuments()).toBe(0);
     expect((await db.collection('routine_definitions').findOne({routineId: 'nav'}))?.ordinaryEnrolledAt).toEqual(date);
+    const archived = await db.collection('routine_definitions').findOne({routineId: recorded.routineId});
+    const history = await readRoutineDefinition(archived as any, new TestingDetailStorage(new StorageService(
+      new LocalStorageProvider({rootDir: join(directory, 'storage')})), 'dev'));
+    expect(history).toEqual(recorded as any);
+    expect(requestInputDigest(history.definition)).toBe(recorded.definitionSha256);
+    expect(routineEnrollmentSchema.safeParse(history).success).toBe(false);
     expect((await db.collection('reports').findOne({reportId}))?.nativeDiagnostics).toBeDefined();
   } finally {await db.dropDatabase(); await client.close(); await rm(directory, {recursive: true, force: true});}
 }, 20_000);
