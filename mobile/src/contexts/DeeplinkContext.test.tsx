@@ -163,6 +163,40 @@ it("handles passive permission status without auth, modal, or navigation", async
   expect(mockPush).not.toHaveBeenCalled()
   expect(mockReplace).not.toHaveBeenCalled()
   expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+})
+
+it.each(["success", "failure"])("a pending passive status %s never changes the splash overlay", async (outcome) => {
+  let complete!: () => void
+  let refuse!: (error: Error) => void
+  mockPublishPermissionStatus.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        complete = resolve
+        refuse = reject
+      }),
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  let pending!: Promise<void>
+  await act(async () => {
+    pending = processUrl("com.mentra://test/permissions?request_id=pending-read")
+    await Promise.resolve()
+  })
+  expect(mockPublishPermissionStatus).toHaveBeenCalledTimes(1)
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+  await act(async () => {
+    if (outcome === "success") complete()
+    else refuse(new Error("native status unavailable"))
+    await pending
+  })
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
 })
 
 it("still defers a protected home link to sign-in without running its handler", async () => {

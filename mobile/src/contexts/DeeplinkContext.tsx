@@ -37,6 +37,8 @@ export interface DeepLinkRoute {
   pattern: string
   handler: (url: string, params: Record<string, string>) => void | Promise<void>
   requiresAuth?: boolean
+  /** Diagnostic observations must not cover the currently selected app screen. */
+  presentation?: "passive"
 }
 
 /**
@@ -474,6 +476,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       {
         pattern: "/test/permissions",
         requiresAuth: false,
+        presentation: "passive",
         handler: async (url: string) => {
           try {
             await publishPermissionStatusRequest(url)
@@ -702,14 +705,14 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute)
         console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", params)
         console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", url)
-        setSplashEnabled(true)
+        if (matchedRoute.presentation !== "passive") setSplashEnabled(true)
         // OAuth must start its one-time exchange while the browser is still
         // presented. A JS timer can be suspended during that transition.
         await matchedRoute.handler(url, params)
       } catch (error) {
         console.warn("Route handler failed, router may not be ready:", error)
       } finally {
-        setSplashEnabled(false)
+        if (matchedRoute.presentation !== "passive") setSplashEnabled(false)
       }
     } catch (error) {
       console.error("Error handling deep link:", error)

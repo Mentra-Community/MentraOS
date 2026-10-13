@@ -43,32 +43,37 @@ enum PermissionStatusReceipt {
         }
     }
 
-    static func current() -> [String: Any] {
-        let bundle = Bundle.main
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return [
-            "schemaVersion": 1,
-            "observedAt": formatter.string(from: Date()),
-            "identity": [
-                "pid": ProcessInfo.processInfo.processIdentifier,
-                "uid": getuid(),
-                "bundleId": bundle.bundleIdentifier ?? "",
-                "bundlePath": bundle.bundleURL.path,
-                "executablePath": bundle.executableURL?.path ?? "",
-                "version": bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
-                "build": bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
-            ] as [String: Any],
-            "locationServicesEnabled": CLLocationManager.locationServicesEnabled(),
-            "permissions": [
-                "location": location(CLLocationManager().authorizationStatus),
-                "camera": capture(AVCaptureDevice.authorizationStatus(for: .video)),
-                "microphone": capture(AVCaptureDevice.authorizationStatus(for: .audio)),
-                "bluetooth": bluetooth(CBManager.authorization),
-                // iOS has no public passive Local Network authorization getter.
-                "localNetwork": ["rawStatus": NSNull(), "status": "unknown"],
-            ] as [String: Any],
-        ]
+    static func current() async -> [String: Any] {
+        // The global service getter may block; only the manager's authorization
+        // observation belongs to the main actor, which owns Core Location objects.
+        let servicesEnabled = CLLocationManager.locationServicesEnabled()
+        return await MainActor.run {
+            let bundle = Bundle.main
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return [
+                "schemaVersion": 1,
+                "observedAt": formatter.string(from: Date()),
+                "identity": [
+                    "pid": ProcessInfo.processInfo.processIdentifier,
+                    "uid": getuid(),
+                    "bundleId": bundle.bundleIdentifier ?? "",
+                    "bundlePath": bundle.bundleURL.path,
+                    "executablePath": bundle.executableURL?.path ?? "",
+                    "version": bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+                    "build": bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+                ] as [String: Any],
+                "locationServicesEnabled": servicesEnabled,
+                "permissions": [
+                    "location": location(CLLocationManager().authorizationStatus),
+                    "camera": capture(AVCaptureDevice.authorizationStatus(for: .video)),
+                    "microphone": capture(AVCaptureDevice.authorizationStatus(for: .audio)),
+                    "bluetooth": bluetooth(CBManager.authorization),
+                    // iOS has no public passive Local Network authorization getter.
+                    "localNetwork": ["rawStatus": NSNull(), "status": "unknown"],
+                ] as [String: Any],
+            ]
+        }
     }
 
     static func correlate(_ observation: [String: Any], requestId: String) throws -> [String: Any] {
@@ -87,10 +92,11 @@ enum PermissionStatusReceipt {
         try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
 
-    static func publish(requestId: String) throws -> [String: Any] {
+    static func publish(requestId: String) async throws -> [String: Any] {
         // Validate before observing; the request never controls a filesystem path.
         _ = try correlate([:], requestId: requestId)
-        let receipt = try correlate(current(), requestId: requestId)
+        let observation = await current()
+        let receipt = try correlate(observation, requestId: requestId)
         let cache = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
                                                 appropriateFor: nil, create: true)
         try write(receipt, to: cache.appendingPathComponent(relativePath))
