@@ -73,3 +73,25 @@ export class AuthExpiredError extends CloudClientError {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+/**
+ * Thrown when a credential request could not be completed for a reason that does
+ * not show the credentials are dead: the network failed or timed out, Core
+ * answered 408, 429 or 5xx, or the answer was not a Core answer at all (a body
+ * that is not JSON, an unrecognized 4xx). The stored credentials were kept, so
+ * the same call may well succeed later; a host retries instead of re-authenticating,
+ * and `onExpired` does not fire. `status` is the HTTP status when something
+ * answered, and `cause` is the underlying failure.
+ */
+export class AuthUnavailableError extends CloudClientError {
+  readonly status?: number;
+  readonly cause: unknown;
+
+  constructor(message: string, options?: { status?: number; cause?: unknown }) {
+    super(message);
+    this.name = "AuthUnavailableError";
+    this.status = options?.status;
+    this.cause = options?.cause;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}

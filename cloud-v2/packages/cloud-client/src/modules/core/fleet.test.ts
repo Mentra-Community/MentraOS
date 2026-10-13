@@ -1,7 +1,9 @@
 import {describe, expect, mock, test} from "bun:test"
 import type {FleetReport, FleetReportAck} from "@mentra/cloud-protocol"
-import {AuthExpiredError, HttpError} from "../../errors"
+import {AuthExpiredError, AuthUnavailableError, HttpError} from "../../errors"
 import {createHttpClient, type HttpClient} from "../../http"
+import {Auth} from "../auth/auth"
+import {DEFAULT_REFRESH_TOKEN_KEY, TokenStore} from "../auth/token-store"
 import type {CloudClientTimers} from "../../timers"
 import type {HttpTransport} from "../../transports"
 import {Core} from "./core"
@@ -490,6 +492,16 @@ describe("Fleet.report maps every other failure to unavailable", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  test("a token source that cannot refresh for a transient reason (AuthUnavailableError) is unavailable", async () => {
+    const fetch = mock(async () => json(200, ack)) as unknown as HttpTransport
+    const fleet = fleetWith(fetch, async () => {
+      throw new AuthUnavailableError("token refresh could not be completed; try again later", {status: 503})
+    })
+
+    await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   test("a non-401 HttpError from the client is still mapped by status", async () => {
     const fleet = new Fleet({
       post: async () => {
@@ -522,3 +534,73 @@ function bodyDroppedAfterHeaders(
   })
   return new Response(body, {status, headers})
 }
+
+describe("Fleet.report with the real Auth as the token source", () => {
+  const unavailableOutcome: FleetReportOutcome = {kind: "unavailable", retryAfterSeconds: null}
+
+  const jwt = () => {
+    const payload = Buffer.from(
+      JSON.stringify({sub: "account-1", tenant_id: "consumer", exp: Math.floor(Date.now() / 1000) + 3600}),
+    ).toString("base64url")
+    return `e30.${payload}.test`
+  }
+
+  /** Fleet over an Auth holding a refresh token, whose `/refresh` answers as `refresh` says. */
+  function fleetOverAuth(refresh: () => Response) {
+    const values = new Map([[DEFAULT_REFRESH_TOKEN_KEY, "refresh-1"]])
+    const storage = {
+      get: async (key: string) => values.get(key) ?? null,
+      set: async (key: string, value: string) => {
+        values.set(key, value)
+      },
+      delete: async (key: string) => {
+        values.delete(key)
+      },
+    }
+    const auth = new Auth({
+      store: new TokenStore({storage}),
+      config: {core: {subjectToken: "subject", subjectTokenType: "oidc"}, runtime: {source: "core"}},
+      logger,
+      baseUrl: "https://core.test",
+      fetch: (async () => refresh()) as unknown as HttpTransport,
+    })
+    const reportFetch = mock(async () => json(200, ack))
+    const fleet = fleetWith(reportFetch as unknown as HttpTransport, () => auth.getCoreToken())
+    return {fleet, reportFetch, storage}
+  }
+
+  test("a refresh that fails on the network is unavailable and keeps the refresh token", async () => {
+    const {fleet, reportFetch, storage} = fleetOverAuth(() => {
+      throw new TypeError("Network request failed")
+    })
+
+    await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
+    expect(reportFetch).not.toHaveBeenCalled()
+    expect(await storage.get(DEFAULT_REFRESH_TOKEN_KEY)).toBe("refresh-1")
+  })
+
+  test("a refresh answered with a 503 is unavailable and keeps the refresh token", async () => {
+    const {fleet, reportFetch, storage} = fleetOverAuth(() => json(503, {error: "temporarily_unavailable"}))
+
+    await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
+    expect(reportFetch).not.toHaveBeenCalled()
+    expect(await storage.get(DEFAULT_REFRESH_TOKEN_KEY)).toBe("refresh-1")
+  })
+
+  test("a refresh token Core rejects still throws AuthExpiredError", async () => {
+    const {fleet, reportFetch, storage} = fleetOverAuth(() => json(400, {error: "invalid_grant"}))
+
+    await expect(fleet.report(batch)).rejects.toBeInstanceOf(AuthExpiredError)
+    expect(reportFetch).not.toHaveBeenCalled()
+    expect(await storage.get(DEFAULT_REFRESH_TOKEN_KEY)).toBeNull()
+  })
+
+  test("a refresh that succeeds sends the report", async () => {
+    const {fleet, reportFetch} = fleetOverAuth(() =>
+      json(200, {access_token: jwt(), refresh_token: "refresh-2", token_type: "Bearer", expires_in: 3600}),
+    )
+
+    await expect(fleet.report(batch)).resolves.toMatchObject({kind: "results"})
+    expect(reportFetch).toHaveBeenCalledTimes(1)
+  })
+})

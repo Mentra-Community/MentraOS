@@ -41,6 +41,7 @@ export {
   CloudClientError,
   HttpError,
   AuthExpiredError,
+  AuthUnavailableError,
   SessionRevocationError,
 } from "./errors";
 
