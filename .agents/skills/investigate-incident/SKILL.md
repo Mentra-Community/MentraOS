@@ -44,7 +44,8 @@ Check whether a variable is set without printing its value. Do not print
 credentials, enable shell tracing, put tokens in committed files, or extract
 browser sessions. If no suitable credential is available, request that the user
 configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-admin-allowlisted org API key (`msk_...`).
+operator key with the incident read scope (`mak_...`), or an older allowlisted
+admin key (`msk_...`), which works as one.
 
 Use the environment from the report notification. Without `--env`, the script
 tries prod, dev, then staging. `MENTRA_CORE_URL` overrides even `--env`; check
