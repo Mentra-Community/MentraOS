@@ -29,6 +29,24 @@ function jobBlock(source, name) {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+test("every internal release-asset fetch has authenticated R2 credentials in its step scope", () => {
+  const directory = new URL("../workflows/", import.meta.url)
+  let fetchSteps = 0
+  for (const name of readdirSync(directory).filter((name) => name.endsWith(".yml"))) {
+    const source = workflow(name)
+    for (const step of source.split(/^      - /m).slice(1)) {
+      if (!/release-assets\.mjs(?:"|')?\s+fetch/.test(step)) continue
+      fetchSteps++
+      const configuration = step.split(/\n        run:/)[0]
+      for (const key of ["ARTIFACTS_R2_ACCESS_KEY_ID", "ARTIFACTS_R2_SECRET_ACCESS_KEY"]) {
+        assert.ok(configuration.includes(`${key}: \${{ secrets.${key} }}`), `${name}: ${step.split("\n")[0]} needs ${key}`)
+      }
+      assert.match(source, /ARTIFACTS_R2_ACCOUNT_ID: \$\{\{ vars\.ARTIFACTS_R2_ACCOUNT_ID \}\}/, name)
+    }
+  }
+  assert.ok(fetchSteps >= 15, "Expected the mobile reuse, marker and production-record fetch callers")
+})
+
 test("example finalization authenticates historical asset URL lookup", () => {
   const finalize = jobBlock(workflow("coordinated-example-release.yml"), "finalize-example")
   const step = finalize
