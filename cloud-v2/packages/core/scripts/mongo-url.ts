@@ -30,7 +30,21 @@ export function isLocalMongoUrl(value: string): boolean {
   return parts.hosts.every(host => LOCAL_HOST_PATTERN.test(host))
 }
 
-/** Which database a URL names, for telling two URLs apart: its hosts and database name. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+/**
+ * Which database a URL names, for telling two URLs apart: its hosts, in any order, with loopback
+ * spellings and the default port made one, and its database name. Only a first check: two URLs can
+ * still reach one database (DNS aliases, a replica set's other members), so a script about to write
+ * also compares the servers it reached.
+ */
 export function databaseKey(parts: MongoUrlParts): string {
-  return `${parts.hosts.join(",")}/${parts.database}`
+  const hosts = parts.hosts.map(host => {
+    const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(host)
+    if (!match) return host
+    const name = LOOPBACK_HOSTS.has(match[1]!) ? "loopback" : match[1]!
+    // A mongodb+srv host is a DNS name with no port.
+    return parts.scheme === "mongodb" ? `${name}:${match[2] ?? "27017"}` : name
+  })
+  return `${[...new Set(hosts)].sort().join(",")}/${parts.database}`
 }

@@ -1058,10 +1058,7 @@ async function prepareTarget(source: Connection): Promise<void> {
   if (target.readyState !== 1) {
     throw new MigrationError("--apply needs the default mongoose connection connected to the target database")
   }
-  if (
-    source === target ||
-    (source.host === target.host && source.port === target.port && source.name === target.name)
-  ) {
+  if (source === target || (await databaseIdentity(source)) === (await databaseIdentity(target))) {
     throw new MigrationError("the source and the target are the same database")
   }
   for (const model of TARGET_MODELS) {
@@ -1332,6 +1329,32 @@ async function applyRemovals(
       after: {status: "revoked"},
     })
   }
+}
+
+/**
+ * Which database `connection` reached, as the server sees it, so two spellings of one host (or two
+ * members of one replica set) compare equal: its replica set (name and members), a sharded cluster's
+ * id, or else its server process; and the database name. Asking needs no privileges.
+ */
+async function databaseIdentity(connection: Connection): Promise<string> {
+  const admin = connection.db!.admin()
+  type Hello = {setName?: string; hosts?: string[]; msg?: string; topologyVersion?: {processId?: unknown}}
+  const hello = (await admin.command({hello: 1}).catch(() => admin.command({isMaster: 1}))) as Hello
+  let server: string
+  if (hello.setName) {
+    server = `replica-set ${hello.setName} ${[...(hello.hosts ?? [])].map(host => host.toLowerCase()).sort().join(",")}`
+  } else if (hello.msg === "isdbgrid") {
+    const version = await connection
+      .getClient()
+      .db("config")
+      .collection("version")
+      .findOne({}, {projection: {clusterId: 1}})
+      .catch(() => null)
+    server = version?.clusterId ? `cluster ${String(version.clusterId)}` : `process ${String(hello.topologyVersion?.processId)}`
+  } else {
+    server = `process ${String(hello.topologyVersion?.processId ?? `${connection.host}:${connection.port}`)}`
+  }
+  return `${server}/${connection.name}`
 }
 
 /** An upsert on `filter` that sets `fields` only when the row is inserted, leaving existing rows untouched. */

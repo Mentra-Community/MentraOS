@@ -910,6 +910,19 @@ describe("re-running apply", () => {
     })
   })
 
+  test("refuses a source that is the target under another spelling of its host, before writing anything", async () => {
+    // Only the server can tell: 127.1 is 127.0.0.1, but no URL comparison says so.
+    const alias = targetUrl.replace(/^mongodb:\/\/(127\.0\.0\.1|localhost)/, "mongodb://127.1")
+    expect(alias).not.toBe(targetUrl)
+    const sameAsTarget = await openSourceConnection(alias)
+    try {
+      await expect(migrateStoreDeveloperOrgs({source: sameAsTarget, apply: true, now: NOW})).rejects.toThrow(/same database/)
+    } finally {
+      await sameAsTarget.close()
+    }
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
+  })
+
   test("one org's failure rolls back that org only, and a re-run completes the import", async () => {
     // A Core row already holds a pending invitation for BETA's invitee under another id, so BETA's
     // invitation violates the unique (workspace, email) pending-invitation index inside BETA's transaction.
@@ -1745,6 +1758,17 @@ describe("parseArgs", () => {
     expect(() =>
       parseArgs(["--source", LOCAL_TARGET, "--target", LOCAL_TARGET]),
     ).toThrow(/same database/)
+  })
+
+  test("refuses the same database under loopback aliases, a default port or reordered hosts", () => {
+    for (const [sourceUrl, targetUrl] of [
+      ["mongodb://localhost/store", "mongodb://127.0.0.1:27017/store"],
+      ["mongodb://[::1]:27017/store", "mongodb://localhost:27017/store"],
+      ["mongodb://a.example:27017,b.example:27017/store", "mongodb://B.example,a.example/store"],
+    ]) {
+      expect(() => parseArgs(["--source", sourceUrl!, "--target", targetUrl!])).toThrow(/same database/)
+    }
+    expect(() => parseArgs(["--source", "mongodb://127.0.0.1/store", "--target", "mongodb://localhost/core"])).not.toThrow()
   })
 })
 
