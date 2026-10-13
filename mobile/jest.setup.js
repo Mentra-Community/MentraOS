@@ -52,6 +52,7 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
   return {
     otaLocalNetwork: {
       isAvailable: () => true,
+      getNetworkDiagnostics: mentraLocalNetworkMock.getNetworkDiagnostics,
       connect: mentraLocalNetworkMock.connect,
       request: mentraLocalNetworkMock.request,
       download: mentraLocalNetworkMock.download,

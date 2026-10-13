@@ -7,6 +7,7 @@ import {
 } from "@mentra/bluetooth-sdk/types"
 
 import {isEnabledHotspotStatus} from "../../modules/bluetooth-sdk/src/BluetoothSdk.types"
+import type {NetworkDiagnostics} from "../../modules/bluetooth-sdk/src/ota-transport"
 
 type Listener = (payload: any) => void
 
@@ -32,6 +33,7 @@ export const emitLocalNetworkEvent = (eventName: string, payload: any) => {
 }
 
 export const mentraLocalNetworkMock = {
+  getNetworkDiagnostics: jest.fn((): NetworkDiagnostics | null => null),
   addListener: jest.fn((eventName: string, listener: Listener) => {
     if (!localNetworkListeners.has(eventName)) localNetworkListeners.set(eventName, new Set())
     localNetworkListeners.get(eventName)!.add(listener)
