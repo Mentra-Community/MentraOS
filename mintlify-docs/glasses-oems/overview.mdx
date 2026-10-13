@@ -73,7 +73,7 @@ You give the engine a single configuration when your app boots. The engine manag
 The engine talks to two tiers of Mentra backend services:
 
 - **Mentra Runtime Services.** The capabilities the engine relies on: speech-to-text, text-to-speech, translation, live streaming, and photo handling. Self-hostable and/or proxyable (run your own, route through your proxy, or both).
-- **Mentra Cloud Core Services.** The Mentra Miniapp Store, the developer console, and the OEM APIs. Proxyable only (always Mentra-hosted, optionally reached through your proxy).
+- **Mentra Cloud Core Services.** The OEM APIs. Proxyable only (always Mentra-hosted, optionally reached through your proxy).
 
 The engine also includes **on-device STT/TTS** as a fallback for offline or degraded-network scenarios. Cloud STT/TTS is the recommended path for production quality; on-device is the safety net.
 
