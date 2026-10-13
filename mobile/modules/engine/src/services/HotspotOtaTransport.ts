@@ -143,6 +143,8 @@ class HotspotOtaTransport {
         retryIosInternalError: true,
         assertCurrent,
         gateway: hotspot.localIp,
+        // The glasses download from our listener; OTA never calls the Gallery server.
+        purpose: "incoming-server",
       })
       this.localNetworkConnected = true
       assertCurrent()

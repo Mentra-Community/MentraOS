@@ -56,3 +56,15 @@ Android temporarily lifts the cellular process pin while creating the local WHIP
 An attempt-specific ID isolates late callbacks and glasses status. Reconnect tears down the glasses publisher, both phone peers and hotspot before rebuilding against the same provisioned input. Three retries bound consecutive failures; a minute of stable streaming renews the retry budget. Last-subscriber stop cancels startup/backoff, awaits native cleanup and disables the hotspot. Failed cleanup retains ownership and can be retried by stop. BLE-unreachable stop/hotspot commands are deferred until reconnection. OTA, Gallery, ACS and managed streaming share one hotspot reservation before BLE AP changes or native association. OTA, Gallery and managed relay retain it until their owned cleanup completes. ACS still has an older retirement policy that releases its JavaScript reservation after reporting an unconfirmed stop; native association custody remains retained on failure. Consolidating that ACS retirement is a separate qualification gate. A refused OTA or Gallery caller makes no AP or association changes. Native media queues keep running when the UI is backgrounded; Android holds a partial wake lock and uses the engine's background timers for retry/readiness.
 
 Device qualification for this outgoing pipeline must include Android and iPhone: audio/video playback on the provisioned WHEP URL, mute/video-only capture, last-subscriber stop, cancellation at each setup step, cellular/hotspot/BLE loss and recovery, repeated starts, screen-off/background operation and a sustained thermal/audio-sync run. Unit tests and platform compilation cover lifecycle/format contracts; they do not establish those hardware results.
+
+### Incoming OTA server and outgoing media clients
+
+Hotspot association verifies the glasses SSID and the Wi-Fi interface/address for
+both uses. Gallery and relay clients also wait for outgoing Local Network access
+by connecting to the glasses HTTP endpoint. OTA selects `incoming-server`: it
+serves already downloaded artifacts to connections initiated by the glasses, and
+its own listener must become ready before the app sends the OTA manifest URL.
+It does not depend on the Gallery HTTP server being available. Apple TN3179 lists
+accepting incoming TCP as an operation that does not require Local Network
+permission. This does not change outgoing Gallery/relay consent or the shared
+network ownership and teardown rules.

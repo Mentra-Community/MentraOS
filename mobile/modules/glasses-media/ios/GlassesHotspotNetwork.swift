@@ -12,6 +12,7 @@ public final class GlassesHotspotNetwork {
     private var lastHotspotSSID: String?
     /// The verified Wi-Fi interface and DHCP address. Every later check uses this exact pair.
     private var binding: HotspotInterfaceBinding?
+    private var accessPurpose: HotspotAccessPurpose = .outgoingClient
     private var gatewayAddress: String?
     private var generation = 0
     private var applying = false
@@ -36,7 +37,7 @@ public final class GlassesHotspotNetwork {
     public var onPermissionRequired: (() -> Void)?
     public init() {}
 
-    public func join(ssid: String, passphrase: String, gateway: String? = nil, completion: @escaping (Result<String, Error>) -> Void) {
+    public func join(ssid: String, passphrase: String, gateway: String? = nil, purpose: HotspotAccessPurpose = .outgoingClient, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
             guard self.ssid == nil, !self.applying else { completion(.failure(LocalMediaError("Previous hotspot session has not finished cleaning up"))); return }
             if let gateway, !LocalMediaPolicy.isPrivate(gateway) {
@@ -54,6 +55,7 @@ public final class GlassesHotspotNetwork {
             self.ssid = ssid
             self.lastHotspotSSID = ssid
             self.gatewayAddress = gateway
+            self.accessPurpose = purpose
             self.cancelled = false
             self.applying = false
             self.ownsConfiguration = false
@@ -245,7 +247,7 @@ public final class GlassesHotspotNetwork {
                 }
                 if (try? membership.get()) == true, let selected = self.selectBinding() {
                     self.bind(selected)
-                    self.waitForLocalAccess(address: selected.address, generation: gen)
+                    self.finishAssociation(address: selected.address, generation: gen)
                 } else if remaining > 0 {
                     self.queue.asyncAfter(deadline: .now() + 0.5) {
                         self.waitForMacAddress(ssid: ssid, association: association, generation: gen, remaining: remaining - 1)
@@ -294,7 +296,7 @@ public final class GlassesHotspotNetwork {
                 // The selection applies the BLE gateway's client check when one was reported.
                 if network?.ssid == ssid, let selected = self.selectBinding() {
                     self.bind(selected)
-                    self.waitForLocalAccess(address: selected.address, generation: gen)
+                    self.finishAssociation(address: selected.address, generation: gen)
                 } else if remaining > 0 {
                     self.queue.asyncAfter(deadline: .now() + 0.5) { self.waitForAddress(ssid: ssid, generation: gen, remaining: remaining - 1) }
                 } else {
@@ -367,6 +369,17 @@ public final class GlassesHotspotNetwork {
         return "Wi-Fi interfaces=\(wifi.isEmpty ? "none" : wifi.sorted().joined(separator: ",")), " +
             "Wi-Fi IPv4=\(addresses.isEmpty ? "none" : addresses.sorted().joined(separator: ",")), " +
             "other private IPv4=\(other.isEmpty ? "none" : other.sorted().joined(separator: ","))"
+    }
+
+    private func finishAssociation(address: String, generation gen: Int) {
+        // OTA serves incoming TCP. Its native listener proves server readiness; dialing
+        // the glasses' unrelated Gallery server would add a client permission dependency.
+        // TN3179: accepting incoming TCP does not require Local Network access.
+        if accessPurpose == .incomingServer {
+            finishJoin(.success(address))
+        } else {
+            waitForLocalAccess(address: address, generation: gen)
+        }
     }
 
     private func waitForLocalAccess(address: String, generation gen: Int) {

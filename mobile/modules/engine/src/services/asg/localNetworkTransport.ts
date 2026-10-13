@@ -109,7 +109,12 @@ export const localNetworkTransport = {
     caller: symbol,
     ssid: string,
     password: string,
-    options?: {retryIosInternalError?: true; assertCurrent?: () => void; gateway?: string},
+    options?: {
+      retryIosInternalError?: true
+      assertCurrent?: () => void
+      gateway?: string
+      purpose?: "outgoing-client" | "incoming-server"
+    },
   ): Promise<string | undefined> {
     const isMac = Platform.OS === "ios" && CrustModule.isIOSAppOnMac === true
     if (isMac && macHotspotOwner) throw new Error("Previous Mac hotspot session has not been released")
@@ -125,7 +130,13 @@ export const localNetworkTransport = {
       const owner = requestId("mac_hotspot")
       macHotspotOwner = {caller, nativeId: owner}
       try {
-        const address = await glassesHotspot.join(owner, ssid, password, options?.gateway)
+        const address = await glassesHotspot.join(
+          owner,
+          ssid,
+          password,
+          options?.gateway,
+          options?.purpose ?? "outgoing-client",
+        )
         assertCurrent()
         return address
       } catch (error) {

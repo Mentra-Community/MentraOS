@@ -46,8 +46,35 @@ describe("Mac hotspot ownership", () => {
     await expect(
       localNetworkTransport.connect(networkOwner, "glasses", "private", {gateway: "192.168.43.1"}),
     ).resolves.toBe("192.168.43.2")
-    expect(mockMacHotspot.join).toHaveBeenCalledWith(expect.any(String), "glasses", "private", "192.168.43.1")
+    expect(mockMacHotspot.join).toHaveBeenCalledWith(
+      expect.any(String),
+      "glasses",
+      "private",
+      "192.168.43.1",
+      "outgoing-client",
+    )
     expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+
+  it("joins for an incoming OTA server while retaining exclusive network ownership", async () => {
+    await expect(
+      localNetworkTransport.connect(networkOwner, "glasses", "private", {
+        gateway: "192.168.43.1",
+        purpose: "incoming-server",
+      }),
+    ).resolves.toBe("192.168.43.2")
+    expect(mockMacHotspot.join).toHaveBeenCalledWith(
+      expect.any(String),
+      "glasses",
+      "private",
+      "192.168.43.1",
+      "incoming-server",
+    )
+    await expect(localNetworkTransport.connect(otherOwner, "other", "private")).rejects.toThrow("not been released")
+    await localNetworkTransport.disconnect(otherOwner)
+    expect(mockMacHotspot.leave).not.toHaveBeenCalled()
+    await localNetworkTransport.disconnect(networkOwner)
+    expect(mockMacHotspot.leave).toHaveBeenCalledTimes(1)
   })
 
   it("rejects overlap without invalidating the admitted connection", async () => {

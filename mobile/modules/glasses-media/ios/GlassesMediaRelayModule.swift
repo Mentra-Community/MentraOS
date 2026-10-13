@@ -11,13 +11,16 @@ public final class GlassesMediaRelayModule: Module {
         Name("MentraGlassesMediaRelay")
         Events("onRelayState")
 
-        AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, promise: Promise) in
+        AsyncFunction("joinLocalHotspot") { (id: String, ssid: String, password: String, gateway: String?, purpose: String, promise: Promise) in
             self.queue.async {
                 guard self.localHotspotOwner == nil else {
                     promise.reject(LocalMediaError("Previous hotspot session has not been released")); return
                 }
+                guard let accessPurpose = HotspotAccessPurpose(rawValue: purpose) else {
+                    promise.reject(LocalMediaError("Invalid hotspot access purpose")); return
+                }
                 self.localHotspotOwner = id
-                self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway) { result in
+                self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
                     switch result {
                     case let .success(address): promise.resolve(address)
                     case let .failure(error): promise.reject(error)

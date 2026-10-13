@@ -111,11 +111,38 @@ it("keeps normal same-pair hotspot preparation and cleanup working", async () =>
     localIp: "192.168.43.1",
   })
   expect(await hotspotOtaTransport.prepare(check)).toBe("http://192.168.43.2/version.json")
+  expect(localNetwork.connect).toHaveBeenCalledWith(
+    expect.any(Symbol),
+    "A",
+    "password",
+    expect.objectContaining({
+      gateway: "192.168.43.1",
+      purpose: "incoming-server",
+    }),
+  )
+  expect(server.start).toHaveBeenCalledWith("{}", {}, "192.168.43.2")
   bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
   await hotspotOtaTransport.teardown()
   expect(bluetoothSdkMock.setHotspotState).toHaveBeenLastCalledWith(false)
   expect(server.stop).toHaveBeenCalledTimes(1)
   expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+})
+
+it("does not publish an OTA URL when the incoming listener fails after association", async () => {
+  bluetoothSdkMock.setHotspotState
+    .mockResolvedValueOnce({
+      type: "hotspot_status",
+      state: "enabled",
+      ssid: "A",
+      password: "password",
+      localIp: "192.168.43.1",
+    })
+    .mockResolvedValueOnce({type: "hotspot_status", state: "disabled"})
+  server.start.mockRejectedValueOnce(new Error("Listener could not bind"))
+  await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({code: "hotspot_server_failed"})
+  expect(server.start).toHaveBeenCalledTimes(1)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+  expect(bluetoothSdkMock.setHotspotState).toHaveBeenLastCalledWith(false)
 })
 
 it("retains terminal native join facts and does not repeat downloads or enable requests", async () => {
@@ -140,6 +167,7 @@ it("retains terminal native join facts and does not repeat downloads or enable r
     retryIosInternalError: true,
     assertCurrent: expect.any(Function),
     gateway: "192.168.43.1",
+    purpose: "incoming-server",
   })
   expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
   expect(server.start).not.toHaveBeenCalled()
