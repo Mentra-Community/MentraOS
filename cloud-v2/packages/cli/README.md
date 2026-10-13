@@ -53,9 +53,10 @@ it waits. The CLI always prints the sign-in URL too, so you can open it yourself
 
 The CLI keeps your login in the OS keychain. Where there is no keychain, it uses
 a file only you can read (mode `0600`) in `~/.mentra/cli-v2`, or in
-`MENTRA_CLI_HOME` when set. It renews the login as you use it. When Mentra's
-sign-in server no longer accepts it, for example after you signed out
-everywhere from your Mentra account, commands print
+`MENTRA_CLI_HOME` when set. It renews the login as you use it, and at once when
+the Store refuses its current access token. When Mentra's sign-in server no
+longer accepts the login, for example after you signed out everywhere from your
+Mentra account, the next command prints
 ``Session expired. Run `mentra login`.`` and the CLI forgets the login.
 
 ```bash
