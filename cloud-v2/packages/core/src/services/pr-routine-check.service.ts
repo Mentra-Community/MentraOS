@@ -19,6 +19,7 @@ import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-rout
 import {PrRerunReferenceService} from './pr-rerun-reference.service'
 
 const digest = (value: unknown) => requestInputDigest(value)
+const selectionDigest = ({requestId: _requestId, ...selected}: NonNullable<PrRoutineMember['selection']>) => digest(selected)
 export const prRoutineGateId = (headSha: string) => `pr-check-${createHash('sha256').update(`${ROUTINE_CHECK_REPOSITORY}:${headSha}`).digest('hex')}`
 const selectionKey = (context: PrRoutineContext) => digest({number: context.number, headSha: context.headSha,
   baseRef: context.baseRef, sameRepository: context.sameRepository, labels: context.labels, peers: context.peers, labelEvents: context.labelEvents ?? {}, labelActors: context.labelActors ?? {}})
@@ -470,7 +471,7 @@ export class PrRoutineCheckService {
     }
     attempt.members = attempt.members.filter(member => member.linkedTarget || member.originalRequestId || !attempt.members.some(value =>
       value.linkedTarget && value.selection && member.selection &&
-      digest({...value.selection, requestId: undefined}) === digest({...member.selection, requestId: undefined})))
+      selectionDigest(value.selection) === selectionDigest(member.selection)))
     if (attempt.members.filter(member => !member.linkedTarget).length < 2) delete attempt.suiteId
     // Create the original group after exact-input deduplication, never rewrite an existing suite's membership.
     if (!attempt.rerun && !attempt.members.some(member => !member.linkedTarget && attempt.members.some(value =>
