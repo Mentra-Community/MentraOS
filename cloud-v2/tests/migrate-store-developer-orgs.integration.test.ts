@@ -45,7 +45,7 @@ import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-in
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
-import {countActiveOwners, recoverOwnership} from "../packages/core/src/services/workspaces/workspace.service"
+import {recoverOwnership} from "../packages/core/src/services/workspaces/workspace.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 
@@ -391,6 +391,11 @@ async function targetCounts() {
 }
 
 /** The `_id` MongoDB assigned to a seeded source membership row, as the 24-character hex string. */
+/** How many active owner memberships `workspaceId` has, claimed or still waiting for their person. */
+async function activeOwnerMemberships(workspaceId: string): Promise<number> {
+  return WorkspaceMembershipModel.countDocuments({workspaceId, role: "owner", status: "active"})
+}
+
 async function sourceMembershipHex(sourceUserId: string, orgId: string, role: string): Promise<string> {
   const row = await sourceDb()
     .collection("developer_org_memberships")
@@ -1553,11 +1558,22 @@ describe("re-running apply carries demotions made in the Store", () => {
     const adminId = `wm_${await sourceMembershipHex(U.acmeAdmin, ORG_ACME, "admin")}`
     const devId = `wm_${await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")}`
     const undated = (await WorkspaceMembershipModel.findOne({pendingWorkosUserId: U.acmeUndated}).lean())!
-    // An Organization Admin made the admin an owner in Core; then the Store demoted them to member.
+    // An Organization Admin made the admin an owner in Core (as Core records it: the role, its
+    // history and an audit event by that person); then the Store demoted them to member.
     await WorkspaceMembershipModel.updateOne(
       {membershipId: adminId},
       {$set: {role: "owner"}, $push: {roleHistory: {role: "owner", from: NOW, authorizationRevision: 0}}},
     )
+    await WorkspaceAuditEventModel.create({
+      eventId: ulid(),
+      workspaceId: ORG_ACME,
+      action: "membership.role_changed",
+      actor: {kind: "user", mentraUserId: "mu_org_admin"},
+      target: {membershipId: adminId},
+      before: {role: "admin"},
+      after: {role: "owner"},
+      occurredAt: NOW,
+    })
     await setStoreRole(ORG_ACME, U.acmeAdmin, "member")
     // The Store raised a member to admin.
     await setStoreRole(ORG_ACME, U.acmeDev, "admin")
@@ -1580,6 +1596,25 @@ describe("re-running apply carries demotions made in the Store", () => {
       ].sort((a, b) => (a.membershipId < b.membershipId ? -1 : 1)),
     )
     expect(await snapshotTarget()).toEqual(before)
+  })
+
+  test("a role the Store lowers in steps across runs is lowered at each run", async () => {
+    await run({apply: true})
+    const ownerId = `wm_${await sourceMembershipHex(U.acmeOwner, ORG_ACME, "owner")}`
+    // A new owner joins in the Store, and the old one becomes an admin...
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_ACME, userId: "user_01J8Z3K6V4W9Q2X5R7T1B0NOWN", role: "owner", email: "next@acme.example"}))
+    await setStoreRole(ORG_ACME, U.acmeOwner, "admin")
+    expect((await run({apply: true})).demotedMemberships).toEqual([
+      {orgId: ORG_ACME, membershipId: ownerId, fromRole: "owner", toRole: "admin"},
+    ])
+    // ...and later a member: the importer's own earlier change is no change made in Core.
+    await setStoreRole(ORG_ACME, U.acmeOwner, "member")
+    const third = await run({apply: true})
+    expect(third.roleDrift).toEqual([])
+    expect(third.demotedMemberships).toEqual([{orgId: ORG_ACME, membershipId: ownerId, fromRole: "admin", toRole: "developer"}])
+    expect((await WorkspaceMembershipModel.findOne({membershipId: ownerId}).lean())!.role).toBe("developer")
   })
 
   test("an ownership handed over in the Store keeps the Core owner: the demotion is kept and the promotion reported", async () => {
@@ -1636,7 +1671,7 @@ describe("re-running apply never leaves a workspace without an owner", () => {
     ])
     expect(await WorkspaceMembershipModel.findOne({membershipId: ownerId}).lean()).toMatchObject({status: "active", role: "owner"})
     expect(await WorkspaceMembershipModel.findOne({membershipId: devId}).lean()).toMatchObject({status: "ended"})
-    expect(await countActiveOwners(ORG_ACME)).toBe(1)
+    expect(await activeOwnerMemberships(ORG_ACME)).toBe(1)
     expect(await validateCredentialToken(ownerKey.token)).not.toBeNull()
 
     // Every run says so again until an Organization Admin decides in Core, and changes nothing more.
@@ -1660,7 +1695,7 @@ describe("re-running apply never leaves a workspace without an owner", () => {
         revokedCredentialIds: [ownerKey.row.keyId],
       },
     ])
-    expect(await countActiveOwners(ORG_ACME)).toBe(1)
+    expect(await activeOwnerMemberships(ORG_ACME)).toBe(1)
     expect(await validateCredentialToken(ownerKey.token)).toBeNull()
   })
 
@@ -1693,7 +1728,7 @@ describe("re-running apply never leaves a workspace without an owner", () => {
         [ORG_DELTA, deltaOwnerId],
       ].sort(),
     )
-    for (const orgId of [ORG_ACME, ORG_BETA, ORG_DELTA]) expect(await countActiveOwners(orgId)).toBe(1)
+    for (const orgId of [ORG_ACME, ORG_BETA, ORG_DELTA]) expect(await activeOwnerMemberships(orgId)).toBe(1)
     expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${String(insertedId)}`}).lean()).toMatchObject({
       status: "active",
       role: "owner",

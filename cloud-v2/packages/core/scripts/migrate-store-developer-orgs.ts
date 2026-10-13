@@ -43,7 +43,8 @@
  *    invitation made in Core is kept, and the Store's for that email is reported
  *    instead of imported (`invitationConflicts`).
  *  - A role the Store lowered, on a membership still unclaimed whose role Core has
- *    not changed since the import (its only role history entry), is lowered in Core
+ *    not changed since the import (no role change in its audit trail but the
+ *    import's own), is lowered in Core
  *    (`demotedMemberships`, one `membership.role_changed` event each, as the system).
  *    Any other difference between the Store's role and Core's is reported and left
  *    alone (`roleDrift`): the person has signed in, Core changed the role, or the
@@ -703,7 +704,7 @@ type TargetMembership = {
   mentraUserId: string | null
   pendingWorkosUserId: string | null
   role: string
-  /** Whether Core changed the role since the membership was imported. */
+  /** Whether someone changed the role in Core since the import (the import's own demotions do not count). */
   roleChangedInCore: boolean
 }
 
@@ -760,8 +761,16 @@ async function readTargetState(
   const options = session ? {session} : {}
   const collection = (model: {collection: {collectionName: string}}) => db.collection(model.collection.collectionName)
   const workspaceId = plan.orgId
-  const [workspace, memberships, credentials, invitations, existingMemberships, existingInvitations, existingCredentials] =
-    await Promise.all([
+  const [
+    workspace,
+    memberships,
+    credentials,
+    invitations,
+    existingMemberships,
+    existingInvitations,
+    existingCredentials,
+    roleChangesByPeople,
+  ] = await Promise.all([
       collection(WorkspaceModel).findOne({workspaceId}, {...options, projection: {status: 1}}),
       collection(WorkspaceMembershipModel)
         .find(
@@ -793,14 +802,27 @@ async function readTargetState(
           {...options, projection: {credentialId: 1}},
         )
         .toArray(),
+      // Role changes someone made in Core (in a portal or through the Store's Console), as opposed to
+      // the import's own, which it records as the system.
+      collection(WorkspaceAuditEventModel)
+        .find(
+          {workspaceId, action: "membership.role_changed", "actor.kind": {$ne: "system"}},
+          {...options, projection: {"target.membershipId": 1}},
+        )
+        .toArray(),
     ])
+  const changedByPeople = new Set(
+    roleChangesByPeople.map(event => String((event.target as {membershipId?: unknown} | undefined)?.membershipId ?? "")),
+  )
   const active = memberships.map(row => ({
     membershipId: String(row.membershipId),
     mentraUserId: stringOrNull(row.mentraUserId),
     pendingWorkosUserId: stringOrNull(row.pendingWorkosUserId),
     role: String(row.role),
-    // An imported membership starts with one role history entry; anything else is Core's doing.
-    roleChangedInCore: !(Array.isArray(row.roleHistory) && row.roleHistory.length === 1 && row.roleHistory[0]?.role === row.role),
+    // Someone changed it in Core (recorded as theirs), or its history does not end at its role.
+    roleChangedInCore:
+      changedByPeople.has(String(row.membershipId)) ||
+      !(Array.isArray(row.roleHistory) && row.roleHistory.length > 0 && row.roleHistory.at(-1)?.role === row.role),
   }))
   const ownerUserIds = active.flatMap(row => (row.role === "owner" && row.mentraUserId ? [row.mentraUserId] : []))
   const deletedOwners = ownerUserIds.length
