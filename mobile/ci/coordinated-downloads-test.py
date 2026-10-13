@@ -90,6 +90,24 @@ class CompiledCode(unittest.TestCase):
         self.verify()
         self.assertFalse(self.diagnostics.exists())
 
+    def test_accepts_changed_signature_allocation_without_touching_signed_exports(self):
+        entitlements = self.root / 'large-entitlements.plist'
+        entitlements.write_bytes(plistlib.dumps({'com.mentra.signature-probe': 'x' * 64000}))
+        subprocess.run(['codesign', '--force', '--sign', '-', '--entitlements', str(entitlements),
+                        str(self.exported / 'Mentra')], check=True, capture_output=True)
+        before = [(app / 'Mentra').read_bytes() for app in [self.source, self.exported]]
+        # Reproduce the false mismatch caused by removing two different-size signatures.
+        removed = []
+        for name, original in zip(['before-source', 'before-export'], before):
+            path = self.root / name
+            path.write_bytes(original)
+            subprocess.run(['codesign', '--remove-signature', str(path)], check=True, capture_output=True)
+            removed.append(path.read_bytes())
+        self.assertNotEqual(*removed)
+        self.verify()
+        self.assertEqual(before, [(app / 'Mentra').read_bytes() for app in [self.source, self.exported]])
+        self.assertFalse(self.diagnostics.exists())
+
     def test_changed_code_is_rejected_and_exact_pair_survives_temporary_cleanup(self):
         subprocess.run(['xcrun', 'clang', '-x', 'c', '-', '-o', str(self.exported / 'Mentra')],
                        input=b'int main(void) { return 42; }', check=True, capture_output=True)

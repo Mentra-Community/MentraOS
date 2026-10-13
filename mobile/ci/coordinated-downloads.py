@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent / 'pr-ios'))
-from artifacts import BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, validate_profile
+from artifacts import BUNDLE_ID, configure, digest, package_mac_app, read_profile, run, unsigned_executable_bytes, validate_profile
 from repackage import unpack
 
 
@@ -39,9 +39,7 @@ def verify_compiled_code(source, exported, executable, root, diagnostics):
     binaries = []
     for name, original in [('store', source), ('adhoc', exported)]:
         binary = root / name / 'unsigned-executable'
-        shutil.copy2(original / executable, binary)
-        run('codesign', '--remove-signature', binary)
-        binaries.append(binary.read_bytes())
+        binaries.append(unsigned_executable_bytes(original / executable, binary))
     if binaries[0] == binaries[1]:
         return
     # Keep the exact signed pair before TemporaryDirectory removes the export.

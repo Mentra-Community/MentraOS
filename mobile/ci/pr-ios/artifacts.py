@@ -35,6 +35,16 @@ def digest(file):
     return value.hexdigest()
 
 
+def unsigned_executable_bytes(source, scratch):
+    """Compare compiled bytes without signature allocation left by different signers."""
+    shutil.copy2(source, scratch)
+    # Removal alone can leave a different __LINKEDIT vmsize. Normalize only
+    # disposable copies; shipped Apple signatures and compiled code stay intact.
+    run('codesign', '--force', '--sign', '-', scratch)
+    run('codesign', '--remove-signature', scratch)
+    return scratch.read_bytes()
+
+
 def read_profile(file):
     return plistlib.loads(run("security", "cms", "-D", "-i", file))
 

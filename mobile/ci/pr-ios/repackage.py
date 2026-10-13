@@ -10,7 +10,7 @@ import sys
 import tempfile
 import zipfile
 
-from artifacts import BUNDLE_ID, HERE, digest, read_profile, run, signer_certificate, validate_profile
+from artifacts import BUNDLE_ID, HERE, digest, read_profile, run, signer_certificate, unsigned_executable_bytes, validate_profile
 sys.path.insert(0, str(HERE.parents[2] / '.github/scripts'))
 from pr_mobile_config import read_build, packaged_config, build_info
 
@@ -85,15 +85,12 @@ def verify_payload(before, after, *, fingerprint, ota_url, head_sha, build_numbe
     filtered = lambda files: {n: h for n, h in files.items() if n not in allowed and not n.startswith('_CodeSignature/')}
     if filtered(payload(before)) != filtered(payload(after)):
         raise ValueError('Compiled iOS payload or resources changed')
-    # Re-signing changes the Mach-O signature and its load-command offsets.
-    # Compare copies after removing only that signature, preserving all code.
+    # Compare scratch copies with identical signature normalization, preserving code.
     with tempfile.TemporaryDirectory(prefix='mentra-ios-code-') as temp:
         copies = []
         for name, app in [('before', before), ('after', after)]:
             target = Path(temp) / name
-            shutil.copy2(app / old_info['CFBundleExecutable'], target)
-            run('codesign', '--remove-signature', target)
-            copies.append(target.read_bytes())
+            copies.append(unsigned_executable_bytes(app / old_info['CFBundleExecutable'], target))
         if copies[0] != copies[1]:
             raise ValueError('Compiled iOS executable changed')
 
