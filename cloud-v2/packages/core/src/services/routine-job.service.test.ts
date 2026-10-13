@@ -22,6 +22,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async get(id){return row?.requestId===id?copy(row):null},async insert(value){if(row)throw Object.assign(Error('duplicate'),{code:11000});row=copy(value)},
     async prepare(id,digest,prepared,inputSha256,now){if(!row||row.requestId!==id||row.state!=='awaiting-source'||row.fleetSelectionSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,fleetPreparation:copy(prepared),fleetInputSha256:inputSha256,state:'awaiting-runner'};return copy(row)},
+    async exhaustPreparation(id,completed,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.fleetDispatch?.attempts!==20||row.fleetActions?.some(run=>!completed.includes(run.actionsRunId)))return null;row={...row,state:'terminal',terminalStatus:'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}};return copy(row)},
     async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
       row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run'}:{})};return copy(row)},
     async bind(id,digest,binding,intent,now){if(!row||row.requestId!==id||row.state!=='awaiting-runner'||row.fleetBinding||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
@@ -568,5 +569,14 @@ test('preparation status database write fences source, custody, deadline and new
   expect(cas.mock.calls[0]![0]).toMatchObject({requestId:'job-one',fleetSelectionSha256:value.inputSha256,state:'awaiting-source',fleetPreparation:{$exists:false},fleetBinding:{$exists:false},fleetCancellation:{$exists:false},fleetDeadline:{$gt:now},'fleetActions.actionsRunId':'100'});
   expect(cas.mock.calls[0]![0].$expr).toEqual({$eq:[{$max:{$map:{input:'$fleetActions',as:'action',in:{$toDecimal:'$$action.actionsRunId'}}}},{$toDecimal:{$literal:'100'}}]});
   expect(cas.mock.calls[0]![1]).toEqual({$set:{fleetPreparationStatus:value,updatedAt:now}});
+ }finally{TestRequestModel.collection.findOneAndUpdate=original}
+});
+
+test('retry exhaustion database write cannot cancel concurrently prepared, bound or newer delivered work', async () => {
+ const original=TestRequestModel.collection.findOneAndUpdate,cas=mock(async(_filter:any,_update:any,_options:any)=>null);TestRequestModel.collection.findOneAndUpdate=cas as any;
+ const now=new Date('2026-10-08T00:00:00Z');
+ try {await routineJobRepository.exhaustPreparation!('job-one',['100'],now);
+  expect(cas.mock.calls[0]![0]).toMatchObject({requestId:'job-one',state:'awaiting-source',fleetPreparation:{$exists:false},fleetBinding:{$exists:false},fleetCancellation:{$exists:false},'fleetDispatch.attempts':20,fleetDeadline:{$gt:now},$expr:{$setIsSubset:[{$ifNull:['$fleetActions.actionsRunId',[]]},{$literal:['100']}]}});
+  expect(cas.mock.calls[0]![1]).toMatchObject({$set:{state:'terminal',terminalStatus:'not-run'}});
  }finally{TestRequestModel.collection.findOneAndUpdate=original}
 });

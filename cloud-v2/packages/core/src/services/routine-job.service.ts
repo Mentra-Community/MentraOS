@@ -25,6 +25,7 @@ export interface RoutineJobRepository {
   completionRequest?(jobId: string): Promise<StoredRoutineJob | null>;
   insert(row: StoredRoutineJob): Promise<void>;
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
+  exhaustPreparation?(jobId: string, completedRunIds: string[], now: Date): Promise<StoredRoutineJob | null>;
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
@@ -59,6 +60,15 @@ export const routineJobRepository: RoutineJobRepository = {
       {$set: {fleetPreparationStatus: value, updatedAt: now,
         ...(!value.retryable ? {state: 'terminal', terminalStatus: value.code === 'not-applicable' ? 'not-applicable' : 'not-run'} : {})}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async exhaustPreparation(requestId, completedRunIds, now) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, state:'awaiting-source',
+      fleetPreparation:{$exists:false}, fleetBinding:{$exists:false}, fleetCancellation:{$exists:false},
+      fleetDeadline:{$gt:now}, 'fleetDispatch.attempts':20,
+      $expr:{$setIsSubset:[{$ifNull:['$fleetActions.actionsRunId',[]]},{$literal:completedRunIds}]}},
+      {$set:{state:'terminal',terminalStatus:'not-run',updatedAt:now,fleetCancellation:{requestedAt:now.toISOString(),
+        reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}}},
+      {returnDocument:'after',writeConcern:testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async bind(requestId, fleetInputSha256, fleetBinding, dispatchIntent, now) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
@@ -319,8 +329,8 @@ export class RoutineJobService {
       if(previous)await this.rows.dispatch?.(row.requestId,previous,{...previous,checkedAt:new Date(this.now()).toISOString(),error:error instanceof TestRunError?error.message:'Actions run discovery is unavailable'});
       return this.job(row.requestId);
     }
-    if ((previous?.attempts ?? 0) >= 20 && runs.length && runs.every(run => run.status === 'completed')) {
-      await this.cancel(row.requestId, {reason: 'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'});
+    if (!row.fleetPreparation && (previous?.attempts ?? 0) >= 20 && runs.length && runs.every(run => run.status === 'completed')) {
+      await this.rows.exhaustPreparation?.(row.requestId, runs.map(run => run.actionsRunId), new Date(this.now()));
       return this.job(row.requestId);
     }
     if (!routineActionsRetry(previous,runs,this.now())) {
