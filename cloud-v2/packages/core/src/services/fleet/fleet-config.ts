@@ -22,7 +22,7 @@
  *    `CLOUD_CORE_FLEET_MAX_ASSET_BYTES` (default 26214400): the largest request body Core reads, the
  *    largest upstream response body Core buffers, how long an upstream answer may take, and the
  *    largest Fleet UI asset Core relays. A value that is not a positive integer falls back to the
- *    default.
+ *    default, and a timeout above 2147483647 ms (the longest a timer holds) is clamped to it.
  *
  * Three states, never conflated:
  *  - `not_installed`: no URL, or `CLOUD_CORE_ENABLED_FEATURES` is set without `fleet.managed`. Core
@@ -49,6 +49,9 @@ const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
 const DEFAULT_MAX_ASSET_BYTES = 25 * 1024 * 1024
+
+/** The longest a timer holds: past 2^31 - 1 ms some runtimes fire at once, which would fail every request. */
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 /** The only hosts a deployed Core may reach over plain `http`. */
 const LOCAL_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"])
@@ -171,12 +174,24 @@ function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number)
   return fallback
 }
 
+/** The timeout, never above what a timer can hold. */
+function timeoutMs(env: NodeJS.ProcessEnv): number {
+  const value = positiveInteger(env, "CLOUD_CORE_FLEET_TIMEOUT_MS", DEFAULT_TIMEOUT_MS)
+  if (value <= MAX_TIMEOUT_MS) return value
+  reportOnce(
+    "warn",
+    "CLOUD_CORE_FLEET_TIMEOUT_MS",
+    `CLOUD_CORE_FLEET_TIMEOUT_MS is above ${MAX_TIMEOUT_MS} ms, the longest a timer holds; using ${MAX_TIMEOUT_MS}`,
+  )
+  return MAX_TIMEOUT_MS
+}
+
 /** The byte and time limits on Core's side of the Fleet seam. */
 export function fleetLimits(env: NodeJS.ProcessEnv = processEnvironment()): FleetLimits {
   return {
     maxBodyBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES),
     maxResponseBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES", DEFAULT_MAX_RESPONSE_BYTES),
-    timeoutMs: positiveInteger(env, "CLOUD_CORE_FLEET_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
+    timeoutMs: timeoutMs(env),
     maxAssetBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_ASSET_BYTES", DEFAULT_MAX_ASSET_BYTES),
   }
 }

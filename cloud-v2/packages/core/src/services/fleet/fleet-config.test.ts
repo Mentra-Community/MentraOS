@@ -211,6 +211,16 @@ describe("Fleet limits", () => {
     }
   })
 
+  test("a timeout is clamped to the longest a timer can hold, 2147483647 ms", () => {
+    expect(fleetLimits(env({CLOUD_CORE_FLEET_TIMEOUT_MS: "2147483647"})).timeoutMs).toBe(2_147_483_647)
+    // Past 2^31 - 1 a timer overflows and fires at once on some runtimes, which would fail every request.
+    for (const huge of ["2147483648", "4294967296", "9007199254740991"]) {
+      expect([huge, fleetLimits(env({CLOUD_CORE_FLEET_TIMEOUT_MS: huge})).timeoutMs]).toEqual([huge, 2_147_483_647])
+    }
+    // Only the timeout is clamped: a byte limit may be as large as a safe integer.
+    expect(fleetLimits(env({CLOUD_CORE_FLEET_MAX_BODY_BYTES: "9007199254740991"})).maxBodyBytes).toBe(9_007_199_254_740_991)
+  })
+
   test("a bad value for one limit leaves the others alone", () => {
     expect(fleetLimits(env({CLOUD_CORE_FLEET_TIMEOUT_MS: "soon", CLOUD_CORE_FLEET_MAX_BODY_BYTES: "512"}))).toEqual({
       ...DEFAULTS,

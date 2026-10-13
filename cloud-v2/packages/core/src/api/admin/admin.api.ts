@@ -17,7 +17,9 @@
  *    standing in that workspace (an Organization Admin acts as its owner);
  *  - `/organization`: the organization API (every workspace, ownership
  *    recovery, operator keys), for people holding the organization capability;
- *  - `/audit-log`: an Organization Admin who is a person.
+ *  - `/audit-log`: an Organization Admin who is a person;
+ *  - `/fleet`: forwarded to the optional Fleet service, for a person holding
+ *    `organization.fleet.administer` (an Organization Admin). The forwarder carries its own gates.
  *
  * An Organization Admin holds every organization capability; an operator key
  * holds only the scopes it was created with; a workspace key holds none.
@@ -30,6 +32,7 @@ import {fleetInstalled} from "../../services/fleet/fleet-config"
 import {organizationView} from "../../services/workspaces/authorization.service"
 import {listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppEnv} from "../../types/hono.types"
+import {adminFleetApi} from "../fleet/fleet-forwarding"
 import {principalAuth, principalLabel, requireOrganizationCapability} from "../middleware/principal.middleware"
 import {createOrganizationApi} from "../organization/organization.api"
 import {createPortalAuthApi} from "../signin/portal-auth.api"
@@ -99,6 +102,7 @@ app.get("/me", async c => {
 
 app.route("/workspaces", createWorkspacesApi())
 app.route("/organization", createOrganizationApi())
+app.route("/fleet", adminFleetApi)
 
 const readsIncidents = requireOrganizationCapability("organization.incidents.read")
 const readsSupportProfiles = requireOrganizationCapability("organization.supportProfiles.read")

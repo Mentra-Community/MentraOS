@@ -56,6 +56,9 @@ repository.
 | `CLOUD_CORE_OIDC_CLIENTS` | Public | The sign-in server's clients as JSON: the admin portal, with its callback on Core's origin. |
 | `CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET` | Secret | The admin portal's client secret at Core's sign-in server (at least 32 characters). |
 | `ENTRA_BROWSER_CLIENT_SECRET` (the name in `browser.clientSecretEnv`) | Secret | Core's sign-in server's client secret at the provider. |
+| `CLOUD_CORE_ENABLED_FEATURES` | Public | Optional. The first-party features this deployment has bought, as comma-separated `feature[:package+package]` entries. Names are case-sensitive; Fleet needs `fleet.managed`. Blank leaves a feature to its own settings. See [Fleet integration](../docs/fleet-integration.md). |
+| `CLOUD_CORE_FLEET_URL` | Public | Optional. Fleet's base URL. Unset means Fleet is not installed. The size and time limits (`CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS`) are in [Fleet integration](../docs/fleet-integration.md). |
+| `CLOUD_CORE_FLEET_SECRET` | Secret | Optional. The secret that signs what Core forwards to Fleet. Required when `CLOUD_CORE_FLEET_URL` is set. |
 
 Signing keys and the refresh pepper must survive upgrades. An Entra provider is
 configured explicitly:

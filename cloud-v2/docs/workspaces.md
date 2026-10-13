@@ -165,8 +165,10 @@ person.
 (`organization.supportProfiles.read`), test runs, the routine catalog and
 system health (`organization.testing.read`, and `organization.testing.manage`
 to write). `/api/admin/me` answers any caller with its capabilities and whether
-Fleet is installed on this Core (`fleet.installed`). The Store
-calls Core through a signed service API ([Store integration](store-integration.md)).
+Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
+to the optional Fleet service for a person holding `organization.fleet.administer`
+(an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
+The Store calls Core through a signed service API ([Store integration](store-integration.md)).
 
 ## Configuration
 
@@ -177,6 +179,7 @@ calls Core through a signed service API ([Store integration](store-integration.m
 | `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` | Optional. The invitation link, an absolute URL containing `{token}`. Default `<CLOUD_CORE_ENTERPRISE_PORTAL_URL origin>/?workspaceInvite={token}`, the workspace portal. With neither set, inviting answers `503 invitations_unavailable`. |
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
 | `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets, `{"store": ["<newest>", "<older>"]}`. Unset: every service call is refused. |
+| `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they

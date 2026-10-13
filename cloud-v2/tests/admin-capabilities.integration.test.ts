@@ -273,6 +273,8 @@ describe("GET /api/admin/me", () => {
       credential: null,
       organization: {capabilities: [...ORGANIZATION_CAPABILITIES]},
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
     }
 
     const bySession = await call("GET", "/api/admin/me", {as: admin})
@@ -332,6 +334,8 @@ describe("GET /api/admin/me", () => {
         capabilities: ["organization.incidents.read", "organization.testing.read"],
       },
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
     })
     expect(reply.text).not.toContain(key.token)
   })
@@ -348,6 +352,8 @@ describe("GET /api/admin/me", () => {
       credential: {credentialId: ws.credentialId, credentialKind: "workspace", label: "ci"},
       organization: {capabilities: []},
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
     })
     expect(reply.text).not.toContain(ws.token)
   })
