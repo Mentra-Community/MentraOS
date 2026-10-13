@@ -7,7 +7,9 @@
     "mentra": "./src/index.ts"
   },
   "files": [
-    "src"
+    "src",
+    "!src/**/*.test.ts",
+    "!src/testing"
   ],
   "engines": {
     "bun": ">=1.0.0"
