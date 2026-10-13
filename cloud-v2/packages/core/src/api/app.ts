@@ -46,6 +46,7 @@ import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
 import adminApi from "./admin/admin.api";
 import reportAgent from "./agent/reports.api";
+import {createInternalRoutineCaseApi} from './internal/routine-cases.api';
 import {createTestRequestsApi} from "./internal/test-requests.api";
 import {createPrRoutineCheckApi} from './internal/pr-routine-check.api';
 import {createFrameworkResultsApi} from "./internal/framework-results.api";
@@ -141,6 +142,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/workspaces", internalWorkspaces);
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
+  app.route("/api/internal/routine-cases", createInternalRoutineCaseApi());
   app.route("/api/internal/routine-jobs", createRoutineJobsApi());
   app.route('/api/internal/pr-routine-checks', createPrRoutineCheckApi());
   app.route("/api/internal/testing/dispatch", createTestingDispatchApi());
