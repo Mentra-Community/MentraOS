@@ -546,8 +546,9 @@ describe("Fleet.report with the real Auth as the token source", () => {
   }
 
   /** Fleet over an Auth holding a refresh token, whose `/refresh` answers as `refresh` says. */
-  function fleetOverAuth(refresh: () => Response) {
-    const values = new Map([[DEFAULT_REFRESH_TOKEN_KEY, "refresh-1"]])
+  function fleetOverAuth(refresh: () => Response, refreshToken: string | null = "refresh-1") {
+    const values = new Map<string, string>()
+    if (refreshToken !== null) values.set(DEFAULT_REFRESH_TOKEN_KEY, refreshToken)
     const storage = {
       get: async (key: string) => values.get(key) ?? null,
       set: async (key: string, value: string) => {
@@ -585,6 +586,21 @@ describe("Fleet.report with the real Auth as the token source", () => {
     await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
     expect(reportFetch).not.toHaveBeenCalled()
     expect(await storage.get(DEFAULT_REFRESH_TOKEN_KEY)).toBe("refresh-1")
+  })
+
+  test("a first-use exchange answered with a 503 is unavailable, not an auth failure", async () => {
+    const {fleet, reportFetch, storage} = fleetOverAuth(() => json(503, {error: "temporarily_unavailable"}), null)
+
+    await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
+    expect(reportFetch).not.toHaveBeenCalled()
+    expect(await storage.get(DEFAULT_REFRESH_TOKEN_KEY)).toBeNull()
+  })
+
+  test("a first-use exchange Core refuses still throws AuthExpiredError", async () => {
+    const {fleet, reportFetch} = fleetOverAuth(() => json(400, {error: "invalid_grant"}), null)
+
+    await expect(fleet.report(batch)).rejects.toBeInstanceOf(AuthExpiredError)
+    expect(reportFetch).not.toHaveBeenCalled()
   })
 
   test("a refresh token Core rejects still throws AuthExpiredError", async () => {

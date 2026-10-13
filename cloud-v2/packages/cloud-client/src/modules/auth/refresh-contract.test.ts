@@ -374,3 +374,240 @@ describe("the fresh subject exchange after a refresh failure", () => {
     expect(t.expired).toBe(0)
   })
 })
+
+/** A `getSubjectToken` host callback that throws for its first `failures` calls. */
+function subjectProvider(failures = 0) {
+  const state = {calls: 0}
+  const config: AuthConfig = {
+    core: {
+      getSubjectToken: async () => {
+        state.calls += 1
+        if (state.calls <= failures) throw new Error("secure storage is unavailable")
+        return {token: "fresh-subject", type: "supabase" as const}
+      },
+    },
+    runtime: {source: "core"},
+  }
+  return {state, config}
+}
+
+/** Core refusing the subject token for good: the only answers to `/exchange` that mean the host must re-authenticate. */
+const EXCHANGE_REFUSALS: Array<[string, () => Response]> = [
+  ["400 invalid_grant", () => oauthError(400, "invalid_grant", "subject token verification failed")],
+  ["401 unauthorized_client", () => oauthError(401, "unauthorized_client", "unknown oem: acme")],
+  ["400 invalid_request", () => oauthError(400, "invalid_request", "subject_token is not a parseable JWT")],
+]
+
+/** Everything else a fresh exchange can come to says nothing about the subject token. */
+const EXCHANGE_TRANSIENT = TRANSIENT.filter(([name]) => !name.startsWith("a 400 invalid_request"))
+
+describe("a fresh exchange after a definitive refresh rejection", () => {
+  for (const [name, failure, status] of EXCHANGE_TRANSIENT) {
+    test(`${name} does not notify, and the next call exchanges again without refreshing`, async () => {
+      const {state, config} = subjectProvider()
+      const t = harness({
+        config,
+        respond: ({endpoint, n}) => {
+          if (endpoint === "refresh") return oauthError(400, "invalid_grant")
+          return n === 1 ? failure() : issued("exchanged")
+        },
+      })
+
+      const error = await t.auth.getCoreToken().catch((e) => e)
+      expect(error).toBeInstanceOf(AuthUnavailableError)
+      expect(error).not.toBeInstanceOf(AuthExpiredError)
+      expect((error as AuthUnavailableError).status).toBe(status)
+      expect(t.expired).toBe(0)
+      // The dead refresh token stays cleared; there is nothing left to refresh with.
+      expect(await t.storage.get(KEY)).toBeNull()
+
+      await expect(t.auth.getCoreToken()).resolves.toBeString()
+      expect(t.calls.map((call) => call.endpoint)).toEqual(["refresh", "exchange", "exchange"])
+      expect(state.calls).toBe(2)
+      expect(await t.storage.get(KEY)).toBe("exchanged")
+      expect(t.expired).toBe(0)
+    })
+  }
+
+  for (const [name, refusal] of EXCHANGE_REFUSALS) {
+    test(`Core's ${name} refusal of the fresh subject notifies exactly once`, async () => {
+      const {config} = subjectProvider()
+      const t = harness({
+        config,
+        respond: ({endpoint}) => (endpoint === "refresh" ? oauthError(400, "invalid_grant") : refusal()),
+      })
+
+      const error = await t.auth.getCoreToken().catch((e) => e)
+      expect(error).toBeInstanceOf(AuthExpiredError)
+      expect(error).not.toBeInstanceOf(AuthUnavailableError)
+      expect(t.expired).toBe(1)
+      expect(await t.storage.get(KEY)).toBeNull()
+    })
+  }
+
+  test("a failing getSubjectToken does not notify, and the next call asks it again", async () => {
+    const {state, config} = subjectProvider(1)
+    const t = harness({
+      config,
+      respond: ({endpoint}) => (endpoint === "refresh" ? oauthError(400, "invalid_grant") : issued("exchanged")),
+    })
+
+    await expect(t.auth.getCoreToken()).rejects.toBeInstanceOf(AuthUnavailableError)
+    expect(t.calls.map((call) => call.endpoint)).toEqual(["refresh"])
+    expect(t.expired).toBe(0)
+
+    await expect(t.auth.getCoreToken()).resolves.toBeString()
+    expect(t.calls.map((call) => call.endpoint)).toEqual(["refresh", "exchange"])
+    expect(state.calls).toBe(2)
+    expect(t.expired).toBe(0)
+  })
+
+  test("an abort propagates as the abort and does not notify", async () => {
+    const {config} = subjectProvider()
+    const t = harness({
+      config,
+      respond: ({endpoint}) => {
+        if (endpoint === "refresh") return oauthError(400, "invalid_grant")
+        throw new DOMException("The operation was aborted", "AbortError")
+      },
+    })
+
+    const error = await t.auth.getCoreToken().catch((e) => e)
+    expect((error as Error).name).toBe("AbortError")
+    expect(t.expired).toBe(0)
+  })
+
+  const RACING_OUTCOMES: Array<[string, () => Response]> = [
+    ["Core's refusal", () => oauthError(400, "invalid_grant")],
+    ["a 503", () => new Response(null, {status: 503})],
+    ["a success", () => issued("late-exchange")],
+  ]
+  for (const [name, outcome] of RACING_OUTCOMES) {
+    test(`a logout racing the exchange wins over ${name}: nothing is notified or restored`, async () => {
+      const {config} = subjectProvider()
+      let enter!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const t = harness({
+        config,
+        respond: async ({endpoint}) => {
+          if (endpoint === "refresh") return oauthError(400, "invalid_grant")
+          enter()
+          await gate
+          return outcome()
+        },
+      })
+
+      const inFlight = t.auth.getCoreToken().catch((e) => e)
+      await entered
+      await t.auth.clearSession()
+      release()
+
+      const error = await inFlight
+      expect(error).toBeInstanceOf(AuthExpiredError)
+      expect((error as Error).message).toBe("auth session was cleared")
+      expect(t.expired).toBe(0)
+      expect(await t.storage.get(KEY)).toBeNull()
+    })
+  }
+})
+
+describe("a definitive rejection that arrives after logout", () => {
+  for (const [name, makeConfig] of [
+    ["with a host that can supply a fresh subject token", () => subjectProvider()],
+    ["without one", () => ({state: {calls: 0}, config: SUBJECT_CONFIG})],
+  ] as const) {
+    test(`${name} neither notifies, clears, nor exchanges`, async () => {
+      const {state, config} = makeConfig()
+      let enter!: () => void
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve
+      })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const t = harness({
+        config,
+        respond: async ({endpoint}) => {
+          if (endpoint === "refresh") {
+            enter()
+            await gate
+          }
+          return oauthError(400, "invalid_grant")
+        },
+      })
+
+      const inFlight = t.auth.getCoreToken().catch((e) => e)
+      await entered
+      await t.auth.clearSession()
+      // A new session saved after the logout (here by "another client" over the same storage) must survive the late answer.
+      await t.storage.set(KEY, "refresh-of-the-next-session")
+      release()
+
+      const error = await inFlight
+      expect(error).toBeInstanceOf(AuthExpiredError)
+      expect((error as Error).message).toBe("auth session was cleared")
+      expect(t.calls.map((call) => call.endpoint)).toEqual(["refresh"])
+      expect(state.calls).toBe(0)
+      expect(t.expired).toBe(0)
+      expect(await t.storage.get(KEY)).toBe("refresh-of-the-next-session")
+    })
+  }
+})
+
+describe("the first-use exchange", () => {
+  for (const [name, failure, status] of EXCHANGE_TRANSIENT) {
+    test(`${name} is retryable: nothing stored or notified, and the next call exchanges again`, async () => {
+      const t = harness({refreshToken: null, respond: ({n}) => (n === 1 ? failure() : issued("exchanged"))})
+
+      const error = await t.auth.getCoreToken().catch((e) => e)
+      expect(error).toBeInstanceOf(AuthUnavailableError)
+      expect(error).not.toBeInstanceOf(AuthExpiredError)
+      expect((error as AuthUnavailableError).status).toBe(status)
+      expect(await t.storage.get(KEY)).toBeNull()
+      expect(t.expired).toBe(0)
+
+      await expect(t.auth.getCoreToken()).resolves.toBeString()
+      expect(t.calls.map((call) => call.endpoint)).toEqual(["exchange", "exchange"])
+      expect(await t.storage.get(KEY)).toBe("exchanged")
+    })
+  }
+
+  for (const [name, refusal] of EXCHANGE_REFUSALS) {
+    test(`Core's ${name} refusal is an AuthExpiredError, without a notification`, async () => {
+      const t = harness({refreshToken: null, respond: () => refusal()})
+
+      const error = await t.auth.getCoreToken().catch((e) => e)
+      expect(error).toBeInstanceOf(AuthExpiredError)
+      expect(error).not.toBeInstanceOf(AuthUnavailableError)
+      expect(t.expired).toBe(0)
+      expect(await t.storage.get(KEY)).toBeNull()
+    })
+  }
+
+  test("an abort propagates as the abort", async () => {
+    const t = harness({
+      refreshToken: null,
+      respond: () => {
+        throw new DOMException("The operation was aborted", "AbortError")
+      },
+    })
+
+    const error = await t.auth.getCoreToken().catch((e) => e)
+    expect((error as Error).name).toBe("AbortError")
+  })
+
+  test("a failing getSubjectToken propagates as it always has", async () => {
+    const {config} = subjectProvider(1)
+    const t = harness({config, refreshToken: null, respond: () => issued("exchanged")})
+
+    await expect(t.auth.getCoreToken()).rejects.toThrow("secure storage is unavailable")
+    expect(t.calls).toHaveLength(0)
+  })
+})

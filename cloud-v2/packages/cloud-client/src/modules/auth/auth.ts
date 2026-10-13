@@ -24,6 +24,13 @@
  *    that is not Core's) says nothing about the token. It is kept, `onExpired`
  *    does not fire, no exchange is attempted, and `AuthUnavailableError` is
  *    thrown so the caller retries later with the same refresh token.
+ *  - Exchange failures are classified the same way: only Core's own refusal of
+ *    the subject token (`EXCHANGE_REFUSAL_ERRORS`) is an `AuthExpiredError`, and
+ *    `onExpired` fires only when that refusal answers the fresh exchange that
+ *    follows a rejected refresh token. Anything else, including the host's
+ *    `getSubjectToken` throwing, is an `AuthUnavailableError` and notifies no one.
+ *  - A rejection or exchange answer that arrives after `clearSession()` is about
+ *    a session that is gone: it notifies no one and restores nothing.
  *
  * Security: the access token is never written to storage, never given to a
  * miniapp, and no token is ever logged.
@@ -149,26 +156,46 @@ function isRetryableRevokeError(err: unknown): boolean {
 }
 
 /**
+ * What counts as Core itself refusing a token request, as opposed to a request
+ * that merely failed. Core renders every refusal as `{error, error_description}`
+ * through its global error translator (`api/app.ts`) with the status its
+ * `OauthError` carries (`types/oauth.types.ts`). Only a 400 or 401 whose body has
+ * one of the codes below counts; RFC 6749 lets a server pick between the two
+ * statuses, so both are accepted for every code. A 5xx, 408 or 429, a body that
+ * is not JSON, or any other 4xx is not Core talking about the credentials at all
+ * (a proxy, a captive portal, an outage), so it is never a refusal.
+ */
+const CORE_REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 401])
+
+/**
  * The only answers to `POST /api/client/auth/refresh` that say the refresh token
- * (or the session it belongs to) is gone for good. Core renders every refusal as
- * `{error, error_description}` through its global error translator
- * (`api/app.ts`), and `refreshSession` (`services/session.service.ts`) refuses a
- * token for exactly two reasons:
+ * (or the session it belongs to) is gone for good. `refreshSession`
+ * (`services/session.service.ts`) refuses a token for exactly two reasons:
  *
  *  - `invalid_grant`, HTTP 400: the token is unknown, expired or already used,
  *    its session identity is incomplete, or its account is deleted.
  *  - `unauthorized_client`, HTTP 401: the session's tenant (OEM or enterprise
  *    org) is unknown or disabled.
  *
- * Both statuses are accepted for both codes, since RFC 6749 lets a server pick
- * between 400 and 401. Nothing else qualifies. `invalid_request` and
- * `unsupported_grant_type` describe the shape of the request (a missing
- * `refresh_token` or `grant_type`), which a proxy that drops or rewrites the form
- * body produces just as well, so they are no verdict on the token. A 5xx, 408 or
- * 429, a body that is not JSON, or any other 4xx is not Core talking at all.
+ * `invalid_request` and `unsupported_grant_type` describe the shape of the
+ * request (a missing `refresh_token` or `grant_type`), which a proxy that drops
+ * or rewrites the form body produces just as well, so they are no verdict on the
+ * token.
  */
-const DEAD_REFRESH_TOKEN_STATUSES: ReadonlySet<number> = new Set([400, 401])
 const DEAD_REFRESH_TOKEN_ERRORS: ReadonlySet<string> = new Set(["invalid_grant", "unauthorized_client"])
+
+/**
+ * The answers to `POST /api/client/auth/exchange` that say the subject token is
+ * unusable (`oem.service.ts`, `session.service.ts`): `invalid_grant` (it failed
+ * verification or lacks required claims), `unauthorized_client` (its OEM is
+ * unknown or disabled), and `invalid_request` (it is not a parseable JWT).
+ * `unsupported_grant_type` is left out for the same reason as on refresh.
+ */
+const EXCHANGE_REFUSAL_ERRORS: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "unauthorized_client",
+  "invalid_request",
+])
 
 /** OAuth error codes are short snake_case words; anything else is not safe to keep or log. */
 const OAUTH_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
@@ -177,11 +204,10 @@ const OAUTH_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
  * A token endpoint answered with a non-2xx status. `status` is the HTTP status and
  * `code` is the OAuth `error` from a JSON body, when there was a well-formed one.
  *
- * It is an `AuthExpiredError` so the first-use exchange and the logout refresh,
- * which have always thrown that for any refusal, are unchanged. `refresh` never
- * lets it escape: it decides from `status` and `code` whether the refresh token is
- * dead (`RefreshTokenRejectedError`) or the failure is transient
- * (`AuthUnavailableError`).
+ * It is an `AuthExpiredError` so the logout refresh, which has always thrown that
+ * for any non-2xx, is unchanged. `requestTokens` lets it out only when it is
+ * Core's refusal (`isCoreRefusal`); every other non-2xx becomes an
+ * `AuthUnavailableError` there.
  */
 class TokenEndpointError extends AuthExpiredError {
   constructor(
@@ -196,12 +222,13 @@ class TokenEndpointError extends AuthExpiredError {
 /** Core definitively rejected the refresh token: it is cleared, and the host must re-authenticate. */
 class RefreshTokenRejectedError extends AuthExpiredError {}
 
-function isDeadRefreshTokenRejection(err: unknown): err is TokenEndpointError {
+/** `err` is Core itself refusing the request: a 400 or 401 carrying one of `codes`. */
+function isCoreRefusal(err: unknown, codes: ReadonlySet<string>): err is TokenEndpointError {
   return (
     err instanceof TokenEndpointError &&
-    DEAD_REFRESH_TOKEN_STATUSES.has(err.status) &&
+    CORE_REFUSAL_STATUSES.has(err.status) &&
     err.code !== undefined &&
-    DEAD_REFRESH_TOKEN_ERRORS.has(err.code)
+    codes.has(err.code)
   )
 }
 
@@ -507,17 +534,42 @@ export class Auth implements AuthModule {
         // was the caller's answer, and a cleared session must not reacquire
         // credentials from the upstream provider.
         if (err instanceof RefreshTokenRejectedError && this.canExchangeFreshSubject()) {
-          this.logger.info("refresh token rejected; exchanging fresh subject token")
-          try {
-            return await this.exchange(generation)
-          } catch {
-            this.fireExpired()
-          }
+          return this.exchangeAfterRejection(generation, err)
         }
         throw err
       }
     }
     return this.exchange(generation)
+  }
+
+  /**
+   * One fresh subject exchange after Core rejected the refresh token (the host
+   * can supply a subject token on demand). The dead refresh token is already
+   * cleared, so a failure here leaves the next `getCoreToken` on the first-use
+   * exchange; `onExpired` fires only if Core itself refuses the fresh subject
+   * token, which is when the host really must re-authenticate.
+   */
+  private async exchangeAfterRejection(generation: number, rejection: RefreshTokenRejectedError): Promise<string> {
+    this.assertSessionActive(generation)
+    this.logger.info("refresh token rejected; exchanging fresh subject token")
+    try {
+      return await this.exchange(generation)
+    } catch (err) {
+      if (isAbortError(err)) throw err
+      // A logout that raced the exchange wins over whatever the exchange came to.
+      this.assertSessionActive(generation)
+      if (isCoreRefusal(err, EXCHANGE_REFUSAL_ERRORS)) {
+        this.fireExpired()
+        throw rejection
+      }
+      // Already classified: a retryable failure, or a local problem that is not about the credentials.
+      if (err instanceof AuthUnavailableError || err instanceof AuthExpiredError) throw err
+      // The host's getSubjectToken threw (or the like): nothing was refused.
+      this.logger.warn("fresh subject token could not be exchanged; keeping the session retryable", {
+        error: err instanceof Error ? err.name : typeof err,
+      })
+      throw new AuthUnavailableError("fresh subject token could not be exchanged; try again later", {cause: err})
+    }
   }
 
   /**
@@ -553,7 +605,7 @@ export class Auth implements AuthModule {
       subject_token_type: SUBJECT_TOKEN_TYPE_URN[subject.type],
     })
 
-    const tokens = await this.postForm(EXCHANGE_PATH, body, "exchange")
+    const tokens = await this.requestTokens(EXCHANGE_PATH, body, "exchange", EXCHANGE_REFUSAL_ERRORS)
     await this.saveTokenPair(
       {
         accessToken: tokens.access_token,
@@ -572,8 +624,8 @@ export class Auth implements AuthModule {
    * Refresh near expiry: trade the stored refresh token for a new access token
    * and a rotated refresh token, saving both.
    *
-   * Only Core's definitive rejection of the refresh token (see
-   * `isDeadRefreshTokenRejection`) clears the stored state. The caller either
+   * Only Core's definitive rejection of the refresh token
+   * (`DEAD_REFRESH_TOKEN_ERRORS`) clears the stored state. The caller either
    * falls back to one fresh subject-token exchange (for on-demand subject-token
    * configs) or fires `onExpired` once; both surface a
    * `RefreshTokenRejectedError`. We do not retry refresh forever: a dead
@@ -585,6 +637,7 @@ export class Auth implements AuthModule {
    * `AuthUnavailableError`, except an abort, which propagates unchanged.
    */
   private async refresh(refreshToken: string, opts?: {deferExpired?: boolean; generation?: number}): Promise<string> {
+    const generation = opts?.generation ?? this.sessionGeneration
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -592,31 +645,20 @@ export class Auth implements AuthModule {
 
     let tokens: TokenResponse
     try {
-      tokens = await this.postForm(REFRESH_PATH, body, "refresh")
+      tokens = await this.requestTokens(REFRESH_PATH, body, "refresh", DEAD_REFRESH_TOKEN_ERRORS)
     } catch (err) {
-      // The caller's own cancellation is not a failure of the token either.
-      if (isAbortError(err)) throw err
-      if (isDeadRefreshTokenRejection(err)) {
-        // Core rejected the refresh token for good: drop it so we do not keep
-        // presenting a known-bad token.
-        await this.store.clear()
-        if (!opts?.deferExpired) {
-          this.fireExpired()
-        }
-        throw new RefreshTokenRejectedError("token refresh failed; re-auth required")
+      // An abort, a retryable failure and a local problem are not a rejection of the token.
+      if (!isCoreRefusal(err, DEAD_REFRESH_TOKEN_ERRORS)) throw err
+      // A rejection that arrives after logout is about a session that is already gone: it must
+      // not notify the host, clear what a newer session saved, or send the caller to exchange.
+      this.assertSessionActive(generation)
+      // Core rejected the refresh token for good: drop it so we do not keep
+      // presenting a known-bad token.
+      await this.store.clear()
+      if (!opts?.deferExpired) {
+        this.fireExpired()
       }
-      // A local problem (for example no Core endpoint configured) is not a
-      // failed request and says nothing about the token; it is not retryable.
-      if (err instanceof AuthExpiredError && !(err instanceof TokenEndpointError)) throw err
-      // Anything else is no verdict on the token: keep it and let the caller retry.
-      // Core answering with an error we do not recognize still carries its status;
-      // a transport or parse failure does not.
-      const status = err instanceof TokenEndpointError ? err.status : undefined
-      this.logger.warn("token refresh failed; keeping the refresh token", {
-        ...(status !== undefined ? {status} : {}),
-        error: err instanceof Error ? err.name : typeof err,
-      })
-      throw new AuthUnavailableError("token refresh could not be completed; try again later", {status, cause: err})
+      throw new RefreshTokenRejectedError("token refresh failed; re-auth required")
     }
 
     await this.saveTokenPair(
@@ -624,7 +666,7 @@ export class Auth implements AuthModule {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
       },
-      opts?.generation ?? this.sessionGeneration,
+      generation,
     )
     this.expiredFired = false
     this.logger.debug("refreshed access token")
@@ -700,6 +742,42 @@ export class Auth implements AuthModule {
   }
 
   /**
+   * `postForm` for the calls whose failure says something about the credentials
+   * (`/exchange` and `/refresh`). Settles as exactly one of:
+   *  - the tokens;
+   *  - the caller's abort, unchanged;
+   *  - a `TokenEndpointError` that is Core's own refusal (`isCoreRefusal` with
+   *    `refusals`), for the caller to act on;
+   *  - an `AuthExpiredError` that is not a failed request (no Core endpoint
+   *    configured), unchanged;
+   *  - `AuthUnavailableError` for everything else: a network error, a timeout, a
+   *    408, 429 or 5xx, a body that is not Core's JSON, any other 4xx. None of
+   *    those says the credentials are bad, so the caller keeps them and retries.
+   */
+  private async requestTokens(
+    path: string,
+    body: URLSearchParams,
+    label: string,
+    refusals: ReadonlySet<string>,
+  ): Promise<TokenResponse> {
+    try {
+      return await this.postForm(path, body, label)
+    } catch (err) {
+      if (isAbortError(err) || isCoreRefusal(err, refusals)) throw err
+      if (err instanceof AuthExpiredError && !(err instanceof TokenEndpointError)) throw err
+      // Core answering with an error we do not recognize still carries its status;
+      // a transport or parse failure does not.
+      const status = err instanceof TokenEndpointError ? err.status : undefined
+      this.logger.warn("token request failed; keeping the credentials", {
+        label,
+        ...(status !== undefined ? {status} : {}),
+        error: err instanceof Error ? err.name : typeof err,
+      })
+      throw new AuthUnavailableError(`${label} could not be completed; try again later`, {status, cause: err})
+    }
+  }
+
+  /**
    * POST a form-encoded body to a token endpoint and parse the RFC token
    * response.
    *
@@ -729,7 +807,7 @@ export class Auth implements AuthModule {
       // description, so no token field can leak into a message a host might
       // surface.
       // Only a 400 or 401 body is ever consulted, so no other body is read.
-      const code = DEAD_REFRESH_TOKEN_STATUSES.has(res.status) ? await this.readOauthErrorCode(res) : undefined
+      const code = CORE_REFUSAL_STATUSES.has(res.status) ? await this.readOauthErrorCode(res) : undefined
       this.logger.warn("auth token request failed", {label, status: res.status, ...(code ? {code} : {})})
       throw new TokenEndpointError(`${label} request failed with status ${res.status}`, res.status, code)
     }

@@ -409,6 +409,14 @@ without configuring Core at all.
    that is not Core's JSON, any other 4xx) says nothing about the token. Keep it,
    don't fire `onExpired`, don't exchange, and throw `AuthUnavailableError`; the
    next call refreshes again with the same refresh token.
+6. Exchanges are classified the same way. Only Core's own refusal of the subject
+   token (HTTP 400 or 401 with `invalid_grant`, `unauthorized_client` or
+   `invalid_request`) is an `AuthExpiredError`, and `onExpired` fires only when
+   such a refusal answers the fresh exchange that follows a rejected refresh
+   token. A network error, timeout, 408, 429, 5xx, a body that is not Core's
+   JSON, or the host's `getSubjectToken` throwing is an `AuthUnavailableError`
+   that clears and notifies nothing. An answer that arrives after
+   `clearSession()` notifies no one and restores nothing.
 
 **`getMiniappToken(packageName)`:** calls `POST /api/client/auth/miniapp-token` with
 the Core token as the Bearer, and caches the result per packageName with its
