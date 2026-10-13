@@ -18,6 +18,7 @@ import {TestHostStateService, type ReceivedTestHostState} from './test-host-stat
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
+type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
 export interface RoutineJobRepository {
@@ -449,7 +450,7 @@ export class RoutineJobService {
       binding.hostId === hostId && binding.laneId === input.laneId && binding.actionsJobId === input.actionsJobId && binding.actionsRunId === input.actionsRunId,
       observation};
   }
-  async cancel(jobId: string, value: unknown) {
+  async cancel(jobId: string, value: unknown, phase?: ObservationPhase) {
     const input = z.object({reason: z.string().min(1).max(2000)}).strict().parse(value), row = await this.job(jobId);
     const cancellation = row.fleetCancellation ?? {requestedAt: new Date(this.now()).toISOString(), reason: input.reason};
     const saved = row.fleetCancellation ? row : await this.rows.cancel(jobId, row.fleetSelectionSha256, cancellation) ?? await this.job(jobId);
@@ -461,7 +462,7 @@ export class RoutineJobService {
         if(!retained.fleetActions?.some(value=>value.actionsRunId===run.actionsRunId))throw new TestRunError(503,'Actions delivery history exceeds its bound');
       }}});
     await this.rows.cancellationProgress?.(jobId,progress,completedRunIds);
-    return this.observation(jobId);
+    return this.observation(jobId, phase);
   }
   async actions(jobId: string, value: unknown) {
     const input = routineJobActionsSchema.parse(value); let row = await this.job(jobId);
@@ -523,13 +524,13 @@ export class RoutineJobService {
       throw new TestRequestConflict('Publication failure changed its original frozen receipt');
     return {...saved.dispatchCompletion!, publicationFailure: saved.publicationFailure};
   }
-  async observation(jobId: string, phase: (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void = () => {}) {
+  async observation(jobId: string, phase: ObservationPhase = () => {}) {
     phase('request'); const saved = await this.job(jobId);
     phase('delivery'); let row = await this.deliver(saved);
     if (!row.fleetCancellation && this.now() >= row.fleetDeadline.getTime() && (row.state !== 'terminal' ||
       !!row.fleetBinding && !row.dispatchCompletion && !row.hostRejection && !row.preparationCancellation && !row.preparationRejection)) {
-      phase('cancellation'); await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'});
-      row = await this.job(jobId);
+      phase('cancellation'); await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'}, phase);
+      phase('request'); row = await this.job(jobId);
     }
     phase('result'); let result: unknown;
     if (row.fleetBinding) try {result = await this.results.detail(jobId);}

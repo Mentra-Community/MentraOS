@@ -24,6 +24,20 @@ test('normal observations stay quiet and a slow original request retains its pha
     }finally{clock.mockRestore();timer.mockRestore();cancel.mockRestore();}
   }
 });
+
+test('slow fallback failure settles its diagnostic timer without changing the original API error',async()=>{
+  process.env.TEST_RUN_INGEST_TOKEN=observerToken;let now=0,cleared=false;const warnings:any[]=[];
+  const clock=spyOn(Date,'now').mockImplementation(()=>now);
+  const timer=spyOn(globalThis,'setTimeout').mockImplementation((()=>1)as any),cancel=spyOn(globalThis,'clearTimeout').mockImplementation((()=>{cleared=true;})as any);
+  const jobs={async observation(){throw new TestRunError(404,'Missing run');}}as unknown as RoutineJobService;
+  const authors={async observation(){now=11000;throw new TestRunError(409,'Original author conflict');}}as unknown as RoutineWorkService;
+  const app=new Hono<AppEnv>();app.use('*',async(c,next)=>{c.set('logger',{warn:(fields:unknown,message:string)=>warnings.push({fields,message})}as any);await next();});app.route('/',createRoutineJobsApi(jobs,authors));
+  try{
+    const response=await app.request('/author/observation',{headers:{authorization:`Bearer ${observerToken}`}});
+    expect(response.status).toBe(409);expect(await response.json()).toMatchObject({message:'Original author conflict'});
+    expect(cleared).toBe(true);expect(warnings).toEqual([{fields:{phase:'author',elapsedMs:11000,errorName:'Error'},message:'slow routine job observation failed'}]);
+  }finally{clock.mockRestore();timer.mockRestore();cancel.mockRestore();}
+});
 const previous = process.env.TEST_RUN_INGEST_TOKEN;
 afterEach(() => {if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN; else process.env.TEST_RUN_INGEST_TOKEN=previous});
 const observerToken='observer-token-at-least-thirty-two-characters';
