@@ -91,7 +91,10 @@ export async function saveCredentials(credentials: CliCredentials): Promise<"key
       return "keychain"
     }
   } catch {
-    // No usable keychain: fall through to the file.
+    // No usable keychain: fall through to the file, and try not to leave an older login there.
+    if (typeof Bun !== "undefined" && Bun.secrets) {
+      await Bun.secrets.delete({service: SERVICE, name: credentialName(target)}).catch(() => false)
+    }
   }
   const path = credentialsFile(target)
   mkdirSync(cliHome(), {recursive: true, mode: 0o700})
@@ -116,23 +119,32 @@ export async function loadCredentials(target: CliTarget): Promise<CommandCredent
   return loadStoredLogin(target)
 }
 
-/** The login stored for `target`, ignoring `MENTRA_CLI_TOKEN`; null when there is none. */
+/**
+ * The login stored for `target`, ignoring `MENTRA_CLI_TOKEN`; null when there is none. When both the
+ * keychain and the file hold one (a save fell back to the file while the keychain was unavailable),
+ * the more recently stored wins.
+ */
 export async function loadStoredLogin(target: CliTarget): Promise<CliCredentials | null> {
+  let fromKeychain: CliCredentials | null = null
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
       const value = await Bun.secrets.get({service: SERVICE, name: credentialName(target)})
-      if (value) return storedLogin(value, target)
+      if (value) fromKeychain = storedLogin(value, target)
     }
   } catch {
-    // Fall through to the file.
+    // Read the file alone.
   }
+  let fromFile: CliCredentials | null = null
   try {
     const path = credentialsFile(target)
-    if (existsSync(path)) return storedLogin(readFileSync(path, "utf8"), target)
+    if (existsSync(path)) fromFile = storedLogin(readFileSync(path, "utf8"), target)
   } catch {
     // An unreadable file reads as signed out.
   }
-  return null
+  if (fromKeychain && fromFile) {
+    return Date.parse(fromFile.storedAt) > Date.parse(fromKeychain.storedAt) ? fromFile : fromKeychain
+  }
+  return fromKeychain ?? fromFile
 }
 
 /** Remove the login stored for `target`, from the keychain and the file. */

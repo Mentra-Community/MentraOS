@@ -189,6 +189,32 @@ describe("stored logins", () => {
     expect(await loadCredentials(target)).toBeNull()
   })
 
+  test("a login written to the file while the keychain failed is not shadowed by an older keychain login", async () => {
+    const target = store(DEFAULT_STORE_URL)
+    await saveCredentials(login(target, {refreshToken: "older", storedAt: "2026-10-01T00:00:00.000Z"}))
+    useKeychain(false)
+    expect(await saveCredentials(login(target, {refreshToken: "newer", storedAt: "2026-10-02T00:00:00.000Z"}))).toBe("file")
+    useKeychain(true)
+    expect((await loadStoredLogin(target))?.refreshToken).toBe("newer")
+    // Saving again with the keychain back moves the login there and drops the file.
+    await saveCredentials(login(target, {refreshToken: "newest", storedAt: "2026-10-03T00:00:00.000Z"}))
+    expect((await loadStoredLogin(target))?.refreshToken).toBe("newest")
+  })
+
+  test("a write the keychain refuses removes the older keychain login it would otherwise leave behind", async () => {
+    const target = store(DEFAULT_STORE_URL)
+    await saveCredentials(login(target, {refreshToken: "older"}))
+    // The keychain refuses writes but still deletes: the stale record goes with the fallback.
+    useKeychain(true)
+    const set = spyOn(Bun.secrets, "set").mockImplementation(async () => {
+      throw new Error("keychain locked")
+    })
+    expect(await saveCredentials(login(target, {refreshToken: "newer"}))).toBe("file")
+    set.mockRestore()
+    expect([...secrets.keys()]).toHaveLength(0)
+    expect((await loadStoredLogin(target))?.refreshToken).toBe("newer")
+  })
+
   test("clearing removes the keychain record", async () => {
     const target = store(DEFAULT_STORE_URL)
     await saveCredentials(login(target))
