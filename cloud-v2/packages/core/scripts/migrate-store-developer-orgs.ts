@@ -72,6 +72,15 @@
  * unclaimed membership in that workspace is skipped with the keys bound to it
  * (`pendingCollisions`); the rest of the org still imports.
  *
+ * Once the Store serves from Core it keeps every workspace's publishing profile
+ * (its package prefix) in `developer_orgs` too, under the workspace id, so a re-run
+ * after that (a roll-forward) also reads profiles of workspaces made in Core. Those
+ * are not developer organizations: a document with no recorded owner and no
+ * memberships, invitations or keys, whose Core workspace exists and was not
+ * created by this script (it records `workspace.imported` for every workspace it
+ * creates), is listed in `workspaceProfiles` and left out of everything else in
+ * the report. This needs the target, so a run without one cannot tell them apart.
+ *
  * What is imported:
  *  - Memberships: `status: "active"` rows only. owner -> owner, admin -> admin,
  *    member -> developer. They keep the WorkOS user id as `pendingWorkosUserId`
@@ -273,6 +282,11 @@ export type MigrationReport = {
   targetCompared: boolean
   /** Orgs whose Core workspace exists but is not active (deleted in Core): nothing imported or changed. */
   skippedWorkspaces: Array<{orgId: string; status: string}>
+  /**
+   * `developer_orgs` documents that are the Store's publishing profiles of workspaces made in Core,
+   * not developer organizations: nothing imported, changed or counted. Empty when the target was not read.
+   */
+  workspaceProfiles: string[]
   /** Live Core credentials revoked because their Store key is revoked. */
   revokedCredentials: Array<{orgId: string; credentialId: string}>
   /**
@@ -441,6 +455,7 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     duplicateMemberships: [],
     targetCompared: apply || options.target !== undefined,
     skippedWorkspaces: [],
+    workspaceProfiles: [],
     revokedCredentials: [],
     removedMemberships: [],
     demotedMemberships: [],
@@ -459,19 +474,37 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
   if (apply) {
     // Only now, with the whole source validated, does anything touch the target.
     await prepareTarget(source)
-    for (const plan of plans) recordOrg(report, plan, await importOrg(plan, log))
+    const profiles = await workspaceProfileIds(mongoose.connection.db!, orgs, rows)
+    for (const plan of plans) {
+      if (profiles.has(plan.orgId)) report.workspaceProfiles.push(plan.orgId)
+      else recordOrg(report, plan, await importOrg(plan, log))
+    }
   } else if (options.target) {
     const db = options.target.db
     if (!db) throw new MigrationError("the target connection is not open")
-    for (const plan of plans) recordOrg(report, plan, reconcile(plan, await readTargetState(db, plan)))
+    const profiles = await workspaceProfileIds(db, orgs, rows)
+    for (const plan of plans) {
+      if (profiles.has(plan.orgId)) report.workspaceProfiles.push(plan.orgId)
+      else recordOrg(report, plan, reconcile(plan, await readTargetState(db, plan)))
+    }
   } else {
     for (const plan of plans) recordOrg(report, plan, null)
+  }
+  if (report.workspaceProfiles.length > 0) {
+    log(
+      `${report.workspaceProfiles.length} developer_orgs document(s) are the Store's publishing profiles of workspaces ` +
+        "made in Core, not developer organizations: left out (workspaceProfiles)",
+    )
   }
 
   const labels = [
     ...new Set(
       plans
-        .filter(plan => !report.skippedWorkspaces.some(skipped => skipped.orgId === plan.orgId))
+        .filter(
+          plan =>
+            !report.skippedWorkspaces.some(skipped => skipped.orgId === plan.orgId) &&
+            !report.workspaceProfiles.includes(plan.orgId),
+        )
         .flatMap(plan => plan.credentials.map(credential => credential.env)),
     ),
   ].sort()
@@ -482,6 +515,38 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     )
   }
   return report
+}
+
+/**
+ * The source orgs that are the Store's publishing profiles of workspaces made in Core: no recorded
+ * owner and no source rows at all, with a Core workspace of that id that this script did not create
+ * (it records `workspace.imported` for every workspace it creates, so an org it imported with nothing
+ * in it stays an org).
+ */
+async function workspaceProfileIds(db: mongoose.mongo.Db, orgs: SourceOrg[], rows: SourceRows): Promise<Set<string>> {
+  const candidates = orgs
+    .map(org => org.orgId)
+    .filter(
+      (orgId, index) =>
+        typeof orgId === "string" &&
+        !stringOrNull(orgs[index]!.ownerUserId) &&
+        !rows.memberships.has(orgId) &&
+        !rows.invitations.has(orgId) &&
+        !rows.keys.has(orgId),
+    )
+  if (candidates.length === 0) return new Set()
+  const existing = (
+    await db.collection(WorkspaceModel.collection.collectionName).distinct("workspaceId", {workspaceId: {$in: candidates}})
+  ).map(String)
+  if (existing.length === 0) return new Set()
+  const imported = new Set(
+    (
+      await db
+        .collection(WorkspaceAuditEventModel.collection.collectionName)
+        .distinct("workspaceId", {workspaceId: {$in: existing}, action: "workspace.imported"})
+    ).map(String),
+  )
+  return new Set(existing.filter(workspaceId => !imported.has(workspaceId)))
 }
 
 /** Everything the import needs from one org, derived from the source rows alone. */
