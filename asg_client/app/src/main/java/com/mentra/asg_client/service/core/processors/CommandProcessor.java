@@ -4,8 +4,10 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.log.BesBootRecheck;
+import com.mentra.asg_client.io.bes.log.BesIncidentNotifier;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
-import com.mentra.asg_client.io.bes.log.BesTracePoller;
+import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.logging.BleTraceLogger;
@@ -14,6 +16,7 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BesCrashReportedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
@@ -80,7 +83,6 @@ public class CommandProcessor {
     private final CommandParser commandParser;
     private final CommandProtocolDetector protocolDetector;
     private final K900CommandHandler k900CommandHandler;
-    private final BesTracePoller besTracePoller;
     private final ResponseSender responseSender;
     private final ChunkReassembler chunkReassembler;
     private final RgbLedCommandHandler rgbLedCommandHandler;
@@ -121,11 +123,18 @@ public class CommandProcessor {
         this.k900CommandHandler =
                 new K900CommandHandler(
                         serviceManager, stateManager, communicationManager, peripheralBus);
-        this.besTracePoller = new BesTracePoller();
+        // Delivered BES TRACE lines land in a rolling store attached to bug reports.
+        BesTraceTail.get().attach(context);
         this.responseSender = new ResponseSender(serviceManager);
         // A wedged BES is otherwise silent on Android's side; this is what turns the stall into a
         // record that survives to the incident report.
         BesLivenessMonitor.get().start(this::probeBesForLiveness);
+        // A BES-only reset leaves the MTK up, so nothing else would re-read sr_syvr and run the
+        // crash collector. A new boot id in the TRACE stream, or a confirmed reboot, does.
+        BesBootRecheck bootRecheck = BesBootRecheck.create(this::requestBesSystemVersionNow);
+        BesTraceTail.get().setBootChangeListener(
+                (oldBid, newBid) -> bootRecheck.onBootChange("trace bid " + oldBid + " -> " + newBid));
+        BesLivenessMonitor.get().setRebootListener(() -> bootRecheck.onBootChange("liveness"));
         this.chunkReassembler = new ChunkReassembler();
 
         // Register vendor-supplied protocol strategies (e.g. the Mentra Live MCU wire format)
@@ -456,6 +465,13 @@ public class CommandProcessor {
                     new TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");
 
+            commandHandlerRegistry.registerHandler(
+                    new BesCrashReportedCommandHandler(communicationManager));
+            Log.d(TAG, "✅ Registered BesCrashReportedCommandHandler");
+
+            // bes_crash_detected leaves over the same BLE response path as the other replies.
+            BesIncidentNotifier.get().setSender(communicationManager::sendBluetoothResponse);
+
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
             Log.d(TAG, "✅ Registered RgbLedCommandHandler");
 
@@ -606,12 +622,9 @@ public class CommandProcessor {
         }
     }
 
-    public void setBesTracePollingEnabled(boolean enabled, long intervalMs) {
-        if (enabled) {
-            besTracePoller.start(k900CommandHandler, context, configurationManager, intervalMs);
-        } else {
-            besTracePoller.stop();
-        }
+    /** Debug override for the BES TRACE tail (DebugBesTraceReceiver). */
+    public void setBesTraceTailEnabled(boolean enabled) {
+        BesTraceTail.get().setEnabled(enabled);
     }
 
     /**
@@ -629,8 +642,14 @@ public class CommandProcessor {
         return k900CommandHandler.requestSystemVersion();
     }
 
+    private boolean requestBesSystemVersionNow() {
+        return k900CommandHandler != null && k900CommandHandler.requestSystemVersion();
+    }
+
     public void cleanup() {
-        besTracePoller.stop();
+        BesTraceTail.get().setBootChangeListener(null);
+        BesLivenessMonitor.get().setRebootListener(null);
+        BesTraceTail.get().detach();
         BesLivenessMonitor.get().stop();
         if (streamCommandHandler != null) streamCommandHandler.cleanup();
     }

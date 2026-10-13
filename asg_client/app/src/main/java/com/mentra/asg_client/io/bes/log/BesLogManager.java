@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.utils.IncidentUploadOkHttp;
 import com.mentra.asg_client.utils.ServerConfigUtil;
@@ -13,6 +14,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -63,6 +67,7 @@ public class BesLogManager {
   private final StringBuilder mLogBuffer = new StringBuilder();
   private boolean mIsReceiving = false;
   private final AtomicBoolean mFinished = new AtomicBoolean(false);
+  private volatile Runnable mOnFinished;
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -72,7 +77,6 @@ public class BesLogManager {
    * background thread instead of posting to the backend — used for BLE relay to the phone.
    */
   private final Consumer<String> mRelayJsonCallback;
-  private final Consumer<String> mRawLogCallback;
 
   /**
    * Backend base URL for direct HTTP upload. When non-empty, takes precedence over
@@ -85,7 +89,7 @@ public class BesLogManager {
    */
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager) {
-    this(incidentId, context, configurationManager, "", null, null);
+    this(incidentId, context, configurationManager, "", null);
   }
 
   /**
@@ -96,7 +100,7 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        String apiBaseUrl) {
-    this(incidentId, context, configurationManager, apiBaseUrl, null, null);
+    this(incidentId, context, configurationManager, apiBaseUrl, null);
   }
 
   /**
@@ -106,26 +110,18 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        Consumer<String> relayJsonCallback) {
-    this(incidentId, context, configurationManager, "", relayJsonCallback, null);
-  }
-
-  public static BesLogManager forRawLogCallback(Context context,
-                                                IConfigurationManager configurationManager,
-                                                Consumer<String> rawLogCallback) {
-    return new BesLogManager("", context, configurationManager, "", null, rawLogCallback);
+    this(incidentId, context, configurationManager, "", relayJsonCallback);
   }
 
   private BesLogManager(String incidentId, Context context,
                         IConfigurationManager configurationManager,
                         String apiBaseUrl,
-                        Consumer<String> relayJsonCallback,
-                        Consumer<String> rawLogCallback) {
+                        Consumer<String> relayJsonCallback) {
     mIncidentId = incidentId;
     mContext = context;
     mConfigurationManager = configurationManager;
     mApiBaseUrl = apiBaseUrl != null ? apiBaseUrl.trim() : "";
     mRelayJsonCallback = relayJsonCallback;
-    mRawLogCallback = rawLogCallback;
     mHandler = new Handler(Looper.getMainLooper());
 
     mFirstPacketTimeout = () -> {
@@ -154,6 +150,34 @@ public class BesLogManager {
 
   public boolean isFinished() {
     return mFinished.get();
+  }
+
+  /**
+   * Runs once when the UART stream is over (terminator, timeout or send failure), before any
+   * upload starts: the owner uses it to release the {@link BesLogTransferLock}.
+   */
+  public void setOnFinished(Runnable onFinished) {
+    mOnFinished = onFinished;
+  }
+
+  /** Ends a session whose {@code mh_logs} request never reached the BES. */
+  public void abort() {
+    if (!mFinished.compareAndSet(false, true)) return;
+    mHandler.removeCallbacks(mFirstPacketTimeout);
+    mHandler.removeCallbacks(mOverallTimeout);
+    runOnFinished();
+  }
+
+  private void runOnFinished() {
+    Runnable onFinished = mOnFinished;
+    mOnFinished = null;
+    if (onFinished != null) {
+      try {
+        onFinished.run();
+      } catch (RuntimeException e) {
+        Log.e(TAG, "onFinished hook failed", e);
+      }
+    }
   }
 
   /**
@@ -195,6 +219,7 @@ public class BesLogManager {
     if (!mFinished.compareAndSet(false, true)) return;
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
+    runOnFinished();
 
     String fullLog = mLogBuffer.toString();
 
@@ -210,17 +235,6 @@ public class BesLogManager {
           mRelayJsonCallback.accept(json);
         } catch (Exception e) {
           Log.e(TAG, "relayJsonCallback failed", e);
-        }
-      }).start();
-      return;
-    }
-
-    if (mRawLogCallback != null) {
-      new Thread(() -> {
-        try {
-          mRawLogCallback.accept(fullLog);
-        } catch (Exception e) {
-          Log.e(TAG, "rawLogCallback failed", e);
         }
       }).start();
       return;
@@ -242,6 +256,44 @@ public class BesLogManager {
 
     final String snapshot = fullLog;
     new Thread(() -> uploadLogs(snapshot)).start();
+  }
+
+  /**
+   * Deliver entries that are already on disk (the BES TRACE store) through the same relay or
+   * upload path as a completed mh_logs dump. No UART traffic.
+   */
+  public void deliverStored(JSONArray entries) {
+    if (!mFinished.compareAndSet(false, true)) return;
+    final String json = buildFirmwareUploadJson(entries);
+    if (mRelayJsonCallback != null) {
+      new Thread(() -> {
+        try {
+          mRelayJsonCallback.accept(json);
+        } catch (Exception e) {
+          Log.e(TAG, "relayJsonCallback failed", e);
+        }
+      }).start();
+      return;
+    }
+    if (mIncidentId == null || mIncidentId.isEmpty() || entries.length() == 0) {
+      Log.i(TAG, "No stored BES TRACE to upload");
+      return;
+    }
+    new Thread(() -> uploadBody(json)).start();
+  }
+
+  /** glasses_firmware artifact JSON for already-timestamped entries. */
+  public static String buildFirmwareUploadJson(JSONArray entries) {
+    try {
+      JSONObject body = new JSONObject();
+      body.put("type", "logs");
+      body.put("source", "glasses_firmware");
+      body.put("entries", entries);
+      return body.toString();
+    } catch (Exception e) {
+      Log.e(TAG, "buildFirmwareUploadJson failed", e);
+      return "{\"type\":\"logs\",\"source\":\"glasses_firmware\",\"entries\":[]}";
+    }
   }
 
   /**
@@ -276,6 +328,161 @@ public class BesLogManager {
     }
   }
 
+  /** TRACE budget (message bytes, newest kept) of the BLE relay copy of an incident bundle. */
+  public static final int BLE_RELAY_FIRMWARE_MAX_BYTES = AsgConstants.BES_TRACE_BLE_RELAY_MAX_BYTES;
+
+  /** Dump budget (message bytes) of the BLE relay copy; the dump is also capped at 80 KB on disk. */
+  public static final int BLE_RELAY_DUMP_MAX_BYTES = 80 * 1024;
+
+  /** Entry source of crash-dump lines in an incident artifact. */
+  public static final String INCIDENT_DUMP_SOURCE = "BES_CRASH";
+
+  /** Entry source of frozen TRACE lines in an incident artifact. */
+  public static final String INCIDENT_TRACE_SOURCE = "BES";
+
+  /** One frozen TRACE line: the store's wall time and text. */
+  public static final class IncidentTraceLine {
+    public final long wallMs;
+    public final String text;
+
+    public IncidentTraceLine(long wallMs, String text) {
+      this.wallMs = wallMs;
+      this.text = text;
+    }
+  }
+
+  /**
+   * Parses a frozen {@code trace.txt} ({@code wallMs \t generation \t positionHex \t text}, one
+   * line per row). Rows that do not parse are skipped.
+   */
+  public static List<IncidentTraceLine> parseIncidentTrace(String traceText) {
+    List<IncidentTraceLine> lines = new ArrayList<>();
+    if (traceText == null || traceText.isEmpty()) {
+      return lines;
+    }
+    for (String row : traceText.split("\n")) {
+      if (row.isEmpty()) {
+        continue;
+      }
+      String[] parts = row.split("\t", 4);
+      if (parts.length < 4) {
+        continue;
+      }
+      try {
+        lines.add(new IncidentTraceLine(Long.parseLong(parts[0].trim()), parts[3]));
+      } catch (NumberFormatException ignored) {
+        // Skip a torn row; the rest of the bundle is still evidence.
+      }
+    }
+    return lines;
+  }
+
+  /**
+   * glasses_firmware artifact body for one incident bundle: crash-dump lines first (entry source
+   * {@code BES_CRASH}), then the frozen TRACE lines (entry source {@code BES}). {@code retryKey}
+   * is part of the body so the persisted bytes are exactly what Cloud (directly or through the
+   * phone relay) sees.
+   *
+   * <p>With {@code relay}, the dump is kept first up to {@link #BLE_RELAY_DUMP_MAX_BYTES} and the
+   * newest TRACE lines up to {@link #BLE_RELAY_FIRMWARE_MAX_BYTES}; when anything is dropped the
+   * first entry's message starts with a {@code [RELAY-TRIMMED ...]} marker.
+   *
+   * @return the body, or {@code null} when there is nothing to upload
+   */
+  public static String buildIncidentFirmwareJson(
+      String dumpText,
+      long dumpTimestampMs,
+      List<IncidentTraceLine> trace,
+      boolean relay,
+      String retryKey) {
+    try {
+      List<String> dump = new ArrayList<>();
+      if (dumpText != null) {
+        for (String line : dumpText.split("\n")) {
+          if (!line.trim().isEmpty()) {
+            dump.add(line);
+          }
+        }
+      }
+      List<IncidentTraceLine> traceLines = trace != null ? trace : new ArrayList<>();
+      int dumpTotal = dump.size();
+      int traceTotal = traceLines.size();
+
+      int dumpKept = dumpTotal;
+      int traceFrom = 0;
+      if (relay) {
+        long dumpBytes = 0;
+        dumpKept = 0;
+        while (dumpKept < dumpTotal) {
+          long next = dumpBytes + utf8Length(dump.get(dumpKept));
+          if (next > BLE_RELAY_DUMP_MAX_BYTES) {
+            break;
+          }
+          dumpBytes = next;
+          dumpKept++;
+        }
+        long traceBytes = 0;
+        traceFrom = traceTotal;
+        while (traceFrom > 0) {
+          long next = traceBytes + utf8Length(traceLines.get(traceFrom - 1).text);
+          if (next > BLE_RELAY_FIRMWARE_MAX_BYTES) {
+            break;
+          }
+          traceBytes = next;
+          traceFrom--;
+        }
+      }
+      int traceKept = traceTotal - traceFrom;
+      if (dumpKept + traceKept == 0) {
+        return null;
+      }
+
+      String marker = "";
+      if (dumpKept < dumpTotal || traceKept < traceTotal) {
+        marker = "[RELAY-TRIMMED dump_lines=" + dumpKept + "/" + dumpTotal
+            + " trace_lines=" + traceKept + "/" + traceTotal + "] ";
+      }
+
+      JSONArray entries = new JSONArray();
+      for (int i = 0; i < dumpKept; i++) {
+        entries.put(incidentEntry(
+            dumpTimestampMs, "info", dump.get(i), INCIDENT_DUMP_SOURCE, entries.length() == 0 ? marker : ""));
+      }
+      for (int i = traceFrom; i < traceTotal; i++) {
+        IncidentTraceLine line = traceLines.get(i);
+        entries.put(incidentEntry(
+            line.wallMs, "debug", line.text, INCIDENT_TRACE_SOURCE, entries.length() == 0 ? marker : ""));
+      }
+
+      JSONObject body = new JSONObject();
+      body.put("type", "logs");
+      body.put("source", "glasses_firmware");
+      if (retryKey != null && !retryKey.isEmpty()) {
+        body.put("retryKey", retryKey);
+      }
+      body.put("entries", entries);
+      return body.toString();
+    } catch (Exception e) {
+      Log.e(TAG, "buildIncidentFirmwareJson failed", e);
+      return null;
+    }
+  }
+
+  private static JSONObject incidentEntry(
+      long timestamp, String level, String message, String source, String messagePrefix)
+      throws Exception {
+    JSONObject entry = new JSONObject();
+    entry.put("timestamp", timestamp);
+    entry.put("level", level);
+    entry.put("message", messagePrefix + message);
+    entry.put("source", source);
+    return entry;
+  }
+
+  private static int utf8Length(String text) {
+    return text.getBytes(StandardCharsets.UTF_8).length;
+  }
+
   /**
    * Print BES log text to logcat in 3000-char chunks (Android Log truncates at ~4000 chars).
    */
@@ -294,6 +501,10 @@ public class BesLogManager {
   }
 
   private void uploadLogs(String logText) {
+    uploadBody(buildFirmwareUploadJson(logText));
+  }
+
+  private void uploadBody(String bodyStr) {
     try {
       String coreToken = mConfigurationManager.getCoreToken();
       if (coreToken == null || coreToken.isEmpty()) {
@@ -306,7 +517,6 @@ public class BesLogManager {
           : ServerConfigUtil.getServerBaseUrl(mContext);
       String url = buildReportArtifactsUrl(baseUrl, mIncidentId);
 
-      String bodyStr = buildFirmwareUploadJson(logText);
       JSONObject body = new JSONObject(bodyStr);
 
       RequestBody requestBody = RequestBody.create(bodyStr, JSON_MEDIA_TYPE);

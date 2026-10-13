@@ -150,6 +150,9 @@ class MentraLive : SGCManager() {
         private const val A2DP_CONNECT_MAX_ATTEMPTS = 5
         private const val A2DP_CONNECT_RETRY_MS = 800L
         private const val UNPAIR_FLUSH_MS = 400L
+        // Longer than the glasses' bounded relay of one report (BES logs, two file transfers,
+        // the phone POST), so an unreleased name cannot be reused while its report is in flight.
+        internal const val INCIDENT_RELAY_OWNERSHIP_MS = 10 * 60_000L
         private const val GATT_DISCONNECT_TIMEOUT_MS = 2_000L
         private const val MTU_CALLBACK_TIMEOUT_MS = 3_000L
         private val gattTeardownBarrier = MentraLiveGattTeardownBarrier()
@@ -774,6 +777,7 @@ class MentraLive : SGCManager() {
             val apiBaseUrl: String,
             val kind: BleIncidentLogKind
     ) {
+        val reservedAtMs: Long = SystemClock.elapsedRealtime()
         var session: FileTransferSession? = null
     }
 
@@ -4421,6 +4425,16 @@ class MentraLive : SGCManager() {
                         if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null
                 )
             }
+            "bes_crash_detected", "bes_crash_reported_ack" ->
+                    try {
+                        Bridge.log(
+                                "LIVE: $type incidentKey=${json.optString("incidentKey")} " +
+                                        "state=${json.optString("state")} ok=${json.opt("ok")}"
+                        )
+                        Bridge.sendTypedMessage(type, jsonObjectToMap(json))
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error converting $type to Map", e)
+                    }
             "ota_progress" -> {
                 // Legacy glasses firmware: map to unified ota_status so JS has a single path
                 // (Mantle / progress UI).
@@ -6077,6 +6091,30 @@ class MentraLive : SGCManager() {
         }
     }
 
+    /**
+     * The 16-character relay file names keep only 15 characters of the report id, so two reports
+     * can share them. The phone routes a received file to the report registered under its name;
+     * refuse a second report until the owner's Cloud POST is confirmed or its ownership expires.
+     */
+    private fun reserveIncidentRelays(vararg relays: BleIncidentLogRelay) {
+        synchronized(bleIncidentLogRelays) {
+            val now = SystemClock.elapsedRealtime()
+            for (relay in relays) {
+                val owner = bleIncidentLogRelays[relay.fileBaseKey] ?: continue
+                if (owner.incidentId != relay.incidentId &&
+                        now - owner.reservedAtMs < INCIDENT_RELAY_OWNERSHIP_MS) {
+                    throw BluetoothSdkException(
+                            "incident_relay_busy",
+                            "BLE relay ${relay.fileBaseKey} is still owned by report ${owner.incidentId}.",
+                    )
+                }
+            }
+            for (relay in relays) {
+                bleIncidentLogRelays[relay.fileBaseKey] = relay
+            }
+        }
+    }
+
     override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
         if (!isConnected || bluetoothGatt == null || txCharacteristic == null) {
             throw BluetoothSdkException(
@@ -6096,10 +6134,9 @@ class MentraLive : SGCManager() {
             }
             val bKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B')
             val lKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'L')
-            bleIncidentLogRelays[bKey] =
-                    BleIncidentLogRelay(bKey, incidentId, base, BleIncidentLogKind.FIRMWARE)
-            bleIncidentLogRelays[lKey] =
-                    BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT)
+            val bRelay = BleIncidentLogRelay(bKey, incidentId, base, BleIncidentLogKind.FIRMWARE)
+            val lRelay = BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT)
+            reserveIncidentRelays(bRelay, lRelay)
 
             val auth = JSONObject()
             auth.put("type", "auth_token")
@@ -6114,8 +6151,8 @@ class MentraLive : SGCManager() {
                     sessionGeneration != bleSessionGeneration.get() ||
                     !isConnected || bluetoothGatt == null || txCharacteristic == null ||
                     !sendJson(json, true, true, sessionGeneration) || sessionGeneration != bleSessionGeneration.get()) {
-                bleIncidentLogRelays.remove(bKey)
-                bleIncidentLogRelays.remove(lKey)
+                bleIncidentLogRelays.remove(bKey, bRelay)
+                bleIncidentLogRelays.remove(lKey, lRelay)
                 throw BluetoothSdkException("incident_dispatch_failed", "Could not queue the glasses incident-log request.")
             }
             Bridge.log(
@@ -6129,6 +6166,27 @@ class MentraLive : SGCManager() {
             )
         } catch (e: JSONException) {
             throw BluetoothSdkException("incident_dispatch_failed", "Could not create the glasses incident-log request.", e)
+        }
+    }
+
+    override fun sendBesCrashReported(incidentKey: String, reportId: String) {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null) {
+            throw BluetoothSdkException(
+                "glasses_not_connected", "Cannot report the BES crash because the glasses BLE link is not ready.",
+            )
+        }
+        val sessionGeneration = bleSessionGeneration.get()
+        try {
+            val json = JSONObject()
+            json.put("type", "bes_crash_reported")
+            json.put("incidentKey", incidentKey)
+            json.put("reportId", reportId)
+            if (!sendJson(json, true, true, sessionGeneration) || sessionGeneration != bleSessionGeneration.get()) {
+                throw BluetoothSdkException("bes_crash_dispatch_failed", "Could not queue bes_crash_reported to the glasses.")
+            }
+            Bridge.log("LIVE: Queued bes_crash_reported incidentKey=$incidentKey reportId=$reportId")
+        } catch (e: JSONException) {
+            throw BluetoothSdkException("bes_crash_dispatch_failed", "Could not create bes_crash_reported.", e)
         }
     }
 
@@ -10430,6 +10488,15 @@ class MentraLive : SGCManager() {
                     // Transfer is complete - process successfully
                     Bridge.log("LIVE: 📦 File transfer complete: " + packetInfo.fileName)
 
+                    if (IncidentLogBleRelayNaming.isRelayFileName(packetInfo.fileName)) {
+                        // No relay registered (e.g. the app restarted mid-relay): nothing reached
+                        // Cloud, so success would make the glasses mark the incident uploaded.
+                        Log.w(TAG, "Incident log relay without a registered report: " + packetInfo.fileName)
+                        sendTransferCompleteConfirmation(packetInfo.fileName, false)
+                        activeFileTransfers.remove(packetInfo.fileName)
+                        return
+                    }
+
                     // Assemble and save the file
                     val fileData = session.assembleFile()
                     if (fileData != null) {
@@ -10646,6 +10713,13 @@ class MentraLive : SGCManager() {
                 success,
                 message ->
             Handler(Looper.getMainLooper()).post {
+                // A different report now owns this name (it was admitted after our owner finished),
+                // so a completion here would mark ITS file done. Drop the stale callback.
+                val owner = bleIncidentLogRelays[relay.fileBaseKey]
+                if (owner != null && owner.incidentId != relay.incidentId) {
+                    Log.w(TAG, "Dropping stale incident relay callback for " + relay.fileBaseKey)
+                    return@post
+                }
                 if (success) {
                     Bridge.log(
                             "LIVE: ✅ Incident log BLE relay uploaded (" +
@@ -10653,7 +10727,6 @@ class MentraLive : SGCManager() {
                                     "): " +
                                     relay.incidentId
                     )
-                    bleIncidentLogRelays.remove(relay.fileBaseKey)
                 } else {
                     Log.e(
                             TAG,
@@ -10666,6 +10739,11 @@ class MentraLive : SGCManager() {
                     relay.session = null
                 }
                 sendTransferCompleteConfirmation(fileName, success)
+                // Release only after the glasses' confirmation is queued, so a report that reuses
+                // this name is ordered behind the owner's completion.
+                if (success) {
+                    bleIncidentLogRelays.remove(relay.fileBaseKey, relay)
+                }
             }
         }
     }

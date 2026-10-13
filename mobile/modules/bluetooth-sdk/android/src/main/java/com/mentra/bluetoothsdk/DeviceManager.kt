@@ -1996,6 +1996,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         driver.sendIncidentId(incidentId, apiBaseUrl)
     }
 
+    fun sendBesCrashReported(incidentKey: String, reportId: String) {
+        val driver = sgc ?: throw BluetoothSdkException(
+            "glasses_not_connected", "Cannot report the BES crash because glasses are not connected.",
+        )
+        driver.sendBesCrashReported(incidentKey, reportId)
+    }
+
     /** Push a notification into the glasses' own notification centre; rejects unsupported or disconnected devices. */
     fun sendPhoneNotification(notification: Map<String, Any>) {
         // Package only - never the notification text.

@@ -11,7 +11,9 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.io.bes.log.BesCrashDumpCollector;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
+import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -321,6 +323,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 onBesRecoveryFailed();
                             }
                         });
+        BesTraceTail.get().setSender(this::sendBoundedQuietCommand);
         comManager.registerListener(this);
         comManager.start();
     }
@@ -493,6 +496,33 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         && number <= Integer.MAX_VALUE
                 ? (int) number
                 : null;
+    }
+
+    /**
+     * BES log and TRACE delivery: the normal write safety path without per-frame logging, bounded.
+     * Both callers run on deadline-driven threads (the TRACE poll and the crash pull), so a
+     * blocked UART lane must not hold them. It gives up after
+     * {@link AsgConstants#BES_INCIDENT_SEND_TIMEOUT_MS} and the request is then never sent.
+     */
+    private boolean sendBoundedQuietCommand(String json) {
+        return transportCoordinator.runNormalWrite(
+                quietWrite(json), AsgConstants.BES_INCIDENT_SEND_TIMEOUT_MS);
+    }
+
+    private BesUartTransportCoordinator.WriteAction quietWrite(String json) {
+        byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return () -> {
+            if (!linkState.isSerialOpen()) {
+                return false;
+            }
+            byte[] frame = BesWireFormat.packDataCommand(
+                    payload, BesWireFormat.CMD_TYPE_STRING, uartToBesEndian);
+            boolean sent = comManager.write(frame);
+            if (sent) {
+                BesLivenessMonitor.get().onOutboundWrite();
+            }
+            return sent;
+        };
     }
 
     private boolean sendMessageInternalLocked(byte[] data) {
@@ -1321,6 +1351,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         uartEvidenceInvalidatedAtElapsedMs = SystemClock.elapsedRealtime();
         framedPathProven = false;
         I2sReadyGate.invalidateLink();
+        BesTraceTail.get().setSupported(false);
     }
 
     private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
@@ -1527,8 +1558,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 // both mutations atomic with the baud-state transition.
                                 applyPhonePresenceFromSyvr(bData);
                                 linkState.capsAdvertised(applyBesWireCaps(json));
+                                // OS-1988: a BES with wire_caps.crash_pull reports its boot and
+                                // saved crash dump here; the collector ignores any other BES.
+                                BesCrashDumpCollector.get()
+                                        .onSystemVersion(json, this::sendBoundedQuietCommand);
                                 JSONObject caps = json.optJSONObject("wire_caps");
                                 I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
+                                BesTraceTail.get().onWireCaps(caps);
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
                 Log.i(TAG, "Ignoring sr_syvr from a retired UART session");
@@ -1863,7 +1899,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             skipReason = "state_not_recoverable";
         } else if (currentBootId == null) {
             skipReason = "missing_current_boot";
-        } else if (currentBootId.equals(snapshot.getAuthorizationBootId())) {
+        } else if (currentBootId.equals(snapshot.getAuthorizationBootId())
+                && !"apply_reboot_timeout".equals(snapshot.getTerminalCode())) {
             skipReason = "still_authorization_boot";
         }
         Log.i(
@@ -1918,13 +1955,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private static boolean isRecoverableBesOtaTimeout(BesOtaStateStore.Snapshot snapshot) {
-        if (snapshot.getState() != BesOtaStateStore.State.TERMINAL
-                || snapshot.getTerminalStatus() != BesOtaStateStore.TerminalStatus.FAILURE) {
-            return false;
-        }
-        String terminalCode = snapshot.getTerminalCode();
-        return "recovery_timeout".equals(terminalCode)
-                || "verification_timeout".equals(terminalCode);
+        return snapshot.getState() == BesOtaStateStore.State.TERMINAL
+                && snapshot.getTerminalStatus() == BesOtaStateStore.TerminalStatus.FAILURE
+                && BesOtaStateStore.isSupersedableTimeout(snapshot.getTerminalCode());
     }
 
     private void cacheBesBaudSwitchVersion(JSONObject bData) {
@@ -2219,6 +2252,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 for (byte[] message : completeMessages) {
                     if (!transportCoordinator.isCurrentSerialSession(receiveSession)) {
                         break;
+                    }
+                    // BES TRACE delivery frames bypass BleTrace and listener logging.
+                    if (BesWireFormat.isK900ProtocolFormat(message)
+                            && BesTraceTail.get()
+                                    .onUartPayload(BesWireFormat.extractPayloadAuto(message))) {
+                        BesLivenessMonitor.get().onInboundFrame();
+                        if (BesWireFormat.isValidLinkHealthFrame(message)) {
+                            onValidUartFrame(receiveSession);
+                        }
+                        continue;
                     }
                     BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
                     BesLivenessMonitor.get().onInboundFrame();

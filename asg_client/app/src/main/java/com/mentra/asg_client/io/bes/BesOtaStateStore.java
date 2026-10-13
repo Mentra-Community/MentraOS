@@ -446,6 +446,9 @@ public final class BesOtaStateStore {
      * <p>Recovery timing is not proof that the installation failed. A fresh framed version reply
      * from a different Linux boot is stronger evidence, but it must never erase authorization,
      * protocol, artifact, or version failures.
+     *
+     * <p>{@code apply_reboot_timeout} also accepts proof from the authorization boot: BES had
+     * already accepted apply, and BES can restart without resetting the MTK.
      */
     public TransitionResult completeLateExactTargetAfterRecoveryTimeout(
             String ownerSessionId, String currentBootId, String actualVersion) {
@@ -458,12 +461,12 @@ public final class BesOtaStateStore {
                     current.isValid()
                             && current.state == State.TERMINAL
                             && current.terminalStatus == TerminalStatus.FAILURE
-                            && ("recovery_timeout".equals(current.terminalCode)
-                                    || "verification_timeout".equals(current.terminalCode));
+                            && isSupersedableTimeout(current.terminalCode);
+            boolean sameBootAllowed = "apply_reboot_timeout".equals(current.terminalCode);
             if (!eligibleTimeout
                     || !current.ownerSessionId.equals(owner)
                     || boot == null
-                    || boot.equals(current.authorizationBootId)
+                    || (!sameBootAllowed && boot.equals(current.authorizationBootId))
                     || !current.targetVersion.equals(actual)) {
                 logDecision(
                         "late_timeout_version_proof_rejected",
@@ -487,6 +490,13 @@ public final class BesOtaStateStore {
                     ? TransitionResult.APPLIED
                     : TransitionResult.PERSISTENCE_FAILURE;
         }
+    }
+
+    /** Timeout failures that exact target-version proof may replace with success. */
+    public static boolean isSupersedableTimeout(String terminalCode) {
+        return "recovery_timeout".equals(terminalCode)
+                || "verification_timeout".equals(terminalCode)
+                || "apply_reboot_timeout".equals(terminalCode);
     }
 
     /** Monotonic owner-checked failure transition. Failure never erases authorization history. */

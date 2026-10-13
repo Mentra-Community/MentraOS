@@ -14,6 +14,7 @@ describe("public SDK surface", () => {
       "setMicTuning",
       "requestMicTuningState",
       "setMicRmsTelemetry",
+      "sendBesCrashReported",
     ]) {
       expect(indexSource).not.toContain(name)
     }
@@ -23,5 +24,10 @@ describe("public SDK surface", () => {
     expect(indexSource).not.toMatch(/"wear_state"/)
     expect(indexSource).not.toMatch(/"wear_tuning"/)
     expect(indexSource).not.toMatch(/"mic_tuning_state"/)
+  })
+
+  it("allowlists bes_crash_detected and exports its payload type", () => {
+    expect(indexSource).toMatch(/"bes_crash_detected"/)
+    expect(indexSource).toMatch(/\bBesCrashDetectedEvent,/)
   })
 })
