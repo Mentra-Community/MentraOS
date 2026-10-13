@@ -402,13 +402,103 @@ describe("Fleet.report throws only for auth and aborts", () => {
     await expect(fleetWith(fetch).report(batch, {signal: controller.signal})).rejects.toBe(reason)
   })
 
-  test("an error that is not a Fleet answer is not swallowed", async () => {
+  test("an AbortError raised while reading the body propagates even when the caller's signal is not aborted", async () => {
+    const fetch = mock(async () =>
+      bodyDroppedAfterHeaders(200, new DOMException("The operation was aborted", "AbortError")),
+    )
+
+    const error = await fleetWith(fetch as unknown as HttpTransport)
+      .report(batch)
+      .catch((e) => e)
+    expect(error).toBeInstanceOf(DOMException)
+    expect((error as DOMException).name).toBe("AbortError")
+  })
+})
+
+describe("Fleet.report maps every other failure to unavailable", () => {
+  const unavailableOutcome: FleetReportOutcome = {kind: "unavailable", retryAfterSeconds: null}
+
+  test("a connection that drops while a 200 body is being read is unavailable", async () => {
+    for (const failure of [
+      new Error("The socket connection was closed unexpectedly"),
+      new TypeError("Network request failed"),
+      Object.assign(new Error("connection reset"), {code: "ECONNRESET"}),
+    ]) {
+      const fetch = mock(async () => bodyDroppedAfterHeaders(200, failure))
+      await expect(fleetWith(fetch as unknown as HttpTransport).report(batch)).resolves.toEqual(unavailableOutcome)
+      // The body read is past the retry loop, so the batch is sent once and left to the caller's own backoff.
+      expect(fetch).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  test("a connection that drops after part of the 200 body arrived is unavailable", async () => {
+    const fetch = mock(async () => bodyDroppedAfterHeaders(200, new Error("socket closed"), '{"schemaVersion":1,"res'))
+
+    await expect(fleetWith(fetch as unknown as HttpTransport).report(batch)).resolves.toEqual(unavailableOutcome)
+  })
+
+  test("a connection that drops while an error body is being read keeps the status mapping", async () => {
+    const fetch = mock(async () =>
+      bodyDroppedAfterHeaders(503, new Error("socket closed"), undefined, {"Retry-After": "21"}),
+    )
+
+    await expect(fleetWith(fetch as unknown as HttpTransport).report(batch)).resolves.toEqual({
+      kind: "unavailable",
+      retryAfterSeconds: 21,
+    })
+  })
+
+  test("an unexpected error from the HTTP client is unavailable", async () => {
+    for (const failure of [new RangeError("unexpected"), new Error("plain"), "a thrown string", undefined]) {
+      const fleet = new Fleet({
+        post: async () => {
+          throw failure
+        },
+      } as unknown as HttpClient)
+
+      await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
+    }
+  })
+
+  test("a token source failure that is not an auth error is unavailable", async () => {
+    const fetch = mock(async () => json(200, ack)) as unknown as HttpTransport
+    const fleet = fleetWith(fetch, async () => {
+      throw new Error("secure storage is unavailable")
+    })
+
+    await expect(fleet.report(batch)).resolves.toEqual(unavailableOutcome)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test("a non-401 HttpError from the client is still mapped by status", async () => {
     const fleet = new Fleet({
       post: async () => {
-        throw new RangeError("programming error")
+        throw new HttpError("HTTP 413", 413, "payload_too_large")
       },
     } as unknown as HttpClient)
 
-    await expect(fleet.report(batch)).rejects.toBeInstanceOf(RangeError)
+    await expect(fleet.report(batch)).resolves.toEqual({kind: "batch_too_large"})
   })
 })
+
+/** A response whose headers arrive and whose body stream then fails, as when the socket closes mid-read. */
+function bodyDroppedAfterHeaders(
+  status: number,
+  failure: unknown,
+  partial?: string,
+  headers: Record<string, string> = {},
+): Response {
+  const encoder = new TextEncoder()
+  let sentPartial = partial === undefined
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (!sentPartial) {
+        sentPartial = true
+        controller.enqueue(encoder.encode(partial))
+        return
+      }
+      controller.error(failure)
+    },
+  })
+  return new Response(body, {status, headers})
+}

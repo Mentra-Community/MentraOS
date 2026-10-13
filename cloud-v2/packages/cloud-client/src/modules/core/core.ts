@@ -106,7 +106,10 @@ export class Core {
     update(input: SupportStateInput): Promise<SupportProfileUpdateResult>;
   };
   readonly fleet: {
-    /** Throws only for auth and aborts; every Fleet answer is a `FleetReportOutcome`. */
+    /**
+     * Rejects only for an authentication failure (`AuthExpiredError`, or an `HttpError` with status 401) or an abort.
+     * Every other result, including any network or unexpected failure, is a `FleetReportOutcome`.
+     */
     report(batch: FleetReport, opts?: { signal?: AbortSignal }): Promise<FleetReportOutcome>;
   };
 

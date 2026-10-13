@@ -1,5 +1,5 @@
 import {FLEET_NOT_INSTALLED, FleetReportAckSchema, type FleetReport, type FleetReportAck} from "@mentra/cloud-protocol"
-import {HttpError} from "../../errors"
+import {AuthExpiredError, HttpError} from "../../errors"
 import type {HttpClient} from "../../http"
 
 const FLEET_REPORT_PATH = "/api/client/fleet/report"
@@ -34,9 +34,14 @@ const unavailable = (retryAfterSeconds: number | null = null): FleetReportOutcom
   retryAfterSeconds,
 })
 
-/** A 200 whose body is not JSON at all (a captive portal's page, for example) is not an acknowledgement either. */
-function isMalformedBody(error: unknown): boolean {
-  return error instanceof SyntaxError
+/** The caller (or the transport) cancelled the request. */
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError"
+}
+
+/** The credentials were refused or are gone: the caller must refresh or sign in again, so this is never an outcome. */
+function isAuthFailure(error: unknown): boolean {
+  return error instanceof AuthExpiredError || (error instanceof HttpError && error.status === 401)
 }
 
 function outcomeForHttpError(error: HttpError): FleetReportOutcome {
@@ -69,9 +74,14 @@ export class Fleet {
   /**
    * Reports one batch of Fleet records to the phone's own Core.
    *
-   * Throws only for authentication (`AuthExpiredError`, or an `HttpError` with status 401) and for aborts; every
-   * answer from Fleet is a {@link FleetReportOutcome}. The request is sent idempotently, so a transient network
-   * failure is retried by the HTTP client; that is safe because Fleet records are idempotent by ID.
+   * Rejects in exactly two cases: an authentication failure (`AuthExpiredError`, or an `HttpError` with status 401),
+   * or an abort (an `AbortError`, or any error raised once `opts.signal` is aborted). Every other result is a
+   * {@link FleetReportOutcome}, including network failures, timeouts, a connection that drops while the response
+   * body is being read, a body that is not a valid acknowledgement, and unexpected errors, which are
+   * `{kind: "unavailable", retryAfterSeconds: null}`.
+   *
+   * The request is sent idempotently, so the HTTP client retries a transient network failure before the body is
+   * read; that is safe because Fleet records are idempotent by ID.
    */
   async report(batch: FleetReport, opts?: {signal?: AbortSignal}): Promise<FleetReportOutcome> {
     const signal = opts?.signal
@@ -83,11 +93,10 @@ export class Fleet {
       })
     } catch (error) {
       // The caller stopped the request: that is its answer, whatever the transport happened to report.
-      if (signal?.aborted) throw error
-      if (error instanceof HttpError && error.status !== 401) return outcomeForHttpError(error)
-      if (isMalformedBody(error)) return unavailable()
-      // Auth failures (AuthExpiredError, 401), AbortErrors and anything unexpected are the caller's to handle.
-      throw error
+      if (signal?.aborted || isAbortError(error) || isAuthFailure(error)) throw error
+      if (error instanceof HttpError) return outcomeForHttpError(error)
+      // Anything else (a body that is not JSON, a socket that closed mid-body, a failing token source) is no answer.
+      return unavailable()
     }
 
     const ack = FleetReportAckSchema.safeParse(body)
