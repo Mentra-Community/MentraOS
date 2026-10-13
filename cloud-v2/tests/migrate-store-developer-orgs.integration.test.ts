@@ -1317,7 +1317,8 @@ describe("keys that are not imported", () => {
       id: storeKey({orgId: ORG_ACME, name: "Short id", createdByUserId: U.acmeDev, keyId: "not-a-ulid"}),
       lowerId: storeKey({orgId: ORG_ACME, name: "Lowercase id", createdByUserId: U.acmeDev, keyId: ulid().toLowerCase()}),
       noId: storeKey({orgId: ORG_ACME, name: "No id", createdByUserId: U.acmeDev, keyId: undefined}),
-      hash: storeKey({orgId: ORG_ACME, name: "Short hash", createdByUserId: U.acmeDev, hash: "abc123"}),
+      // Malformed hashes no generated id could contain, so the report can be searched for them.
+      hash: storeKey({orgId: ORG_ACME, name: "Short hash", createdByUserId: U.acmeDev, hash: "short-hash-abc123"}),
       upperHash: storeKey({
         orgId: ORG_ACME,
         name: "Uppercase hash",
@@ -1327,7 +1328,7 @@ describe("keys that are not imported", () => {
       env: storeKey({orgId: ORG_ACME, name: "Bad env", createdByUserId: U.acmeDev, env: "Prod_1"}),
       noEnv: storeKey({orgId: ORG_ACME, name: "No env", createdByUserId: U.acmeDev, env: undefined}),
       // Shape is checked for package keys too.
-      app: storeKey({orgId: ORG_ACME, name: "Bad package key", createdByUserId: STAFF_EMAIL, publishingPackage: "com.acme.x", hash: "zz"}),
+      app: storeKey({orgId: ORG_ACME, name: "Bad package key", createdByUserId: STAFF_EMAIL, publishingPackage: "com.acme.x", hash: "package-hash-zz"}),
       // Malformed and without a creator: it is malformed, and only that.
       ghost: storeKey({orgId: ORG_ACME, name: "Ghost and bad env", createdByUserId: U.ghost, env: "BAD"}),
     }
