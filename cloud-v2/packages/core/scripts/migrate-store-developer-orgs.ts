@@ -52,9 +52,10 @@
  *  - A claimed membership (the person has signed in) is never changed: drift on one
  *    is reported (`claimedMembershipDrift`) for an admin to act on in Core.
  *  - A run never leaves a workspace without an owner. When ending or lowering the
- *    unclaimed memberships the Store removed or demoted would leave none (no other active owner,
- *    claimed or pending, and no new owner imported by this run; a deleted
- *    account's owner membership does not count), every owner membership it
+ *    unclaimed memberships the Store removed or demoted would leave none (no other active owner
+ *    who has signed in, or is pending with an identity a person can still claim, and no
+ *    such new owner imported by this run; a deleted account's owner membership does not
+ *    count, as in Core's own last-owner guard), every owner membership it
  *    would end or lower is kept instead and reported (`keptLastOwners`), for an
  *    Organization Admin to decide in Core. The next run ends it once Core has
  *    another owner.
@@ -121,6 +122,7 @@ import {roleAtLeast, type WorkspaceRole} from "@mentra/workspace-contract"
 import mongoose, {type AnyBulkWriteOperation, type ClientSession, type Connection, type Model} from "mongoose"
 import {withTransaction} from "../src/connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../src/models/access-credential.model"
+import {LegacyBrowserIdentityModel} from "../src/models/legacy-browser-identity.model"
 import {UserModel} from "../src/models/user.model"
 import {WorkspaceAuditEventModel} from "../src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../src/models/workspace-invitation.model"
@@ -718,6 +720,11 @@ type TargetState = {
   memberships: TargetMembership[]
   /** Core users among the active owners whose account is deleted: no owner for the last-owner rule. */
   deletedOwnerUserIds: Set<string>
+  /**
+   * WorkOS users, among the owners waiting for their person (in Core or planned), whom a person can still
+   * take up memberships for (the same rule as Core's last-owner guard, `claimableWorkosUserIds`).
+   */
+  claimableOwnerWorkosUserIds: Set<string>
   /** The workspace's live (not revoked) credentials. */
   liveCredentials: Array<{credentialId: string; createdByMembershipId: string | null}>
   /** The workspace's pending invitations. */
@@ -833,10 +840,35 @@ async function readTargetState(
         )
         .toArray()
     : []
+  // Read raw (a dry run's connection is read-only), the same rule as `claimableWorkosUserIds`.
+  const waitingOwners = [
+    ...active.flatMap(row => (row.role === "owner" && !row.mentraUserId && row.pendingWorkosUserId ? [row.pendingWorkosUserId] : [])),
+    ...plan.memberships.flatMap(membership => (membership.role === "owner" ? [membership.sourceUserId] : [])),
+  ]
+  const identities = waitingOwners.length
+    ? await collection(LegacyBrowserIdentityModel)
+        .find({workosUserId: {$in: waitingOwners}}, {...options, projection: {workosUserId: 1, claimedBy: 1}})
+        .toArray()
+    : []
+  const claimants = identities.flatMap(row => (typeof row.claimedBy === "string" && row.claimedBy ? [row.claimedBy] : []))
+  const deletedClaimants = new Set(
+    claimants.length
+      ? (
+          await collection(UserModel)
+            .find({mentraUserId: {$in: claimants}, supportTelemetryDeletedAt: {$ne: null}}, {...options, projection: {mentraUserId: 1}})
+            .toArray()
+        ).map(row => String(row.mentraUserId))
+      : [],
+  )
   return {
     workspaceStatus: workspace ? String(workspace.status) : null,
     memberships: active,
     deletedOwnerUserIds: new Set(deletedOwners.map(row => String(row.mentraUserId))),
+    claimableOwnerWorkosUserIds: new Set(
+      identities
+        .filter(row => !(typeof row.claimedBy === "string" && deletedClaimants.has(row.claimedBy)))
+        .map(row => String(row.workosUserId)),
+    ),
     liveCredentials: credentials.map(row => ({
       credentialId: String(row.credentialId),
       createdByMembershipId: stringOrNull(row.createdByMembershipId),
@@ -946,13 +978,16 @@ function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
         remaining.filter(
           membership =>
             roleAfter(membership) === "owner" &&
-            !(membership.mentraUserId && target.deletedOwnerUserIds.has(membership.mentraUserId)),
+            (membership.mentraUserId
+              ? !target.deletedOwnerUserIds.has(membership.mentraUserId)
+              : membership.pendingWorkosUserId !== null && target.claimableOwnerWorkosUserIds.has(membership.pendingWorkosUserId)),
         ).length +
         plan.memberships.filter(
           membership =>
             membership.role === "owner" &&
             !target.existingMembershipIds.has(membership.membershipId) &&
-            !pendingAfter.has(membership.sourceUserId),
+            !pendingAfter.has(membership.sourceUserId) &&
+            target.claimableOwnerWorkosUserIds.has(membership.sourceUserId),
         ).length
       if (liveOwners === 0) {
         for (const membership of toEnd.filter(candidate => candidate.role === "owner")) {

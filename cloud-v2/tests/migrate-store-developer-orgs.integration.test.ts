@@ -42,6 +42,7 @@ import {AccessCredentialModel} from "../packages/core/src/models/access-credenti
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
+import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
@@ -466,7 +467,7 @@ afterAll(async () => {
 beforeEach(async () => {
   assertConnectedTo(targetUrl, WorkspaceModel.db.name)
   assertConnectedTo(sourceUrl, source.name)
-  await Promise.all([...TARGET_MODELS, UserModel].map(model => (model as typeof WorkspaceModel).deleteMany({})))
+  await Promise.all([...TARGET_MODELS, UserModel, LegacyBrowserIdentityModel].map(model => (model as typeof WorkspaceModel).deleteMany({})))
   for (const name of SOURCE_COLLECTIONS) await sourceDb().collection(name).deleteMany({})
   await seedSource()
   for (const key of ENV_KEYS) delete process.env[key]
@@ -1136,7 +1137,9 @@ describe("re-running apply carries access removals made in the Store", () => {
     await run({apply: true})
     const synthesized = `wm_owner_${ORG_BETA}`
     expect(await WorkspaceMembershipModel.findOne({membershipId: synthesized}).lean()).toMatchObject({role: "owner", status: "active"})
-    // The Store now lists the recorded owner as a member, and someone new as the owner.
+    // The Store now lists the recorded owner as a member, and someone new as the owner, whom a verified
+    // email can claim (so they count as an owner).
+    await LegacyBrowserIdentityModel.create({workosUserId: "user_01J8Z3K6V4W9Q2X5R7T1B0NOWN", email: "new.owner@beta.example"})
     const {insertedId} = await sourceDb()
       .collection("developer_org_memberships")
       .insertOne(membership({orgId: ORG_BETA, userId: U.betaOwner, role: "member", email: "owner@beta.example"}))
@@ -1601,7 +1604,8 @@ describe("re-running apply carries demotions made in the Store", () => {
   test("a role the Store lowers in steps across runs is lowered at each run", async () => {
     await run({apply: true})
     const ownerId = `wm_${await sourceMembershipHex(U.acmeOwner, ORG_ACME, "owner")}`
-    // A new owner joins in the Store, and the old one becomes an admin...
+    // A new owner joins in the Store (a verified email can claim them), and the old one becomes an admin...
+    await LegacyBrowserIdentityModel.create({workosUserId: "user_01J8Z3K6V4W9Q2X5R7T1B0NOWN", email: "next@acme.example"})
     await sourceDb()
       .collection("developer_org_memberships")
       .insertOne(membership({orgId: ORG_ACME, userId: "user_01J8Z3K6V4W9Q2X5R7T1B0NOWN", role: "owner", email: "next@acme.example"}))
@@ -1710,6 +1714,11 @@ describe("re-running apply never leaves a workspace without an owner", () => {
     await WorkspaceMembershipModel.create(
       membershipRow({membershipId: "wm_pending_owner2", workspaceId: ORG_BETA, mentraUserId: null, pendingWorkosUserId: U.stranger, role: "owner", status: "active", startedAt: NOW}),
     )
+    // Pending owners count while a verified email can still claim them (the export recorded one).
+    await LegacyBrowserIdentityModel.create([
+      {workosUserId: U.stranger, email: "stranger@beta.example"},
+      {workosUserId: U.acmeAdmin, email: "adam@delta.example"},
+    ])
     await removeInStore(ORG_ACME, U.acmeOwner)
     // BETA's synthesized owner is gone once the Store records someone else as its owner.
     await sourceDb().collection("developer_orgs").updateOne({orgId: ORG_BETA}, {$set: {ownerUserId: U.betaAdmin}})
@@ -1734,6 +1743,21 @@ describe("re-running apply never leaves a workspace without an owner", () => {
       role: "owner",
       pendingWorkosUserId: U.acmeAdmin,
     })
+  })
+
+  test("a pending owner nobody can claim is no owner: removing the last claimable one is kept and reported", async () => {
+    await run({apply: true})
+    const acmeOwnerId = `wm_${await sourceMembershipHex(U.acmeOwner, ORG_ACME, "owner")}`
+    // A second pending owner whose identity was never exported (or was removed): nobody can take it up.
+    await WorkspaceMembershipModel.create(
+      membershipRow({membershipId: "wm_unclaimable_owner", workspaceId: ORG_ACME, mentraUserId: null, pendingWorkosUserId: U.stranger, role: "owner", status: "active", startedAt: NOW}),
+    )
+    await removeInStore(ORG_ACME, U.acmeOwner)
+
+    const report = await run({apply: true})
+
+    expect(report.keptLastOwners).toEqual([{orgId: ORG_ACME, membershipId: acmeOwnerId, userId: U.acmeOwner}])
+    expect(await WorkspaceMembershipModel.findOne({membershipId: acmeOwnerId}).lean()).toMatchObject({status: "active"})
   })
 
   test("a deleted account's owner membership is no owner: the pending owner is kept", async () => {
