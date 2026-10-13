@@ -929,8 +929,11 @@ describe("re-running apply", () => {
   })
 
   test("refuses a source that is the target under another spelling of its host, before writing anything", async () => {
-    // Only the server can tell: 127.1 is 127.0.0.1, but no URL comparison says so.
-    const alias = targetUrl.replace(/^mongodb:\/\/(127\.0\.0\.1|localhost)/, "mongodb://127.1")
+    // The same server under its other loopback name. The import's own URL check would catch this pair;
+    // here the connections are handed to it directly, so only the servers' identities can tell.
+    const alias = targetUrl.startsWith("mongodb://localhost")
+      ? targetUrl.replace("mongodb://localhost", "mongodb://127.0.0.1")
+      : targetUrl.replace("mongodb://127.0.0.1", "mongodb://localhost")
     expect(alias).not.toBe(targetUrl)
     const sameAsTarget = await openSourceConnection(alias)
     try {
