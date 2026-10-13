@@ -8,7 +8,6 @@ const REPOSITORY = "Mentra-Community/MentraOS";
 const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
-const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
 // Google Play's largest accepted version code.
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
@@ -197,9 +196,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         const current = finalizers.filter(job => job.run_attempt === latest);
         if (current.length > 1) throw new TestDispatchError(502, "Nightly publication is ambiguous");
         if (current[0]?.status !== "completed" || current[0]?.conclusion !== "success"
-          || !current[0]?.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success")
           || !current[0]?.completed_at || !Number.isFinite(Date.parse(current[0].completed_at))
           || Date.parse(current[0].completed_at) > boundary) continue;
+        // Dry runs can finalize successfully, but never produce the finalized result artifact.
+        if (!await this.releaseIdentity(run)) continue;
         // A published but missing platform artifact remains unavailable; do not silently use an older release.
         const publicationAttempt = Math.min(latest, ...finalizers.filter(job => job.started_at && job.completed_at
           && job.started_at === current[0]!.started_at && job.completed_at === current[0]!.completed_at
@@ -319,26 +319,37 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt, tag: "pr-builds", archive: data.artifacts.android,
       result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
-  private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
-    // Downstream failures and notification-only retries do not erase a publication.
-    // A newer finalizer execution must qualify itself; never fall back past it.
-    const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
-    const latestAttempt = Math.max(0, ...finalizers.map(job => job.run_attempt));
-    const published = finalizers.filter(job => job.run_attempt === latestAttempt);
-    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success"
-      && published[0]!.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success"),
-      "Selected coordinated attempt did not publish immutable assets");
-    const job = published[0]!;
-    // GitHub can repeat a retained successful job in a later attempt's history.
-    const attempt = Math.min(job.run_attempt, ...finalizers.filter(item => job.started_at && job.completed_at
-      && item.started_at === job.started_at && item.completed_at === job.completed_at && item.conclusion === job.conclusion)
-      .map(item => item.run_attempt));
+  private async releaseIdentity(run: GithubRun): Promise<string | null> {
     const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
       workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
     const plans = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-plan-mentra-"));
     requireThat(plans.length === 1 && !plans[0]!.expired && plans[0]!.workflow_run.id === run.id
       && plans[0]!.workflow_run.head_sha === run.head_sha, "Release plan is missing or ambiguous");
     const identity = plans[0]!.name.slice("coordinated-release-plan-mentra-".length);
+    const results = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-result-mentra-"));
+    // The existing workflow deliberately omits this artifact for dry runs. Its absence is not a CDN read failure.
+    if (results.length === 0) return null;
+    requireThat(results.length === 1 && results[0]!.name === `coordinated-release-result-mentra-${identity}`
+      && !results[0]!.expired && results[0]!.workflow_run.id === run.id && results[0]!.workflow_run.head_sha === run.head_sha,
+      "Finalized release result is missing or ambiguous");
+    return identity;
+  }
+  private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
+    // Downstream failures and notification-only retries do not erase a publication.
+    // A newer finalizer execution must qualify itself; never fall back past it.
+    const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
+    const latestAttempt = Math.max(0, ...finalizers.map(job => job.run_attempt));
+    const published = finalizers.filter(job => job.run_attempt === latestAttempt);
+    // Successful finalization plus the immutable receipts below prove publication; GitHub can omit job steps.
+    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success",
+      "Selected coordinated attempt did not publish immutable assets");
+    const job = published[0]!;
+    // GitHub can repeat a retained successful job in a later attempt's history.
+    const attempt = Math.min(job.run_attempt, ...finalizers.filter(item => job.started_at && job.completed_at
+      && item.started_at === job.started_at && item.completed_at === job.completed_at && item.conclusion === job.conclusion)
+      .map(item => item.run_attempt));
+    const identity = await this.releaseIdentity(run);
+    requireThat(identity, "Selected coordinated attempt did not publish immutable assets");
     const match = /^(\d+\.\d+\.\d+)-(dev|beta)\.[1-9]\d*$/.exec(identity);
     requireThat(match && match[2] === (channel === "dev" ? "dev" : "beta"), "Release identity does not match the selected channel");
     const tag = `mentra-builds-v${match[1]}`;
