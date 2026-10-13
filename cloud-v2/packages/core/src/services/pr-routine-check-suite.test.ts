@@ -335,3 +335,15 @@ test('lost tagged child checkpoint renews only a positively expired unaccepted p
  expect(f.reruns.get(preview.rerunId)!.state).toBe('preview');expect([...f.reruns.values()].filter(row=>row.state==='accepted')).toHaveLength(1);
  expect(f.gate().attempt.members[0]!.status).toBe('running');expect(f.gate().attempt.members[0]!.linkedPreview!.renewals).toBe(1);
 });
+
+test('mixed labelled linked and ordinary coverage omits only request identity from finite selection deduplication',async()=>{
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain()
+ const originalSuite=f.gate().attempt.suiteId!
+ f.context.labels=[(await f.references.copy('one','s',originalSuite)).label,'routine:one','routine:two']
+ await f.service.intake(12,'mixed-linked-ordinary','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(6)
+ expect(f.gate().attempt.members).toHaveLength(2)
+ expect(f.gate().attempt.members.find(member=>member.linkedTarget)?.requestId).toMatch(/^rerun-/)
+ expect(f.gate().attempt.members.find(member=>!member.linkedTarget)?.routineId).toBe('two')
+ expect(f.gate().attempt.members.every(member=>!!member.originalRequestId&&f.requests.has(member.requestId!))).toBe(true)
+ expect(f.gate().reporting.error).toBeUndefined()
+})
