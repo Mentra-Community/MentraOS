@@ -450,6 +450,8 @@ export async function publishR2Artifact({
 }) {
   if (usesPrivateArtifactStorage(release))
     throw new Error("Refusing to publish private draft artifacts in the public R2 bucket")
+  if (replace && release.tag_name === "pr-builds" && /^(?:asg-pr-|ota-pr-)/.test(name))
+    throw new Error("Exact PR ASG artifacts cannot be replaced; reuse the committed publication")
   if (replace && !["pr-builds", "oem-app-builds"].includes(release.tag_name))
     throw new Error("Replacement is only allowed for rolling PR/OEM builds")
   if (fingerprint && !/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error("Invalid mobile build fingerprint")

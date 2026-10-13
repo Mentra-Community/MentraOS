@@ -7,7 +7,7 @@ import test from "node:test"
 
 const script = path.resolve(".github/scripts/build-bluetooth-sdk-ota-manifest.mjs")
 
-function runManifestBuild(releaseVersion) {
+function runManifestBuild(releaseVersion, fingerprint = '') {
   const root = mkdtempSync(path.join(tmpdir(), "mentra-ota-manifest-"))
   const firmwarePath = path.join(root, "firmware.json")
   const outputPath = path.join(root, "version.json")
@@ -36,6 +36,7 @@ function runManifestBuild(releaseVersion) {
       FIRMWARE_MANIFEST: firmwarePath,
       OUTPUT_PATH: outputPath,
       RELEASE_VERSION: releaseVersion,
+      ASG_SOURCE_FINGERPRINT: fingerprint,
     },
   })
   return {outputPath, result}
@@ -63,6 +64,16 @@ test("labels a pull request build manifest with its PR number and commit", () =>
   const {outputPath, result} = runManifestBuild("pr-3927-4987210f6e")
   assert.equal(result.status, 0, result.stderr)
   assert.equal(JSON.parse(readFileSync(outputPath, "utf8")).releaseVersion, "pr-3927-4987210f6e")
+})
+
+test("retains the PR ASG source fingerprint and refuses invalid provenance", () => {
+  const fingerprint = 'c'.repeat(64)
+  const {outputPath, result} = runManifestBuild(`pr-3927-${'d'.repeat(40)}`, fingerprint)
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(readFileSync(outputPath, 'utf8')).asgSource, {fingerprint})
+  const invalid = runManifestBuild(`pr-3927-${'d'.repeat(40)}`, 'not-a-fingerprint')
+  assert.notEqual(invalid.result.status, 0)
+  assert.match(invalid.result.stderr, /Invalid ASG source fingerprint/)
 })
 
 test("rejects a value outside the coordinated release identity format", () => {
