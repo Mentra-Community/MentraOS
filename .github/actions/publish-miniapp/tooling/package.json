@@ -2,11 +2,11 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@mentra/cli": "file:vendor/mentra-cli-2.0.0-dev.2-25fcd4b90311.tgz",
-    "@mentra/miniapp-cli": "file:vendor/mentra-miniapp-cli-0.1.0-dev.2-25fcd4b90311.tgz",
+    "@mentra/cli": "file:vendor/mentra-cli-2.0.0-dev.2-ca2a4f46756a.tgz",
+    "@mentra/miniapp-cli": "file:vendor/mentra-miniapp-cli-0.1.0-dev.2-ca2a4f46756a.tgz",
     "jszip": "3.10.1"
   },
   "overrides": {
-    "@mentra/miniapp-cli": "file:./vendor/mentra-miniapp-cli-0.1.0-dev.2-25fcd4b90311.tgz"
+    "@mentra/miniapp-cli": "file:./vendor/mentra-miniapp-cli-0.1.0-dev.2-ca2a4f46756a.tgz"
   }
 }
