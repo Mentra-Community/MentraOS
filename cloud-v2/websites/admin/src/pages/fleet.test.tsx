@@ -10,6 +10,7 @@ import {
   FleetPage,
   FleetUnavailable,
   FleetUnavailableError,
+  fleetHomeLocation,
   fleetLocation,
   fleetRoute,
   fleetUiMe,
@@ -68,6 +69,39 @@ describe("the Fleet item in the admin portal's navigation", () => {
   });
 });
 
+describe("which page an address asks for", () => {
+  async function loadPage() {
+    const scope = globalThis as { window?: unknown };
+    scope.window = { location: { search: "", hostname: "localhost", href: "http://localhost/", pathname: "/" } };
+    try {
+      return (await import("../App")).requestedPage;
+    } finally {
+      delete scope.window;
+    }
+  }
+  const prCheck = `pr-check-${"a".repeat(64)}`;
+
+  test("a Fleet link outranks the testing pages and the incident report, and only a system health link outranks it", async () => {
+    const requestedPage = await loadPage();
+    // The same order as the browser's Back and Forward restore: system health, Fleet, test runs, routine catalog.
+    expect(requestedPage("?systemHealth=1&fleet=%2F")).toBe("system-health");
+    expect(requestedPage("?fleet=%2Fdevices&testRuns=1")).toBe("fleet");
+    expect(requestedPage(`?prCheck=${prCheck}&fleet=%2F`)).toBe("fleet");
+    expect(requestedPage("?routineCatalog=1&fleet=%2F")).toBe("fleet");
+    expect(requestedPage("?fleet=%2F", "rep_1")).toBe("fleet");
+  });
+
+  test("the other pages keep their order, and a report link opens the incident system", async () => {
+    const requestedPage = await loadPage();
+    expect(requestedPage("?testRuns=1&routineCatalog=1")).toBe("test-runs");
+    expect(requestedPage(`?prCheck=${prCheck}`)).toBe("test-runs");
+    expect(requestedPage("?routineCatalog=1", "rep_1")).toBe("routine-catalog");
+    expect(requestedPage("", "rep_1")).toBe("incidents");
+    expect(requestedPage("")).toBeNull();
+    expect(requestedPage("?unrelated=1")).toBeNull();
+  });
+});
+
 describe("the Fleet route in the address bar", () => {
   test("?fleet= holds the route, with its own query, and its absence means no Fleet link", () => {
     expect(readFleetPath("")).toBeNull();
@@ -99,6 +133,10 @@ describe("the Fleet route in the address bar", () => {
     expect(fleetLocation("https://admin.test/?fleet=%2Fusage", "usage")).toBe("/?fleet=%2Fusage");
   });
 
+  test("the Fleet page is entered at the overview with nothing else in the address", () => {
+    expect(fleetHomeLocation()).toBe("/?fleet=%2F");
+  });
+
   test("reads back what it wrote", () => {
     for (const route of ["/", "/devices", "/devices/dev_1?tab=battery&since=7d", "/usage/mu_1?range=custom&from=2026-10-01"]) {
       const location = fleetLocation("https://admin.test/", route);
@@ -127,25 +165,40 @@ describe("what the module is told about the caller", () => {
   });
 });
 
-function fakeModule(overrides: Partial<FleetUiModule> = {}) {
+function fakeModule(options: { setRoute?: boolean } & Partial<FleetUiModule> = {}) {
+  const { setRoute: redraws = false, ...overrides } = options;
   const mounts: Array<{ element: unknown; ctx: FleetUiContext }> = [];
   const unmounts: number[] = [];
+  const routes: Array<{ path: string; query: string }> = [];
+  /** What happened, in order. A synchronous remount shows up as an unmount straight followed by a mount. */
+  const events: string[] = [];
   const module: FleetUiModule = {
     contractVersion: FLEET_UI_CONTRACT_VERSION,
     mount(element, ctx) {
       const id = mounts.length;
       mounts.push({ element, ctx });
+      events.push(`mount ${ctx.route.path}${ctx.route.query}`);
       // Render something, and leave it there when unmounted: the page must not trust the module to clean up.
       (element as unknown as FakeShadowRoot).children.push(`fleet ${ctx.route.path}${ctx.route.query}`);
       return {
         unmount() {
           unmounts.push(id);
+          events.push(`unmount ${id}`);
         },
+        ...(redraws
+          ? {
+              setRoute(route: { path: string; query: string }) {
+                routes.push(route);
+                events.push(`setRoute ${route.path}${route.query}`);
+                (element as unknown as FakeShadowRoot).children.splice(0, 1, `fleet ${route.path}${route.query}`);
+              },
+            }
+          : {}),
       };
     },
     ...overrides,
   };
-  return { module, mounts, unmounts };
+  return { module, mounts, unmounts, routes, events };
 }
 
 function importing(entry: unknown): { importEntry: FleetEntryImporter; specifiers: string[] } {
@@ -195,6 +248,8 @@ interface Opened {
   expired: number[];
   props: FleetPageProps;
   update(next: Partial<FleetPageProps>): Promise<void>;
+  /** The same, without act: for a test that wraps it in a synchronous act to show nothing was awaited. */
+  updateNow(next: Partial<FleetPageProps>): void;
 }
 
 async function open(importEntry: FleetEntryImporter, overrides: Partial<FleetPageProps> = {}): Promise<Opened> {
@@ -225,6 +280,10 @@ async function open(importEntry: FleetEntryImporter, overrides: Partial<FleetPag
       await act(async () => {
         view.update(<FleetPage {...props} />);
       });
+    },
+    updateNow(next) {
+      Object.assign(props, next);
+      view.update(<FleetPage {...props} />);
     },
   };
 }
@@ -322,7 +381,7 @@ describe("the Fleet page", () => {
     expect(host.attachCalls).toBe(0);
   });
 
-  test("shows Fleet is unavailable when the import fails, and Retry loads it again under a fresh URL", async () => {
+  test("shows Fleet is unavailable when the import fails, and Retry imports again under a fresh URL", async () => {
     const { module, mounts } = fakeModule();
     const specifiers: string[] = [];
     let failing = true;
@@ -346,6 +405,57 @@ describe("the Fleet page", () => {
     expect(shown(opened.view)).not.toContain("Fleet is unavailable");
   });
 
+  test("Retry after a mount that threw mounts the module already loaded, not a second evaluation of it", async () => {
+    // A module with import-time side effects (customElements.define, say) throws if it is evaluated twice.
+    const attempts: string[] = [];
+    const { module } = fakeModule({
+      mount(element, ctx) {
+        attempts.push(ctx.route.path);
+        if (attempts.length === 1) throw new Error("boom");
+        (element as unknown as FakeShadowRoot).children.push("fleet");
+        return { unmount() {} };
+      },
+    });
+    const { importEntry, specifiers } = importing({ default: module });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const opened = await open(importEntry, { path: "/devices" });
+      expect(shown(opened.view)).toContain("Fleet is unavailable");
+      expect(specifiers).toEqual([FLEET_MODULE_URL]);
+
+      await act(async () => {
+        button(opened.view, "Retry").props.onClick();
+      });
+      // Imported once, mounted twice, and no `?retry=` URL was ever asked for.
+      expect(specifiers).toEqual([FLEET_MODULE_URL]);
+      expect(attempts).toEqual(["/devices", "/devices"]);
+      expect(shown(opened.view)).not.toContain("Fleet is unavailable");
+      expect(opened.shadow.children).toEqual(["fleet"]);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("Retry clicked twice before the page redraws imports and mounts once", async () => {
+    const { module, mounts } = fakeModule();
+    let failing = true;
+    let calls = 0;
+    const importEntry: FleetEntryImporter = async () => {
+      calls += 1;
+      if (failing) throw new TypeError("Failed to fetch dynamically imported module");
+      return { default: module };
+    };
+    const opened = await open(importEntry);
+    failing = false;
+    const retry = button(opened.view, "Retry");
+    await act(async () => {
+      retry.props.onClick();
+      retry.props.onClick();
+    });
+    expect(calls).toBe(2);
+    expect(mounts).toHaveLength(1);
+  });
+
   test("shows Fleet is unavailable when mount throws, and leaves nothing of the module behind", async () => {
     const { module } = fakeModule({
       mount(element) {
@@ -364,18 +474,210 @@ describe("the Fleet page", () => {
     }
   });
 
-  test("unmounts the module and clears its shadow root when the page is left", async () => {
-    const { module, mounts, unmounts } = fakeModule();
-    const { view, shadow } = await open(importing({ default: module }).importEntry);
-    expect(mounts).toHaveLength(1);
-    expect(shadow.children).toEqual(["fleet /"]);
+  for (const redraws of [false, true]) {
+    const kind = redraws ? "a module that redraws itself (setRoute)" : "a module that is mounted again for a route";
 
-    await act(async () => {
-      view.unmount();
+    test(`unmounts ${kind} and clears its shadow root when the page is left`, async () => {
+      const { module, mounts, unmounts } = fakeModule({ setRoute: redraws });
+      const { view, shadow } = await open(importing({ default: module }).importEntry);
+      expect(mounts).toHaveLength(1);
+      expect(shadow.children).toEqual(["fleet /"]);
+
+      await act(async () => {
+        view.unmount();
+      });
+      expect(unmounts).toEqual([0]);
+      // The module's own unmount left its markup behind; the page does not.
+      expect(shadow.children).toEqual([]);
     });
+
+    test(`the same route with new handlers or a refreshed me does not touch ${kind}`, async () => {
+      const { module, mounts, unmounts, routes } = fakeModule({ setRoute: redraws });
+      const opened = await open(importing({ default: module }).importEntry, { path: "/devices" });
+      const later: string[] = [];
+      await opened.update({
+        me: { ...orgAdmin },
+        onNavigate: path => later.push(path),
+        onSessionExpired: () => later.push("expired"),
+      });
+      expect(mounts).toHaveLength(1);
+      expect(unmounts).toEqual([]);
+      expect(routes).toEqual([]);
+
+      // The running module reaches the page's latest handlers through the context it was given.
+      mounts[0]!.ctx.navigate("/usage");
+      mounts[0]!.ctx.onSessionExpired();
+      expect(later).toEqual(["/usage", "expired"]);
+      expect(opened.navigations).toEqual([]);
+      expect(opened.expired).toEqual([]);
+    });
+
+    test(`passes ${kind}'s navigate on to the page, as a push unless it asks to replace, with a clean route`, async () => {
+      const { module, mounts } = fakeModule({ setRoute: redraws });
+      const opened = await open(importing({ default: module }).importEntry);
+      const { ctx } = mounts[0]!;
+      ctx.navigate("/devices?tab=phones");
+      ctx.navigate("/usage", { replace: true });
+      ctx.navigate("//evil.test");
+      expect(opened.navigations).toEqual([
+        { path: "/devices?tab=phones", replace: undefined },
+        { path: "/usage", replace: true },
+        { path: "/evil.test", replace: undefined },
+      ]);
+    });
+
+    test(`${kind} is mounted at the latest route when the route changed while it loaded`, async () => {
+      const { module, mounts } = fakeModule({ setRoute: redraws });
+      let finish!: (entry: unknown) => void;
+      const slow = new Promise<unknown>(resolve => {
+        finish = resolve;
+      });
+      const opened = await open(() => slow, { path: "/" });
+      await opened.update({ path: "/usage?range=30d" });
+      await act(async () => {
+        finish({ default: module });
+        await slow;
+      });
+      expect(mounts).toHaveLength(1);
+      expect(mounts[0]!.ctx.route).toEqual({ path: "/usage", query: "?range=30d" });
+    });
+
+    test(`${kind} is mounted at the latest route by a Retry after the route changed`, async () => {
+      const { module, mounts } = fakeModule({ setRoute: redraws });
+      let failing = true;
+      const importEntry: FleetEntryImporter = async () => {
+        if (failing) throw new TypeError("Failed to fetch dynamically imported module");
+        return { default: module };
+      };
+      const opened = await open(importEntry, { path: "/" });
+      await opened.update({ path: "/devices" });
+      failing = false;
+      await act(async () => {
+        button(opened.view, "Retry").props.onClick();
+      });
+      expect(mounts).toHaveLength(1);
+      expect(mounts[0]!.ctx.route).toEqual({ path: "/devices", query: "" });
+    });
+  }
+
+  test("a module that cannot redraw is unmounted and mounted again in one synchronous step for a new route", async () => {
+    const { module, mounts, unmounts, events } = fakeModule();
+    const { importEntry, specifiers } = importing({ default: module });
+    const opened = await open(importEntry, { path: "/" });
+    expect(events).toEqual(["mount /"]);
+
+    // A synchronous act: nothing has been awaited when it returns, so no frame can be painted in between.
+    act(() => {
+      opened.updateNow({ path: "/usage/mu_1?range=30d" });
+    });
+    expect(events).toEqual(["mount /", "unmount 0", "mount /usage/mu_1?range=30d"]);
     expect(unmounts).toEqual([0]);
-    // The module's own unmount left its markup behind; the page does not.
-    expect(shadow.children).toEqual([]);
+    expect(mounts).toHaveLength(2);
+    expect(mounts[1]!.ctx.route).toEqual({ path: "/usage/mu_1", query: "?range=30d" });
+    expect(mounts[1]!.element).toBe(opened.shadow);
+    // attachShadow throws when called twice on a real element, so a second call here would have failed the mount.
+    expect(opened.host.attachCalls).toBe(1);
+    expect(opened.shadow.children).toEqual(["fleet /usage/mu_1?range=30d"]);
+    // The module is imported once. Going to another route is not an unavailable Fleet, and shows no spinner.
+    expect(specifiers).toEqual([FLEET_MODULE_URL]);
+    expect(shown(opened.view)).not.toContain("Fleet is unavailable");
+    expect(shown(opened.view)).not.toContain("Loading Fleet");
+  });
+
+  test("a module that redraws itself is given the new route and is neither unmounted nor mounted again", async () => {
+    const { module, mounts, unmounts, routes, events } = fakeModule({ setRoute: true });
+    const { importEntry, specifiers } = importing({ default: module });
+    const opened = await open(importEntry, { path: "/" });
+
+    act(() => {
+      opened.updateNow({ path: "/devices?tab=phones" });
+    });
+    expect(routes).toEqual([{ path: "/devices", query: "?tab=phones" }]);
+    expect(events).toEqual(["mount /", "setRoute /devices?tab=phones"]);
+    expect(mounts).toHaveLength(1);
+    expect(unmounts).toEqual([]);
+    expect(specifiers).toEqual([FLEET_MODULE_URL]);
+    expect(opened.host.attachCalls).toBe(1);
+    expect(opened.shadow.children).toEqual(["fleet /devices?tab=phones"]);
+  });
+
+  test("a redrawing module's own navigate reaches it again as setRoute once the page has moved, and its context stays live", async () => {
+    const { module, mounts, routes } = fakeModule({ setRoute: true });
+    const opened = await open(importing({ default: module }).importEntry, { path: "/" });
+
+    // The module asks to go somewhere; the page records it and hands the new route back as its `path`.
+    mounts[0]!.ctx.navigate("/usage?range=7d");
+    expect(opened.navigations).toEqual([{ path: "/usage?range=7d", replace: undefined }]);
+    await opened.update({ path: "/usage?range=7d" });
+    // Back and Forward arrive the same way.
+    await opened.update({ path: "/" });
+    expect(routes).toEqual([{ path: "/usage", query: "?range=7d" }, { path: "/", query: "" }]);
+    expect(mounts).toHaveLength(1);
+
+    mounts[0]!.ctx.navigate("/devices");
+    expect(opened.navigations).toHaveLength(2);
+  });
+
+  test("a redrawing module whose setRoute throws is mounted again for the route", async () => {
+    const mountedAt: string[] = [];
+    const unmounted: number[] = [];
+    const module: FleetUiModule = {
+      contractVersion: FLEET_UI_CONTRACT_VERSION,
+      mount(element, ctx) {
+        const id = mountedAt.length;
+        mountedAt.push(ctx.route.path);
+        (element as unknown as FakeShadowRoot).children.push(`fleet ${ctx.route.path}`);
+        return {
+          unmount() {
+            unmounted.push(id);
+          },
+          setRoute() {
+            throw new Error("cannot redraw");
+          },
+        };
+      },
+    };
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const opened = await open(importing({ default: module }).importEntry, { path: "/" });
+      act(() => {
+        opened.updateNow({ path: "/devices" });
+      });
+      expect(mountedAt).toEqual(["/", "/devices"]);
+      expect(unmounted).toEqual([0]);
+      expect(opened.shadow.children).toEqual(["fleet /devices"]);
+      expect(logs(logged, "failed to change route")).toHaveLength(1);
+      expect(shown(opened.view)).not.toContain("Fleet is unavailable");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("a route change after a failed mount waits for Retry and does not mount behind the notice", async () => {
+    const { module, mounts } = fakeModule();
+    const attempts: string[] = [];
+    const flaky: FleetUiModule = {
+      ...module,
+      mount(element, ctx) {
+        attempts.push(ctx.route.path);
+        if (attempts.length === 1) throw new Error("boom");
+        return module.mount(element, ctx);
+      },
+    };
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const opened = await open(importing({ default: flaky }).importEntry, { path: "/" });
+      await opened.update({ path: "/devices" });
+      expect(attempts).toEqual(["/"]);
+      expect(shown(opened.view)).toContain("Fleet is unavailable");
+      await act(async () => {
+        button(opened.view, "Retry").props.onClick();
+      });
+      expect(attempts).toEqual(["/", "/devices"]);
+      expect(mounts).toHaveLength(1);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   test("never mounts a module that finishes loading after the page was left", async () => {
@@ -419,58 +721,6 @@ describe("the Fleet page", () => {
     }
   });
 
-  test("a new route unmounts the old mount and mounts again in the same shadow root", async () => {
-    const { module, mounts, unmounts } = fakeModule();
-    const { importEntry, specifiers } = importing({ default: module });
-    const opened = await open(importEntry, { path: "/" });
-    await opened.update({ path: "/usage/mu_1?range=30d" });
-
-    expect(unmounts).toEqual([0]);
-    expect(mounts).toHaveLength(2);
-    expect(mounts[1]!.ctx.route).toEqual({ path: "/usage/mu_1", query: "?range=30d" });
-    expect(mounts[1]!.element).toBe(opened.shadow);
-    // attachShadow throws when called twice on a real element, so a second call here would have failed the mount.
-    expect(opened.host.attachCalls).toBe(1);
-    expect(opened.shadow.children).toEqual(["fleet /usage/mu_1?range=30d"]);
-    // The module was already imported once for this page; going to another route is not an unavailable Fleet.
-    expect(shown(opened.view)).not.toContain("Fleet is unavailable");
-    expect(specifiers.every(specifier => specifier.startsWith(FLEET_MODULE_URL))).toBe(true);
-  });
-
-  test("the same route with new handlers or a refreshed me does not remount the module", async () => {
-    const { module, mounts, unmounts } = fakeModule();
-    const opened = await open(importing({ default: module }).importEntry, { path: "/devices" });
-    const later: string[] = [];
-    await opened.update({
-      me: { ...orgAdmin },
-      onNavigate: path => later.push(path),
-      onSessionExpired: () => later.push("expired"),
-    });
-    expect(mounts).toHaveLength(1);
-    expect(unmounts).toEqual([]);
-
-    // The running module reaches the page's latest handlers through the context it was given.
-    mounts[0]!.ctx.navigate("/usage");
-    mounts[0]!.ctx.onSessionExpired();
-    expect(later).toEqual(["/usage", "expired"]);
-    expect(opened.navigations).toEqual([]);
-    expect(opened.expired).toEqual([]);
-  });
-
-  test("passes the module's navigate on to the page, as a push unless it asks to replace, with a clean route", async () => {
-    const { module, mounts } = fakeModule();
-    const opened = await open(importing({ default: module }).importEntry);
-    const { ctx } = mounts[0]!;
-    ctx.navigate("/devices?tab=phones");
-    ctx.navigate("/usage", { replace: true });
-    ctx.navigate("//evil.test");
-    expect(opened.navigations).toEqual([
-      { path: "/devices?tab=phones", replace: undefined },
-      { path: "/usage", replace: true },
-      { path: "/evil.test", replace: undefined },
-    ]);
-  });
-
   test("ignores navigation from a mount that was replaced or left, but still passes on an expired session", async () => {
     const { module, mounts } = fakeModule();
     const opened = await open(importing({ default: module }).importEntry, { path: "/" });
@@ -488,6 +738,16 @@ describe("the Fleet page", () => {
     // The session is the caller's, not the route's: a 401 that lands as the page closes is still true.
     mounts[1]!.ctx.onSessionExpired();
     expect(opened.expired).toEqual([0]);
+  });
+
+  test("ignores navigation from a redrawing module once the page was left", async () => {
+    const { module, mounts } = fakeModule({ setRoute: true });
+    const opened = await open(importing({ default: module }).importEntry);
+    await act(async () => {
+      opened.view.unmount();
+    });
+    mounts[0]!.ctx.navigate("/after-leaving");
+    expect(opened.navigations).toEqual([]);
   });
 
   test("tells the page when the module reports an expired session", async () => {

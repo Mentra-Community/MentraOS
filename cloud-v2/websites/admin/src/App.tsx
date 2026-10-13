@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
-import { FleetPage, fleetLocation, normalizeFleetPath, readFleetPath } from "./pages/fleet";
+import { FleetPage, fleetHomeLocation, fleetLocation, normalizeFleetPath, readFleetPath } from "./pages/fleet";
 import { OperatorKeysPage } from "./pages/operator-keys";
 import { WorkspacesPage } from "./pages/workspaces";
 import { loginHref, signOutOfAdminPortal } from "./lib/session";
@@ -116,6 +116,22 @@ export function visibleNav(visible: readonly AdminPageKey[]): NavItem[] {
 }
 
 /**
+ * The page an address asks for, if any. The one place that orders the deep links, for the first load and for
+ * Back and Forward alike: system health, Fleet, the test runs pages, the routine catalog, and (the first load
+ * only, as `reportId`) an incident report.
+ */
+export function requestedPage(search: string, reportId: string | null = null): AdminPageKey | null {
+  if (new URLSearchParams(search).get("systemHealth") === "1") return "system-health";
+  if (readFleetPath(search) !== null) return "fleet";
+  if (
+    readPrCheckId(search) || readRerunId(search) || readSuiteId(search) || readTestRunLink(search) ||
+    readTestRunListScope(search) || new URLSearchParams(search).get("testRuns") === "1"
+  ) return "test-runs";
+  if (new URLSearchParams(search).get("routineCatalog") === "1") return "routine-catalog";
+  return reportId ? "incidents" : null;
+}
+
+/**
  * The admin environment is bound to the hostname, not chosen in-app (PRD: no
  * env switcher; opening the matching hostname switches environment). Localhost
  * and anything unrecognized default to dev so local development is harmless.
@@ -143,15 +159,12 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
-const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
 const initialPrCheckId = readPrCheckId(window.location.search);
 const initialRerunId = readRerunId(window.location.search);
 const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
-const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 const initialHealthTab = readSystemHealthTab(window.location.search);
-const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 const initialFleetPath = readFleetPath(window.location.search);
 
 function AdminPage() {
@@ -159,9 +172,7 @@ function AdminPage() {
   const env = ENVIRONMENT;
   // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal cannot
   // open (a deep link, say) falls back to their first visible page.
-  const [page, setPage] = useState<AdminPageKey | null>(
-    initialSystemHealth ? "system-health" : initialPrCheckId || initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : initialFleetPath !== null ? "fleet" : pendingDeepLinkReportId ? "incidents" : null,
-  );
+  const [page, setPage] = useState<AdminPageKey | null>(() => requestedPage(window.location.search, pendingDeepLinkReportId));
   const [prCheckId, setPrCheckId] = useState<string | null>(initialPrCheckId);
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
@@ -204,12 +215,11 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
-      const search = new URLSearchParams(window.location.search);
       setHealthTab(readSystemHealthTab(window.location.search));
       setLaneSelection(readLaneSelection(window.location.search));
-      if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
-      const fleet = readFleetPath(window.location.search);
-      if (fleet !== null) { setFleetPath(fleet); setPage("fleet"); return; }
+      const requested = requestedPage(window.location.search);
+      if (requested === "system-health") { setPage("system-health"); return; }
+      if (requested === "fleet") { setFleetPath(readFleetPath(window.location.search) ?? "/"); setPage("fleet"); return; }
       const prCheck = readPrCheckId(window.location.search);
       setPrCheckId(prCheck);
       const rerun = readRerunId(window.location.search);
@@ -221,8 +231,7 @@ function AdminPage() {
       setTestRunLink(selection);
       setTestRunListScope(scope);
       setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
-      if (prCheck || rerun || suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
-      else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
+      if (requested === "test-runs" || requested === "routine-catalog") setPage(requested);
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -309,7 +318,7 @@ function AdminPage() {
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
         setFleetPath("/");
-        if (key === "fleet") window.history.replaceState(null, "", fleetLocation(window.location.href, "/"));
+        if (key === "fleet") window.history.replaceState(null, "", fleetHomeLocation());
       }}
       title={pageMeta[active].title}
       description={pageMeta[active].body}

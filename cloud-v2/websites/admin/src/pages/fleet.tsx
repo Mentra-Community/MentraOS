@@ -19,9 +19,10 @@ import type { AdminMe } from "../lib/admin-access";
  * `apiBase`, with the portal's session cookie.
  *
  * The page owns the route. It lives in `?fleet=<path>` (see {@link readFleetPath}), so a Fleet screen has a
- * link and Back and Forward work. `mount` is the module's only way in, so the module is told the route once,
- * when it mounts: a different route (the module calling `navigate`, or Back and Forward) unmounts it and mounts
- * it again in the same shadow root.
+ * link and Back and Forward work. The module is told the route when it mounts; after that a route change (the
+ * module's own `navigate`, or Back and Forward) reaches it through the `setRoute` of the handle it returned,
+ * and a module without one is unmounted and mounted again, in one synchronous step, in the same shadow root.
+ * The module is imported once: a route change or a Retry after a failed mount reuses it.
  */
 
 /** Where Fleet's API is, as the module is told it. Core forwards it to Fleet for Organization Admins. */
@@ -67,6 +68,11 @@ export function fleetLocation(href: string, fleetPath: string): string {
   const url = new URL(href);
   url.searchParams.set(FLEET_PARAM, normalizeFleetPath(fleetPath));
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+/** The address of the Fleet page at its overview. Opening the page from the navigation replaces the address with it. */
+export function fleetHomeLocation(): string {
+  return fleetLocation("http://localhost/", "/");
 }
 
 /** What the module is told about the caller: the contract's fields, and nothing else the portal knows. */
@@ -136,7 +142,7 @@ export async function loadFleetModule(importEntry: FleetEntryImporter = importFl
 
 export interface FleetPageProps {
   me: AdminMe;
-  /** The Fleet route, from `?fleet=`. A change unmounts the module and mounts it again for the new route. */
+  /** The Fleet route, from `?fleet=`. A change reaches the module through `setRoute`, or mounts it again. */
   path: string;
   /** The module asked to go to `path` (a clean route). The caller records it in history and passes the new `path` back. */
   onNavigate(path: string, opts?: { replace?: boolean }): void;
@@ -148,83 +154,194 @@ export interface FleetPageProps {
 
 type Phase = { status: "loading" } | { status: "ready" } | { status: "unavailable"; reason: string };
 
+const LOADING: Phase = { status: "loading" };
+const READY: Phase = { status: "ready" };
+
 function reasonFor(error: unknown): string {
   return error instanceof FleetUnavailableError ? error.message : "Fleet could not start.";
 }
 
-export function FleetPage({ me, path, onNavigate, onSessionExpired, importEntry = importFleetEntry }: FleetPageProps) {
-  const host = useRef<HTMLDivElement>(null);
-  const [phase, setPhase] = useState<Phase>({ status: "loading" });
-  // Set by Retry. It only changes the URL the module is imported from.
-  const [retry, setRetry] = useState<number | undefined>(undefined);
-  // The module keeps the context it was mounted with for as long as it runs, so a re-render of this page must
-  // not remount it just to hand it newer handlers: it reaches the latest ones through here.
-  const latest = useRef({ me, onNavigate, onSessionExpired });
-  useEffect(() => {
-    latest.current = { me, onNavigate, onSessionExpired };
-  });
+/** What the host reads from the page each time it needs it, so a re-render never has to restart the module. */
+interface FleetHostInputs {
+  me: AdminMe;
+  onNavigate: FleetPageProps["onNavigate"];
+  onSessionExpired: FleetPageProps["onSessionExpired"];
+}
 
-  useEffect(() => {
-    const element = host.current;
-    if (!element) return;
-    // False once this effect has ended (another route, a retry, the page left): then nothing it started may
-    // touch the page.
-    let live = true;
-    let mounted: { unmount(): void } | null = null;
-    // A module that is already showing stays on screen while it is mounted again for another route.
-    setPhase(current => (current.status === "ready" ? current : { status: "loading" }));
+interface FleetHost {
+  /** Imports the module and mounts it. */
+  start(): void;
+  /** The page's route changed. */
+  setPath(path: string): void;
+  /** The Retry button. */
+  retry(): void;
+  /** The page was left (or its host element changed): unmounts and stops reporting. */
+  dispose(): void;
+}
 
-    loadFleetModule(importEntry, retry).then(
-      module => {
-        if (!live) return;
-        let shadow: ShadowRoot | null = null;
-        try {
-          // attachShadow throws on an element that has one, so a shadow root from an earlier mount is reused.
-          shadow = element.shadowRoot ?? element.attachShadow({ mode: "open" });
-          const context: FleetUiContext = {
-            contractVersion: FLEET_UI_CONTRACT_VERSION,
-            apiBase: FLEET_API_BASE,
-            me: fleetUiMe(latest.current.me),
-            route: fleetRoute(path),
-            navigate: (to, opts) => {
-              // Only the module on screen may move the page.
-              if (live) latest.current.onNavigate(normalizeFleetPath(to), opts);
-            },
-            // The session is the caller's, not this route's, so a 401 that lands late is still true.
-            onSessionExpired: () => latest.current.onSessionExpired(),
-          };
-          mounted = module.mount(shadow, context);
-          setPhase({ status: "ready" });
-        } catch (error) {
-          console.error("The Fleet module failed to mount.", error);
-          shadow?.replaceChildren();
-          setPhase({ status: "unavailable", reason: "Fleet could not start." });
-        }
-      },
-      error => {
-        if (live) setPhase({ status: "unavailable", reason: reasonFor(error) });
-      },
-    );
+/**
+ * Everything the page does with the module, outside React: import it, mount it, tell it the route, unmount it.
+ * One host serves one open Fleet page. After {@link FleetHost.dispose} nothing it started touches the page.
+ */
+function createFleetHost(options: {
+  element: HTMLElement;
+  importEntry: FleetEntryImporter;
+  /** The route at the time the page opened. */
+  path: string;
+  inputs(): FleetHostInputs;
+  onPhase(phase: Phase): void;
+}): FleetHost {
+  const { element, importEntry, inputs, onPhase } = options;
+  // False once disposed: then nothing already started (an import, a callback from the module) may touch the page.
+  let live = true;
+  let path = options.path;
+  // The module once it has been imported and checked. It is evaluated once; a Retry after a failed mount mounts
+  // this one again (a module with import-time side effects, a customElements.define say, would throw if it were
+  // evaluated a second time under a new URL), and only a failed import is attempted again.
+  let loaded: FleetUiModule | null = null;
+  let loading = false;
+  let mounted: ReturnType<FleetUiModule["mount"]> | null = null;
+  // Identifies the mount whose context may move the page; zero when none does.
+  let active = 0;
+  let mounts = 0;
 
-    return () => {
-      live = false;
+  /** Mounts the loaded module for the current route. Synchronous. */
+  function mountLoaded(module: FleetUiModule): void {
+    const id = ++mounts;
+    active = id;
+    let shadow: ShadowRoot | null = null;
+    try {
+      // attachShadow throws on an element that has one, so a shadow root from an earlier mount is reused.
+      shadow = element.shadowRoot ?? element.attachShadow({ mode: "open" });
+      const context: FleetUiContext = {
+        contractVersion: FLEET_UI_CONTRACT_VERSION,
+        apiBase: FLEET_API_BASE,
+        me: fleetUiMe(inputs().me),
+        route: fleetRoute(path),
+        navigate: (to, opts) => {
+          // Only the module on screen may move the page.
+          if (live && active === id) inputs().onNavigate(normalizeFleetPath(to), opts);
+        },
+        // The session is the caller's, not this mount's, so a 401 that lands late is still true.
+        onSessionExpired: () => inputs().onSessionExpired(),
+      };
+      mounted = module.mount(shadow, context);
+      onPhase(READY);
+    } catch (error) {
+      console.error("The Fleet module failed to mount.", error);
+      active = 0;
+      shadow?.replaceChildren();
+      onPhase({ status: "unavailable", reason: "Fleet could not start." });
+    }
+  }
+
+  /** Unmounts what is mounted and empties the shadow root, which stays with the element for the next mount. */
+  function unmountMounted(): void {
+    active = 0;
+    const handle = mounted;
+    mounted = null;
+    try {
+      handle?.unmount();
+    } catch (error) {
+      console.error("The Fleet module failed to unmount.", error);
+    }
+    // Whatever the module left behind goes too.
+    element.shadowRoot?.replaceChildren();
+  }
+
+  async function load(retry?: number): Promise<void> {
+    loading = true;
+    onPhase(LOADING);
+    try {
+      const module = await loadFleetModule(importEntry, retry);
+      if (!live) return;
+      loaded = module;
+      mountLoaded(module);
+    } catch (error) {
+      if (live) onPhase({ status: "unavailable", reason: reasonFor(error) });
+    } finally {
+      loading = false;
+    }
+  }
+
+  return {
+    start() {
+      void load();
+    },
+    setPath(next) {
+      if (next === path) return;
+      path = next;
+      // Nothing is mounted while the module is loading (it mounts at `path` when it arrives) or after a failure
+      // (Retry mounts at `path`).
       const handle = mounted;
-      mounted = null;
-      try {
-        handle?.unmount();
-      } catch (error) {
-        console.error("The Fleet module failed to unmount.", error);
+      if (!handle || !loaded) return;
+      if (typeof handle.setRoute === "function") {
+        try {
+          handle.setRoute(fleetRoute(next));
+          return;
+        } catch (error) {
+          console.error("The Fleet module failed to change route; mounting it again.", error);
+        }
       }
-      // The shadow root stays with the element for the next mount; whatever the module left in it does not.
-      element.shadowRoot?.replaceChildren();
+      // One synchronous step, so no frame is painted between the old mount and the new one.
+      unmountMounted();
+      mountLoaded(loaded);
+    },
+    retry() {
+      if (!live || loading) return;
+      if (loaded) {
+        // The import was fine and the mount was not: mount the same module again.
+        unmountMounted();
+        mountLoaded(loaded);
+      } else {
+        // The import failed, and the browser may remember that for the URL: ask for one it has not seen.
+        void load(Date.now());
+      }
+    },
+    dispose() {
+      live = false;
+      unmountMounted();
+    },
+  };
+}
+
+export function FleetPage({ me, path, onNavigate, onSessionExpired, importEntry = importFleetEntry }: FleetPageProps) {
+  const element = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<Phase>(LOADING);
+  const latest = useRef({ me, path, onNavigate, onSessionExpired });
+  useEffect(() => {
+    latest.current = { me, path, onNavigate, onSessionExpired };
+  });
+  const host = useRef<FleetHost | null>(null);
+
+  // One host per open page (and per module importer): it imports and mounts the module once.
+  useEffect(() => {
+    const target = element.current;
+    if (!target) return;
+    const created = createFleetHost({
+      element: target,
+      importEntry,
+      path: latest.current.path,
+      inputs: () => latest.current,
+      onPhase: setPhase,
+    });
+    host.current = created;
+    created.start();
+    return () => {
+      created.dispose();
+      host.current = null;
     };
-  }, [path, retry, importEntry]);
+  }, [importEntry]);
+
+  useEffect(() => {
+    host.current?.setPath(path);
+  }, [path]);
 
   return (
     <section aria-label="Fleet">
       {phase.status === "loading" ? <LoadingIndicator label="Loading Fleet" /> : null}
-      {phase.status === "unavailable" ? <FleetUnavailable reason={phase.reason} onRetry={() => setRetry(Date.now())} /> : null}
-      <div ref={host} hidden={phase.status === "unavailable"} />
+      {phase.status === "unavailable" ? <FleetUnavailable reason={phase.reason} onRetry={() => host.current?.retry()} /> : null}
+      <div ref={element} hidden={phase.status === "unavailable"} />
     </section>
   );
 }

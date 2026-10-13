@@ -49,4 +49,34 @@ describe("Fleet UI module contract", () => {
     handle.unmount()
     expect(calls).toEqual(["mount /api/admin/fleet /fleet?range=7d", "navigate /fleet/devices true", "expired", "unmount"])
   })
+
+  test("a module's handle may offer setRoute, which a host calls instead of mounting again; it is optional", () => {
+    const calls: string[] = []
+    const ctx: FleetUiContext = {
+      contractVersion: 1,
+      apiBase: "/api/admin/fleet",
+      me,
+      route: {path: "/", query: ""},
+      navigate: () => {},
+      onSessionExpired: () => {},
+    }
+    const redrawing: FleetUiModule = {
+      contractVersion: FLEET_UI_CONTRACT_VERSION,
+      mount: () => ({
+        unmount: () => calls.push("unmount"),
+        setRoute: (route) => calls.push(`route ${route.path}${route.query}`),
+      }),
+    }
+    const remounting: FleetUiModule = {
+      contractVersion: FLEET_UI_CONTRACT_VERSION,
+      mount: () => ({unmount: () => calls.push("unmount")}),
+    }
+    const withSetRoute = redrawing.mount({} as unknown as HTMLElement, ctx)
+    withSetRoute.setRoute?.({path: "/devices", query: "?tab=phones"})
+    const withoutSetRoute = remounting.mount({} as unknown as HTMLElement, ctx)
+    withoutSetRoute.setRoute?.({path: "/devices", query: "?tab=phones"})
+    expect(typeof withSetRoute.setRoute).toBe("function")
+    expect(withoutSetRoute.setRoute).toBeUndefined()
+    expect(calls).toEqual(["route /devices?tab=phones"])
+  })
 })

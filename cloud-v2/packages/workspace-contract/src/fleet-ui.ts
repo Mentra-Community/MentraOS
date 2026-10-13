@@ -27,7 +27,7 @@ export interface FleetUiContext {
   /** Where the module sends its API requests, e.g. `/api/admin/fleet`. */
   apiBase: string
   me: FleetUiMe
-  /** The host's current route. */
+  /** The host's route when the module mounts. Later changes reach the module as the {@link FleetUiModule.mount} doc says. */
   route: {path: string; query: string}
   /** Asks the host to go to `path`; with `replace`, the current history entry is replaced instead of a new one added. */
   navigate(path: string, opts?: {replace?: boolean}): void
@@ -38,6 +38,15 @@ export interface FleetUiContext {
 /** What the Fleet UI entry exports. */
 export interface FleetUiModule {
   contractVersion: number
-  /** Renders into `element`; the returned handle removes everything the module added. */
-  mount(element: HTMLElement | ShadowRoot, ctx: FleetUiContext): {unmount(): void}
+  /**
+   * Renders into `element`; the returned handle removes everything the module added.
+   *
+   * `ctx.route` is the route at mount. If the handle provides `setRoute`, the host calls it on every later
+   * route change (including after the module's own `navigate` and Back/Forward) instead of remounting;
+   * otherwise the host unmounts and mounts again.
+   */
+  mount(
+    element: HTMLElement | ShadowRoot,
+    ctx: FleetUiContext,
+  ): {unmount(): void; setRoute?(route: {path: string; query: string}): void}
 }
