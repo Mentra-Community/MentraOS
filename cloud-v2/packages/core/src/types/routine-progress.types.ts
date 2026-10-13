@@ -40,6 +40,8 @@ export function matchingRoutineProgress(host: {incarnation: string; sequence: nu
 
 export interface RoutineLiveProgress {
   progress: RoutineProgress
+  receivedAt: string
+  observationAgeMs: number
   title: string
   steps: Array<{id: string; instruction: string}>
 }

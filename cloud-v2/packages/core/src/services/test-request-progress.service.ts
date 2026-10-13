@@ -7,7 +7,8 @@ import {matchingRoutineProgress, type RoutineLiveProgress} from '../types/routin
 /** Display only: the accepted controller heartbeat remains the progress authority. */
 export class TestRequestProgressService {
   constructor(private readonly hosts: Pick<TestHostStateService, 'progressObservation'> = new TestHostStateService(),
-    private readonly definitions: Pick<RoutineDefinitionService, 'getExact'> = new RoutineDefinitionService()) {}
+    private readonly definitions: Pick<RoutineDefinitionService, 'getExact'> = new RoutineDefinitionService(),
+    private readonly now: () => number = Date.now) {}
 
   async get(row: StoredRequest): Promise<RoutineLiveProgress | undefined> {
     if (!isExecutableRequest(row) || !row.hostReceipt || row.state === 'terminal') return
@@ -19,7 +20,8 @@ export class TestRequestProgressService {
     if (!definition || definition.definitionSha256 !== requestInputDigest(definition.definition)) return
     const steps = definition.definition.steps.map(({id, instruction}) => ({id, instruction}))
     const progress = matchingRoutineProgress(host, host.lane, row, steps.map(step => step.id))
-    if (progress) return {progress, title: definition.definition.title, steps}
+    if (progress) return {progress, receivedAt: host.receivedAt,
+      observationAgeMs: Math.max(0, this.now() - Date.parse(host.receivedAt)), title: definition.definition.title, steps}
     return undefined
   }
 }

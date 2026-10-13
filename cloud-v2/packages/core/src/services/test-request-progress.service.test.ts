@@ -18,20 +18,20 @@ function fixture() {
     controllerIncarnation: 'boot-one', sequence: 9, phase: 'test', currentStep: {id: 'close', index: 1},
     completedSteps: 1, totalSteps: 3, startedAt: '2026-10-03T00:58:00Z', lastProgressAt: '2026-10-03T00:59:00Z',
     observedAt: '2026-10-03T01:00:00Z'})
-  const host = {incarnation: 'boot-one', sequence: 9, lane: {id: 'phone', activity: {generation: 7,
+  const host = {incarnation: 'boot-one', sequence: 9, receivedAt: '2026-10-03T01:00:00Z', lane: {id: 'phone', activity: {generation: 7,
     owner: {kind: 'run' as const, id: requestId, requestId}}, progress}}
   const definition = {routineId: 'miniapps', platform: 'android', definitionRevision: input.definitionRevision,
     definition: {title: 'Open and close miniapps', steps}} as RoutineEnrollment
   definition.definitionSha256 = requestInputDigest(definition.definition)
   const calls: unknown[][] = []
   const service = new TestRequestProgressService({async progressObservation(...args) {calls.push(args); return host}},
-    {async getExact(...args) {calls.push(args); return definition}})
+    {async getExact(...args) {calls.push(args); return definition}}, () => Date.parse('2026-10-03T01:00:02Z'))
   return {row, progress, host, definition, steps, calls, service}
 }
 
 test('ordinary request live details use its exact definition and authenticated current owner without a result', async () => {
   const f = fixture(), live = await f.service.get(f.row)
-  expect(live).toEqual({progress: f.progress, title: f.definition.definition.title,
+  expect(live).toEqual({progress: f.progress, receivedAt: f.host.receivedAt, observationAgeMs: 2000, title: f.definition.definition.title,
     steps: f.steps.map(({id, instruction}) => ({id, instruction}))})
   expect(f.calls).toEqual([['host-one', 'phone'], ['miniapps', 'android', 'a'.repeat(40)]])
 })

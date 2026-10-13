@@ -26,12 +26,13 @@ const PROGRESS_FRESH_FOR_MS = 60_000;
 const PROGRESS_PHASES = {preparation: 'Preparing software', 'framework-setup': 'Framework setup', 'routine-setup': 'Routine setup',
   test: 'Running test', 'routine-teardown': 'Routine cleanup', 'framework-teardown': 'Framework cleanup', publication: 'Publishing evidence'};
 
-export function requestLiveStatus(request: FrameworkRequestDisplay, now = Date.now()) {
+export function requestLiveStatus(request: FrameworkRequestDisplay, now = Date.now(), responseReceivedAt = now) {
   const live = request.live;
   if (!live) return null;
-  const stale = now - Date.parse(live.progress.observedAt) > PROGRESS_FRESH_FOR_MS;
+  const age = live.observationAgeMs + Math.max(0, now - responseReceivedAt);
+  const stale = age > PROGRESS_FRESH_FOR_MS;
   return {stale, phase: PROGRESS_PHASES[live.progress.phase],
-    elapsed: elapsedDuration(Math.max(0, (stale ? Date.parse(live.progress.observedAt) : now) - Date.parse(live.progress.startedAt)))};
+    elapsed: elapsedDuration(Math.max(0, Date.parse(live.progress.observedAt) - Date.parse(live.progress.startedAt)) + (stale ? 0 : age))};
 }
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
@@ -197,19 +198,19 @@ export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | 
   return data?.uploadsComplete === false || (data?.incidentReportPending && now - observedAt < CANCELLED_REQUEST_OBSERVATION_MS) ? 5000 : false;
 }
 
-function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
+function RequestCard({request, responseReceivedAt, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; responseReceivedAt: number; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
   const status = request.terminalStatus ?? request.state;
-  const now = useClock(), live = request.live, progress = live?.progress, activity = requestLiveStatus(request, now);
+  const now = useClock(), live = request.live, progress = live?.progress, activity = requestLiveStatus(request, now, responseReceivedAt);
   return <section className={PANEL} aria-label="Routine request">
     <a className={TESTING_LINK} href="/?testRuns=1">All test runs</a>
-    <div className="mt-4 flex flex-wrap items-center gap-3"><h2 className="text-xl font-semibold">{live?.title ?? request.routineId}: {status === "not-run" ? "Did not run" : live ? 'In progress' : status}</h2>
+    <div className="mt-4 flex flex-wrap items-center gap-3"><h2 className="text-xl font-semibold">{live?.title ?? request.routineId}: {status === "not-run" ? "Did not run" : live ? activity?.stale ? 'Last observed' : 'In progress' : status}</h2>
       {live && <HistoryStatus outcome={activity?.stale ? 'progress unavailable' : 'running'} />}</div>
     {progress && activity && <div className="mt-4 space-y-3" aria-label="Live routine progress">
       <div role="status" className="flex flex-wrap items-center gap-2 text-sm">
         {!activity.stale && <Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />}
         <span>{activity.phase}{activity.stale && ' · Last observed'}</span>
         <span className="text-[#656d76]">{progress.completedSteps}/{progress.totalSteps} steps completed · {activity.elapsed}</span>
-        <time className="text-xs text-[#656d76]" dateTime={progress.observedAt}>Updated {new Date(progress.observedAt).toLocaleTimeString()}</time>
+        <time className="text-xs text-[#656d76]" dateTime={live!.receivedAt}>Received {new Date(live!.receivedAt).toLocaleTimeString()}</time>
       </div>
       {!!live?.steps.length && <div className="max-h-80 overflow-y-auto rounded-md border border-[#d0d7de]"><Table>
         <TableHeader><TableRow><TableHead className="w-24">Status</TableHead><TableHead>Test step</TableHead></TableRow></TableHeader>
@@ -344,7 +345,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     const request = result.data.request;
     return <div className="space-y-5">
       {result.error && <p role="alert">Request could not refresh: {result.error.message}</p>}
-      <RequestCard request={request} observing={frameworkRunRefetchInterval(result.data, observedAt) !== false}
+      <RequestCard request={request} responseReceivedAt={result.dataUpdatedAt} observing={frameworkRunRefetchInterval(result.data, observedAt) !== false}
         refreshing={result.isFetching} onRefresh={() => {setObservation({runId, startedAt: request.terminalStatus === "cancelled" ? Date.now() : null}); void result.refetch();}} />
     </div>;
   }
