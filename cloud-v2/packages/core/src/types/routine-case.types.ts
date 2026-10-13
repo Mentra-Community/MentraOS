@@ -36,7 +36,9 @@ export const routineCaseSchema = z.object({version: z.literal(2), caseId: caseId
   classification: caseClassificationSchema, diagnosis: z.string().max(2000), evidence: z.array(caseEvidenceSchema).max(30),
   stage: caseStageSchema, nextAction: z.string().max(1000), owner: z.string().max(300).nullable(),
   input: z.object({question: z.string().min(1).max(1000), recipient: z.string().min(1).max(300)}).strict().optional(),
-  occurrences: z.array(caseOccurrenceSchema).min(1).max(100), intendedFixes: z.array(casePrSchema).max(20),
+  occurrences: z.array(caseOccurrenceSchema).min(1).max(100).refine(rows =>
+    new Set(rows.map(row => row.occurrenceId)).size === rows.length && new Set(rows.map(row => row.rootKey)).size === rows.length,
+    'Duplicate canonical occurrence identity'), intendedFixes: z.array(casePrSchema).max(20),
   prObservations: z.array(casePrObservationSchema).max(20), claim: caseClaimSchema.optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   archive: z.object({key: z.string().max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().positive()}).strict().optional(),

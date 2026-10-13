@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto'
 import {convertRoutineCases} from './convert-routine-cases'
 import {caseDetailArchive} from '../services/routine-case.service'
 import {connectMongo,disconnectMongo,withTransaction} from '../connections/mongo.connection'
-import {RoutineCaseModel,RoutineCaseActivityModel} from '../models/routine-case.model'
+import {RoutineCaseModel,RoutineCaseActivityModel,ensureRoutineCaseIndexes} from '../models/routine-case.model'
 import mongoose from 'mongoose'
 import {requestInputDigest} from '../services/test-request.service'
 import {routineCaseSchema} from '../types/routine-case.types'
@@ -30,6 +30,7 @@ async function main() {
         throw Error('Live source changed after drain; reconcile the exact inventory before conversion')
     }finally{await source.close()}
     await connectMongo(process.env.MONGO_URL)
+    await ensureRoutineCaseIndexes()
   }
   try {
     const result=await convertRoutineCases(input,drain,caseDetailArchive(),mode==='apply'?{

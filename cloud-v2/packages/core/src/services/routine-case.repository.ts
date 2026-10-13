@@ -1,4 +1,4 @@
-import {RoutineCaseActivityModel, RoutineCaseModel} from '../models/routine-case.model'
+import {RoutineCaseActivityModel, RoutineCaseModel, ensureRoutineCaseIndexes} from '../models/routine-case.model'
 import {withTransaction} from '../connections/mongo.connection'
 import {routineCaseSchema, type CaseActivity, type RoutineCase} from '../types/routine-case.types'
 import {TestRunError} from './test-result-error'
@@ -32,6 +32,7 @@ export const routineCaseRepository: RoutineCaseRepository = {
     .sort({revision: -1}).limit(limit).select({_id: 0}).read('primary').readConcern('majority')
     .setOptions({maxTimeMS: 5000}).lean() as CaseActivity[]},
   async commit(previous, next, event, fence) {
+    try {await ensureRoutineCaseIndexes()} catch {throw new TestRunError(503, 'Canonical case authority indexes are not ready; no case write was accepted')}
     return withTransaction(async session => {
       if (await RoutineCaseActivityModel.findOne({mutationId: event.mutationId}).session(session).lean()) return false
       const values = {version: 2, generation: next.generation, rootKeys: next.occurrences.map(o => o.rootKey), payload: next}

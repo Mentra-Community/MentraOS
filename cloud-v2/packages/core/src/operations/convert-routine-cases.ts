@@ -29,7 +29,7 @@ export interface CaseConversionTarget {read(id:string):Promise<RoutineCase|null>
 /** Finite, operator-reviewed conversion only. All old documents and exact settlement evidence are preserved in R2. */
 export async function convertRoutineCases(raw:unknown, rawDrain:unknown, archive:CaseDetailArchive, target?:CaseConversionTarget) {
   const input=caseConversionInventorySchema.parse(raw),drain=drainSchema.parse(rawDrain),cases:RoutineCase[]=[],retained=new Set<string>()
-  const consumed=new Set<string>()
+  const consumed=new Set<string>(), occurrenceIds=new Set<string>(), rootKeys=new Set<string>()
   const sourceCases=new Map((raw as {cases:Array<{caseId:string}>}).cases.map(row=>[row.caseId,row]))
   const sourceRuns=new Map((raw as {occurrences:Array<{runId:string}>}).occurrences.map(row=>[row.runId,row]))
   const byRun=new Map(input.occurrences.map(run=>[run.runId,run])), linked=input.occurrences.filter(run=>run.miniCase)
@@ -59,7 +59,10 @@ export async function convertRoutineCases(raw:unknown, rawDrain:unknown, archive
         if(run.miniCase!.anchorRunId!==b.runId||!run.routineFailure)throw Error('Occurrence anchor/intake is contradictory')
         const i=run.routineFailure.intake,s=i.source
         if(!s)throw Error('Linked original source is unavailable; conversion requires its retained source correction')
-        occurrences.push({occurrenceId:i.occurrenceId,rootKey:requestInputDigest({legacyEnvironment:i.environment,occurrenceId:i.occurrenceId}),anchorRunId:b.runId,
+        const rootKey=requestInputDigest({legacyEnvironment:i.environment,occurrenceId:i.occurrenceId})
+        if(occurrenceIds.has(i.occurrenceId)||rootKeys.has(rootKey))throw Error('Duplicate logical occurrence identity in conversion inventory')
+        occurrenceIds.add(i.occurrenceId);rootKeys.add(rootKey)
+        occurrences.push({occurrenceId:i.occurrenceId,rootKey,anchorRunId:b.runId,
           original:{runId:i.testRunId,environment:i.environment,repository:s.repository,channel:s.channel,branch:s.branch,branchKey,...(s.headSha?{headSha:s.headSha}:{})},verificationRequestIds:[]})
       }
     }

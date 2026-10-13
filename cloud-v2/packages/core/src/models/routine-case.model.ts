@@ -1,4 +1,4 @@
-import {Schema} from 'mongoose'
+import mongoose, {Schema} from 'mongoose'
 import {registerModel} from './register-model'
 
 /** Sole cause/occurrence/claim authority. No automatic executor inbox is created. */
@@ -20,3 +20,26 @@ const activity = new Schema({caseId: {type: String, required: true}, revision: {
 activity.index({caseId: 1, revision: 1}, {unique: true})
 activity.index({mutationId: 1}, {unique: true})
 export const RoutineCaseActivityModel = registerModel('RoutineCaseActivity', activity)
+
+const readiness = new WeakMap<object, Promise<void>>()
+/** Build and verify the authority indexes before accepting a case write or a finite conversion. */
+export function ensureRoutineCaseIndexes(): Promise<void> {
+  const db = mongoose.connection.db
+  if (!db) return Promise.reject(new Error('Canonical case database is not connected'))
+  const existing = readiness.get(db)
+  if (existing) return existing
+  const pending = (async () => {
+    for (const model of [RoutineCaseModel, RoutineCaseActivityModel]) {
+      await model.createCollection()
+      await model.createIndexes()
+      const indexes = await model.collection.listIndexes().toArray()
+      for (const [keys, options] of model.schema.indexes()) {
+        if (!options.unique) continue
+        if (!indexes.some(index => index.unique === true && JSON.stringify(index.key) === JSON.stringify(keys)))
+          throw new Error(`Canonical case unique index is missing: ${model.collection.name}`)
+      }
+    }
+  })().catch(error => {readiness.delete(db); throw error})
+  readiness.set(db, pending)
+  return pending
+}

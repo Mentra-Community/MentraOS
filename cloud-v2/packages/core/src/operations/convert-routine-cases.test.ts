@@ -42,3 +42,22 @@ test('a linked occurrence naming an absent branch is never silently omitted',asy
  await expect(convertRoutineCases(bad,drain,archive(),{async read(){return null},async insert(row){writes.push(row)}})).rejects.toThrow('absent canonical case')
  expect(writes).toHaveLength(0)
 })
+
+test('distinct inbox runs cannot duplicate logical occurrence identities within or across canonical cases',async()=>{
+ for(const acrossCases of [false,true]) {
+  const bad=structuredClone(inventory), duplicate=structuredClone(bad.occurrences[0]!)
+  duplicate.runId='second-run'
+  if(acrossCases) {
+   const other=structuredClone(original), otherId='mfc_'+'1'.repeat(64)
+   delete (other as any).lease
+   other.caseId=otherId
+   other.branches[key]!.runId='second-anchor'
+   other.branches[key]!.observedOccurrenceRunIds=['second-run']
+   bad.cases.push(other);duplicate.miniCase={caseId:otherId,branchKey:key,anchorRunId:'second-anchor'}
+  }
+  bad.occurrences.push(duplicate)
+  const writes:unknown[]=[]
+  await expect(convertRoutineCases(bad,drain,archive(),{async read(){return null},async insert(row){writes.push(row)}})).rejects.toThrow('Duplicate logical occurrence')
+  expect(writes).toHaveLength(0)
+ }
+})
