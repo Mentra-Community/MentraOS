@@ -1,6 +1,22 @@
+/**
+ * Builds the workspace portal into dist/ for Cloudflare Pages.
+ *
+ * Public build-time configuration, read from the environment (scripts/deploy-pages.ts sets it for each
+ * Mentra environment):
+ * - DEVELOPER_CONSOLE_URL: the Developer Console the sidebar links to. Unset (a Private Cloud, CI or a
+ *   local build): no link.
+ */
 import tailwind from "bun-plugin-tailwind";
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { developerConsoleUrl } from "./src/lib/config";
+
+const configuredConsole = process.env.DEVELOPER_CONSOLE_URL?.trim() ?? "";
+const consoleUrl = developerConsoleUrl(configuredConsole);
+if (configuredConsole && !consoleUrl) {
+  throw new Error(`DEVELOPER_CONSOLE_URL must be an absolute http(s) URL, not "${configuredConsole}".`);
+}
+console.log(` Developer Console link: ${consoleUrl ?? "none"}`);
 
 const outdir = path.join(process.cwd(), "dist");
 
@@ -23,6 +39,7 @@ const result = await Bun.build({
   external: ["/fonts/*"],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env.DEVELOPER_CONSOLE_URL": JSON.stringify(consoleUrl ?? ""),
   },
 });
 

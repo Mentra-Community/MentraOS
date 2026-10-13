@@ -1,5 +1,5 @@
 import { Avatar, Button } from "@mentra/workspace-ui";
-import { LogOut, Menu, MoreHorizontal, X, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, LogOut, Menu, MoreHorizontal, X, type LucideIcon } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { MentraLogo } from "@/components/brand";
 import { Link } from "@/lib/navigation";
@@ -20,11 +20,16 @@ export type NavGroup = {
   items: readonly NavItem[];
 };
 
+const NAV_ITEM_CLASS =
+  "text-foreground hover:bg-hover flex h-10 items-center gap-3 rounded-full px-4 text-[15px] font-semibold transition-colors";
+
 type AppShellProps = {
   /** The top of the sidebar, under the Mentra mark: the workspace switcher. */
   switcher: ReactNode;
   nav: readonly NavGroup[];
   activeKey: string | null;
+  /** Links to other Mentra sites, above the account footer. Each opens in a new tab. */
+  links?: readonly NavItem[];
   /** The page header. Without a title there is no header (a full-page message), only the mobile menu bar. */
   title?: string;
   description?: string;
@@ -38,13 +43,14 @@ type AppShellProps = {
 
 /**
  * The workspace portal's frame: a sidebar with the workspace switcher on top, the current workspace's
- * sections and the account at the bottom, and a sticky page header over the content. On small screens
- * the sidebar is a drawer behind the menu button.
+ * sections, links to other Mentra sites and the account at the bottom, and a sticky page header over
+ * the content. On small screens the sidebar is a drawer behind the menu button.
  */
 export function AppShell({
   switcher,
   nav,
   activeKey,
+  links = [],
   title,
   description,
   headerAction,
@@ -120,10 +126,7 @@ export function AppShell({
                       <Link
                         href={item.href}
                         aria-current={active ? "page" : undefined}
-                        className={cn(
-                          "text-foreground hover:bg-hover flex h-10 items-center gap-3 rounded-full px-4 text-[15px] font-semibold transition-colors",
-                          active && "bg-primary text-primary-foreground hover:bg-primary",
-                        )}
+                        className={cn(NAV_ITEM_CLASS, active && "bg-primary text-primary-foreground hover:bg-primary")}
                       >
                         <Icon className={cn("size-[18px]", active ? "text-primary-foreground" : "text-muted-foreground")} />
                         {item.label}
@@ -135,6 +138,27 @@ export function AppShell({
             </div>
           ))}
         </nav>
+
+        {links.length > 0 ? (
+          <ul
+            className="shrink-0 space-y-0.5 px-3 pb-3"
+            onClick={event => closeOnNavigation(event, () => setMobileSidebarOpen(false))}
+          >
+            {links.map(item => {
+              const Icon = item.icon;
+              return (
+                <li key={item.key}>
+                  <a href={item.href} target="_blank" rel="noreferrer" className={NAV_ITEM_CLASS}>
+                    <Icon className="text-muted-foreground size-[18px]" />
+                    {item.label}
+                    <ArrowUpRight className="text-muted-foreground ml-auto size-4" />
+                    <span className="sr-only"> (opens in a new tab)</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
 
         <AccountFooter userEmail={userEmail} onSignOut={onSignOut} signingOut={signingOut} />
       </aside>

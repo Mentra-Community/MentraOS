@@ -1,6 +1,7 @@
 /**
  * What every screen of the workspace portal shares: Core's workspace API at `/api/portal/workspaces`
- * (which this portal's session authenticates), the signed-in person, and the invitations they can act on.
+ * (which this portal's session authenticates), the signed-in person, the invitations they can act on,
+ * and the Developer Console the sidebar links to.
  */
 
 import { createWorkspaceApi } from "@mentra/workspace-ui";
@@ -51,6 +52,8 @@ export interface PortalSession {
   forgetInvitation(invitation: { invitationId: string | null; token: string | null }, reason: "accepted" | "dismissed" | "gone"): void;
   signOut(): void;
   signingOut: boolean;
+  /** This environment's Developer Console (lib/config), linked from the sidebar; null where there is none. */
+  developerConsoleUrl: string | null;
 }
 
 const PortalContext = createContext<PortalSession | null>(null);
