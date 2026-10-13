@@ -812,6 +812,11 @@ export const cloudClientService = {
         return getCoreClient().supportProfile.update(...args)
       },
     },
+    fleet: {
+      report(...args: Parameters<CloudCore["fleet"]["report"]>) {
+        return getCoreClient().fleet.report(...args)
+      },
+    },
   },
 
   hasAudioSubscriptions(): boolean {

@@ -25,17 +25,20 @@ export class CloudClientError extends Error {
  * `status` is the HTTP status so a caller can branch (for example a 401 triggers
  * one refresh-and-retry). `code` is the optional machine-readable error code the
  * cloud puts in the JSON body, when present, for finer branching than status
- * alone allows.
+ * alone allows. `retryAfterSeconds` is the server's `Retry-After` delay in whole
+ * seconds, set only when the response carried the delta-seconds form.
  */
 export class HttpError extends CloudClientError {
   status!: number;
   code?: string;
+  retryAfterSeconds?: number;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "HttpError";
     this.status = status;
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

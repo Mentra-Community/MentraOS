@@ -6,8 +6,8 @@
  * helper, which attaches the access token from `cloud.auth` as the Bearer, so
  * core never touches credentials itself.
  *
- * Today it exposes the unified report submission surface and the support
- * profile update.
+ * Today it exposes the unified report submission surface, the support
+ * profile update and the Fleet report.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -16,6 +16,8 @@
  * ("src/modules/core/core.ts").
  */
 import type { HttpClient } from "../../http";
+import type { FleetReport } from "@mentra/cloud-protocol";
+import { Fleet, type FleetReportOutcome } from "./fleet";
 import {
   Reports,
   type AddReportArtifactsResult,
@@ -53,6 +55,7 @@ export type {
   SubmitReportInput,
   SubmitReportResult,
 } from "./reports";
+export type { FleetReportOutcome } from "./fleet";
 export type {
   SupportConnectionState,
   SupportProfileUpdateResult,
@@ -102,11 +105,16 @@ export class Core {
   readonly supportProfile: {
     update(input: SupportStateInput): Promise<SupportProfileUpdateResult>;
   };
+  readonly fleet: {
+    /** Throws only for auth and aborts; every Fleet answer is a `FleetReportOutcome`. */
+    report(batch: FleetReport, opts?: { signal?: AbortSignal }): Promise<FleetReportOutcome>;
+  };
 
   constructor(deps: CoreDeps) {
     const { http } = deps;
     const reports = new Reports({ http });
     const supportProfiles = new SupportProfiles(http);
+    const fleet = new Fleet(http);
 
     this.reports = {
       submit: reports.submit.bind(reports),
@@ -119,6 +127,9 @@ export class Core {
     };
     this.supportProfile = {
       update: supportProfiles.update.bind(supportProfiles),
+    };
+    this.fleet = {
+      report: fleet.report.bind(fleet),
     };
   }
 }
