@@ -23,6 +23,7 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 - [BES MCU firmware OTA](features/bes-ota.md) — pushing new BES firmware over UART
 - [Maintaining customized Mentra Live devices](features/dev-firmware-update.md) — initial setup,
   safe firmware updates, USB reconnect guidance, and recovery
+- [USB refurbishment](refurbishment-usb-update.md) — one stock command for the published ASG, MTK, and BES set
 
 ## Testing and characterization
 

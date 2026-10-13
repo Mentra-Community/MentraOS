@@ -106,3 +106,139 @@ stop_asg() {
   echo "Force-stopping $PACKAGE …"
   adb -s "$SERIAL" shell am force-stop "$PACKAGE"
 }
+
+PLACEHOLDER_ADB_SERIAL="0123456789ABCDEF"
+
+# Ready devices as "serial<TAB>transport_id", one per line.
+list_ready_transports() {
+  adb devices -l | awk 'NR>1 && $2=="device" {
+    transport=""
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^transport_id:/) {
+        split($i, parts, ":")
+        transport = parts[2]
+      }
+    }
+    if (transport != "") print $1 "\t" transport
+  }'
+}
+
+device_prop() {
+  local transport="$1"
+  local prop="$2"
+  adb -t "$transport" shell getprop "$prop" </dev/null 2>/dev/null | tr -d '\r\n'
+}
+
+device_cid() {
+  local transport="$1"
+  adb -t "$transport" shell cat /sys/block/mmcblk0/device/cid </dev/null 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]'
+}
+
+# Rewrite later adb calls onto one transport. Child processes inherit PATH.
+pin_adb_transport() {
+  local transport="$1"
+  local real dir
+  real="$(command -v adb)"
+  [ -n "$real" ] || return 1
+  [ -n "$transport" ] || return 1
+  dir="${STOCK_UPDATE_ADB_BIN:-$(mktemp -d "${TMPDIR:-/tmp}/mentra-adb.XXXXXX")}"
+  mkdir -p "$dir"
+  cat > "$dir/adb" << EOF
+#!/bin/bash
+args=()
+skip=""
+for arg in "\$@"; do
+  if [ -n "\$skip" ]; then
+    skip=""
+    continue
+  fi
+  case "\$arg" in
+    -s|-t) skip=1; continue ;;
+  esac
+  args+=("\$arg")
+done
+exec $(printf '%q' "$real") -t $(printf '%q' "$transport") "\${args[@]}"
+EOF
+  chmod +x "$dir/adb"
+  export PATH="$dir:$PATH"
+  export ADB_TRANSPORT="$transport"
+  unset ANDROID_SERIAL ADB_SERIAL || true
+  ADB=(adb)
+}
+
+# Select one Mentra Live. A unique real --serial is enough.
+# --cid is required when the serial is missing, duplicated, or the placeholder.
+# Prints a message and returns 11 when the choice is ambiguous or unmatched.
+select_glasses_transport() {
+  local want_serial="${1:-}"
+  local want_cid="${2:-}"
+  local rows count serial transport cid mac model matched=0
+  rows="$(list_ready_transports || true)"
+  count="$(printf '%s\n' "$rows" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$count" -eq 0 ]; then
+    echo "Error: no adb device in 'device' state." >&2
+    return 11
+  fi
+
+  if [ -n "$want_serial" ] && [ "$want_serial" != "$PLACEHOLDER_ADB_SERIAL" ]; then
+    matched="$(printf '%s\n' "$rows" | awk -F '\t' -v serial="$want_serial" '$1==serial {c++} END{print c+0}')"
+    if [ "$matched" -ne 1 ]; then
+      echo "Error: serial $want_serial matched $matched ready devices." >&2
+      printf '%s\n' "$rows" >&2
+      return 11
+    fi
+    serial="$want_serial"
+    transport="$(printf '%s\n' "$rows" | awk -F '\t' -v serial="$want_serial" '$1==serial {print $2; exit}')"
+  elif [ -n "$want_cid" ]; then
+    local found_serial="" found_transport=""
+    while IFS=$'\t' read -r serial transport; do
+      [ -n "$serial" ] || continue
+      cid="$(device_cid "$transport")"
+      if [ "$cid" = "$(printf '%s' "$want_cid" | tr '[:upper:]' '[:lower:]')" ]; then
+        matched=$((matched + 1))
+        found_serial="$serial"
+        found_transport="$transport"
+      fi
+    done <<< "$rows"
+    if [ "$matched" -ne 1 ]; then
+      echo "Error: eMMC CID matched $matched ready devices. Connected glasses:" >&2
+      while IFS=$'\t' read -r serial transport; do
+        [ -n "$serial" ] || continue
+        cid="$(device_cid "$transport" || true)"
+        mac="$(device_prop "$transport" persist.mentra.live.mac || true)"
+        echo "  serial=$serial cid=${cid:-unreadable} mac=${mac:-unreadable}" >&2
+      done <<< "$rows"
+      return 11
+    fi
+    serial="$found_serial"
+    transport="$found_transport"
+  elif [ "$count" -eq 1 ]; then
+    IFS=$'\t' read -r serial transport <<< "$rows"
+    if [ "$serial" = "$PLACEHOLDER_ADB_SERIAL" ]; then
+      cid="$(device_cid "$transport")"
+      echo "Error: the only ready device uses placeholder serial $PLACEHOLDER_ADB_SERIAL." >&2
+      echo "Pass --cid $cid to select it." >&2
+      return 11
+    fi
+  else
+    echo "Error: multiple adb devices are ready. Pass --serial for a unique serial, or --cid when the serial is shared." >&2
+    while IFS=$'\t' read -r serial transport; do
+      [ -n "$serial" ] || continue
+      cid="$(device_cid "$transport" || true)"
+      mac="$(device_prop "$transport" persist.mentra.live.mac || true)"
+      echo "  serial=$serial cid=${cid:-unreadable} mac=${mac:-unreadable}" >&2
+    done <<< "$rows"
+    return 11
+  fi
+
+  SELECTED_SERIAL="$serial"
+  SELECTED_TRANSPORT="$transport"
+  SELECTED_CID="$(device_cid "$transport")"
+  SELECTED_MAC="$(device_prop "$transport" persist.mentra.live.mac)"
+  SELECTED_MODEL="$(device_prop "$transport" ro.product.model)"
+  if [ -z "$SELECTED_MAC" ]; then
+    echo "Error: Bluetooth MAC on transport $transport is empty." >&2
+    return 11
+  fi
+  export SELECTED_SERIAL SELECTED_TRANSPORT SELECTED_CID SELECTED_MAC SELECTED_MODEL
+}

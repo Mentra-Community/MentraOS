@@ -130,6 +130,18 @@ continues automatically.
 
 **Warning:** Your fork will not receive OTA updates from Mentra.
 
+### Refurbishing a stock Mentra Live
+
+Bring one stock Mentra Live up to the latest published glasses set. The default track is production and stops before any download until a public `mentra-vX.Y.Z` release exists.
+
+```bash
+./scripts/refurbish-mentra-live.sh
+./scripts/refurbish-mentra-live.sh --serial <adb-serial>
+./scripts/refurbish-mentra-live.sh --track staging
+```
+
+Pass `--cid` only when the serial is missing, duplicated, or the placeholder `0123456789ABCDEF`. See [USB refurbishment](docs/refurbishment-usb-update.md) for tracks, terminal output, exit codes, reports, and reruns.
+
 ### Updating Mentra Live Firmware with a Custom Build Installed
 
 After using `dev-setup.sh`, update the glasses firmware without rebuilding or reinstalling your
