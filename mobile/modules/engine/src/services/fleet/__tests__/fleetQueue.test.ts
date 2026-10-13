@@ -15,6 +15,8 @@ const B = "b".repeat(64)
 const START = Date.UTC(2026, 9, 13, 12, 0, 0)
 const MINUTE = 60_000
 const DAY = 24 * 60 * MINUTE
+/** 7 days and 1 minute: older than the queue keeps anything. */
+const STALE = 7 * DAY + MINUTE
 
 function at(minutes: number): string {
   return new Date(START + minutes * MINUTE).toISOString()
@@ -400,6 +402,273 @@ describe("FleetQueue expiry", () => {
     const queue = newQueue()
     expect(queue.takeLosses(A, START + 30 * DAY)).toEqual({dropped: 0, expired: 0, from: null, to: null})
     expect(store.keys()).toEqual([])
+  })
+})
+
+describe("FleetQueue.sweepExpired", () => {
+  const keysOf = (partition: string) => store.keys().filter((key) => key.split(":")[1] === partition)
+  const restart = () => newQueue(new MemoryFleetStore(store.values))
+
+  test("empties a partition untouched for 7 days and 1 minute and removes its keys", () => {
+    const queue = newQueue()
+    for (const id of ["r1", "r2", "r3"]) queue.enqueue(A, gap(id, at(1)))
+    queue.nextSequence(A, "session")
+    expect(keysOf(A).length).toBeGreaterThan(3)
+
+    // A restarted process: the partition's account never came back, so nothing loaded it.
+    const restarted = restart()
+    restarted.sweepExpired(START + STALE)
+
+    expect(keysOf(A).filter((key) => key.startsWith("q:"))).toEqual([])
+    expect(keysOf(A).filter((key) => key.startsWith("i:") || key.startsWith("n:"))).toEqual([])
+    expect(restarted.size(A)).toBe(0)
+  })
+
+  test("keeps the loss counters of a partition whose account returns within the window", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    queue.enqueue(A, gap("r2", at(3)))
+    const swept = START + STALE
+    restart().sweepExpired(swept)
+    expect(keysOf(A)).toEqual([`l:${A}`])
+
+    // The account signs in again two days later, on a restarted process.
+    const returned = restart()
+    expect(returned.takeLosses(A, swept + 2 * DAY)).toEqual({dropped: 0, expired: 2, from: at(1), to: at(3)})
+    expect(keysOf(A)).toEqual([])
+    expect(returned.takeLosses(A, swept + 2 * DAY)).toEqual({dropped: 0, expired: 0, from: null, to: null})
+  })
+
+  test("drops the loss counters too once they are older than 7 days", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    const swept = START + STALE
+    restart().sweepExpired(swept)
+    expect(keysOf(A)).toEqual([`l:${A}`])
+
+    restart().sweepExpired(swept + 7 * DAY)
+    expect(keysOf(A)).toEqual([`l:${A}`])
+    restart().sweepExpired(swept + 7 * DAY + 1)
+    expect(keysOf(A)).toEqual([])
+    expect(store.keys()).toEqual([])
+  })
+
+  test("leaves a fresh partition untouched", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("old", at(0)))
+    clock = START + 7 * DAY
+    queue.enqueue(B, gap("fresh1", at(7 * 24 * 60)))
+    queue.enqueue(B, gap("fresh2", at(7 * 24 * 60 + 1)))
+    queue.nextSequence(B, "session")
+    const before = new Map(
+      store
+        .keys()
+        .filter((key) => keysOf(B).includes(key))
+        .map((key) => [key, store.values.get(key)]),
+    )
+
+    restart().sweepExpired(START + STALE)
+
+    expect(keysOf(A).filter((key) => key.startsWith("q:"))).toEqual([])
+    expect(new Map(keysOf(B).map((key) => [key, store.values.get(key)]))).toEqual(before)
+    expect(ids(restart().nextBatch(B, 10, 1_000_000))).toEqual(["fresh1", "fresh2"])
+  })
+
+  test("removes only the old records of a partition that has younger ones", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("old1", at(0)))
+    queue.enqueue(A, gap("old2", at(1)))
+    clock = START + 3 * DAY
+    queue.enqueue(A, gap("young", at(3 * 24 * 60)))
+    queue.nextSequence(A, "session")
+
+    const restarted = restart()
+    restarted.sweepExpired(START + STALE)
+
+    expect(ids(restarted.nextBatch(A, 10, 1_000_000))).toEqual(["young"])
+    expect(JSON.parse(store.values.get(`i:${A}`)!)).toMatchObject({count: 1})
+    expect(store.values.has(`n:${A}`)).toBe(true)
+    expect(restarted.takeLosses(A, START + STALE)).toEqual({dropped: 0, expired: 2, from: at(0), to: at(1)})
+  })
+
+  test("sweeps every partition in the store with a single scan", () => {
+    const queue = newQueue()
+    for (const partition of [A, B, "c".repeat(64), "p1", "p10"])
+      queue.enqueue(partition, gap(`r-${partition.slice(0, 3)}`))
+    queue.nextSequence(B, "session")
+
+    const scanned = new MemoryFleetStore(store.values)
+    const sweeper = newQueue(scanned)
+    sweeper.sweepExpired(START + STALE)
+
+    expect(scanned.getAllKeysCalls).toBe(1)
+    expect(store.keys().filter((key) => key.startsWith("q:") || key.startsWith("i:") || key.startsWith("n:"))).toEqual(
+      [],
+    )
+    sweeper.sweepExpired(START + STALE)
+    expect(scanned.getAllKeysCalls).toBe(2)
+  })
+
+  test("does not scan again for partitions this process has already loaded", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1"))
+    queue.enqueue(B, gap("r2"))
+    expect(store.getAllKeysCalls).toBe(2)
+    queue.sweepExpired(START + MINUTE)
+    expect(store.getAllKeysCalls).toBe(3)
+    expect(queue.size(A)).toBe(1)
+    expect(queue.size(B)).toBe(1)
+    expect(store.getAllKeysCalls).toBe(3)
+  })
+
+  test("expires records in a partition this process has loaded", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    queue.sweepExpired(START + STALE)
+    expect(queue.size(A)).toBe(0)
+    expect(queue.nextBatch(A, 10, 1_000_000)).toEqual([])
+    expect(queue.takeLosses(A, START + STALE)).toEqual({dropped: 0, expired: 1, from: at(1), to: at(1)})
+    // The queue stays usable, and does not reuse a key.
+    queue.enqueue(A, gap("r2", at(2)))
+    expect(ids(queue.nextBatch(A, 10, 1_000_000))).toEqual(["r2"])
+    expect(store.keys()).toContain(`q:${A}:0000000000000001:r2`)
+  })
+
+  test("defaults to the queue's clock", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    queue.sweepExpired()
+    expect(queue.size(A)).toBe(1)
+    clock = START + STALE
+    queue.sweepExpired()
+    expect(queue.size(A)).toBe(0)
+  })
+
+  test("does not reset the sequence of a live collector session when it clears an empty partition", () => {
+    const queue = newQueue()
+    expect(queue.nextSequence(A, "session")).toBe(0)
+    expect(queue.nextSequence(A, "session")).toBe(1)
+    queue.sweepExpired(START)
+    expect(store.values.has(`n:${A}`)).toBe(false)
+    expect(queue.nextSequence(A, "session")).toBe(2)
+    expect(store.values.has(`n:${A}`)).toBe(true)
+  })
+
+  test("removes loss counters it cannot read, and an index with nothing behind it", () => {
+    store.values.set(`l:${A}`, "{not json")
+    store.values.set(`i:${A}`, JSON.stringify({count: 0, nextSeq: 4, oldest: null, newest: null}))
+    newQueue().sweepExpired(START)
+    expect(keysOf(A)).toEqual([])
+  })
+
+  test("forgets losses that never reached the store once they are too old", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    store.failSetWhen = (key) => !key.startsWith("i:") || key.endsWith("r2")
+    queue.enqueue(A, gap("r2", at(2)))
+    store.failSetWhen = null
+    queue.sweepExpired(START + STALE)
+    expect(queue.takeLosses(A, START + STALE).dropped).toBe(0)
+  })
+
+  test("never throws, whatever the store does", () => {
+    const queue = newQueue()
+    for (const id of ["r1", "r2"]) queue.enqueue(A, gap(id, at(1)))
+    queue.nextSequence(A, "session")
+
+    // A fresh queue over the failing store, as after a restart.
+    store.failGetAllKeys = true
+    expect(() => newQueue(store).sweepExpired(START + STALE)).not.toThrow()
+    store.failGetAllKeys = false
+
+    store.failSetWhen = () => true
+    store.failRemoveWhen = () => true
+    expect(() => newQueue(store).sweepExpired(START + STALE)).not.toThrow()
+    store.failSetWhen = null
+    store.failRemoveWhen = null
+    expect(warn).toHaveBeenCalled()
+
+    // Once the store works again the sweep finishes the job.
+    newQueue(store).sweepExpired(START + STALE)
+    expect(keysOf(A).filter((key) => key.startsWith("q:"))).toEqual([])
+  })
+
+  test("sweeps the other partitions when one of them fails", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("a1", at(1)))
+    queue.enqueue(B, gap("b1", at(1)))
+    store.failRemoveWhen = (key) => key.includes(A)
+    expect(() => newQueue(store).sweepExpired(START + STALE)).not.toThrow()
+    store.failRemoveWhen = null
+    expect(keysOf(B).filter((key) => key.startsWith("q:"))).toEqual([])
+  })
+
+  test("finds the partition in a record key whose record ID contains the key separators", () => {
+    const queue = newQueue()
+    queue.enqueue("acct-1", gap("x:0000000000000009:y", at(1)))
+    restart().sweepExpired(START + STALE)
+    expect(keysOf("acct-1")).toEqual([`l:acct-1`])
+  })
+})
+
+describe("FleetQueue never throws after mutating state", () => {
+  test("nextBatch, remove, takeLosses and clearPartition survive a store that refuses writes and removals", () => {
+    const queue = newQueue()
+    for (const id of ["r1", "r2", "r3"]) queue.enqueue(A, gap(id, at(1)))
+    store.values.set(`q:${A}:0000000000000000:r1`, "{not json")
+    store.failSetWhen = () => true
+    store.failRemoveWhen = () => true
+
+    expect(() => queue.nextBatch(A, 10, 1_000_000)).not.toThrow()
+    expect(() => queue.remove(A, ["r2"])).not.toThrow()
+    expect(() => queue.takeLosses(A, START + STALE)).not.toThrow()
+    expect(() => queue.clearPartition(A)).not.toThrow()
+    expect(warn).toHaveBeenCalled()
+  })
+
+  test("the in-memory queue follows what was asked even when the store would not take it", () => {
+    const queue = newQueue()
+    for (const id of ["r1", "r2", "r3"]) queue.enqueue(A, gap(id, at(1)))
+    store.failSetWhen = (key) => key.startsWith("i:")
+    store.failRemoveWhen = (key) => key.endsWith(":r2")
+    queue.remove(A, ["r1", "r2"])
+    store.failSetWhen = null
+    store.failRemoveWhen = null
+    expect(ids(queue.nextBatch(A, 10, 1_000_000))).toEqual(["r3"])
+    expect(queue.size(A)).toBe(1)
+  })
+
+  test("takeLosses still reports when it cannot clear the counters, so nothing is lost", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    store.failRemoveWhen = (key) => key.startsWith("l:")
+    const first = queue.takeLosses(A, START + 8 * DAY)
+    expect(first).toEqual({dropped: 0, expired: 1, from: at(1), to: at(1)})
+    store.failRemoveWhen = null
+    // Reported again next time, rather than never.
+    expect(queue.takeLosses(A, START + 8 * DAY).expired).toBe(1)
+    expect(queue.takeLosses(A, START + 8 * DAY).expired).toBe(0)
+  })
+
+  test("a failed index write after an unreadable record is discarded does not throw", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    queue.enqueue(A, gap("r2", at(2)))
+    store.values.set(`q:${A}:0000000000000000:r1`, "{not json")
+    const restarted = newQueue(store)
+    store.failSetWhen = (key) => key.startsWith("i:")
+    expect(() => ids(restarted.nextBatch(A, 10, 1_000_000))).not.toThrow()
+    store.failSetWhen = null
+    expect(ids(restarted.nextBatch(A, 10, 1_000_000))).toEqual(["r2"])
+  })
+
+  test("a failed index repair on load does not throw", () => {
+    const queue = newQueue()
+    queue.enqueue(A, gap("r1", at(1)))
+    store.values.delete(`i:${A}`)
+    store.failSetWhen = (key) => key.startsWith("i:")
+    expect(() => newQueue(store).size(A)).not.toThrow()
+    store.failSetWhen = null
   })
 })
 

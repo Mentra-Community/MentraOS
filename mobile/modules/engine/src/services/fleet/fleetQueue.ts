@@ -11,7 +11,7 @@
  *   enqueue counter, zero-padded to 16 digits so that key order is queue order.
  * - `i:<partition>` is the partition's index: `{count, nextSeq, oldest, newest}`, the record count, the next
  *   sequence and the oldest and newest record keys.
- * - `l:<partition>` holds the losses not yet reported: `{dropped, expired, from, to}`.
+ * - `l:<partition>` holds the losses not yet reported: `{dropped, expired, from, to, updatedAt}`.
  * - `n:<partition>` holds the collector-session sequence counters, as `[collectorSessionId, next][]`.
  *
  * MMKV can list keys only by listing all of them, so the first call for a partition in a process scans the store
@@ -24,6 +24,10 @@
  * Writes are ordered so that a crash errs toward reporting a loss twice rather than never: a loss is recorded
  * before the record it describes is removed, and the index is written last and rebuilt from the records if it is
  * missing or stale.
+ *
+ * Logout spares this store, so an account that signs out and never returns leaves its partition behind.
+ * `sweepExpired` is how the 7-day bound still holds for it: one scan finds every partition, expires its old
+ * records and removes what an empty partition no longer needs.
  */
 import {FLEET_LIMITS, type FleetRecord} from "@mentra/cloud-protocol"
 import {getFleetStore} from "./fleetStorage"
@@ -69,6 +73,17 @@ export interface FleetQueue {
    * should enqueue it straight away: the counters are cleared by this call.
    */
   takeLosses(partition: string, now: number): FleetLosses
+  /**
+   * Enforces the 7-day bound on every partition in the store, including those of accounts that signed out and
+   * never came back (nothing else visits them, and logout spares this store). One scan finds the partitions; for
+   * each, records older than 7 days are dropped and counted exactly as `takeLosses` counts expiries, so an
+   * account that does return still gets its coverage gap. A partition left with no records loses its index and
+   * sequence counters, and its loss counters too once they are themselves older than 7 days: a gap report that
+   * old, for an account that never returned, can never be delivered. Never throws.
+   *
+   * The reporter calls this at start and on each upload tick. `now` defaults to the queue's clock.
+   */
+  sweepExpired(now?: number): void
   /** Forgets everything held for the partition: records, losses and sequence counters. */
   clearPartition(partition: string): void
   size(partition: string): number
@@ -83,7 +98,12 @@ export interface FleetQueueOptions {
 
 const SEQUENCE_WIDTH = 16
 const MAX_TRACKED_COLLECTOR_SESSIONS = 16
-const EMPTY_LOSSES: FleetLosses = {dropped: 0, expired: 0, from: null, to: null}
+
+/** The losses as stored: the counters plus when they last changed, which tells a sweep when they are too old to matter. */
+interface LossRecord extends FleetLosses {
+  updatedAt: number
+}
+const EMPTY_LOSSES: LossRecord = {dropped: 0, expired: 0, from: null, to: null, updatedAt: 0}
 
 const DEFAULT_PORTS: Record<string, string> = {http: "80", https: "443"}
 const URL_PARTS = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i
@@ -181,16 +201,17 @@ function later(a: string | null, b: string | null): string | null {
   return parseTime(b) > parseTime(a) ? b : a
 }
 
-function mergeLosses(a: FleetLosses, b: FleetLosses): FleetLosses {
+function mergeLosses(a: LossRecord, b: LossRecord): LossRecord {
   return {
     dropped: a.dropped + b.dropped,
     expired: a.expired + b.expired,
     from: earlier(a.from, b.from),
     to: later(a.to, b.to),
+    updatedAt: Math.max(a.updatedAt, b.updatedAt),
   }
 }
 
-function lossesOf(kind: LossKind, observedAts: Array<string | undefined>): FleetLosses {
+function lossesOf(kind: LossKind, observedAts: Array<string | undefined>, updatedAt: number): LossRecord {
   let from: string | null = null
   let to: string | null = null
   for (const observedAt of observedAts) {
@@ -203,14 +224,47 @@ function lossesOf(kind: LossKind, observedAts: Array<string | undefined>): Fleet
     expired: kind === "expired" ? observedAts.length : 0,
     from,
     to,
+    updatedAt,
   }
+}
+
+/** What a scan of the store found for one partition. */
+interface FoundPartition {
+  records: string[]
+  hasIndex: boolean
+  hasLosses: boolean
+  hasSequences: boolean
+}
+
+const RECORD_KEY_PARTITION = /^q:(.+?):\d{16}:/
+
+/** Groups every Fleet queue key in the store by the partition it belongs to. */
+function groupByPartition(keys: string[]): Map<string, FoundPartition> {
+  const found = new Map<string, FoundPartition>()
+  const entry = (partition: string): FoundPartition => {
+    let existing = found.get(partition)
+    if (!existing) {
+      existing = {records: [], hasIndex: false, hasLosses: false, hasSequences: false}
+      found.set(partition, existing)
+    }
+    return existing
+  }
+  for (const key of keys) {
+    if (key.startsWith("q:")) {
+      const partition = RECORD_KEY_PARTITION.exec(key)?.[1]
+      if (partition !== undefined) entry(partition).records.push(key)
+    } else if (key.startsWith("i:")) entry(key.slice(2)).hasIndex = true
+    else if (key.startsWith("l:")) entry(key.slice(2)).hasLosses = true
+    else if (key.startsWith("n:")) entry(key.slice(2)).hasSequences = true
+  }
+  return found
 }
 
 function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): FleetQueue {
   const now = options.now ?? Date.now
   const states = new Map<string, PartitionState>()
   /** Losses that could not be written to the store; reported by the next `takeLosses` in this process. */
-  const unpersistedLosses = new Map<string, FleetLosses>()
+  const unpersistedLosses = new Map<string, LossRecord>()
   const sequences = new Map<string, Array<[string, number]>>()
 
   function readJson(key: string): unknown {
@@ -247,21 +301,45 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
     return value as StoredEntry
   }
 
-  function readLosses(partition: string): FleetLosses | null {
-    const value = readJson(lossKey(partition)) as Partial<FleetLosses> | null
+  function readLosses(partition: string): LossRecord | null {
+    const value = readJson(lossKey(partition)) as Partial<LossRecord> | null
     if (!value || !isCount(value.dropped) || !isCount(value.expired)) return null
     return {
       dropped: value.dropped,
       expired: value.expired,
       from: typeof value.from === "string" ? value.from : null,
       to: typeof value.to === "string" ? value.to : null,
+      updatedAt: isCount(value.updatedAt) ? value.updatedAt : 0,
+    }
+  }
+
+  /** Removes a key. A key that will not go is logged, not thrown: the queue has already moved on in memory. */
+  function removeKey(key: string): void {
+    try {
+      store.remove(key)
+    } catch (error) {
+      warn("could not remove a key", error)
+    }
+  }
+
+  /** Writes the index. A failed write is logged, not thrown: the next load rebuilds the index from the records. */
+  function persistIndex(partition: string, state: PartitionState): void {
+    try {
+      writeIndex(partition, state)
+    } catch (error) {
+      warn("could not update the index", error)
     }
   }
 
   /** Counts losses, in the store if it will take them, otherwise in memory. */
-  function noteLosses(partition: string, kind: LossKind, observedAts: Array<string | undefined>): void {
+  function noteLosses(
+    partition: string,
+    kind: LossKind,
+    observedAts: Array<string | undefined>,
+    at: number = now(),
+  ): void {
     if (observedAts.length === 0) return
-    const delta = lossesOf(kind, observedAts)
+    const delta = lossesOf(kind, observedAts, at)
     try {
       store.set(lossKey(partition), JSON.stringify(mergeLosses(readLosses(partition) ?? EMPTY_LOSSES, delta)))
     } catch (error) {
@@ -270,40 +348,41 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
     }
   }
 
-  /** The partition's records, read from the store the first time the process asks. */
-  function load(partition: string): PartitionState {
-    const loaded = states.get(partition)
-    if (loaded) return loaded
+  /** The partition's state from its record keys, repairing the index if a crash left it behind. */
+  function stateFrom(partition: string, recordKeys: string[]): PartitionState {
     const prefix = recordPrefix(partition)
-    const keys = store
-      .getAllKeys()
-      .filter((key) => isRecordKey(key, prefix))
-      .sort()
+    const keys = [...recordKeys].sort()
     const index = readIndex(partition)
     const lastKey = keys[keys.length - 1]
     const lastSequence =
       lastKey === undefined ? -1 : Number(lastKey.slice(prefix.length, prefix.length + SEQUENCE_WIDTH))
     const state: PartitionState = {keys, nextSeq: Math.max(index?.nextSeq ?? 0, lastSequence + 1)}
-    states.set(partition, state)
     const inStep =
       index !== null &&
       index.count === keys.length &&
       index.nextSeq === state.nextSeq &&
       index.oldest === (keys[0] ?? null) &&
       index.newest === (lastKey ?? null)
-    if (!inStep && (keys.length > 0 || index !== null)) {
-      try {
-        writeIndex(partition, state)
-      } catch (error) {
-        warn("could not repair the index", error)
-      }
-    }
+    if (!inStep && (keys.length > 0 || index !== null)) persistIndex(partition, state)
+    return state
+  }
+
+  /** The partition's records, read from the store the first time the process asks. */
+  function load(partition: string): PartitionState {
+    const loaded = states.get(partition)
+    if (loaded) return loaded
+    const prefix = recordPrefix(partition)
+    const state = stateFrom(
+      partition,
+      store.getAllKeys().filter((key) => isRecordKey(key, prefix)),
+    )
+    states.set(partition, state)
     return state
   }
 
   /** Removes the first `count` records of the partition (they are already counted as lost). */
   function removeOldest(state: PartitionState, count: number): void {
-    for (const key of state.keys.splice(0, count)) store.remove(key)
+    for (const key of state.keys.splice(0, count)) removeKey(key)
   }
 
   /** Discards records that cannot be read, counting them as dropped. */
@@ -314,9 +393,9 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
       unreadable.map(() => undefined),
     )
     const gone = new Set(unreadable)
-    for (const key of unreadable) store.remove(key)
+    for (const key of unreadable) removeKey(key)
     state.keys = state.keys.filter((key) => !gone.has(key))
-    writeIndex(partition, state)
+    persistIndex(partition, state)
   }
 
   function trimToCapacity(partition: string, state: PartitionState): void {
@@ -341,10 +420,23 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
       else break
     }
     if (head === 0) return
-    noteLosses(partition, "expired", expired)
-    noteLosses(partition, "dropped", unreadable)
+    noteLosses(partition, "expired", expired, at)
+    noteLosses(partition, "dropped", unreadable, at)
     removeOldest(state, head)
-    writeIndex(partition, state)
+    persistIndex(partition, state)
+  }
+
+  /** Expires a partition's old records, then clears out what an empty partition no longer needs. */
+  function sweepPartition(partition: string, found: FoundPartition, at: number): void {
+    const state = states.get(partition) ?? stateFrom(partition, found.records)
+    expire(partition, state, at)
+    if (state.keys.length > 0) return
+    if (found.hasIndex) removeKey(indexKey(partition))
+    if (found.hasSequences) removeKey(sequenceKey(partition))
+    if (found.hasLosses) {
+      const losses = readLosses(partition)
+      if (losses === null || at - losses.updatedAt > FLEET_LIMITS.phoneQueueMaxAgeMs) removeKey(lossKey(partition))
+    }
   }
 
   function loadSequences(partition: string): Array<[string, number]> {
@@ -372,12 +464,8 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
         noteLosses(partition, "dropped", [record?.observedAt])
         return
       }
-      try {
-        trimToCapacity(partition, state)
-        writeIndex(partition, state)
-      } catch (error) {
-        warn("could not update the index", error)
-      }
+      trimToCapacity(partition, state)
+      persistIndex(partition, state)
     },
 
     nextBatch(partition, maxRecords, maxBytes) {
@@ -409,12 +497,12 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
       const idOffset = recordPrefix(partition).length + SEQUENCE_WIDTH + 1
       const kept: string[] = []
       for (const key of state.keys) {
-        if (wanted.has(key.slice(idOffset))) store.remove(key)
+        if (wanted.has(key.slice(idOffset))) removeKey(key)
         else kept.push(key)
       }
       if (kept.length === state.keys.length) return
       state.keys = kept
-      writeIndex(partition, state)
+      persistIndex(partition, state)
     },
 
     takeLosses(partition, at) {
@@ -423,18 +511,37 @@ function buildQueue(store: FleetKeyValueStore, options: FleetQueueOptions): Flee
         readLosses(partition) ?? EMPTY_LOSSES,
         unpersistedLosses.get(partition) ?? EMPTY_LOSSES,
       )
-      if (losses.dropped === 0 && losses.expired === 0) return {...EMPTY_LOSSES}
-      store.remove(lossKey(partition))
+      if (losses.dropped === 0 && losses.expired === 0) return {dropped: 0, expired: 0, from: null, to: null}
+      // If the counters will not go they are reported again next time, which is better than never.
+      removeKey(lossKey(partition))
       unpersistedLosses.delete(partition)
-      return losses
+      return {dropped: losses.dropped, expired: losses.expired, from: losses.from, to: losses.to}
+    },
+
+    sweepExpired(at = now()) {
+      try {
+        for (const [partition, found] of groupByPartition(store.getAllKeys())) {
+          try {
+            sweepPartition(partition, found, at)
+          } catch (error) {
+            warn("could not sweep a partition", error)
+          }
+        }
+        // Counts that never reached the store go with the process; forget the ones too old to report.
+        for (const [partition, losses] of unpersistedLosses) {
+          if (at - losses.updatedAt > FLEET_LIMITS.phoneQueueMaxAgeMs) unpersistedLosses.delete(partition)
+        }
+      } catch (error) {
+        warn("could not sweep expired records", error)
+      }
     },
 
     clearPartition(partition) {
       const state = load(partition)
-      for (const key of state.keys) store.remove(key)
-      store.remove(indexKey(partition))
-      store.remove(lossKey(partition))
-      store.remove(sequenceKey(partition))
+      for (const key of state.keys) removeKey(key)
+      removeKey(indexKey(partition))
+      removeKey(lossKey(partition))
+      removeKey(sequenceKey(partition))
       state.keys = []
       state.nextSeq = 0
       unpersistedLosses.delete(partition)

@@ -10,6 +10,10 @@ export class MemoryFleetStore implements FleetKeyValueStore {
   readonly reads: string[] = []
   /** Throws from `set` for a key when this returns true. */
   failSetWhen: ((key: string) => boolean) | null = null
+  /** Throws from `remove` for a key when this returns true. */
+  failRemoveWhen: ((key: string) => boolean) | null = null
+  /** Throws from `getAllKeys` while true. */
+  failGetAllKeys = false
 
   constructor(readonly values = new Map<string, string>()) {}
 
@@ -24,11 +28,13 @@ export class MemoryFleetStore implements FleetKeyValueStore {
   }
 
   remove(key: string): void {
+    if (this.failRemoveWhen?.(key)) throw new Error("simulated storage failure")
     this.values.delete(key)
   }
 
   getAllKeys(): string[] {
     this.getAllKeysCalls += 1
+    if (this.failGetAllKeys) throw new Error("simulated storage failure")
     return [...this.values.keys()]
   }
 
