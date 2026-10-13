@@ -201,7 +201,7 @@ try {
       }
     }
     else if (operation === 'verify') {
-      for (const row of scope.rows) {
+      const verifyRow = async (row: ScopeRow) => {
         const receipt = JSON.parse(await readFile(receiptPath(row), 'utf8'));
         if (receipt.scopeSha256 !== scopeSha256 || receipt.sourceSha256 !== row.bsonSha256) throw Error('Export receipt differs');
         const doc: any = value(await readBson(row));
@@ -215,6 +215,10 @@ try {
           if (snapshot.reportId !== doc.reportId || snapshot.mentraUserId !== doc.mentraUserId) throw Error('Report association differs');
           expandNativeReportSnapshot(snapshot, await originalRun(snapshot.runId));
         }
+      };
+      for (let offset = 0; offset < scope.rows.length; offset += 8) {
+        await Promise.all(scope.rows.slice(offset, offset + 8).map(verifyRow));
+        console.log(JSON.stringify({operation, verified: Math.min(offset + 8, scope.rows.length), total: scope.rows.length}));
       }
       await write(join(directory, 'verified.json'), {scopeSha256, records: scope.rows.length, verifiedAt: new Date().toISOString()});
     } else if (operation === 'apply') {
