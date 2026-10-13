@@ -2,7 +2,7 @@ import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {runDuration} from "../lib/run-duration";
 import {useQuery} from "@tanstack/react-query";
-import {useEffect, useState} from "react";
+import {useClock} from "../lib/use-clock";
 import type {LaneRestorationAttempt, LaneRestorationHost, LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
 import {restorationHostIsFresh} from "../../../../packages/core/src/types/lane-restoration.types";
 import {api} from "../lib/api";
@@ -64,8 +64,7 @@ export function RestorationHost({host, fresh, laneId}: {host: LaneRestorationHos
 }
 export function LaneRestorationPage() {
   const query = useQuery({queryKey: ["lane-restoration"], queryFn: () => api<LaneRestorationList>("/api/admin/test-runs/restoration/list"), refetchInterval: 30_000});
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {const id = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(id);}, []);
+  const now = useClock();
   return <div className="space-y-5"><div className="flex flex-wrap items-start justify-between gap-3"><div>
     <h2 className="text-xl font-semibold">Lane restoration</h2><details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">About state repair</summary><p className="mt-2">Controller-recorded agent attempts and scheduling decisions. A stopped agent or a request for help is not successful restoration.</p></details>
     <a href="/?systemHealth=1" className="mt-2 inline-block text-sm font-medium text-[#087d50] hover:underline">Back to System health</a></div>
