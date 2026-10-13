@@ -399,6 +399,14 @@ MEMORY.md
 # Cursor IDE local config (MCP, etc.)
 .cursor/*
 !.cursor/BUGBOT.md
+# Shared with cloud agents. Other .cursor files stay local.
+!.cursor/agents/
+.cursor/agents/*
+!.cursor/agents/plan-reviewer.md
+!.cursor/skills/
+.cursor/skills/*
+!.cursor/skills/plan-review-replan/
+!.cursor/skills/plan-review-replan/**
 
 # PR agent orchestrator local outputs
 .pr-agent/
