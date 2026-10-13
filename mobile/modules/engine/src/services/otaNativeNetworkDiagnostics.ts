@@ -1,6 +1,7 @@
 import {DeviceEventEmitter, Platform} from "react-native"
 
 type FailureCategory = "dns" | "connect" | "tls" | "timeout" | "other"
+const OBSERVATION_WINDOW_MS = 60_000
 
 function classifyFailure(message: string, timedOut: boolean): FailureCategory {
   if (timedOut || /\b(?:timed out|timeout)\b/i.test(message)) return "timeout"
@@ -29,6 +30,7 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
   if (Platform.OS !== "android") return () => {}
   try {
     let active = true
+    let timer: ReturnType<typeof setTimeout> | undefined
     const subscription = DeviceEventEmitter.addListener("didCompleteNetworkResponse", (payload: unknown) => {
       try {
         if (!active) return
@@ -42,6 +44,7 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
             manifestRequestId,
             nativeRequestId,
             correlation: "unavailable",
+            windowMs: OBSERVATION_WINDOW_MS,
             observedAtMs,
             elapsedMs: Math.max(0, observedAtMs - startedAtMs),
             category: classifyFailure(message, timedOut === true),
@@ -52,15 +55,24 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
         // Diagnostic parsing/logging cannot affect the native request's other listeners.
       }
     })
-    return () => {
+    const stop = () => {
       if (!active) return
       active = false
+      if (timer !== undefined) clearTimeout(timer)
       try {
         subscription.remove()
       } catch {
         // Diagnostic cleanup must not replace the manifest's result.
       }
     }
+    // Fetch can remain pending across periodic checks. Bound only this observer;
+    // do not cancel or impose a deadline on the product request.
+    try {
+      timer = setTimeout(stop, OBSERVATION_WINDOW_MS)
+    } catch {
+      stop()
+    }
+    return stop
   } catch {
     // The ordinary fetch still runs if diagnostic subscription is unavailable.
     return () => {}

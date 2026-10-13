@@ -27,6 +27,7 @@ describe("Android native manifest-window diagnostics", () => {
     stop = undefined
     Platform.OS = originalPlatform
     global.fetch = originalFetch
+    jest.useRealTimers()
     jest.restoreAllMocks()
   })
 
@@ -130,6 +131,42 @@ describe("Android native manifest-window diagnostics", () => {
       Promise.resolve({ok: true, json: () => Promise.resolve(json)}),
     ) as unknown as typeof fetch
     expect(await fetchVersionInfo("https://example.test/manifest")).toBe(json)
+  })
+
+  it("expires a stalled request's observer without cancelling or changing the eventual fetch result", async () => {
+    jest.useFakeTimers()
+    const before = DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")
+    const json = {versionCode: 123}
+    let resolveFetch: ((value: unknown) => void) | undefined
+    global.fetch = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    ) as unknown as typeof fetch
+    const result = fetchVersionInfo("https://example.test/manifest")
+    expect(DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")).toBe(before + 1)
+    jest.advanceTimersByTime(59_999)
+    DeviceEventEmitter.emit("didCompleteNetworkResponse", [42, "timeout", true])
+    expect(events()).toHaveLength(1)
+    expect(events()[0].windowMs).toBe(60_000)
+    jest.advanceTimersByTime(1)
+    expect(DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")).toBe(before)
+    DeviceEventEmitter.emit("didCompleteNetworkResponse", [43, "timeout", true])
+    expect(events()).toHaveLength(1)
+    resolveFetch?.({ok: true, json: () => Promise.resolve(json)})
+    expect(await result).toBe(json)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("cancels the independent observation timer after an ordinary fetch completes", async () => {
+    jest.useFakeTimers()
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: true, json: () => Promise.resolve({})}),
+    ) as unknown as typeof fetch
+    await fetchVersionInfo("https://example.test/manifest")
+    expect(jest.getTimerCount()).toBe(0)
   })
 
   it("listener and cleanup failures cannot replace a manifest result", async () => {
