@@ -59,7 +59,11 @@ export function observeManifestNativeErrors(manifestRequestId: number, startedAt
     const stop = () => {
       if (!active) return
       active = false
-      if (timer !== undefined) BgTimer.clearTimeout(timer)
+      try {
+        if (timer !== undefined) BgTimer.clearTimeout(timer)
+      } catch {
+        // Still remove the event listener if timer cleanup is unavailable.
+      }
       try {
         subscription.remove()
       } catch {

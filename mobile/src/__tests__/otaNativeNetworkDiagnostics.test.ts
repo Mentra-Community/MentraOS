@@ -203,6 +203,23 @@ describe("Android native manifest-window diagnostics", () => {
     }
   })
 
+  it.each(["setTimeout", "clearTimeout"] as const)(
+    "background timer %s failure cannot change a successful fetch or retain its listener",
+    async (method) => {
+      jest.useFakeTimers()
+      jest.spyOn(BgTimer, method).mockImplementation(() => {
+        throw new Error("timer unavailable")
+      })
+      const before = DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")
+      const json = {versionCode: 123}
+      global.fetch = jest.fn(() =>
+        Promise.resolve({ok: true, json: () => Promise.resolve(json)}),
+      ) as unknown as typeof fetch
+      expect(await fetchVersionInfo("https://example.test/manifest")).toBe(json)
+      expect(DeviceEventEmitter.listenerCount("didCompleteNetworkResponse")).toBe(before)
+    },
+  )
+
   it("listener and cleanup failures cannot replace a manifest result", async () => {
     let callback: ((payload: unknown) => void) | undefined
     const remove = jest.fn(() => {
