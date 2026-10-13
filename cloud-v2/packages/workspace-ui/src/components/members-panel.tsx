@@ -10,6 +10,9 @@
  *
  * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need
  * it to recover a workspace's ownership. Leave it off anywhere else.
+ *
+ * A member imported from the Store who has not signed in yet is marked "Pending first sign-in". They
+ * hold their role and are managed like anyone else, but have no Mentra user id until they sign in.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -120,7 +123,7 @@ function MembersTable({
         </thead>
         <tbody className="max-sm:block">
           {members.map((member) => {
-            const label = member.email ?? member.mentraUserId;
+            const label = member.email ?? member.mentraUserId ?? "Imported member";
             const isSelf = member.membershipId === ownMembershipId;
             const options = canManage && !isSelf ? roleOptions(viewer, member.role) : [];
             return (
@@ -135,8 +138,9 @@ function MembersTable({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[15px] font-semibold [overflow-wrap:anywhere]">{label}</span>
                         {isSelf ? <Badge>You</Badge> : null}
+                        {member.pending ? <Badge>Pending first sign-in</Badge> : null}
                       </div>
-                      {showUserIds ? (
+                      {showUserIds && member.mentraUserId ? (
                         <div className="mt-1 flex flex-wrap items-center gap-2">
                           <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
                           <CopyButton

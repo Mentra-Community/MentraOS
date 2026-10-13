@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { MemberView } from "@mentra/workspace-contract";
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createWorkspaceApi } from "./api";
@@ -39,6 +40,7 @@ import {
   renderAfterFailedRefetch,
   renderSeeded,
   selectOptions,
+  START,
   WORKSPACE_ID,
   WORKSPACE_NAME,
 } from "./test-fixtures";
@@ -177,6 +179,37 @@ describe("members panel: role controls follow the viewer's role", () => {
     );
     expect(hidden).not.toContain(">u_1<");
     expect(labelsStartingWith(hidden, "Copy the Mentra user id")).toEqual([]);
+  });
+
+  test("a member imported from the Store who has not signed in yet is marked, and has no user id to copy", () => {
+    const { api } = offlineApi();
+    const detail = organizationAdminDetail();
+    const members: MemberView[] = [
+      ...membersFor(detail),
+      { membershipId: "wm_pending", mentraUserId: null, email: "pat@acme.test", role: "developer", startedAt: START, pending: true },
+      { membershipId: "wm_pending_owner", mentraUserId: null, email: null, role: "owner", startedAt: START, pending: true },
+    ];
+    const markup = renderSeeded(
+      api,
+      { detail, members },
+      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} showUserIds />,
+    );
+    expect(markup.split(">Pending first sign-in<").length - 1).toBe(2);
+    expect(markup).toContain("pat@acme.test");
+    // Without an email the row still names something, never a blank or "null".
+    expect(markup).toContain(">Imported member<");
+    expect(markup).not.toContain(">null<");
+    // Only signed-in members have a Mentra user id to copy.
+    expect(labelsStartingWith(markup, "Copy the Mentra user id of ")).toHaveLength(OTHER_MEMBERS.length);
+    // A pending member is still managed like anyone else.
+    expect(labelsStartingWith(markup, "Remove ")).toContain("Remove pat@acme.test");
+
+    const signedIn = renderSeeded(
+      api,
+      { detail, members: membersFor(detail) },
+      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+    expect(signedIn).not.toContain("Pending first sign-in");
   });
 
   test("marks the viewer's own row", () => {

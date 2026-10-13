@@ -369,22 +369,46 @@ describe("workspace models (local replica set)", () => {
       // The lookups the services use are indexed too.
       expect(byKey({mentraUserId: 1, status: 1})).toBeDefined()
       expect(byKey({workspaceId: 1, role: 1, status: 1})).toBeDefined()
+      // The claim at first sign-in finds a WorkOS user's pending rows. The index is not unique: Azure
+      // Cosmos DB cannot add a unique index to a populated collection, so the import enforces one pending
+      // row per person per workspace itself.
+      const pending = byKey({pendingWorkosUserId: 1, status: 1})
+      expect(pending).toBeDefined()
+      expect(pending?.unique).toBeUndefined()
+      expect(indexes.filter(index => index.unique && "pendingWorkosUserId" in index.key)).toEqual([])
     })
 
-    test("requires a mentraUserId and keeps only the fields it defines", async () => {
+    test("needs a Core user or a pending WorkOS user, and keeps only the fields it defines", async () => {
       for (const mentraUserId of [null, undefined, ""]) {
         const err = await thrown(() =>
           WorkspaceMembershipModel.create(membership({membershipId: `wm_${String(mentraUserId)}`, mentraUserId})),
         )
         expect(err.name).toBe("ValidationError")
       }
-      // Memberships carry no display name and no pending identity-provider id.
-      const row = await WorkspaceMembershipModel.create(
-        membership({membershipId: "wm_a", name: "Ada", pendingWorkosUserId: "user_01"}),
-      )
+      expect(
+        (await thrown(() =>
+          WorkspaceMembershipModel.create(membership({membershipId: "wm_blank", mentraUserId: null, pendingWorkosUserId: " "})),
+        )).name,
+      ).toBe("ValidationError")
+      // Memberships carry no display name. A row a Core mutation creates has no pending id at all.
+      const row = await WorkspaceMembershipModel.create(membership({membershipId: "wm_a", name: "Ada"}))
       const stored = await WorkspaceMembershipModel.findOne({membershipId: row.membershipId}).lean()
       expect(stored).not.toHaveProperty("name")
       expect(stored).not.toHaveProperty("pendingWorkosUserId")
+    })
+
+    test("a membership imported from the Store waits for its person under their WorkOS user id", async () => {
+      const pending = await WorkspaceMembershipModel.create(
+        membership({membershipId: "wm_pending_a", mentraUserId: null, pendingWorkosUserId: "user_01A"}),
+      )
+      expect(pending.mentraUserId).toBeNull()
+      expect(pending.pendingWorkosUserId).toBe("user_01A")
+      // Pending rows never meet the one-active-membership index, which only covers string user ids.
+      await WorkspaceMembershipModel.create(
+        membership({membershipId: "wm_pending_b", mentraUserId: null, pendingWorkosUserId: "user_01B"}),
+      )
+      await WorkspaceMembershipModel.create(membership({membershipId: "wm_claimed"}))
+      expect(await WorkspaceMembershipModel.countDocuments({workspaceId: "ws_1", status: "active"})).toBe(3)
     })
 
     test("applies defaults and validates role and endedReason", async () => {
