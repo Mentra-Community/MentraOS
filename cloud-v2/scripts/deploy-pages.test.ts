@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { developerConsoleUrl } from "../websites/portal/src/lib/config";
 import { developerConsoleUrls, portalBuildConfig } from "./deploy-pages";
 
-test("each environment's workspace portal links to its Developer Console; staging, which has none yet, to production's", () => {
+test("each environment's workspace portal links to its own Developer Console", () => {
   expect(developerConsoleUrls).toEqual({
     dev: "https://console.dev.mentraglass.com",
-    staging: "https://console.mentraglass.com",
+    staging: "https://console.staging.mentraglass.com",
     prod: "https://console.mentraglass.com",
   });
 });

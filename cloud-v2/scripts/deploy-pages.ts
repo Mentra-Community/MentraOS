@@ -36,11 +36,10 @@ const accountConfig = {
 const accountConfigured = Object.values(accountConfig).every(Boolean);
 
 // The Developer Console each environment's workspace portal links to from its
-// sidebar, given to the portal's build as DEVELOPER_CONSOLE_URL. Staging has no
-// Developer Console of its own yet, so its portal links to production's.
+// sidebar, given to the portal's build as DEVELOPER_CONSOLE_URL.
 export const developerConsoleUrls: Record<Environment, string> = {
   dev: "https://console.dev.mentraglass.com",
-  staging: "https://console.mentraglass.com",
+  staging: "https://console.staging.mentraglass.com",
   prod: "https://console.mentraglass.com",
 };
 
