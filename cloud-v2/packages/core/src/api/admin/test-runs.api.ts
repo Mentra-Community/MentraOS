@@ -17,10 +17,11 @@ import {routineDispatchIntentSchema} from '../../types/routine-dispatch.types';
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types/routine-job.types';
 import {PrRoutineCheckService} from '../../services/pr-routine-check.service';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
+import {PrRerunReferenceService} from '../../services/pr-rerun-reference.service';
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
@@ -32,6 +33,12 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   });
   const suites = new TestSuiteService();
   app.route("/reruns", createTestRerunRoutes(undefined, "admin"));
+  app.get('/rerun-label', async c => {
+    const input = z.object({routineId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/),
+      kind: z.enum(['s', 'r']), targetId: frameworkIdentitySchema}).strict().safeParse(c.req.query());
+    if (!input.success) throw new TestRunError(400, 'Invalid rerun label selection');
+    return c.json(await rerunLabels.copy(input.data.routineId, input.data.kind, input.data.targetId));
+  });
   app.get("/suite-index/labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
   app.get("/suite-index/list", async c => c.json(await suites.list()));
   app.get("/history/list", async c => c.json(await history.list(c.req.query())));

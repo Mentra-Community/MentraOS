@@ -4,6 +4,7 @@ import {HistoryStatus, runDisplayStatus} from "../components/test-history-table"
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
+import {CopyRerunLabel} from '../components/copy-rerun-label';
 import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
 import type {CatalogExample, CatalogHistoryRun, RoutineCatalogCard as CatalogCard, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage, TestHistoryOrigin} from "../../../../packages/core/src/types/test-history.types";
@@ -368,6 +369,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <p className="mt-3 text-sm">Execution: {outcome === "pass" ? "Passed" : outcome.replaceAll("-", " ")}</p>
       <p className="mt-3 text-sm"><BuildIdentity build={run.build} /></p>
       <RunRerunLinks requestId={run.requestId}/>
+      <CopyRerunLabel routineId={run.routineId} kind="r" targetId={run.requestId}/>
       <details className="mt-3 border-t border-[#eceeeb] pt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Run provenance</summary>
         <dl className="mt-3 space-y-2 break-words"><div>Run <code>{actualRunId}</code> · Request <code>{run.requestId}</code></div>
           <div>Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</div>

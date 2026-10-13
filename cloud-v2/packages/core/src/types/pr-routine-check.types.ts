@@ -1,5 +1,7 @@
 import type {PortableRoutineSelection} from './routine-job.types'
 import type {RoutineProgress} from './routine-progress.types'
+import type {PrLinkedTarget} from './pr-rerun-label.types'
+import type {TestBuildSource} from './test-build.types'
 
 export const ROUTINE_CHECK_NAME = 'Routine tests'
 export const ROUTINE_CHECK_REPOSITORY = 'Mentra-Community/MentraOS'
@@ -7,7 +9,7 @@ export const ROUTINE_RERUN_ACTION = {label: 'Re-run routines', description: 'Run
 export type CheckConclusion = 'success' | 'failure' | 'cancelled' | 'timed_out'
 export type PrRoutineContext = {
   number: number; headSha: string; baseRef: string; headRef: string; sameRepository: boolean;
-  open: boolean; labels: string[]; peers: number[]
+  open: boolean; labels: string[]; peers: number[]; labelActors?: Record<string, string>; labelEvents?: Record<string, number>
 }
 export type PrRoutineMember = {
   memberId: string; routineId: string; platform: 'android' | 'ios-on-mac';
@@ -15,6 +17,8 @@ export type PrRoutineMember = {
   originalRequestId?: string; requestId?: string; requestDeadline?: string; suiteBound?: boolean; selection?: PortableRoutineSelection;
   status: string; publicationComplete: boolean; settled: boolean; progress?: RoutineProgress;
   laneLabel?: string; waitReason?: string; containmentPending?: boolean;
+  linkedTarget?: PrLinkedTarget; linkedSource?: TestBuildSource;
+  linkedPreview?: {id: string; digest?: string; renewals?: number};
 }
 export type PrRoutineAttempt = {
   generation: number; acceptedAt: string; deadline: string; routineRevision?: string; members: PrRoutineMember[];
@@ -30,6 +34,7 @@ export type PrRoutineCheck = {
   retired: PrRoutineAttempt[]; controls: Array<{id: string; kind: 'rerun' | 'cancel'; generation: number; actor: string}>;
   checkId?: number; checkExternalId: string; creation?: {attemptedAt: string; absenceObservedAt?: string; attempts: number};
   selectionError?: string;
+  selectionWait?: string;
   buildRequests?: Partial<Record<'android' | 'ios-on-mac' | 'asg', {state: 'intended' | 'uncertain' | 'answered'; requestedAt: string; attempts?: number; lastAttemptAt?: string; absenceObservedAt?: string; operationId?: string; runId?: number; error?: string}>>;
   predecessors?: string[];
   reporting: {nextAt: string; intended?: {revision: number; payload: CheckPayload; digest: string};

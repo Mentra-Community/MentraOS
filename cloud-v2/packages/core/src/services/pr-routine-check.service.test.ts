@@ -53,7 +53,7 @@ function fixture() {
     routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
-  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
+  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async cancelPlan() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
@@ -156,7 +156,7 @@ function control(f: ReturnType<typeof fixture>, deliveryId: string, kind: 'rerun
 test('duplicate native rerun retains one generation and fresh absolute deadline', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f)
   const command = control(f, 'rerun-event'), accepted = f.now
-  await f.service.control(command); await f.service.control(command); await f.drain(1)
+  await f.service.control(command); await f.service.control(command); await f.drain(2)
   expect(f.gate().attempt.generation).toBe(2); expect(f.gate().controls).toHaveLength(1)
   expect(f.gate().attempt.deadline).toBe(new Date(accepted + 3 * 3600000).toISOString())
   expect(f.previews[0].deadline).toBe(f.gate().attempt.deadline)
@@ -164,12 +164,12 @@ test('duplicate native rerun retains one generation and fresh absolute deadline'
 
 test('linked native rerun IDs remain distinct when a new same-head coverage generation restarts attempt numbering', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f);
-  await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(1);
+  await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(2);
   const first = f.gate().attempt.rerun!.id; expect(f.previews.at(-1)!.rerunId.startsWith(first)).toBe(true);
   f.gate().attempt.conclusion = 'failure'; f.gate().attempt.members[0]!.settled = true;
   f.context.baseRef = 'staging'; await f.intake('new-coverage'); await f.drain(6); await complete(f);
   expect(f.gate().coverageGeneration).toBe(2); expect(f.gate().attempt.generation).toBe(1);
-  await f.service.control(control(f, 'coverage-two-rerun')); await f.drain(1);
+  await f.service.control(control(f, 'coverage-two-rerun')); await f.drain(2);
   expect(f.gate().attempt.generation).toBe(2); expect(f.gate().attempt.rerun!.id).not.toBe(first);
   expect(f.previews).toHaveLength(2); expect(f.previews[1]!.rerunId).not.toBe(f.previews[0]!.rerunId);
 });
@@ -258,20 +258,20 @@ test('coverage replacement settles never-admitted members but keeps mixed admitt
   }
 })
 
-test('cancellation failure on one linked child does not starve the other children or original', async () => {
+test('cancellation ignores unrelated descendants and still cancels its owned request', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!;
   for (const child of ['child-a', 'child-b']) f.requests.set(child, {requestId: child, fleetBinding: {hostId: 'testing-air-1'}, state: 'running'});
   f.history([{requestId: 'child-a', attemptNumber: 1}, {requestId: 'child-b', attemptNumber: 2}]); f.failCancellation('child-a');
   await f.service.control(control(f, 'cancel-independent-children', 'cancel')); await f.drain(1);
-  expect(f.cancellations).toContain('child-a'); expect(f.cancellations).toContain('child-b'); expect(f.cancellations).toContain(requestId);
+  expect(f.cancellations).not.toContain('child-a'); expect(f.cancellations).not.toContain('child-b'); expect(f.cancellations).toContain(requestId);
   expect(f.gate().attempt.conclusion).toBeUndefined(); expect(f.gate().attempt.members[0]!.settled).toBe(false);
 })
-test('cancel reaches linked child and requires its independent custody receipt', async () => {
+test('foreign running rerun does not block cancellation of a settled check', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f)
   f.requests.set('child', {requestId: 'child', fleetBinding: {hostId: 'testing-air-1'}, state: 'running'})
   f.history([{requestId: 'child', attemptNumber: 1}]); f.gate().attempt.conclusion = undefined
   await f.service.control(control(f, 'cancel-linked', 'cancel')); await f.drain(1)
-  expect(f.cancellations).toContain('child'); expect(f.gate().attempt.conclusion).toBeUndefined()
+  expect(f.cancellations).not.toContain('child'); expect(f.gate().attempt.conclusion).toBe('cancelled')
   f.requests.get('child').dispatchCompletion = {disposition: 'clean'}
   await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
 })
@@ -475,7 +475,7 @@ test('persisted native Re-run wakes a parked gate within its event tick and reta
  const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f,'failed');
  expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined(); const old=f.gate().attempt.generation;
  await f.service.receiveControl(control(f,'parked-native-rerun')); await f.service.tick();
- expect(f.gate().attempt.generation).toBe(old+1); expect(f.previews.length).toBeGreaterThan(0);
+ expect(f.gate().attempt.generation).toBe(old+1); expect(f.gate().attempt.rerun!.groups).toBeDefined(); await f.drain(1); expect(f.previews.length).toBeGreaterThan(0);
  await f.drain(2); expect(f.gate().controls.filter(row=>row.id==='parked-native-rerun')).toHaveLength(1);
 })
 

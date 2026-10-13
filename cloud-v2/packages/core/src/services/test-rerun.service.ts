@@ -45,7 +45,7 @@ export const testRerunRepository: RerunRepository = {
   async byRequest(requestId) {return await TestRerunModel.findOne({state: "accepted", "plan.members.requestId": requestId})
     .read("primary").readConcern("majority").lean() as RerunRecord | null;},
 };
-type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
+export type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
   routineSource?: z.infer<typeof frameworkRequestInputSchema>['routineSource'];
   routineRevision?: string;
   build?: z.infer<typeof frameworkRequestInputSchema>['build']; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string};
@@ -130,7 +130,8 @@ export class TestRerunService {
   private async parentMembers(parent: RerunPlan["parent"]): Promise<ParentMember[]> {
     if (!frameworkIdentitySchema.safeParse("suiteId" in parent ? parent.suiteId : parent.requestId).success)
       throw new TestRunError(400, "Invalid original identity");
-    if ("suiteId" in parent) return (await this.suites.detail(parent.suiteId)).members;
+    if ("suiteId" in parent) return (await this.suites.detail(parent.suiteId)).members.map(member => ({...member,
+      routineRevision: member.definitionRevision}));
     if (await this.suites.originalMember?.(parent.requestId)) throw new TestRunError(409, "Use the original suite member to preserve its history");
     if (await this.store.byRequest(parent.requestId)) throw new TestRunError(409, "Use the rerun's original parent to preserve its history");
     const request = await this.requests.get(parent.requestId);
@@ -142,6 +143,8 @@ export class TestRerunService {
     return [{...attempt, memberId: parent.requestId, routineId: input?.routineId ?? intent!.routineId, platform: input?.platform ?? intent!.platform,
       routineSource: input?.routineSource ?? intent?.routineSource, routineRevision: input?.definitionRevision ?? intent!.routineRevision}];
   }
+  /** Exact original identities/source for supported linked adapters; never today's catalog. */
+  async originalMembers(parent: RerunPlan['parent']) {return this.parentMembers(parent);}
   /** Displayed progress/history needs verdicts and identities, not frozen artifact inputs. */
   private async observedMembers(parent: RerunPlan["parent"]): Promise<ParentMember[]> {
     if ("suiteId" in parent) return (await this.suites.summary(parent.suiteId)).members;
@@ -309,6 +312,17 @@ export class TestRerunService {
     const member = parsed.data.members.find(member => member.requestId === requestId);
     if (!member || !row.acceptedAt) throw new TestRunError(503, 'Linked cancellation provenance is unavailable');
     await this.jobs.cancelFrozen(member.selection, parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt) + 3 * 3600_000).toISOString(), {reason});
+    return true;
+  }
+  /** Fence this plan's own selected jobs, including a preview whose child checkpoint was lost. */
+  async cancelPlan(rerunId: string, reason: string): Promise<boolean> {
+    if (!frameworkIdentitySchema.safeParse(rerunId).success) throw new TestRunError(400, 'Invalid linked plan identity');
+    const stored = await this.store.get(rerunId);
+    if (!stored) return false;
+    const row = verified(stored), parsed = rerunPlanSchema.safeParse(row.plan);
+    if (!parsed.success) throw new TestRunError(503, 'Linked cancellation provenance is unavailable');
+    const deadline = parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt ?? row.plan.createdAt) + 3 * 3600_000).toISOString();
+    for (const member of parsed.data.members) await this.jobs.cancelFrozen(member.selection, deadline, {reason});
     return true;
   }
   async detail(id: string) {

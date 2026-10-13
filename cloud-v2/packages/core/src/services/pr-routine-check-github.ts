@@ -1,4 +1,5 @@
 import {z} from 'zod'
+import {isRoutineCheckLabel} from '../types/pr-rerun-label.types'
 import {TestRunGithubApp} from './test-run-github-app'
 import {readTestMetadata} from './test-builds.service'
 import {TestRunError} from './test-result-error'
@@ -49,10 +50,26 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
       const rows = z.array(prSchema).max(100).parse(await this.api(`pulls?state=open&per_page=100&page=${page}`, {}, 'checks', deadline))
       peers.push(...rows.filter(row => row.head.sha === pr.head.sha && ['dev', 'staging'].includes(row.base.ref))
         .map(row => row.number))
-      if (rows.length < 100) return {number: pr.number, headSha: pr.head.sha, baseRef: pr.base.ref,
+      if (rows.length < 100) {
+        const labels = pr.labels.map(row => row.name).filter(isRoutineCheckLabel).sort(), linked = labels.filter(label => label.startsWith('rerun:'))
+        const labelActors: Record<string, string> = {}, labelEvents: Record<string, number> = {}
+        if (linked.length) {
+          const eventSchema = z.object({id: positive, event: z.string(), actor: z.object({login: z.string()}).nullable(), label: z.object({name: z.string()}).optional()})
+          for (let eventsPage = 1; eventsPage <= 10; eventsPage++) {
+            const events = z.array(eventSchema).max(100).parse(await this.api(`issues/${number}/events?per_page=100&page=${eventsPage}`, {}, 'checks', deadline))
+            for (const event of events) if (event.label && linked.includes(event.label.name)) {
+              if (event.event === 'labeled' && event.actor) {labelActors[event.label.name] = event.actor.login; labelEvents[event.label.name] = event.id}
+              if (event.event === 'unlabeled') {delete labelActors[event.label.name]; delete labelEvents[event.label.name]}
+            }
+            if (events.length < 100) break
+            if (eventsPage === 10) throw new TestRunError(503, 'Rerun label authority exceeds the bounded event inventory')
+          }
+        }
+        return {number: pr.number, headSha: pr.head.sha, baseRef: pr.base.ref,
         headRef: pr.head.ref, sameRepository: pr.head.repo?.full_name === ROUTINE_CHECK_REPOSITORY,
-        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(value => value.startsWith('routine:')).sort(),
+        open: pr.state === 'open', labels, ...(linked.length ? {labelActors, labelEvents} : {}),
         peers: [...new Set(peers)].sort((a, b) => a - b)}
+      }
     }
     throw new TestRunError(503, 'PR contexts exceed the bounded ownership inventory')
   }

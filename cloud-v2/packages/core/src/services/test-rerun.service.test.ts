@@ -286,3 +286,14 @@ test('recorded accepted history keeps ordinary cancellation only for a positivel
  f.requests.delete(member.requestId);
  await expect(f.service.cancelRequest(member.requestId,'Cancel recorded child')).rejects.toThrow('current linked selection');
 })
+
+test('plan cancellation fences unaccepted children without claiming their predecessors and refuses tampered provenance', async () => {
+ const f=fixture(); const preview=await f.service.preview({rerunId:'cancel-unaccepted-plan',parent:{suiteId:'suite-1'},selection:{memberIds:['member-20']},reason:'Cancel retained intent'},'employee');
+ expect(f.rows.get(preview.rerunId)!.state).toBe('preview');
+ expect(await f.service.cancelPlan(preview.rerunId,'Cancel requested check')).toBe(true);
+ expect(f.requests.get(preview.plan.members[0]!.requestId)?.fleetCancellation).toBeDefined();
+ expect(f.rows.get(preview.rerunId)!.state).toBe('preview');
+ expect(await f.service.cancelPlan('not-created','Cancel absent intent')).toBe(false);
+ const member=f.rows.get(preview.rerunId)!.plan.members[0]!; if (!('selection' in member)) throw Error('Expected current portable selection'); member.selection.routineId='tampered';
+ await expect(f.service.cancelPlan(preview.rerunId,'Cancel corrupt intent')).rejects.toThrow('integrity');
+});
