@@ -34,7 +34,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /** Independent incident log sources share one sequential, bounded BLE transport. */
@@ -342,6 +345,97 @@ public class UploadIncidentLogsCommandHandlerTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    @Test
+    public void concurrentReportsKeepBesCaptureAndBothFilesCorrelated() throws Exception {
+        assertConcurrentReportsRemainSequential(false);
+    }
+
+    @Test
+    public void failedFirstReportFirmwareStillAllowsTheNextWholeReport() throws Exception {
+        assertConcurrentReportsRemainSequential(true);
+    }
+
+    private void assertConcurrentReportsRemainSequential(boolean firstFirmwareRefused)
+            throws Exception {
+        CountDownLatch firstCapturing = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondAttempting = new CountDownLatch(1);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        List<String> capturedReports = new ArrayList<>();
+        doAnswer(
+                        invocation -> {
+                            String report = invocation.getArgument(0);
+                            capturedReports.add(report);
+                            if (report.equals("rep_first_concurrent_report")) {
+                                firstCapturing.countDown();
+                                assertThat(releaseFirst.await(5, TimeUnit.SECONDS)).isTrue();
+                            }
+                            Consumer<String> callback = invocation.getArgument(3);
+                            callback.accept("{\"source\":\"glasses_firmware\",\"entries\":[]}");
+                            return null;
+                        })
+                .when(bes)
+                .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+        starts.add(!firstFirmwareRefused);
+        starts.add(true);
+        starts.add(true);
+        starts.add(true);
+        for (int i = 0; i < (firstFirmwareRefused ? 3 : 4); i++) {
+            waits.add(true);
+        }
+        Thread first = relayThread("rep_first_concurrent_report", null, error);
+        Thread second = relayThread("rep_second_concurrent_report", secondAttempting, error);
+        try {
+            first.start();
+            assertThat(firstCapturing.await(5, TimeUnit.SECONDS)).isTrue();
+            second.start();
+            assertThat(secondAttempting.await(5, TimeUnit.SECONDS)).isTrue();
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (second.getState() != Thread.State.BLOCKED
+                    && second.isAlive()
+                    && System.nanoTime() < until) {
+                Thread.yield();
+            }
+            assertThat(second.getState())
+                    .as("second report waits for the entire first relay")
+                    .isEqualTo(Thread.State.BLOCKED);
+            verify(bes, times(1))
+                    .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+        } finally {
+            releaseFirst.countDown();
+            first.join(5_000);
+            second.join(5_000);
+        }
+        assertThat(first.isAlive()).isFalse();
+        assertThat(second.isAlive()).isFalse();
+        assertThat(error.get()).isNull();
+        assertThat(capturedReports)
+                .containsExactly("rep_first_concurrent_report", "rep_second_concurrent_report");
+        assertThat(sentSources)
+                .containsExactly("glasses_firmware", "glasses", "glasses_firmware", "glasses");
+        assertThat(sentFiles)
+                .extracting(File::getName)
+                .containsExactly(
+                        "Brep_first_concu",
+                        "Lrep_first_concu",
+                        "Brep_second_conc",
+                        "Lrep_second_conc");
+        assertFilesRemoved();
+    }
+
+    private Thread relayThread(
+            String report, CountDownLatch attempting, AtomicReference<Throwable> error) {
+        return new Thread(
+                () -> {
+                    try {
+                        if (attempting != null) attempting.countDown();
+                        handler.relayLogsViaBle(report);
+                    } catch (Throwable failure) {
+                        error.compareAndSet(null, failure);
+                    }
+                });
     }
 
     private void assertFilesRemoved() {

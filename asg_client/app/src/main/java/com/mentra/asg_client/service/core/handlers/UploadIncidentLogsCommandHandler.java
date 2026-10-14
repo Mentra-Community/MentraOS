@@ -232,7 +232,9 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
         new Thread(() -> relayLogsViaBle(incidentId)).start();
     }
 
-    void relayLogsViaBle(String incidentId) {
+    // Both reports share one BES capture session and one BLE file-transfer slot.
+    // Hold this handler's monitor for the complete B/L transaction, not just its idle check.
+    synchronized void relayLogsViaBle(String incidentId) {
         IBluetoothManager bt =
                 mServiceManager != null ? mServiceManager.getBluetoothManager() : null;
         if (bt == null) {
