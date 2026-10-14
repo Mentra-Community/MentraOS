@@ -476,7 +476,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       {
         pattern: "/test/permissions",
         requiresAuth: false,
-        presentation: "passive",
+        presentation: "passive" as const,
         handler: async (url: string) => {
           try {
             await publishPermissionStatusRequest(url)
