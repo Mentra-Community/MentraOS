@@ -3,12 +3,19 @@ import {createHash} from 'node:crypto';
 import {routineRevisionSchema} from '../types/routine-dispatch.types';
 import {TestRunGithubApp} from './test-run-github-app';
 import {TestRunError} from './test-result-error';
+import {createLogger} from '@mentra/cloud-shared/logger';
+
+const logger = createLogger('core').child({service: 'routine-source-selection.service'});
+type SourceDiagnostic = {phase: 'authentication' | 'request' | 'response' | 'body' | 'integrity';
+  blobSha: string; expectedBytes: number; elapsedMs: number; status?: number; receivedBytes?: number;
+  failure: 'unavailable' | 'deadline' | 'identity-mismatch'};
 
 /** Resolve main once per new selection; retries use the durable selected SHA. */
 export class GithubRoutineSourceGateway {
   private readonly inventories = new Map<string, Promise<{commit: string; files: Array<{path: string; gitBlobSha1: string; size: number}>}>>();
   constructor(private readonly app: Pick<TestRunGithubApp, 'token'> = new TestRunGithubApp(),
-    private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch) {}
+    private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch,
+    private readonly report: (value: SourceDiagnostic) => void = value => logger.error(value, 'Exact routine source download failed')) {}
   private async bytes(response: Response, maxBytes: number, signal: AbortSignal) {
     if (!response.ok || !response.body) throw new Error('Source response is unavailable');
     const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
@@ -78,16 +85,29 @@ export class GithubRoutineSourceGateway {
   async blob(file: {gitBlobSha1: string; size: number}) {
     routineRevisionSchema.parse(file.gitBlobSha1);
     let bytes: Uint8Array;
+    let phase: SourceDiagnostic['phase'] = 'authentication', status: number | undefined;
+    const startedAt = Date.now();
     const deadline = AbortSignal.timeout(60_000);
     try {
+      const token = await this.app.token('harness');
+      phase = 'request';
       const response = await this.transport(`https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/git/blobs/${file.gitBlobSha1}`, {
-        redirect: 'error', signal: deadline, headers: {Authorization: `Bearer ${await this.app.token('harness')}`,
+        redirect: 'error', signal: deadline, headers: {Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28'},
       });
+      phase = 'response'; status = response.status;
+      if (response.ok && response.body) phase = 'body';
       bytes = await this.bytes(response, file.size + 1, deadline);
-    } catch {throw new TestRunError(503, 'Exact routine source bytes are unavailable; retry preparation');}
-    if (bytes.byteLength !== file.size || createHash('sha1').update(`blob ${file.size}\0`).update(bytes).digest('hex') !== file.gitBlobSha1)
+    } catch {
+      this.report({phase, blobSha: file.gitBlobSha1, expectedBytes: file.size, elapsedMs: Date.now() - startedAt,
+        ...(status === undefined ? {} : {status}), failure: deadline.aborted ? 'deadline' : 'unavailable'});
+      throw new TestRunError(503, 'Exact routine source bytes are unavailable; retry preparation');
+    }
+    if (bytes.byteLength !== file.size || createHash('sha1').update(`blob ${file.size}\0`).update(bytes).digest('hex') !== file.gitBlobSha1) {
+      this.report({phase: 'integrity', blobSha: file.gitBlobSha1, expectedBytes: file.size, receivedBytes: bytes.byteLength,
+        elapsedMs: Date.now() - startedAt, status, failure: 'identity-mismatch'});
       throw new TestRunError(503, 'GitHub routine blob differs from its exact inventory');
+    }
     return bytes;
   }
 }

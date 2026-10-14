@@ -42,3 +42,26 @@ test('source inventory reports invalid bounded source separately from a cancelle
   const f=gateway();await f.service.resolve();await f.service.inventory(commit);
   expect(f.calls.every(url=>url.startsWith('https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/'))).toBe(true);
 });
+
+test('blob failures retain sanitized upstream phase and status without exposing provider material', async () => {
+  const observations: unknown[] = [];
+  const upstream = async () => new Response('PRIVATE_PROVIDER_BODY', {status: 403});
+  const service = new GithubRoutineSourceGateway({async token() {return 'PRIVATE_TOKEN';}}, upstream, value => observations.push(value));
+  await expect(service.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toMatchObject({status: 503});
+  expect(observations).toEqual([{phase: 'response', blobSha: blob, expectedBytes: bytes.length,
+    elapsedMs: expect.any(Number), status: 403, failure: 'unavailable'}]);
+  expect(JSON.stringify(observations)).not.toContain('PRIVATE');
+
+  observations.length = 0;
+  const unauthenticated = new GithubRoutineSourceGateway({async token() {throw new Error('PRIVATE_KEY');}}, upstream, value => observations.push(value));
+  await expect(unauthenticated.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toMatchObject({status: 503});
+  expect(observations).toEqual([{phase: 'authentication', blobSha: blob, expectedBytes: bytes.length,
+    elapsedMs: expect.any(Number), failure: 'unavailable'}]);
+  expect(JSON.stringify(observations)).not.toContain('PRIVATE');
+
+  observations.length = 0;
+  const corrupt = new GithubRoutineSourceGateway({async token() {return 'PRIVATE_TOKEN';}}, async () => new Response('wrong'), value => observations.push(value));
+  await expect(corrupt.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toThrow('differs');
+  expect(observations).toEqual([{phase: 'integrity', blobSha: blob, expectedBytes: bytes.length,
+    receivedBytes: 5, elapsedMs: expect.any(Number), status: 200, failure: 'identity-mismatch'}]);
+});
