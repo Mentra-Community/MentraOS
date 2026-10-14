@@ -200,13 +200,11 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                                                         + " ("
                                                         + logs.length()
                                                         + " entries)");
-                                        if (mK900CommandHandler != null) {
-                                            mK900CommandHandler.requestBesLogs(
-                                                    incidentId,
-                                                    mContext,
-                                                    mConfigurationManager,
-                                                    apiBaseUrl);
-                                        }
+                                        new Thread(
+                                                        () ->
+                                                                captureBesLogsOverHttp(
+                                                                        incidentId, apiBaseUrl))
+                                                .start();
                                     } else {
                                         Log.e(
                                                 TAG,
@@ -230,6 +228,21 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private void triggerBleFallback(String incidentId, String reason) {
         Log.w(TAG, "Falling back to BLE relay for incident " + incidentId + " (" + reason + ")");
         new Thread(() -> relayLogsViaBle(incidentId)).start();
+    }
+
+    synchronized void captureBesLogsOverHttp(String incidentId, String apiBaseUrl) {
+        if (mK900CommandHandler == null) return;
+        try {
+            BesLogManager session =
+                    mK900CommandHandler.requestBesLogs(
+                            incidentId, mContext, mConfigurationManager, apiBaseUrl, null);
+            if (session != null && !session.awaitCollection(BES_WAIT_SEC, TimeUnit.SECONDS)) {
+                Log.w(TAG, "Timed out waiting for HTTP incident BES capture: " + incidentId);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "HTTP incident BES capture interrupted for " + incidentId, e);
+        }
     }
 
     // Both reports share one BES capture session and one BLE file-transfer slot.

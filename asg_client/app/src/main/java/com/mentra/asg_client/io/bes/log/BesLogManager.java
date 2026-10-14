@@ -13,6 +13,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -63,6 +64,7 @@ public class BesLogManager {
   private final StringBuilder mLogBuffer = new StringBuilder();
   private boolean mIsReceiving = false;
   private final AtomicBoolean mFinished = new AtomicBoolean(false);
+  private final CountDownLatch mCollectionFinished = new CountDownLatch(1);
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -157,6 +159,22 @@ public class BesLogManager {
   }
 
   /**
+   * Wait for capture settlement only; the independent HTTP upload can still be running.
+   * A caller deadline or interruption finalizes this capture through the same partial-log path
+   * as its watchdog, so another incident cannot replace a still-active session.
+   */
+  public boolean awaitCollection(long timeout, TimeUnit unit) throws InterruptedException {
+    try {
+      boolean completed = mCollectionFinished.await(timeout, unit);
+      if (!completed) finish("incident_capture_wait_expired");
+      return completed;
+    } catch (InterruptedException e) {
+      finish("incident_capture_interrupted");
+      throw e;
+    }
+  }
+
+  /**
    * Process one incoming {@code sr_log} packet.
    *
    * @param cur  packet sequence number; 255 signals end of stream
@@ -197,6 +215,7 @@ public class BesLogManager {
     mHandler.removeCallbacks(mOverallTimeout);
 
     String fullLog = mLogBuffer.toString();
+    mCollectionFinished.countDown();
 
     if (timeoutReason != null) {
       Log.w(TAG, "⚠️ BES log collection ended due to: " + timeoutReason
