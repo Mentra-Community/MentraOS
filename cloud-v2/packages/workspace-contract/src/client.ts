@@ -1,13 +1,23 @@
 /**
  * Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`), for a service
- * that shares a secret with its Core (the Store). Every request is signed over its timestamp, method,
+ * that shares a secret with its Core (the Store, Fleet). Every request is signed over its timestamp, method,
  * path and body hash (`service-signature.ts`); no request names an organization.
  */
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
-import type {AuthorizeRequest, AuthorizeResponse, MembershipCheckEntry, PrincipalResponse, WorkspaceSummary} from "./types"
+import type {
+  AuthorizeRequest,
+  AuthorizeResponse,
+  MembershipCheckEntry,
+  PrincipalResponse,
+  WorkspaceChangeEvent,
+  WorkspaceChangesResponse,
+  WorkspaceSummary,
+} from "./types"
 
 const API_PREFIX = "/api/internal/workspaces"
+/** A feed cursor: a `seq` as a decimal string, with no sign, leading zero or fraction. */
+const CURSOR = /^[1-9]\d*$/
 const DEFAULT_TIMEOUT_MS = 5_000
 
 export type CoreWorkspaceClientErrorCode =
@@ -43,6 +53,13 @@ export interface CoreWorkspaceClient {
   checkMemberships(mentraUserId: string, workspaceIds: string[]): Promise<Record<string, MembershipCheckEntry | null>>
   /** Null only when Core says the workspace does not exist (HTTP 404 `workspace_not_found`); any other 404 throws. */
   getWorkspace(workspaceId: string): Promise<WorkspaceSummary | null>
+  /**
+   * One page of the change feed, oldest first. `after` is the `seq` of the last event already
+   * processed, as a decimal string (omitted or null starts from the beginning); `limit` is at most 500
+   * (Core's default when omitted is 100). `next` is the cursor for the following page, or null when
+   * the page was not full. Store a cursor only after the events up to it are processed.
+   */
+  listChanges(input: {after?: string | null; limit?: number}): Promise<WorkspaceChangesResponse>
   mintServiceCredential(input: {
     workspaceId: string
     name: string
@@ -90,6 +107,28 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       throw badResponse(path, "the principal is neither a user nor a credential")
     }
     return principal
+  }
+
+  /** A record or null: the shape of an event's `target`, `before` and `after`. */
+  function checkSnapshot(path: string, value: unknown, what: string): void {
+    if (value !== null) checkRecord(path, value, what)
+  }
+
+  function checkChangeEvent(path: string, value: unknown): WorkspaceChangeEvent {
+    const event = checkRecord(path, value, "an event")
+    if (typeof event.eventId !== "string" || !event.eventId) throw badResponse(path, "an event has no eventId")
+    if (typeof event.seq !== "number" || !Number.isSafeInteger(event.seq) || event.seq < 1) {
+      throw badResponse(path, "an event has no positive integer seq")
+    }
+    if (typeof event.action !== "string" || !event.action) throw badResponse(path, "an event has no action")
+    if (event.workspaceId !== null && typeof event.workspaceId !== "string") {
+      throw badResponse(path, "an event's workspaceId is neither a string nor null")
+    }
+    if (typeof event.occurredAt !== "string") throw badResponse(path, "an event has no occurredAt")
+    checkSnapshot(path, event.target, "an event's target")
+    checkSnapshot(path, event.before, "an event's before")
+    checkSnapshot(path, event.after, "an event's after")
+    return event as unknown as WorkspaceChangeEvent
   }
 
   function checkWorkspace(path: string, value: unknown, what: string): Json {
@@ -216,6 +255,31 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       )
       if (raw === null) return null
       return checkWorkspace(path, raw, "the workspace") as unknown as WorkspaceSummary
+    },
+
+    async listChanges(input) {
+      const query = new URLSearchParams()
+      if (input.after !== undefined && input.after !== null) query.set("after", input.after)
+      if (input.limit !== undefined) query.set("limit", String(input.limit))
+      const queryString = query.toString()
+      const path = `${API_PREFIX}/changes${queryString ? `?${queryString}` : ""}`
+      const raw = checkRecord(path, await call("GET", path), "the change page")
+      if (!Array.isArray(raw.events)) throw badResponse(path, "missing events")
+      if (raw.next !== null && (typeof raw.next !== "string" || !CURSOR.test(raw.next))) {
+        throw badResponse(path, "next is neither a sequence number nor null")
+      }
+      let previous = 0
+      for (const event of raw.events) {
+        const checked = checkChangeEvent(path, event)
+        if (checked.seq <= previous) throw badResponse(path, "events are not in strictly increasing seq order")
+        previous = checked.seq
+      }
+      // The cursor a poller stores is the last event's seq: one that points anywhere else skips or repeats events.
+      const last = raw.events[raw.events.length - 1] as WorkspaceChangeEvent | undefined
+      if (raw.next !== null && String(last?.seq) !== raw.next) {
+        throw badResponse(path, "next is not the seq of the last event")
+      }
+      return {events: raw.events as WorkspaceChangeEvent[], next: raw.next}
     },
 
     async mintServiceCredential(input) {

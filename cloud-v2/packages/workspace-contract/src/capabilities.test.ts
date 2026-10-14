@@ -89,4 +89,9 @@ describe("operator key scopes", () => {
     expect(OPERATOR_KEY_SCOPES).not.toContain("organization.credentials.manage")
     for (const scope of OPERATOR_KEY_SCOPES) expect(ORGANIZATION_CAPABILITIES).toContain(scope)
   })
+
+  test("organization.fleet.administer is an organization capability and not an operator key scope", () => {
+    expect(ORGANIZATION_CAPABILITIES).toContain("organization.fleet.administer")
+    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.fleet.administer")
+  })
 })

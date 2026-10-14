@@ -82,6 +82,54 @@ public class K900NetworkManagerHotspotLifecycleTest {
     }
 
     @Test
+    public void startsAfterNativeFailureWithNoRemainingGateway() {
+        manager.apState = AsgConstants.WIFI_AP_STATE_FAILED;
+        manager.startHotspot();
+        assertThat(wifi.isWifiEnabled()).isTrue();
+        advance(500);
+        assertThat(commands()).extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false, true);
+        manager.gateway = "192.168.43.1";
+        advance(200);
+        assertThat(manager.isHotspotEnabled()).isTrue();
+    }
+
+    @Test
+    public void nativeFailureDoesNotCountAsStoppedWhileGatewayRemains() {
+        manager.stopHotspot();
+        manager.apState = AsgConstants.WIFI_AP_STATE_FAILED;
+        manager.gateway = "192.168.43.1";
+        manager.startHotspot();
+        advance(13_000);
+        assertThat(commands()).extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false, false, false);
+        assertThat(wifi.isWifiEnabled()).isFalse();
+        assertThat(manager.isHotspotEnabled()).isFalse();
+    }
+
+    @Test
+    public void replacementCleanupAcceptsTerminalNativeFailureWithNoGateway() throws Exception {
+        manager.apState = AsgConstants.WIFI_AP_STATE_FAILED;
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread worker =
+                new Thread(
+                        () -> {
+                            try {
+                                manager.stopHotspotAndAwaitDisabled();
+                            } catch (Exception e) {
+                                failure.set(e);
+                            }
+                        });
+        worker.start();
+        worker.join(2000);
+        assertThat(worker.isAlive()).isFalse();
+        assertThat(failure.get()).isNull();
+        assertThat(commands()).extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false);
+    }
+
+    @Test
     public void adoptsReadyApAcrossProcessReplacementWithoutRestartingIt() {
         manager.gateway = "192.168.43.1";
         manager.startHotspot();

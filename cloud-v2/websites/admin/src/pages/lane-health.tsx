@@ -87,7 +87,7 @@ export function LaneHealthHost({
                   <p className="text-xs">Generation {lane.activity.generation}</p>
                 </div> : ['running', 'reserved', 'in-repair'].includes(lane.state)
                   ? <p className="mt-2 text-xs text-[#747780]">{fresh ? 'Owner not reported.' : 'Last reported owner unavailable.'}</p> : null}
-                {controls && <LaneControls hostId={host.hostId} laneId={lane.id} mode={lane.dispatchMode} fresh={fresh} />}
+                {controls && <LaneControls hostId={host.hostId} laneId={lane.id} mode={lane.dispatchMode} fresh={fresh} lane={lane} />}
                 {linkHistory && (
                   <a
                     className="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline"

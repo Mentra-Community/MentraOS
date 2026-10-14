@@ -47,7 +47,7 @@ export interface AppVariables {
   workspaceAuthorization?: AuthorizeResponse
 
   /** The service that signed an internal service API request (`serviceAuth`). */
-  service?: "store"
+  service?: "store" | "fleet"
 
   /** The raw body the service signature covered, read once by `serviceAuth`. */
   serviceBody?: string

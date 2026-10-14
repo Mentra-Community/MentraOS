@@ -1,5 +1,6 @@
 import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
+import {permissionRequirementsSchema} from "./resource-permissions.types";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 
@@ -22,7 +23,7 @@ export const resourceCapabilityMap = {
   workspace: [],
 } as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
-  capabilities: z.array(routineIdentitySchema).max(30)}).strict().refine(value =>
+  capabilities: z.array(routineIdentitySchema).max(30), permissions: permissionRequirementsSchema.optional()}).strict().refine(value =>
     new Set(value.capabilities).size === value.capabilities.length && value.capabilities.every(capability =>
       (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations');
 /** Serialized source definition; executable functions remain in the harness repository. */

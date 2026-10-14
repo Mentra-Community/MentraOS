@@ -40,6 +40,7 @@ import {
 } from "../packages/core/scripts/migrate-store-developer-orgs"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
@@ -62,6 +63,7 @@ const TARGET_MODELS = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
 ] as unknown as Array<typeof WorkspaceModel>
 
 const SOURCE_COLLECTIONS = [
@@ -522,6 +524,7 @@ describe("dry run", () => {
       WorkspaceInvitation: 0,
       AccessCredential: 0,
       WorkspaceAuditEvent: 0,
+      WorkspaceAuditCounter: 0,
     })
     expect(await snapshotSource()).toEqual(sourceBefore)
   })
@@ -2135,6 +2138,7 @@ describe("command line", () => {
       WorkspaceInvitation: 0,
       AccessCredential: 0,
       WorkspaceAuditEvent: 0,
+      WorkspaceAuditCounter: 0,
     })
     // Progress goes to stderr; stdout is the report alone, and it never carries a hash.
     for (const key of SOURCE_KEYS) expect(result.stdout).not.toContain(key.hash)
@@ -2183,6 +2187,7 @@ describe("command line", () => {
       expect(await collections()).toEqual(
         [
           "access_credentials",
+          "workspace_audit_counters",
           "workspace_audit_events",
           "workspace_invitations",
           "workspace_memberships",

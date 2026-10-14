@@ -115,6 +115,19 @@ function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
+/**
+ * Read a `Retry-After` header in its delta-seconds form (a non-negative whole
+ * number of seconds). The HTTP-date form, signs, fractions, exponents and any
+ * other text are ignored: a caller that wants a delay gets a number or nothing,
+ * never a guess. A value too large to be an exact integer is also ignored.
+ */
+function parseRetryAfterSeconds(headers: Headers | undefined): number | undefined {
+  const raw = headers?.get("Retry-After")?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  const seconds = Number(raw);
+  return Number.isSafeInteger(seconds) ? seconds : undefined;
+}
+
 export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
   const { baseUrl, getToken, logger } = deps;
   const executeFetch = deps.fetch ?? globalThis.fetch;
@@ -304,7 +317,12 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
       // No JSON body, or unparseable: fall back to status alone.
     }
     throwIfAborted(signal);
-    return new HttpError(`HTTP ${res.status} on ${method} ${path}${detail}`, res.status, code);
+    return new HttpError(
+      `HTTP ${res.status} on ${method} ${path}${detail}`,
+      res.status,
+      code,
+      parseRetryAfterSeconds(res.headers),
+    );
   }
 
   /**

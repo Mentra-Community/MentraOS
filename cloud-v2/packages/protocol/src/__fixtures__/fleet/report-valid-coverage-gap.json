@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-gap-0001",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 9,
+      "observedAt": "2026-10-13T12:00:00Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "coverage_gap",
+      "payload": {
+        "reason": "queue_dropped",
+        "from": "2026-10-13T11:20:00Z",
+        "to": "2026-10-13T11:55:00Z",
+        "droppedRecordCount": 31
+      }
+    }
+  ]
+}

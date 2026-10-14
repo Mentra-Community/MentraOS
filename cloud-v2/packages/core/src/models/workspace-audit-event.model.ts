@@ -1,13 +1,17 @@
 /**
  * @fileoverview `workspace_audit_events` collection. Append-only audit trail of
  * workspace administration (workspace, membership, invitation and credential
- * changes) and of operator keys.
+ * changes) and of operator keys, and the source of the change feed services read.
  *
  * `eventId` is a ULID from one monotonic source per process and identifies the
- * event; a workspace's audit page reads newest first by it. `workspaceId` is null
- * for organization-level events (operator keys). `target`, `before` and `after`
- * are free-form snapshots whose shape depends on `action`, and never carry a
- * secret.
+ * event; a workspace's audit page reads newest first by it. `seq` is the event's
+ * position in the change feed: it is issued inside the recording transaction from
+ * the single feed counter (see `workspace-audit-counter.model.ts`), so it follows
+ * commit order and is the feed cursor. Organization-level events (operator keys,
+ * `workspaceId` null) are written without a transaction and have no `seq`, and
+ * neither does any event recorded before the feed existed. `target`, `before` and
+ * `after` are free-form snapshots whose shape depends on `action`, and never carry
+ * a secret.
  */
 
 import {Schema, type InferSchemaType} from "mongoose"
@@ -30,6 +34,8 @@ const ActorSchema = new Schema(
 const WorkspaceAuditEventSchema = new Schema(
   {
     eventId: {type: String, required: true, unique: true},
+    /** Position in the change feed. Absent on organization-level and pre-feed events. */
+    seq: {type: Number},
     workspaceId: {type: String, default: null},
     /** e.g. `"workspace.created"`, `"membership.role_changed"`, `"credential.revoked"`. */
     action: {type: String, required: true},
@@ -45,6 +51,10 @@ const WorkspaceAuditEventSchema = new Schema(
 
 // One workspace's audit page, newest first.
 WorkspaceAuditEventSchema.index({workspaceId: 1, eventId: -1})
+// The change feed: events in `seq` order. NOT unique: the collection already holds documents in every
+// deployment, and Azure Cosmos DB cannot add a unique index to a populated collection. Uniqueness comes
+// from the counter, not from this index. Events without a `seq` fall outside every range read of it.
+WorkspaceAuditEventSchema.index({seq: 1})
 
 export type WorkspaceAuditEventRow = InferSchemaType<typeof WorkspaceAuditEventSchema>
 export const WorkspaceAuditEventModel = registerModel("WorkspaceAuditEvent", WorkspaceAuditEventSchema)

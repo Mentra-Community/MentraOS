@@ -383,3 +383,32 @@ test('activity reads and displays bounded fleet preparation failures', async () 
  try{const response=await createTestRunAdminApi().request('/activity');expect(response.status).toBe(200);expect(await response.json()).toMatchObject({requests:[{requestId:selected.requestId,reason:row.fleetPreparationStatus.reason}]});expect(projection).toMatchObject({fleetPreparationStatus:1});}
  finally{find.mockRestore();}
 });
+
+test('recovery button body uses existing authenticated lane-control admission and refuses anonymous operators', async () => {
+  const {LaneControlsService} = await import('../../services/lane-controls.service')
+  const observed: unknown[] = []
+  class Controls extends LaneControlsService {
+    override async submit(value: unknown, operator: string) {
+      const {laneControlInputSchema} = await import('../../types/lane-control.types')
+      const input = laneControlInputSchema.parse(value); observed.push({input, operator})
+      return {operationId: input.operationId, hostId: input.hostId, laneId: input.laneId,
+        action: input.action, expiresAt: input.expiresAt}
+    }
+  }
+  const body = {operationId: '11111111-1111-4111-8111-111111111111', hostId: 'air', laneId: 'mac',
+    expiresAt: Date.now() + 120000, action: 'reopen-repair', repair: {interruptionId: 'repair:mac:98',
+      expectedHaltDecisionId: 'halt:98', changedConditions: 'I allowed microphone access.'}}
+  const route = () => createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, undefined, new Controls())
+  const options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}
+  expect((await route().request('/lanes/controls', options)).status).toBe(403)
+  expect(observed).toEqual([])
+  const app = new Hono<any>()
+  app.use('*', async (c, next) => {c.set('developer', {developerId: 'signed-in-operator'}); await next()})
+  app.route('/', route())
+  const response = await app.request('/lanes/controls', options)
+  expect(response.status).toBe(202)
+  expect(response.headers.get('Cache-Control')).toBe('no-store')
+  expect(observed).toEqual([{input: body, operator: 'signed-in-operator'}])
+  expect((await app.request('/lanes/controls', {...options, body: JSON.stringify({...body, ready: true})})).status).toBe(400)
+  expect(observed).toHaveLength(1)
+})

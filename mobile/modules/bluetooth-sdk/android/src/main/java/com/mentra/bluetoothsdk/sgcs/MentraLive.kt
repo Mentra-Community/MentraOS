@@ -646,6 +646,10 @@ class MentraLive : SGCManager() {
     private var a2dpProfile: BluetoothA2dp? = null
     private var isA2dpProxyRegistered = false
     private var a2dpConnectAttempts = 0
+    private val classicAudioServiceDiscovery =
+            ClassicAudioServiceDiscovery(handler, CONNECTION_TIMEOUT_MS.toLong()) {
+                Bridge.log("LIVE: Classic: $it")
+            }
 
     private data class OutgoingBleCommandTraceInfo(
             val commandType: String,
@@ -1709,6 +1713,7 @@ class MentraLive : SGCManager() {
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
+        classicAudioServiceDiscovery.cancel()
         audioConnected = false
         notificationsEnabled = false
         currentMtu = 23
@@ -1984,6 +1989,7 @@ class MentraLive : SGCManager() {
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
+        classicAudioServiceDiscovery.cancel()
         audioConnected = false
         notificationsEnabled = false
         processSendQueueRunnable?.let { handler.removeCallbacks(it) }
@@ -2351,6 +2357,7 @@ class MentraLive : SGCManager() {
                             registerBondingReceiver()
                             bondingRetryCount = 0
                             ctkdInitiatedThisGattSession = false
+                            classicAudioServiceDiscovery.cancel()
                             Bridge.log(
                                     "LIVE: CTKD: BLE GATT up - deferring Classic/A2DP until notifications ready"
                             )
@@ -2399,6 +2406,7 @@ class MentraLive : SGCManager() {
                             // Reset audio pairing flags
                             glassesReadyReceived = false
                             ctkdInitiatedThisGattSession = false
+                            classicAudioServiceDiscovery.cancel()
                             audioConnected = false
 
                             notificationsEnabled = false
@@ -2461,6 +2469,7 @@ class MentraLive : SGCManager() {
                         glassesReadyReceived = false
                         audioConnected = false
                         ctkdInitiatedThisGattSession = false
+                        classicAudioServiceDiscovery.cancel()
 
                         notificationsEnabled = false
 
@@ -7234,7 +7243,7 @@ class MentraLive : SGCManager() {
                                     BluetoothDevice.BOND_BONDED ->
                                             run {
                                                 Bridge.log(
-                                                        "LIVE: CTKD: ✅ Successfully bonded with device - BT Classic connection established"
+                                                        "LIVE: CTKD: Successfully bonded - checking Classic audio services"
                                                 )
                                                 markPairingTiming(
                                                         "ctkd_bonded",
@@ -7253,7 +7262,7 @@ class MentraLive : SGCManager() {
                                                 // path does this at GATT connect).
                                                 // markAudioConnected / sendAudioConnected fire
                                                 // when the A2DP path completes.
-                                                connectA2dpProfile(device)
+                                                prepareClassicAudio(device)
 
                                                 // Safety net: if glasses_ready somehow missed
                                                 // setting fullyBooted, catch up here.
@@ -7290,6 +7299,7 @@ class MentraLive : SGCManager() {
                                                 }
                                             }
                                     BluetoothDevice.BOND_NONE -> {
+                                        classicAudioServiceDiscovery.cancel()
                                         Bridge.log(
                                                 "LIVE: CTKD: ❌ Bonding failed or removed for device"
                                         )
@@ -7411,6 +7421,10 @@ class MentraLive : SGCManager() {
         classicAudioReceiver =
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
+                        if (intent?.action == BluetoothDevice.ACTION_UUID) {
+                            intent.bluetoothDeviceExtra()?.let { classicAudioServiceDiscovery.onUuids(it) }
+                            return
+                        }
                         if (intent?.action != BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED &&
                                 intent?.action != BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) return
                         val device = intent.bluetoothDeviceExtra() ?: return
@@ -7427,6 +7441,7 @@ class MentraLive : SGCManager() {
         try {
             val filter =
                     IntentFilter().apply {
+                        addAction(BluetoothDevice.ACTION_UUID)
                         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
                         addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
                     }
@@ -7551,10 +7566,10 @@ class MentraLive : SGCManager() {
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> {
                 Bridge.log(
-                        "LIVE: CTKD: Device is already bonded - connecting A2DP audio profile"
+                        "LIVE: CTKD: Device is already bonded - checking Classic audio services"
                 )
                 markPairingTiming("ctkd_already_bonded")
-                connectA2dpProfile(device)
+                prepareClassicAudio(device)
             }
             BluetoothDevice.BOND_BONDING -> {
                 // Secure pairing firmware may request SMP as soon as GATT connects.
@@ -7613,6 +7628,19 @@ class MentraLive : SGCManager() {
         return classicAudioConnectionTracker.connected
     }
 
+    private fun prepareClassicAudio(device: BluetoothDevice) {
+        if (!canConnectClassicAudio(device)) return
+        val gatt = bluetoothGatt
+        classicAudioServiceDiscovery.connectWhenDiscovered(device) {
+            if (bluetoothGatt === gatt && canConnectClassicAudio(device)) connectA2dpProfile(device)
+        }
+    }
+
+    private fun canConnectClassicAudio(device: BluetoothDevice): Boolean =
+            !isKilled && !pairingYieldActive && isConnected && notificationsEnabled &&
+                    ctkdInitiatedThisGattSession && connectedDevice?.address == device.address &&
+                    device.bondState == BluetoothDevice.BOND_BONDED
+
     /** A2DP profile service listener for connecting to already-bonded devices */
     private val a2dpServiceListener: BluetoothProfile.ServiceListener =
             object : BluetoothProfile.ServiceListener {
@@ -7661,7 +7689,9 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: A2DP: Skipping connectA2dpWithProxy — SGC destroyed")
             return
         }
-        if (a2dpProfile == null || device == null) {
+        if (device == null || !canConnectClassicAudio(device) ||
+                !ClassicAudioServiceDiscovery.hasAudioSink(device)) return
+        if (a2dpProfile == null) {
             Bridge.log("LIVE: A2DP: Cannot connect - proxy or device is null")
             return
         }
@@ -7711,14 +7741,11 @@ class MentraLive : SGCManager() {
                 "LIVE: A2DP: Retry $a2dpConnectAttempts/$A2DP_CONNECT_MAX_ATTEMPTS in " +
                         "${A2DP_CONNECT_RETRY_MS}ms ($reason)"
         )
+        val gatt = bluetoothGatt
         handler.postDelayed(
                 Runnable {
-                    if (isKilled || pairingYieldActive || connectedDevice == null) {
-                        return@Runnable
-                    }
-                    val target = connectedDevice ?: return@Runnable
-                    if (a2dpProfile != null) {
-                        connectA2dpWithProxy(target)
+                    if (bluetoothGatt === gatt && canConnectClassicAudio(device)) {
+                        connectA2dpWithProxy(device)
                     }
                 },
                 A2DP_CONNECT_RETRY_MS
@@ -7938,6 +7965,7 @@ class MentraLive : SGCManager() {
 
         // Mark as killed to prevent reconnection attempts
         isKilled = true
+        classicAudioServiceDiscovery.cancel()
         explicitConnectByName = false
         pairingYieldActive = false
         pairingYieldAwaitingReclaim = false
@@ -7959,7 +7987,11 @@ class MentraLive : SGCManager() {
 
         // Tear down Classic (A2DP/HFP) before GATT close. Closing only the proxy left the
         // phone's system Bluetooth UI showing Mentra Live still connected.
-        val classicDevice = connectedDevice
+        // BLE loss clears connectedDevice while the OS audio profiles can remain connected.
+        // Use this session's existing Classic target before resetting the tracker below.
+        val classicDevice = connectedDevice ?: classicAudioConnectionTracker.targetForDisconnect()?.let {
+            bluetoothAdapter?.getRemoteDevice(it)
+        }
         disconnectClassicProfiles(classicDevice)
         closeA2dpProxy()
         classicAudioConnectionTracker.reset()
@@ -8036,6 +8068,7 @@ class MentraLive : SGCManager() {
         glassesReadyReceived = false
         audioConnected = false
         ctkdInitiatedThisGattSession = false
+        classicAudioServiceDiscovery.cancel()
         DeviceStore.apply("glasses", "fullyBooted", false)
         updateConnectionState(ConnTypes.DISCONNECTED)
 

@@ -3,7 +3,7 @@ import {CoreWorkspaceClientError, createCoreWorkspaceClient} from "./client"
 import {SERVICE_HEADERS, verifyServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
 import type {WorkspaceRole} from "./capabilities"
-import type {AuthorizeResponse, PrincipalResponse, WorkspaceSummary} from "./types"
+import type {AuthorizeResponse, PrincipalResponse, WorkspaceChangeEvent, WorkspaceSummary} from "./types"
 
 const SECRET = "client-secret"
 const BASE = "https://core.test"
@@ -53,6 +53,18 @@ const workspace = (): WorkspaceSummary => ({
   name: "Acme",
   status: "active",
   authorizationRevision: 3,
+})
+
+const changeEvent = (seq: number, overrides: Partial<WorkspaceChangeEvent> = {}): WorkspaceChangeEvent => ({
+  eventId: `01HZ00000000000000000000${seq}`,
+  seq,
+  workspaceId: "ws_1",
+  action: "membership.added",
+  occurredAt: "2026-10-13T12:00:00.000Z",
+  target: {membershipId: "wm_1", mentraUserId: "mu_1"},
+  before: {role: null},
+  after: {role: "member"},
+  ...overrides,
 })
 
 const userPrincipal = () =>
@@ -292,6 +304,60 @@ describe("operations", () => {
       await expectClientError(client.resolveEmail("a@example.com"), "bad_response")
     }
   })
+
+  test("listChanges asks for the page after a cursor, signed over the exact query", async () => {
+    const page = {events: [changeEvent(8), changeEvent(9)], next: "9"}
+    const {client, calls} = clientFor(() => json(page))
+
+    expect(await client.listChanges({after: "7", limit: 2})).toEqual(page)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.method).toBe("GET")
+    expect(calls[0]!.url).toBe(`${BASE}/api/internal/workspaces/changes?after=7&limit=2`)
+    const url = new URL(calls[0]!.url)
+    expect(
+      verifyServiceRequest({
+        secrets: [SECRET],
+        method: "GET",
+        pathWithQuery: `${url.pathname}${url.search}`,
+        body: "",
+        timestampMs: Number(calls[0]!.headers.get(SERVICE_HEADERS.timestamp)),
+        signature: calls[0]!.headers.get(SERVICE_HEADERS.signature) ?? "",
+        nowMs: Date.now(),
+      }),
+    ).toBe(true)
+  })
+
+  test("listChanges sends only what it is given: no cursor starts from the beginning", async () => {
+    const empty = {events: [], next: null}
+    const {client, calls} = clientFor(() => json(empty))
+
+    expect(await client.listChanges({})).toEqual(empty)
+    expect(await client.listChanges({after: null})).toEqual(empty)
+    expect(await client.listChanges({after: "0"})).toEqual(empty)
+    expect(await client.listChanges({limit: 500})).toEqual(empty)
+
+    expect(calls.map(call => call.url.slice(BASE.length))).toEqual([
+      "/api/internal/workspaces/changes",
+      "/api/internal/workspaces/changes",
+      "/api/internal/workspaces/changes?after=0",
+      "/api/internal/workspaces/changes?limit=500",
+    ])
+  })
+
+  test("listChanges returns an event as Core sent it, tombstones with no workspace and null snapshots included", async () => {
+    const tombstone = changeEvent(10, {
+      workspaceId: null,
+      action: "user.deleted",
+      target: {mentraUserId: "mu_gone"},
+      before: null,
+      after: null,
+    })
+    const unknownAction = changeEvent(11, {action: "something.new", target: null})
+    const {client} = clientFor(() => json({events: [tombstone, unknownAction], next: null}))
+
+    expect(await client.listChanges({after: "9"})).toEqual({events: [tombstone, unknownAction], next: null})
+  })
 })
 
 describe("response shape", () => {
@@ -379,6 +445,45 @@ describe("response shape", () => {
     await expectClientError(credential.client.mintServiceCredential(mint), "bad_response")
     const notAnObject = clientFor(() => json([{credentialId: "cred_1", token: "msk_dev_x.y"}]))
     await expectClientError(notAnObject.client.mintServiceCredential(mint), "bad_response")
+  })
+
+  test("fails closed when a change page has the wrong shape", async () => {
+    const good = changeEvent(1)
+    const bad: unknown[] = [
+      [good],
+      {next: null},
+      {events: good, next: null},
+      {events: [good]},
+      {events: [good], next: 1},
+      {events: [good], next: ""},
+      {events: [good], next: "not-a-cursor"},
+      {events: ["event"], next: null},
+      {events: [{...good, eventId: undefined}], next: null},
+      {events: [{...good, seq: "1"}], next: null},
+      {events: [{...good, seq: 1.5}], next: null},
+      {events: [{...good, seq: -1}], next: null},
+      {events: [{...good, action: undefined}], next: null},
+      {events: [{...good, workspaceId: 7}], next: null},
+      {events: [{...good, occurredAt: undefined}], next: null},
+      {events: [{...good, target: "x"}], next: null},
+      {events: [{...good, before: []}], next: null},
+      {events: [{...good, after: 7}], next: null},
+    ]
+    for (const body of bad) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.listChanges({}), "bad_response")
+    }
+  })
+
+  test("fails closed when a change page is out of order or its cursor does not point at its last event", async () => {
+    const outOfOrder = clientFor(() => json({events: [changeEvent(5), changeEvent(4)], next: "4"}))
+    await expectClientError(outOfOrder.client.listChanges({}), "bad_response")
+    const repeated = clientFor(() => json({events: [changeEvent(5), changeEvent(5)], next: "5"}))
+    await expectClientError(repeated.client.listChanges({}), "bad_response")
+    const wrongCursor = clientFor(() => json({events: [changeEvent(5), changeEvent(6)], next: "9"}))
+    await expectClientError(wrongCursor.client.listChanges({}), "bad_response")
+    const cursorWithoutEvents = clientFor(() => json({events: [], next: "9"}))
+    await expectClientError(cursorWithoutEvents.client.listChanges({}), "bad_response")
   })
 })
 

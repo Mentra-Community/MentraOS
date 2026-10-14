@@ -1,5 +1,6 @@
-import type {MiniappSession} from "@mentra/miniapp/background"
+import {base64ToBytes, type MiniappSession} from "@mentra/miniapp/background"
 
+import {ONSET_PHRASE_PCM_BASE64, ONSET_PHRASE_SAMPLE_RATE} from "../onsetPhrasePcm"
 import type {Channels} from "../../shared/channels"
 
 /**
@@ -22,6 +23,52 @@ import type {Channels} from "../../shared/channels"
  */
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
+
+const ONSET_SAMPLE_RATE = 16000
+const ONSET_CLICK_STARTS_MS = [0, 300, 600, 900]
+const ONSET_CLICK_MS = 40
+const ONSET_CLICK_HZ = 2400
+
+/** Four loud beeps. Sample 0 of the first beep is already at full level. */
+function buildOnsetClicks(sampleRate: number): Uint8Array {
+  const frames = sampleRate // one second
+  const pcm = new Uint8Array(frames * 2)
+  const view = new DataView(pcm.buffer)
+  const clickFrames = Math.floor((sampleRate * ONSET_CLICK_MS) / 1000)
+  for (const startMs of ONSET_CLICK_STARTS_MS) {
+    const start = Math.floor((sampleRate * startMs) / 1000)
+    for (let i = 0; i < clickFrames; i++) {
+      const sample = Math.sin((2 * Math.PI * ONSET_CLICK_HZ * i) / sampleRate)
+      view.setInt16((start + i) * 2, Math.round(sample * 0.7 * 0x7fff), true)
+    }
+  }
+  return pcm
+}
+
+async function playPcm(
+  session: MiniappSession,
+  pcm: Uint8Array,
+  sampleRate: 16000 | 24000 | 48000,
+): Promise<{durationMs?: number; chunks: number}> {
+  const writer = await session.speaker.createStream({sampleRate, stopOtherAudio: true})
+  try {
+    const chunkBytes = Math.floor(sampleRate / 10) * 2
+    let chunks = 0
+    for (let offset = 0; offset < pcm.length; offset += chunkBytes) {
+      await writer.write(pcm.subarray(offset, Math.min(pcm.length, offset + chunkBytes)))
+      chunks++
+    }
+    const {durationMs} = await writer.close()
+    return {durationMs, chunks}
+  } catch (err) {
+    await writer.abort().catch(() => {})
+    throw err
+  }
+}
+
+async function playOnsetClicks(session: MiniappSession): Promise<{durationMs?: number; chunks: number}> {
+  return playPcm(session, buildOnsetClicks(ONSET_SAMPLE_RATE), ONSET_SAMPLE_RATE)
+}
 
 export class TesterController {
   private subscriptions: Map<string, () => void> = new Map()
@@ -127,6 +174,33 @@ export class TesterController {
           await writer.abort().catch(() => {})
           throw err
         }
+      }),
+    )
+
+    // OS-2022: first samples of miniapp audio can be missing after the glasses
+    // speaker has gone idle. The click train starts at full amplitude so a
+    // missing opening beep is audible. The second pass starts immediately.
+    this.unsubs.push(
+      ui.handle("tester:speaker-onset-test", async (payload) => {
+        const {kind = "clicks", idleMs = 6000} = (payload ?? {}) as {
+          kind?: "clicks" | "speech"
+          idleMs?: number
+        }
+        const waitMs = Math.max(0, Math.min(30000, Math.round(idleMs)))
+        await new Promise((resolve) => setTimeout(resolve, waitMs))
+
+        if (kind === "speech") {
+          // Phone TTS is not used. Cloud download failed on this phone and the
+          // offline voice model is not installed, so speak() produced silence.
+          const phrase = base64ToBytes(ONSET_PHRASE_PCM_BASE64)
+          const first = await playPcm(this.session, phrase, ONSET_PHRASE_SAMPLE_RATE)
+          const second = await playPcm(this.session, phrase, ONSET_PHRASE_SAMPLE_RATE)
+          return {kind, idleMs: waitMs, first, second}
+        }
+
+        const first = await playOnsetClicks(this.session)
+        const second = await playOnsetClicks(this.session)
+        return {kind: "clicks" as const, idleMs: waitMs, first, second}
       }),
     )
   }

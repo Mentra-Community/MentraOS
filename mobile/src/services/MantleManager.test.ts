@@ -1315,6 +1315,19 @@ describe("runtime recovery initialization", () => {
     expect(manager.initialized).toBe(true)
   })
 
+  it("restores miniapps only after engine.start() has resolved, so Fleet's collector hears their launches", async () => {
+    const start = deferred()
+    jest.spyOn(engine, "start").mockReturnValueOnce(start.promise)
+    const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
+    const activity = manager.init()
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(autostart).not.toHaveBeenCalled()
+    start.resolve()
+    await activity
+    await manager.waitForMiniapps()
+    expect(autostart).toHaveBeenCalledTimes(1)
+  })
+
   it("retries failed foreground reconciliation without restarting the runtime", async () => {
     await manager.init({background: true})
     jest.mocked(deploymentManagedMiniappSync.sync).mockRejectedValueOnce(new Error("sync failed"))

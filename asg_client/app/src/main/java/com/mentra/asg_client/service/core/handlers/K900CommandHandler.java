@@ -163,8 +163,9 @@ public class K900CommandHandler {
      *     ServerConfigUtil (only used when {@code relayFirmwareJson} is null)
      * @param relayFirmwareJson if non-null, assembled BES logs are passed to this consumer as
      *     glasses_firmware JSON instead of HTTP upload
+     * @return the exact started capture session, or null if no capture started
      */
-    public void requestBesLogs(
+    public BesLogManager requestBesLogs(
             String incidentId,
             Context context,
             IConfigurationManager configManager,
@@ -177,7 +178,7 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-            return;
+            return null;
         }
 
         if (!serviceManager.getBluetoothManager().isConnected()) {
@@ -185,14 +186,15 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-            return;
+            return null;
         }
 
         // Replace any stale session from a previous request
-        mBesLogSession =
+        BesLogManager session =
                 (relayFirmwareJson != null)
                         ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
                         : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
+        mBesLogSession = session;
 
         try {
             JSONObject k900Command = new JSONObject();
@@ -211,7 +213,8 @@ public class K900CommandHandler {
 
             if (sent) {
                 Log.i(TAG, "✅ mh_logs sent — starting BES log collection timeouts");
-                mBesLogSession.startTimeouts();
+                session.startTimeouts();
+                return session;
             } else {
                 Log.e(TAG, "❌ Failed to send mh_logs");
                 mBesLogSession = null;
@@ -226,6 +229,7 @@ public class K900CommandHandler {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
         }
+        return null;
     }
 
     public boolean requestBesLogsForTrace(

@@ -8,13 +8,15 @@ import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
-  type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
+  routineQualificationTargetSchema, type RoutineQualificationTarget, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {selectedBuildInput} from '../types/test-build.types';
+import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
+import type {FrameworkBinding} from '../types/framework-version.types';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {RoutineDefinitionService} from './routine-definition.service';
-import {TestHostStateService, type ReceivedTestHostState} from './test-host-state.service';
+import {TestHostStateService, type RoutingTestHostState} from './test-host-state.service';
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
@@ -30,6 +32,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
+  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number): AsyncIterable<StoredRoutineJob>;
   supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   supersessionChecked?(jobId: string, now: Date): Promise<void>;
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
@@ -87,6 +90,17 @@ export const routineJobRepository: RoutineJobRepository = {
           $or: [{fleetDispatch: {$exists: false}}, {'fleetDispatch.attempts': {$lte: 20}, 'fleetDispatch.lastAttemptAt': {$lte: new Date(now.getTime() - 30_000).toISOString()},
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
+  },
+  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS) {
+    const cursor = TestRequestModel.find({state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false},
+      fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}, 'fleetSelection.platform': 'ios-on-mac',
+      fleetPreparation: {$exists: true}, 'fleetPreparation.requirements.resources': {$elemMatch: {permissions: {$elemMatch: {recipient: 'app'}}}},
+      $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': hostId}]},
+        {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': laneId}]}]})
+      .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority')
+      .setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean().cursor({batchSize: 20});
+    try {for await (const row of cursor) yield row as unknown as StoredRoutineJob;}
+    finally {await cursor.close();}
   },
   async supersessionCandidates(limit, now) {
     return await TestRequestModel.find({state: {$ne: 'terminal'}, fleetCancellation: {$exists: false},
@@ -153,16 +167,20 @@ export function routinePortableRequirements(definition: RoutineEnrollment): Port
     ...(body.glasses ? {glasses: {models: body.glasses.models, capabilities: [...body.resourceRequirements.find(value => value.kind === "glasses")!.capabilities]}} : {}),
     resources: body.resourceRequirements});
 }
-export function routineLaneDescriptorRevision(lane: ReceivedTestHostState['lanes'][number]): string {
+export function routineLaneDescriptorRevision(lane: RoutingTestHostState['lanes'][number]): string {
   return requestInputDigest({id: lane.id, platform: lane.platform,
-    resources: lane.resources.map(resource => ({...resource, capabilities: [...resource.capabilities ?? []].sort()})).sort((a, b) => a.id.localeCompare(b.id)),
+    resources: lane.resources.map(({permissionObservations: _, ...resource}) => ({...resource, capabilities: [...resource.capabilities ?? []].sort()})).sort((a, b) => a.id.localeCompare(b.id)),
     glasses: (lane.glasses ?? []).map(glasses => ({...glasses, capabilities: [...glasses.capabilities].sort()})).sort((a, b) => a.resourceId.localeCompare(b.resourceId))});
 }
-export function compatibleRoutineLane(requirements: PortableRequirements, lane: ReceivedTestHostState['lanes'][number]) {
+export function compatibleRoutineLane(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
+  context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}}) {
   if (lane.platform !== requirements.platform || (lane.glasses?.length ?? 0) > 1 ||
     new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length) return false;
   if (!requirements.resources.every(required => lane.resources.some(offered => offered.kind === required.kind &&
-    required.capabilities.every(capability => offered.capabilities?.includes(capability))))) return false;
+    required.capabilities.every(capability => offered.capabilities?.includes(capability)) &&
+    (required.permissions ?? []).every(value => Boolean(context && permissionObservationMatches(
+      offered.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
+      {...context, recipient: value.recipient})))))) return false;
   if (requirements.glasses && !lane.glasses?.some(offered => requirements.glasses!.models.includes(offered.model) &&
     requirements.glasses!.capabilities.every(capability => offered.capabilities.includes(capability)))) return false;
   return true;
@@ -174,16 +192,18 @@ export function routineRequirementLabels(requirements: PortableRequirements, mod
     throw new TestRequestConflict('Queue labels require one acceptable glasses model');
   return [...new Set([`mentra-platform-${requirements.platform}`,
     ...requirements.resources.flatMap(resource => [`mentra-resource-${resource.kind}`,
-      ...resource.capabilities.map(capability => `mentra-cap-${token(`${resource.kind}:${capability}`)}`)]),
+      ...resource.capabilities.map(capability => `mentra-cap-${token(`${resource.kind}:${capability}`)}`),
+      ...resource.permissions?.map(value => `mentra-permission-${token(`${resource.kind}:${value.recipient}:${value.permission}`)}`) ?? []]),
     ...(model ? [`mentra-glasses-${token(model)}`, ...requirements.glasses!.capabilities.map(capability => `mentra-glasses-cap-${token(`${model}:${capability}`)}`)] : []),
     ...(target?.hostId ? [`mentra-host-${token(target.hostId)}`] : []),
     ...(target?.laneId ? [`mentra-lane-${token(`${target.hostId}:${target.laneId}`)}`] : [])])].sort();
 }
 /** Queue model choice follows current accepting lanes; the portable alternatives stay immutable. */
-export function routineJobRouting(requirements: PortableRequirements, hosts: ReceivedTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget']) {
+export function routineJobRouting(requirements: PortableRequirements, hosts: RoutingTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget'],
+  build?: {headSha: string; archive?: {sha256: string}; receipt?: {sha256: string}}) {
   const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000 &&
     (!target?.hostId || target.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
-      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && compatibleRoutineLane(requirements, lane)));
+      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && compatibleRoutineLane(requirements, lane, build ? permissionContext(host.frameworkBinding, build, now) : undefined)));
   const accepting = compatible.filter(lane => lane.state === 'idle');
   const chosenModel = requirements.glasses ? [...new Set(accepting.flatMap(lane => (lane.glasses ?? []).filter(glasses =>
     requirements.glasses!.models.includes(glasses.model) && requirements.glasses!.capabilities.every(value => glasses.capabilities.includes(value))).map(glasses => glasses.model)))].sort()[0]
@@ -219,10 +239,50 @@ export class RoutineJobService {
     if (!frameworkIdentitySchema.safeParse(jobId).success) throw new TestRunError(400, 'Invalid job identity');
     const row = await this.rows.get(jobId);
     if (!row) throw new TestRunError(404, 'Routine job was not found');
+    this.assertExactInputs(row);
+    return row;
+  }
+  private assertExactInputs(row: StoredRoutineJob) {
     if (requestInputDigest(row.fleetSelection) !== row.fleetSelectionSha256 || row.fleetPreparation &&
       (row.fleetInputSha256 !== routineJobInputDigest(row) || requestInputDigest(row.fleetPreparation.definition) !== row.fleetPreparation.definitionSha256))
       throw new TestRunError(503, 'Stored routine job exact inputs are unavailable');
-    return row;
+  }
+  /** Passive target discovery precedes permission matching; only local reservation can acquire resources. */
+  async qualificationTargets(hostId: string): Promise<RoutineQualificationTarget[]> {
+    const now = this.now(), host = await this.hosts.get(hostId), binding = host?.frameworkBinding;
+    if (!host || host.hostId !== hostId || !binding || binding.routineApiVersion < 38 ||
+      !Number.isFinite(Date.parse(host.receivedAt)) || Date.parse(host.receivedAt) > now || now - Date.parse(host.receivedAt) > 120_000) return [];
+    const targets: RoutineQualificationTarget[] = [], queryDeadline = now + 5_000;
+    for (const lane of host.lanes) {
+      if (lane.platform !== 'ios-on-mac' || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic' ||
+        (lane.glasses?.length ?? 0) > 1 || new Set(lane.resources.map(resource => resource.kind)).size !== lane.resources.length) continue;
+      if (!this.rows.qualificationCandidates || this.now() >= queryDeadline) break;
+      // Finite ordered scan, shared five-second query budget; current 26-member suites fit without a mutable cursor.
+      let scanned = 0;
+      for await (const row of this.rows.qualificationCandidates(hostId, lane.id, 100, new Date(now), queryDeadline - this.now())) {
+        if (++scanned > 100 || this.now() >= queryDeadline) break;
+        if (row.state !== 'awaiting-runner' || row.hostId || row.fleetBinding || row.fleetCancellation || !row.fleetPreparation ||
+          row.fleetDeadline.getTime() <= now || row.fleetSelection.platform !== 'ios-on-mac' ||
+          row.fleetTarget?.hostId && row.fleetTarget.hostId !== hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id) continue;
+        this.assertExactInputs(row);
+        const requirements = row.fleetPreparation.requirements, context = permissionContext(binding, row.fleetSelection.build, now);
+        if (!requirements.resources.some(resource => resource.permissions?.some(value => value.recipient === 'app')) ||
+          row.fleetSelection.minimumFrameworkVersion && row.fleetSelection.minimumFrameworkVersion > binding.version ||
+          row.fleetPreparation.routineSource.minimumRoutineApiVersion > binding.routineApiVersion) continue;
+        // Structural suitability is only a probe candidate. The local provider still checks worker grants under reservation.
+        const structural = {...requirements, resources: requirements.resources.map(({permissions: _, ...resource}) => resource)};
+        const appGranted = requirements.resources.every(required => (required.permissions ?? []).filter(value => value.recipient === 'app')
+          .every(value => Boolean(context && permissionObservationMatches(lane.resources.find(resource => resource.kind === required.kind)
+            ?.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
+          {...context, recipient: 'app'}))));
+        if (!compatibleRoutineLane(structural, lane) || appGranted) continue;
+        const target = {jobId: row.requestId, hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(),
+          selection: row.fleetSelection, requirements, ...(row.fleetTarget ? {target: row.fleetTarget} : {})};
+        targets.push(routineQualificationTargetSchema.parse({...target, inputSha256: requestInputDigest(target)}));
+        break;
+      }
+    }
+    return targets;
   }
   private retry(row: StoredRoutineJob, selected: z.infer<typeof routineJobSubmissionSchema>) {
     const original = row.fleetSelection;
@@ -369,7 +429,7 @@ export class RoutineJobService {
       state: row.state, ...routing, selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
   }
   private async routing(row: StoredRoutineJob) {
-    return routineJobRouting(row.fleetPreparation!.requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetTarget);
+    return routineJobRouting(row.fleetPreparation!.requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetTarget, row.fleetSelection.build);
   }
   async preparationStatus(jobId: string, value: unknown) {
     const input = routinePreparationStatusSchema.parse(value), row = await this.job(jobId);
@@ -432,7 +492,7 @@ export class RoutineJobService {
       !lane || lane.dispatchMode !== 'automatic' || lane.state !== 'idle' ||
       row.fleetTarget?.hostId && row.fleetTarget.hostId !== hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== input.laneId ||
       lane.descriptorRevision !== input.descriptorRevision || routineLaneDescriptorRevision(lane) !== input.descriptorRevision ||
-      !compatibleRoutineLane(row.fleetPreparation.requirements, lane))
+      !compatibleRoutineLane(row.fleetPreparation.requirements, lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now())))
       throw new TestRequestConflict('Selected host has no current accepting compatible lane descriptor');
     const binding: RoutineJobBinding = {jobId, requestId: jobId, hostId, laneId: input.laneId,
       descriptorRevision: input.descriptorRevision, actionsJobId: input.actionsJobId, actionsRunId: input.actionsRunId, boundAt: new Date(this.now()).toISOString()};

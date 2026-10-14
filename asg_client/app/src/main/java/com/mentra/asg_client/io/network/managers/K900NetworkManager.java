@@ -323,8 +323,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                     return;
                 }
                 int apState = readVendorHotspotState();
-                if (apState == AsgConstants.WIFI_AP_STATE_DISABLED
-                        && findLocalHotspotGatewayIp().isEmpty()) {
+                if (isVendorHotspotStopped(apState, findLocalHotspotGatewayIp())) {
                     mHotspotStopping = false;
                     requestVendorHotspot(generation);
                     return;
@@ -337,6 +336,14 @@ public class K900NetworkManager extends BaseNetworkManager {
                         generation, "Could not read K900 hotspot state: " + e.getMessage());
             }
         }
+    }
+
+    private boolean isVendorHotspotStopped(int apState, String gatewayIp) {
+        // Android keeps FAILED as its last SoftAP state after removing the failed manager.
+        // A stop with no manager cannot emit DISABLED. Still require no live AP gateway.
+        return (apState == AsgConstants.WIFI_AP_STATE_DISABLED
+                        || apState == AsgConstants.WIFI_AP_STATE_FAILED)
+                && gatewayIp.isEmpty();
     }
 
     // K900's system app can read this hidden native state. An empty/down interface alone does
@@ -587,8 +594,8 @@ public class K900NetworkManager extends BaseNetworkManager {
                     throw new java.io.IOException(
                             "Hotspot cleanup was superseded before APK replacement");
                 }
-                if (readVendorHotspotState() == AsgConstants.WIFI_AP_STATE_DISABLED
-                        && findLocalHotspotGatewayIp().isEmpty()) return;
+                if (isVendorHotspotStopped(
+                        readVendorHotspotState(), findLocalHotspotGatewayIp())) return;
             }
             if (SystemClock.elapsedRealtime() >= deadline) {
                 throw new java.io.IOException("K900 hotspot did not stop before APK replacement");

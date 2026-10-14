@@ -13,6 +13,7 @@ import {
   laneActivitySchema,
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
+import {permissionObservationsSchema} from "../types/resource-permissions.types"
 import {TestRunError} from "./test-result-error"
 import {routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
@@ -22,6 +23,7 @@ const resource = z
     kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]),
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
+    permissionObservations: permissionObservationsSchema.optional(),
   })
   .strict()
 export const glassesInventorySchema = z
@@ -36,6 +38,75 @@ export const glassesInventorySchema = z
     (value) => new Set(value.capabilities).size === value.capabilities.length,
     "Offered glasses capabilities must be unique",
   )
+const routingLaneSchema = z.object({
+  id: frameworkIdentitySchema,
+  descriptorRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  platform: routinePlatformSchema,
+  dispatchMode: z.enum(['automatic', 'authoring', 'paused']),
+  state: z.enum(['idle', 'running', 'reserved', 'in-repair', 'out-of-service', 'offline']),
+  resources: z.array(resource),
+  glasses: z.array(glassesInventorySchema).max(1).optional(),
+}).strict().superRefine(validateLaneResources)
+function validateLaneResources(lane: {resources: z.infer<typeof resource>[]; glasses?: z.infer<typeof glassesInventorySchema>[]}, ctx: z.RefinementCtx) {
+  for (const resource of lane.resources) if (new Set(resource.capabilities ?? []).size !== (resource.capabilities ?? []).length)
+    ctx.addIssue({code: "custom", message: "Resource capabilities must be unique"})
+  if(new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length)
+    ctx.addIssue({code:"custom",message:"A dispatch lane offers one provider per resource kind"})
+  const ids = lane.resources.map((ref) => ref.id)
+  if (new Set(ids).size !== ids.length)
+    ctx.addIssue({code: "custom", message: "Duplicate lane resource identity"})
+  if (lane.glasses === undefined && lane.resources.some((ref) => ref.kind === "glasses"))
+    ctx.addIssue({code: "custom", message: "Declared glasses resources require physical inventory"})
+  if (lane.glasses !== undefined) {
+    const offered = lane.glasses.map((value) => value.resourceId)
+    if (
+      new Set(offered).size !== offered.length ||
+      new Set(lane.glasses.map((value) => value.deviceId)).size !== offered.length
+    )
+      ctx.addIssue({code: "custom", message: "Duplicate lane glasses identity"})
+    if (
+      lane.resources.filter((ref) => ref.kind === "glasses").some((ref) => !offered.includes(ref.id)) ||
+      lane.glasses.some(
+        (value) => !lane.resources.some((ref) => ref.id === value.resourceId && ref.kind === "glasses"),
+      )
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Glasses inventory must exactly identify declared glasses resources",
+      })
+  }
+}
+function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneSchema>[]}, ctx: z.RefinementCtx) {
+  if (new Set(snapshot.lanes.map((lane) => lane.id)).size !== snapshot.lanes.length)
+    ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
+  const byResource = new Map<string, string>(),
+    byDevice = new Map<string, string>()
+  for (const lane of snapshot.lanes)
+    for (const glasses of lane.glasses ?? []) {
+      const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model})
+      if (
+        (byResource.has(glasses.resourceId) && byResource.get(glasses.resourceId) !== identity) ||
+        (byDevice.has(glasses.deviceId) && byDevice.get(glasses.deviceId) !== glasses.resourceId)
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared physical glasses must retain one resource, device and model identity across lanes",
+        })
+      byResource.set(glasses.resourceId, identity)
+      byDevice.set(glasses.deviceId, glasses.resourceId)
+    }
+}
+const routingHostSchema = z.object({
+  hostId: frameworkIdentitySchema,
+  frameworkBinding: frameworkBindingSchema.optional(),
+  lanes: z.array(routingLaneSchema).max(100),
+}).strict().superRefine(validateHostLaneInventory)
+export type RoutingTestHostState = z.infer<typeof routingHostSchema> & {receivedAt: string}
+// Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
+const routingStateProjection = {hostId: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
+  'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+  'snapshot.lanes.glasses': 1, _id: 0} as const
 const routineAvailability = z
   .object({
     routineId: routineIdentitySchema,
@@ -76,33 +147,7 @@ export const hostStateSchema = z
             const keys = lane.routineAvailability?.map((row) => `${row.routineId}:${row.definitionRevision}`) ?? []
             if (new Set(keys).size !== keys.length)
               ctx.addIssue({code: "custom", message: "Duplicate lane routine availability identity"})
-            for (const resource of lane.resources) if (new Set(resource.capabilities ?? []).size !== (resource.capabilities ?? []).length)
-              ctx.addIssue({code: "custom", message: "Resource capabilities must be unique"})
-            if(new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length)
-              ctx.addIssue({code:"custom",message:"A dispatch lane offers one provider per resource kind"})
-            const ids = lane.resources.map((ref) => ref.id)
-            if (new Set(ids).size !== ids.length)
-              ctx.addIssue({code: "custom", message: "Duplicate lane resource identity"})
-            if (lane.glasses === undefined && lane.resources.some((ref) => ref.kind === "glasses"))
-              ctx.addIssue({code: "custom", message: "Declared glasses resources require physical inventory"})
-            if (lane.glasses !== undefined) {
-              const offered = lane.glasses.map((value) => value.resourceId)
-              if (
-                new Set(offered).size !== offered.length ||
-                new Set(lane.glasses.map((value) => value.deviceId)).size !== offered.length
-              )
-                ctx.addIssue({code: "custom", message: "Duplicate lane glasses identity"})
-              if (
-                lane.resources.filter((ref) => ref.kind === "glasses").some((ref) => !offered.includes(ref.id)) ||
-                lane.glasses.some(
-                  (value) => !lane.resources.some((ref) => ref.id === value.resourceId && ref.kind === "glasses"),
-                )
-              )
-                ctx.addIssue({
-                  code: "custom",
-                  message: "Glasses inventory must exactly identify declared glasses resources",
-                })
-            }
+            validateLaneResources(lane, ctx)
           }),
       )
       .max(100),
@@ -142,26 +187,9 @@ export const hostStateSchema = z
     for (const lane of snapshot.lanes) if (lane.progress && (lane.progress.controllerIncarnation !== snapshot.incarnation ||
         lane.progress.sequence !== snapshot.sequence || lane.progress.observedAt !== snapshot.observedAt))
       ctx.addIssue({code: 'custom', message: 'Routine progress differs from its controller observation'})
-    if (new Set(snapshot.lanes.map((lane) => lane.id)).size !== snapshot.lanes.length)
-      ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
     if (snapshot.restoration?.attempts.some((attempt) => !snapshot.lanes.some((lane) => lane.id === attempt.laneId)))
       ctx.addIssue({code: "custom", message: "Restoration attempt names an unknown host lane"})
-    const byResource = new Map<string, string>(),
-      byDevice = new Map<string, string>()
-    for (const lane of snapshot.lanes)
-      for (const glasses of lane.glasses ?? []) {
-        const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model})
-        if (
-          (byResource.has(glasses.resourceId) && byResource.get(glasses.resourceId) !== identity) ||
-          (byDevice.has(glasses.deviceId) && byDevice.get(glasses.deviceId) !== glasses.resourceId)
-        )
-          ctx.addIssue({
-            code: "custom",
-            message: "Shared physical glasses must retain one resource, device and model identity across lanes",
-          })
-        byResource.set(glasses.resourceId, identity)
-        byDevice.set(glasses.deviceId, glasses.resourceId)
-      }
+    validateHostLaneInventory(snapshot, ctx)
   })
 export type TestHostState = z.infer<typeof hostStateSchema>
 const frameworkStopSchema = z.object({
@@ -366,16 +394,21 @@ export class TestHostStateService {
       throw error
     }
   }
-  async list(): Promise<ReceivedTestHostState[]> {
+  /** Routing needs current offers, not controller repair history or run progress. */
+  async list(): Promise<RoutingTestHostState[]> {
     let credentials: unknown;
     try {credentials = JSON.parse(process.env.TEST_HOST_TOKENS ?? 'null')} catch {credentials = null}
     if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return [];
     const hostIds = Object.entries(credentials).filter(([hostId, token]) => frameworkIdentitySchema.safeParse(hostId).success &&
       typeof token === 'string' && token.length >= 32).map(([hostId]) => hostId);
     if (hostIds.length > 100) throw new TestRunError(503, 'Enrolled host inventory exceeds its bound');
-    const rows = await TestHostStateModel.find({hostId: {$in: hostIds}}).limit(100).read('primary').readConcern('majority').lean();
-    return rows.map(row => ({...hostStateSchema.parse(row.snapshot), receivedAt: row.receivedAt.toISOString(),
-      frameworkHistory: (row.frameworkHistory ?? []).map(value => frameworkHistoryEntrySchema.parse(value))}));
+    const rows = await TestHostStateModel.find({hostId: {$in: hostIds}}).select(routingStateProjection).limit(100)
+      .read('primary').readConcern('majority').lean();
+    return rows.map(row => {
+      const snapshot = routingHostSchema.parse(row.snapshot);
+      if (snapshot.hostId !== row.hostId) throw new TestRunError(503, 'Routing snapshot differs from enrolled host');
+      return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString()};
+    });
   }
   async get(hostId: string): Promise<ReceivedTestHostState | null> {
     const row = await TestHostStateModel.findOne({hostId}).lean()
