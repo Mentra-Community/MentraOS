@@ -34,7 +34,8 @@
  *
  * Everything is read from the environment on each call, so a changed setting takes effect on the
  * next request and tests can pass their own. A problem is logged once per process, naming the
- * variable and never its value.
+ * variable and never its value. That includes a `CLOUD_CORE_FLEET_URL` that
+ * `CLOUD_CORE_ENABLED_FEATURES` switches off (a warning that names both variables).
  */
 
 import {createLogger} from "@mentra/cloud-shared"
@@ -137,9 +138,18 @@ export function fleetConfig(env: NodeJS.ProcessEnv = processEnvironment()): Flee
   // The URL decides whether Fleet is installed; a secret without one is inert.
   if (!rawUrl) return {state: "not_installed"}
 
-  // A Private Cloud that did not buy Fleet is not installed, however its Fleet settings look.
+  // A Private Cloud that did not buy Fleet is not installed, however its Fleet settings look. A URL that
+  // the feature list switches off is usually a list that forgot `fleet.managed`, and the 404 every phone
+  // then gets says nothing of it, so the operator is told once.
   const features = listedFeatures(env)
-  if (features && !features.has(FLEET_FEATURE)) return {state: "not_installed"}
+  if (features && !features.has(FLEET_FEATURE)) {
+    reportOnce(
+      "warn",
+      "CLOUD_CORE_ENABLED_FEATURES",
+      `CLOUD_CORE_FLEET_URL is set but CLOUD_CORE_ENABLED_FEATURES does not list ${FLEET_FEATURE}; Fleet is not installed`,
+    )
+    return {state: "not_installed"}
+  }
 
   const problems: string[] = []
   const baseUrl = parseFleetUrl(rawUrl, isDeployedEnvironment(env))

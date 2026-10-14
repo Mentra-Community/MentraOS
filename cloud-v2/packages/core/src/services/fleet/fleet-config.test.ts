@@ -270,3 +270,61 @@ describe("the process environment", () => {
     expect(fleetLimits().timeoutMs).toBe(1234)
   })
 })
+
+describe("the warning for a Fleet URL that the feature list switches off", () => {
+  const FLEET_CONFIG = new URL("./fleet-config", import.meta.url).pathname
+
+  /**
+   * Runs `fleetConfig` in a fresh process (the warning is once per process, and the logger is the real one),
+   * once per environment in `environments`, three calls each, and returns the warn lines it logged.
+   */
+  async function warningsFrom(environments: NodeJS.ProcessEnv[]): Promise<Array<{msg: string}>> {
+    const script = `
+      import {fleetConfig} from ${JSON.stringify(FLEET_CONFIG)}
+      for (const env of ${JSON.stringify(environments)}) for (let i = 0; i < 3; i++) fleetConfig(env)
+    `
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      env: {...process.env, LOG_STDOUT_JSON: "true", LOG_LEVEL: "debug"},
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [out, , code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    expect(code).toBe(0)
+    return out
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line) as {level: string; msg: string})
+      .filter(line => line.level === "warn")
+  }
+
+  test("is one warning per process, naming both variables and neither value", async () => {
+    const warnings = await warningsFrom([
+      {
+        CLOUD_CORE_FLEET_URL: "https://mfm-private-host.example.test",
+        CLOUD_CORE_FLEET_SECRET: "a-very-private-secret",
+        CLOUD_CORE_ENABLED_FEATURES: "some.other.feature",
+      },
+      {CLOUD_CORE_FLEET_URL: "https://mfm-private-host.example.test", CLOUD_CORE_ENABLED_FEATURES: ",,"},
+    ])
+
+    expect(warnings).toHaveLength(1)
+    const text = JSON.stringify(warnings[0])
+    expect(text).toContain("CLOUD_CORE_FLEET_URL")
+    expect(text).toContain("CLOUD_CORE_ENABLED_FEATURES")
+    expect(text).not.toContain("mfm-private-host")
+    expect(text).not.toContain("a-very-private-secret")
+    expect(text).not.toContain("some.other.feature")
+  })
+
+  test("is not given when Fleet is listed, when the list is blank, or when there is no URL to switch off", async () => {
+    const warnings = await warningsFrom([
+      hosted("https://mfm.example.test"),
+      {...hosted("https://mfm.example.test"), CLOUD_CORE_ENABLED_FEATURES: "fleet.managed"},
+      {...hosted("https://mfm.example.test"), CLOUD_CORE_ENABLED_FEATURES: "other.feature, fleet.managed:com.example.app"},
+      {CLOUD_CORE_ENABLED_FEATURES: "other.feature"},
+      {CLOUD_CORE_FLEET_SECRET: SECRET, CLOUD_CORE_ENABLED_FEATURES: "other.feature"},
+    ])
+
+    expect(warnings).toEqual([])
+  })
+})
