@@ -10,6 +10,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
 import {publishPermissionStatusRequest} from "@/services/permissionStatusRequest"
+import {requestAttendedPermissions} from "@/services/attendedPermissionRequest"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -473,6 +474,19 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
     routes: [
+      {
+        pattern: "/test/request-permissions",
+        requiresAuth: false,
+        presentation: "passive" as const,
+        handler: async (url: string) => {
+          try {
+            const result = await requestAttendedPermissions(url)
+            console.info("ATTENDED_PERMISSION_REQUEST", JSON.stringify(result))
+          } catch (error) {
+            console.error("ATTENDED_PERMISSION_REQUEST_INCOMPLETE", error instanceof Error ? error.message : "request failed")
+          }
+        },
+      },
       {
         pattern: "/test/permissions",
         requiresAuth: false,
