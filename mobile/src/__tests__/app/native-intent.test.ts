@@ -24,3 +24,9 @@ it("leaves a warm app in place for an authoring install command", () => {
   expect(redirectSystemPath({path, initial: false})).toBeNull()
   expect(redirectSystemPath({path, initial: true})).toBe("/")
 })
+
+it("preserves the current screen for a passive permission status request", () => {
+  const path = "com.mentra://test/permissions?request_id=read-1"
+  expect(redirectSystemPath({path, initial: false})).toBeNull()
+  expect(redirectSystemPath({path, initial: true})).toBe("/")
+})

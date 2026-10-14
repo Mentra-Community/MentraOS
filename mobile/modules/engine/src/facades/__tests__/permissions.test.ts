@@ -8,6 +8,11 @@ const NEARBY_WIFI_DEVICES = "android.permission.NEARBY_WIFI_DEVICES"
 
 const permissionChecks = new Map<string, boolean>()
 const permissionRequestResults = new Map<string, string>()
+const nativeStatus = mock(async (requestId: string | null) => ({
+  ...(requestId === null ? {} : {requestId}), locationServicesEnabled: false, permissions: {location: {status: "granted"}},
+}))
+const nativePermissions = {getPermissionStatus: nativeStatus}
+mock.module("@mentra/crust", () => ({default: nativePermissions}))
 
 const androidCheck = mock(async (permission: string) => permissionChecks.get(permission) ?? false)
 const androidRequest = mock(async (permission: string) => permissionRequestResults.get(permission) ?? "denied")
@@ -86,6 +91,32 @@ describe("permissions facade", () => {
     androidCheck.mockClear()
     androidRequest.mockClear()
     androidRequestMultiple.mockClear()
+    nativeStatus.mockClear()
+    Object.assign(reactNative.Platform as object, {OS: "android"})
+  })
+
+  test("passive app status preserves authorization and global services independently without requesting consent", async () => {
+    Object.assign(reactNative.Platform as object, {OS: "ios"})
+    await expect(permissions.status()).resolves.toMatchObject({
+      locationServicesEnabled: false, permissions: {location: {status: "granted"}},
+    })
+    await expect(permissions.writeStatusReceipt("permission-read-1")).resolves.toMatchObject({requestId: "permission-read-1"})
+    expect(nativeStatus.mock.calls.map(([requestId]) => requestId)).toEqual([null, "permission-read-1"])
+    expect(androidRequest).not.toHaveBeenCalled()
+    expect(androidRequestMultiple).not.toHaveBeenCalled()
+  })
+
+  test("an unsupported platform or missing native implementation is unavailable, never an affirmative grant", async () => {
+    await expect(permissions.status()).rejects.toThrow("unavailable")
+    expect(nativeStatus).not.toHaveBeenCalled()
+    Object.assign(reactNative.Platform as object, {OS: "ios"})
+    const original = nativePermissions.getPermissionStatus
+    try {
+      nativePermissions.getPermissionStatus = undefined as never
+      await expect(permissions.status()).rejects.toThrow("unavailable")
+    } finally {
+      nativePermissions.getPermissionStatus = original
+    }
   })
 
   test("checks Android background location by requiring foreground and background grants", async () => {

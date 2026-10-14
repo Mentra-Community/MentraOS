@@ -29,7 +29,7 @@ Pod::Spec.new do |s|
   # is intentionally NO `s.dependency 'MapboxNavigationCore'` here.
 
   # iOS frameworks required for media processing + navigation + heading
-  s.frameworks = 'AVFoundation', 'Photos', 'CoreImage', 'CoreGraphics', 'UIKit', 'CoreLocation', 'CoreMotion'
+  s.frameworks = 'AVFoundation', 'Photos', 'CoreImage', 'CoreGraphics', 'UIKit', 'CoreLocation', 'CoreMotion', 'CoreBluetooth'
 
   # Swift/Objective-C compatibility + Mapbox SPM module visibility.
   #

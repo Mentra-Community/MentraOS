@@ -9,6 +9,7 @@ import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
+import {publishPermissionStatusRequest} from "@/services/permissionStatusRequest"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -36,6 +37,8 @@ export interface DeepLinkRoute {
   pattern: string
   handler: (url: string, params: Record<string, string>) => void | Promise<void>
   requiresAuth?: boolean
+  /** Diagnostic observations must not cover the currently selected app screen. */
+  presentation?: "passive"
 }
 
 /**
@@ -471,6 +474,20 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     host: "apps.mentra.glass",
     routes: [
       {
+        pattern: "/test/permissions",
+        requiresAuth: false,
+        presentation: "passive" as const,
+        handler: async (url: string) => {
+          try {
+            await publishPermissionStatusRequest(url)
+          } catch (error) {
+            // Supporting diagnostics only. The fixed app-owned file is the
+            // authoritative receipt; absence must remain unknown to the host.
+            console.error("PERMISSION_STATUS_UNAVAILABLE", error instanceof Error ? error.message : String(error))
+          }
+        },
+      },
+      {
         pattern: "/test/submit-incident-report",
         handler: (url: string) => {
           const query = new URL(url).searchParams
@@ -688,14 +705,14 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute)
         console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", params)
         console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", url)
-        setSplashEnabled(true)
+        if (matchedRoute.presentation !== "passive") setSplashEnabled(true)
         // OAuth must start its one-time exchange while the browser is still
         // presented. A JS timer can be suspended during that transition.
         await matchedRoute.handler(url, params)
       } catch (error) {
         console.warn("Route handler failed, router may not be ready:", error)
       } finally {
-        setSplashEnabled(false)
+        if (matchedRoute.presentation !== "passive") setSplashEnabled(false)
       }
     } catch (error) {
       console.error("Error handling deep link:", error)

@@ -12,6 +12,10 @@ const mockSetPendingRoute = jest.fn()
 const mockGetSession = jest.fn()
 const mockIncidentRequest = jest.fn()
 const mockLoadAuthoringMiniapp = jest.fn()
+const mockPublishPermissionStatus = jest.fn()
+jest.mock("@/services/permissionStatusRequest", () => ({
+  publishPermissionStatusRequest: (...args: unknown[]) => mockPublishPermissionStatus(...args),
+}))
 jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
   loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
 }))
@@ -147,6 +151,53 @@ it("removes its native URL subscription on unmount", () => {
 
 const incidentUrl =
   "com.mentra://test/submit-incident-report?alert_id=run-1&failure_code=ota_failed&failure_message=failed%20%26%20stopped"
+
+it("handles passive permission status without auth, modal, or navigation", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  const url = "com.mentra://test/permissions?request_id=read-1"
+  await act(async () => { await processUrl(url) })
+  expect(mockPublishPermissionStatus).toHaveBeenCalledWith(url)
+  expect(mockGetSession).not.toHaveBeenCalled()
+  expect(mockIncidentRequest).not.toHaveBeenCalled()
+  expect(mockSetPendingRoute).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+})
+
+it.each(["success", "failure"])("a pending passive status %s never changes the splash overlay", async (outcome) => {
+  let complete!: () => void
+  let refuse!: (error: Error) => void
+  mockPublishPermissionStatus.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        complete = resolve
+        refuse = reject
+      }),
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  let pending!: Promise<void>
+  await act(async () => {
+    pending = processUrl("com.mentra://test/permissions?request_id=pending-read")
+    await Promise.resolve()
+  })
+  expect(mockPublishPermissionStatus).toHaveBeenCalledTimes(1)
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+  await act(async () => {
+    if (outcome === "success") complete()
+    else refuse(new Error("native status unavailable"))
+    await pending
+  })
+  expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+  expect(mockPush).not.toHaveBeenCalled()
+  expect(mockReplace).not.toHaveBeenCalled()
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+})
 
 it("still defers a protected home link to sign-in without running its handler", async () => {
   render(

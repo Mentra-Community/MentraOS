@@ -193,3 +193,21 @@ _different_ test file — each file must set up everything it imports.
 Settings are `native_notifications_enabled`, `native_notifications_auto_display`, `native_notifications_duration`, and `native_notifications_do_not_disturb`. Native presentation defaults off. The Android `notifications_blocklist` is also passed to native configuration so pending work is invalidated when filtering changes. Disconnected events are not retained for replay.
 
 On iOS, G2 receives ANCS directly; the host does not upload the app-identity relay back to the glasses. Full title/body access, editing the firmware app filter, and phone-dismissal synchronization remain unsupported. The existing G2 app-identity event is not evidence of full content access.
+
+### Passive app permission diagnostics
+
+`engine.permissions.status()` reads the current iOS app's Camera, Microphone,
+Bluetooth and foreground Location authorization without requesting consent.
+Location Services enablement is a separate field: an authorized app cannot use
+Location when the global service is off. Local Network remains `unknown` because
+iOS provides no passive authorization getter. Missing native implementations
+reject as unavailable; they do not manufacture a grant.
+
+Commissioning can send `com.mentra://test/permissions?request_id=<nonce>` to the
+already selected app. It preserves the current screen and writes one atomic
+receipt to the app container's `Library/Caches/MentraDiagnostics/permission-status.json`.
+The receipt includes its request ID, observation time and the app's native
+PID/UID, bundle paths and version. The host must verify that identity against the
+same live selected process and installed artifact, and reject stale or mismatched
+receipts. Status observation is separate from explicit permission requests and
+never files an incident, starts recording, scans Bluetooth or joins a network.
