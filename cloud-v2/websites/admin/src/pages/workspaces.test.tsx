@@ -56,7 +56,7 @@ describe("the Workspaces page", () => {
     expect(render(<WorkspacesPage />)).toContain("Loading workspaces");
   });
 
-  test("warns that the Mentra Miniapp Store keeps the workspace's unpublished miniapps until an operator reassigns them", () => {
+  test("warns that the Mentra Miniapp Store keeps the workspace's remaining miniapps until an operator reassigns them", () => {
     const owner: WorkspaceDetail = {
       ...everyone[0]!,
       membership: null,
@@ -67,7 +67,7 @@ describe("the Workspaces page", () => {
       <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
       { details: [owner] },
     );
-    expect(markup).toContain("Unpublished miniapps");
+    expect(markup).toContain("Miniapps this workspace still has in the Mentra Miniapp Store stay there");
     expect(markup).toContain("until a Store operator assigns them to another workspace");
   });
 

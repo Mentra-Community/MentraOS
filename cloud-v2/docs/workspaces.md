@@ -100,9 +100,9 @@ at `/enterprise` until it returns as workspace settings.
   the portals say so where the delete is ("This workspace still owns 3
   published miniapps. Delete them in the Developer Console first."). Once the
   miniapps are deleted, the Store clears its hold and the workspace can be
-  deleted ([Store integration](store-integration.md#deletion-holds)). Miniapps
-  it has there that are not published stay until a Store operator assigns them
-  to another workspace.
+  deleted ([Store integration](store-integration.md#deletion-holds)). Any
+  miniapps it still has there when it is deleted stay until a Store operator
+  assigns them to another workspace.
 - Deleting a Mentra account first marks it deleted, which makes it no
   principal at all (see `signin.md`), so it can neither create nor join a
   workspace, and its owner memberships never count toward the last Owner. It

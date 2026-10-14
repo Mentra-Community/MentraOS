@@ -626,10 +626,10 @@ describe("deleting a workspace a service holds", () => {
     expect(section).toContain("This workspace still owns 2 published miniapps. Delete them in the Developer Console first.");
     expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
 
-    // Without a hold, the page warns what deleting does to the miniapps that are not published.
+    // Without a hold, the page warns what deleting does to the miniapps the workspace still has in the Store.
     const free = render(`/w/${ACME}/settings`, TWO_WORKSPACES);
     expect(free).not.toContain("still owns");
-    expect(free).toContain("Unpublished miniapps this workspace has in the Mentra Miniapp Store stay there");
+    expect(free).toContain("Miniapps this workspace still has in the Mentra Miniapp Store stay there");
   });
 });
 

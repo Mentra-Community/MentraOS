@@ -80,10 +80,30 @@ API), to its owners and to Organization Admins alike, until the Store clears the
 hold.
 
 ```ts
-// After a publish, an unpublish or a miniapp delete changes how many published miniapps the workspace owns:
+// Before a publish takes effect: hold for what the workspace will own. If Core refuses, refuse the publish.
+await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published + 1})
+
+// After an unpublish, a miniapp delete or a failed publish, from the Store's own records:
 if (published > 0) await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published})
 else await core.clearDeletionHold(workspaceId)
 ```
+
+- **Hold first, release last.** Take the hold before a publish takes effect, and
+  lower or clear it only after an unpublish or delete has. A workspace deleted
+  between a publish and its hold would leave the miniapp published with nobody
+  to manage it. So if Core refuses the hold (`410 workspace_deleted`,
+  `404 workspace_not_found`), refuse the publish. A publish that fails after
+  the hold sets the count back from the Store's records. At worst the workspace
+  is held a moment longer than it needs to be, never released early.
+- **One writer per workspace.** Each call replaces the Store's hold, so two
+  updates of one workspace that race can land in the wrong order: a stale
+  count, or a clear after a publish. Serialize hold updates per workspace:
+  count and call Core under one per-workspace lock.
+- **Reconcile.** At startup, and on a schedule, set every workspace's hold from
+  the Store's records: hold the workspaces that own published miniapps, clear
+  the rest. This repairs a call that failed. The first run is the backfill for
+  workspaces that published before holds existed: until it has run, they are
+  not held.
 
 - **The calls.** `PUT /api/internal/workspaces/workspaces/:workspaceId/deletion-holds/store`
   with `{"reason": "owns_miniapps", "count": 3}` sets the hold; `DELETE` on the

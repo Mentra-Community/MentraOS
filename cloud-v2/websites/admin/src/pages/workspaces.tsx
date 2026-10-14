@@ -35,11 +35,12 @@ const ALL_WORKSPACES_PAGE_SIZE = 50;
 
 /**
  * The Mentra Miniapp Store holds a workspace from deletion while it owns published miniapps (the settings
- * screen says so instead of offering the delete). It does not hold one for miniapps that are not
- * published, so the page says what happens to those.
+ * screen says so instead of offering the delete). Whatever the workspace still has there when it is
+ * deleted (miniapps that are not published, or published ones the Store had not held it for) stays, so
+ * the page says what happens to it.
  */
 export const STORE_DELETE_NOTICE =
-  "Unpublished miniapps this workspace has in the Mentra Miniapp Store stay there, and nobody can manage them until a Store operator assigns them to another workspace.";
+  "Miniapps this workspace still has in the Mentra Miniapp Store stay there, and nobody can manage them until a Store operator assigns them to another workspace.";
 
 type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";
 const TABS: ReadonlyArray<readonly [TabKey, string]> = [
