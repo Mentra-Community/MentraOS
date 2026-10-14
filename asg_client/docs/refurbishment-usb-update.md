@@ -24,7 +24,7 @@ The default track is production. Until a public, non-draft, non-prerelease `ment
 ./asg_client/scripts/refurbish-mentra-live.sh --serial <adb-serial>
 ```
 
-When the serial is missing, duplicated, or that placeholder, the command exits `11` and prints each ready device's serial, eMMC CID, and Bluetooth MAC. Pass `--cid` only to answer that error. The CID is `/sys/block/mmcblk0/device/cid`. An empty or unreadable MAC stops the run. Transport numbers are not identity and are not stored in the report.
+When the serial is missing, duplicated, or that placeholder, the command exits `11` and prints each ready device's serial, eMMC CID, and Bluetooth MAC. Pass `--cid` only to answer that error. The CID is `/sys/block/mmcblk0/device/cid`. An unreadable CID stops the run. An empty MAC does not: older factory images never set `persist.mentra.live.mac`, so the report records it as an empty string and the CID identifies the unit. Transport numbers are not identity and are not stored in the report. adb assigns a new transport id after every reboot, so while a shared serial is pinned by transport the updater re-finds that same CID when the old id disappears.
 
 ```bash
 ./asg_client/scripts/refurbish-mentra-live.sh --cid <emmc-cid>
@@ -94,7 +94,7 @@ This command refuses an enabled third-party launcher and does not install one. C
 
 ## Lab note
 
-Physical acceptance of a day-one unit, an intermediate stock unit, and a published production flash is still open. Those rows need a legacy unit, an older supported stock unit, and a public `mentra-vX.Y.Z` release. Fixture tests cover those code paths. They do not close the hardware rows.
+A legacy unit was updated on the dev track: ASG 36, MTK `MentraLive_20260418`, BES `17.26.4.18` to pin `3.3.0-dev.912` (ASG `3.3.0` / `303000342`, MTK `MentraLive_20260923.0`, BES `26.10.8.0`). A second run on that unit exited 0 and did not flash again. A published production flash is still open: it needs a public `mentra-vX.Y.Z` release. Fixture tests cover the other code paths. They do not close that hardware row.
 
 On the current bench, do not flash the glasses whose Bluetooth MAC is `2C:BA:CA:25:E5:11` and whose eMMC CID is `1501003458364b4d4203b71dcc5eb7b3`. The product command does not contain that identity. Confirm the selected MAC and CID in the terminal before a staging or dev run continues past resolution.
 
@@ -107,10 +107,10 @@ The no-flash bench checks were run with both lab glasses and a phone attached. R
 - Default production exited 10 with a FAIL report and did not install.
 - No selector exited 11 and named both glasses CIDs. `--cid` for the authorized unit selected that MAC and CID only.
 - A corrupted manifest exited 12 before install.
-- `--track dev` on the authorized unit read BES `26.10.11.0` against pinned `26.10.8.0` and exited 14. The same command again did not install. MTK was already the pinned terminal. The running ASG version name is a `-dev` build; it was not replaced because a newer BES stops the run before any install.
+- `--track dev` on the unit that was ahead of the pin read BES `26.10.11.0` against pinned `26.10.8.0` and exited 14. It was not flashed.
+- `--track dev --cid 1501003458364b4d4203ce1dcc942845` updated the other unit from ASG 36 / `MentraLive_20260418` / BES `17.26.4.18` to `3.3.0-dev.912`. The final read was ASG `3.3.0` (`303000342`), MTK `MentraLive_20260923.0`, BES `26.10.8.0`. The report recorded MAC `CC:E7:DE:E0:02:6C`. A rerun exited 0 and skipped ASG, MTK, and BES.
 
-These rows are still open, so this ticket is not physically done:
+These rows are still open:
 
-- Kill-and-rerun after a real trigger. This unit is ahead of the pinned BES, so there is no safe trigger to interrupt.
-- Unplug and replug continuation. Selection is by CID, and that was not replayed across a cable change.
-- A physical day-one unit, a physical intermediate stock unit, and a published production flash. Those need a legacy unit, an older supported stock unit, and a public `mentra-vX.Y.Z` release.
+- Kill-and-rerun after a real trigger, and unplug-and-replug continuation.
+- A published production flash. That needs a public `mentra-vX.Y.Z` release.

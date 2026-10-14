@@ -230,7 +230,7 @@ if ! select_glasses_transport "$WANT_SERIAL" "$WANT_CID"; then
   REASON="could not select one Mentra Live"
   exit 11
 fi
-echo "Selected serial $SELECTED_SERIAL, transport $SELECTED_TRANSPORT, MAC $SELECTED_MAC, CID $SELECTED_CID."
+echo "Selected serial $SELECTED_SERIAL, transport $SELECTED_TRANSPORT, MAC ${SELECTED_MAC:-not set on this image}, CID $SELECTED_CID."
 case "$SELECTED_MODEL" in
   "Mentra Live"|Mentra_Live) ;;
   *)
@@ -238,7 +238,7 @@ case "$SELECTED_MODEL" in
     exit 11
     ;;
 esac
-pin_adb_transport "$SELECTED_TRANSPORT" "$SELECTED_SERIAL"
+pin_adb_transport "$SELECTED_TRANSPORT" "$SELECTED_SERIAL" "$SELECTED_CID"
 ADB=(adb)
 
 if "${ADB[@]}" shell pm list packages -e 2>/dev/null | tr -d '\r' | grep -Fqx "package:$DEV_PKG"; then

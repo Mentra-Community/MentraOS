@@ -281,15 +281,16 @@ preserve_newer_stock_update() {
   echo "Stored a verified recovery copy at $PRESERVED_STOCK_APK_DEVICE_PATH."
 }
 
-# Stop and disable the launchers that compete for HOME before any firmware
-# mutation. Left enabled, the third-party launcher, com.mentra.recovery, or the
-# legacy OTA updater can retake HOME or interrupt the BES window while stock
-# ASG, MTK, and the compatibility bridge run.
+# Stop the launchers that compete for HOME before any firmware mutation. The
+# third-party launcher and the legacy OTA updater stay disabled. Recovery is
+# only force-stopped: stock ASG refuses the MTK download with
+# downgrade_recovery_disabled while com.mentra.recovery is disabled, so a
+# previous run that turned it off has to be repaired here.
 disable_competing_launchers() {
   "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
   "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
   "${ADB[@]}" shell am force-stop "$RECOVERY_PKG" >/dev/null 2>&1 || true
-  "${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
   "${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
   "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
 }
@@ -612,11 +613,33 @@ wait_for_bes_success() {
   local deadline logs versions bes
   local budget="${STOCK_UPDATE_BES_WAIT_SECONDS:-420}"
   local accepted=false
+  local offline_since=""
   deadline=$((SECONDS + budget))
 
   echo "Waiting for BES firmware transfer and apply (up to 7 minutes)..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    adb_online || fail "ADB disconnected during the BES transfer"
+    # BES reboots the chip and USB can drop. The pinned adb wrapper finds the
+    # same eMMC CID when the transport id changes, so wait instead of failing.
+    if ! adb_online; then
+      if [ -z "$offline_since" ]; then
+        offline_since="$SECONDS"
+        echo "ADB dropped during the BES transfer. Waiting for this unit to return."
+      elif [ $((SECONDS - offline_since)) -ge 90 ]; then
+        fail "ADB disconnected during the BES transfer and did not return within 90 seconds"
+      fi
+      sleep 3
+      continue
+    fi
+    if [ -n "$offline_since" ]; then
+      echo "ADB returned. Checking whether BES already applied."
+      offline_since=""
+      versions="$(query_firmware_versions || true)"
+      bes="${versions%%|*}"
+      if [ -n "$bes" ] && version_at_least "$bes" "$target_version"; then
+        echo "Verified BES firmware $bes."
+        return 0
+      fi
+    fi
     logs="$("${ADB[@]}" logcat -d 2>/dev/null | tail -n 500 || true)"
     if printf '%s\n' "$logs" | grep -Fq 'BES firmware update SUCCESS! BES will reboot.'; then
       accepted=true

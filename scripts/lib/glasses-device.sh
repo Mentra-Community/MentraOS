@@ -141,7 +141,8 @@ device_cid() {
 pin_adb_transport() {
   local transport="$1"
   local serial="${2:-}"
-  local real dir selector_flag selector_value serial_matches=0
+  local cid="${3:-}"
+  local real dir selector_flag selector_value serial_matches=0 lower_cid
   real="$(command -v adb)"
   [ -n "$real" ] || return 1
   [ -n "$transport" ] || return 1
@@ -158,32 +159,58 @@ pin_adb_transport() {
     selector_flag="-t"
     selector_value="$transport"
   fi
+  lower_cid="$(printf '%s' "$cid" | tr '[:upper:]' '[:lower:]')"
   dir="${STOCK_UPDATE_ADB_BIN:-$(mktemp -d "${TMPDIR:-/tmp}/mentra-adb.XXXXXX")}"
   mkdir -p "$dir"
-  cat > "$dir/adb" << EOF
-#!/bin/bash
+  printf '%s\n' "$selector_value" > "$dir/selector"
+  # adb transport ids change on every reboot. When the pinned transport is
+  # gone, find the same unit again by eMMC CID so reboot waits and the MTK
+  # observer keep following it instead of a dead id.
+  {
+    printf '#!/bin/bash\nreal=%q\nflag=%q\nwant_cid=%q\n' "$real" "$selector_flag" "$lower_cid"
+    cat << 'WRAPPER'
+state="$(dirname "$0")/selector"
+selector="$(cat "$state")"
+if [ "$flag" = "-t" ] && [ -n "$want_cid" ]; then
+  ready="$("$real" devices -l 2>/dev/null | awk 'NR>1 && $2=="device" {for (i=1;i<=NF;i++) if ($i ~ /^transport_id:/) {split($i,p,":"); print p[2]}}')"
+  if ! printf '%s\n' "$ready" | grep -Fxq "$selector"; then
+    for candidate in $ready; do
+      got="$("$real" -t "$candidate" shell cat /sys/block/mmcblk0/device/cid </dev/null 2>/dev/null | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+      if [ "$got" = "$want_cid" ]; then
+        selector="$candidate"
+        printf '%s\n' "$selector" > "$state"
+        break
+      fi
+    done
+  fi
+fi
 args=()
+leading=true
 skip=""
-for arg in "\$@"; do
-  if [ -n "\$skip" ]; then
+for arg in "$@"; do
+  if [ -n "$skip" ]; then
     skip=""
     continue
   fi
-  case "\$arg" in
-    -s|-t) skip=1; continue ;;
-  esac
-  args+=("\$arg")
+  if [ "$leading" = true ]; then
+    case "$arg" in
+      -s|-t) skip=1; continue ;;
+      -*) ;;
+      *) leading=false ;;
+    esac
+  fi
+  args+=("$arg")
 done
-exec $(printf '%q' "$real") $selector_flag $(printf '%q' "$selector_value") "\${args[@]}"
-EOF
+exec "$real" "$flag" "$selector" "${args[@]}"
+WRAPPER
+  } > "$dir/adb"
   chmod +x "$dir/adb"
   export PATH="$dir:$PATH"
   if [ "$selector_flag" = "-s" ]; then
     export ANDROID_SERIAL="$selector_value"
     unset ADB_TRANSPORT || true
   else
-    export ADB_TRANSPORT="$transport"
-    unset ANDROID_SERIAL ADB_SERIAL || true
+    unset ANDROID_SERIAL ADB_SERIAL ADB_TRANSPORT || true
   fi
   # Reboot waits read $SERIAL to tell USB from Wi-Fi ADB and run under `set -u`;
   # keep it populated even when we had to fall back to a transport_id.
@@ -262,8 +289,10 @@ select_glasses_transport() {
   SELECTED_CID="$(device_cid "$transport")"
   SELECTED_MAC="$(device_prop "$transport" persist.mentra.live.mac)"
   SELECTED_MODEL="$(device_prop "$transport" ro.product.model)"
-  if [ -z "$SELECTED_MAC" ]; then
-    echo "Error: Bluetooth MAC on transport $transport is empty." >&2
+  # The eMMC CID is the stable identity. Older factory images do not set
+  # persist.mentra.live.mac, so an empty MAC is allowed and recorded as such.
+  if [ -z "$SELECTED_CID" ]; then
+    echo "Error: eMMC CID on transport $transport is unreadable; cannot identify the unit." >&2
     return 11
   fi
   export SELECTED_SERIAL SELECTED_TRANSPORT SELECTED_CID SELECTED_MAC SELECTED_MODEL

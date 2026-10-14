@@ -208,10 +208,14 @@ class Fixture:
                 device["mtk"] = end
                 device["boot_n"] = int(device.get("boot_n", 1)) + 1
                 device["boot"] = "boot-%s" % device["boot_n"]
+                if os.environ.get("FIXTURE_RENUMBER") == "1":
+                    device["tid"] = str(100 + device["boot_n"])
             else:
                 device["bes"] = args[1]
                 device["bes_readable"] = True
                 state["bes_log"] = os.environ.get("FIXTURE_BES_LOG", "1") == "1"
+                if os.environ.get("FIXTURE_BES_DROP"):
+                    state["drop_adb"] = int(os.environ["FIXTURE_BES_DROP"])
                 if os.environ.get("FIXTURE_BES_VERSION"):
                     device["bes"] = os.environ["FIXTURE_BES_VERSION"]
             json.dump(state, open(state_path, "w"))
@@ -244,6 +248,7 @@ class Fixture:
             if rest[:2] == ["devices", "-l"] or rest == ["devices"]:
                 print("List of devices attached")
                 for index, device in enumerate(state["devices"], start=1):
+                    index = device.get("tid", index)
                     if device.get("offline"):
                         print(f"{device['serial']}\toffline transport_id:{index}")
                     else:
@@ -256,7 +261,11 @@ class Fixture:
                     raise SystemExit(1)
                 index = matches[0]
             elif transport is not None:
-                index = int(transport) - 1
+                found = [i for i, device in enumerate(state["devices"]) if str(device.get("tid", i + 1)) == transport]
+                if not found:
+                    sys.stderr.write("error: no device with transport id '%s'\n" % transport)
+                    raise SystemExit(1)
+                index = found[0]
             else:
                 ready = [i for i, device in enumerate(state["devices"]) if not device.get("offline")]
                 index = ready[0] if len(ready) == 1 else None
@@ -316,6 +325,10 @@ class Fixture:
                     if state.get("bes_log"):
                         print("BES firmware update SUCCESS! BES will reboot.")
             elif rest[:2] == ["get-state"]:
+                if int(state.get("drop_adb") or 0) > 0:
+                    state["drop_adb"] = int(state["drop_adb"]) - 1
+                    json.dump(state, open(state_path, "w"))
+                    raise SystemExit(1)
                 print("device")
             elif "printf" in text and "-f " in text:
                 print("00", end="")
@@ -422,15 +435,45 @@ class RefurbFixtureTests(unittest.TestCase):
         self.assertNotIn("1", [call[2] for call in installs])
 
     def test_recovery_and_legacy_updater_are_re_enabled_after_success(self):
-        body = self.current_body()
-        fix = Fixture(self.temp.name, [device(asg_code="9", asg_name="9.0")], self.documents_for(body), pin_for(body))
+        step = patch("MentraLive_20260101", "MentraLive_20260202", PATCH)
+        body = manifest(sha256(APK), sha256(BES), [step], bes_size=len(BES))
+        fix = Fixture(self.temp.name, [device(asg_code="9", asg_name="9.0", mtk="MentraLive_20260101")],
+                      self.documents_for(body, {step["url"]: PATCH}), pin_for(body))
         result = fix.run(REFURB, ["--track", "dev", "--serial", "ABC123"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         text = [" ".join(call) for call in fix.calls() if call[0] == "adb"]
-        for package in ("com.mentra.recovery", "com.augmentos.otaupdater"):
-            disabled = max(i for i, line in enumerate(text) if "disable-user" in line and package in line)
-            enabled = max(i for i, line in enumerate(text) if " pm enable " in line and package in line)
-            self.assertGreater(enabled, disabled, package)
+        # Stock ASG will not download MTK firmware while recovery is disabled.
+        self.assertFalse(any("disable-user" in line and "com.mentra.recovery" in line for line in text))
+        recovery_on = [i for i, line in enumerate(text) if " pm enable " in line and "com.mentra.recovery" in line]
+        self.assertTrue(recovery_on)
+        first_mtk = next(i for i, call in enumerate(fix.calls()) if call[0] == "mtk")
+        adb_before_mtk = [i for i, call in enumerate(fix.calls()[:first_mtk]) if call[0] == "adb"]
+        self.assertTrue(any("pm enable" in " ".join(fix.calls()[i]) and "com.mentra.recovery" in " ".join(fix.calls()[i]) for i in adb_before_mtk))
+        legacy = "com.augmentos.otaupdater"
+        disabled = max(i for i, line in enumerate(text) if "disable-user" in line and legacy in line)
+        enabled = max(i for i, line in enumerate(text) if " pm enable " in line and legacy in line)
+        self.assertGreater(enabled, disabled, legacy)
+
+    def test_bes_usb_drop_waits_for_the_same_unit(self):
+        body = self.current_body()
+        fix = Fixture(self.temp.name, [device(bes="0.0.0.1")], self.documents_for(body), pin_for(body))
+        fix.env["FIXTURE_BES_DROP"] = "1"
+        result = fix.run(REFURB, ["--track", "dev", "--serial", "ABC123"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("ADB dropped during the BES transfer", result.stdout + result.stderr)
+        report = json.loads(fix.reports()[0].read_text())
+        self.assertEqual(report["result"], "PASS")
+
+    def test_old_image_without_mac_is_identified_by_cid(self):
+        body = self.current_body()
+        old = device(serial=PLACEHOLDER, mac="", asg_code="9", asg_name="9.0")
+        fix = Fixture(self.temp.name, [old], self.documents_for(body), pin_for(body))
+        result = fix.run(REFURB, ["--track", "dev", "--cid", old["cid"]])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(fix.reports()[0].read_text())
+        self.assertEqual(report["device"]["mac"], "")
+        self.assertEqual(report["device"]["cid"], old["cid"])
+        self.assertEqual(report["result"], "PASS")
 
     def test_unique_real_serial_works_without_cid(self):
         body = self.current_body()
@@ -512,6 +555,29 @@ class RefurbFixtureTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len([call for call in failed.calls() if call[0] == "mtk"]), 1)
         self.assertNotIn("--full", " ".join(" ".join(call) for call in failed.calls()))
+
+    def test_unit_is_followed_by_cid_when_adb_renumbers_its_transport_after_reboot(self):
+        first = patch("MentraLive_20260101", "MentraLive_20260102", PATCH)
+        second = patch("MentraLive_20260102", "MentraLive_20260202", PATCH2)
+        body = manifest(sha256(APK), sha256(BES), [first, second], bes_size=len(BES))
+        docs = self.documents_for(body, {first["url"]: PATCH, second["url"]: PATCH2})
+        other = device(serial=PLACEHOLDER, cid="1501003458364b4d4203b71dcc5eb7b3", mac="2C:BA:CA:25:E5:11",
+                       mtk="MentraLive_20260909", asg_code="1", asg_name="1.0")
+        target = device(serial=PLACEHOLDER, mtk="MentraLive_20260101", asg_code="9", asg_name="9.0")
+        fix = Fixture(self.temp.name, [other, target], docs, pin_for(body))
+        fix.env["FIXTURE_RENUMBER"] = "1"
+        result = fix.run(REFURB, ["--track", "dev", "--cid", target["cid"]])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = fix.calls()
+        first_mtk = next(i for i, call in enumerate(calls) if call[0] == "mtk")
+        after = [call for call in calls[first_mtk:]
+                 if call[0] == "adb" and call[1] == "-t" and "mmcblk0/device/cid" not in " ".join(call)]
+        self.assertTrue(after)
+        # The unit that rebooted now has transport 102; the other glasses stay on 1.
+        self.assertTrue(all(call[2] in ("102", "103") for call in after), after)
+        self.assertEqual(len([call for call in calls if call[0] == "mtk"]), 2)
+        report = json.loads(fix.reports()[0].read_text())
+        self.assertEqual(report["result"], "PASS")
 
     def test_full_image_is_used_only_when_no_patch_exists_and_wipe_is_rejected(self):
         full_path = Path(self.temp.name) / "full.zip"
