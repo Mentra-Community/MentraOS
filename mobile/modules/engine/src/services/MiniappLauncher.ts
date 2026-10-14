@@ -37,6 +37,7 @@ import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
+import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
 import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
@@ -483,12 +484,22 @@ class MiniappLauncher {
       if (!app.local) continue
       if (!getLocalAppRunningState(app.packageName)) continue
       if (this.isRunning(app.packageName)) continue
+      let started = false
       try {
         await this.ensureRunning(app.packageName)
+        started = true
       } catch (e) {
         console.warn(`MiniappLauncher: autostart failed for ${app.packageName} — clearing stale running flag`, e)
         saveLocalAppRunningState(app.packageName, false)
       }
+      // Restoring what was running is the platform's doing, never the user's: Fleet hears an automatic start.
+      fleetEvents.launch({
+        packageName: app.packageName,
+        miniappName: app.name,
+        versionName: app.version,
+        start: "automatic",
+        outcome: started ? "started" : "failed",
+      })
     }
   }
 

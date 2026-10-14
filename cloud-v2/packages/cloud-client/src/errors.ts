@@ -25,17 +25,20 @@ export class CloudClientError extends Error {
  * `status` is the HTTP status so a caller can branch (for example a 401 triggers
  * one refresh-and-retry). `code` is the optional machine-readable error code the
  * cloud puts in the JSON body, when present, for finer branching than status
- * alone allows.
+ * alone allows. `retryAfterSeconds` is the server's `Retry-After` delay in whole
+ * seconds, set only when the response carried the delta-seconds form.
  */
 export class HttpError extends CloudClientError {
   status!: number;
   code?: string;
+  retryAfterSeconds?: number;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "HttpError";
     this.status = status;
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -67,6 +70,28 @@ export class AuthExpiredError extends CloudClientError {
   constructor(message = "Authentication expired; re-auth required") {
     super(message);
     this.name = "AuthExpiredError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * Thrown when a credential request could not be completed for a reason that does
+ * not show the credentials are dead: the network failed or timed out, Core
+ * answered 408, 429 or 5xx, or the answer was not a Core answer at all (a body
+ * that is not JSON, an unrecognized 4xx). The stored credentials were kept, so
+ * the same call may well succeed later; a host retries instead of re-authenticating,
+ * and `onExpired` does not fire. `status` is the HTTP status when something
+ * answered, and `cause` is the underlying failure.
+ */
+export class AuthUnavailableError extends CloudClientError {
+  readonly status?: number;
+  readonly cause: unknown;
+
+  constructor(message: string, options?: { status?: number; cause?: unknown }) {
+    super(message);
+    this.name = "AuthUnavailableError";
+    this.status = options?.status;
+    this.cause = options?.cause;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

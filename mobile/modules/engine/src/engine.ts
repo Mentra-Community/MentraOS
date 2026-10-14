@@ -27,6 +27,7 @@ import {
 import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
+import {startFleetReporter, stopFleetReporter} from "./services/fleet/FleetReporter"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {
@@ -119,6 +120,10 @@ export const engine = {
         )
       }
       startSupportProfileSync()
+      // Fleet: after the token sync above, so the account is usually known and the collector starts synchronously,
+      // here inside start(), before the host restores miniapps (MantleManager awaits engine.start() before
+      // autostartLocalMiniapps()); otherwise those launches would reach no listener.
+      startFleetReporter()
     }
     // Push device-setting changes to the glasses for ANY host, so
     // engine.glasses.settings.set() reaches the device (not just the Mentra app).
@@ -157,6 +162,7 @@ export const engine = {
     await safely("ota service", stopOtaService)
     await safely("audio cloud uplink", stopAudioCloudUplink)
     await safely("support profile sync", stopSupportProfileSync)
+    await safely("fleet reporter", stopFleetReporter)
     await safely("phone notifications sync", stopPhoneNotificationsSync)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
     await safely("miniapp engine", stopMiniappEngine)
