@@ -36,6 +36,11 @@ import {
   redactSecrets,
 } from "../packages/core/src/services/workspaces/audit.service"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
+import {
+  clearDeletionHold,
+  listDeletionHolds,
+  setDeletionHold,
+} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {workspaceCreationPolicy} from "../packages/core/src/services/workspaces/organization"
 import {
   changeRole,
@@ -1147,6 +1152,183 @@ describe("deleteWorkspace", () => {
     await expectError(() => deleteWorkspace(orgAdmin, ws, {confirmName: "Acme"}), "workspace_deleted", 410)
     expect(await revisionOf(ws)).toBe(r)
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws, status: "active"})).toBe(0)
+  })
+})
+
+describe("deletion holds", () => {
+  const OWNS = "owns_miniapps"
+  const storeHold = (count?: number) => ({service: "store", reason: OWNS, ...(count === undefined ? {} : {count})})
+  const holdEvents = (ws: string) =>
+    WorkspaceAuditEventModel.find({workspaceId: ws, action: /^workspace\.deletion_hold_/}).sort({seq: 1}).lean()
+
+  test("a service sets its hold, replaces it, and clears it; each change is audited as the service", async () => {
+    const ws = await newWorkspace()
+    const revision = await revisionOf(ws)
+
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3})).toEqual([storeHold(3)])
+    expect(await listDeletionHolds(ws)).toEqual([storeHold(3)])
+    // Setting again replaces the service's hold: still one, with the new count.
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 2})).toEqual([storeHold(2)])
+    // A count is optional.
+    expect(await setDeletionHold("store", ws, {reason: OWNS})).toEqual([storeHold()])
+    expect(await clearDeletionHold("store", ws)).toEqual([])
+    expect(await listDeletionHolds(ws)).toEqual([])
+
+    expect((await holdEvents(ws)).map(event => [event.action, event.actor, event.target, event.before, event.after])).toEqual([
+      ["workspace.deletion_hold_set", {kind: "service", service: "store"}, {workspaceId: ws, service: "store"}, null, {reason: OWNS, count: 3}],
+      ["workspace.deletion_hold_set", {kind: "service", service: "store"}, {workspaceId: ws, service: "store"}, {reason: OWNS, count: 3}, {reason: OWNS, count: 2}],
+      ["workspace.deletion_hold_set", {kind: "service", service: "store"}, {workspaceId: ws, service: "store"}, {reason: OWNS, count: 2}, {reason: OWNS, count: null}],
+      ["workspace.deletion_hold_cleared", {kind: "service", service: "store"}, {workspaceId: ws, service: "store"}, {reason: OWNS, count: null}, null],
+    ])
+    // A hold changes nothing anyone may do, so it leaves the authorization revision alone.
+    expect(await revisionOf(ws)).toBe(revision)
+  })
+
+  test("setting the hold a service already has, or clearing one it does not have, writes and records nothing", async () => {
+    const ws = await newWorkspace()
+    expect(await clearDeletionHold("store", ws)).toEqual([])
+    await setDeletionHold("store", ws, {reason: OWNS, count: 3})
+    const written = (await WorkspaceModel.findOne({workspaceId: ws}).lean())!.updatedAt
+
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3})).toEqual([storeHold(3)])
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, ignored: true} as never)).toEqual([storeHold(3)])
+    expect(await clearDeletionHold("fleet", ws)).toEqual([storeHold(3)])
+
+    expect((await holdEvents(ws)).map(event => event.action)).toEqual(["workspace.deletion_hold_set"])
+    expect((await WorkspaceModel.findOne({workspaceId: ws}).lean())!.updatedAt).toEqual(written)
+  })
+
+  test("each service has its own hold, listed by service, and clears only its own", async () => {
+    const ws = await newWorkspace()
+    await setDeletionHold("store", ws, {reason: OWNS, count: 1})
+    expect(await setDeletionHold("fleet", ws, {reason: "manages_devices", count: 4})).toEqual([
+      {service: "fleet", reason: "manages_devices", count: 4},
+      storeHold(1),
+    ])
+    expect(await clearDeletionHold("fleet", ws)).toEqual([storeHold(1)])
+    expect(await listDeletionHolds(ws)).toEqual([storeHold(1)])
+  })
+
+  test("a malformed reason or count is 400 invalid_request, and nothing is written", async () => {
+    const ws = await newWorkspace()
+    const bad: Array<{reason?: unknown; count?: unknown}> = [
+      {},
+      {reason: ""},
+      {reason: "Owns Miniapps"},
+      {reason: "owns-miniapps"},
+      {reason: "x".repeat(65)},
+      {reason: 5},
+      {reason: OWNS, count: 0},
+      {reason: OWNS, count: -1},
+      {reason: OWNS, count: 1.5},
+      {reason: OWNS, count: "3"},
+      {reason: OWNS, count: Number.MAX_SAFE_INTEGER + 1},
+    ]
+    for (const input of bad) {
+      const err = await thrown(() => setDeletionHold("store", ws, input as {reason: unknown}))
+      expect({input, code: err.code, status: err.status}).toEqual({input, code: "invalid_request", status: 400})
+    }
+    // A null count is no count.
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: null})).toEqual([storeHold()])
+    expect((await holdEvents(ws)).map(event => event.action)).toEqual(["workspace.deletion_hold_set"])
+    await expectError(() => setDeletionHold("", ws, {reason: OWNS}), "invalid_request", 400)
+    await expectError(() => clearDeletionHold(" ", ws), "invalid_request", 400)
+  })
+
+  test("an unknown workspace is not_found; a deleted one takes no hold (410) and has none to clear", async () => {
+    await expectError(() => setDeletionHold("store", "ws_missing", {reason: OWNS}), "not_found", 404)
+    await expectError(() => clearDeletionHold("store", "ws_missing"), "not_found", 404)
+    await expectError(() => listDeletionHolds("ws_missing"), "not_found", 404)
+    await expectError(() => setDeletionHold("store", "", {reason: OWNS}), "not_found", 404)
+
+    const ws = await newWorkspace()
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
+    await expectError(() => setDeletionHold("store", ws, {reason: OWNS, count: 1}), "workspace_deleted", 410)
+    expect(await clearDeletionHold("store", ws)).toEqual([])
+    expect(await holdEvents(ws)).toEqual([])
+  })
+
+  test("a held workspace cannot be deleted by anyone: 409 workspace_has_holds, saying why and listing the holds", async () => {
+    const ws = await newWorkspace(user("mu_owner"), "Acme")
+    const memberId = await addMember(ws, "mu_member", "member")
+    const key = await seedCredential(ws, memberId)
+    await setDeletionHold("store", ws, {reason: OWNS, count: 3})
+    const revision = await revisionOf(ws)
+
+    for (const actor of [user("mu_owner"), orgAdmin, system]) {
+      const err = await thrown(() => deleteWorkspace(actor, ws, {confirmName: "Acme"}))
+      expect(err).toBeInstanceOf(WorkspaceError)
+      expect({code: err.code, status: err.status}).toEqual({code: "workspace_has_holds", status: 409})
+      expect(err.message).toBe("This workspace still owns 3 published miniapps. Delete them in the Developer Console first.")
+      expect(err.details).toEqual({holds: [storeHold(3)]})
+    }
+    // Nothing changed.
+    expect((await getWorkspace(ws))!.status).toBe("active")
+    expect(await revisionOf(ws)).toBe(revision)
+    expect(await getActiveMembership(ws, "mu_member")).not.toBeNull()
+    expect(await revokedAtOf(key)).toBeNull()
+    expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws, action: "workspace.deleted"})).toBe(0)
+
+    // Once the service clears its hold, the delete goes through.
+    await clearDeletionHold("store", ws)
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
+    expect((await getWorkspace(ws))!.status).toBe("deleted")
+  })
+
+  test("who may delete is checked first, then the holds, then the typed name", async () => {
+    const ws = await newWorkspace(user("mu_owner"), "Acme")
+    await addMember(ws, "mu_admin", "admin")
+    await setDeletionHold("store", ws, {reason: OWNS, count: 1})
+
+    // Someone who may not delete learns nothing about the holds.
+    await expectError(() => deleteWorkspace(user("mu_admin"), ws, {confirmName: "Acme"}), "forbidden", 403)
+    await expectError(() => deleteWorkspace(service, ws, {confirmName: "Acme"}), "forbidden", 403)
+    // An owner is told about the hold whatever they typed: getting the name right would not help.
+    await expectError(() => deleteWorkspace(user("mu_owner"), ws, {confirmName: "wrong"}), "workspace_has_holds", 409)
+  })
+
+  test("a hold and a delete at the same time: exactly one wins, and a deleted workspace never holds anything", async () => {
+    for (let round = 0; round < 6; round++) {
+      const ws = await newWorkspace(user("mu_owner"), "Acme")
+      const [deleted, held] = await Promise.allSettled([
+        deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
+        setDeletionHold("store", ws, {reason: OWNS, count: 1}),
+      ])
+      const status = (await getWorkspace(ws))!.status
+      const holds = (await WorkspaceModel.findOne({workspaceId: ws}).lean())!.deletionHolds ?? []
+      if (status === "deleted") {
+        expect(deleted.status).toBe("fulfilled")
+        expect(held.status).toBe("rejected")
+        expect((held as PromiseRejectedResult).reason.code).toBe("workspace_deleted")
+        expect(holds).toEqual([])
+      } else {
+        expect(held.status).toBe("fulfilled")
+        expect(deleted.status).toBe("rejected")
+        expect((deleted as PromiseRejectedResult).reason.code).toBe("workspace_has_holds")
+        expect(holds).toHaveLength(1)
+      }
+    }
+  })
+
+  test("holds leave everything but deletion alone: rename, roles, removal, leaving and recovery work as before", async () => {
+    await accounts("mu_member")
+    const ws = await newWorkspace(user("mu_owner"), "Acme")
+    const memberId = await addMember(ws, "mu_member", "member")
+    await addMember(ws, "mu_leaver", "developer")
+    const removedId = await addMember(ws, "mu_removed", "member")
+    await setDeletionHold("store", ws, {reason: OWNS, count: 2})
+
+    await renameWorkspace(user("mu_owner"), ws, "Acme Two", await revisionOf(ws))
+    await changeRole(user("mu_owner"), ws, memberId, "admin", await revisionOf(ws))
+    await removeMember(user("mu_owner"), ws, removedId, await revisionOf(ws))
+    await leaveWorkspace(user("mu_leaver"), ws)
+    await recoverOwnership(orgAdmin, ws, "mu_member")
+
+    expect((await getWorkspace(ws))!.name).toBe("Acme Two")
+    expect((await getActiveMembership(ws, "mu_member"))!.role).toBe("owner")
+    expect(await getActiveMembership(ws, "mu_removed")).toBeNull()
+    expect(await getActiveMembership(ws, "mu_leaver")).toBeNull()
+    expect(await listDeletionHolds(ws)).toEqual([storeHold(2)])
   })
 })
 

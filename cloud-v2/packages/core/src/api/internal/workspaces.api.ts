@@ -7,15 +7,17 @@
  * are the contract's (`@mentra/workspace-contract`), spoken by its
  * `createCoreWorkspaceClient`.
  *
- * | Route                          | Service      | Answers                                     |
- * | ------------------------------ | ------------ | ------------------------------------------- |
- * | `POST /authorize`              | any          | `AuthorizeResponse`                         |
- * | `POST /principal`              | any          | `PrincipalResponse`, or 401 `invalid_token` |
- * | `POST /memberships/check`      | any          | `{memberships}`                             |
- * | `GET /workspaces/:workspaceId` | any          | `WorkspaceSummary`, or 404                  |
- * | `GET /changes?after=&limit=`   | store, fleet | `WorkspaceChangesResponse`                  |
- * | `POST /credentials`            | store        | `{credentialId, token}`                     |
- * | `POST /users/resolve-email`    | store        | `{mentraUserId}`, or 404 `user_not_found`   |
+ * | Route                                                     | Service      | Answers                                     |
+ * | --------------------------------------------------------- | ------------ | ------------------------------------------- |
+ * | `POST /authorize`                                         | any          | `AuthorizeResponse`                         |
+ * | `POST /principal`                                         | any          | `PrincipalResponse`, or 401 `invalid_token` |
+ * | `POST /memberships/check`                                 | any          | `{memberships}`                             |
+ * | `GET /workspaces/:workspaceId`                            | any          | `WorkspaceSummary`, or 404                  |
+ * | `GET /changes?after=&limit=`                              | store, fleet | `WorkspaceChangesResponse`                  |
+ * | `POST /credentials`                                       | store        | `{credentialId, token}`                     |
+ * | `POST /users/resolve-email`                               | store        | `{mentraUserId}`, or 404 `user_not_found`   |
+ * | `PUT /workspaces/:workspaceId/deletion-holds/:service`    | `:service`   | `DeletionHoldsResponse`                     |
+ * | `DELETE /workspaces/:workspaceId/deletion-holds/:service` | `:service`   | `DeletionHoldsResponse`                     |
  *
  * `GET /changes` is the change feed: workspace events and `user.deleted`
  * tombstones in commit order, for a service that follows them (`listChanges`).
@@ -39,6 +41,15 @@
  * so the person is never an Organization Admin here: that standing comes only
  * from a verified identity (`bearer`).
  *
+ * A deletion hold (`deletion-hold.service`) is a service's reason a workspace must
+ * not be deleted yet. Any service Core knows may hold a workspace, but only under
+ * its own name: `:service` must be the service that signed the request (403
+ * `forbidden` otherwise, as for `issuedBy.service`). `PUT` takes `{reason, count?}`
+ * and replaces that service's hold; `DELETE` clears it. Both are idempotent and
+ * answer every hold on the workspace afterwards. An unknown workspace is 404
+ * `workspace_not_found`; holding a deleted one is 410 `workspace_deleted`, and
+ * clearing there finds nothing to clear.
+ *
  * `POST /users/resolve-email` turns an account email into the opaque Mentra
  * user id (the Store's private-miniapp and beta invitations). Core stays the
  * only service that maps account-provider identities to Mentra users: only an
@@ -54,6 +65,7 @@ import {
   type AuthorizeCredential,
   type AuthorizeResponse,
   type CorePrincipal as WirePrincipal,
+  type DeletionHoldsResponse,
   type MembershipCheckResponse,
   type PrincipalResponse,
   type ResolveEmailResponse,
@@ -70,6 +82,8 @@ import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "../../serv
 import {listChanges} from "../../services/workspaces/audit.service"
 import {authorize} from "../../services/workspaces/authorization.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
+import {clearDeletionHold, setDeletionHold} from "../../services/workspaces/deletion-hold.service"
+import {WorkspaceError} from "../../services/workspaces/workspace-error"
 import {getWorkspace, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
@@ -195,6 +209,24 @@ app.post("/credentials", requireService("store"), async c => {
   return c.json(minted, 201)
 })
 
+// --- Deletion holds --------------------------------------------------------
+
+// Any service Core knows, for its own hold only.
+app.put("/workspaces/:workspaceId/deletion-holds/:service", async c => {
+  const service = ownHoldService(c)
+  if (!service) return holdForbidden(c)
+  const body = jsonBody(c)
+  const workspaceId = c.req.param("workspaceId")
+  return holdsAnswer(c, workspaceId, () => setDeletionHold(service, workspaceId, {reason: body.reason, count: body.count}))
+})
+
+app.delete("/workspaces/:workspaceId/deletion-holds/:service", async c => {
+  const service = ownHoldService(c)
+  if (!service) return holdForbidden(c)
+  const workspaceId = c.req.param("workspaceId")
+  return holdsAnswer(c, workspaceId, () => clearDeletionHold(service, workspaceId))
+})
+
 // --- People ----------------------------------------------------------------
 
 const emailSchema = z.string().trim().toLowerCase().email()
@@ -293,6 +325,35 @@ async function mentraUserPrincipal(
     email: null,
     emailVerified: false,
     isOrganizationAdmin: false,
+  }
+}
+
+/** The service that signed, when the path names it; null when the path names another service's hold. */
+function ownHoldService(c: AppContext): string | null {
+  const service = c.get("service")
+  if (!service) throw new Error("serviceAuth did not set the service")
+  return c.req.param("service") === service ? service : null
+}
+
+function holdForbidden(c: AppContext) {
+  return c.json({error: "forbidden", error_description: "a service may set or clear only its own deletion hold"}, 403)
+}
+
+/**
+ * The workspace's holds after `change`, or the contract's 404 `workspace_not_found` for a workspace that
+ * does not exist (any other failure is the error handler's).
+ */
+async function holdsAnswer(
+  c: AppContext,
+  workspaceId: string,
+  change: () => Promise<DeletionHoldsResponse["holds"]>,
+) {
+  try {
+    const answer: DeletionHoldsResponse = {workspaceId, holds: await change()}
+    return c.json(answer)
+  } catch (err) {
+    if (err instanceof WorkspaceError && err.code === "not_found") return c.json({error: WORKSPACE_NOT_FOUND_ERROR}, 404)
+    throw err
   }
 }
 

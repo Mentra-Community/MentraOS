@@ -41,7 +41,8 @@
  *
  * The global error handler translates `OauthError` subtypes to the RFC 8693
  * error body shape `{ error, error_description }`, and expected workspace
- * failures (`WorkspaceError`) to the same shape with their status. Anything
+ * failures (`WorkspaceError`) to the same shape with their status (plus any
+ * fields the error carries in `details`). Anything
  * else becomes a generic 500.
  */
 
@@ -195,7 +196,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
       );
     }
     if (err instanceof WorkspaceError) {
-      return c.json({ error: err.code, error_description: err.message }, err.status as 400);
+      // `details` add fields (a 409 workspace_has_holds lists the holds); they never replace these two.
+      return c.json({ ...err.details, error: err.code, error_description: err.message }, err.status as 400);
     }
 
     // Unexpected. Log with the per-request logger if available so the line
