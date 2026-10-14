@@ -837,6 +837,16 @@ extension MentraLive: CBCentralManagerDelegate {
                 if trailer.secureCapable && trailer.pairingMode {
                     armPreviousOwnerRejectionQuietTimer()
                 }
+                // The rejection still holds for this pairing window. Keep the previous-owner
+                // rejection scan running so the next pairing mode can lift it. Falling into the
+                // pairing-yield path below would stop the scan; when the yield ended
+                // handleReconnection would bail (rejection still active), leaving this phone
+                // blind to the next pairing mode until a later connectById.
+                pairFlow(
+                    "discover",
+                    "name=\(name) id=\(peripheral.identifier.uuidString) action=hold_previous_owner_rejection"
+                )
+                return
             }
             let standDown = MentraLiveConnectionAttemptPolicy.shouldStandDownInsteadOfReconnect(
                 pairingMode: trailer.secureCapable && trailer.pairingMode,
