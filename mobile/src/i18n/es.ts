@@ -57,6 +57,17 @@ const es = {
   },
   pairing: {
     ...en.pairing,
+    replaceOwnerTitle: "¿Emparejar estas gafas con este teléfono?",
+    replaceOwnerBody:
+      "Estas gafas están configuradas actualmente con otro propietario. Al emparejarlas aquí, se desconectarán de la cuenta y el teléfono de ese propietario. Esta acción no se puede deshacer.",
+    replaceOwnerConfirm: "Reemplazar propietario",
+    replaceOwnerWaiting: "Contactando con tus gafas…",
+    replaceOwnerNotPairing:
+      "Tus gafas salieron del modo de emparejamiento. Pulsa el botón de encendido 3 veces rápido para volver a ponerlas en modo de emparejamiento y vuelve a intentarlo.",
+    replaceOwnerWipeFailed: "No pudimos quitar al propietario anterior de tus gafas. Inténtalo de nuevo.",
+    replaceOwnerFailed: "Algo salió mal al emparejar tus gafas. Inténtalo de nuevo.",
+    replaceOwnerTimeout:
+      "Tus gafas no respondieron. Asegúrate de que estén cerca y en modo de emparejamiento, y vuelve a intentarlo.",
     nearbyNotInPairingModeHint:
       "Se encontraron gafas Mentra Live cerca, pero no están en modo de emparejamiento. Pulsa el botón de encendido 3 veces rápido y vuelve a intentarlo.",
     notInPairingModeLabel: "No está en modo de emparejamiento",

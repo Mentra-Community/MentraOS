@@ -1,11 +1,10 @@
 import {useIsFocused, useRoute} from "@react-navigation/native"
 import BluetoothSdk, {type Device, type PairingInfoEvent} from "@mentra/bluetooth-sdk"
-import {engine} from "@mentra/engine"
+import {engine, DeviceTypes} from "@mentra/engine"
 import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {View} from "react-native"
 
-import {DeviceTypes} from "@mentra/engine"
 import {Button} from "@/components/ignite"
 import {Header} from "@/components/ignite/Header"
 import {Screen} from "@/components/ignite/Screen"
@@ -14,7 +13,12 @@ import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshoo
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
-import {advertisedSecurePairingCapable, isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
+import {REPLACE_OWNER_ROUTE, shouldRouteToReplaceOwner} from "@/utils/pairing/replaceOwner"
+import {
+  advertisedSecurePairingCapable,
+  isMentraLiveOwnershipTransferSupported,
+  isMentraLiveSecurePairingEnabled,
+} from "@/utils/pairing/securePairingFeature"
 
 // Secure pairing info should arrive immediately after Mentra Live finishes booting.
 // Secure or unknown firmware fails closed instead of spinning forever.
@@ -27,6 +31,11 @@ const PAIRING_KICKOFF_DELAY_MS = 2_000
  * pairing_info is used only as a secure-firmware readiness signal; the advertised capability
  * lets existing customer firmware proceed without waiting for an event it does not emit.
  * Route params arrive as strings, so legacy firmware is both boolean false and "false".
+ *
+ * Ownership transfer (flag-gated, Android only) is the exception to open reclaim: glasses in
+ * transfer mode report `pairing_info.awaiting_confirm` and refuse to bond until the user
+ * confirms on the replace-owner screen, which is pushed on top of this one and pops back
+ * here once confirmed. Routing keys on awaiting_confirm, never on had_previous_bond.
  */
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
@@ -68,6 +77,7 @@ export default function GlassesPairingLoadingScreen() {
   const pairingKickoffStartedRef = useRef(false)
   const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pairingStoppedRef = useRef(false)
+  const replaceOwnerRoutedRef = useRef(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
   const advertisedSecurePairing = advertisedSecurePairingCapable(
     securePairingCapable,
@@ -135,14 +145,36 @@ export default function GlassesPairingLoadingScreen() {
       setPairingInfoReceived(true)
       logPairingTiming(
         "pairing_info",
-        `had_previous_bond=${event.had_previous_bond} secure=${event.secure_pairing_capable} design=A_open_reclaim`,
+        `had_previous_bond=${event.had_previous_bond} secure=${event.secure_pairing_capable} awaiting_confirm=${String(
+          event.awaiting_confirm,
+        )} design=A_open_reclaim`,
       )
+
+      if (
+        shouldRouteToReplaceOwner({
+          platformSupported: isMentraLiveOwnershipTransferSupported(),
+          awaitingConfirm: event.awaiting_confirm,
+          securePairing: securePairingRequired,
+        })
+      ) {
+        // One push per awaiting_confirm episode; replayed pairing_info must not stack screens.
+        if (replaceOwnerRoutedRef.current || hasNavigatedRef.current || pairingStoppedRef.current) return
+        replaceOwnerRoutedRef.current = true
+        console.log(
+          `PAIRFLOW: loading_navigate route=${REPLACE_OWNER_ROUTE} model=${deviceModel} name=${deviceName ?? ""}`,
+        )
+        logPairingTiming("navigate_replace_owner")
+        useNavigationStore.getState().push(REPLACE_OWNER_ROUTE, {deviceModel, deviceName})
+      } else if (event.awaiting_confirm !== true) {
+        // The glasses moved past the confirm state; a later one is a new episode.
+        replaceOwnerRoutedRef.current = false
+      }
     })
 
     return () => {
       sub.remove()
     }
-  }, [securePairingRequired, pairingCode, logPairingTiming])
+  }, [securePairingRequired, pairingCode, logPairingTiming, deviceModel, deviceName])
 
   const handleGoBack = useCallback(() => {
     console.log(`PAIRFLOW: loading_cancel model=${deviceModel} name=${deviceName ?? ""}`)
@@ -204,7 +236,9 @@ export default function GlassesPairingLoadingScreen() {
       if (pairingStoppedRef.current) return
       pairingKickoffStartedRef.current = true
       console.log(
-        `PAIRFLOW: loading_kickoff model=${deviceModel} name=${deviceName ?? ""} secure=${String(securePairingRequired)}`,
+        `PAIRFLOW: loading_kickoff model=${deviceModel} name=${deviceName ?? ""} secure=${String(
+          securePairingRequired,
+        )}`,
       )
       logPairingTiming("pairing_kickoff")
       void engine.pairing
@@ -299,7 +333,9 @@ export default function GlassesPairingLoadingScreen() {
 
     hasNavigatedRef.current = true
     console.log(
-      `PAIRFLOW: loading_navigate route=/pairing/success model=${deviceModel} name=${deviceName ?? ""} pairingInfo=${pairingInfoReceived}`,
+      `PAIRFLOW: loading_navigate route=/pairing/success model=${deviceModel} name=${
+        deviceName ?? ""
+      } pairingInfo=${pairingInfoReceived}`,
     )
     logPairingTiming("navigate_success_scheduled")
     navigationTimerRef.current = setTimeout(() => {
@@ -338,7 +374,9 @@ export default function GlassesPairingLoadingScreen() {
 
   useEffect(() => {
     console.log(
-      `PAIRFLOW: loading_state focused=${isFocused} kickoffComplete=${pairingKickoffComplete} targetReady=${selectedTargetReady} pairingInfo=${pairingInfoReceived} secureRequired=${securePairingRequired} booting=${showGlassesBooting} model=${deviceModel} name=${deviceName ?? ""}`,
+      `PAIRFLOW: loading_state focused=${isFocused} kickoffComplete=${pairingKickoffComplete} targetReady=${selectedTargetReady} pairingInfo=${pairingInfoReceived} secureRequired=${securePairingRequired} booting=${showGlassesBooting} model=${deviceModel} name=${
+        deviceName ?? ""
+      }`,
     )
   }, [
     deviceModel,

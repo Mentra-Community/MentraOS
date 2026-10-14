@@ -1,6 +1,9 @@
+import {Platform} from "react-native"
+
 import {
   advertisedSecurePairingCapable,
   isMentraLiveOwnershipTransferEnabled,
+  isMentraLiveOwnershipTransferSupported,
   parseOptionalBoolean,
 } from "./securePairingFeature"
 
@@ -48,5 +51,37 @@ describe("Mentra Live ownership transfer flag", () => {
 
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "true"
     expect(isMentraLiveOwnershipTransferEnabled()).toBe(true)
+  })
+})
+
+describe("Mentra Live ownership transfer platform gate", () => {
+  const originalSecure = process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+  const originalTransfer = process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER
+
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "true"
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+    if (originalSecure === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = originalSecure
+    if (originalTransfer === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = originalTransfer
+  })
+
+  it("is supported on Android only when the flag is on", () => {
+    jest.replaceProperty(Platform, "OS", "android")
+    expect(isMentraLiveOwnershipTransferSupported()).toBe(true)
+
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "false"
+    expect(isMentraLiveOwnershipTransferSupported()).toBe(false)
+  })
+
+  it("stays off on iOS even with the flag on (until spike B0 passes)", () => {
+    jest.replaceProperty(Platform, "OS", "ios")
+    expect(isMentraLiveOwnershipTransferEnabled()).toBe(true)
+    expect(isMentraLiveOwnershipTransferSupported()).toBe(false)
   })
 })

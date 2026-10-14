@@ -57,6 +57,17 @@ const fr = {
   },
   pairing: {
     ...en.pairing,
+    replaceOwnerTitle: "Appairer ces lunettes avec ce téléphone ?",
+    replaceOwnerBody:
+      "Ces lunettes sont actuellement associées à un autre propriétaire. Les appairer ici les déconnectera du compte et du téléphone de ce propriétaire. Cette action est irréversible.",
+    replaceOwnerConfirm: "Remplacer le propriétaire",
+    replaceOwnerWaiting: "Contact avec vos lunettes…",
+    replaceOwnerNotPairing:
+      "Vos lunettes ont quitté le mode d'appairage. Appuyez 3 fois rapidement sur le bouton d'alimentation pour les remettre en mode d'appairage, puis réessayez.",
+    replaceOwnerWipeFailed: "Impossible de retirer le propriétaire précédent de vos lunettes. Réessayez.",
+    replaceOwnerFailed: "Une erreur s'est produite lors de l'appairage de vos lunettes. Réessayez.",
+    replaceOwnerTimeout:
+      "Vos lunettes n'ont pas répondu. Vérifiez qu'elles sont à proximité et en mode d'appairage, puis réessayez.",
     nearbyNotInPairingModeHint:
       "Des lunettes Mentra Live à proximité ont été trouvées, mais elles ne sont pas en mode d'appairage. Appuyez 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
     notInPairingModeLabel: "Pas en mode d'appairage",

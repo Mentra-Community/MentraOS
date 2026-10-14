@@ -55,6 +55,17 @@ const ja = {
   },
   pairing: {
     ...en.pairing,
+    replaceOwnerTitle: "このグラスをこのスマートフォンとペアリングしますか？",
+    replaceOwnerBody:
+      "このグラスは現在、別のオーナーに設定されています。ここでペアリングすると、そのオーナーのアカウントとスマートフォンから切断されます。この操作は元に戻せません。",
+    replaceOwnerConfirm: "オーナーを置き換える",
+    replaceOwnerWaiting: "グラスに接続しています…",
+    replaceOwnerNotPairing:
+      "グラスがペアリングモードを終了しました。電源ボタンを素早く3回押してもう一度ペアリングモードにしてから、もう一度お試しください。",
+    replaceOwnerWipeFailed: "以前のオーナーをグラスから削除できませんでした。もう一度お試しください。",
+    replaceOwnerFailed: "グラスのペアリング中に問題が発生しました。もう一度お試しください。",
+    replaceOwnerTimeout:
+      "グラスから応答がありません。近くにあってペアリングモードになっていることを確認し、もう一度お試しください。",
     nearbyNotInPairingModeHint:
       "近くにMentra Liveが見つかりましたが、ペアリングモードではありません。電源ボタンを素早く3回押してから、もう一度お試しください。",
     notInPairingModeLabel: "ペアリングモードではありません",

@@ -32,6 +32,8 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
 
 let subs: Array<{remove: () => void}> = []
+// End of the pairing window in which the glasses kept this phone as owner (ownership transfer).
+let ownerRetainedUntilMs = 0
 
 export function startDeviceEventRouter(): void {
   if (subs.length) return
@@ -143,8 +145,29 @@ export function startDeviceEventRouter(): void {
   // Another phone completed pairing with the saved Mentra Live. Native keeps the
   // saved identity and stops reconnecting; this flag lets the home card explain
   // the loss instead of showing an endless reconnect.
+  //
+  // Ownership transfer: when the glasses open pairing mode but KEEP this phone as owner
+  // (`entering_pairing_mode.owner_retained`), native yields for the window and keeps the
+  // saved glasses. That is not a loss, so the retained window is remembered here and an
+  // `owner_replaced` for the same pairing-mode notice inside it cannot mark owner-lost.
+  // Real loss still arrives later as its own `owner_replaced` (rejection streak).
+  // owner_retained false/absent changes nothing: native stands down and the notice below marks lost.
   subs.push(
-    BluetoothSdk.addListener("owner_replaced", () => {
+    BluetoothSdk.addListener("entering_pairing_mode", (event) => {
+      if (event.owner_retained === true) {
+        ownerRetainedUntilMs = Date.now() + (typeof event.window_ms === "number" ? event.window_ms : 0)
+        console.log(`DeviceEventRouter: owner retained for ${event.window_ms}ms window; keeping saved glasses`)
+      } else {
+        ownerRetainedUntilMs = 0
+      }
+    }),
+  )
+  subs.push(
+    BluetoothSdk.addListener("owner_replaced", (event) => {
+      if (event?.reason === "entering_pairing_mode" && Date.now() < ownerRetainedUntilMs) {
+        console.log("DeviceEventRouter: ignoring owner_replaced inside a retained-owner pairing window")
+        return
+      }
       void useSettingsStore.getState().setSetting(SETTINGS.mentra_live_owner_lost.key, true, false)
     }),
   )
@@ -261,4 +284,5 @@ export function startDeviceEventRouter(): void {
 export function stopDeviceEventRouter(): void {
   for (const sub of subs) sub.remove()
   subs = []
+  ownerRetainedUntilMs = 0
 }

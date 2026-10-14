@@ -54,7 +54,10 @@ describe("DeviceEventRouter", () => {
 
     it("BLE drop flips connected=false but reports linkConnected=false so miniapps can tell it apart", () => {
       const store = useGlassesStore.getState()
-      store.setGlassesInfo({connection: {state: "connected"} as never, wifi: {state: "connected", ssid: "Net"} as never})
+      store.setGlassesInfo({
+        connection: {state: "connected"} as never,
+        wifi: {state: "connected", ssid: "Net"} as never,
+      })
       const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
       fwdSpy.mockClear()
 
@@ -67,7 +70,10 @@ describe("DeviceEventRouter", () => {
 
     it("Wi-Fi drop with BLE up reports connected=false and linkConnected=true", () => {
       const store = useGlassesStore.getState()
-      store.setGlassesInfo({connection: {state: "connected"} as never, wifi: {state: "connected", ssid: "Net"} as never})
+      store.setGlassesInfo({
+        connection: {state: "connected"} as never,
+        wifi: {state: "connected", ssid: "Net"} as never,
+      })
       const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
       fwdSpy.mockClear()
 
@@ -143,6 +149,60 @@ describe("DeviceEventRouter", () => {
     emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
     expect(setSpy).toHaveBeenCalledTimes(1)
     expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+  })
+
+  describe("entering_pairing_mode owner_retained (ownership transfer)", () => {
+    it("does not mark owner-lost when the glasses retained this phone as owner", () => {
+      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 120_000, reason: "user_gesture", owner_retained: true})
+      expect(setSpy).not.toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+      expect(setSpy).not.toHaveBeenCalled()
+    })
+
+    it("does not let an owner_replaced notice for the same pairing mode undo the yield", () => {
+      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 120_000, owner_retained: true})
+      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+      expect(setSpy).not.toHaveBeenCalled()
+    })
+
+    it("still marks owner-lost for real loss during a retained window", () => {
+      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 120_000, owner_retained: true})
+      emitBluetoothSdkEvent("owner_replaced", {reason: "gatt_auth_status_5"})
+      expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+    })
+
+    it("marks owner-lost again once the retained window has passed", () => {
+      const now = Date.now()
+      const nowSpy = jest.spyOn(Date, "now").mockReturnValue(now)
+      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 120_000, owner_retained: true})
+      nowSpy.mockReturnValue(now + 120_001)
+      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+      expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+    })
+
+    it.each([
+      ["owner_retained false", {window_ms: 120_000, owner_retained: false}],
+      ["owner_retained absent", {window_ms: 120_000}],
+    ])("keeps today's behavior with %s", (_label, event) => {
+      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      emitBluetoothSdkEvent("entering_pairing_mode", event)
+      expect(setSpy).not.toHaveBeenCalled()
+      // Native stands down and announces the loss as owner_replaced.
+      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+      expect(setSpy).toHaveBeenCalledTimes(1)
+      expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+    })
+
+    it("a later window without retention clears an earlier retained one", () => {
+      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 120_000, owner_retained: true})
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 120_000})
+      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+      expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+    })
   })
 
   it("clears owner-lost once the glasses connect again", () => {

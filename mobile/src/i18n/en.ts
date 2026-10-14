@@ -253,6 +253,16 @@ const en = {
     tryAgain: "Try Again",
     pairingCodeLabel: "Code {{code}}",
     legacyFirmwareLabel: "Legacy software",
+    replaceOwnerTitle: "Pair these glasses with this phone?",
+    replaceOwnerBody:
+      "These glasses are currently set up with another owner. Pairing them here will disconnect them from that owner's account and phone. This cannot be undone.",
+    replaceOwnerConfirm: "Replace owner",
+    replaceOwnerWaiting: "Contacting your glasses…",
+    replaceOwnerNotPairing:
+      "Your glasses left pairing mode. Press the power button 3 times quickly to put them in pairing mode again, then try again.",
+    replaceOwnerWipeFailed: "We couldn't remove the previous owner from your glasses. Try again.",
+    replaceOwnerFailed: "Something went wrong while pairing your glasses. Try again.",
+    replaceOwnerTimeout: "Your glasses didn't respond. Make sure they are nearby and in pairing mode, then try again.",
     ar99Step1: "1. Make sure Bluetooth is turned on on your phone.",
     ar99Step2: "2. Press and hold the power button for 3 to 5 seconds to turn on the glasses.",
   },
@@ -623,8 +633,7 @@ const en = {
     pairAgain: "Pair again",
     liveOwnerLostStatus: "No longer paired",
     liveOwnerLostTitle: "Pair again",
-    liveOwnerLostMessage:
-      "This phone is no longer paired with these glasses. Pair again to use them here.",
+    liveOwnerLostMessage: "This phone is no longer paired with these glasses. Pair again to use them here.",
     liveOwnerLostIosBluetooth: "Then open Settings > Bluetooth on this iPhone and forget Mentra Live.",
     connectRing: "Connect ring",
     connectController: "Connect ring",

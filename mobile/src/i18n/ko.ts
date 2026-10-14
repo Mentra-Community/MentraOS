@@ -55,6 +55,16 @@ const ko = {
   },
   pairing: {
     ...en.pairing,
+    replaceOwnerTitle: "이 안경을 이 휴대폰과 페어링할까요?",
+    replaceOwnerBody:
+      "이 안경은 현재 다른 소유자에게 설정되어 있습니다. 여기서 페어링하면 해당 소유자의 계정과 휴대폰에서 연결이 끊어집니다. 이 작업은 되돌릴 수 없습니다.",
+    replaceOwnerConfirm: "소유자 교체",
+    replaceOwnerWaiting: "안경에 연결하는 중…",
+    replaceOwnerNotPairing:
+      "안경이 페어링 모드를 종료했습니다. 전원 버튼을 빠르게 3번 눌러 다시 페어링 모드로 만든 뒤 다시 시도하세요.",
+    replaceOwnerWipeFailed: "안경에서 이전 소유자를 제거하지 못했습니다. 다시 시도하세요.",
+    replaceOwnerFailed: "안경을 페어링하는 중 문제가 발생했습니다. 다시 시도하세요.",
+    replaceOwnerTimeout: "안경이 응답하지 않습니다. 가까이 있고 페어링 모드인지 확인한 뒤 다시 시도하세요.",
     nearbyNotInPairingModeHint:
       "근처에 Mentra Live 안경이 있지만 페어링 모드가 아닙니다. 전원 버튼을 빠르게 3번 누른 뒤 다시 시도하세요.",
     notInPairingModeLabel: "페어링 모드가 아님",
