@@ -6,6 +6,7 @@ import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlas
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, isLegacyOtaManifestSelected, resolveOtaManifestUrl} from "./otaManifestUrl"
 import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
+import {observeManifestNativeErrors} from "./otaNativeNetworkDiagnostics"
 
 /**
  * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
@@ -193,6 +194,7 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
   const requestId = ++manifestFetchSequence
   const startedAtMs = Date.now()
   logManifestNetwork(requestId, "start", startedAtMs)
+  const stopNativeObservation = observeManifestNativeErrors(requestId, startedAtMs)
   try {
     const response = await fetch(url)
     if (!response.ok) {
@@ -217,6 +219,8 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
     logManifestNetwork(requestId, "fetch-failed", startedAtMs)
     console.warn("OTA: Error fetching version info:", error)
     return {json: null, failureReason: "network"}
+  } finally {
+    stopNativeObservation()
   }
 }
 

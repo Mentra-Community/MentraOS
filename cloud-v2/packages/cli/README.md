@@ -140,8 +140,7 @@ and `[::1]`.
 
 In the MentraOS repository, `bun run mentra` runs this CLI against the production
 Store. `bun run mentra:dev` uses the development Store, `bun run mentra:staging`
-the staging Core (which has no Store) and `bun run mentra:local` a Store on
-`localhost:3003`.
+the staging Store and `bun run mentra:local` a Store on `localhost:3003`.
 
 ## Workspaces
 

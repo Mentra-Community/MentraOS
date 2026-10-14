@@ -16,7 +16,7 @@ import {
 } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoginGate, PortalRoutes } from "./App";
-import { switcherInvitation } from "./components/portal-shell";
+import { portalLinks, switcherInvitation } from "./components/portal-shell";
 import { WorkspaceSwitcher } from "./components/workspace-switcher";
 import type { PortalMe } from "./lib/api";
 import type { PendingInvitation } from "./lib/invitations";
@@ -70,6 +70,7 @@ function session(overrides: Partial<PortalSession> = {}): PortalSession {
     forgetInvitation() {},
     signOut() {},
     signingOut: false,
+    developerConsoleUrl: null,
     ...overrides,
   };
 }
@@ -178,6 +179,11 @@ describe("a workspace page", () => {
     expect(markup).toContain("priya@acme.test");
   });
 
+  test("the sidebar names the site as the admin portal does: Mentra Portal, on MentraOS", () => {
+    const markup = render(`/w/${ACME}/members`, TWO_WORKSPACES);
+    expect(markup).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg><div class="min-w-0"><div[^>]*>Mentra Portal<\/div><div[^>]*>MentraOS<\/div>/);
+  });
+
   test("a developer sees only Settings, and no Invite", () => {
     const markup = render(`/w/${NORTHWIND}/settings`, TWO_WORKSPACES);
     expect(markup).toContain('aria-label="Workspace: Northwind Pilot. Switch workspace"');
@@ -206,6 +212,47 @@ describe("a workspace page", () => {
     const markup = render("/nowhere", TWO_WORKSPACES);
     expect(markup).toContain("Page not found");
     expect(markup).toContain("Go to Acme Field Team");
+  });
+});
+
+describe("the Developer Console link", () => {
+  const CONSOLE = "https://console.dev.mentraglass.com";
+  /** The rendered link to `href`, start tag to end tag; null when there is none. */
+  function anchorTo(markup: string, href: string): string | null {
+    const start = markup.indexOf(`<a href="${href}"`);
+    return start < 0 ? null : markup.slice(start, markup.indexOf("</a>", start) + "</a>".length);
+  }
+
+  test("is this environment's Developer Console, or nothing where there is none", () => {
+    expect(portalLinks(CONSOLE)).toEqual([
+      expect.objectContaining({ key: "developer-console", label: "Developer Console", href: CONSOLE }),
+    ]);
+    expect(portalLinks(null)).toEqual([]);
+  });
+
+  test("opens in a new tab, marked as leaving the portal, from every sidebar whatever the viewer's role", () => {
+    for (const path of [`/w/${ACME}/members`, `/w/${NORTHWIND}/settings`, "/nowhere", "/enterprise"]) {
+      const link = anchorTo(render(path, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE }), CONSOLE);
+      expect(link).toContain('target="_blank"');
+      expect(link).toContain('rel="noreferrer"');
+      expect(link).toContain(">Developer Console<");
+      expect(link).toContain("lucide-arrow-up-right");
+      expect(link).toContain("(opens in a new tab)");
+    }
+  });
+
+  test("sits under the workspace's sections, above the account", () => {
+    const markup = render(`/w/${ACME}/members`, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
+    expect(markup.indexOf(`href="/w/${ACME}/audit"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
+    expect(markup.indexOf(`href="${CONSOLE}"`)).toBeLessThan(markup.indexOf("Open account menu"));
+  });
+
+  test("a Private Cloud's portal, where Core runs without a Store, has no link", () => {
+    for (const path of [`/w/${ACME}/members`, "/nowhere"]) {
+      const markup = render(path, TWO_WORKSPACES, { developerConsoleUrl: null });
+      expect(markup).not.toContain("Developer Console");
+      expect(markup).not.toContain('target="_blank"');
+    }
   });
 });
 
@@ -591,6 +638,10 @@ describe("an Organization Admin is labelled by their own role", () => {
     // Someone whose powers are their own gets no note.
     expect(render(`/w/${ACME}/members`, TWO_WORKSPACES)).not.toContain("Organization Admin");
   });
+});
+
+test("the login gate names the site", () => {
+  expect(renderToStaticMarkup(<LoginGate loginUrl="/api/portal/auth/login" />)).toContain("Sign into Mentra Portal");
 });
 
 test("the login gate says to sign in with the invited address when an invitation is pending", () => {

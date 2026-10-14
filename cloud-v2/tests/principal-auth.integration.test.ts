@@ -22,6 +22,7 @@ import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/co
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
@@ -56,7 +57,13 @@ import {
 setDefaultTimeout(30_000)
 
 const databaseUrl = localTestMongoUrl("principal-auth")
-const WORKSPACE_MODELS = [AccessCredentialModel, WorkspaceAuditEventModel, WorkspaceMembershipModel, WorkspaceModel] as const
+const WORKSPACE_MODELS = [
+  AccessCredentialModel,
+  WorkspaceAuditCounterModel,
+  WorkspaceAuditEventModel,
+  WorkspaceMembershipModel,
+  WorkspaceModel,
+] as const
 let verified = false
 let app: ReturnType<typeof createApp>
 let idp: FakeIdp

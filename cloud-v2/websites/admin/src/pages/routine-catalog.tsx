@@ -279,6 +279,16 @@ export function selectedFailureScreen(run: RecordedFrameworkRun, screens: Framew
     ['image/png', 'image/jpeg'].includes(asset.mimeType));
 }
 
+function FailureScreenshot({label, actionId, href}: {label: 'App' | 'Desktop'; actionId?: string; href: string}) {
+  const [failed, setFailed] = useState(false);
+  return <figure className="min-w-0">
+    <figcaption className="mb-2 text-sm font-medium">{label}</figcaption>
+    {failed ? <p role="alert">{label} screenshot could not load.</p> : <img src={href} alt={`${label}: ${actionId}`}
+      onError={() => setFailed(true)} className="mx-auto block h-[var(--recording-height)] w-full rounded-lg bg-black object-contain" />}
+    <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={href}>Open {label.toLowerCase()} screenshot</a>
+  </figure>;
+}
+
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
   const video = useRef<HTMLVideoElement>(null);
   const executionDetails = useRef<HTMLDivElement>(null);
@@ -380,6 +390,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const failureScreenAction = selectedFailure ? activeStep : failureSummary?.actionId;
   const displayedScreen = mediaView === 'desktop' ? desktopScreen : failureScreen ?? desktopScreen;
   const showFailureScreen = !!displayedScreen && mediaView !== 'recording';
+  const showMacScreens = run.platform === 'ios-on-mac' && showFailureScreen;
   const screenLabel = displayedScreen === desktopScreen ? 'Desktop screenshot' : 'Failure screenshot';
   const hasMedia = hasRecording || !!failureScreen || !!desktopScreen;
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
@@ -425,13 +436,15 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
       actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
-    <div className={hasMedia ? "grid gap-5 lg:h-[calc(var(--recording-height)+8rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
+    <div className={hasMedia ? `grid gap-5 ${showMacScreens ? 'lg:h-[calc(var(--recording-height)+10rem)]' : 'lg:h-[calc(var(--recording-height)+8rem)]'} lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]` : "space-y-5"}>
     {hasMedia && <section aria-label="Run evidence viewer" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">{showFailureScreen ? screenLabel : 'Recording'}</h3>
+        <h3 className="font-semibold">{showMacScreens ? 'Failure screenshots' : showFailureScreen ? screenLabel : 'Recording'}</h3>
         {(failureScreen || desktopScreen) && <div className="flex flex-wrap gap-2">
-          {failureScreen && <TestingButton disabled={showFailureScreen && displayedScreen === failureScreen} onClick={() => {video.current?.pause(); setMediaView('failure'); setImageError(false);}}>Failure screenshot</TestingButton>}
-          {desktopScreen && <TestingButton disabled={showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>Desktop screenshot</TestingButton>}
+          {run.platform === 'ios-on-mac' ? <TestingButton disabled={showFailureScreen} onClick={() => {video.current?.pause(); setMediaView('failure');}}>Failure screenshots</TestingButton> : <>
+            {failureScreen && <TestingButton disabled={showFailureScreen && displayedScreen === failureScreen} onClick={() => {video.current?.pause(); setMediaView('failure'); setImageError(false);}}>Failure screenshot</TestingButton>}
+            {desktopScreen && <TestingButton disabled={showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>Desktop screenshot</TestingButton>}
+          </>}
           {hasRecording && <TestingButton disabled={!showFailureScreen} onClick={() => {
             const step = run.result.steps.find(step => step.id === activeStep);
             if (step) seekStep(step, true);
@@ -440,7 +453,10 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         </div>}
       </div>
       <div className="mt-3 lg:min-h-0 lg:flex-1">
-      {showFailureScreen ? <>
+      {showMacScreens ? <div className={`grid gap-3 ${failureScreen && desktopScreen ? 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]' : ''}`}>
+        {failureScreen && <FailureScreenshot key={failureScreen.id} label="App" actionId={failureScreenAction} href={assetHref(failureScreen.id)} />}
+        {desktopScreen && <FailureScreenshot key={desktopScreen.id} label="Desktop" actionId={failureScreenAction} href={assetHref(desktopScreen.id)} />}
+      </div> : showFailureScreen ? <>
         {imageError ? <p role="alert">Failure screenshot could not load.</p> : <img src={assetHref(displayedScreen!.id)}
           alt={`${screenLabel}: ${failureScreenAction}`} onError={() => setImageError(true)}
           className="mx-auto block h-[var(--recording-height)] w-full max-w-[60rem] rounded-lg bg-black object-contain" />}

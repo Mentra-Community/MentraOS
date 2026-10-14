@@ -7,13 +7,15 @@ import {hostCancellationSchema, hostRejectionSchema, TestRequestConflict, TestRe
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 import {RoutineDispatchService} from '../../services/routine-dispatch.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
+import {RoutineJobService} from '../../services/routine-job.service';
 
 const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/), acceptedAt: z.string().datetime({offset: true})}).strict();
 
 /** Cloud delivery/acknowledgement only; host SQLite owns execution and allocation. */
 export function createTestRequestsApi(service = new TestRequestService(), credentials?: () => string | undefined,
-  sources = new GithubRoutineSourceGateway(), dispatch = new RoutineDispatchService(undefined, undefined, undefined, service)) {
+  sources = new GithubRoutineSourceGateway(), dispatch = new RoutineDispatchService(undefined, undefined, undefined, service),
+  qualifications: Pick<RoutineJobService, 'qualificationTargets'> = new RoutineJobService()) {
   const app = new Hono<TestHostEnv>();
   app.use("*", createTestHostAuth(credentials));
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
@@ -25,8 +27,12 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
     c.var.logger?.error({errorName: error.name}, "controller request delivery failed");
     return c.json({error: "request_delivery_unavailable"}, 503);
   });
-  app.get("/", async c => c.json(await service.queued(c.var.testHostId,
-    c.req.query("after"), Number(c.req.query("limit") ?? 50))));
+  app.get("/", async c => {
+    const requested = c.req.query('qualificationTargets');
+    if (requested !== undefined && requested !== '1') return c.json({error: 'invalid_request'}, 400);
+    const page = await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50));
+    return c.json(requested === '1' ? {...page, qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId)} : page);
+  });
   app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));
   const active = async (requestId: string, hostId: string) => {

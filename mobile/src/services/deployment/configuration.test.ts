@@ -82,6 +82,46 @@ it("uses shared dev defaults for missing or blank environment values", () => {
   })
 })
 
+describe("the Store miniapp's per-environment Store", () => {
+  const originalStore = process.env.EXPO_PUBLIC_STORE_URL
+  afterEach(() => {
+    if (originalStore === undefined) delete process.env.EXPO_PUBLIC_STORE_URL
+    else process.env.EXPO_PUBLIC_STORE_URL = originalStore
+  })
+
+  it("hands the build's Store to com.mentra.store only, through the engine's miniapp configuration", () => {
+    process.env.EXPO_PUBLIC_STORE_URL = " https://api.apps.dev.mentraglass.com "
+    const manifest = createOfficialManifest()
+    expect(deploymentManifestSchema.parse(manifest)).toEqual(manifest)
+    expect(manifest.miniapps.configuration).toEqual({
+      "com.mentra.store": {storeUrl: "https://api.apps.dev.mentraglass.com"},
+    })
+    expect(deploymentCloudConfigValues(createConsumerDeployment()).miniappConfiguration).toEqual({
+      "com.mentra.store": {storeUrl: "https://api.apps.dev.mentraglass.com"},
+    })
+  })
+
+  it.each([undefined, "", "   "])("supplies no Store when the build sets none (%p)", (value) => {
+    if (value === undefined) delete process.env.EXPO_PUBLIC_STORE_URL
+    else process.env.EXPO_PUBLIC_STORE_URL = value
+    expect(createOfficialManifest().miniapps.configuration).toEqual({})
+  })
+
+  it("keeps the build's Store under Core and Runtime debug overrides", async () => {
+    process.env.EXPO_PUBLIC_STORE_URL = "https://api.apps.dev.mentraglass.com"
+    await deploymentStore.returnToMentra()
+    const deployment = deploymentStore.getActive()
+    await saveDeploymentCloudOverrides(deployment, {core: "http://localhost:3000", runtime: "http://localhost:3001"})
+    try {
+      expect(deploymentCloudConfigValues(deployment).miniappConfiguration).toEqual({
+        "com.mentra.store": {storeUrl: "https://api.apps.dev.mentraglass.com"},
+      })
+    } finally {
+      await saveDeploymentCloudOverrides(deployment, {core: "", runtime: ""})
+    }
+  })
+})
+
 it.each(["consumer", "workspace"])("uses one resolver for %s debug overrides, startup and reconnect", async (kind) => {
   if (kind === "workspace") await deploymentStore.activate(workspace)
   const deployment = deploymentStore.getActive()

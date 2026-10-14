@@ -1,17 +1,17 @@
 /**
  * @fileoverview Service authentication for Core's internal workspace API.
  *
- * The Store calls `/api/internal/workspaces/*` with an HMAC signature
+ * The Store and Fleet call `/api/internal/workspaces/*` with an HMAC signature
  * (`@mentra/workspace-contract`, `signServiceRequest`) over the timestamp,
  * method, path with query and body. `serviceAuth` verifies it and sets
  * `c.var.service` to the service that signed; `requireService` limits a route
- * to some services. The Store is the only service Core knows today.
+ * to some services. `store` and `fleet` are the services Core knows.
  *
  * Secrets come from `CLOUD_CORE_SERVICE_SECRETS`, a JSON object that maps each
  * service to a list of secrets, newest first, so a secret can be rotated by
  * listing the old one beside the new one:
  *
- *     {"store": ["s1", "s0"]}
+ *     {"store": ["s1", "s0"], "fleet": ["f1"]}
  *
  * Status mapping:
  *  - the variable is not valid JSON of that shape (a service whose list is empty,
@@ -43,7 +43,7 @@ const logger = createLogger("core").child({service: "service-auth"})
 export type ServiceName = NonNullable<AppVariables["service"]>
 
 /** The services Core has a role for. A name outside this list can never authenticate. */
-export const SERVICE_NAMES: readonly ServiceName[] = ["store"]
+export const SERVICE_NAMES: readonly ServiceName[] = ["store", "fleet"]
 
 /** A timestamp header is a plain count of milliseconds: digits only, so one value has one spelling. */
 const TIMESTAMP_PATTERN = /^\d{1,15}$/

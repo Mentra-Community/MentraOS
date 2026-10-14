@@ -17,7 +17,9 @@ const result = await Bun.build({
   target: "browser",
   sourcemap: "linked",
   // The self-hosted fonts are copied from public/fonts. Bun would otherwise inline them as data: URLs.
-  external: ["/fonts/*"],
+  // /api/* is Core's, reached at run time: the Fleet page imports its UI module from /api/admin/fleet/ui/.
+  // The bundler must never try to resolve or inline that.
+  external: ["/fonts/*", "/api/*"],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
   },

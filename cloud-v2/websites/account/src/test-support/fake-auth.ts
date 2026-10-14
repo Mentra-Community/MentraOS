@@ -19,7 +19,7 @@ export function createFakeAuth(options: { session?: AccountSession | null } = {}
       return { error: null };
     }),
     signInWithOAuth: mock(
-      async (_credentials: { provider: "google" | "apple"; options: { redirectTo: string } }): Promise<AuthCallResult> => ({
+      async (_credentials: Parameters<AccountAuthClient["signInWithOAuth"]>[0]): Promise<AuthCallResult> => ({
         error: null,
       }),
     ),

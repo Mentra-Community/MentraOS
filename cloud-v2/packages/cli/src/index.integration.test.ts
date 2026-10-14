@@ -103,7 +103,7 @@ describe("CLI targets and publication", () => {
     ["mentra", "Store: https://api.apps.mentraglass.com"],
     ["mentra:local", "Store: http://localhost:3003"],
     ["mentra:dev", "Store: https://api.apps.dev.mentraglass.com"],
-    ["mentra:staging", "Core: https://core.staging.us-west-2.mentraglass.com"],
+    ["mentra:staging", "Store: https://api.apps.staging.mentraglass.com"],
     ["mentra:prod", "Store: https://api.apps.mentraglass.com"],
   ])("%s targets %s without Doppler", async (scriptName, target) => {
     const f = fixture();

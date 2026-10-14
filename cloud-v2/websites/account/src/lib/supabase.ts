@@ -25,7 +25,7 @@ export interface AccountAuthClient {
   signInWithPassword(credentials: { email: string; password: string }): Promise<AuthCallResult>;
   signInWithOAuth(credentials: {
     provider: SocialProvider;
-    options: { redirectTo: string };
+    options: { redirectTo: string; queryParams?: { prompt: "select_account" } };
   }): Promise<AuthCallResult>;
   signUp(credentials: {
     email: string;

@@ -231,7 +231,8 @@ export function startDeviceEventRouter(): void {
       if (app.running) {
         useAppStatusStore.getState().stop(packageName)
       } else {
-        useAppStatusStore.getState().start(app, {skipNavigation: true})
+        // Picked from the glasses' own menu: a person's choice.
+        useAppStatusStore.getState().start(app, {skipNavigation: true, trigger: "user"})
       }
     }),
   )

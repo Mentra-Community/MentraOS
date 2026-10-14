@@ -21,9 +21,9 @@ function fixture() {
    if([...rows.values()].some(r=>r.caseId!==next.caseId&&r.occurrences.some(o=>next.occurrences.some(n=>n.rootKey===o.rootKey))))return false
    rows.set(next.caseId,structuredClone(routineCaseSchema.parse(next)));events.push(structuredClone(event));return true},}
  const archive:CaseDetailArchive={async write(body){if(failArchive)throw Error('R2 unavailable');bodies.push(structuredClone(body));return{key:'testing/case.json',sha256:'d'.repeat(64),sizeBytes:100}}}
- const prs={async observe(pr:any){return{...pr,headSha:'b'.repeat(40),state:'open' as const,review:'approved' as const,mergedAt:null,observedAt:new Date(now).toISOString()}}}
- const service=new RoutineCaseService(store,archive,{async verify(_o,id){return{passed:id==='passing'}}},()=>now,()=>true,prs)
- return {service,rows,events,bodies,advance:(ms:number)=>now+=ms,failArchive:()=>failArchive=true,beforeCommit:(run:()=>void)=>beforeCommit=run}
+ const prReads:any[]=[],prs={async observe(pr:any,options?:any){prReads.push({pr,options});return{...pr,headSha:'b'.repeat(40),state:'open' as const,review:'approved' as const,mergedAt:null,observedAt:new Date(now).toISOString()}}}
+ const service=new RoutineCaseService(store,archive,{async verify(_o,id){return{passed:id==='passing'}}},()=>now,()=>true,prs,{async recordedInputs(){return[]}})
+ return {service,rows,events,bodies,prReads,advance:(ms:number)=>now+=ms,failArchive:()=>failArchive=true,beforeCommit:(run:()=>void)=>beforeCommit=run}
 }
 const operator={kind:'operator' as const,id:'employee'}
 const update = (revision:number, value={}) => ({mutationId:randomUUID(),revision,...value})
@@ -94,4 +94,12 @@ test('replacing intended PRs filters current observations and validates the fina
  const second=await f.service.update(id,update(1,{intendedFixes:references(21)}),operator)
  expect(second.case.prObservations).toHaveLength(20);expect(second.case.prObservations.every(pr=>pr.number>=21)).toBe(true)
  expect(routineCaseSchema.safeParse(f.rows.get(id)).success).toBe(true)
+})
+
+test('explicit PR refresh shares one comparison budget and leaves recorded owner stage unchanged',async()=>{
+ const f=fixture(),created=await f.service.create(occurrence(),randomUUID(),operator,undefined,{repository:'Mentra-Community/MentraOS',number:4710})
+ const next=await f.service.update(created.case.caseId,update(created.case.revision,{stage:'verifying',owner:'employee'}),operator)
+ const refreshed=await f.service.reconcilePrs(next.case.caseId,update(next.case.revision),operator)
+ expect(refreshed.case.stage).toBe('verifying');expect(refreshed.case.owner).toBe('employee')
+ expect(f.prReads.at(-1).options).toMatchObject({inputs:[],comparisonBudget:{remaining:20},previous:{number:4710}})
 })

@@ -42,3 +42,68 @@ test('source inventory reports invalid bounded source separately from a cancelle
   const f=gateway();await f.service.resolve();await f.service.inventory(commit);
   expect(f.calls.every(url=>url.startsWith('https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/'))).toBe(true);
 });
+
+test('blob failures retain sanitized upstream phase and status without exposing provider material', async () => {
+  const observations: unknown[] = [];
+  const upstream = async () => new Response('PRIVATE_PROVIDER_BODY', {status: 403});
+  const service = new GithubRoutineSourceGateway({async token() {return 'PRIVATE_TOKEN';}}, upstream, value => observations.push(value));
+  await expect(service.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toMatchObject({status: 503});
+  expect(observations).toEqual([{phase: 'response', blobSha: blob, expectedBytes: bytes.length,
+    elapsedMs: expect.any(Number), status: 403, failure: 'unavailable'}]);
+  expect(JSON.stringify(observations)).not.toContain('PRIVATE');
+
+  observations.length = 0;
+  const unauthenticated = new GithubRoutineSourceGateway({async token() {throw new Error('PRIVATE_KEY');}}, upstream, value => observations.push(value));
+  await expect(unauthenticated.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toMatchObject({status: 503});
+  expect(observations).toEqual([{phase: 'authentication', blobSha: blob, expectedBytes: bytes.length,
+    elapsedMs: expect.any(Number), failure: 'unavailable'}]);
+  expect(JSON.stringify(observations)).not.toContain('PRIVATE');
+
+  observations.length = 0;
+  const corrupt = new GithubRoutineSourceGateway({async token() {return 'PRIVATE_TOKEN';}}, async () => new Response('wrong'), value => observations.push(value));
+  await expect(corrupt.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toThrow('differs');
+  expect(observations).toEqual([{phase: 'integrity', blobSha: blob, expectedBytes: bytes.length,
+    receivedBytes: 5, elapsedMs: expect.any(Number), status: 200, failure: 'identity-mismatch'}]);
+});
+
+test('26 concurrent members share verified immutable blobs and returned copies cannot poison the cache', async () => {
+  let reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; await Promise.resolve(); return new Response(bytes);
+  });
+  const file = {gitBlobSha1: blob, size: bytes.length};
+  const results = await Promise.all(Array.from({length: 26}, () => service.blob(file)));
+  expect(reads).toBe(1);
+  for (const value of results) expect(value).toEqual(bytes);
+  results[0]![0] = 0;
+  expect(results[1]).toEqual(bytes); expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(1);
+  await expect(service.blob({...file, size: file.size + 1})).rejects.toThrow('differs');
+});
+
+test('failed or corrupt downloads never populate the verified blob cache', async () => {
+  let reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; return new Response(reads === 1 ? 'wrong' : bytes);
+  }, () => {});
+  const file = {gitBlobSha1: blob, size: bytes.length};
+  await expect(service.blob(file)).rejects.toThrow('differs');
+  expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(2);
+});
+
+test('in-flight byte admission preserves one64MiB blob and releases failed capacity without evicting a shared download', async () => {
+  let finish!: (value: Response) => void, reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; return new Promise<Response>(resolve => {finish = resolve;});
+  }, () => {});
+  const large = {gitBlobSha1: 'a'.repeat(40), size: 64 * 1024 ** 2};
+  const first = service.blob(large), shared = service.blob(large);
+  const failed = Promise.allSettled([first, shared]);
+  await expect(service.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toThrow('concurrent bound');
+  await Promise.resolve(); finish(new Response('unavailable', {status: 503}));
+  expect(await failed).toEqual([{status: 'rejected', reason: expect.objectContaining({status: 503})},
+    {status: 'rejected', reason: expect.objectContaining({status: 503})}]);
+  expect(reads).toBe(1);
+  const next = service.blob({gitBlobSha1: blob, size: bytes.length});
+  await Promise.resolve(); finish(new Response(bytes));
+  expect(await next).toEqual(bytes); expect(reads).toBe(2);
+});

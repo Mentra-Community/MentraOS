@@ -1,10 +1,14 @@
 import {NativeModule, requireNativeModule} from "expo"
 
-import {CrustModuleEvents, InstalledApp} from "./Crust.types"
+import {AppPermissionReceipt, AppPermissionSnapshot, CrustModuleEvents, InstalledApp} from "./Crust.types"
 
 declare class CrustModule extends NativeModule<CrustModuleEvents> {
   /** True for the native iOS app running on an Apple Silicon Mac. */
   readonly isIOSAppOnMac?: boolean
+  /** iOS: passive actual-app authorization status; never requests consent. */
+  getPermissionStatus(requestId: null): Promise<AppPermissionSnapshot>
+  /** iOS: a nonce publishes fresh status at the fixed managed-cache path. */
+  getPermissionStatus(requestId: string): Promise<AppPermissionReceipt>
   PI: number
   hello(): string
   setValueAsync(value: string): Promise<void>

@@ -8,7 +8,7 @@
  * else needs a principal (a signed-in person or a Core credential), and each
  * area then needs its own capability. There is no blanket admin gate:
  *
- *  - `/me`: any principal; says what it may do here;
+ *  - `/me`: any principal; says what it may do here and whether Fleet is installed;
  *  - `/reports`: `organization.incidents.read`;
  *  - `/support-profiles`: `organization.supportProfiles.read`;
  *  - `/test-runs`, `/routine-catalog`, `/routines`, `/test-routines`, `/test-builds`, `/test-dispatches`:
@@ -17,7 +17,9 @@
  *    standing in that workspace (an Organization Admin acts as its owner);
  *  - `/organization`: the organization API (every workspace, ownership
  *    recovery, operator keys), for people holding the organization capability;
- *  - `/audit-log`: an Organization Admin who is a person.
+ *  - `/audit-log`: an Organization Admin who is a person;
+ *  - `/fleet`: forwarded to the optional Fleet service, for a person holding
+ *    `organization.fleet.administer` (an Organization Admin). The forwarder carries its own gates.
  *
  * An Organization Admin holds every organization capability; an operator key
  * holds only the scopes it was created with; a workspace key holds none.
@@ -26,9 +28,11 @@
 import type {OrganizationCapability, PrincipalResponse} from "@mentra/workspace-contract"
 import {Hono, type MiddlewareHandler} from "hono"
 import {createMiddleware} from "hono/factory"
+import {fleetInstalled} from "../../services/fleet/fleet-config"
 import {organizationView} from "../../services/workspaces/authorization.service"
 import {listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppEnv} from "../../types/hono.types"
+import {adminFleetApi} from "../fleet/fleet-forwarding"
 import {principalAuth, principalLabel, requireOrganizationCapability} from "../middleware/principal.middleware"
 import {createOrganizationApi} from "../organization/organization.api"
 import {createPortalAuthApi} from "../signin/portal-auth.api"
@@ -48,6 +52,11 @@ export interface AdminMeResponse {
   credential: {credentialId: string; credentialKind: "workspace" | "organization"; label: string} | null
   organization: {capabilities: OrganizationCapability[]}
   workspaces: PrincipalResponse["workspaces"]
+  /**
+   * Whether the optional Fleet integration is installed on this Core. True for an install whose settings are
+   * unusable too, so the admin portal can say Fleet is unavailable rather than hide a broken install.
+   */
+  fleet: {installed: boolean}
 }
 
 const app = new Hono<AppEnv>()
@@ -86,12 +95,14 @@ app.get("/me", async c => {
         : null,
     organization: {capabilities: organizationView(principal).capabilities},
     workspaces: principal.kind === "user" ? await listWorkspacesForUser(principal.mentraUserId) : [],
+    fleet: {installed: fleetInstalled()},
   }
   return c.json(body)
 })
 
 app.route("/workspaces", createWorkspacesApi())
 app.route("/organization", createOrganizationApi())
+app.route("/fleet", adminFleetApi)
 
 const readsIncidents = requireOrganizationCapability("organization.incidents.read")
 const readsSupportProfiles = requireOrganizationCapability("organization.supportProfiles.read")

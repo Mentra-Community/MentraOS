@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { CreateWorkspaceDialog, ROLE_LABELS, workspaceListQuery } from "@mentra/workspace-ui";
+import { CodeXml } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { AppShell, type NavGroup } from "@/components/app-shell";
+import { AppShell, type NavGroup, type NavItem } from "@/components/app-shell";
 import { SwitcherInvitationActions } from "@/components/pending-invitation";
 import { WorkspaceSwitcher, type SwitcherInvitation, type SwitcherWorkspace } from "@/components/workspace-switcher";
 import type { PendingInvitation } from "@/lib/invitations";
@@ -31,9 +32,15 @@ export function switcherInvitation(invitation: PendingInvitation): SwitcherInvit
   };
 }
 
+/** The sidebar's links out of the portal: this environment's Developer Console, where there is one. */
+export function portalLinks(developerConsoleUrl: string | null): NavItem[] {
+  if (!developerConsoleUrl) return [];
+  return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
+}
+
 /**
  * `AppShell` with the workspace switcher wired to the person's workspaces, this tab's invitation and the
- * create-workspace dialog. A new workspace opens as soon as it exists.
+ * create-workspace dialog, and the links out of the portal. A new workspace opens as soon as it exists.
  */
 export function PortalShell({
   current,
@@ -83,6 +90,7 @@ export function PortalShell({
       }
       nav={nav}
       activeKey={activeKey}
+      links={portalLinks(portal.developerConsoleUrl)}
       title={title}
       description={description}
       headerAction={headerAction}
