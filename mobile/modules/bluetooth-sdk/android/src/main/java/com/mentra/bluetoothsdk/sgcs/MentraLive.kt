@@ -7987,7 +7987,11 @@ class MentraLive : SGCManager() {
 
         // Tear down Classic (A2DP/HFP) before GATT close. Closing only the proxy left the
         // phone's system Bluetooth UI showing Mentra Live still connected.
-        val classicDevice = connectedDevice
+        // BLE loss clears connectedDevice while the OS audio profiles can remain connected.
+        // Use this session's existing Classic target before resetting the tracker below.
+        val classicDevice = connectedDevice ?: classicAudioConnectionTracker.targetForDisconnect()?.let {
+            bluetoothAdapter?.getRemoteDevice(it)
+        }
         disconnectClassicProfiles(classicDevice)
         closeA2dpProxy()
         classicAudioConnectionTracker.reset()

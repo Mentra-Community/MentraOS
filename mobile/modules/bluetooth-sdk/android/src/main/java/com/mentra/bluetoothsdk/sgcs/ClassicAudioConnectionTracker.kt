@@ -29,6 +29,10 @@ internal class ClassicAudioConnectionTracker(
     val connected: Boolean
         get() = connectedProfiles.isNotEmpty()
 
+    /** BLE may already be gone when the user explicitly disconnects Classic audio. */
+    @Synchronized
+    fun targetForDisconnect(): String? = targetAddress
+
     @Synchronized
     fun setTarget(address: String) {
         val normalizedAddress = address.normalizedBluetoothAddress()
