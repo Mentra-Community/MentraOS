@@ -18,6 +18,7 @@ import {
   BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
+  LEGACY_GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
   LEGACY_EXTRA_TIMEOUT_MS,
   LEGACY_MTK_SIM_TICK_MS,
@@ -678,6 +679,154 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
 })
 
 describe("OtaInstallCoordinator version-change detour retry gate", () => {
+  const target = 49000000
+  const prepareDowngrade = (versionCode = target) => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "test"},
+    })
+    const checked = {
+      ...checkResult(),
+      isApkDowngrade: true,
+      updateInfo: {
+        available: true,
+        isDowngrade: true,
+        versionCode,
+        versionName: "3.2.1",
+        updates: ["apk"],
+        totalSize: 110336896,
+      },
+    }
+    otaInstallCoordinator.prepare(checked)
+    return checked
+  }
+
+  beforeEach(() => prepareDowngrade())
+
+  it("retains the existing offer when restoring a coordinator with no prepared check", () => {
+    let restored!: typeof otaInstallCoordinator
+    let restoredStore!: typeof useGlassesStore
+    jest.isolateModules(() => {
+      restored = require("../../modules/engine/src/services/OtaInstallCoordinator").otaInstallCoordinator
+      restoredStore = require("../../modules/engine/src/stores/glasses").useGlassesStore
+    })
+    restoredStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    restoredStore.getState().setOtaUpdateAvailable({
+      available: true,
+      isDowngrade: true,
+      versionCode: target,
+      versionName: "3.2.1",
+      updates: ["apk"],
+      totalSize: 1,
+    })
+    try {
+      restored.attach()
+      expect(restored.snapshot().isVersionChange).toBe(true)
+    } finally {
+      restored.detach()
+    }
+  })
+
+  it.each(["cleared", "replaced"])(
+    "keeps the checked downgrade after the store offer is %s before attach",
+    (change) => {
+      prepareDowngrade(302010070)
+      useGlassesStore.getState().setOtaUpdateAvailable(
+        change === "cleared"
+          ? null
+          : {
+              available: true,
+              isDowngrade: true,
+              versionCode: 302010071,
+              versionName: "other",
+              updates: ["apk"],
+              totalSize: 1,
+            },
+      )
+      otaInstallCoordinator.attach()
+      expect(otaInstallCoordinator.snapshot().isVersionChange).toBe(true)
+      GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+      useGlassesStore.getState().setGlassesInfo({buildNumber: "302010071"})
+      expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+      useGlassesStore.getState().setGlassesInfo({buildNumber: "302010070"})
+      expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(true)
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    },
+  )
+
+  it("does not adopt a stale downgrade offer when the prepared check has no APK downgrade", () => {
+    otaInstallCoordinator.prepare(checkResult())
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true,
+      isDowngrade: true,
+      versionCode: target,
+      versionName: "stale",
+      updates: ["apk"],
+      totalSize: 1,
+    })
+    otaInstallCoordinator.attach()
+    expect(otaInstallCoordinator.snapshot().isVersionChange).toBe(false)
+  })
+
+  it.each(["physical", "session"])(
+    "waits for the exact target after an acknowledged install and %s reconnect",
+    async (edge) => {
+      useGlassesStore.getState().setGlassesInfo({buildNumber: "303000317"})
+      prepareDowngrade(302010070)
+      // A late BES completion clears the global offer before the progress screen mounts.
+      useGlassesStore.getState().setOtaUpdateAvailable(null)
+      otaInstallCoordinator.attach()
+      await flushNativeStartPromise()
+      GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+      if (edge === "physical") {
+        useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+        setGlassesConnected()
+      } else {
+        GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "recovery"})
+      }
+      useGlassesStore.getState().setOtaStatus(idleStatus())
+      useGlassesStore.getState().setGlassesInfo({buildNumber: "33"})
+      await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + RETRY_INTERVAL_MS)
+      expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+      expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+      useGlassesStore.getState().setGlassesInfo({buildNumber: "302010070"})
+      expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(true)
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+      await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it("keeps the recovery wait bounded when the target never arrives", async () => {
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "recovery"})
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    await jest.advanceTimersByTimeAsync(LEGACY_GLOBAL_OTA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.globalTimeout)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("suppresses session-change arbitration even when the checked store offer is still present", async () => {
+    const checked = prepareDowngrade()
+    useGlassesStore.getState().setOtaUpdateAvailable(checked.updateInfo)
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "recovery"})
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("retry during a latched detour re-enters the wait without sending ota_start", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setOtaUpdateAvailable({

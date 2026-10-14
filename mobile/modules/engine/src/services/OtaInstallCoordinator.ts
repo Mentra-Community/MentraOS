@@ -358,7 +358,9 @@ class OtaInstallCoordinator {
       initialState.otaProgress,
       initialState.buildNumber,
     )
-    const selected = initialState.otaUpdateAvailable
+    // A late completion from the previous OTA step can clear the store's offer
+    // between check and mount. Keep this install bound to its prepared check.
+    const selected = this.preparedCheckResult ? this.preparedCheckResult.updateInfo : initialState.otaUpdateAvailable
     if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
       this.versionChangeSession = true
       this.versionChangeTarget = selected.versionCode
@@ -1190,6 +1192,14 @@ class OtaInstallCoordinator {
     // a duplicate ota_start. Clearing here is a no-op on the physical path.
     this.clearQueryReplyTimeout()
     this.setSawReconnectEdge(true)
+
+    // Both a physical reconnect and an ASG session change can enter here while
+    // the recovery worker installs the pinned downgrade. Idle is expected after
+    // its restart; query/fallback must not re-drive the old hotspot endpoint.
+    if (this.isInVersionChangeDetour()) {
+      console.log(`[OTA_PROGRESS] ${label}: reconnect during version-change detour — no query (expected)`)
+      return true
+    }
 
     if (this.besRestartDisconnectObserved) {
       console.log(`[OTA_PROGRESS] ${label}: BES reboot reconnect observed — no ota_query_status`)
