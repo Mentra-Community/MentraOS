@@ -44,6 +44,8 @@ other service Core knows: it adds a `"fleet"` list, with `x-mentra-service: flee
 | `GET /changes?after=&limit=` | The change feed: workspace events and `user.deleted` tombstones in commit order, for the Store and Fleet ([Fleet integration](fleet-integration.md#the-change-feed)). |
 | `POST /credentials` | `{credentialId, token}`: a workspace key limited to the named packages, minted for the Store on behalf of a staff member (`issuedBy.actorEmail`). The token is returned once. |
 | `POST /users/resolve-email` | `{mentraUserId}` of the Mentra account whose confirmed email this is (the Core user is created on first use), or `404 user_not_found`. |
+| `PUT /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds}`: the calling service holds the workspace from deletion, replacing its previous hold ([Deletion holds](#deletion-holds)). |
+| `DELETE /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds}`: the calling service's hold is cleared. |
 
 - **Principals.** A bearer credential is what a person or a key presented to the
   Store: a Core access token from the Core's sign-in server (issued to the
@@ -68,6 +70,49 @@ other service Core knows: it adds a `"fleet"` list, with `x-mentra-service: flee
 
 Authorization decisions use current state. Display data (workspace names) may
 be cached for up to five minutes; a cached answer never authorizes a write.
+
+## Deletion holds
+
+Core does not know which miniapps a workspace owns, so the Store tells it. While
+a workspace owns published miniapps, the Store holds it from deletion; Core then
+refuses to delete it from anywhere (the workspace portal, the admin portal, the
+API), to its owners and to Organization Admins alike, until the Store clears the
+hold.
+
+```ts
+// After a publish, an unpublish or a miniapp delete changes how many published miniapps the workspace owns:
+if (published > 0) await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published})
+else await core.clearDeletionHold(workspaceId)
+```
+
+- **The calls.** `PUT /api/internal/workspaces/workspaces/:workspaceId/deletion-holds/store`
+  with `{"reason": "owns_miniapps", "count": 3}` sets the hold; `DELETE` on the
+  same path, with an empty body, clears it. Both are signed like every other
+  call, and `:service` must be the service that signs (`store`); naming another
+  service is `403 {"error":"forbidden"}`. The client's `setDeletionHold` and
+  `clearDeletionHold` fill it in.
+- **The hold.** `reason` is a lowercase code of letters, digits and underscores
+  (`owns_miniapps` for the Store); `count` is optional and, when sent, a positive
+  whole number. Anything else is `400 invalid_request`. Each service has one hold
+  per workspace: setting replaces it.
+- **Idempotent.** Setting the hold the Store already has, or clearing one it does
+  not have, changes nothing and records nothing, so the Store can set the current
+  count after every change, or reconcile every workspace at startup, without
+  bookkeeping. Every change is recorded in the workspace's audit log and on the
+  change feed (`workspace.deletion_hold_set`, `workspace.deletion_hold_cleared`).
+- **Answers.** `200 {workspaceId, holds}`: every hold on the workspace afterwards,
+  each `{service, reason, count?}`. An unknown workspace is
+  `404 workspace_not_found`. Holding a deleted workspace is
+  `410 workspace_deleted`; clearing on one answers `200` with no holds, since a
+  workspace with a hold is never deleted.
+- **What a delete gets.** `409 {"error": "workspace_has_holds",
+  "error_description": "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+  "holds": [...]}`. The portals show the same sentence where the delete is, before
+  anyone tries (`deletionHolds` on the workspace's detail).
+- **Nothing else.** A hold blocks only deleting the workspace. Membership
+  changes, keys, invitations and account deletion work as before: deleting an
+  account never deletes a workspace, so a held workspace whose last owner deletes
+  their account stays, with its hold, for an Organization Admin to recover.
 
 ## Signing people in to the Store
 
