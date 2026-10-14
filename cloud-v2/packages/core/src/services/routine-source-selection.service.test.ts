@@ -65,3 +65,27 @@ test('blob failures retain sanitized upstream phase and status without exposing 
   expect(observations).toEqual([{phase: 'integrity', blobSha: blob, expectedBytes: bytes.length,
     receivedBytes: 5, elapsedMs: expect.any(Number), status: 200, failure: 'identity-mismatch'}]);
 });
+
+test('26 concurrent members share verified immutable blobs and returned copies cannot poison the cache', async () => {
+  let reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; await Promise.resolve(); return new Response(bytes);
+  });
+  const file = {gitBlobSha1: blob, size: bytes.length};
+  const results = await Promise.all(Array.from({length: 26}, () => service.blob(file)));
+  expect(reads).toBe(1);
+  for (const value of results) expect(value).toEqual(bytes);
+  results[0]![0] = 0;
+  expect(results[1]).toEqual(bytes); expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(1);
+  await expect(service.blob({...file, size: file.size + 1})).rejects.toThrow('differs');
+});
+
+test('failed or corrupt downloads never populate the verified blob cache', async () => {
+  let reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; return new Response(reads === 1 ? 'wrong' : bytes);
+  }, () => {});
+  const file = {gitBlobSha1: blob, size: bytes.length};
+  await expect(service.blob(file)).rejects.toThrow('differs');
+  expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(2);
+});
