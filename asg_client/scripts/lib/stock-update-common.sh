@@ -630,16 +630,6 @@ wait_for_bes_success() {
       sleep 3
       continue
     fi
-    if [ -n "$offline_since" ]; then
-      echo "ADB returned. Checking whether BES already applied."
-      offline_since=""
-      versions="$(query_firmware_versions || true)"
-      bes="${versions%%|*}"
-      if [ -n "$bes" ] && version_at_least "$bes" "$target_version"; then
-        echo "Verified BES firmware $bes."
-        return 0
-      fi
-    fi
     logs="$("${ADB[@]}" logcat -d 2>/dev/null | tail -n 500 || true)"
     if printf '%s\n' "$logs" | grep -Fq 'BES firmware update SUCCESS! BES will reboot.'; then
       accepted=true
@@ -648,6 +638,18 @@ wait_for_bes_success() {
     fi
     if printf '%s\n' "$logs" | grep -Eq 'Apply firmware error|WHOLE CRC32 CHECK FAILED|BES OTA authorization DENIED|Debug BES OTA dispatch failed|BES OTA failed to start|BesOtaManager not initialized'; then
       fail "BES update failed; inspect adb logcat for the reported OTA error"
+    fi
+    if [ -n "$offline_since" ]; then
+      # Inspect the logcat buffer above before query_firmware_versions runs
+      # `logcat -c`, which would wipe the BES success marker the loop depends on.
+      echo "ADB returned. Checking whether BES already applied."
+      offline_since=""
+      versions="$(query_firmware_versions || true)"
+      bes="${versions%%|*}"
+      if [ -n "$bes" ] && version_at_least "$bes" "$target_version"; then
+        echo "Verified BES firmware $bes."
+        return 0
+      fi
     fi
     sleep 3
   done
