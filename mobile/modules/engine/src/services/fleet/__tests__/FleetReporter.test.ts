@@ -280,6 +280,16 @@ function observe(count: number, observedAt?: string): FleetRecord[] {
   return records
 }
 
+/** A backlog already waiting for an account on a Core when the reporter starts. */
+function backlog(count: number, coreUrl = CORE_X, user = A): void {
+  const partition = partitionKey(coreUrl, user)
+  for (let i = 0; i < count; i += 1) {
+    const record = launchRecord()
+    origin.set(record.recordId, partition)
+    queue.enqueue(partition, record)
+  }
+}
+
 /** Records waiting for an account on a Core, straight from the queue. */
 function queued(coreUrl: string, user: string): FleetRecord[] {
   return queue.nextBatch(partitionKey(coreUrl, user), 100_000, Number.MAX_SAFE_INTEGER)
@@ -839,7 +849,35 @@ describe("backing off", () => {
 })
 
 describe("batch size", () => {
-  test("a 413 halves the batch until it fits, and the batch never grows back to a refused size", async () => {
+  test("after an outage the next batch is a probe of 5 that doubles with each success, up to 500", async () => {
+    backlog(1_200)
+    reporter.start()
+    core.respond = () => unavailable()
+    await advance(0)
+    core.respond = (rs) => acceptAll(rs)
+    await advance(30 * SECOND)
+    expect(core.calls.map((call) => call.records.length)).toEqual([500, 5, 10, 20, 40, 80, 160, 320, 500])
+    await advance(MINUTE)
+    expect(core.calls.at(-1)!.records).toHaveLength(65)
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
+  test.each([
+    ["forbidden", {kind: "forbidden"} as FleetSendOutcome],
+    ["an authentication failure", {kind: "unauthorized"} as FleetSendOutcome],
+    ["an answer that settles nothing", {kind: "results", ack: {schemaVersion: 1, results: []}} as FleetSendOutcome],
+    ["a session change", {kind: "session_changed"} as FleetSendOutcome],
+  ])("after %s the next batch is a probe of 5", async (_name, outcome) => {
+    backlog(300)
+    reporter.start()
+    core.respond = () => outcome
+    await advance(0)
+    core.respond = (rs) => acceptAll(rs)
+    await untilNextCall(HOUR)
+    expect(core.calls.map((call) => call.records.length).slice(0, 2)).toEqual([300, 5])
+  })
+
+  test("a 413 halves the batch until it fits, and the batch does not grow back to a refused size for a while", async () => {
     reporter.start()
     const records = observe(8)
     const refused: number[] = []
@@ -864,10 +902,54 @@ describe("batch size", () => {
     )
   })
 
+  test("a refused size is tried again once 10 sends have succeeded below it", async () => {
+    reporter.start()
+    observe(4)
+    let fits = 2
+    core.respond = (rs) => (rs.length > fits ? {kind: "batch_too_large"} : acceptAll(rs))
+    await advance(2 * MINUTE)
+    // 4 is refused and 2 fits, so batches stay below 4: two sends have succeeded.
+    expect(core.calls.map((call) => call.records.length)).toEqual([4, 2, 2])
+    fits = 500
+    for (let i = 0; i < 8; i += 1) {
+      observe(4)
+      await advance(MINUTE)
+    }
+    // Core would take more, but the batch stays below the refused size until the tenth success.
+    expect(core.calls.slice(3).map((call) => call.records.length)).toEqual(Array(8).fill(3))
+    await advance(MINUTE)
+    expect(core.calls.at(-1)!.records).toHaveLength(6)
+  })
+
+  test("a spurious refusal of a 2-record batch does not pin the run to single records sent back to back", async () => {
+    reporter.start()
+    observe(2)
+    let refused = false
+    core.respond = (rs) => {
+      if (refused) return acceptAll(rs)
+      refused = true
+      return {kind: "batch_too_large"}
+    }
+    await advance(MINUTE)
+    expect(core.calls.map((call) => call.records.length)).toEqual([2])
+    observe(300)
+    await advance(2 * HOUR)
+    const calls = core.calls
+    for (let i = 1; i < calls.length; i += 1) {
+      if (calls[i].records.length === 1) expect(calls[i].at - calls[i - 1].at).toBeGreaterThanOrEqual(MINUTE)
+    }
+    expect(calls.filter((call) => call.records.length === 1).length).toBeLessThanOrEqual(10)
+    expect(Math.max(...calls.map((call) => call.records.length))).toBeGreaterThan(100)
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
   test("a single record still too large is removed with a record_rejected gap", async () => {
     reporter.start()
     const [big, small] = observe(2)
     core.respond = (rs) => (ids(rs).includes(big.recordId) ? {kind: "batch_too_large"} : acceptAll(rs))
+    await advance(MINUTE)
+    expect(core.calls.map((call) => call.records.length)).toEqual([2])
+    // A single record is never sent straight after another request: it waits the normal minute.
     await advance(MINUTE)
     expect(core.calls.map((call) => call.records.length)).toEqual([2, 1])
     const left = queued(CORE_X, A)
@@ -891,6 +973,8 @@ describe("batch size", () => {
         ids(rs).includes(bad.recordId) ? {kind: "batch_invalid", code: "invalid_batch"} : acceptAll(rs)
       await advance(MINUTE)
       expect(core.calls.map((call) => ids(call.records))).toEqual([ids([okA, okB, bad, okC]), ids([okA, okB])])
+      await advance(MINUTE)
+      expect(core.calls.map((call) => call.records.length).slice(2)).toEqual([2])
       await advance(MINUTE)
       expect(core.calls.map((call) => call.records.length).slice(2)).toEqual([2, 1])
       const left = queued(CORE_X, A)

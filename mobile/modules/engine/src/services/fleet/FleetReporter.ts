@@ -13,10 +13,17 @@
  * - accepted or duplicate: the record is removed. Rejected: removed, with a `record_rejected` gap over its
  *   observation time. Retryable: kept, and the next request waits at least its Retry-After.
  * - not installed: collection stops and the partition is dropped, until the next sign-in or engine start.
+ * - no Fleet route (a 404 without Fleet's code: a Core from before Fleet, or a proxy): collection stops until the next
+ *   sign-in or engine start, as for not installed, but the partition is kept; its records expire after 7 days.
  * - unavailable, an authentication failure, or anything unexpected: everything is kept, and the next attempt waits
- *   min(30 min, 30 s * 2^n) +-20%, or Retry-After when given (at most 30 minutes). An answer resets n.
+ *   min(30 min, 30 s * 2^n) +-20%, or Retry-After when given (at most 30 minutes). Only an answer that settles a
+ *   record (accepted, duplicate or rejected) resets n.
  * - forbidden: everything is kept, and the next attempt waits 30 minutes.
- * - too large, or refused as a batch: the batch is halved; a single record still refused is removed with a gap.
+ * - too large, or refused as a batch: the batch is halved; a single record still refused is removed with a gap. The
+ *   batch does not grow back to a refused size until 10 sends have succeeded below it.
+ *
+ * After any failure the next batch is a probe of 5 records, and each success doubles the batch again, up to 500. A
+ * batch of a single record is never sent straight after another request: it waits the normal minute.
  *
  * Before each upload, the records the queue dropped or expired become one coverage gap, queued in the same tick.
  *
@@ -65,6 +72,10 @@ const UPLOAD_INTERVAL_MS = 60_000
 /** This many records waiting are sent at once rather than at the next minute. */
 const UPLOAD_NOW_RECORDS = 100
 const MAX_BATCH_RECORDS = FLEET_LIMITS.maxRecordsPerBatch
+/** After a failure the next batch is this small, and doubles with each success. */
+const PROBE_BATCH_RECORDS = 5
+/** A batch size Core refused is not tried again until this many sends have succeeded below it. */
+const BATCH_CAP_RESET_SENDS = 10
 /** The records' own JSON; the rest of the 1 MiB request limit is headroom for the envelope and the commas. */
 const MAX_BATCH_BYTES = 1_000_000
 const BACKOFF_BASE_MS = 30_000
@@ -122,8 +133,10 @@ interface Run {
   /** Failed attempts since the last answer: the n of the backoff. */
   failures: number
   batchLimit: number
-  /** Below every batch size Core refused in this run: the limit never grows back to a size that was refused. */
+  /** Below the batch sizes Core refused lately: the limit does not grow back to a refused size for a while. */
   batchCap: number
+  /** Sends that succeeded since Core last refused a batch; at BATCH_CAP_RESET_SENDS the cap is lifted. */
+  sendsSinceRefusal: number
   batchRefusalLogged: boolean
 }
 
@@ -195,6 +208,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       failures: 0,
       batchLimit: MAX_BATCH_RECORDS,
       batchCap: MAX_BATCH_RECORDS,
+      sendsSinceRefusal: 0,
       batchRefusalLogged: false,
     }
     run = r
@@ -301,7 +315,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     const r = run
     if (!r || r.partition !== partition || r.uploading || r.backingOff || r.dueAt <= now()) return
     // Deferred to a timer: this runs inside whatever the collector is reacting to.
-    if (queue.size(partition) >= UPLOAD_NOW_RECORDS) schedule(r, AT_ONCE)
+    if (queue.size(partition) >= UPLOAD_NOW_RECORDS && r.batchLimit > 1) schedule(r, AT_ONCE)
   }
 
   function sweepIfDue(at: number): void {
@@ -371,6 +385,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
         // The client refreshed the token once; records are never dropped for credentials.
         return failed(r, null)
       case "forbidden":
+        // Core will not take this account's reports now; that changes slowly, so wait the longest backoff.
+        r.batchLimit = Math.min(r.batchLimit, PROBE_BATCH_RECORDS)
         r.failures += 1
         return {delayMs: Math.round(BACKOFF_MAX_MS * (0.8 + 0.4 * random())), backingOff: true}
       case "batch_too_large":
@@ -389,6 +405,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
   }
 
   function failed(r: Run, retryAfterSeconds: number | null): Next {
+    // Whatever went wrong may still be wrong: the next attempt sends a small batch, not the whole backlog again.
+    r.batchLimit = Math.min(r.batchLimit, PROBE_BATCH_RECORDS)
     const delayMs =
       retryAfterSeconds != null && Number.isFinite(retryAfterSeconds)
         ? retryDelayMs(retryAfterSeconds)
@@ -429,6 +447,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     if (removed.length === 0) return failed(r, retryable ? retryAfterSeconds : null)
 
     r.failures = 0
+    r.sendsSinceRefusal += 1
+    if (r.sendsSinceRefusal >= BATCH_CAP_RESET_SENDS) r.batchCap = MAX_BATCH_RECORDS
     r.batchLimit = Math.min(r.batchCap, r.batchLimit * 2)
     const at = now()
     queue.remove(r.partition, removed)
@@ -443,18 +463,28 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
         backingOff: true,
       }
     }
-    return queue.size(r.partition) >= UPLOAD_NOW_RECORDS ? AT_ONCE : AFTER_INTERVAL
+    return afterSend(r)
   }
 
   /**
-   * Too large, or refused as a batch: halve it, and never grow back to this size in this run (a proxy's body limit
-   * would otherwise refuse every other request). A single record still refused goes, with a gap over its time.
+   * The next send goes at once while 100 or more records wait, unless it would carry a single record: single records
+   * are spaced by the normal minute, so a run reduced to them cannot fire one request after another.
+   */
+  function afterSend(r: Run): Next {
+    return queue.size(r.partition) >= UPLOAD_NOW_RECORDS && r.batchLimit > 1 ? AT_ONCE : AFTER_INTERVAL
+  }
+
+  /**
+   * Too large, or refused as a batch: halve it, and do not grow back to this size until 10 sends have succeeded below
+   * it (a proxy's body limit would otherwise refuse every other request, and one spurious refusal would otherwise pin
+   * the run to tiny batches). A single record still refused goes, with a gap over its time.
    */
   function shrink(r: Run, records: FleetRecord[]): Next {
     if (records.length > 1) {
       r.batchCap = Math.min(r.batchCap, records.length - 1)
       r.batchLimit = Math.max(1, Math.floor(records.length / 2))
-      return AT_ONCE
+      r.sendsSinceRefusal = 0
+      return r.batchLimit > 1 ? AT_ONCE : AFTER_INTERVAL
     }
     const [record] = records
     queue.remove(r.partition, [record.recordId])
