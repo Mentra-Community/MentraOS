@@ -73,6 +73,7 @@ export const laneRepairStatusSchema = z.object({
   current: z.boolean(),
   startedAt: timestamp,
   finishedAt: timestamp,
+  haltDecisionId: frameworkIdentitySchema.optional(),
 }).superRefine((attempt, ctx) => {
   if (attempt.startedAt && attempt.finishedAt && Date.parse(attempt.finishedAt) < Date.parse(attempt.startedAt))
     ctx.addIssue({code: "custom", message: "Restoration finish precedes its recorded start"})
@@ -91,6 +92,7 @@ export const laneRestorationAttemptSchema = z
     handedOffAt: timestamp,
     startedAt: timestamp,
     finishedAt: timestamp,
+  haltDecisionId: frameworkIdentitySchema.optional(),
     report: z
       .object({
         reportId: frameworkIdentitySchema,

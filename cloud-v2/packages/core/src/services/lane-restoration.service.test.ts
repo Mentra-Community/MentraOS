@@ -213,3 +213,15 @@ test('host-filtered history preserves full receipts; malformed current custody n
   await expect(service.list('not a valid identity')).rejects.toThrow('Invalid controller');
   await expect(service.overview()).rejects.toThrow('unavailable');
 });
+
+test('current repair exposes only its actual halt decision for fenced recovery delivery', async () => {
+  const halted = {...attempt, state: 'halted' as const, current: false, haltDecisionId: 'halt:actual'}
+  const reported = {...snapshot, lanes: [{...snapshot.lanes[0], state: 'out-of-service',
+    activity: {generation: 80, owner: {id: attempt.executionId, kind: 'fixer' as const}}}],
+    restoration: {schemaVersion: 1, attempts: [halted], truncated: false}}
+  const service = new LaneRestorationService({async overview() {return [{snapshot: reported, receivedAt: new Date(at)}]},
+    async list() {return [{snapshot: reported, receivedAt: new Date(at)}]}})
+  expect((await service.overview()).hosts[0]!.lanes[0]!.repair!.haltDecisionId).toBe('halt:actual')
+  expect((await service.list()).hosts[0]!.lanes[0]!.repair!.haltDecisionId).toBe('halt:actual')
+  expect(Object.keys(laneOverviewFields)).toContain('snapshot.restoration.attempts.haltDecisionId')
+})

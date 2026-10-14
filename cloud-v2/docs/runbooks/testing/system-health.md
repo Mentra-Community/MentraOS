@@ -135,3 +135,22 @@ accepted and show restoration records unknown. The producer begins recording
 future resume refusals as scoped operation receipts; it does not manufacture
 missing past calls or freeze a failed readiness check into an accepted decision.
 This is retained controller history, not a complete lifetime audit log.
+
+### Retry a halted repair
+
+A current out-of-service lane can show **Retry recovery** when its controller
+supports dashboard recovery delivery and reports the exact accepted halt decision.
+Describe the requested human action you completed, then confirm the retry. The
+existing authenticated lane-control delivery calls the controller's `fixer.reopen`
+operation for that interruption and halt decision. A changed repair, an active or
+uncertain previous fixer, or unsettled writers can refuse the request. Acceptance
+means repair custody was reopened; cleanup and readiness checks still decide
+whether the lane can return to service.
+
+Pause and Reserve are disabled on a repair-owned lane. Resume scheduling only
+changes the scheduling mode, and Release returns your own waiting or granted
+reservation; neither recovers a repair.
+
+Deploy the Core reader before a controller reports `laneControls.reopenRepair` or
+`haltDecisionId`. The Admin control stays unavailable until that explicit support
+and a fresh, matching halted repair are reported. No lane is reopened by rollout.
