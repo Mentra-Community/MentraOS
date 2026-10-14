@@ -35,6 +35,7 @@ const INVALID_RECORDS: Record<string, {path: (string | number)[]; code: ZodIssue
   "report-invalid-negative-elapsed.json": {path: ["payload", "sessions", 0, "elapsedMs"], code: "too_small"},
   "report-invalid-offset-time.json": {path: ["observedAt"], code: "invalid_string"},
   "report-invalid-photo-without-operation-id.json": {path: ["operationId"], code: "invalid_type"},
+  "report-invalid-snapshot-glasses-without-binding.json": {path: ["deviceBinding"], code: "custom"},
 }
 const INVALID_ENVELOPES = ["report-invalid-empty-batch.json"]
 
@@ -163,6 +164,16 @@ describe("record", () => {
     const record = loadRecord("report-valid-miniapp-launch.json")
     record.deviceBinding = {kind: "provisional", bindingId: "bind-5c21e0", product: "mentra_live"}
     expect(FleetRecordSchema.safeParse(record).success).toBe(false)
+  })
+
+  test("a snapshot carries a glasses binding exactly when it includes glasses", () => {
+    const record = loadRecord("report-valid-snapshot.json")
+    const {glasses, ...phoneOnly} = record.payload
+    expect(glasses).toBeDefined()
+    const issues = (candidate: Json) => FleetRecordSchema.safeParse(candidate).error?.issues ?? []
+    expect(issues({...record, payload: phoneOnly}).map((issue) => issue.path)).toEqual([["deviceBinding"]])
+    const {deviceBinding: _binding, ...unbound} = record
+    expect(FleetRecordSchema.safeParse({...unbound, payload: phoneOnly}).success).toBe(true)
   })
 
   test("a photo stage failed names the stage it failed at, and only then", () => {
