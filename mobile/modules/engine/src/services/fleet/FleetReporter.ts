@@ -4,9 +4,12 @@
  * A run is one account on one Core, which is one partition of the durable queue. Each run starts the collector with
  * a new collector session and uploads only its own partition, as that account, to that Core: every request goes
  * through `reportAs`, which sends nothing unless the client still holds that account's token for that Core. A
- * sign-out, a sign-in as someone else or a client rebuilt for another Core ends the run (the collector writes its
- * final checkpoints into the old partition) and starts the next. An old partition's records wait in the queue until
- * their account signs in to their Core again, or expire into a coverage gap; they are never sent as anyone else.
+ * sign-out, a sign-in or a client rebuilt for another Core ends the run (the collector writes its final checkpoints
+ * into the old partition), and the next run starts once the client says whose token it holds. When it cannot say yet
+ * (offline, Core unavailable) the account is not known, which is not a sign-out: the reporter asks again after the
+ * same backoff as uploads, until it is answered, a sign-out comes, or the engine stops. An old partition's records
+ * wait in the queue until their account signs in to their Core again, or expire into a coverage gap; they are never
+ * sent as anyone else.
  *
  * Uploads go a minute after records arrive, or at once when 100 are waiting, at most 500 records (and 1 MB of them)
  * per request. With nothing waiting the uploader sets no timer: the next record wakes it. What each answer does:
@@ -165,6 +168,10 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
   let notInstalled: string | null = null
   /** Bumped by every change of session, so only the latest resolution of the account is applied. */
   let resolution = 0
+  /** Asks again who the client speaks for, after a resolution that could not tell (offline, Core unavailable). */
+  let resolveRetry: number | null = null
+  /** Resolutions in a row that could not tell: the n of their backoff. */
+  let resolveFailures = 0
   let lastSweepAt = 0
   const cleanups: Array<() => void> = []
 
@@ -264,37 +271,63 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     beginRun({coreUrl: session.coreUrl, mentraUserId: user}, partition)
   }
 
-  /** Asks the client who it speaks for now (refreshing its token if needed) and follows. The latest ask wins. */
+  /**
+   * Asks the client who it speaks for now (refreshing its token if needed) and follows. The latest ask wins. An ask
+   * the client cannot answer yet (offline, Core unavailable) is no sign-out: what is running keeps running, and the
+   * ask is made again after a backoff, until it is answered or a session change asks anew.
+   */
   async function resolveAndApply(): Promise<void> {
     const mine = ++resolution
+    cancelResolveRetry()
     let session: CoreSession | null
     try {
       session = await cloud.resolveCoreSession()
     } catch (error) {
-      // Nothing learned: keep what is running.
+      if (mine !== resolution || !started) return
       warn("resolving the account", error)
+      retryResolution()
       return
     }
     if (mine !== resolution || !started) return
+    resolveFailures = 0
     guard("following the account", () => applySession(session))
+  }
+
+  function retryResolution(): void {
+    const delayMs = backoffDelayMs(resolveFailures, random)
+    resolveFailures += 1
+    resolveRetry = BgTimer.setTimeout(() => {
+      resolveRetry = null
+      void resolveAndApply()
+    }, delayMs)
+  }
+
+  function cancelResolveRetry(): void {
+    if (resolveRetry !== null) BgTimer.clearTimeout(resolveRetry)
+    resolveRetry = null
   }
 
   function onSessionChanged(change: CoreSessionChange): void {
     if (!started) return
     if (change.reason === "signed_out") {
-      // A resolution still under way must not bring the account back.
+      // A resolution still under way, or one waiting to ask again, must not bring the account back.
       resolution += 1
+      cancelResolveRetry()
+      resolveFailures = 0
       endRun("account_changed")
       return
     }
     // A new authenticated session asks Core again, including a Core that said it has no Fleet.
     if (change.reason === "signed_in") notInstalled = null
     // What the change already names is enough to stop collecting for an account or a Core that is no longer current.
+    // A sign-in that names no account yet may be anyone: what follows is not the previous account's until the client
+    // says whose token it holds. A rebuilt client that names none yet is still the session that was running.
     const r = run
     if (r) {
+      const account = change.mentraUserId ?? (change.reason === "signed_in" ? null : r.session.mentraUserId)
       let partition: string | null = null
       try {
-        partition = change.coreUrl ? partitionKey(change.coreUrl, change.mentraUserId ?? r.session.mentraUserId) : null
+        partition = change.coreUrl && account ? partitionKey(change.coreUrl, account) : null
       } catch {
         partition = null
       }
@@ -654,6 +687,8 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       if (!started) return
       started = false
       resolution += 1
+      cancelResolveRetry()
+      resolveFailures = 0
       guard("stopping", () => endRun("engine_stopped"))
       for (const cleanup of cleanups.splice(0)) guard("removing a listener", cleanup)
       notInstalled = null

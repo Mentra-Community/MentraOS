@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
-import {AuthExpiredError, HttpError} from "@mentra/cloud-client"
+import {AuthExpiredError, AuthUnavailableError, HttpError} from "@mentra/cloud-client"
 import type {FleetReport} from "@mentra/cloud-protocol"
 
 import type {FleetSendOutcome} from "../CloudClientService"
@@ -222,6 +222,36 @@ describe("the Core session", () => {
     expect(cloudClientService.getCoreSession()?.mentraUserId).toBeNull()
     latest().auth.mode = "ok"
     expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: A})
+  })
+
+  test.each([
+    ["Core is unavailable", () => new AuthUnavailableError("refresh could not be completed; try again later")],
+    ["the network failed", () => new HttpError("network", 0)],
+    ["the host could not hand over a subject token", () => new Error("engine.configure: no subject token available")],
+  ])(
+    "resolveCoreSession rejects when no account is known and the token cannot be had because %s",
+    async (_why, error) => {
+      nextTokenMode = error()
+      cloudClientService.init()
+      await settle()
+      // The account is not known, which is not the same as there being none.
+      await expect(cloudClientService.resolveCoreSession()).rejects.toBeDefined()
+    },
+  )
+
+  test("resolveCoreSession answers with the kept identity when the token cannot be had for now", async () => {
+    nextTokenMode = new AuthUnavailableError("refresh could not be completed; try again later")
+    kept.set(IDENTITY_KEY, "kept-account")
+    cloudClientService.init()
+    await settle()
+    expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: "kept-account"})
+  })
+
+  test("resolveCoreSession answers with no account when Core refused the credentials", async () => {
+    nextTokenMode = new AuthExpiredError()
+    cloudClientService.init()
+    await settle()
+    expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: null})
   })
 })
 

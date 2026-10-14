@@ -124,6 +124,10 @@ const core = {
   listeners: new Set<(change: CoreSessionChange) => void>(),
   calls: [] as Call[],
   sent: [] as Call[],
+  /** How many times the reporter asked who the client speaks for. */
+  resolutions: 0,
+  /** Set while the client cannot learn whose token it will hold (offline, Core unavailable). */
+  resolveError: null as Error | null,
   respond: ((records: FleetRecord[]) => acceptAll(records)) as (
     records: FleetRecord[],
     call: Call,
@@ -133,7 +137,11 @@ const core = {
 function installFakeCloud(): void {
   Object.assign(cloudClientService, {
     getCoreSession: () => (core.session ? {...core.session} : null),
-    resolveCoreSession: async () => (core.session ? {...core.session} : null),
+    resolveCoreSession: async () => {
+      core.resolutions += 1
+      if (core.resolveError) throw core.resolveError
+      return core.session ? {...core.session} : null
+    },
     onCoreSessionChanged: (listener: (change: CoreSessionChange) => void) => {
       core.listeners.add(listener)
       return () => {
@@ -372,6 +380,8 @@ beforeEach(() => {
   core.listeners.clear()
   core.calls = []
   core.sent = []
+  core.resolutions = 0
+  core.resolveError = null
   core.respond = (records) => acceptAll(records)
   installFakeCloud()
   glassesStore.setState({...GLASSES_IDLE}, true)
@@ -1159,6 +1169,99 @@ describe("queue losses", () => {
       payload: {reason: "queue_expired", from: old.observedAt, to: old.observedAt, droppedRecordCount: 1},
     })
     expect(ids(core.calls.at(-1)!.records)).not.toContain(old.recordId)
+  })
+})
+
+describe("an account that is not known yet", () => {
+  /** What the client says when it cannot learn whose token it will hold: offline, or Core unavailable. */
+  const OFFLINE = new Error("refresh could not be completed; try again later")
+
+  test("a sign-in ends the previous account's collection at once; the next starts once the account is known", async () => {
+    reporter.start()
+    signIn(A)
+    await settle()
+    expect(collector.stops).toEqual(["account_changed"])
+    expect(collector.runs.map((run) => run.partition)).toEqual([partitionKey(CORE_X, A), partitionKey(CORE_X, A)])
+  })
+
+  test("after a sign-in, an account that cannot be resolved is no sign-out: it is asked for again, with backoff", async () => {
+    reporter.start()
+    const fromA = observe(2)
+    core.resolveError = OFFLINE
+    signIn(B)
+    await settle()
+    // Whose activity follows is not known yet: nothing is collected, for A or anyone else.
+    expect(collector.stops).toEqual(["account_changed"])
+    expect(collector.active).toBeNull()
+    const asked = core.resolutions
+    await advance(36 * SECOND)
+    expect(core.resolutions).toBe(asked + 1)
+    // Then later and later (30 s, 1, 2, 4 minutes...), never in a loop.
+    await advance(10 * MINUTE)
+    expect(core.resolutions - asked).toBe(4)
+    expect(core.calls).toEqual([])
+
+    core.resolveError = null
+    await advance(10 * MINUTE)
+    expect(collector.active?.partition).toBe(partitionKey(CORE_X, B))
+    const fromB = observe(2)
+    await advance(MINUTE)
+    expect(core.sent.at(-1)!.as).toEqual({coreUrl: CORE_X, mentraUserId: B})
+    expect(ids(core.sent.at(-1)!.records)).toEqual(ids(fromB))
+    // A's records wait for A.
+    expect(ids(queued(CORE_X, A))).toEqual(ids(fromA))
+    // Asked no more once known.
+    const known = core.resolutions
+    await advance(2 * HOUR)
+    expect(core.resolutions).toBe(known)
+  })
+
+  test("at start, an account that cannot be resolved yet is asked for again", async () => {
+    cloudClientService.getCoreSession = () => ({coreUrl: CORE_X, mentraUserId: null})
+    core.resolveError = OFFLINE
+    reporter.start()
+    await settle()
+    expect(collector.runs).toEqual([])
+    core.resolveError = null
+    await advance(36 * SECOND)
+    expect(collector.runs.map((run) => run.partition)).toEqual([partitionKey(CORE_X, A)])
+  })
+
+  test("a sign-out while the account is not known stops asking", async () => {
+    reporter.start()
+    core.resolveError = OFFLINE
+    signIn(B)
+    await settle()
+    signOut()
+    const asked = core.resolutions
+    await advance(2 * HOUR)
+    expect(core.resolutions).toBe(asked)
+    expect(collector.active).toBeNull()
+    expect(timers.size).toBe(0)
+  })
+
+  test("stopping while the account is not known leaves no timer behind", async () => {
+    reporter.start()
+    core.resolveError = OFFLINE
+    signIn(B)
+    await settle()
+    await reporter.stop()
+    expect(timers.size).toBe(0)
+    const asked = core.resolutions
+    await advance(HOUR)
+    expect(core.resolutions).toBe(asked)
+  })
+
+  test("a resolution that finds no account (Core refused the credentials) stops collection, and is not retried", async () => {
+    reporter.start()
+    core.session = {coreUrl: CORE_X, mentraUserId: null}
+    emit({reason: "signed_in", coreUrl: CORE_X, mentraUserId: null})
+    await settle()
+    expect(collector.active).toBeNull()
+    const asked = core.resolutions
+    await advance(2 * HOUR)
+    expect(core.resolutions).toBe(asked)
+    expect(timers.size).toBe(0)
   })
 })
 

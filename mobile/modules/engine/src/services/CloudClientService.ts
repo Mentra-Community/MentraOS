@@ -867,16 +867,21 @@ export const cloudClientService = {
   },
 
   /**
-   * The same, once the client's Core token is current (exchanged or refreshed as needed). When no token can be had
-   * (offline, or signed out) it answers with what is known, like `getCoreSession`.
+   * The same, once the client's Core token is current (exchanged or refreshed as needed). When Core refused the
+   * credentials, or there are none, it answers with what is known, like `getCoreSession`. When the token cannot be
+   * had for any other reason (offline, Core unavailable), it answers with the identity kept for the signed-in account
+   * if there is one, and otherwise rejects with that failure: the account is not known yet, which is not the same as
+   * there being none.
    */
   async resolveCoreSession(): Promise<CoreSession | null> {
     const c = client
     if (!c?.core) return null
     try {
       await c.auth.getCoreToken()
-    } catch {
-      // Offline or signed out: fall back to what is known.
+    } catch (error) {
+      const known = currentCoreSession()
+      if (!isAuthFailure(error) && !known?.mentraUserId) throw error
+      return known
     }
     return currentCoreSession()
   },
