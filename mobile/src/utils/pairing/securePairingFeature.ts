@@ -6,6 +6,13 @@ export const isMentraLiveSecurePairingEnabled = (): boolean =>
   process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING === "true"
 
 /**
+ * Keeps the previous owner until the new phone confirms. Requires secure
+ * pairing as well; anything other than exact `true` stays off.
+ */
+export const isMentraLiveOwnershipTransferEnabled = (): boolean =>
+  isMentraLiveSecurePairingEnabled() && process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER === "true"
+
+/**
  * Expo Router stores route params as strings, so a legacy advertisement's
  * `false` arrives as `"false"`. Missing means the scan did not say.
  */

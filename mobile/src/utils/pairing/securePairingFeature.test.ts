@@ -1,4 +1,8 @@
-import {advertisedSecurePairingCapable, parseOptionalBoolean} from "./securePairingFeature"
+import {
+  advertisedSecurePairingCapable,
+  isMentraLiveOwnershipTransferEnabled,
+  parseOptionalBoolean,
+} from "./securePairingFeature"
 
 describe("legacy Mentra Live capability flags", () => {
   it("keeps boolean flags and reads Expo Router strings", () => {
@@ -16,5 +20,33 @@ describe("legacy Mentra Live capability flags", () => {
     expect(advertisedSecurePairingCapable("true", false)).toBe(false)
     expect(advertisedSecurePairingCapable(undefined, undefined)).toBeUndefined()
     expect(advertisedSecurePairingCapable("true", undefined)).toBe(true)
+  })
+})
+
+describe("Mentra Live ownership transfer flag", () => {
+  const originalSecure = process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+  const originalTransfer = process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER
+
+  afterEach(() => {
+    if (originalSecure === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = originalSecure
+    if (originalTransfer === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = originalTransfer
+  })
+
+  it("stays off unless secure pairing and ownership transfer are both exactly true", () => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER
+    expect(isMentraLiveOwnershipTransferEnabled()).toBe(false)
+
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "true"
+    expect(isMentraLiveOwnershipTransferEnabled()).toBe(false)
+
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "TRUE"
+    expect(isMentraLiveOwnershipTransferEnabled()).toBe(false)
+
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "true"
+    expect(isMentraLiveOwnershipTransferEnabled()).toBe(true)
   })
 })

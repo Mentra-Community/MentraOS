@@ -414,6 +414,9 @@ export const pairing = {
     }
   },
 
+  /** Ownership transfer: wipe the retained owner so this phone can bond. */
+  confirmReplaceOwner: (): Promise<void> => BluetoothSdk.confirmReplaceOwner(),
+
   /** Subscribe to pairing failures; returns an unsubscribe. */
   onPairFailure: (cb: (event: PairFailureEvent) => void): (() => void) => {
     const sub = BluetoothSdk.addListener("pair_failure", cb)

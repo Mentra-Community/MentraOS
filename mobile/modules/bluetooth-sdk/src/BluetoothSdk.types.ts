@@ -874,11 +874,27 @@ export type PairingInfoEvent = {
   classic_bond_ready?: boolean
   secure_pairing_capable?: boolean
   protocol_version?: number
+  /** Present when the glasses build includes ownership transfer. */
+  ownership_transfer?: boolean
+  /** PAIRING with a retained owner that has not been confirmed yet. */
+  awaiting_confirm?: boolean
+  /** True only after a BLE bond committed the owner and the window closed. */
+  owner_committed?: boolean
 }
 
 export type EnteringPairingModeEvent = {
   window_ms: number
   reason?: string
+  /** The previous owner was kept until confirm (ownership transfer). */
+  owner_retained?: boolean
+}
+
+/** Refusal reasons for `confirm_replace_owner_result`. Unknown native strings still typecheck. */
+export type ConfirmReplaceOwnerResultReason = "not_pairing" | "no_owner" | "wipe_failed" | string
+
+export type ConfirmReplaceOwnerResultEvent = {
+  ok: boolean
+  reason?: ConfirmReplaceOwnerResultReason
 }
 
 export type OwnerReplacedEvent = {
@@ -1170,6 +1186,7 @@ export type BluetoothSdkModuleEvents = {
   pairing_info: (event: PairingInfoEvent) => void
   entering_pairing_mode: (event: EnteringPairingModeEvent) => void
   owner_replaced: (event: OwnerReplacedEvent) => void
+  confirm_replace_owner_result: (event: ConfirmReplaceOwnerResultEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -1334,6 +1351,7 @@ export type BluetoothSdkEventMap = {
   pairing_info: PairingInfoEvent
   entering_pairing_mode: EnteringPairingModeEvent
   owner_replaced: OwnerReplacedEvent
+  confirm_replace_owner_result: ConfirmReplaceOwnerResultEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
@@ -1394,6 +1412,8 @@ export interface BluetoothSdkPublicModule {
   cancelConnectionAttempt(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
+  /** Ownership transfer: wipe the retained owner so the connected phone can bond. */
+  confirmReplaceOwner(): Promise<void>
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>

@@ -133,6 +133,7 @@ export const bluetoothSdkMock = {
   connectSimulated: jest.fn(() => Promise.resolve()),
   disconnect: jest.fn(() => Promise.resolve()),
   forget: jest.fn(() => Promise.resolve()),
+  confirmReplaceOwner: jest.fn(() => Promise.resolve()),
   unpair: jest.fn(() => Promise.resolve()),
   forgetController: jest.fn(() => Promise.resolve()),
   showDashboard: jest.fn(() => Promise.resolve()),
