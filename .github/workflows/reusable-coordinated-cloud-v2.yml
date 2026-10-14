@@ -133,7 +133,7 @@ jobs:
           # Porter's CLI tags the image from GITHUB_SHA when it runs inside
           # Actions, which is the dispatching commit rather than the frozen
           # source on a workflow_dispatch from main; the explicit flag wins.
-          # The dev Runtime's source-owned Helm settings travel with its config.
+          # The dev Runtime's source-owned disruption policy travels with its config.
           config="${config#cloud-v2/}"
           overrides="${config%.yaml}.overrides.yaml"
           helm_args=()

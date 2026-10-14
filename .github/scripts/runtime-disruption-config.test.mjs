@@ -4,30 +4,25 @@ import test from 'node:test'
 
 const source = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-test('dev Runtime requests redundant serving capacity with unchanged health and drain', () => {
+test('dev Runtime keeps its singleton capacity and readiness', () => {
   const config = source('../../cloud-v2/porter.dev.yaml')
-  const at = config.indexOf('  - name: runtime\n')
-  const core = config.slice(0, at)
-  const runtime = config.slice(at)
-  assert.match(core, /instances: 1/)
-  assert.match(runtime, /instances: 2/)
+  const runtime = config.slice(config.indexOf('  - name: runtime\n'))
+  assert.match(runtime, /instances: 1/)
+  assert.match(runtime, /cpuCores: 0\.5\n    ramMegabytes: 2048/)
   assert.match(runtime, /readinessCheck:\n      enabled: true\n      httpPath: \/ready/)
   assert.match(runtime, /terminationGracePeriodSeconds: 10/)
 })
 
-test('Runtime override guards voluntary disruption and node placement', () => {
+test('Runtime blocks last-ready voluntary eviction without placement expansion', () => {
   const overrides = source('../../cloud-v2/porter.dev.overrides.yaml')
   assert.match(overrides, /^cloud-dev-runtime:/m)
   assert.doesNotMatch(overrides, /^cloud-dev-core:/m)
-  assert.match(overrides, /podDisruptionBudget:\n    enabled: true\n    minAvailablePercentage: 50/)
+  assert.match(overrides, /podDisruptionBudget:\n    enabled: true\n    minAvailablePercentage: 100/)
   assert.match(overrides, /maxUnavailable: 0\n      maxSurge: 1/)
-  assert.match(overrides, /requiredDuringSchedulingIgnoredDuringExecution:/)
-  assert.match(overrides, /app\.kubernetes\.io\/instance: cloud-dev/)
-  assert.match(overrides, /app\.kubernetes\.io\/name: cloud-dev-runtime/)
-  assert.match(overrides, /topologyKey: kubernetes\.io\/hostname/)
+  assert.doesNotMatch(overrides, /affinity|nodeGroups|replicaCount|do-not-disrupt/)
 })
 
-test('normal dev source deployment requires the matching Helm overrides', () => {
+test('normal dev source deployment carries its required Helm override', () => {
   const workflow = source('../workflows/reusable-coordinated-cloud-v2.yml')
   assert.match(workflow, /overrides="\$\{config%\.yaml\}\.overrides\.yaml"/)
   assert.match(workflow, /if \[\[ "\$PORTER_APP_NAME" == "cloud-dev" \]\]; then\n\s+\[\[ -s "\$overrides" \]\]/)
