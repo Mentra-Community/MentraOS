@@ -259,7 +259,7 @@ describe("pairing scan screen", () => {
     )
   })
 
-  it("routes Mentra Live through btclassic on iOS even without phone microphone permission", async () => {
+  it("routes Mentra Live straight to BLE loading on iOS even without phone microphone permission", async () => {
     ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(false)
     useCoreStore.setState({
       searchResults: [
@@ -278,15 +278,13 @@ describe("pairing scan screen", () => {
     fireEvent.press(getByText("001"))
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/btclassic", {
-        device: JSON.stringify({id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}),
-      })
-      expect(pushUnder).toHaveBeenCalledWith("/pairing/loading", {
+      expect(push).toHaveBeenCalledWith("/pairing/loading", {
         device: JSON.stringify({id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}),
         deviceModel: "Mentra Live",
         deviceName: "MENTRA_LIVE_BLE_001",
       })
     })
+    expect(replace).not.toHaveBeenCalled()
 
     expect(requestFeaturePermissions).not.toHaveBeenCalled()
 

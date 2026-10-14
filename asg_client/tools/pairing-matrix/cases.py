@@ -2223,15 +2223,17 @@ def t0_flag_off_wire_regression(ctx: Ctx):
 def t1_confirmed_handoff(ctx: Ctx):
     """Confirmed handoff, Android new phone (needs MENTRA_TRANSFER=on). Lab has ONE Android, so the previous owner
     is the Mac (BLE-only owner, stand-in like D4BFIX); true Android-to-Android needs a second phone route in pmx.
-    Window keeps the owner; the Mac is refused; S22 connects, taps confirm, accepts the dialog, commits, and the Mac
-    cannot come back. Wipe order (Classic then BLE) is not visible in any current log: not asserted here."""
+    Window keeps the owner. Firmware admits the owner's BLE; the Mentra App stands down so it does not take the slot.
+    The Mac central here is not that app, so a BLE link from it is allowed. S22 connects, taps confirm, accepts the
+    dialog, commits, and the Mac cannot come back after the wipe. Wipe order (Classic then BLE) is not visible in any
+    current log: not asserted here."""
     if not require_transfer(ctx):
         return
     stage_old_owner(ctx, "mac")
     gm = open_retaining_window(ctx, expect_notice=False)
     pm, im = ctx.p.mark(), ctx.i.mark()
     rows = mac_central("--hold", "8", "--read")
-    ctx.check("retained owner (Mac) refused during the window", refused(rows), str(rows))
+    ctx.note("owner BLE admitted during the window (app stands down; firmware does not refuse): " + str(rows))
     res = android_pair_with_confirm(ctx)
     ctx.check("S22 picked the glasses and tapped confirm", res["picked"] and res["confirmed"], str(res))
     wire_fact(ctx, "pairing_info awaiting_confirm:true seen by the new phone", r"awaiting_confirm\W{0,4}true", gm, pm, im)

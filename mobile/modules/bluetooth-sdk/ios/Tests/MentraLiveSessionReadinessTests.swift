@@ -181,9 +181,19 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         // The owner-lost flag is applied on a main-actor task.
         try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertFalse(transport.isPairingYieldActive())
-        XCTAssertTrue(transport.isManagerKilled)
+        // The first pairing mode rejects this phone without killing the manager, so a
+        // later pairing mode can lift the rejection.
+        XCTAssertFalse(transport.isManagerKilled)
+        XCTAssertTrue(transport.isPreviousOwnerRejectionActive())
         XCTAssertEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
         XCTAssertEqual(enteringEvents, 0)
+
+        try transport.processReceivedData(JSONSerialization.data(withJSONObject: [
+            "type": "entering_pairing_mode", "window_ms": 5000,
+        ]))
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(transport.isPreviousOwnerRejectionActive())
+        XCTAssertNotEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
     }
 
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {

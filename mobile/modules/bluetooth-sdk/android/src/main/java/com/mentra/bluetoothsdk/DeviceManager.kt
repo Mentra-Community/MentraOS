@@ -572,10 +572,9 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
                         BluetoothAdapter.STATE_ON -> {
                             Bridge.log("MAN: Bluetooth turned ON")
-                            if (ownerLost) {
-                                Bridge.log("MAN: Bluetooth restored, reconnect skipped — glasses owned by another phone")
-                            }
-                            // Auto-reconnect to last known device if we have one
+                            // Auto-reconnect to last known device if we have one.
+                            // After owner loss, connectById watches for the next pairing
+                            // mode instead of opening GATT.
                             if (shouldReconnectAfterBluetoothOn()) {
                                 Bridge.log(
                                     "MAN: Bluetooth restored, attempting reconnect to: $deviceName"
@@ -2344,7 +2343,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     internal fun shouldReconnectAfterBluetoothOn(): Boolean =
-        defaultWearable.isNotEmpty() && deviceName.isNotEmpty() && !ownerLost
+        defaultWearable.isNotEmpty() && deviceName.isNotEmpty()
 
     /** A forget or a ready (re-paired) glasses session ends owner loss for SDK-only hosts too. */
     internal fun clearOwnerLost() {

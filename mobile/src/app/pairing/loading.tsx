@@ -3,7 +3,7 @@ import BluetoothSdk, {type Device, type PairingInfoEvent} from "@mentra/bluetoot
 import {engine, DeviceTypes} from "@mentra/engine"
 import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {View} from "react-native"
+import {Platform, View} from "react-native"
 
 import {Button} from "@/components/ignite"
 import {Header} from "@/components/ignite/Header"
@@ -11,9 +11,15 @@ import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
-import {REPLACE_OWNER_ROUTE, shouldRouteToReplaceOwner} from "@/utils/pairing/replaceOwner"
+import {
+  BT_CLASSIC_ROUTE,
+  REPLACE_OWNER_ROUTE,
+  shouldPairClassicAfterBle,
+  shouldRouteToReplaceOwner,
+} from "@/utils/pairing/replaceOwner"
 import {
   advertisedSecurePairingCapable,
   isMentraLiveOwnershipTransferSupported,
@@ -32,10 +38,11 @@ const PAIRING_KICKOFF_DELAY_MS = 2_000
  * lets existing customer firmware proceed without waiting for an event it does not emit.
  * Route params arrive as strings, so legacy firmware is both boolean false and "false".
  *
- * Ownership transfer (flag-gated, Android only) is the exception to open reclaim: glasses in
- * transfer mode report `pairing_info.awaiting_confirm` and refuse to bond until the user
- * confirms on the replace-owner screen, which is pushed on top of this one and pops back
- * here once confirmed. Routing keys on awaiting_confirm, never on had_previous_bond.
+ * Ownership transfer is the exception to open reclaim: glasses in transfer mode report
+ * `pairing_info.awaiting_confirm` and refuse to bond until the user confirms on the
+ * replace-owner screen, which is pushed on top of this one and pops back here once
+ * confirmed. Routing keys on awaiting_confirm, never on had_previous_bond. iOS then
+ * opens Settings for Classic audio; Android attaches Classic from the BLE bond.
  */
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
@@ -78,6 +85,10 @@ export default function GlassesPairingLoadingScreen() {
   const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pairingStoppedRef = useRef(false)
   const replaceOwnerRoutedRef = useRef(false)
+  const classicAudioRoutedRef = useRef(false)
+  const bluetoothClassicConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
+  ).bluetoothClassicConnected
   const isMentraLive = deviceModel === DeviceTypes.LIVE
   const advertisedSecurePairing = advertisedSecurePairingCapable(
     securePairingCapable,
@@ -331,6 +342,21 @@ export default function GlassesPairingLoadingScreen() {
       return
     }
 
+    if (
+      shouldPairClassicAfterBle({
+        platform: Platform.OS,
+        deviceModel,
+        bluetoothClassicConnected,
+      })
+    ) {
+      if (classicAudioRoutedRef.current) return
+      classicAudioRoutedRef.current = true
+      console.log(`PAIRFLOW: loading_navigate route=${BT_CLASSIC_ROUTE} model=${deviceModel} name=${deviceName ?? ""}`)
+      logPairingTiming("navigate_btclassic")
+      useNavigationStore.getState().push(BT_CLASSIC_ROUTE, {device: deviceJson})
+      return
+    }
+
     hasNavigatedRef.current = true
     console.log(
       `PAIRFLOW: loading_navigate route=/pairing/success model=${deviceModel} name=${
@@ -354,6 +380,8 @@ export default function GlassesPairingLoadingScreen() {
     deviceName,
     advertisedSecurePairing,
     logPairingTiming,
+    bluetoothClassicConnected,
+    deviceJson,
   ])
 
   useEffect(() => {

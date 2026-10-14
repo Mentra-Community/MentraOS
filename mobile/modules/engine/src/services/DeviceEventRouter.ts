@@ -151,7 +151,8 @@ export function startDeviceEventRouter(): void {
   // saved glasses. That is not a loss, so the retained window is remembered here and an
   // `owner_replaced` for the same pairing-mode notice inside it cannot mark owner-lost.
   // Real loss still arrives later as its own `owner_replaced` (rejection streak).
-  // owner_retained false/absent changes nothing: native stands down and the notice below marks lost.
+  // owner_retained false/absent: native rejects this phone for that pairing mode and the
+  // notice below marks lost. A later pairing mode clears the rejection.
   subs.push(
     BluetoothSdk.addListener("entering_pairing_mode", (event) => {
       if (event.owner_retained === true) {

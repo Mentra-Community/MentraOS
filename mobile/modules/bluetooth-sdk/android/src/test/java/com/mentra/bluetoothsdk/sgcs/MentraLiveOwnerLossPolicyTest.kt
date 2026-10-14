@@ -122,6 +122,87 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun theFirstPairingModeDoesNotReleaseAndTheNextOneDoes() {
+        val watch = PreviousOwnerRejectionWatch()
+        assertFalse(watch.onAdvertisement(pairingMode = true, pairingGeneration = 1))
+        assertFalse(watch.onEnteringPairingModeAgain())
+        watch.beginFirstWindow()
+        // The window we just stood down for is already advertising.
+        assertFalse(watch.onAdvertisement(pairingMode = true, pairingGeneration = 1))
+        assertFalse(watch.onAdvertisement(pairingMode = true, pairingGeneration = 1))
+        // A second entry while that window is still up, seen as a new generation.
+        assertTrue(watch.onAdvertisement(pairingMode = true, pairingGeneration = 2))
+        assertFalse(watch.isActive)
+    }
+
+    @Test
+    fun aQuietFirstWindowThenAnotherPairingModeReleases() {
+        val watch = PreviousOwnerRejectionWatch()
+        watch.beginFirstWindow()
+        assertFalse(watch.onAdvertisement(pairingMode = true, pairingGeneration = 4))
+        watch.noteQuiet()
+        assertTrue(watch.isActive)
+        assertTrue(watch.onAdvertisement(pairingMode = true, pairingGeneration = 4))
+        assertFalse(watch.isActive)
+    }
+
+    @Test
+    fun aSecondEnteringPairingModeReleasesWithoutAnAdvertisement() {
+        val watch = PreviousOwnerRejectionWatch()
+        watch.beginFirstWindow()
+        assertTrue(watch.onEnteringPairingModeAgain())
+        assertFalse(watch.isActive)
+        assertFalse(watch.onEnteringPairingModeAgain())
+    }
+
+    @Test
+    fun automaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(
+                        pairingMode = true,
+                        savedGlasses = true,
+                        explicitPairing = false,
+                )
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(
+                        pairingMode = true,
+                        savedGlasses = true,
+                        explicitPairing = true,
+                )
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(
+                        pairingMode = false,
+                        savedGlasses = true,
+                        explicitPairing = false,
+                )
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(
+                        pairingMode = true,
+                        savedGlasses = false,
+                        explicitPairing = false,
+                )
+        )
+    }
+
+    @Test
+    fun aRestartedAppKeepsOnlyALiveYieldDeadline() {
+        val now = 1_000_000L
+        assertEquals(0L, MentraLiveOwnerLossPolicy.persistedYieldRemainingMs(0L, now))
+        assertEquals(50_000L, MentraLiveOwnerLossPolicy.persistedYieldRemainingMs(now + 50_000L, now))
+        assertEquals(0L, MentraLiveOwnerLossPolicy.persistedYieldRemainingMs(now - 1L, now))
+        assertEquals(
+                0L,
+                MentraLiveOwnerLossPolicy.persistedYieldRemainingMs(
+                        now + MentraLiveOwnerLossPolicy.PAIRING_WINDOW_ABSOLUTE_MS + 1L,
+                        now,
+                )
+        )
+    }
+
+    @Test
     fun enteringPairingModeYieldsOnlyWhenTheOwnerWasRetained() {
         assertTrue(MentraLiveOwnerLossPolicy.shouldYieldOnEnteringPairingMode(true))
         // Absent or false keeps the 3.3 stand-down.
@@ -155,6 +236,53 @@ class MentraLiveOwnerLossPolicyTest {
     fun awaitingConfirmSuspendsTheSecureBondWait() {
         assertFalse(MentraLiveOwnerLossPolicy.shouldRunSecureBondWait(awaitingConfirm = true))
         assertTrue(MentraLiveOwnerLossPolicy.shouldRunSecureBondWait(awaitingConfirm = false))
+    }
+
+    @Test
+    fun explicitSecurePairDefersCtkdUntilPairingInfoAllowsTheBond() {
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldDeferCtkdBond(
+                        explicitPairing = true,
+                        secureTarget = true,
+                        bondState = BluetoothDevice.BOND_NONE,
+                        pairingInfoSeen = false,
+                        awaitingConfirm = false,
+                ),
+        )
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldDeferCtkdBond(
+                        explicitPairing = true,
+                        secureTarget = true,
+                        bondState = BluetoothDevice.BOND_NONE,
+                        pairingInfoSeen = true,
+                        awaitingConfirm = true,
+                ),
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldDeferCtkdBond(
+                        explicitPairing = true,
+                        secureTarget = true,
+                        bondState = BluetoothDevice.BOND_NONE,
+                        pairingInfoSeen = true,
+                        awaitingConfirm = false,
+                ),
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldDeferCtkdBond(
+                        explicitPairing = false,
+                        secureTarget = true,
+                        bondState = BluetoothDevice.BOND_NONE,
+                        pairingInfoSeen = false,
+                        awaitingConfirm = false,
+                ),
+        )
+    }
+
+    @Test
+    fun awaitingConfirmDoesNotAcceptAReadySession() {
+        assertFalse(MentraLiveOwnerLossPolicy.shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm = true))
+        assertTrue(MentraLiveOwnerLossPolicy.shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm = false))
+        assertEquals(20_000L, MentraLiveOwnerLossPolicy.CONFIRM_IGNORE_MS)
     }
 
     @Test

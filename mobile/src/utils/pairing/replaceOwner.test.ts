@@ -2,6 +2,7 @@ import {
   classifyReplaceOwnerResult,
   REPLACE_OWNER_ERROR_TX,
   REPLACE_OWNER_ROUTE,
+  shouldPairClassicAfterBle,
   shouldRouteToReplaceOwner,
 } from "./replaceOwner"
 
@@ -21,6 +22,39 @@ describe("shouldRouteToReplaceOwner", () => {
 
   it("does not accept truthy non-booleans", () => {
     expect(shouldRouteToReplaceOwner({...base, awaitingConfirm: "true" as unknown as boolean})).toBe(false)
+  })
+})
+
+describe("shouldPairClassicAfterBle", () => {
+  it("sends iOS Mentra Live to Settings only when Classic audio is not up yet", () => {
+    expect(
+      shouldPairClassicAfterBle({
+        platform: "ios",
+        deviceModel: "Mentra Live",
+        bluetoothClassicConnected: false,
+      }),
+    ).toBe(true)
+    expect(
+      shouldPairClassicAfterBle({
+        platform: "ios",
+        deviceModel: "Mentra Live",
+        bluetoothClassicConnected: true,
+      }),
+    ).toBe(false)
+    expect(
+      shouldPairClassicAfterBle({
+        platform: "android",
+        deviceModel: "Mentra Live",
+        bluetoothClassicConnected: false,
+      }),
+    ).toBe(false)
+    expect(
+      shouldPairClassicAfterBle({
+        platform: "ios",
+        deviceModel: "Even Realities G1",
+        bluetoothClassicConnected: false,
+      }),
+    ).toBe(false)
   })
 })
 

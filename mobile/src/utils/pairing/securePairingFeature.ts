@@ -1,5 +1,3 @@
-import {Platform} from "react-native"
-
 /**
  * Secure Mentra Live ownership is coordinated with BES firmware and remains
  * disabled unless a release explicitly opts in on both sides.
@@ -15,14 +13,11 @@ export const isMentraLiveOwnershipTransferEnabled = (): boolean =>
   isMentraLiveSecurePairingEnabled() && process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER === "true"
 
 /**
- * Ownership transfer is Android-only for now. The iOS flow is Classic-first
- * (Settings audio pairing before BLE), which deadlocks against transfer-ON
- * firmware: it refuses new Classic pairing until the phone confirms over BLE.
- * iOS stays transfer-OFF until spike B0 (iPhone confirm-before-Settings) passes.
- * Route and render the transfer flow with this, never the raw flag.
+ * Ownership transfer on both platforms. iOS connects BLE first and confirms
+ * there, then opens Settings for Classic audio. Route and render the transfer
+ * flow with this, never the raw flag.
  */
-export const isMentraLiveOwnershipTransferSupported = (): boolean =>
-  isMentraLiveOwnershipTransferEnabled() && Platform.OS === "android"
+export const isMentraLiveOwnershipTransferSupported = (): boolean => isMentraLiveOwnershipTransferEnabled()
 
 /**
  * Expo Router stores route params as strings, so a legacy advertisement's

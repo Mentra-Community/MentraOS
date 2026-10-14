@@ -4,6 +4,22 @@
  */
 
 export const REPLACE_OWNER_ROUTE = "/pairing/replace-owner"
+export const BT_CLASSIC_ROUTE = "/pairing/btclassic"
+
+/**
+ * iOS has no API to start Classic audio pairing, so the Mentra App does BLE
+ * first and opens Settings after the glasses are ready. Android gets Classic
+ * from the BLE bond and skips this step.
+ */
+export const shouldPairClassicAfterBle = ({
+  platform,
+  deviceModel,
+  bluetoothClassicConnected,
+}: {
+  platform: string
+  deviceModel: string
+  bluetoothClassicConnected: boolean
+}): boolean => platform === "ios" && deviceModel === "Mentra Live" && !bluetoothClassicConnected
 
 /** The glasses answer `confirm_replace_owner` within this budget or the app offers retry/cancel. */
 export const REPLACE_OWNER_CONFIRM_TIMEOUT_MS = 10_000

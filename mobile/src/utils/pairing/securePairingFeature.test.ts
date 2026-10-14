@@ -71,17 +71,15 @@ describe("Mentra Live ownership transfer platform gate", () => {
     else process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = originalTransfer
   })
 
-  it("is supported on Android only when the flag is on", () => {
+  it("is supported on Android and iOS when the flag is on", () => {
     jest.replaceProperty(Platform, "OS", "android")
     expect(isMentraLiveOwnershipTransferSupported()).toBe(true)
 
-    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "false"
-    expect(isMentraLiveOwnershipTransferSupported()).toBe(false)
-  })
-
-  it("stays off on iOS even with the flag on (until spike B0 passes)", () => {
     jest.replaceProperty(Platform, "OS", "ios")
     expect(isMentraLiveOwnershipTransferEnabled()).toBe(true)
+    expect(isMentraLiveOwnershipTransferSupported()).toBe(true)
+
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER = "false"
     expect(isMentraLiveOwnershipTransferSupported()).toBe(false)
   })
 })

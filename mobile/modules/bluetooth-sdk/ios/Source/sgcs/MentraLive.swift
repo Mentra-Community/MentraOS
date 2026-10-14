@@ -729,7 +729,9 @@ extension MentraLive: CBCentralManagerDelegate {
             switch state {
             case .poweredOn:
                 self.pairFlow("central", "state=powered_on")
-                if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
+                if self.previousOwnerRejection.isActive {
+                    self.startPreviousOwnerRejectionScan()
+                } else if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
                    !savedDeviceName.isEmpty
                 {
                     self.attachKnownOrScan(savedDeviceName)
@@ -817,7 +819,41 @@ extension MentraLive: CBCentralManagerDelegate {
                 rssi: rssi?.intValue
             )
 
-            let willConnect = savedDeviceName == name
+            let rejectionHolds = savedDeviceName == name && previousOwnerRejection.isActive
+            if rejectionHolds {
+                let released = previousOwnerRejection.onAdvertisement(
+                    pairingMode: trailer.secureCapable && trailer.pairingMode,
+                    pairingGeneration: trailer.pairingGeneration
+                )
+                persistPreviousOwnerRejection()
+                if released {
+                    pairFlow(
+                        "discover",
+                        "name=\(name) id=\(peripheral.identifier.uuidString) action=release_previous_owner"
+                    )
+                    releasePreviousOwnerRejection(connect: true)
+                    return
+                }
+                if trailer.secureCapable && trailer.pairingMode {
+                    armPreviousOwnerRejectionQuietTimer()
+                }
+            }
+            let standDown = MentraLiveConnectionAttemptPolicy.shouldStandDownInsteadOfReconnect(
+                pairingMode: trailer.secureCapable && trailer.pairingMode,
+                savedGlasses: savedDeviceName == name,
+                explicitPairing: isExplicitPairingAttempt()
+            )
+            if standDown {
+                pairFlow(
+                    "discover",
+                    "name=\(name) id=\(peripheral.identifier.uuidString) action=yield_pairing_mode"
+                )
+                centralManager?.stopScan()
+                isScanning = false
+                enterPairingYield(yieldDurationMs: MentraLiveConnectionAttemptPolicy.yieldMs(windowMs: 120_000))
+                return
+            }
+            let willConnect = savedDeviceName == name && !previousOwnerRejection.isActive
             pairFlow(
                 "discover",
                 "name=\(name) id=\(peripheral.identifier.uuidString) saved=\(savedDeviceName ?? "-") pairingMode=\(trailer.pairingMode) secure=\(trailer.secureCapable) connect=\(willConnect)"
@@ -1341,16 +1377,20 @@ class MentraLive: NSObject, SGCManager {
         let pairingMode: Bool
         let pairingCode: String?
         let secureCapable: Bool
+        let pairingGeneration: Int?
     }
 
     private func parseSecurePairingTrailer(_ advertisementData: [String: Any]) -> SecurePairingTrailer {
         guard let advertisement = pairingAdvertisement(advertisementData) else {
-            return SecurePairingTrailer(pairingMode: false, pairingCode: nil, secureCapable: false)
+            return SecurePairingTrailer(
+                pairingMode: false, pairingCode: nil, secureCapable: false, pairingGeneration: nil
+            )
         }
         return SecurePairingTrailer(
             pairingMode: advertisement.pairingMode,
             pairingCode: advertisement.pairingCode,
-            secureCapable: true
+            secureCapable: true,
+            pairingGeneration: advertisement.pairingGeneration
         )
     }
 
@@ -1589,6 +1629,13 @@ class MentraLive: NSObject, SGCManager {
     private var isKilled = false
     /// Glasses opened pairing window — stand down without forgetting identity/bonds.
     private var pairingYieldActive = false
+    /// The first pairing mode stood this phone down. It stays down until the glasses enter
+    /// pairing mode again. Unlike `isKilled`, the manager keeps scanning so it can see that.
+    private var previousOwnerRejection = PreviousOwnerRejectionWatch()
+    private var previousOwnerRejectionQuietWorkItem: DispatchWorkItem?
+    private static let rejectionPhaseKey = "mentra_live_previous_owner_rejection_phase"
+    private static let rejectionGenerationKey = "mentra_live_previous_owner_rejection_generation"
+    private static let yieldUntilKey = "mentra_live_pairing_yield_until_wall_ms"
     private var pairingYieldAwaitingReclaim = false
     /// Names seen advertising the secure-pairing trailer; survives manager recreation.
     private static var securePairingNames = Set<String>()
@@ -1603,6 +1650,8 @@ class MentraLive: NSObject, SGCManager {
     /// Connect-time auth failures across automatic reconnects. One is a hint; a streak is owner loss.
     private var ownerRejectionStreak = MentraLiveOwnerRejectionStreak()
     private var securePairingWaitWorkItem: DispatchWorkItem?
+    /// Drops the link if confirm_replace_owner never arrives.
+    private var confirmIgnoreWorkItem: DispatchWorkItem?
     private var pairingYieldEndWorkItem: DispatchWorkItem?
     /// Hold GATT teardown until the unpair write can leave the phone.
     private var unpairFlushPending = false
@@ -1742,6 +1791,15 @@ class MentraLive: NSObject, SGCManager {
         } else {
             Bridge.log("LIVE: 🎵 Phone audio monitor disabled (BLOCK_AUDIO_DUPLEX=false)")
         }
+
+        restorePreviousOwnerRejection()
+        restorePairingYield()
+        if previousOwnerRejection.isActive, centralManager == nil {
+            centralManager = CBCentralManager(
+                delegate: self, queue: bluetoothQueue,
+                options: ["CBCentralManagerOptionShowPowerAlertKey": 0]
+            )
+        }
     }
 
     deinit {
@@ -1800,6 +1858,11 @@ class MentraLive: NSObject, SGCManager {
         pairingYieldActive
     }
 
+    /// True after the first pairing mode stood this phone down, until the next pairing mode.
+    func isPreviousOwnerRejectionActive() -> Bool {
+        previousOwnerRejection.isActive
+    }
+
     /// Ownership transfer: the glasses kept this phone as owner but refuse it for the pairing
     /// window. Make no connection attempt for `yieldDurationMs`, keep the saved glasses and the
     /// bonds, and resume reconnecting when the window ends. Unlike `standDownAfterOwnerLoss`
@@ -1808,6 +1871,7 @@ class MentraLive: NSObject, SGCManager {
         cancelPendingReconnect(reason: "pairing_yield")
         pairingYieldActive = true
         pairingYieldAwaitingReclaim = false
+        persistPairingYield(untilWallMs: Int(Date().timeIntervalSince1970 * 1000) + yieldDurationMs)
         pairingYieldEndWorkItem?.cancel()
         cancelSecurePairingWait()
         if isScanning {
@@ -1827,6 +1891,7 @@ class MentraLive: NSObject, SGCManager {
         securePairingConfirmed = false
         awaitingSecurePairingConfirmation = false
         awaitingOwnerConfirm = false
+        cancelUnconfirmedReplaceDisconnect()
         stopAllTimers()
         closeL2capFileChannel()
         txCharacteristic = nil
@@ -1843,6 +1908,7 @@ class MentraLive: NSObject, SGCManager {
             guard let self else { return }
             Bridge.log("LIVE: Pairing yield ended — resuming reconnect to saved glasses")
             self.pairingYieldActive = false
+            self.clearPersistedPairingYield()
             self.pairingYieldAwaitingReclaim = true
             self.pairingYieldEndWorkItem = nil
             if !self.isKilled, self.connectedPeripheral == nil {
@@ -1932,6 +1998,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Owner loss (\(reason)) — stopping reconnect, keeping saved glasses")
         pairingYieldAwaitingReclaim = false
         pairingYieldActive = false
+        clearPersistedPairingYield()
         pairingYieldEndWorkItem?.cancel()
         pairingYieldEndWorkItem = nil
         destroy()
@@ -1940,6 +2007,166 @@ class MentraLive: NSObject, SGCManager {
         }
         Bridge.saveSetting("mentra_live_owner_lost", true)
         Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
+    }
+
+    /// First pairing mode. Disconnect and stop reconnecting, but keep scanning so the next
+    /// pairing mode can lift the rejection. Does not destroy the manager.
+    private func rejectPreviousOwnerUntilNextPairingMode() {
+        cancelPendingReconnect(reason: "previous_owner_rejection")
+        cancelSecurePairingWait()
+        if isScanning {
+            stopScan()
+        }
+        isConnecting = false
+        clearPhysicalReadiness()
+        connected = false
+        glassesSessionId = nil
+        streamControlVersion = 0
+        readinessCompletedThisBleSession = false
+        rgbLedAuthorityClaimed = false
+        lastSentMicTuningBody = nil
+        wearTuningQueriedThisLink = false
+        securePairingConfirmed = false
+        awaitingSecurePairingConfirmation = false
+        awaitingOwnerConfirm = false
+        cancelUnconfirmedReplaceDisconnect()
+        stopAllTimers()
+        closeL2capFileChannel()
+        txCharacteristic = nil
+        rxCharacteristic = nil
+        updateConnectionState(ConnTypes.DISCONNECTED)
+        if let peripheral = connectedPeripheral {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        }
+        connectedPeripheral = nil
+        connectingPeripheral = nil
+        previousOwnerRejection.beginFirstWindow()
+        persistPreviousOwnerRejection()
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "mentra_live_owner_lost", true)
+        }
+        Bridge.saveSetting("mentra_live_owner_lost", true)
+        Bridge.sendTypedMessage("owner_replaced", body: ["reason": "entering_pairing_mode"])
+        if centralManager == nil {
+            centralManager = CBCentralManager(
+                delegate: self, queue: bluetoothQueue,
+                options: ["CBCentralManagerOptionShowPowerAlertKey": 0]
+            )
+        }
+        startPreviousOwnerRejectionScan()
+        armPreviousOwnerRejectionQuietTimer()
+    }
+
+    /// The next pairing mode. Clear the rejection and reconnect to the saved glasses.
+    private func releasePreviousOwnerRejection(connect: Bool) {
+        clearPreviousOwnerRejection()
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "mentra_live_owner_lost", false)
+        }
+        Bridge.saveSetting("mentra_live_owner_lost", false)
+        guard connect, !isKilled, connectedPeripheral == nil else { return }
+        if let name = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME), !name.isEmpty {
+            attachKnownOrScan(name)
+        } else {
+            handleReconnection()
+        }
+    }
+
+    /// Stop watching. Does not clear owner-lost; `standDownAfterOwnerLoss` sets that itself.
+    private func clearPreviousOwnerRejection() {
+        previousOwnerRejection.clear()
+        previousOwnerRejectionQuietWorkItem?.cancel()
+        previousOwnerRejectionQuietWorkItem = nil
+        UserDefaults.standard.removeObject(forKey: Self.rejectionPhaseKey)
+        UserDefaults.standard.removeObject(forKey: Self.rejectionGenerationKey)
+    }
+
+    private func armPreviousOwnerRejectionQuietTimer() {
+        guard previousOwnerRejection.isInsideFirst else { return }
+        previousOwnerRejectionQuietWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.previousOwnerRejection.isInsideFirst else { return }
+            self.previousOwnerRejection.noteQuiet()
+            self.persistPreviousOwnerRejection()
+            Bridge.log("LIVE: First pairing window went quiet — next pairing mode can reconnect")
+        }
+        previousOwnerRejectionQuietWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(PreviousOwnerRejectionWatch.quietMs),
+            execute: work
+        )
+    }
+
+    private func startPreviousOwnerRejectionScan() {
+        guard previousOwnerRejection.isActive, !isKilled,
+              let central = centralManager, central.state == .poweredOn
+        else { return }
+        if isScanning {
+            central.stopScan()
+        }
+        isScanning = true
+        central.scanForPeripherals(
+            withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+        )
+        pairFlow("scan", "start trigger=previous_owner_rejection")
+    }
+
+    private func persistPreviousOwnerRejection() {
+        switch previousOwnerRejection.phase {
+        case .idle:
+            UserDefaults.standard.removeObject(forKey: Self.rejectionPhaseKey)
+            UserDefaults.standard.removeObject(forKey: Self.rejectionGenerationKey)
+            return
+        case .insideFirst:
+            UserDefaults.standard.set("inside", forKey: Self.rejectionPhaseKey)
+        case .waitingForNext:
+            UserDefaults.standard.set("waiting", forKey: Self.rejectionPhaseKey)
+        }
+        if let generation = previousOwnerRejection.rememberedGeneration {
+            UserDefaults.standard.set(generation, forKey: Self.rejectionGenerationKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.rejectionGenerationKey)
+        }
+    }
+
+    private func persistPairingYield(untilWallMs: Int) {
+        UserDefaults.standard.set(untilWallMs, forKey: Self.yieldUntilKey)
+    }
+
+    private func clearPersistedPairingYield() {
+        UserDefaults.standard.removeObject(forKey: Self.yieldUntilKey)
+    }
+
+    /// A restarted app keeps standing down until the saved deadline.
+    private func restorePairingYield() {
+        let until = UserDefaults.standard.integer(forKey: Self.yieldUntilKey)
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let remaining = MentraLiveConnectionAttemptPolicy.persistedYieldRemainingMs(
+            untilWallMs: until, nowWallMs: now
+        )
+        guard remaining > 0 else {
+            if until != 0 { clearPersistedPairingYield() }
+            return
+        }
+        Bridge.log("LIVE: Restored pairing yield for \(remaining)ms")
+        enterPairingYield(yieldDurationMs: remaining)
+    }
+
+    private func restorePreviousOwnerRejection() {
+        guard let phaseName = UserDefaults.standard.string(forKey: Self.rejectionPhaseKey) else { return }
+        let phase: PreviousOwnerRejectionWatch.Phase
+        switch phaseName {
+        case "inside":
+            phase = .insideFirst
+        case "waiting":
+            phase = .waitingForNext
+        default:
+            return
+        }
+        let generation = UserDefaults.standard.object(forKey: Self.rejectionGenerationKey) as? Int
+        previousOwnerRejection.restore(phase: phase, generation: generation)
+        Bridge.log("LIVE: Restored previous-owner rejection phase=\(phaseName)")
     }
 
     func connectById(_ deviceName: String) {
@@ -1954,6 +2181,26 @@ class MentraLive: NSObject, SGCManager {
         }
         if pairingYieldActive {
             pairFlow("connect_by_id", "blocked reason=pairing_yield name=\(deviceName)")
+            return
+        }
+        if !previousOwnerRejection.isActive,
+           DeviceStore.shared.get("bluetooth", "mentra_live_owner_lost") as? Bool == true
+        {
+            // A previous process already stood down (no in-memory watch). The next
+            // pairing-mode advertisement lifts it; do not GATT-connect before that.
+            previousOwnerRejection.resumeWaitingForNext()
+            persistPreviousOwnerRejection()
+        }
+        if previousOwnerRejection.isActive {
+            pairFlow("connect_by_id", "deferred reason=previous_owner_rejection name=\(deviceName)")
+            UserDefaults.standard.set(deviceName, forKey: PREFS_DEVICE_NAME)
+            if centralManager == nil {
+                centralManager = CBCentralManager(
+                    delegate: self, queue: bluetoothQueue,
+                    options: ["CBCentralManagerOptionShowPowerAlertKey": 0]
+                )
+            }
+            startPreviousOwnerRejectionScan()
             return
         }
         pairFlow("connect_by_id", "name=\(deviceName)")
@@ -2521,6 +2768,10 @@ class MentraLive: NSObject, SGCManager {
             pairFlow("scan", "blocked reason=pairing_yield trigger=\(reason)")
             return
         }
+        if previousOwnerRejection.isActive {
+            startPreviousOwnerRejectionScan()
+            return
+        }
 
         guard centralManager!.state == .poweredOn else {
             pairFlow("scan", "blocked reason=bluetooth_off trigger=\(reason) central=\(centralManager?.state.rawValue ?? -1)")
@@ -2574,8 +2825,11 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Connection Management
 
     private func connectToDevice(_ peripheral: CBPeripheral) {
-        if pairingYieldActive {
-            pairFlow("connect_device", "blocked reason=pairing_yield id=\(peripheral.identifier.uuidString)")
+        if pairingYieldActive || previousOwnerRejection.isActive {
+            pairFlow(
+                "connect_device",
+                "blocked reason=\(pairingYieldActive ? "pairing_yield" : "previous_owner_rejection") id=\(peripheral.identifier.uuidString)"
+            )
             isConnecting = false
             return
         }
@@ -2734,8 +2988,8 @@ class MentraLive: NSObject, SGCManager {
             return
         }
 
-        if pairingYieldActive {
-            Bridge.log("LIVE: Reconnection aborted - pairing yield active")
+        if pairingYieldActive || previousOwnerRejection.isActive {
+            Bridge.log("LIVE: Reconnection aborted - pairing yield or previous-owner rejection")
             return
         }
 
@@ -3020,6 +3274,7 @@ class MentraLive: NSObject, SGCManager {
             // handshake off), then negotiate from the caps this message advertises.
             pairingYieldAwaitingReclaim = false
             pairingYieldActive = false
+            clearPersistedPairingYield()
             pairingYieldEndWorkItem?.cancel()
             pairingYieldEndWorkItem = nil
             resetWireNegotiationState()
@@ -3242,14 +3497,22 @@ class MentraLive: NSObject, SGCManager {
                         "owner_retained": true,
                     ]
                 )
-            } else {
-                // The glasses forget the previous owner as soon as pairing mode starts.
-                // This phone has lost them: disconnect and do not try to reconnect.
+            } else if previousOwnerRejection.onEnteringPairingModeAgain() {
+                // This phone already stood down for an earlier pairing mode. A later entry
+                // lifts that rejection so the previous owner can connect again.
                 Bridge.log(
-                    "PAIRFLOW: entering_pairing_mode reason=\(enterReason) window_ms=\(windowMs) action=stand_down_no_reconnect"
+                    "PAIRFLOW: entering_pairing_mode reason=\(enterReason) window_ms=\(windowMs) action=release_previous_owner"
                 )
-                Bridge.log("LIVE: Glasses entering pairing mode — owner lost, no reconnect")
-                standDownAfterOwnerLoss(reason: "entering_pairing_mode")
+                Bridge.log("LIVE: Glasses entering pairing mode again — releasing previous-owner rejection")
+                releasePreviousOwnerRejection(connect: true)
+            } else {
+                // First pairing mode: stand down for this window only. The next pairing mode
+                // lets this phone connect again.
+                Bridge.log(
+                    "PAIRFLOW: entering_pairing_mode reason=\(enterReason) window_ms=\(windowMs) action=reject_until_next_pairing_mode"
+                )
+                Bridge.log("LIVE: Glasses entering pairing mode — previous owner rejected until the next pairing mode")
+                rejectPreviousOwnerUntilNextPairingMode()
             }
 
         case "confirm_replace_owner_result":
@@ -3258,10 +3521,14 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: confirm_replace_owner_result ok=\(ok) reason=\(reason ?? "")")
             if MentraLiveConnectionAttemptPolicy.shouldRearmSecurePairingWaitAfterConfirm(ok: ok) {
                 // The glasses wiped the old owner and sent the security request; the bond
-                // follows, so the pairing-wait failure timeout applies again.
+                // follows. glasses_ready was withheld, so park until owner_committed.
                 awaitingOwnerConfirm = false
-                if awaitingSecurePairingConfirmation {
-                    armSecurePairingWait()
+                cancelUnconfirmedReplaceDisconnect()
+                if !fullyBooted {
+                    awaitingSecurePairingConfirmation = true
+                    if isExplicitPairingAttempt() {
+                        armSecurePairingWait()
+                    }
                 }
             }
             var resultBody: [String: Any] = ["ok": ok]
@@ -3280,6 +3547,12 @@ class MentraLive: NSObject, SGCManager {
             if !MentraLiveConnectionAttemptPolicy.shouldRunSecurePairingWait(awaitingConfirm: awaitingConfirm) {
                 Bridge.log("LIVE: pairing_info awaiting_confirm — suspending secure pairing wait")
                 cancelSecurePairingWait()
+                // Keep the BLE link so the confirm can still be sent. Just don't treat the
+                // session as booted until the user confirms.
+                fullyBooted = false
+                armUnconfirmedReplaceDisconnect()
+            } else {
+                cancelUnconfirmedReplaceDisconnect()
             }
             if MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: ownerCommitted) {
                 securePairingConfirmed = true
@@ -4263,6 +4536,13 @@ class MentraLive: NSObject, SGCManager {
         // handleDeviceReady promotes the pairing target to the default device. Secure glasses
         // own a phone only after a BLE bond and announce it with pairing_info; GATT works
         // unencrypted inside the open window, so readiness alone is not a pairing.
+        if !MentraLiveConnectionAttemptPolicy.shouldAcceptReadyWhileAwaitingConfirm(
+            awaitingConfirm: awaitingOwnerConfirm
+        ) {
+            Bridge.log("LIVE: glasses_ready while replace owner is unconfirmed — not connecting")
+            armUnconfirmedReplaceDisconnect()
+            return
+        }
         if isExplicitPairingAttempt(), isSecurePairingTarget(), !securePairingConfirmed {
             Bridge.log("LIVE: glasses_ready before owner commit — waiting for pairing_info")
             awaitingSecurePairingConfirmation = true
@@ -4311,6 +4591,27 @@ class MentraLive: NSObject, SGCManager {
     private func cancelSecurePairingWait() {
         securePairingWaitWorkItem?.cancel()
         securePairingWaitWorkItem = nil
+    }
+
+    private func armUnconfirmedReplaceDisconnect() {
+        guard confirmIgnoreWorkItem == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.confirmIgnoreWorkItem = nil
+            guard !self.isKilled, self.awaitingOwnerConfirm else { return }
+            Bridge.log("LIVE: replace owner ignored — disconnecting")
+            self.disconnect()
+        }
+        confirmIgnoreWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + MentraLiveConnectionAttemptPolicy.confirmIgnoreSeconds,
+            execute: work
+        )
+    }
+
+    private func cancelUnconfirmedReplaceDisconnect() {
+        confirmIgnoreWorkItem?.cancel()
+        confirmIgnoreWorkItem = nil
     }
 
     private func isSecurePairingTarget() -> Bool {
@@ -6378,6 +6679,11 @@ class MentraLive: NSObject, SGCManager {
         )
 
         isKilled = true
+        pairingYieldActive = false
+        clearPersistedPairingYield()
+        pairingYieldEndWorkItem?.cancel()
+        pairingYieldEndWorkItem = nil
+        clearPreviousOwnerRejection()
         unpairFlushWorkItem?.cancel()
         unpairFlushWorkItem = nil
         unpairFlushPending = false

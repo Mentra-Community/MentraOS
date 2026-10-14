@@ -11,7 +11,7 @@ import {DiscoveredGlassesRow} from "@/components/pairing/DiscoveredGlassesRow"
 import {NimoBluetoothSetup} from "@/components/pairing/NimoBluetoothSetup"
 import {Group} from "@/components/ui/Group"
 import GlassView from "@/components/ui/GlassView"
-import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
@@ -39,11 +39,7 @@ function GlassesScanScreen() {
   const {deviceModel, ar99ProjectName} = useLocalSearchParams() as {deviceModel: DeviceModel; ar99ProjectName?: string}
   const {theme} = useAppTheme()
   const {goBack, replace, push} = useNavigationStore.getState()
-  const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const bluetoothClassicConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
-    engine.pairing.onReadiness(onChange),
-  ).bluetoothClassicConnected
   const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) => engine.pairing.onFound(onChange))
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
   const [scanTimedOut, setScanTimedOut] = useState(false)
@@ -275,26 +271,10 @@ function GlassesScanScreen() {
   }
 
   const startPairing = async (device: Device) => {
-    const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
     const resolvedProjectName = deviceModel === DeviceTypes.AR99 ? (device.projectName ?? ar99ProjectName) : undefined
-    if (
-      Platform.OS === "android" ||
-      bluetoothClassicConnected ||
-      !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
-    ) {
-      push("/pairing/loading", {
-        device: JSON.stringify(device),
-        deviceModel: device.model,
-        deviceName: device.name,
-        ar99ProjectName: resolvedProjectName,
-        securePairingCapable: device.securePairingCapable,
-        pairingCode: device.pairingCode,
-      })
-      return
-    }
-
-    replace("/pairing/btclassic", {device: JSON.stringify(device)})
-    pushUnder("/pairing/loading", {
+    // BLE first on both platforms. iOS opens Settings for Classic audio from
+    // the loading screen after the glasses are ready.
+    push("/pairing/loading", {
       device: JSON.stringify(device),
       deviceModel: device.model,
       deviceName: device.name,

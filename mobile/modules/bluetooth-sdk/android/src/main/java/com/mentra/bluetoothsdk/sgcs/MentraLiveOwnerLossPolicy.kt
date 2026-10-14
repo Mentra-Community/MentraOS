@@ -115,10 +115,34 @@ internal object MentraLiveOwnerLossPolicy {
     /**
      * Ownership transfer (pairing spec T1): when the glasses kept the previous owner while they
      * opened the window (`owner_retained`), that owner's phone yields for the window instead of
-     * standing down. Absent/false keeps the 3.3 stand-down. Mirrors iOS
+     * standing down. Absent/false stands the previous owner down for that pairing mode only.
+     * The next pairing mode lifts the rejection. Mirrors iOS
      * `MentraLiveConnectionAttemptPolicy.shouldYieldOnEnteringPairingMode`.
      */
     fun shouldYieldOnEnteringPairingMode(ownerRetained: Boolean): Boolean = ownerRetained
+
+    /**
+     * Automatic reconnect must not take the single BLE slot while the glasses are still in
+     * pairing mode. An explicit pairing attempt (the new phone, or Pair again) still connects.
+     * Mirrors iOS `MentraLiveConnectionAttemptPolicy.shouldStandDownInsteadOfReconnect`.
+     */
+    fun shouldStandDownInsteadOfReconnect(
+            pairingMode: Boolean,
+            savedGlasses: Boolean,
+            explicitPairing: Boolean,
+    ): Boolean = pairingMode && savedGlasses && !explicitPairing
+
+    /**
+     * Remaining yield after a process restart. A missing, expired, or implausible deadline
+     * returns 0 so the phone reconnects. Mirrors iOS
+     * `MentraLiveConnectionAttemptPolicy.persistedYieldRemainingMs`.
+     */
+    fun persistedYieldRemainingMs(untilWallMs: Long, nowWallMs: Long): Long {
+        if (untilWallMs <= 0L) return 0L
+        val remaining = untilWallMs - nowWallMs
+        if (remaining <= 0L || remaining > PAIRING_WINDOW_ABSOLUTE_MS) return 0L
+        return remaining
+    }
 
     /**
      * A connect rejection while this phone is yielding is the glasses refusing the retained
@@ -165,6 +189,33 @@ internal object MentraLiveOwnerLossPolicy {
     const val SECURE_BOND_WAIT_MS = 40_000L
 
     /**
+     * How long a link may stay up after the glasses ask for `confirm_replace_owner`.
+     * If the phone never confirms, both sides drop the connection. Matches the
+     * glasses `LXY_PAIRING_CONFIRM_IGNORE_MS`.
+     */
+    const val CONFIRM_IGNORE_MS = 20_000L
+
+    /** `glasses_ready` must not become a connected session while replace-owner is unanswered. */
+    fun shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm: Boolean): Boolean = !awaitingConfirm
+
+    /**
+     * An explicit secure pair must not call `createBond` until `pairing_info` says the transfer
+     * gate is open. Starting SMP while the glasses still require `confirm_replace_owner` makes
+     * them reject the pair and drop the link.
+     */
+    fun shouldDeferCtkdBond(
+            explicitPairing: Boolean,
+            secureTarget: Boolean,
+            bondState: Int,
+            pairingInfoSeen: Boolean,
+            awaitingConfirm: Boolean,
+    ): Boolean =
+            explicitPairing &&
+                    secureTarget &&
+                    bondState != BluetoothDevice.BOND_BONDED &&
+                    (!pairingInfoSeen || awaitingConfirm)
+
+    /**
      * Classic audio can come up before the BLE bond or the owner commit. During an explicit
      * secure pair that must not save this phone. A reconnect of an already-paired phone can still
      * mark ready.
@@ -177,4 +228,105 @@ internal object MentraLiveOwnerLossPolicy {
     ): Boolean =
             !explicitPairing ||
                     !shouldDeferReadyForBond(securePairingTarget, bondState, ownerCommitted)
+}
+
+/**
+ * The first pairing mode stands the previous owner's phone down so it does not fight a new
+ * phone for the BLE slot. That rejection ends when pairing mode is entered again.
+ *
+ * The stand-down happens while the first window is already advertising, so those advertisements
+ * are not a second entry. The watch starts inside that window. A later rising edge (the pairing
+ * flag dropped, or advertisements went quiet, then pairing mode is on again) is the next entry.
+ * A changed [pairingGeneration] is also a new entry, even when the flag never dropped.
+ */
+internal class PreviousOwnerRejectionWatch {
+    enum class Phase {
+        IDLE,
+        INSIDE_FIRST,
+        WAITING_FOR_NEXT,
+    }
+
+    companion object {
+        /** Advertisements this quiet mean the first window stopped. Not itself a reconnect. */
+        const val QUIET_MS = 8_000L
+    }
+
+    var phase: Phase = Phase.IDLE
+        private set
+
+    private var stoodDownGeneration: Int? = null
+
+    val isActive: Boolean
+        get() = phase != Phase.IDLE
+
+    val isInsideFirst: Boolean
+        get() = phase == Phase.INSIDE_FIRST
+
+    /** Generation seen in the first window, if the advertisement carried one. */
+    val rememberedGeneration: Int?
+        get() = stoodDownGeneration
+
+    /** First pairing-mode entry. Starts inside that window. */
+    fun beginFirstWindow() {
+        phase = Phase.INSIDE_FIRST
+        stoodDownGeneration = null
+    }
+
+    /**
+     * A previous process already rejected this phone. The next pairing-mode advertisement
+     * lifts it. Does nothing when a window is already being watched.
+     */
+    fun resumeWaitingForNext(generation: Int? = null) {
+        if (phase != Phase.IDLE) return
+        phase = Phase.WAITING_FOR_NEXT
+        stoodDownGeneration = generation
+    }
+
+    /** Restore a watch that survived the process. */
+    fun restore(phase: Phase, generation: Int?) {
+        this.phase = phase
+        stoodDownGeneration = generation
+    }
+
+    /** Pairing-mode advertisements stopped, so the next one is a new entry. */
+    fun noteQuiet() {
+        if (phase == Phase.INSIDE_FIRST) phase = Phase.WAITING_FOR_NEXT
+    }
+
+    /**
+     * @return true when this observation is a later pairing mode and the rejection ends.
+     */
+    fun onAdvertisement(pairingMode: Boolean, pairingGeneration: Int?): Boolean {
+        if (phase == Phase.IDLE) return false
+        if (pairingMode && pairingGeneration != null) {
+            val previous = stoodDownGeneration
+            if (previous == null && phase == Phase.INSIDE_FIRST) {
+                stoodDownGeneration = pairingGeneration
+            } else if (previous != null && pairingGeneration != previous) {
+                clear()
+                return true
+            }
+        }
+        if (!pairingMode) {
+            if (phase == Phase.INSIDE_FIRST) phase = Phase.WAITING_FOR_NEXT
+            return false
+        }
+        if (phase == Phase.WAITING_FOR_NEXT) {
+            clear()
+            return true
+        }
+        return false
+    }
+
+    /** A later `entering_pairing_mode` while already rejected is the next entry. */
+    fun onEnteringPairingModeAgain(): Boolean {
+        if (phase == Phase.IDLE) return false
+        clear()
+        return true
+    }
+
+    fun clear() {
+        phase = Phase.IDLE
+        stoodDownGeneration = null
+    }
 }

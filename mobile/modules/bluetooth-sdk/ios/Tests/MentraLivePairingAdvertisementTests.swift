@@ -247,6 +247,61 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         XCTAssertTrue(streak.record(nowMs: span + 10_000))
     }
 
+    func testTheFirstPairingModeDoesNotReleaseAndTheNextOneDoes() {
+        var watch = PreviousOwnerRejectionWatch()
+        XCTAssertFalse(watch.onAdvertisement(pairingMode: true, pairingGeneration: 1))
+        watch.beginFirstWindow()
+        XCTAssertFalse(watch.onAdvertisement(pairingMode: true, pairingGeneration: 1))
+        XCTAssertTrue(watch.onAdvertisement(pairingMode: true, pairingGeneration: 2))
+        XCTAssertFalse(watch.isActive)
+    }
+
+    func testAQuietFirstWindowThenAnotherPairingModeReleases() {
+        var watch = PreviousOwnerRejectionWatch()
+        watch.beginFirstWindow()
+        XCTAssertFalse(watch.onAdvertisement(pairingMode: true, pairingGeneration: 4))
+        watch.noteQuiet()
+        XCTAssertTrue(watch.isActive)
+        XCTAssertTrue(watch.onAdvertisement(pairingMode: true, pairingGeneration: 4))
+        XCTAssertFalse(watch.isActive)
+    }
+
+    func testASecondEnteringPairingModeReleasesWithoutAnAdvertisement() {
+        var watch = PreviousOwnerRejectionWatch()
+        watch.beginFirstWindow()
+        XCTAssertTrue(watch.onEnteringPairingModeAgain())
+        XCTAssertFalse(watch.isActive)
+        XCTAssertFalse(watch.onEnteringPairingModeAgain())
+    }
+
+    func testAutomaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertTrue(Policy.shouldStandDownInsteadOfReconnect(
+            pairingMode: true, savedGlasses: true, explicitPairing: false
+        ))
+        XCTAssertFalse(Policy.shouldStandDownInsteadOfReconnect(
+            pairingMode: true, savedGlasses: true, explicitPairing: true
+        ))
+        XCTAssertFalse(Policy.shouldStandDownInsteadOfReconnect(
+            pairingMode: false, savedGlasses: true, explicitPairing: false
+        ))
+        XCTAssertFalse(Policy.shouldStandDownInsteadOfReconnect(
+            pairingMode: true, savedGlasses: false, explicitPairing: false
+        ))
+    }
+
+    func testARestartedAppKeepsOnlyALiveYieldDeadline() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        let now = 1_000_000
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: 0, nowWallMs: now), 0)
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now + 50_000, nowWallMs: now), 50_000)
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now - 1, nowWallMs: now), 0)
+        XCTAssertEqual(
+            Policy.persistedYieldRemainingMs(untilWallMs: now + 300_000 + 1, nowWallMs: now),
+            0
+        )
+    }
+
     func testEnteringPairingModeYieldsOnlyWhenTheOwnerWasRetained() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         XCTAssertTrue(Policy.shouldYieldOnEnteringPairingMode(ownerRetained: true))
@@ -287,6 +342,13 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         XCTAssertFalse(Policy.shouldRunSecurePairingWait(awaitingConfirm: true))
         XCTAssertTrue(Policy.shouldRunSecurePairingWait(awaitingConfirm: false))
+    }
+
+    func testAwaitingConfirmDoesNotAcceptAReadySession() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertFalse(Policy.shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm: true))
+        XCTAssertTrue(Policy.shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm: false))
+        XCTAssertEqual(Policy.confirmIgnoreSeconds, 20)
     }
 
     func testSuccessfulConfirmRearmsThePairingWaitButRefusalDoesNot() {

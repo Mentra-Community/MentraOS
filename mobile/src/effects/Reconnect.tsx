@@ -1,8 +1,12 @@
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useEffect} from "react"
 import {AppState} from "react-native"
 
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
+import {useNavigationStore} from "@/stores/navigation"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
+import {REPLACE_OWNER_ROUTE, shouldRouteToReplaceOwner} from "@/utils/pairing/replaceOwner"
+import {isMentraLiveOwnershipTransferSupported} from "@/utils/pairing/securePairingFeature"
 import {decideReconnect, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {DeviceTypes} from "@mentra/engine"
 
@@ -46,6 +50,27 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
 }
 
 export function Reconnect() {
+  // pairing_info is otherwise only observed on the pairing loading screen. A reconnect
+  // (connectToDevice) still has to show Replace owner, or the 20s ignore timer drops the link
+  // with nothing for the user to confirm.
+  useEffect(() => {
+    const sub = BluetoothSdk.addListener("pairing_info", (event) => {
+      if (
+        !shouldRouteToReplaceOwner({
+          platformSupported: isMentraLiveOwnershipTransferSupported(),
+          awaitingConfirm: event.awaiting_confirm,
+          securePairing: event.secure_pairing_capable !== false,
+        })
+      ) {
+        return
+      }
+      const nav = useNavigationStore.getState()
+      if (nav.getCurrentRoute() === REPLACE_OWNER_ROUTE) return
+      console.log("PAIRFLOW: replace_owner_prompt source=pairing_info")
+      nav.push(REPLACE_OWNER_ROUTE, {deviceModel: "Mentra Live"})
+    })
+    return () => sub.remove()
+  }, [])
   const glassesConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
     engine.pairing.onReadiness(onChange),
   ).connected

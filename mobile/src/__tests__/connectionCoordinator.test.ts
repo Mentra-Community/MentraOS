@@ -42,8 +42,8 @@ describe("decideReconnect", () => {
     expect(decideReconnect({...base, hasDefaultDevice: false})).toEqual({kind: "skip", result: false})
   })
 
-  it("skips when the Mentra Live owner was lost, even though a default device remains", () => {
-    expect(decideReconnect({...base, ownerLost: true})).toEqual({kind: "skip", result: false})
+  it("still connects after owner loss so native can watch for the next pairing mode", () => {
+    expect(decideReconnect({...base, ownerLost: true})).toEqual({kind: "connect"})
   })
 
   it("connects when paired, idle, and disconnected", () => {

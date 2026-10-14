@@ -125,8 +125,11 @@ describe("pairing loading screen", () => {
     await act(async () => {})
   }
 
+  let restorePlatform: (() => void) | undefined
+
   beforeEach(() => {
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
+    restorePlatform = jest.replaceProperty(Platform, "OS", "android").restore
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     jest.clearAllMocks()
@@ -141,6 +144,8 @@ describe("pairing loading screen", () => {
   })
 
   afterEach(() => {
+    restorePlatform?.()
+    restorePlatform = undefined
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER
     jest.useRealTimers()
@@ -690,7 +695,7 @@ describe("pairing loading screen", () => {
       expect(push).toHaveBeenCalledTimes(2)
     })
 
-    it("keeps today's flow on iOS even when awaiting_confirm arrives", async () => {
+    it("routes iOS to the replace-owner screen when awaiting_confirm arrives", async () => {
       useTransferFlow("ios")
       render(<GlassesPairingLoadingScreen />)
       await startPairingKickoff()
@@ -702,7 +707,32 @@ describe("pairing loading screen", () => {
           awaiting_confirm: true,
         })
       })
-      expect(push).not.toHaveBeenCalled()
+      expect(push).toHaveBeenCalledWith("/pairing/replace-owner", {
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+      })
+    })
+
+    it("opens iOS Settings for Classic audio after the glasses are ready", async () => {
+      useTransferFlow("ios")
+      render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+
+      act(() => {
+        emitBluetoothSdkEvent("pairing_info", {
+          had_previous_bond: false,
+          secure_pairing_capable: true,
+          owner_committed: true,
+        })
+      })
+      await finishBonding()
+
+      await waitFor(() => {
+        expect(push).toHaveBeenCalledWith("/pairing/btclassic", {
+          device: JSON.stringify({id: "MENTRA_LIVE_BLE_001", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001"}),
+        })
+      })
+      expect(replace).not.toHaveBeenCalled()
     })
 
     it("keeps today's flow when the ownership transfer flag is off", async () => {

@@ -95,10 +95,11 @@ export default function ReplaceOwnerScreen() {
     void engine.pairing.abandonAttempt().catch((cleanupError) => {
       console.warn("Pairing cancellation cleanup failed:", cleanupError)
     })
-    // Same destination as cancelling from the loading screen: pop this screen and loading.
-    const {goBack} = useNavigationStore.getState()
+    // Pop this screen. The loading screen is only underneath during an explicit pair.
+    const {goBack, getPreviousRoute} = useNavigationStore.getState()
+    const underLoading = getPreviousRoute() === "/pairing/loading"
     goBack()
-    goBack()
+    if (underLoading) goBack()
   }, [clearConfirmTimeout, deviceModel])
 
   const handleConfirm = useCallback(() => {
