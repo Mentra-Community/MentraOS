@@ -188,8 +188,63 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
     }
 
     func testCapabilityFlagDoesNotConfirmOwnership() {
-        XCTAssertFalse(MentraLivePairingAdvertisement.pairingInfoConfirmsOwner(ownerCommitted: false))
-        XCTAssertTrue(MentraLivePairingAdvertisement.pairingInfoConfirmsOwner(ownerCommitted: true))
+        XCTAssertFalse(MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: false))
+        XCTAssertTrue(MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: true))
+    }
+
+    func testOnlySecureFirmwareOutsideExplicitPairingRejectsAnOwner() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertTrue(Policy.isOwnerRejection(isAuthFailure: true, explicitPairing: false, secureFirmware: true))
+        XCTAssertFalse(Policy.isOwnerRejection(isAuthFailure: true, explicitPairing: true, secureFirmware: true))
+        XCTAssertFalse(Policy.isOwnerRejection(isAuthFailure: true, explicitPairing: false, secureFirmware: false))
+        XCTAssertFalse(Policy.isOwnerRejection(isAuthFailure: false, explicitPairing: false, secureFirmware: true))
+    }
+
+    func testASingleRejectionDoesNotStandDown() {
+        var streak = MentraLiveOwnerRejectionStreak()
+        XCTAssertFalse(streak.record(nowMs: 0))
+    }
+
+    func testQuickRejectionsWaitForTheStreakToSpanAboutAMinute() {
+        var streak = MentraLiveOwnerRejectionStreak()
+        XCTAssertFalse(streak.record(nowMs: 0))
+        XCTAssertFalse(streak.record(nowMs: 3_000))
+        // Third attempt, but a glasses reboot also rejects for a few seconds.
+        XCTAssertFalse(streak.record(nowMs: 8_000))
+        XCTAssertFalse(streak.record(nowMs: 24_000))
+        XCTAssertTrue(streak.record(nowMs: MentraLiveOwnerRejectionStreak.minSpanMs))
+    }
+
+    func testASuccessfulSessionEndsTheStreak() {
+        var streak = MentraLiveOwnerRejectionStreak()
+        _ = streak.record(nowMs: 0)
+        _ = streak.record(nowMs: 10_000)
+        streak.reset()
+        XCTAssertFalse(streak.record(nowMs: 50_000))
+        XCTAssertFalse(streak.record(nowMs: 60_000))
+    }
+
+    func testRejectionsFarApartAreNotOneStreak() {
+        var streak = MentraLiveOwnerRejectionStreak()
+        _ = streak.record(nowMs: 0)
+        _ = streak.record(nowMs: 10_000)
+        _ = streak.record(nowMs: 20_000)
+        let later = 20_000 + MentraLiveOwnerRejectionStreak.streakGapMs + 1
+        XCTAssertFalse(streak.record(nowMs: later))
+        XCTAssertFalse(streak.record(nowMs: later + 10_000))
+        XCTAssertFalse(streak.record(nowMs: later + 20_000))
+    }
+
+    func testOneAttemptReportingTwiceCountsOnce() {
+        var streak = MentraLiveOwnerRejectionStreak()
+        let span = MentraLiveOwnerRejectionStreak.minSpanMs
+        // didFailToConnect then didDisconnect for each of two attempts.
+        XCTAssertFalse(streak.record(nowMs: 0))
+        XCTAssertFalse(streak.record(nowMs: 400))
+        XCTAssertFalse(streak.record(nowMs: span))
+        XCTAssertFalse(streak.record(nowMs: span + 400))
+        // A genuine third attempt completes the streak.
+        XCTAssertTrue(streak.record(nowMs: span + 10_000))
     }
 
     private func legacyPayload() -> Data {

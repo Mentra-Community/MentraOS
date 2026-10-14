@@ -24,6 +24,7 @@ const INTERNAL_KEYS = new Set<string>([
   SETTINGS.device_address.key,
   SETTINGS.project_name.key,
   SETTINGS.mentra_live_owner_lost.key,
+  SETTINGS.mentra_live_secure_firmware.key,
   SETTINGS.pending_controller.key,
   SETTINGS.default_controller.key,
   SETTINGS.controller_device_name.key,

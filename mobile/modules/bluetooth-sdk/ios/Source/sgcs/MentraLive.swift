@@ -967,10 +967,10 @@ extension MentraLive: CBCentralManagerDelegate {
                 return
             }
 
-            // Entering pairing forgets the owner, so an auth failure while reconnecting saved
-            // glasses means this phone lost ownership even if it missed entering_pairing_mode.
-            if !self.isExplicitPairingAttempt(), Self.isPairingAuthFailure(error) {
-                self.standDownAfterOwnerLoss(reason: "ios_auth_fail")
+            // Entering pairing forgets the owner, so repeated auth failures while reconnecting
+            // saved secure glasses mean this phone lost ownership even if it missed
+            // entering_pairing_mode. One failure alone is not enough.
+            if self.standDownIfOwnerRejectionRepeats(error) {
                 return
             }
 
@@ -1006,10 +1006,10 @@ extension MentraLive: CBCentralManagerDelegate {
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
-            // Entering pairing forgets the owner, so an auth failure while reconnecting saved
-            // glasses means this phone lost ownership even if it missed entering_pairing_mode.
-            if !self.isExplicitPairingAttempt(), Self.isPairingAuthFailure(error) {
-                self.standDownAfterOwnerLoss(reason: "ios_auth_fail")
+            // Entering pairing forgets the owner, so repeated auth failures while reconnecting
+            // saved secure glasses mean this phone lost ownership even if it missed
+            // entering_pairing_mode. One failure alone is not enough.
+            if self.standDownIfOwnerRejectionRepeats(error) {
                 return
             }
 
@@ -1595,6 +1595,8 @@ class MentraLive: NSObject, SGCManager {
     private var awaitingSecurePairingConfirmation = false
     /// pairing_info from secure firmware arrived on this BLE session.
     private var securePairingConfirmed = false
+    /// Connect-time auth failures across automatic reconnects. One is a hint; a streak is owner loss.
+    private var ownerRejectionStreak = MentraLiveOwnerRejectionStreak()
     private var securePairingWaitWorkItem: DispatchWorkItem?
     private var pairingYieldEndWorkItem: DispatchWorkItem?
     /// Hold GATT teardown until the unpair write can leave the phone.
@@ -1811,6 +1813,39 @@ class MentraLive: NSObject, SGCManager {
             return error.code == CBError.peerRemovedPairingInformation.rawValue
         }
         return false
+    }
+
+    /// The saved glasses run secure-pairing firmware, learned from their last `pairing_info`.
+    /// Legacy firmware never rejects a non-owner on purpose, so its failures are not owner loss.
+    private func isSavedGlassesSecureFirmware() -> Bool {
+        DeviceStore.shared.get("bluetooth", "mentra_live_secure_firmware") as? Bool == true
+    }
+
+    /// Remember what the connected glasses reported so later rejections can be read correctly.
+    private func rememberSecureFirmware(_ secure: Bool) {
+        guard isSavedGlassesSecureFirmware() != secure else { return }
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "mentra_live_secure_firmware", secure)
+        }
+        Bridge.saveSetting("mentra_live_secure_firmware", secure)
+    }
+
+    /// One auth failure from secure glasses is not proof that another phone took over. Count it
+    /// and stand down only when it keeps repeating across automatic reconnects.
+    /// - Returns: true when this phone stood down.
+    private func standDownIfOwnerRejectionRepeats(_ error: Error?) -> Bool {
+        guard MentraLiveConnectionAttemptPolicy.isOwnerRejection(
+            isAuthFailure: Self.isPairingAuthFailure(error),
+            explicitPairing: isExplicitPairingAttempt(),
+            secureFirmware: isSavedGlassesSecureFirmware()
+        ) else { return false }
+        let nowMs = Int(ProcessInfo.processInfo.systemUptime * 1000)
+        guard ownerRejectionStreak.record(nowMs: nowMs) else {
+            Bridge.log("LIVE: Owner rejection (ios_auth_fail) — not repeated yet, will retry")
+            return false
+        }
+        standDownAfterOwnerLoss(reason: "ios_auth_fail")
+        return true
     }
 
     /// Another phone took ownership. Stop reconnecting but keep the saved glasses so the app
@@ -3120,7 +3155,7 @@ class MentraLive: NSObject, SGCManager {
                 "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) code=\(json["pairing_code"] as? String ?? "-")"
             )
             let ownerCommitted = json["owner_committed"] as? Bool == true
-            if MentraLivePairingAdvertisement.pairingInfoConfirmsOwner(ownerCommitted: ownerCommitted) {
+            if MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: ownerCommitted) {
                 securePairingConfirmed = true
                 cancelSecurePairingWait()
                 if awaitingSecurePairingConfirmation {
@@ -3128,12 +3163,14 @@ class MentraLive: NSObject, SGCManager {
                     markFullyBooted()
                 }
             }
+            // Legacy firmware that omits this field is not secure-capable.
+            let securePairingCapable = json["secure_pairing_capable"] as? Bool ?? false
+            rememberSecureFirmware(securePairingCapable)
             Bridge.sendPairingInfo(
                 hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
                 pairingCode: json["pairing_code"] as? String,
                 classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
-                // Legacy firmware that omits this field is not secure-capable.
-                securePairingCapable: json["secure_pairing_capable"] as? Bool ?? false,
+                securePairingCapable: securePairingCapable,
                 protocolVersion: json["protocol_version"] as? Int ?? 1
             )
 
@@ -4107,6 +4144,8 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func markFullyBooted() {
+        // A session that reached ready means the glasses still admit this phone.
+        ownerRejectionStreak.reset()
         awaitingSecurePairingConfirmation = false
         cancelSecurePairingWait()
         fullyBooted = true

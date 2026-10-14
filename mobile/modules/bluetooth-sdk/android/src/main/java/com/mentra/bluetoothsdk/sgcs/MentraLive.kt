@@ -631,6 +631,8 @@ class MentraLive : SGCManager() {
     private var pairingYieldAwaitingReclaim = false
     /** elapsedRealtime of the last GATT link that was not an explicit pairing attempt. */
     private var lastAutoReconnectLinkAt: Long? = null
+    /** Connect-time rejections across automatic reconnects. One is a hint; a streak is owner loss. */
+    private val ownerRejectionStreak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
     /** Hold GATT teardown until the unpair write can leave the phone. */
     private var unpairFlushPending = false
     private var unpairFlushRunnable: Runnable? = null
@@ -1226,6 +1228,8 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "connectionState", state)
 
         if (state == ConnTypes.CONNECTED) {
+            // A session that reached ready means the glasses still admit this phone.
+            ownerRejectionStreak.reset()
             DeviceStore.apply("glasses", "connected", true)
             if (glassesReadyReceived) {
                 DeviceStore.apply("glasses", "fullyBooted", true)
@@ -2048,6 +2052,34 @@ class MentraLive : SGCManager() {
      * can explain the loss and offer to pair again or unpair. Bonds and the saved identity
      * are removed only by forget().
      */
+    /**
+     * The saved glasses run secure-pairing firmware, learned from their last `pairing_info`.
+     * Legacy firmware never rejects a non-owner on purpose, so its failures are not owner loss.
+     */
+    private fun isSavedGlassesSecureFirmware(): Boolean =
+            DeviceStore.get("bluetooth", "mentra_live_secure_firmware") as? Boolean == true
+
+    /** Remember what the connected glasses reported so later rejections can be read correctly. */
+    private fun rememberSecureFirmware(secure: Boolean) {
+        if (isSavedGlassesSecureFirmware() == secure) return
+        DeviceStore.apply("bluetooth", "mentra_live_secure_firmware", secure)
+        Bridge.saveSetting("mentra_live_secure_firmware", secure)
+    }
+
+    /**
+     * One rejection from secure glasses is not proof that another phone took over. Count it and
+     * stand down only when it keeps repeating across automatic reconnects.
+     * @return true when this phone stood down
+     */
+    private fun standDownIfOwnerRejectionRepeats(reason: String): Boolean {
+        if (!ownerRejectionStreak.record(SystemClock.elapsedRealtime())) {
+            Bridge.log("LIVE: Owner rejection ($reason) — not repeated yet, will retry")
+            return false
+        }
+        standDownAfterOwnerLoss(reason)
+        return true
+    }
+
     private fun standDownAfterOwnerLoss(reason: String) {
         Bridge.log("LIVE: Owner loss ($reason) — stopping reconnect, keeping saved glasses")
         destroy()
@@ -2514,14 +2546,16 @@ class MentraLive : SGCManager() {
 
                         // Secure glasses reject a non-owner at connect time with HCI
                         // Authentication Failure, whether or not this phone saw the
-                        // entering_pairing_mode notice. GATT 8 (timeout) and 19 (remote
-                        // terminated) are RF/session drops and must not wipe the saved owner.
-                        if (MentraLiveOwnerLossPolicy.shouldStandDownOnGattError(
+                        // entering_pairing_mode notice. One rejection can also be a glasses
+                        // reboot or a stale bond, so stand down only when it repeats across
+                        // automatic reconnects. GATT 8 (timeout) and 19 (remote terminated)
+                        // are RF/session drops and never count.
+                        if (MentraLiveOwnerLossPolicy.isOwnerRejectionOnGattError(
                                         status,
                                         isExplicitPairingAttempt(),
-                                )
+                                        isSavedGlassesSecureFirmware(),
+                                ) && standDownIfOwnerRejectionRepeats("gatt_auth_status_$status")
                         ) {
-                            standDownAfterOwnerLoss("gatt_auth_status_$status")
                             return
                         }
 
@@ -4187,15 +4221,18 @@ class MentraLive : SGCManager() {
                 Bridge.log("LIVE: Glasses entering pairing mode — owner lost, no reconnect")
                 standDownAfterOwnerLoss("entering_pairing_mode")
             }
-            "pairing_info" ->
-                    Bridge.sendPairingInfo(
-                            json.optBoolean("had_previous_bond", false),
-                            jsonNullableString(json, "pairing_code"),
-                            json.optBoolean("classic_bond_ready", false),
-                            // Legacy firmware that omits this field is not secure-capable.
-                            json.optBoolean("secure_pairing_capable", false),
-                            json.optInt("protocol_version", 1),
-                    )
+            "pairing_info" -> {
+                // Legacy firmware that omits this field is not secure-capable.
+                val secureCapable = json.optBoolean("secure_pairing_capable", false)
+                rememberSecureFirmware(secureCapable)
+                Bridge.sendPairingInfo(
+                        json.optBoolean("had_previous_bond", false),
+                        jsonNullableString(json, "pairing_code"),
+                        json.optBoolean("classic_bond_ready", false),
+                        secureCapable,
+                        json.optInt("protocol_version", 1),
+                )
+            }
             "imu_response",
             "imu_stream_response",
             "imu_gesture_response",
@@ -7337,16 +7374,19 @@ class MentraLive : SGCManager() {
                                                 lastAutoReconnectLinkAt?.let {
                                                     SystemClock.elapsedRealtime() - it
                                                 }
-                                        if (MentraLiveOwnerLossPolicy.shouldStandDownOnBondRemoved(
+                                        if (MentraLiveOwnerLossPolicy.isOwnerRejectionOnBondRemoved(
                                                         previousBondState,
                                                         bondState,
                                                         isKilled,
                                                         unpairFlushPending,
                                                         isExplicitPairingAttempt(),
                                                         sinceReconnect,
-                                                )
+                                                        isSavedGlassesSecureFirmware(),
+                                                ) &&
+                                                        standDownIfOwnerRejectionRepeats(
+                                                                "bond_removed_by_glasses"
+                                                        )
                                         ) {
-                                            standDownAfterOwnerLoss("bond_removed_by_glasses")
                                             return
                                         }
                                         markPairingTiming(

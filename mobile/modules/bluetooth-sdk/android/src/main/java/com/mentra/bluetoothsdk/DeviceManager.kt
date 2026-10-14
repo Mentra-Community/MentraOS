@@ -2353,6 +2353,16 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         Bridge.saveSetting("mentra_live_owner_lost", false)
     }
 
+    /**
+     * The saved glasses' firmware is no longer known once they are forgotten. The next glasses
+     * report it again with their first `pairing_info`.
+     */
+    internal fun clearSecureFirmware() {
+        if (DeviceStore.store.get("bluetooth", "mentra_live_secure_firmware") as? Boolean != true) return
+        DeviceStore.apply("bluetooth", "mentra_live_secure_firmware", false)
+        Bridge.saveSetting("mentra_live_secure_firmware", false)
+    }
+
     fun connectDefault() {
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
@@ -2565,6 +2575,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         }
         Bridge.log("MAN: Forgetting smart glasses")
         clearOwnerLost()
+        clearSecureFirmware()
 
         val live = sgc as? MentraLive
         if (live != null) {

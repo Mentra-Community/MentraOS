@@ -140,6 +140,14 @@ struct ViewState {
         Bridge.saveSetting("mentra_live_owner_lost", false)
     }
 
+    /// The saved glasses' firmware is no longer known once they are forgotten. The next glasses
+    /// report it again with their first `pairing_info`.
+    private func clearSecureFirmware() {
+        guard DeviceStore.shared.get("bluetooth", "mentra_live_secure_firmware") as? Bool == true else { return }
+        DeviceStore.shared.apply("bluetooth", "mentra_live_secure_firmware", false)
+        Bridge.saveSetting("mentra_live_secure_firmware", false)
+    }
+
     private var pendingWearable: String {
         get { DeviceStore.shared.get("bluetooth", "pending_wearable") as? String ?? "" }
         set { DeviceStore.shared.apply("bluetooth", "pending_wearable", newValue) }
@@ -2049,6 +2057,7 @@ struct ViewState {
     func forget() {
         Bridge.log("MAN: Forgetting smart glasses")
         clearOwnerLost()
+        clearSecureFirmware()
         // Call forget first to stop timers/handlers/reconnect logic
         sgc?.forget()
         disconnect()

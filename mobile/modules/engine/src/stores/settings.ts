@@ -360,6 +360,20 @@ export const SETTINGS: Record<string, Setting> = {
     // re-block Bluetooth-on auto-reconnect after a successful re-pair.
     nativeAuthoritative: true,
   },
+  // Set from the saved glasses' `pairing_info` (native `secure_pairing_capable`).
+  // Native uses it to treat repeated connect-time rejections as owner loss only
+  // for secure-pairing firmware; legacy firmware never rejects a non-owner on
+  // purpose. Cleared on forget; refreshed by the next `pairing_info`.
+  mentra_live_secure_firmware: {
+    key: "mentra_live_secure_firmware",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    // Native owns this flag and echoes it down via save_setting; a stale JS
+    // value must not overwrite what the glasses just reported on connect.
+    nativeAuthoritative: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
@@ -869,6 +883,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.project_name.key,
   // Phone-local; native gates automatic reconnects on it after a manager rebuild.
   SETTINGS.mentra_live_owner_lost.key,
+  SETTINGS.mentra_live_secure_firmware.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,

@@ -124,6 +124,60 @@ enum MentraLiveConnectionAttemptPolicy {
     static func pairingInfoConfirmsOwner(ownerCommitted: Bool) -> Bool {
         ownerCommitted
     }
+
+    /// A connect-time authentication failure on saved secure glasses. Legacy firmware never
+    /// rejects a non-owner on purpose, and during an explicit pairing attempt the user is
+    /// pairing anew. This is one observation; `MentraLiveOwnerRejectionStreak` decides when it
+    /// adds up to owner loss.
+    static func isOwnerRejection(
+        isAuthFailure: Bool,
+        explicitPairing: Bool,
+        secureFirmware: Bool
+    ) -> Bool {
+        secureFirmware && !explicitPairing && isAuthFailure
+    }
+}
+
+/// Tracks owner rejections across automatic reconnects. One rejection can be a glasses reboot
+/// or a stale bond, so owner loss needs `rejectionsToStandDown` attempts in a row that span at
+/// least `minSpanMs`. A session that reaches ready calls `reset()`. The firmware's own
+/// `entering_pairing_mode` event is explicit and does not go through this streak.
+struct MentraLiveOwnerRejectionStreak {
+    static let rejectionsToStandDown = 3
+    /// The rejections must keep arriving for about this long, so a glasses reboot is not owner loss.
+    static let minSpanMs = 45_000
+    /// A gap this long between rejections means they are unrelated, not one streak.
+    static let streakGapMs = 90_000
+    /// One failed attempt can report twice (didFailToConnect and didDisconnect). Count it once.
+    static let sameAttemptMs = 2_000
+
+    private var count = 0
+    private var firstAtMs = 0
+    private var lastAtMs = 0
+
+    /// Records one rejection and returns true once the streak means owner loss.
+    mutating func record(nowMs: Int) -> Bool {
+        if count > 0, nowMs - lastAtMs <= Self.sameAttemptMs {
+            return reached(nowMs: nowMs)
+        }
+        if count > 0, nowMs - lastAtMs > Self.streakGapMs {
+            count = 0
+        }
+        if count == 0 { firstAtMs = nowMs }
+        count += 1
+        lastAtMs = nowMs
+        return reached(nowMs: nowMs)
+    }
+
+    mutating func reset() {
+        count = 0
+        firstAtMs = 0
+        lastAtMs = 0
+    }
+
+    private func reached(nowMs: Int) -> Bool {
+        count >= Self.rejectionsToStandDown && nowMs - firstAtMs >= Self.minSpanMs
+    }
 }
 
 /// Ownership of the one armed pending reconnect. Each arm returns a new attempt number, so a

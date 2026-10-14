@@ -13,6 +13,23 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [33])
 @LooperMode(LooperMode.Mode.PAUSED)
 class DeviceManagerOwnerLossTest {
+    @Test fun `forgetting glasses clears the saved secure firmware flag`() {
+        Bridge.initialize(ApplicationProvider.getApplicationContext())
+        val saved = DeviceStore.store.getCategory("bluetooth")
+        val manager = DeviceManager(initializeHardware = false)
+        try {
+            DeviceStore.set("bluetooth", "mentra_live_secure_firmware", true)
+            manager.clearSecureFirmware()
+            assertFalse(DeviceStore.store.get("bluetooth", "mentra_live_secure_firmware") as Boolean)
+        } finally {
+            manager.cleanup()
+            (DeviceStore.store.getCategory("bluetooth").keys - saved.keys).forEach {
+                DeviceStore.store.remove("bluetooth", it)
+            }
+            saved.forEach { (key, value) -> DeviceStore.set("bluetooth", key, value) }
+        }
+    }
+
     @Test fun `owner loss blocks bluetooth-on reconnect until forget or re-pair clears it`() {
         Bridge.initialize(ApplicationProvider.getApplicationContext())
         val saved = DeviceStore.store.getCategory("bluetooth")

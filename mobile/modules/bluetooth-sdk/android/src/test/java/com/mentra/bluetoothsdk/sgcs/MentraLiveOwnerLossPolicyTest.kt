@@ -8,29 +8,33 @@ import org.junit.Test
 
 class MentraLiveOwnerLossPolicyTest {
     @Test
-    fun connectTimeRejectionIsOwnerLossOnlyOutsideExplicitPairing() {
-        assertTrue(MentraLiveOwnerLossPolicy.shouldStandDownOnGattError(5, manualPairing = false))
-        assertTrue(MentraLiveOwnerLossPolicy.shouldStandDownOnGattError(15, manualPairing = false))
-        assertFalse(MentraLiveOwnerLossPolicy.shouldStandDownOnGattError(5, manualPairing = true))
+    fun connectTimeRejectionIsAHintOnlyOutsideExplicitPairingOnSecureFirmware() {
+        assertTrue(gattRejection(5))
+        assertTrue(gattRejection(15))
+        assertFalse(gattRejection(5, manualPairing = true))
+    }
+
+    @Test
+    fun legacyFirmwareRejectionsAreNeverOwnerLoss() {
+        assertFalse(gattRejection(5, secureFirmware = false))
+        assertFalse(gattRejection(15, secureFirmware = false))
+        assertFalse(bondRemoved(msSinceAutoReconnectLink = 600L, secureFirmware = false))
     }
 
     @Test
     fun rfDropsAndRemoteTerminationAreNotOwnerLoss() {
         for (status in listOf(8, 19, 22, 62, 133)) {
-            assertFalse(
-                    "status $status",
-                    MentraLiveOwnerLossPolicy.shouldStandDownOnGattError(status, manualPairing = false),
-            )
+            assertFalse("status $status", gattRejection(status))
         }
     }
 
     @Test
-    fun bondDroppedRightAfterAutomaticReconnectIsOwnerLoss() {
+    fun bondDroppedRightAfterAutomaticReconnectIsARejection() {
         assertTrue(bondRemoved(msSinceAutoReconnectLink = 600L))
     }
 
     @Test
-    fun bondRemovalOutsideAReconnectIsNotOwnerLoss() {
+    fun bondRemovalOutsideAReconnectIsNotARejection() {
         assertFalse(bondRemoved(msSinceAutoReconnectLink = null))
         assertFalse(bondRemoved(msSinceAutoReconnectLink = 60_000L))
     }
@@ -43,15 +47,70 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun aSingleRejectionDoesNotStandDown() {
+        val streak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
+        assertFalse(streak.record(0L))
+    }
+
+    @Test
+    fun threeQuickRejectionsDoNotStandDownUntilTheStreakSpansAboutAMinute() {
+        val streak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
+        assertFalse(streak.record(0L))
+        assertFalse(streak.record(3_000L))
+        // Third attempt, but a glasses reboot also rejects for a few seconds.
+        assertFalse(streak.record(8_000L))
+        assertFalse(streak.record(24_000L))
+        assertTrue(streak.record(MentraLiveOwnerLossPolicy.MIN_REJECTION_SPAN_MS))
+    }
+
+    @Test
+    fun aSuccessfulSessionEndsTheStreak() {
+        val streak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
+        streak.record(0L)
+        streak.record(10_000L)
+        streak.reset()
+        assertFalse(streak.record(50_000L))
+        assertFalse(streak.record(60_000L))
+    }
+
+    @Test
+    fun rejectionsFarApartAreNotOneStreak() {
+        val streak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
+        streak.record(0L)
+        streak.record(10_000L)
+        streak.record(20_000L)
+        // A long quiet gap means the earlier rejections were something else.
+        val later = 20_000L + MentraLiveOwnerLossPolicy.REJECTION_STREAK_GAP_MS + 1L
+        assertFalse(streak.record(later))
+        assertFalse(streak.record(later + 10_000L))
+        assertFalse(streak.record(later + 20_000L))
+    }
+
+    @Test
+    fun oneAttemptReportingTwiceCountsOnce() {
+        val streak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
+        val span = MentraLiveOwnerLossPolicy.MIN_REJECTION_SPAN_MS
+        // Bond removed, then the GATT disconnect with status 5, for each of two attempts.
+        // Counted per signal this would be four rejections over a long enough span.
+        assertFalse(streak.record(0L))
+        assertFalse(streak.record(400L))
+        assertFalse(streak.record(span))
+        assertFalse(streak.record(span + 400L))
+        // A genuine third attempt completes the streak.
+        assertTrue(streak.record(span + 10_000L))
+    }
+
+    @Test
     fun aFailedNewBondIsNotABondRemoval() {
         assertFalse(
-                MentraLiveOwnerLossPolicy.shouldStandDownOnBondRemoved(
+                MentraLiveOwnerLossPolicy.isOwnerRejectionOnBondRemoved(
                         previousBondState = BluetoothDevice.BOND_BONDING,
                         bondState = BluetoothDevice.BOND_NONE,
                         killed = false,
                         unpairInProgress = false,
                         manualPairing = false,
                         msSinceAutoReconnectLink = 600L,
+                        secureFirmware = true,
                 )
         )
     }
@@ -108,18 +167,31 @@ class MentraLiveOwnerLossPolicyTest {
         )
     }
 
+    private fun gattRejection(
+            status: Int,
+            manualPairing: Boolean = false,
+            secureFirmware: Boolean = true,
+    ): Boolean =
+            MentraLiveOwnerLossPolicy.isOwnerRejectionOnGattError(
+                    status,
+                    manualPairing,
+                    secureFirmware,
+            )
+
     private fun bondRemoved(
             msSinceAutoReconnectLink: Long?,
             killed: Boolean = false,
             unpairInProgress: Boolean = false,
             manualPairing: Boolean = false,
+            secureFirmware: Boolean = true,
     ): Boolean =
-            MentraLiveOwnerLossPolicy.shouldStandDownOnBondRemoved(
+            MentraLiveOwnerLossPolicy.isOwnerRejectionOnBondRemoved(
                     previousBondState = BluetoothDevice.BOND_BONDED,
                     bondState = BluetoothDevice.BOND_NONE,
                     killed = killed,
                     unpairInProgress = unpairInProgress,
                     manualPairing = manualPairing,
                     msSinceAutoReconnectLink = msSinceAutoReconnectLink,
+                    secureFirmware = secureFirmware,
             )
 }

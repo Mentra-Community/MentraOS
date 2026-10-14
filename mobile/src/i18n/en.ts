@@ -621,10 +621,10 @@ const en = {
     setupWithoutGlasses: "Set up without glasses",
     connectGlasses: "Connect glasses",
     pairAgain: "Pair again",
-    liveOwnerLostStatus: "In pairing mode",
+    liveOwnerLostStatus: "No longer paired",
     liveOwnerLostTitle: "Pair again",
     liveOwnerLostMessage:
-      "These glasses are in pairing mode, so they are not connected to this phone. Pair again to use them here.",
+      "This phone is no longer paired with these glasses. Pair again to use them here.",
     liveOwnerLostIosBluetooth: "Then open Settings > Bluetooth on this iPhone and forget Mentra Live.",
     connectRing: "Connect ring",
     connectController: "Connect ring",
