@@ -133,9 +133,18 @@ jobs:
           # Porter's CLI tags the image from GITHUB_SHA when it runs inside
           # Actions, which is the dispatching commit rather than the frozen
           # source on a workflow_dispatch from main; the explicit flag wins.
+          # The dev Runtime's source-owned disruption policy travels with its config.
+          config="${config#cloud-v2/}"
+          overrides="${config%.yaml}.overrides.yaml"
+          helm_args=()
+          if [[ "$PORTER_APP_NAME" == "cloud-dev" ]]; then
+            [[ -s "$overrides" ]]
+            helm_args=(--helm-overrides-file "$overrides")
+          fi
           porter apply \
             -w \
-            -f "${config#cloud-v2/}" \
+            -f "$config" \
+            "${helm_args[@]}" \
             -x "${{ steps.target.outputs.porter_target }}" \
             --tag "$PORTER_TAG" \
             --cluster "$PORTER_CLUSTER" \
