@@ -15,9 +15,9 @@
  * - not installed: collection stops and the partition is dropped, until the next sign-in or engine start.
  * - no Fleet route (a 404 without Fleet's code: a Core from before Fleet, or a proxy): collection stops until the next
  *   sign-in or engine start, as for not installed, but the partition is kept; its records expire after 7 days.
- * - unavailable, an authentication failure, or anything unexpected: everything is kept, and the next attempt waits
- *   min(30 min, 30 s * 2^n) +-20%, or Retry-After when given (at most 30 minutes). Only an answer that settles a
- *   record (accepted, duplicate or rejected) resets n.
+ * - unavailable, no answer within a minute, an authentication failure, or anything unexpected: everything is kept,
+ *   and the next attempt waits min(30 min, 30 s * 2^n) +-20%, or Retry-After when given (at most 30 minutes). Only
+ *   an answer that settles a record (accepted, duplicate or rejected) resets n.
  * - forbidden: everything is kept, and the next attempt waits 30 minutes.
  * - too large, or refused as a batch: the batch is halved; a single record still refused is removed with a gap. The
  *   batch does not grow back to a refused size until 10 sends have succeeded below it.
@@ -84,6 +84,9 @@ const BACKOFF_MAX_MS = 30 * 60_000
 const MIN_RETRY_MS = 1_000
 /** `sweepExpired` scans the whole store, so it runs at start and then at most this often. */
 const SWEEP_INTERVAL_MS = 60 * 60_000
+/** A request still unanswered after this long is abandoned, and counts as no answer. */
+const REQUEST_TIMEOUT_MS = 60_000
+const NO_ANSWER: FleetSendOutcome = {kind: "unavailable", retryAfterSeconds: null}
 
 /** min(30 min, 30 s * 2^failures), times a jitter between 0.8 and 1.2. */
 export function backoffDelayMs(failures: number, random: () => number): number {
@@ -355,11 +358,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     if (records.length === 0) return AFTER_INTERVAL
     let outcome: FleetSendOutcome
     try {
-      outcome = await cloud.core.fleet.reportAs(
-        r.session,
-        {schemaVersion: FLEET_SCHEMA_VERSION, records},
-        {signal: r.controller.signal},
-      )
+      outcome = await send(r, records)
     } catch (error) {
       if (r.ended) return AFTER_INTERVAL
       throw error
@@ -367,6 +366,49 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     // An answer for a run that is over changes nothing: its records are sent again as their own account later.
     if (r.ended) return AFTER_INTERVAL
     return answered(r, records, outcome)
+  }
+
+  /**
+   * Sends one batch as the run's account. The request is abandoned when the run ends or when it has gone a minute
+   * without an answer, so a request that hangs cannot keep the run from ever trying again; an abandoned request is
+   * no answer (`unavailable`), and whatever it says later is ignored.
+   */
+  async function send(r: Run, records: FleetRecord[]): Promise<FleetSendOutcome> {
+    const request = new AbortController()
+    let timer: number | null = null
+    let stopWaiting: () => void = () => {}
+    const abandoned = new Promise<FleetSendOutcome>((resolve) => {
+      stopWaiting = () => resolve(NO_ANSWER)
+    })
+    // Lets go of the timer and the run's signal at once, so a run that ends leaves nothing of the request behind.
+    const release = () => {
+      if (timer !== null) BgTimer.clearTimeout(timer)
+      timer = null
+      r.controller.signal.removeEventListener("abort", abandon)
+    }
+    const abandon = () => {
+      release()
+      request.abort()
+      stopWaiting()
+    }
+    r.controller.signal.addEventListener("abort", abandon)
+    timer = BgTimer.setTimeout(() => {
+      timer = null
+      abandon()
+    }, REQUEST_TIMEOUT_MS)
+    try {
+      if (r.controller.signal.aborted) abandon()
+      const answer = cloud.core.fleet.reportAs(
+        r.session,
+        {schemaVersion: FLEET_SCHEMA_VERSION, records},
+        {signal: request.signal},
+      )
+      // Once abandoned, how the request ends is of no interest, and must not surface as an unhandled rejection.
+      answer.catch(() => {})
+      return await Promise.race([answer, abandoned])
+    } finally {
+      release()
+    }
   }
 
   function answered(r: Run, records: FleetRecord[], outcome: FleetSendOutcome): Next {

@@ -848,6 +848,49 @@ describe("backing off", () => {
   })
 })
 
+describe("a request that hangs", () => {
+  test("is abandoned after 60 seconds and counts as unavailable: the records are kept and the loop backs off", async () => {
+    reporter.start()
+    const records = observe(3)
+    core.respond = () => new Promise<FleetSendOutcome>(() => {})
+    await advance(MINUTE)
+    expect(core.calls).toHaveLength(1)
+    const signal = core.calls[0].signal
+    await advance(60 * SECOND - 1)
+    expect(signal?.aborted).toBe(false)
+    await advance(1)
+    expect(signal?.aborted).toBe(true)
+    expect(ids(queued(CORE_X, A))).toEqual(ids(records))
+    core.respond = (rs) => acceptAll(rs)
+    expect(await untilNextCall()).toBe(30 * SECOND)
+    expect(ids(core.calls[1].records)).toEqual(ids(records))
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
+  test("an answer that arrives after the timeout changes nothing", async () => {
+    reporter.start()
+    const records = observe(2)
+    let release: (outcome: FleetSendOutcome) => void = () => {}
+    core.respond = () => new Promise((resolve) => (release = resolve))
+    await advance(MINUTE)
+    await advance(MINUTE)
+    release(acceptAll(records))
+    await settle()
+    expect(ids(queued(CORE_X, A))).toEqual(ids(records))
+  })
+
+  test("the run's own abort still reaches the request, and leaves no timer behind", async () => {
+    reporter.start()
+    observe(1)
+    core.respond = () => new Promise<FleetSendOutcome>(() => {})
+    await advance(MINUTE)
+    const signal = core.calls[0].signal
+    await reporter.stop()
+    expect(signal?.aborted).toBe(true)
+    expect(timers.size).toBe(0)
+  })
+})
+
 describe("batch size", () => {
   test("after an outage the next batch is a probe of 5 that doubles with each success, up to 500", async () => {
     backlog(1_200)
