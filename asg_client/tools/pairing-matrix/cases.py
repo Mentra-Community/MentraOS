@@ -2384,7 +2384,7 @@ def t7_reboot_mid_wipe(ctx: Ctx):
     not reset BES, so the interruption itself is unproven and the case records a gap unless PMX_T7_BES_CYCLED=1 says
     the coordinator power-cycled BES in that window. Asserted: the owner record never shows the wrong wipe order
     (Classic-only own=0/1 after a BLE-only one), and the end state is exactly one of ownerless-locked, old BLE-only
-    owner re-adopted (Mac holds a link, R14), or the S22 as new owner."""
+    owner still present (Mac reconnects over BLE, no Classic audio until it re-pairs), or the S22 as new owner."""
     if not require_transfer(ctx):
         return
     stage_old_owner(ctx, "mac")
