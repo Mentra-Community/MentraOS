@@ -99,11 +99,16 @@ export async function recordOrganizationEvent(event: WorkspaceAuditEventInput): 
  * person who belongs to no workspace; see `isTransactionsUnsupportedError` and
  * `isCrossCollectionTransactionUnsupported`). Never use it for a transient failure on a database
  * that can run transactions: its `seq` is unique and increasing but, unlike
- * {@link recordWorkspaceEvent}'s, not ordered against concurrent writers. A transaction could take
- * the next number and commit between this counter increment and this insert, and a poller would
- * pass the number whose event is not written yet. A database that cannot run transactions has no
- * other feed writer (workspace writes need them), so only two tombstones written within
- * milliseconds of each other can meet that.
+ * {@link recordWorkspaceEvent}'s, not ordered against concurrent writers: reserving the number and
+ * inserting the event are two writes, so a concurrent writer can take the next number and have its
+ * event become readable between them, and a poller would pass the number whose event is not written
+ * yet. A database that cannot run transactions has no other feed writer (workspace writes need
+ * them), so only two tombstones written within milliseconds of each other can meet that.
+ *
+ * Core does not prevent this. The contract is the consumer's: on every poll it re-reads an overlap
+ * behind its cursor (for example the last 100 `seq`) and processes events idempotently. See "Order
+ * and gaps" and "Re-read an overlap" in `cloud-v2/docs/fleet-integration.md`. On a replica set with
+ * transactions this never happens.
  */
 export async function recordFeedEventWithoutTransaction(event: WorkspaceAuditEventInput): Promise<string> {
   return appendEvent(null, event, await nextSeq(null))

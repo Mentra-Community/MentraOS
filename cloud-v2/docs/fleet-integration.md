@@ -450,18 +450,26 @@ that was offline can catch up:
   an event.
 - **Order and gaps.** `seq` is assigned in commit order from one counter, inside
   the transaction that records the event, and a rolled-back transaction gives its
-  number back. A later read therefore never shows an event with a lower `seq` than
-  one already seen. The feed leaves organization-level events (operator keys) out,
-  so consecutive feed events can skip numbers. A skipped number is never a missed
-  workspace event. On a
-  database that cannot run the transaction (a standalone `mongod`, or Azure Cosmos
-  DB for MongoDB, which fails a transaction across two collections), the one
-  event Core can still record, the `user.deleted` tombstone of a person in no
-  workspace, is written without a transaction. Its `seq` is unique and increasing
-  but is not ordered against concurrent writers, so two such tombstones written
-  within milliseconds of each other could be seen out of order. A transaction that
-  fails on a database that can run them (a failover, a timeout, contention) is
-  never recorded that way: the deletion fails and Core retries it within a minute.
+  number back. On a database that runs transactions (a replica set), a later read
+  therefore never shows an event with a lower `seq` than one already seen. The
+  feed leaves organization-level events (operator keys) out, so consecutive feed
+  events can skip numbers. A skipped number is never a missed workspace event.
+- **Re-read an overlap.** On a database that cannot run the transaction (a
+  standalone `mongod`, or Azure Cosmos DB for MongoDB, which fails a transaction
+  across two collections), the one event Core can still record, the
+  `user.deleted` tombstone of a person in no workspace, is written without one:
+  Core reserves its `seq`, then inserts the event, as two separate writes. Its
+  `seq` is unique and increasing but not ordered against concurrent writers, so
+  with overlapping deletions an event with a lower `seq` can become readable after
+  an event with a higher one. A consumer that only reads forward from its cursor
+  would skip it for good. A consumer of such a deployment must therefore read the
+  feed from a point behind its cursor on each poll, for example the last 100
+  `seq` (`after` = cursor minus 100, floored at 0), and process events
+  idempotently, since the overlap returns events it has already handled; `eventId`
+  and `seq` identify them. The overlap is harmless on any deployment, and on a
+  replica set it never finds anything new. A transaction that fails on a database
+  that can run them (a failover, a timeout, contention) is never recorded without
+  one: the deletion fails and Core retries it within a minute.
 - **Retention.** Nothing is ever pruned. The feed begins with the first event
   Core recorded for it: events recorded before Core had a feed carry no `seq` and
   are not on it, so it cannot rebuild earlier history. A service that needs the
