@@ -66,7 +66,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
       matches[0]!.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
       {...context, recipient: value.recipient}))
       throw new TestRunError(409, `Configured lane has no current granted ${value.permission} permission for its ${value.recipient} recipient on ${kind}.`);
-    const {capabilities: _, ...resource} = matches[0]!;
+    const {capabilities: _, permissionObservations: _observations, ...resource} = matches[0]!;
     return resource;
   });
   return frameworkRequestInputSchema.parse(JSON.parse(JSON.stringify({routineId: definition.routineId,

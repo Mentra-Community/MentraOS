@@ -51,7 +51,7 @@ test('strict wire schemas preserve named recipients and reject unknown or duplic
   expect(permissionObservationSchema.safeParse(observed).success).toBe(true);
   expect(permissionObservationSchema.safeParse({...observed, evidence: {sha256: 'unverified'}}).success).toBe(false);
   const f = fixture(), admitted = routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now);
-  expect(frameworkRequestInputSchema.parse(admitted).resources[0]!.permissionObservations).toEqual([observed]);
+  expect(frameworkRequestInputSchema.parse(admitted).resources[0]).toEqual({id: 'app', kind: 'app'});
   const {receivedAt: _, ...snapshot} = f.host;
   expect(hostStateSchema.safeParse({...snapshot, frameworkBinding: undefined}).success).toBe(true);
   f.lane.resources[0]!.permissionObservations = [observed, observed];
@@ -106,4 +106,13 @@ test('permission report churn never changes inventory descriptor or stable requi
   expect(routineRequirementLabels(required)).toEqual(labels);
   delete f.lane.resources[0]!.permissionObservations;
   expect(routineLaneDescriptorRevision(f.lane)).toBe(revision);
+});
+
+test('fresh permission evidence is checked without entering the immutable queued input', () => {
+  const f = fixture(), select = () => routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now);
+  const initial = select(), digest = requestInputDigest(initial);
+  f.lane.resources[0]!.permissionObservations = [{...observed, observedAt: new Date(now - 10).toISOString(), evidence: {sha256: 'f'.repeat(64)}}];
+  expect(select()).toEqual(initial); expect(requestInputDigest(select())).toBe(digest);
+  f.lane.resources[0]!.permissionObservations = [{...observed, status: 'denied'}];
+  expect(() => select()).toThrow('camera permission for its app recipient');
 });
