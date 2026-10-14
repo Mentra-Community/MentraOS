@@ -28,11 +28,23 @@ const FleetId = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9._:-]+$/)
-/** RFC 3339 UTC with a `Z`; a numeric offset is refused. */
-const FleetUtcTime = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/)
-  .refine((value) => !Number.isNaN(Date.parse(value)), "not a date")
+const FLEET_UTC_TIME = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/
+
+/**
+ * Whether `value` names a real instant. `Date.parse` alone is not enough: it normalizes a calendar-invalid date (such
+ * as `2025-02-30`) to a later instant, and accepts `24:00:00`. So the parsed instant is formatted back and must
+ * reproduce every field of the input, with a missing or short fraction read as milliseconds.
+ */
+function isRoundTripUtcTime(value: string): boolean {
+  const match = FLEET_UTC_TIME.exec(value)
+  if (!match) return false
+  const instant = Date.parse(value)
+  if (Number.isNaN(instant)) return false
+  return new Date(instant).toISOString() === `${match[1]}.${(match[2] ?? "").padEnd(3, "0")}Z`
+}
+
+/** RFC 3339 UTC with a `Z`; a numeric offset, a calendar-invalid date, `24:00:00` and a leap second are refused. */
+const FleetUtcTime = z.string().regex(FLEET_UTC_TIME).refine(isRoundTripUtcTime, "not a date")
 const FleetText = z.string().min(1).max(128)
 
 export const FleetDeviceBindingSchema = z.discriminatedUnion("kind", [

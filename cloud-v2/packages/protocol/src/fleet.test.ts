@@ -116,15 +116,29 @@ describe("envelope", () => {
 })
 
 describe("record", () => {
-  test("times must be UTC with a Z, a real date, and at most millisecond precision", () => {
+  test("times must be UTC with a Z and at most millisecond precision", () => {
     const record = loadRecord("report-valid-snapshot.json")
     const parse = (observedAt: string) => FleetRecordSchema.safeParse({...record, observedAt}).success
     expect(parse("2026-10-13T11:00:00Z")).toBe(true)
+    expect(parse("2026-10-13T11:00:00.5Z")).toBe(true)
     expect(parse("2026-10-13T11:00:00.123Z")).toBe(true)
     expect(parse("2026-10-13T11:00:00.1234Z")).toBe(false)
     expect(parse("2026-10-13T11:00:00+00:00")).toBe(false)
     expect(parse("2026-13-45T11:00:00Z")).toBe(false)
     expect(parse("2026-10-13")).toBe(false)
+  })
+
+  test("times must be calendar-valid, with no 24:00:00 or leap second", () => {
+    const record = loadRecord("report-valid-snapshot.json")
+    const parse = (observedAt: string) => FleetRecordSchema.safeParse({...record, observedAt}).success
+    expect(parse("2025-02-30T00:00:00Z")).toBe(false)
+    expect(parse("2026-04-31T00:00:00Z")).toBe(false)
+    expect(parse("2027-02-29T00:00:00Z")).toBe(false)
+    expect(parse("2028-02-29T00:00:00Z")).toBe(true)
+    expect(parse("2028-02-29T23:59:59.999Z")).toBe(true)
+    expect(parse("2026-10-13T24:00:00Z")).toBe(false)
+    expect(parse("2026-10-13T23:59:60Z")).toBe(false)
+    expect(parse("2026-10-13T11:60:00Z")).toBe(false)
   })
 
   test("identifiers are bounded and restricted to a safe alphabet", () => {
