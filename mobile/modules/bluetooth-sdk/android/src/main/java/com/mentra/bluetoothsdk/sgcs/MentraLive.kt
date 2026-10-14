@@ -7945,6 +7945,9 @@ class MentraLive : SGCManager() {
     private fun resetSecurePairingConfirmation() {
         securePairingConfirmed = false
         awaitingSecurePairingConfirmation = false
+        // Also tear down any in-flight owner-commit wait so a leftover 40s timer can't fire
+        // pairingCouldNotStart on a later session after GATT drops mid-wait.
+        cancelSecureBondWait()
     }
 
     /**
