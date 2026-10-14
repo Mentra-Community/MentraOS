@@ -55,7 +55,7 @@ export type {
   SubmitReportInput,
   SubmitReportResult,
 } from "./reports";
-export type { FleetReportOutcome } from "./fleet";
+export type { FleetAck, FleetAckResult, FleetReportOutcome } from "./fleet";
 export type {
   SupportConnectionState,
   SupportProfileUpdateResult,

@@ -157,13 +157,23 @@ describe("Fleet.report 200", () => {
 
   const malformed: Array<[string, () => Response]> = [
     ["a wrong schemaVersion", () => json(200, {schemaVersion: 2, results: []})],
+    ["a missing schemaVersion", () => json(200, {results: []})],
     ["a missing results array", () => json(200, {schemaVersion: 1})],
-    ["an unknown status", () => json(200, {schemaVersion: 1, results: [{index: 0, status: "maybe"}]})],
+    ["a results value that is not an array", () => json(200, {schemaVersion: 1, results: {0: "accepted"}})],
+    ["a result that is not an object", () => json(200, {schemaVersion: 1, results: ["accepted"]})],
     [
-      "a rejected result without a reasonCode",
-      () => json(200, {schemaVersion: 1, results: [{index: 0, status: "rejected"}]}),
+      "a result without an index",
+      () => json(200, {schemaVersion: 1, results: [{recordId: "rec-1", status: "accepted"}]}),
     ],
-    ["an unexpected extra key", () => json(200, {schemaVersion: 1, results: [], extra: true})],
+    ["a negative index", () => json(200, {schemaVersion: 1, results: [{index: -1, status: "accepted"}]})],
+    ["a fractional index", () => json(200, {schemaVersion: 1, results: [{index: 0.5, status: "accepted"}]})],
+    ["an index given as text", () => json(200, {schemaVersion: 1, results: [{index: "0", status: "accepted"}]})],
+    ["a result without a status", () => json(200, {schemaVersion: 1, results: [{index: 0}]})],
+    ["a status that is not text", () => json(200, {schemaVersion: 1, results: [{index: 0, status: 1}]})],
+    [
+      "a recordId that is not text",
+      () => json(200, {schemaVersion: 1, results: [{index: 0, recordId: 7, status: "accepted"}]}),
+    ],
     ["a JSON body of the wrong shape", () => json(200, [1, 2, 3])],
     ["a JSON null body", () => json(200, null)],
     ["an empty body", () => new Response("", {status: 200})],
@@ -174,6 +184,88 @@ describe("Fleet.report 200", () => {
       await expect(outcomeFor(response)).resolves.toEqual({kind: "unavailable", retryAfterSeconds: null})
     })
   }
+
+  test("ignores keys it does not know, at the top and in each result", async () => {
+    await expect(
+      outcomeFor(() =>
+        json(200, {
+          schemaVersion: 1,
+          results: [{index: 0, recordId: "rec-1", status: "accepted", receivedAt: "2026-10-13T12:00:00.000Z"}],
+          servedBy: "mfm-2",
+          extra: true,
+        }),
+      ),
+    ).resolves.toEqual({
+      kind: "results",
+      ack: {schemaVersion: 1, results: [{index: 0, recordId: "rec-1", status: "accepted"}]},
+    })
+  })
+
+  test("a status it does not know is retryable, and keeps the record's index and ID", async () => {
+    await expect(
+      outcomeFor(() =>
+        json(200, {
+          schemaVersion: 1,
+          results: [
+            {index: 0, recordId: "rec-1", status: "deferred", retryAfterSeconds: 30},
+            {index: 1, status: "quarantined", reasonCode: "held"},
+          ],
+        }),
+      ),
+    ).resolves.toEqual({
+      kind: "results",
+      ack: {
+        schemaVersion: 1,
+        results: [
+          {index: 0, recordId: "rec-1", status: "retryable", retryAfterSeconds: 30},
+          {index: 1, status: "retryable"},
+        ],
+      },
+    })
+  })
+
+  test("a rejection with a reason it does not know is still a rejection, with that reason", async () => {
+    await expect(
+      outcomeFor(() =>
+        json(200, {
+          schemaVersion: 1,
+          results: [{index: 0, recordId: "rec-1", status: "rejected", reasonCode: "too_old_now"}],
+        }),
+      ),
+    ).resolves.toEqual({
+      kind: "results",
+      ack: {schemaVersion: 1, results: [{index: 0, recordId: "rec-1", status: "rejected", reasonCode: "too_old_now"}]},
+    })
+  })
+
+  test("a rejection without a usable reason is still a rejection, without one", async () => {
+    for (const reasonCode of [undefined, "Has Spaces and PRIVATE detail", 42, {nested: true}]) {
+      await expect(
+        outcomeFor(() =>
+          json(200, {
+            schemaVersion: 1,
+            results: [{index: 0, status: "rejected", ...(reasonCode === undefined ? {} : {reasonCode})}],
+          }),
+        ),
+      ).resolves.toEqual({kind: "results", ack: {schemaVersion: 1, results: [{index: 0, status: "rejected"}]}})
+    }
+  })
+
+  test("a reason on a result that is not a rejection is dropped", async () => {
+    await expect(
+      outcomeFor(() =>
+        json(200, {schemaVersion: 1, results: [{index: 0, status: "accepted", reasonCode: "schema_invalid"}]}),
+      ),
+    ).resolves.toEqual({kind: "results", ack: {schemaVersion: 1, results: [{index: 0, status: "accepted"}]}})
+  })
+
+  test("a Retry-After on a result that is not a whole number of seconds is ignored", async () => {
+    for (const retryAfterSeconds of [-1, 1.5, "30", Number.MAX_SAFE_INTEGER + 2]) {
+      await expect(
+        outcomeFor(() => json(200, {schemaVersion: 1, results: [{index: 0, status: "retryable", retryAfterSeconds}]})),
+      ).resolves.toEqual({kind: "results", ack: {schemaVersion: 1, results: [{index: 0, status: "retryable"}]}})
+    }
+  })
 
   test("does not let a Retry-After header turn a malformed 200 into a delay", async () => {
     await expect(outcomeFor(() => json(200, {schemaVersion: 2}, {"Retry-After": "30"}))).resolves.toEqual({

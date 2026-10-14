@@ -1,4 +1,4 @@
-import {FLEET_NOT_INSTALLED, FleetReportAckSchema, type FleetReport, type FleetReportAck} from "@mentra/cloud-protocol"
+import {FLEET_NOT_INSTALLED, FLEET_SCHEMA_VERSION, type FleetReport} from "@mentra/cloud-protocol"
 import {AuthExpiredError, HttpError} from "../../errors"
 import type {HttpClient} from "../../http"
 
@@ -7,13 +7,35 @@ const FLEET_REPORT_PATH = "/api/client/fleet/report"
 /** Core's whole-response error codes are short snake_case words; anything else is not safe to surface. */
 const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
 
+const RESULT_STATUSES = ["accepted", "duplicate", "retryable", "rejected"] as const
+
+/**
+ * Fleet's answer for one record of the batch, as this client reads it. `index` is the record's position in the batch
+ * and `recordId`, when present, names it. A status this client does not know reads as `retryable`, so the record is
+ * kept and sent again. `reasonCode` is given only for a rejection, and only when it is a short snake_case code; one
+ * this client does not know is kept as given.
+ */
+export interface FleetAckResult {
+  index: number
+  recordId?: string
+  status: (typeof RESULT_STATUSES)[number]
+  reasonCode?: string
+  retryAfterSeconds?: number
+}
+
+/** A per-record acknowledgement: one result per record Fleet answered for. */
+export interface FleetAck {
+  schemaVersion: typeof FLEET_SCHEMA_VERSION
+  results: FleetAckResult[]
+}
+
 /**
  * What one `POST /api/client/fleet/report` came to. Every answer Core or Fleet can give is an outcome, so a caller
  * branches on `kind` and never on an exception or a status code.
  */
 export type FleetReportOutcome =
-  /** Core answered 200 with a valid per-record acknowledgement. */
-  | {kind: "results"; ack: FleetReportAck}
+  /** Core answered 200 with a per-record acknowledgement. */
+  | {kind: "results"; ack: FleetAck}
   /** Core answered 404 `fleet_not_installed`: Fleet is not installed on this Core. */
   | {kind: "not_installed"}
   /**
@@ -23,7 +45,7 @@ export type FleetReportOutcome =
   | {kind: "no_fleet_route"}
   /**
    * Fleet or the network is not answering usefully right now: 503, 429, any other server or unexpected failure, a
-   * network error or timeout, or a 200 whose body is not a valid acknowledgement. `retryAfterSeconds` is the server's
+   * network error or timeout, or a 200 whose body is not an acknowledgement. `retryAfterSeconds` is the server's
    * `Retry-After` in whole seconds, or null when it gave none.
    */
   | {kind: "unavailable"; retryAfterSeconds: number | null}
@@ -109,7 +131,45 @@ export class Fleet {
       return unavailable()
     }
 
-    const ack = FleetReportAckSchema.safeParse(body)
-    return ack.success ? {kind: "results", ack: ack.data} : unavailable()
+    const ack = readAck(body)
+    return ack ? {kind: "results", ack} : unavailable()
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isWholeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+/**
+ * Reads an acknowledgement the way a client already in the field must: it ignores keys it does not know, reads a
+ * status it does not know as `retryable`, and keeps a rejection whose reason it does not know. A newer Fleet can
+ * therefore add to the answer without this client reading all of it as no answer and resending the same batch
+ * forever. What it cannot do without is the shape that ties a result to a record: a `results` array of objects,
+ * each with a whole-number `index`, a text `status`, and a `recordId` that is text when present. Anything else is
+ * null, which the caller treats as no answer.
+ *
+ * Producers are still held to the strict `FleetReportAckSchema` in `@mentra/cloud-protocol`.
+ */
+function readAck(body: unknown): FleetAck | null {
+  if (!isObject(body) || body.schemaVersion !== FLEET_SCHEMA_VERSION || !Array.isArray(body.results)) return null
+  const results: FleetAckResult[] = []
+  for (const raw of body.results) {
+    if (!isObject(raw) || !isWholeNumber(raw.index) || typeof raw.status !== "string") return null
+    if (raw.recordId !== undefined && typeof raw.recordId !== "string") return null
+    const status = (RESULT_STATUSES as readonly string[]).includes(raw.status)
+      ? (raw.status as FleetAckResult["status"])
+      : "retryable"
+    const result: FleetAckResult = {index: raw.index, status}
+    if (raw.recordId !== undefined) result.recordId = raw.recordId
+    if (status === "rejected" && typeof raw.reasonCode === "string" && ERROR_CODE_PATTERN.test(raw.reasonCode)) {
+      result.reasonCode = raw.reasonCode
+    }
+    if (isWholeNumber(raw.retryAfterSeconds)) result.retryAfterSeconds = raw.retryAfterSeconds
+    results.push(result)
+  }
+  return {schemaVersion: FLEET_SCHEMA_VERSION, results}
 }

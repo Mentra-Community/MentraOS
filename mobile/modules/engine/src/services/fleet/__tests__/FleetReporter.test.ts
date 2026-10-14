@@ -564,6 +564,28 @@ describe("uploading", () => {
     })
   })
 
+  test("a rejection for a reason this app does not know still removes the record with a gap", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      reporter.start()
+      const [rejected] = observe(1)
+      core.respond = (rs) => ({
+        kind: "results",
+        ack: {
+          schemaVersion: 1,
+          results: [{index: 0, recordId: rs[0].recordId, status: "rejected", reasonCode: "too_old_now"}],
+        },
+      })
+      await advance(MINUTE)
+      const left = queued(CORE_X, A)
+      expect(ids(left)).not.toContain(rejected.recordId)
+      expect(left.map((record) => record.kind)).toEqual(["coverage_gap"])
+      expect(warn.mock.calls.some((args) => args.join(" ").includes("too_old_now x1"))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   test("a rejected gap is dropped without a further gap, so rejection cannot loop", async () => {
     reporter.start()
     observe(1)

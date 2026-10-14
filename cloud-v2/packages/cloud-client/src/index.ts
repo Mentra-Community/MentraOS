@@ -65,6 +65,8 @@ export type {
 export type {
   AddReportArtifactsResult,
   AddReportLogsOptions,
+  FleetAck,
+  FleetAckResult,
   FleetReportOutcome,
   ReportAttachmentInput,
   ReportContext,

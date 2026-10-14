@@ -23,7 +23,7 @@
  * Fleet is decided by the phone's Core alone. The reporter reads no deployment or telemetry setting, and nothing it
  * does can block the engine: every entry point catches its own failures.
  */
-import {FLEET_LIMITS, FLEET_SCHEMA_VERSION, type FleetRecord, type FleetRecordResult} from "@mentra/cloud-protocol"
+import {FLEET_LIMITS, FLEET_SCHEMA_VERSION, type FleetRecord} from "@mentra/cloud-protocol"
 import {AppState, Platform} from "react-native"
 
 import {BgTimer} from "../../utils/timers"
@@ -101,6 +101,8 @@ function warn(what: string, error: unknown): void {
 }
 
 type GapPayload = Extract<FleetRecord, {kind: "coverage_gap"}>["payload"]
+/** Fleet's answer for one record, as the Core client read it. */
+type AckResult = Extract<FleetSendOutcome, {kind: "results"}>["ack"]["results"][number]
 
 /** One account on one Core, from the start of its collection to the end. */
 interface Run {
@@ -395,7 +397,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     return {delayMs, backingOff: true}
   }
 
-  function settle(r: Run, records: FleetRecord[], results: FleetRecordResult[]): Next {
+  function settle(r: Run, records: FleetRecord[], results: AckResult[]): Next {
     const removed: string[] = []
     const rejected: FleetRecord[] = []
     const reasons = new Map<string, number>()
