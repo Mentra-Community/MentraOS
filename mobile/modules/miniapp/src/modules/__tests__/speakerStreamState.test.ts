@@ -143,7 +143,7 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     expect(session.speaker.isPlaying).toBe(true)
   })
 
-  test("2a. session.speaker.isPlaying returns false after stream.close() settles", async () => {
+  test("2a. session.speaker.isPlaying returns false after stream.close() settles and host emits stopped", async () => {
     const {transport, session} = await setupSession()
 
     const streamPromise = session.speaker.createStream()
@@ -183,7 +183,7 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     expect(session.speaker.isPlaying).toBe(false)
   })
 
-  test("2b. session.speaker.isPlaying returns false after stream.abort() settles", async () => {
+  test("2b. session.speaker.isPlaying returns false after stream.abort() settles and host emits stopped", async () => {
     const {transport, session} = await setupSession()
 
     const streamPromise = session.speaker.createStream()
@@ -219,7 +219,7 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     expect(session.speaker.isPlaying).toBe(false)
   })
 
-  test("3. Rapid creation of a subsequent stream does not leave isPlaying false due to stale predecessor completion", async () => {
+  test("3. Rapid creation of a subsequent stream: predecessor settlement does not clobber active stream state", async () => {
     const {transport, session} = await setupSession()
 
     // 1. Open Stream 1
@@ -250,17 +250,22 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     const stream2 = await stream2Promise
     expect(session.speaker.isPlaying).toBe(true)
 
-    // 3. Stale completion from Stream 1 abort arrives from host (e.g., native onEnded from predecessor)
-    transport.deliverFromPhone({
-      type: MiniappResponseType.SPEAKER_STATE,
-      state: "stopped",
-      durationMs: 120,
-    })
+    // 3. Predecessor stream 1 settles (e.g. abort() resolves)
+    const stream1Abort = stream1.abort()
+    const abortReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_ABORT)
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+      },
+      abortReq.requestId,
+    )
+    await stream1Abort
 
-    // Stream 2 is still active: isPlaying must remain true!
+    // Stream 1 settling must NOT clobber Stream 2: isPlaying remains true!
     expect(session.speaker.isPlaying).toBe(true)
 
-    // 4. Stream 2 finally closes
+    // 4. Stream 2 finally closes with host stopped event
     const close2Promise = stream2.close()
     const close2Req = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_CLOSE)
     transport.deliverFromPhone({
@@ -279,6 +284,60 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     await close2Promise
 
     // Now all streams have settled
+    expect(session.speaker.isPlaying).toBe(false)
+  })
+
+  test("4. session.speaker.stop() sends STOP_AUDIO, clears active streams, and transitions isPlaying to false", async () => {
+    const {transport, session} = await setupSession()
+
+    const streamPromise = session.speaker.createStream()
+    const openReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_OPEN)
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {streamId: "stream_stop_test"},
+      },
+      openReq.requestId,
+    )
+    await streamPromise
+    expect(session.speaker.isPlaying).toBe(true)
+
+    // Calling speaker.stop() sends STOP_AUDIO
+    session.speaker.stop()
+    const stopReq = await transport.waitForRequest(MiniappRequestType.STOP_AUDIO)
+    expect(stopReq.payload.type).toBe(MiniappRequestType.STOP_AUDIO)
+
+    // Host emits stopped in response to STOP_AUDIO
+    transport.deliverFromPhone({
+      type: MiniappResponseType.SPEAKER_STATE,
+      state: "stopped",
+    })
+    expect(session.speaker.isPlaying).toBe(false)
+  })
+
+  test("5. Host-driven stopped, idle, or error event clears active streams immediately", async () => {
+    const {transport, session} = await setupSession()
+
+    const streamPromise = session.speaker.createStream()
+    const openReq = await transport.waitForRequest(MiniappRequestType.SPEAKER_STREAM_OPEN)
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {streamId: "stream_host_stop_test"},
+      },
+      openReq.requestId,
+    )
+    await streamPromise
+    expect(session.speaker.isPlaying).toBe(true)
+
+    // Host pushes error
+    transport.deliverFromPhone({
+      type: MiniappResponseType.SPEAKER_STATE,
+      state: "error",
+      errorCode: "INTERNAL",
+    })
     expect(session.speaker.isPlaying).toBe(false)
   })
 })
