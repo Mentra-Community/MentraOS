@@ -2208,7 +2208,7 @@ def t0_flag_off_wire_regression(ctx: Ctx):
     leaks = wire_hits(ctx, TRANSFER_KEY_RX)
     ctx.check("no owner_retained/awaiting_confirm/ownership_transfer in any log", not leaks,
               str([f"[{s}] {l.strip()[-100:]}" for s, l in leaks[:3]]))
-    for name, pat in (("pairing_info", r"pairing_info"), ("entering_pairing_mode", r"entering_pairing_mode")):
+    for name, pat in (("pairing_info", r"pairing_info"), ("entering_pairing_mode", r"entering[_ ]pairing[_ ]mode")):
         if not wire_hits(ctx, pat):
             ctx.gap(f"scan anchor: {name} seen in a log", "absence of the transfer keys proves nothing without it")
     versions = [m.group(1) for _, l in wire_hits(ctx, r"protocol_version") if "pairing_info" in l
