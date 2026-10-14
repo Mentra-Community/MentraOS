@@ -30,3 +30,8 @@ it("preserves the current screen for a passive permission status request", () =>
   expect(redirectSystemPath({path, initial: false})).toBeNull()
   expect(redirectSystemPath({path, initial: true})).toBe("/")
 })
+
+test("attended permission command stays with the handler instead of navigating", () => {
+  expect(redirectSystemPath({path: "com.mentra://test/request-permissions?request_id=batch-1", initial: false})).toBeNull()
+  expect(redirectSystemPath({path: "com.mentra://test/request-permissions?request_id=batch-1", initial: true})).toBe("/")
+})
