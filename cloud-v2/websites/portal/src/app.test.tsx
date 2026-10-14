@@ -179,6 +179,11 @@ describe("a workspace page", () => {
     expect(markup).toContain("priya@acme.test");
   });
 
+  test("the sidebar names the site as the admin portal does: Mentra Portal, on MentraOS", () => {
+    const markup = render(`/w/${ACME}/members`, TWO_WORKSPACES);
+    expect(markup).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg><div class="min-w-0"><div[^>]*>Mentra Portal<\/div><div[^>]*>MentraOS<\/div>/);
+  });
+
   test("a developer sees only Settings, and no Invite", () => {
     const markup = render(`/w/${NORTHWIND}/settings`, TWO_WORKSPACES);
     expect(markup).toContain('aria-label="Workspace: Northwind Pilot. Switch workspace"');
@@ -633,6 +638,10 @@ describe("an Organization Admin is labelled by their own role", () => {
     // Someone whose powers are their own gets no note.
     expect(render(`/w/${ACME}/members`, TWO_WORKSPACES)).not.toContain("Organization Admin");
   });
+});
+
+test("the login gate names the site", () => {
+  expect(renderToStaticMarkup(<LoginGate loginUrl="/api/portal/auth/login" />)).toContain("Sign into Mentra Portal");
 });
 
 test("the login gate says to sign in with the invited address when an invitation is pending", () => {
