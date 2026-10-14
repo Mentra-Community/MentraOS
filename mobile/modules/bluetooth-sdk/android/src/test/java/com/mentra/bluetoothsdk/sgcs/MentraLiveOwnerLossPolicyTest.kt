@@ -122,6 +122,48 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun enteringPairingModeYieldsOnlyWhenTheOwnerWasRetained() {
+        assertTrue(MentraLiveOwnerLossPolicy.shouldYieldOnEnteringPairingMode(true))
+        // Absent or false keeps the 3.3 stand-down.
+        assertFalse(MentraLiveOwnerLossPolicy.shouldYieldOnEnteringPairingMode(false))
+    }
+
+    @Test
+    fun rejectionsDuringAYieldAreNotRecorded() {
+        assertFalse(MentraLiveOwnerLossPolicy.shouldRecordOwnerRejection(yieldActive = true))
+        assertTrue(MentraLiveOwnerLossPolicy.shouldRecordOwnerRejection(yieldActive = false))
+    }
+
+    @Test
+    fun yieldRejectionsNeverBuildAStreakThatStandsDown() {
+        val streak = MentraLiveOwnerLossPolicy.OwnerRejectionStreak()
+        var standDown = false
+        var now = 0L
+        // Rejections spanning well past the stand-down thresholds, all inside the yield.
+        repeat(6) {
+            if (MentraLiveOwnerLossPolicy.shouldRecordOwnerRejection(yieldActive = true)) {
+                standDown = standDown || streak.record(now)
+            }
+            now += 60_000L
+        }
+        assertFalse(standDown)
+        // The first rejection after the yield starts a fresh streak.
+        assertFalse(streak.record(now))
+    }
+
+    @Test
+    fun awaitingConfirmSuspendsTheSecureBondWait() {
+        assertFalse(MentraLiveOwnerLossPolicy.shouldRunSecureBondWait(awaitingConfirm = true))
+        assertTrue(MentraLiveOwnerLossPolicy.shouldRunSecureBondWait(awaitingConfirm = false))
+    }
+
+    @Test
+    fun successfulConfirmRearmsTheBondWaitButRefusalDoesNot() {
+        assertTrue(MentraLiveOwnerLossPolicy.shouldRearmSecureBondWaitAfterConfirm(ok = true))
+        assertFalse(MentraLiveOwnerLossPolicy.shouldRearmSecureBondWaitAfterConfirm(ok = false))
+    }
+
+    @Test
     fun secureTargetIsNotReadyUntilBondedAndOwnerCommitted() {
         assertTrue(defer(bond = BluetoothDevice.BOND_BONDING, committed = true))
         assertTrue(defer(bond = BluetoothDevice.BOND_NONE, committed = true))

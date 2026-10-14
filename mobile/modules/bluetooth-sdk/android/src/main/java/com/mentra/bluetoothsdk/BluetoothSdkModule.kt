@@ -379,6 +379,7 @@ class BluetoothSdkModule : Module() {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
+            "confirm_replace_owner_result",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
@@ -810,6 +811,12 @@ class BluetoothSdkModule : Module() {
         SdkAsyncFunction("sendShutdown") { -> sdk?.sendShutdown() }
 
         SdkAsyncFunction("sendReboot") { -> sdk?.sendReboot() }
+
+        // Ownership transfer: the result arrives as the confirm_replace_owner_result event.
+        SdkAsyncFunction("confirmReplaceOwner") { ->
+            sdk?.confirmReplaceOwner()
+            Unit
+        }
 
         // MARK: - Video Recording Commands
 

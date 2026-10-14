@@ -125,6 +125,44 @@ enum MentraLiveConnectionAttemptPolicy {
         ownerCommitted
     }
 
+    /// Matches the glasses' absolute pairing window cap; the idle timer can be held that long.
+    static let pairingWindowAbsoluteMs = 300_000
+    private static let pairingWindowMinMs = 5_000
+
+    /// Stay out for the whole window, not just its idle timeout. Mirrors Android
+    /// `MentraLiveOwnerLossPolicy.yieldMs`.
+    static func yieldMs(windowMs: Int) -> Int {
+        min(pairingWindowAbsoluteMs, max(pairingWindowMinMs, max(windowMs, pairingWindowAbsoluteMs)))
+    }
+
+    /// Ownership transfer (pairing spec T1): when the glasses kept the previous owner while they
+    /// opened the window (`owner_retained`), that owner's phone yields for the window instead of
+    /// standing down. Absent/false keeps the 3.3 stand-down. Mirrors Android
+    /// `MentraLiveOwnerLossPolicy.shouldYieldOnEnteringPairingMode`.
+    static func shouldYieldOnEnteringPairingMode(ownerRetained: Bool) -> Bool {
+        ownerRetained
+    }
+
+    /// A connect rejection while this phone is yielding is the glasses refusing the retained
+    /// owner on purpose (T2), not owner loss, so it never enters `MentraLiveOwnerRejectionStreak`.
+    static func shouldRecordOwnerRejection(yieldActive: Bool) -> Bool {
+        !yieldActive
+    }
+
+    /// While the glasses report `awaiting_confirm` the user is on the replace-owner confirm
+    /// screen and no bond can follow until `confirm_replace_owner` succeeds. The secure pairing
+    /// wait must not start (or must not fail the pair) in that state. A confirm result with
+    /// `ok == true` re-arms it, because the bond follows. Mirrors Android
+    /// `MentraLiveOwnerLossPolicy.shouldRunSecureBondWait`.
+    static func shouldRunSecurePairingWait(awaitingConfirm: Bool) -> Bool {
+        !awaitingConfirm
+    }
+
+    /// The `confirm_replace_owner_result` outcome that lets the pairing wait run again.
+    static func shouldRearmSecurePairingWaitAfterConfirm(ok: Bool) -> Bool {
+        ok
+    }
+
     /// A connect-time authentication failure on saved secure glasses. Legacy firmware never
     /// rejects a non-owner on purpose, and during an explicit pairing attempt the user is
     /// pairing anew. This is one observation; `MentraLiveOwnerRejectionStreak` decides when it

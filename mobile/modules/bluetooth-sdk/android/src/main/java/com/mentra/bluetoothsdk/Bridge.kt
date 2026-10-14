@@ -138,6 +138,9 @@ public class Bridge private constructor() {
             classicBondReady: Boolean = false,
             securePairingCapable: Boolean = true,
             protocolVersion: Int = 1,
+            ownershipTransfer: Boolean = false,
+            awaitingConfirm: Boolean = false,
+            ownerCommitted: Boolean = false,
         ) {
             val data = HashMap<String, Any>()
             data["had_previous_bond"] = hadPreviousBond
@@ -145,6 +148,9 @@ public class Bridge private constructor() {
             data["classic_bond_ready"] = classicBondReady
             data["secure_pairing_capable"] = securePairingCapable
             data["protocol_version"] = protocolVersion
+            data["ownership_transfer"] = ownershipTransfer
+            data["awaiting_confirm"] = awaitingConfirm
+            data["owner_committed"] = ownerCommitted
             sendTypedMessage("pairing_info", data as Map<String, Any>)
         }
 

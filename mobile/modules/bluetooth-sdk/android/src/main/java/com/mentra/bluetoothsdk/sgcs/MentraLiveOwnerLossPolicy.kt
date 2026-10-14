@@ -113,6 +113,32 @@ internal object MentraLiveOwnerLossPolicy {
                     .coerceIn(PAIRING_WINDOW_MIN_MS, PAIRING_WINDOW_ABSOLUTE_MS)
 
     /**
+     * Ownership transfer (pairing spec T1): when the glasses kept the previous owner while they
+     * opened the window (`owner_retained`), that owner's phone yields for the window instead of
+     * standing down. Absent/false keeps the 3.3 stand-down. Mirrors iOS
+     * `MentraLiveConnectionAttemptPolicy.shouldYieldOnEnteringPairingMode`.
+     */
+    fun shouldYieldOnEnteringPairingMode(ownerRetained: Boolean): Boolean = ownerRetained
+
+    /**
+     * A connect rejection while this phone is yielding is the glasses refusing the retained
+     * owner on purpose (T2), not owner loss, so it never enters the [OwnerRejectionStreak].
+     */
+    fun shouldRecordOwnerRejection(yieldActive: Boolean): Boolean = !yieldActive
+
+    /**
+     * While the glasses report `awaiting_confirm` the user is on the replace-owner confirm
+     * screen and no bond can follow until `confirm_replace_owner` succeeds. The secure-bond
+     * wait must not start (or must not fail the pair) in that state. A confirm result with
+     * `ok == true` re-arms it, because the bond follows. Mirrors iOS
+     * `MentraLiveConnectionAttemptPolicy.shouldRunSecurePairingWait`.
+     */
+    fun shouldRunSecureBondWait(awaitingConfirm: Boolean): Boolean = !awaitingConfirm
+
+    /** The `confirm_replace_owner_result` outcome that lets the bond wait run again. */
+    fun shouldRearmSecureBondWaitAfterConfirm(ok: Boolean): Boolean = ok
+
+    /**
      * `secure_pairing_capable` only means the firmware can do secure pairing. Ownership is the
      * separate `owner_committed` bit the glasses set after the BLE bond. Mirrors iOS
      * `MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner`.

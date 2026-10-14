@@ -93,7 +93,7 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
                        BluetoothSdkDefaults.voiceActivityDetectionEnabled)
     }
 
-    func testPairingYieldDuringPendingReadinessCleansUpAndReclaimsAfterItsWindow() async throws {
+    func testPairingYieldDuringPendingReadinessCleansUpAndKeepsTheOwnerForTheWholeWindow() async throws {
         let store = DeviceStore.shared.store
         let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
         let previous = DeviceManager.shared.sgc
@@ -122,8 +122,19 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         store.set("glasses", "headUp", true)
         store.set("glasses", "voiceActivityDetectionEnabled", !BluetoothSdkDefaults.voiceActivityDetectionEnabled)
 
-        try receive(["type": "entering_pairing_mode", "window_ms": 5000])
+        var enteringBodies: [[String: Any]] = []
+        let enteringSink = Bridge.addEventSink { event, body in
+            if event == "entering_pairing_mode" { enteringBodies.append(body) }
+        }
+        defer { Bridge.removeEventSink(enteringSink) }
+
+        // Ownership transfer: the glasses kept this phone as owner, so it yields.
+        try receive(["type": "entering_pairing_mode", "window_ms": 5000, "owner_retained": true])
         XCTAssertTrue(transport.isPairingYieldActive())
+        XCTAssertFalse(transport.isManagerKilled)
+        XCTAssertNotEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
+        XCTAssertEqual(enteringBodies.count, 1)
+        XCTAssertEqual(enteringBodies.first?["owner_retained"] as? Bool, true)
         XCTAssertFalse(sdk.glassesStatus.connected)
         XCTAssertFalse(sdk.glassesStatus.fullyBooted)
         XCTAssertEqual(store.get("glasses", "headUp") as? Bool, false)
@@ -135,12 +146,44 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         XCTAssertTrue(transport.isPairingYieldActive())
         XCTAssertFalse(sdk.glassesStatus.fullyBooted)
 
-        // Let the existing minimum yield expire, then accept a fresh readiness.
-        try await Task.sleep(nanoseconds: 5_100_000_000)
+        // The yield covers the whole 300 s window, not the 5 s idle value in the message.
+        try await Task.sleep(nanoseconds: 5_500_000_000)
+        XCTAssertTrue(transport.isPairingYieldActive())
+    }
+
+    func testEnteringPairingModeWithoutOwnerRetainedStillStandsDown() async throws {
+        let store = DeviceStore.shared.store
+        let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
+        let previous = DeviceManager.shared.sgc
+        let transport = SessionReadinessTransport()
+        let sdk = MentraBluetoothSDK()
+        DeviceManager.shared.sgc = transport
+        var enteringEvents = 0
+        let sink = Bridge.addEventSink { event, _ in
+            if event == "entering_pairing_mode" { enteringEvents += 1 }
+        }
+        defer {
+            Bridge.removeEventSink(sink)
+            sdk.invalidate()
+            transport.cleanup()
+            DeviceManager.shared.sgc = previous
+            for (category, values) in saved {
+                for key in store.getCategory(category).keys where values[key] == nil {
+                    store.remove(category, key)
+                }
+                for (key, value) in values { store.set(category, key, value) }
+            }
+        }
+
+        try transport.processReceivedData(JSONSerialization.data(withJSONObject: [
+            "type": "entering_pairing_mode", "window_ms": 5000,
+        ]))
+        // The owner-lost flag is applied on a main-actor task.
+        try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertFalse(transport.isPairingYieldActive())
-        try receive(["type": "glasses_ready", "sid": "reclaimed"])
-        XCTAssertTrue(sdk.glassesStatus.connected)
-        XCTAssertTrue(sdk.glassesStatus.fullyBooted)
+        XCTAssertTrue(transport.isManagerKilled)
+        XCTAssertEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
+        XCTAssertEqual(enteringEvents, 0)
     }
 
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {

@@ -95,13 +95,19 @@ class Bridge {
         pairingCode: String? = nil,
         classicBondReady: Bool = false,
         securePairingCapable: Bool = true,
-        protocolVersion: Int = 1
+        protocolVersion: Int = 1,
+        ownershipTransfer: Bool = false,
+        awaitingConfirm: Bool = false,
+        ownerCommitted: Bool = false
     ) {
         var body: [String: Any] = [
             "had_previous_bond": hadPreviousBond,
             "classic_bond_ready": classicBondReady,
             "secure_pairing_capable": securePairingCapable,
             "protocol_version": protocolVersion,
+            "ownership_transfer": ownershipTransfer,
+            "awaiting_confirm": awaitingConfirm,
+            "owner_committed": ownerCommitted,
         ]
         if let pairingCode { body["pairing_code"] = pairingCode }
         Bridge.sendTypedMessage("pairing_info", body: body)

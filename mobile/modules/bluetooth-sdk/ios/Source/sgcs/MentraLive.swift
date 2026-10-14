@@ -956,6 +956,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.rxCharacteristic = nil
             let waitingForOwnerCommit = self.awaitingSecurePairingConfirmation
             self.securePairingConfirmed = false
+            self.awaitingOwnerConfirm = false
             self.awaitingSecurePairingConfirmation = false
             self.cancelSecurePairingWait()
 
@@ -1595,6 +1596,10 @@ class MentraLive: NSObject, SGCManager {
     private var awaitingSecurePairingConfirmation = false
     /// pairing_info from secure firmware arrived on this BLE session.
     private var securePairingConfirmed = false
+    /// Latest `pairing_info.awaiting_confirm`: the user is on the replace-owner confirm screen
+    /// (ownership transfer). No bond can follow yet, so the secure pairing wait must not fail
+    /// the pair. Cleared when the BLE session ends or the confirm succeeds.
+    private var awaitingOwnerConfirm = false
     /// Connect-time auth failures across automatic reconnects. One is a hint; a streak is owner loss.
     private var ownerRejectionStreak = MentraLiveOwnerRejectionStreak()
     private var securePairingWaitWorkItem: DispatchWorkItem?
@@ -1795,6 +1800,74 @@ class MentraLive: NSObject, SGCManager {
         pairingYieldActive
     }
 
+    /// Ownership transfer: the glasses kept this phone as owner but refuse it for the pairing
+    /// window. Make no connection attempt for `yieldDurationMs`, keep the saved glasses and the
+    /// bonds, and resume reconnecting when the window ends. Unlike `standDownAfterOwnerLoss`
+    /// this never calls `destroy()` and never sets owner-lost.
+    private func enterPairingYield(yieldDurationMs: Int) {
+        cancelPendingReconnect(reason: "pairing_yield")
+        pairingYieldActive = true
+        pairingYieldAwaitingReclaim = false
+        pairingYieldEndWorkItem?.cancel()
+        cancelSecurePairingWait()
+        if isScanning {
+            stopScan()
+        }
+        // Publish the disconnect immediately. didDisconnectPeripheral may lag or race with
+        // cancelPeripheralConnection, and is ignored once connectedPeripheral is nil.
+        isConnecting = false
+        clearPhysicalReadiness()
+        connected = false
+        glassesSessionId = nil
+        streamControlVersion = 0
+        readinessCompletedThisBleSession = false
+        rgbLedAuthorityClaimed = false
+        lastSentMicTuningBody = nil
+        wearTuningQueriedThisLink = false
+        securePairingConfirmed = false
+        awaitingSecurePairingConfirmation = false
+        awaitingOwnerConfirm = false
+        stopAllTimers()
+        closeL2capFileChannel()
+        txCharacteristic = nil
+        rxCharacteristic = nil
+        updateConnectionState(ConnTypes.DISCONNECTED)
+        if let peripheral = connectedPeripheral {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        }
+        connectedPeripheral = nil
+        connectingPeripheral = nil
+        // Stay out for the whole window. Probing GATT during the yield races the new phone
+        // for the single BLE slot.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Bridge.log("LIVE: Pairing yield ended — resuming reconnect to saved glasses")
+            self.pairingYieldActive = false
+            self.pairingYieldAwaitingReclaim = true
+            self.pairingYieldEndWorkItem = nil
+            if !self.isKilled, self.connectedPeripheral == nil {
+                self.handleReconnection()
+            }
+        }
+        pairingYieldEndWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(yieldDurationMs), execute: work)
+    }
+
+    /// Ask the glasses to replace the retained owner with this phone (`confirm_replace_owner`).
+    /// The result arrives as the `confirm_replace_owner_result` event.
+    /// - Returns: true when the command was sent; false when not connected.
+    @discardableResult
+    func confirmReplaceOwner() -> Bool {
+        guard !isKilled, !pairingYieldActive, connectedPeripheral != nil,
+              txCharacteristic != nil
+        else {
+            Bridge.log("LIVE: confirmReplaceOwner ignored — not connected to glasses")
+            return false
+        }
+        Bridge.log("LIVE: Sending confirm_replace_owner")
+        return sendJson(["type": "confirm_replace_owner"], wakeUp: true, requireAck: true, bridgeLogging: true)
+    }
+
     /// Owner-loss destroy marks the manager dead. A later connect must build a new one.
     /// A live manager already holds the peripheral found during the pairing scan.
     var isManagerKilled: Bool {
@@ -1839,6 +1912,10 @@ class MentraLive: NSObject, SGCManager {
             explicitPairing: isExplicitPairingAttempt(),
             secureFirmware: isSavedGlassesSecureFirmware()
         ) else { return false }
+        guard MentraLiveConnectionAttemptPolicy.shouldRecordOwnerRejection(yieldActive: pairingYieldActive) else {
+            Bridge.log("LIVE: Owner rejection (ios_auth_fail) during pairing yield — not counted")
+            return false
+        }
         let nowMs = Int(ProcessInfo.processInfo.systemUptime * 1000)
         guard ownerRejectionStreak.record(nowMs: nowMs) else {
             Bridge.log("LIVE: Owner rejection (ios_auth_fail) — not repeated yet, will retry")
@@ -3140,21 +3217,70 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Received pong response - connection healthy")
 
         case "entering_pairing_mode":
-            // The glasses forget the previous owner as soon as pairing mode starts.
-            // This phone has lost them: disconnect and do not try to reconnect.
             let enterReason = json["reason"] as? String ?? "-"
             let windowMs = json["window_ms"] as? Int ?? -1
-            Bridge.log(
-                "PAIRFLOW: entering_pairing_mode reason=\(enterReason) window_ms=\(windowMs) action=stand_down_no_reconnect"
-            )
-            Bridge.log("LIVE: Glasses entering pairing mode — owner lost, no reconnect")
-            standDownAfterOwnerLoss(reason: "entering_pairing_mode")
+            let ownerRetained = json["owner_retained"] as? Bool ?? false
+            if MentraLiveConnectionAttemptPolicy.shouldYieldOnEnteringPairingMode(ownerRetained: ownerRetained) {
+                // Ownership transfer: the glasses kept this phone as owner but refuse it for the
+                // window. Yield (no connection attempts), keep the saved glasses, resume
+                // reconnecting when the window ends.
+                let yieldDurationMs = MentraLiveConnectionAttemptPolicy.yieldMs(
+                    windowMs: windowMs < 0 ? 120_000 : windowMs
+                )
+                Bridge.log(
+                    "PAIRFLOW: entering_pairing_mode reason=\(enterReason) window_ms=\(windowMs) owner_retained=true action=yield_\(yieldDurationMs)ms"
+                )
+                Bridge.log(
+                    "LIVE: Glasses entering pairing mode (owner retained) — yield \(yieldDurationMs)ms, keeping saved glasses"
+                )
+                enterPairingYield(yieldDurationMs: yieldDurationMs)
+                Bridge.sendTypedMessage(
+                    "entering_pairing_mode",
+                    body: [
+                        "window_ms": windowMs < 0 ? 120_000 : windowMs,
+                        "reason": json["reason"] as? String ?? "user_gesture",
+                        "owner_retained": true,
+                    ]
+                )
+            } else {
+                // The glasses forget the previous owner as soon as pairing mode starts.
+                // This phone has lost them: disconnect and do not try to reconnect.
+                Bridge.log(
+                    "PAIRFLOW: entering_pairing_mode reason=\(enterReason) window_ms=\(windowMs) action=stand_down_no_reconnect"
+                )
+                Bridge.log("LIVE: Glasses entering pairing mode — owner lost, no reconnect")
+                standDownAfterOwnerLoss(reason: "entering_pairing_mode")
+            }
+
+        case "confirm_replace_owner_result":
+            let ok = json["ok"] as? Bool ?? false
+            let reason = json["reason"] as? String
+            Bridge.log("LIVE: confirm_replace_owner_result ok=\(ok) reason=\(reason ?? "")")
+            if MentraLiveConnectionAttemptPolicy.shouldRearmSecurePairingWaitAfterConfirm(ok: ok) {
+                // The glasses wiped the old owner and sent the security request; the bond
+                // follows, so the pairing-wait failure timeout applies again.
+                awaitingOwnerConfirm = false
+                if awaitingSecurePairingConfirmation {
+                    armSecurePairingWait()
+                }
+            }
+            var resultBody: [String: Any] = ["ok": ok]
+            if let reason { resultBody["reason"] = reason }
+            Bridge.sendTypedMessage("confirm_replace_owner_result", body: resultBody)
 
         case "pairing_info":
             Bridge.log(
-                "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) code=<redacted>"
+                "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) transfer=\(json["ownership_transfer"] as? Bool ?? false) awaiting_confirm=\(json["awaiting_confirm"] as? Bool ?? false) code=<redacted>"
             )
             let ownerCommitted = json["owner_committed"] as? Bool == true
+            // Ownership transfer: while the user is on the confirm screen no bond can follow,
+            // so the secure pairing wait is suspended until the confirm succeeds.
+            let awaitingConfirm = json["awaiting_confirm"] as? Bool ?? false
+            awaitingOwnerConfirm = awaitingConfirm
+            if !MentraLiveConnectionAttemptPolicy.shouldRunSecurePairingWait(awaitingConfirm: awaitingConfirm) {
+                Bridge.log("LIVE: pairing_info awaiting_confirm — suspending secure pairing wait")
+                cancelSecurePairingWait()
+            }
             if MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: ownerCommitted) {
                 securePairingConfirmed = true
                 cancelSecurePairingWait()
@@ -3171,7 +3297,10 @@ class MentraLive: NSObject, SGCManager {
                 pairingCode: json["pairing_code"] as? String,
                 classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
                 securePairingCapable: securePairingCapable,
-                protocolVersion: json["protocol_version"] as? Int ?? 1
+                protocolVersion: json["protocol_version"] as? Int ?? 1,
+                ownershipTransfer: json["ownership_transfer"] as? Bool ?? false,
+                awaitingConfirm: awaitingConfirm,
+                ownerCommitted: ownerCommitted
             )
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
@@ -4157,11 +4286,20 @@ class MentraLive: NSObject, SGCManager {
     /// never finishes, must fail the attempt instead of leaving the loading screen up.
     private func armSecurePairingWait() {
         cancelSecurePairingWait()
+        // While the user confirms the owner replace no bond can follow; do not arm the failure.
+        guard MentraLiveConnectionAttemptPolicy.shouldRunSecurePairingWait(awaitingConfirm: awaitingOwnerConfirm) else {
+            Bridge.log("LIVE: secure pairing wait not armed — user is confirming the owner replace")
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard self.awaitingSecurePairingConfirmation, self.isExplicitPairingAttempt(),
                   !self.securePairingConfirmed
             else { return }
+            // awaiting_confirm can start after this wait armed; never fail the pair then.
+            guard MentraLiveConnectionAttemptPolicy.shouldRunSecurePairingWait(
+                awaitingConfirm: self.awaitingOwnerConfirm
+            ) else { return }
             self.awaitingSecurePairingConfirmation = false
             Bridge.log("LIVE: secure pairing bond wait expired")
             Bridge.sendPairFailureEvent("errors:pairingCouldNotStart")

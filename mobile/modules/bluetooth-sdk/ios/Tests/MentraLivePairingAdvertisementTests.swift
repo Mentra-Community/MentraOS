@@ -247,6 +247,54 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         XCTAssertTrue(streak.record(nowMs: span + 10_000))
     }
 
+    func testEnteringPairingModeYieldsOnlyWhenTheOwnerWasRetained() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertTrue(Policy.shouldYieldOnEnteringPairingMode(ownerRetained: true))
+        // Absent or false keeps the 3.3 stand-down.
+        XCTAssertFalse(Policy.shouldYieldOnEnteringPairingMode(ownerRetained: false))
+    }
+
+    func testYieldCoversTheAbsoluteWindow() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertEqual(Policy.yieldMs(windowMs: 120_000), 300_000)
+        XCTAssertEqual(Policy.yieldMs(windowMs: 900_000), 300_000)
+        XCTAssertEqual(Policy.yieldMs(windowMs: 5_000), 300_000)
+    }
+
+    func testRejectionsDuringAYieldAreNotRecorded() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertFalse(Policy.shouldRecordOwnerRejection(yieldActive: true))
+        XCTAssertTrue(Policy.shouldRecordOwnerRejection(yieldActive: false))
+    }
+
+    func testYieldRejectionsNeverBuildAStreakThatStandsDown() {
+        var streak = MentraLiveOwnerRejectionStreak()
+        var standDown = false
+        var now = 0
+        // Rejections spanning well past the stand-down thresholds, all inside the yield.
+        for _ in 0 ..< 6 {
+            if MentraLiveConnectionAttemptPolicy.shouldRecordOwnerRejection(yieldActive: true) {
+                standDown = standDown || streak.record(nowMs: now)
+            }
+            now += 60_000
+        }
+        XCTAssertFalse(standDown)
+        // The first rejection after the yield starts a fresh streak.
+        XCTAssertFalse(streak.record(nowMs: now))
+    }
+
+    func testAwaitingConfirmSuspendsTheSecurePairingWait() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertFalse(Policy.shouldRunSecurePairingWait(awaitingConfirm: true))
+        XCTAssertTrue(Policy.shouldRunSecurePairingWait(awaitingConfirm: false))
+    }
+
+    func testSuccessfulConfirmRearmsThePairingWaitButRefusalDoesNot() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertTrue(Policy.shouldRearmSecurePairingWaitAfterConfirm(ok: true))
+        XCTAssertFalse(Policy.shouldRearmSecurePairingWaitAfterConfirm(ok: false))
+    }
+
     private func legacyPayload() -> Data {
         var data = Data(repeating: 0, count: 29)
         data[0] = 0x22
