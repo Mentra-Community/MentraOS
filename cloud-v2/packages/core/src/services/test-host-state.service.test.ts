@@ -4,6 +4,8 @@ import {TestHostStateModel} from "../models/test-host-state.model"
 import {TestRequestModel} from '../models/test-request.model'
 import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
 import {routineProgressSchema} from '../types/routine-progress.types'
+import {compatibleRoutineLane, routineJobRouting} from './routine-job.service'
+import {permissionContext} from '../types/resource-permissions.types'
 
 test('run progress lookup selects only one lane snapshot and uses a bounded consistent read', async () => {
   const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
@@ -24,6 +26,71 @@ test('run progress lookup selects only one lane snapshot and uses a bounded cons
       'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, receivedAt: 1, _id: 0}]);
     expect(settings).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
   } finally {find.mockRestore()}
+})
+
+
+test('routing reads only fresh current offers and preserves permission and physical glasses admission', async () => {
+  const now = Date.parse('2026-10-14T08:00:00Z'), binding = {version: 952, revision: 'a'.repeat(40),
+    installationId: 'accepted', configurationSha256: 'b'.repeat(64), runtimeSha256: 'c'.repeat(64),
+    routineApiVersion: 39, publicApiSha256: 'd'.repeat(64)};
+  const build = {headSha: 'e'.repeat(40), archive: {sha256: 'f'.repeat(64)}, receipt: {sha256: '1'.repeat(64)}};
+  const observation = {permission: 'camera' as const, status: 'granted' as const, rawStatus: 'authorized',
+    observedAt: new Date(now).toISOString(), binding, evidence: {sha256: '2'.repeat(64)},
+    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'verified lifetime', launchedAt: now - 1000,
+      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.3.0', build: '912', teamId: 'T5XXXL6N36', codeRequirement: 'verified requirement',
+      selectedBuild: {headSha: build.headSha, archiveSha256: build.archive.sha256, receiptSha256: build.receipt.sha256}}};
+  const lane = {id: 'mac', descriptorRevision: '3'.repeat(64), platform: 'ios-on-mac' as const,
+    dispatchMode: 'automatic' as const, state: 'idle' as const,
+    resources: [{id: 'app', kind: 'app' as const, capabilities: ['camera'], permissionObservations: [observation]},
+      {id: 'glasses', kind: 'glasses' as const, capabilities: ['display']}],
+    glasses: [{resourceId: 'glasses', deviceId: 'physical-one', model: 'mentra-live', capabilities: ['display']}]};
+  const current = {hostId: 'mini', frameworkBinding: binding, lanes: [lane]};
+  const requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['camera'],
+    permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}, {kind: 'glasses' as const, capabilities: ['display']}],
+    glasses: {models: ['mentra-live'], capabilities: ['display']}};
+  const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
+  let reads = 0;
+  const find = spyOn(TestHostStateModel, 'find').mockImplementation(((filter: unknown) => {
+    filters.push(filter);
+    const query = {select(value: unknown) {selections.push(value); return query},
+      limit(value: unknown) {settings.push(value); return query}, read(value: unknown) {settings.push(value); return query},
+      readConcern(value: unknown) {settings.push(value); return query}, async lean() {
+        reads++; return [{hostId: 'mini', snapshot: structuredClone(current), receivedAt: new Date(now)}];
+      }}; return query;
+  }) as never);
+  const previous = process.env.TEST_HOST_TOKENS;
+  process.env.TEST_HOST_TOKENS = JSON.stringify({mini: 't'.repeat(32), invalid: 'short'});
+  try {
+    const service = new TestHostStateService(), [offered] = await service.list();
+    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString()});
+    expect(selections).toEqual([{hostId: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
+      'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
+      'snapshot.lanes.glasses': 1, _id: 0}]);
+    expect(settings).toEqual([100, 'primary', 'majority']);
+    expect(filters).toEqual([{hostId: {$in: ['mini']}}]);
+    const full = {...current, incarnation: 'boot', incarnationGeneration: 1, sequence: 1, observedAt: new Date(now).toISOString(),
+      frameworkHistory: [], restoration: {diagnostics: 'baggage'.repeat(10000)}, receivedAt: offered.receivedAt};
+    expect(routineJobRouting(requirements, [offered], now, undefined, build)).toEqual(routineJobRouting(requirements, [full], now, undefined, build));
+    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, build, now))).toBe(true);
+    expect(compatibleRoutineLane(requirements, offered.lanes[0], permissionContext(binding, {...build, headSha: '0'.repeat(40)}, now))).toBe(false);
+    observation.observedAt = new Date(now - 120001).toISOString();
+    const [fresh] = await service.list();
+    expect(reads).toBe(2);
+    expect(compatibleRoutineLane(requirements, fresh.lanes[0], permissionContext(binding, build, now))).toBe(false);
+    current.lanes[0].glasses[0].resourceId = 'unoffered';
+    await expect(service.list()).rejects.toThrow('Glasses inventory must exactly identify declared glasses resources');
+    current.lanes[0].glasses[0].resourceId = 'glasses';
+    observation.recipient.selectedBuild.headSha = 'invalid';
+    await expect(service.list()).rejects.toThrow();
+    observation.recipient.selectedBuild.headSha = build.headSha;
+    current.hostId = 'different';
+    await expect(service.list()).rejects.toThrow('Routing snapshot differs from enrolled host');
+  } finally {
+    find.mockRestore();
+    if (previous === undefined) delete process.env.TEST_HOST_TOKENS; else process.env.TEST_HOST_TOKENS = previous;
+  }
 })
 
 function fixture() {
