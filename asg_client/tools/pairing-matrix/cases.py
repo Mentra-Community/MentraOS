@@ -1979,6 +1979,486 @@ def new7_permission_denied(ctx: Ctx):
                      "revoking the permission is not observable by the app")
 
 
+# ------------------------------------------------------------ ownership transfer (W14, T0..T9)
+#
+# Contract: mentra-live-bes docs/pairing-spec.md "## Ownership transfer mode". The firmware flag
+# MENTRA_OWNERSHIP_TRANSFER defaults to 0. Every case above this block asserts the flag-OFF behavior (R4 forget-on-entry,
+# R15 owner-lost card) and is unchanged. Tell the harness which firmware is flashed with MENTRA_TRANSFER=on|off
+# (default off); run_case.py passes the environment through to the snapshot. A T* case that needs the other mode ends
+# NOT_TESTABLE with that reason, and each result row carries "transfer": "on"|"off". Run the old cases only with
+# MENTRA_TRANSFER=off and the T1..T9 cases only with MENTRA_TRANSFER=on (T0 runs only with off).
+#
+# Lab limits, handled with the nearest existing helper (and said in each docstring): there is one Android phone (S22),
+# the iOS simulator (Mac radio) and the Mac as a bare BLE central. The Mac stands in for the previous owner whenever
+# the S22 has to be the NEW phone (like D4BFIX in reverse). The confirm button label of the Mentra App is not fixed
+# yet: CONFIRM_REPLACE_RX (override with PMX_CONFIRM_LABEL) is the one place to update. Wire-level facts
+# (owner_retained, awaiting_confirm, confirm_replace_owner_result) are searched in the BES ring, the ASG log, the
+# phone log and the iOS log; when no log line carries one, the case records a harness gap (OPEN), never a pass.
+
+TRANSFER_ENV = "MENTRA_TRANSFER"
+CONFIRM_REPLACE_RX = os.environ.get("PMX_CONFIRM_LABEL", r"^(Replace|Replace owner|Transfer|Confirm)$")
+# A transfer key present with any value counts as emitted (the contract says absent, meaning false, when flag-off).
+TRANSFER_KEY_RX = r"""\\?["']?(owner_retained|awaiting_confirm|ownership_transfer)\\?["']?\s*[:=]"""
+PROTOCOL_VERSION_RX = re.compile(r"protocol_version\W{0,4}(\d+)")
+
+
+def transfer_mode() -> str:
+    """'on' or 'off' from MENTRA_TRANSFER (default off). Anything else is an error, never a silent default."""
+    value = os.environ.get(TRANSFER_ENV, "off").strip().lower() or "off"
+    if value not in ("on", "off"):
+        raise ValueError(f"{TRANSFER_ENV} must be 'on' or 'off', got {value!r}")
+    return value
+
+
+def transfer_on() -> bool:
+    return transfer_mode() == "on"
+
+
+def require_transfer(ctx, want_on: bool = True) -> bool:
+    """True when the flashed-firmware mode matches the case; otherwise the case ends NOT_TESTABLE."""
+    if transfer_on() == want_on:
+        ctx.note(f"{TRANSFER_ENV}={transfer_mode()}")
+        return True
+    ctx.not_testable(f"needs ownership-transfer firmware {'ON' if want_on else 'OFF'}: run with "
+                     f"{TRANSFER_ENV}={'on' if want_on else 'off'} against a build flashed that way "
+                     f"(this run has {TRANSFER_ENV}={transfer_mode()})")
+    return False
+
+
+def wire_hits(ctx, pattern: str, gm: int = 0, pm: int = 0, im: int = 0) -> list:
+    """[(source, line)] for `pattern` in the BES ring, the ASG log, the phone log and the iOS log."""
+    rx = re.compile(pattern)
+    hits = [("bes", l) for l in ctx.bes(pattern, gm)]
+    hits += [("asg", l) for _, l in ctx.g.since(gm) if rx.search(l)]
+    hits += [("phone", l) for l in phone_lines(ctx, pattern, pm)]
+    hits += [("ios", l) for _, l in ctx.i.since(im) if rx.search(l)]
+    return hits
+
+
+def wire_fact(ctx, name: str, pattern: str, gm: int = 0, pm: int = 0, im: int = 0) -> bool:
+    """A wire message proven by any log source (same fact). No line anywhere: harness gap, not a failure."""
+    hits = wire_hits(ctx, pattern, gm, pm, im)
+    if hits:
+        ctx.check(name, True, f"[{hits[0][0]}] {hits[0][1].strip()[-140:]}")
+        return True
+    ctx.gap(name, f"no BES/ASG/phone/iOS log line matches /{pattern}/ (the transfer wire strings are not logged yet)")
+    return False
+
+
+def owner_state(ctx, mark: int = 0) -> tuple | None:
+    """(ble, classic) owner record of the newest BES `st=... own=b/c` state line since `mark`."""
+    lines = ctx.bes(r"st=\w+ .*own=\d/\d", mark)
+    return owner_lost.own_pair(lines[-1]) if lines else None
+
+
+def answer_while(fn, answer, interval: float = 1.0):
+    """Run fn() while a helper thread calls answer() every `interval` s (the confirm tap on the iOS app)."""
+    import threading
+
+    stop, answered = threading.Event(), []
+
+    def loop():
+        while not stop.is_set():
+            try:
+                if answer():
+                    answered.append(time.time())
+            except Exception:  # noqa: BLE001 - best effort, the case checks the outcome
+                pass
+            stop.wait(interval)
+
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+    try:
+        return fn(), len(answered)
+    finally:
+        stop.set()
+        th.join(timeout=10)
+
+
+def refused(rows: list) -> bool:
+    """mac_central rows show no usable link (not connected, or dropped inside 2 s)."""
+    return all(not r.get("connected") or r.get("link_seconds", 0) < 2 for r in rows)
+
+
+def stage_old_owner(ctx, who: str) -> None:
+    """Start from R_NONE, then make `who` the owner ('s22' = S22 with a live link; 'mac' = the Mac, BLE-only owner)."""
+    ctx.check("precondition ownerless start (R_NONE)", r_none(ctx))
+    if who == "s22":
+        ctx.check("precondition S22 owner", r_s22(ctx))
+        return
+    open_window(ctx)
+    mac_new_owner(ctx, settle_s=0)
+    p = own_probe(ctx)
+    ctx.check("precondition Mac owner (own=1, Mac bond)", p.get("own") == 1 and ios.mac_bonded(), str(p.get("line", ""))[-90:])
+
+
+def open_retaining_window(ctx, expect_notice: bool = True) -> int:
+    """One 3-press gesture on transfer-ON firmware. T1: the owner is KEPT (BES own != 0/0) and a connected old phone
+    is told owner_retained:true. `expect_notice=False` when the old owner is the Mac (no app, no notice)."""
+    gm, pm, im = ctx.g.mark(), ctx.p.mark(), ctx.i.mark()
+    open_window(ctx, settle=False)
+    ctx.check("window opened", ctx.bes_wait(r"mode_enter_done", 20, gm) is not None)
+    time.sleep(3)
+    own = owner_state(ctx, gm)
+    ctx.check("owner kept on entry (BES own != 0/0)", own is not None and own != (0, 0), str(own))
+    if expect_notice:
+        wire_fact(ctx, "entering_pairing_mode carries owner_retained:true", r"owner_retained\W{0,4}true", gm, pm, im)
+    return gm
+
+
+def cancel_window(ctx, gm: int):
+    """One single click after the 2 s grace and the 4 s count reset (B11 recipe) closes the window."""
+    time.sleep(6)
+    pmx.inject("C", 50)
+    hit = ctx.bes_wait(r"cancel by single click|window_close reason=", 15, gm)
+    ctx.check("window closed by one single click", hit is not None, hit[1] if hit else "")
+    return hit
+
+
+def old_phone_quiet(ctx, probe, pm: int, seconds: float, during=None, during_at: float = 0.0) -> None:
+    """Watch the retained owner's phone for `seconds` (full length or the case is INVALID). Yield contract: no connect
+    or reconnect attempt (lines saying 'yield'/'blocked' are the yield working, not attempts), no prompt, no
+    owner-lost card, no owner-loss line. `during()` runs once at `during_at` s (a race to provoke the phone)."""
+    t0, n, fired, card, prompts = time.time(), 0, False, False, []
+    while time.time() < t0 + seconds:
+        if during and not fired and time.time() >= t0 + during_at:
+            fired = True
+            during()
+        seen_card, prompt = probe.poll(foreground=(n == 0))
+        n += 1
+        card = card or bool(seen_card)
+        if prompt:
+            prompts.append(prompt)
+            probe.dismiss(prompt)
+        time.sleep(2)
+    owner_lost.record_window(ctx, "yield_quiet", t0, time.time(), seconds)
+    lines = [l for _, l in probe.lines_since(pm) if "ReactNativeJS" not in l]
+    attempts = [l for l in lines if (probe.connect_rx.search(l) or probe.reconnect_rx.search(l))
+                and not re.search(r"yield|blocked", l, re.I)]
+    lost = [l for l in lines if owner_lost.NOTICE_RX.search(l) or owner_lost.OWNER_LOSS_RX.search(l)]
+    ctx.check(f"old phone made no connect attempt for {seconds:.0f} s", not attempts, str([a[-110:] for a in attempts[:3]]))
+    ctx.check("old phone showed no prompt", not prompts, str(prompts[:2]))
+    ctx.check("old phone never showed the owner-lost card", not card, f"{n} polls")
+    ctx.check("old phone logged no owner loss", not lost, str([l[-110:] for l in lost[:2]]))
+
+
+def owner_restored(ctx, pm: int, gm: int) -> None:
+    """After a cancel or an idle close before confirm: the old owner reconnects with zero action, the glasses still
+    hold its record, and no owner-lost card or owner-loss line ever appeared."""
+    ctx.check("old owner reconnected with zero action", wait_owner_link(ctx, pm, 90) is not None)
+    pmx.app_home()
+    time.sleep(2)
+    ctx.shot("old_owner_home")
+    ctx.check("no owner-lost card", pmx.ui_find(r"^In pairing mode$") is None)
+    lost = phone_lines(ctx, r"Owner loss|owner_replaced|owner lost, no reconnect|mentra_live_owner_lost.*true", pm)
+    ctx.check("no owner-loss line on the old phone", not lost, str(lost[:2]))
+    final = owner_state(ctx, gm)
+    ctx.check("glasses kept the owner (no clear_owner, own != 0/0 after the close)",
+              not ctx.bes(r"clear_owner", gm) and final is not None and final != (0, 0), str(final))
+
+
+def android_pair_with_confirm(ctx, accept: bool = True, timeout: float = 120, on_confirm=None) -> dict:
+    """S22 as the NEW phone: pick the glasses, tap the app's confirm-replace button, then answer (accept) or decline
+    the Android pairing dialog. Same loop shape as D1NOACCEPT. `on_confirm()` runs right after the confirm tap."""
+    out = {"picked": False, "confirmed": False, "dialog_accepted": False, "dialog_declined": False,
+           "success": False, "failed": False, "t_confirm": None}
+    pmx.open_pairing_scan()
+    pick = rf"^(Mentra Live, )?{re.escape(ident.code())}$"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        nodes = pmx.ui_nodes()
+        if not out["picked"] and pmx.ui_find(pick, nodes):
+            pmx.tap(*pmx.ui_find(pick, nodes).center)
+            out["picked"] = True
+        btn = pmx.ui_find(CONFIRM_REPLACE_RX, nodes)
+        if btn and not out["confirmed"]:
+            pmx.tap(*btn.center)
+            out["confirmed"], out["t_confirm"] = True, time.time()
+            ctx.note("tapped the confirm-replace button")
+            if on_confirm:
+                on_confirm()
+        if pmx.ui_find(r"配对请求|Pairing request", nodes):
+            target = pmx.ui_find(pmx.BT_DIALOG_ACCEPT, nodes) if accept else pmx.ui_find(r"^取消$|^Cancel$", nodes)
+            if target:
+                pmx.tap(*target.center)
+                out["dialog_accepted" if accept else "dialog_declined"] = True
+        if pmx.ui_find(r"^Success$", nodes):
+            out["success"] = True
+            break
+        if pmx.ui_find(r"^Pairing Failed$", nodes):
+            out["failed"] = True
+            break
+        time.sleep(1)
+    ctx.note(f"android_pair_with_confirm: {out}")
+    ctx.shot("pair_flow_end")
+    return out
+
+
+@case("T0")
+def t0_flag_off_wire_regression(ctx: Ctx):
+    """Flag-OFF regression (run with MENTRA_TRANSFER=off): through a real S22 pair and one entering_pairing_mode, no
+    BES/ASG/phone log carries owner_retained, awaiting_confirm or ownership_transfer, and every pairing_info that logs
+    protocol_version says 2. Missing anchors (no pairing_info / entering_pairing_mode logged, or no protocol_version
+    in any pairing_info line) make the scan meaningless: harness gap, case OPEN."""
+    if not require_transfer(ctx, want_on=False):
+        return
+    stage_old_owner(ctx, "s22")  # fresh pairing in this case's logs: pairing_info on connect
+    run_owner_lost(ctx, "s22", scenario="cancel", cancel_at_s=6.0,
+                   trigger=lambda: open_window(ctx, settle=False), adv=lambda: ctx.adv(5))
+    leaks = wire_hits(ctx, TRANSFER_KEY_RX)
+    ctx.check("no owner_retained/awaiting_confirm/ownership_transfer in any log", not leaks,
+              str([f"[{s}] {l.strip()[-100:]}" for s, l in leaks[:3]]))
+    for name, pat in (("pairing_info", r"pairing_info"), ("entering_pairing_mode", r"entering_pairing_mode")):
+        if not wire_hits(ctx, pat):
+            ctx.gap(f"scan anchor: {name} seen in a log", "absence of the transfer keys proves nothing without it")
+    versions = [m.group(1) for _, l in wire_hits(ctx, r"protocol_version") if "pairing_info" in l
+                for m in PROTOCOL_VERSION_RX.finditer(l)]
+    if not versions:
+        ctx.gap("pairing_info protocol_version logged", "no pairing_info line carries protocol_version")
+    else:
+        ctx.check("pairing_info protocol_version stays 2", set(versions) == {"2"}, str(sorted(set(versions))))
+
+
+@case("T1")
+def t1_confirmed_handoff(ctx: Ctx):
+    """Confirmed handoff, Android new phone (needs MENTRA_TRANSFER=on). Lab has ONE Android, so the previous owner
+    is the Mac (BLE-only owner, stand-in like D4BFIX); true Android-to-Android needs a second phone route in pmx.
+    Window keeps the owner; the Mac is refused; S22 connects, taps confirm, accepts the dialog, commits, and the Mac
+    cannot come back. Wipe order (Classic then BLE) is not visible in any current log: not asserted here."""
+    if not require_transfer(ctx):
+        return
+    stage_old_owner(ctx, "mac")
+    gm = open_retaining_window(ctx, expect_notice=False)
+    pm, im = ctx.p.mark(), ctx.i.mark()
+    rows = mac_central("--hold", "8", "--read")
+    ctx.check("retained owner (Mac) refused during the window", refused(rows), str(rows))
+    res = android_pair_with_confirm(ctx)
+    ctx.check("S22 picked the glasses and tapped confirm", res["picked"] and res["confirmed"], str(res))
+    wire_fact(ctx, "pairing_info awaiting_confirm:true seen by the new phone", r"awaiting_confirm\W{0,4}true", gm, pm, im)
+    wire_fact(ctx, "confirm_replace_owner_result ok:true", r"confirm_replace_owner_result.*ok\W{0,4}true", gm, pm, im)
+    ctx.check("Android pairing dialog accepted, Success shown", res["dialog_accepted"] and res["success"], str(res))
+    commit = ctx.bes_wait(r"owner committed from ble bond", 45, gm)
+    ctx.check("owner committed from the S22 BLE bond", commit is not None, commit[1] if commit else "")
+    ctx.check("window closed on commit", ctx.bes_wait(r"state PAIRING -> OWNER_ONLY", 20, gm) is not None)
+    ctx.check("owner BLE+Classic recorded (own=1/1)", bool(ctx.bes(r"st=OWNER_ONLY .*own=1/1", gm)))
+    ctx.check("S22 phone bonded", bool(pmx.glasses_bonds()))
+    ctx.check("old owner (Mac) cannot reconnect after the wipe", refused(mac_central("--hold", "8", "--read")))
+    s22_finish_setup()
+
+
+@case("T2")
+def t2_ios_handoff(ctx: Ctx):
+    """Confirmed handoff, iOS new phone, S22 previous owner (needs MENTRA_TRANSFER=on). NOT_TESTABLE until the iPhone
+    spike B0 passes (BLE connect and confirm BEFORE Settings audio pairing); set PMX_IOS_SPIKE_B0=pass afterwards.
+    The confirm tap runs in a helper thread while ios_pair drives the flow. No log line orders confirm before the
+    Settings audio pair yet, so that ordering is not asserted."""
+    if not require_transfer(ctx):
+        return
+    if os.environ.get("PMX_IOS_SPIKE_B0") != "pass":
+        ctx.not_testable("iPhone spike B0 has not passed: an iPhone cannot be proven to connect over BLE and confirm "
+                         "before opening Settings audio pairing; set PMX_IOS_SPIKE_B0=pass once it does")
+        return
+    stage_old_owner(ctx, "s22")
+    ctx.note(f"reset_ios_side: {ios.reset_ios_side()}")
+    ios.open_pairing_scan()
+    probe = owner_lost.make_probe(ctx, "s22")
+    pm, im = probe.mark(), ctx.i.mark()
+    gm = open_retaining_window(ctx)
+    (commit, res), taps = answer_while(lambda: ios_pair(ctx), lambda: ios.tap_text(CONFIRM_REPLACE_RX, 1))
+    ctx.check("iOS tapped confirm", taps > 0, str(taps))
+    wire_fact(ctx, "confirm_replace_owner_result ok:true", r"confirm_replace_owner_result.*ok\W{0,4}true", gm, pm, im)
+    ctx.check("iOS Success screen", bool(res.get("success_screen")), str(res.get("steps")))
+    ctx.check("owner committed", commit is not None, commit[1] if commit else "")
+    ctx.check("Success only after pairing_info confirmed the commit", ios_success_after_pairing_info(ctx, im))
+    ctx.check("iOS Mac bond created", ios.mac_bonded())
+    ctx.check("S22 no longer holds a bond", not s22_holds_bond())
+
+
+@case("T3")
+def t3_cancel_keeps_owner(ctx: Ctx):
+    """Cancel before confirm keeps the owner (needs MENTRA_TRANSFER=on). S22 owner; 3 presses (owner kept, old phone
+    yields); one single click closes the window; the S22 reconnects with zero action; no owner-lost card, no
+    owner-loss line, glasses never cleared the owner."""
+    if not require_transfer(ctx):
+        return
+    stage_old_owner(ctx, "s22")
+    await_live_link(ctx, "s22")
+    probe = owner_lost.make_probe(ctx, "s22")
+    pm = probe.mark()
+    gm = open_retaining_window(ctx)
+    old_phone_quiet(ctx, probe, pm, 8)
+    cancel_window(ctx, gm)
+    time.sleep(3)
+    a = ctx.adv(5)
+    ctx.check("adv pairing flag cleared", bool(a) and not a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+    owner_restored(ctx, pm, gm)
+
+
+@case("T4")
+def t4_expiry_keeps_owner(ctx: Ctx):
+    """Idle expiry before confirm keeps the owner (needs MENTRA_TRANSFER=on). Like F1 but the owner is retained: the
+    window closes at ~120 s with no confirm, the S22 reconnects with zero action, no owner-lost card, glasses keep
+    the record. The old phone is watched for the first 30 s (the whole window is the yield)."""
+    if not require_transfer(ctx):
+        return
+    stage_old_owner(ctx, "s22")
+    await_live_link(ctx, "s22")
+    probe = owner_lost.make_probe(ctx, "s22")
+    pm, t_open = probe.mark(), time.time()
+    gm = open_retaining_window(ctx)
+    old_phone_quiet(ctx, probe, pm, 30)
+    hit = ctx.bes_wait(r"window_close reason=", 150, gm)
+    elapsed = time.time() - t_open
+    ctx.check("window closes without a confirm", hit is not None, hit[1] if hit else "")
+    ctx.check("closes near 120 s", hit is not None and 110 <= elapsed <= 135, f"{elapsed:.0f}s")
+    time.sleep(3)
+    a = ctx.adv(5)
+    ctx.check("adv pairing flag cleared", bool(a) and not a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+    owner_restored(ctx, pm, gm)
+
+
+@case("T5")
+def t5_old_phone_races_window(ctx: Ctx):
+    """Old phone races the window (needs MENTRA_TRANSFER=on). S22 owner; 3 presses; 10 s in, the S22 Bluetooth is
+    bounced to provoke a reconnect. It must make no attempt for 30 s (yield: 'blocked/yield' lines are fine), show no
+    owner-lost card or prompt, and the glasses must not commit anyone or clear the owner. Then one click closes the
+    window and the S22 gets its glasses back. A glasses-side HCI refusal is only visible if the phone attempts, which
+    the case forbids, so refusal is proven by 'no commit and own != 0/0'."""
+    if not require_transfer(ctx):
+        return
+    stage_old_owner(ctx, "s22")
+    await_live_link(ctx, "s22")
+    probe = owner_lost.make_probe(ctx, "s22")
+    pm = probe.mark()
+    gm = open_retaining_window(ctx)
+
+    def bounce():
+        pmx.phone_bt(False)
+        time.sleep(4)
+        pmx.phone_bt(True)
+
+    old_phone_quiet(ctx, probe, pm, 30, during=bounce, during_at=10)
+    ctx.check("glasses committed nobody during the race", not ctx.bes(r"owner committed", gm))
+    own = owner_state(ctx, gm)
+    ctx.check("retained owner still recorded (own != 0/0)", own is not None and own != (0, 0), str(own))
+    ctx.check("glasses did not clear the owner", not ctx.bes(r"clear_owner", gm))
+    cancel_window(ctx, gm)
+    owner_restored(ctx, pm, gm)
+
+
+@case("T6")
+def t6_confirm_then_bond_fails(ctx: Ctx):
+    """PENDING PRODUCT SIGN-OFF (spec T6). Confirm, then the Android pairing dialog is declined (needs
+    MENTRA_TRANSFER=on). Documented outcome: the old owner is already wiped (no rollback), the 120 s idle timer no
+    longer closes the window after confirm, then (single click) the glasses end ownerless and locked and the old phone
+    (Mac stand-in; one Android only) cannot reclaim. The case always ends OPEN unless PMX_T6_SIGNED_OFF=1 records
+    that product accepted this outcome; a PASS before sign-off would be a false claim."""
+    if not require_transfer(ctx):
+        return
+    stage_old_owner(ctx, "mac")
+    gm = open_retaining_window(ctx, expect_notice=False)
+    pm, im = ctx.p.mark(), ctx.i.mark()
+    res = android_pair_with_confirm(ctx, accept=False, timeout=60)
+    ctx.check("confirm tapped, then the Android dialog declined", res["confirmed"] and res["dialog_declined"], str(res))
+    wire_fact(ctx, "confirm_replace_owner_result ok:true", r"confirm_replace_owner_result.*ok\W{0,4}true", gm, pm, im)
+    time.sleep(max(0.0, (res["t_confirm"] or time.time()) + 125 - time.time()))
+    ctx.check("window NOT closed by the 120 s idle timer after confirm", not ctx.bes(r"window_close reason=", gm))
+    a = ctx.adv(5)
+    ctx.check("still advertising the pairing window past 120 s", bool(a) and a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+    cancel_window(ctx, gm)
+    time.sleep(3)
+    own = owner_state(ctx, gm)
+    ctx.check("glasses ownerless (own=0/0)", own == (0, 0), str(own))
+    a = ctx.adv(5)
+    ctx.check("glasses locked (pairing flag clear)", bool(a) and not a["mentra"].get("pairing"), json.dumps((a or {}).get("mentra")))
+    ctx.check("no owner committed, S22 not bonded", not ctx.bes(r"owner committed", gm) and not pmx.glasses_bonds())
+    ctx.check("old owner cannot reclaim", refused(mac_central("--hold", "8", "--read")))
+    if os.environ.get("PMX_T6_SIGNED_OFF") != "1":
+        ctx.gap("T6 product sign-off pending", "no-rollback outcome is documented, not approved; set PMX_T6_SIGNED_OFF=1 after sign-off")
+
+
+@case("T7")
+def t7_reboot_mid_wipe(ctx: Ctx):
+    """Reboot during the wipe (needs MENTRA_TRANSFER=on). Old owner is the Mac (a BLE-only record, own=1/0). The harness
+    has NO BES fault injection: the nearest helper reboots the glasses' Android right after the confirm tap, which does
+    not reset BES, so the interruption itself is unproven and the case records a gap unless PMX_T7_BES_CYCLED=1 says
+    the coordinator power-cycled BES in that window. Asserted: the owner record never shows the wrong wipe order
+    (Classic-only own=0/1 after a BLE-only one), and the end state is exactly one of ownerless-locked, old BLE-only
+    owner re-adopted (Mac holds a link, R14), or the S22 as new owner."""
+    if not require_transfer(ctx):
+        return
+    stage_old_owner(ctx, "mac")
+    gm = open_retaining_window(ctx, expect_notice=False)
+    android_pair_with_confirm(ctx, timeout=45, on_confirm=lambda: reboot_unit3_android(ctx))
+    ok = adb_return_bench(ctx)
+    ctx.check("glasses Android back (adb)", ok)
+    if not ok:
+        return
+    time.sleep(20)
+    seen = {owner_lost.own_pair(l) for l in ctx.bes(r"st=\w+ .*own=\d/\d", 0)} - {None}
+    ctx.check("no Classic-only residue (own=0/1): Classic is wiped first", (0, 1) not in seen, str(sorted(seen)))
+    a = ctx.adv(5)
+    if a and a["mentra"].get("pairing"):
+        ctx.note("window still open after the Android reboot (BES was not reset); closing it with one click")
+        cancel_window(ctx, 0)
+    final = owner_state(ctx, 0)
+    if final == (1, 0):
+        rows = mac_central("--hold", "10", "--read")
+        ctx.check("BLE-only old owner re-adopted (Mac holds a link)", any(r.get("link_seconds", 0) >= 5 for r in rows), str(rows))
+    elif final == (0, 0):
+        ctx.check("ownerless end state is locked and S22 not bonded", not pmx.glasses_bonds())
+    else:
+        ctx.check("end state is the S22 as new owner (own=1/1)", final == (1, 1) and bool(pmx.glasses_bonds()), str(final))
+    if os.environ.get("PMX_T7_BES_CYCLED") != "1":
+        ctx.gap("T7 BES was not interrupted mid-wipe", "Android reboot does not reset BES; no fault-injection helper exists")
+
+
+def mac_classic_connected(wait_s: float = 8.0) -> bool:
+    """Ask the Mac to connect the glasses over Classic (blueutil) and report whether the link came up."""
+    import subprocess
+
+    mac = ios.glasses_mac()
+    subprocess.run(["blueutil", "--connect", mac], capture_output=True, timeout=30)
+    time.sleep(wait_s)
+    out = subprocess.run(["blueutil", "--is-connected", mac], capture_output=True, text=True, timeout=15)
+    return out.stdout.strip() == "1"
+
+
+@case("T8")
+def t8_legacy_classic_owner(ctx: Ctx):
+    """Legacy Classic-only owner (needs MENTRA_TRANSFER=on). Precondition own=0/1 (a pre-3.3 NV record): no helper
+    creates it on current BES, so the case is NOT_TESTABLE unless the bench already holds one (restore an old-BES
+    baseline as in upgrade_cases.py). The Mac stands in as the legacy Classic owner. During the window the Mac's
+    Classic connect is refused and no R14 adoption runs; the S22 confirms and pairs; the Classic owner is wiped."""
+    if not require_transfer(ctx):
+        return
+    p = own_probe(ctx)
+    if not (p.get("own") == 0 and p.get("classic") == 1):
+        ctx.not_testable(f"needs a legacy Classic-only owner record (own=0/1), bench shows {p.get('line', '')[-80:]!r}; "
+                         "stage it from an old-BES baseline first")
+        return
+    gm = open_retaining_window(ctx, expect_notice=False)
+    ctx.check("legacy Classic owner (Mac) refused during the window", not mac_classic_connected())
+    ctx.check("no R14 adoption while PAIRING", not ctx.bes(r"(?i)adopt", gm), str(ctx.bes(r"(?i)adopt", gm)[:2]))
+    res = android_pair_with_confirm(ctx)
+    ctx.check("S22 tapped confirm and the pairing succeeded", res["confirmed"] and res["success"], str(res))
+    ctx.check("owner committed from the S22 BLE bond", ctx.bes_wait(r"owner committed from ble bond", 45, gm) is not None)
+    ctx.check("owner BLE+Classic recorded (own=1/1)", bool(ctx.bes(r"st=OWNER_ONLY .*own=1/1", gm)))
+    ctx.check("legacy Classic owner wiped (Mac cannot connect)", not mac_classic_connected())
+    s22_finish_setup()
+
+
+@case("T9")
+def t9_old_app_transfer_on_firmware(ctx: Ctx):
+    """Old app + transfer-ON firmware (spec 'Mixed fleet'): UNSUPPORTED by design, documented not tested. An app
+    without the confirm step never sends confirm_replace_owner, so the bond stays gated and it can never pair. The
+    harness has only the current app, and a negative pairing run would only show a timeout, not a contract."""
+    if not require_transfer(ctx):
+        return
+    ctx.not_testable("unsupported combination: an app without the confirm step cannot pair against transfer-ON firmware "
+                     "(T3 keeps the bond gated); the app flag flips before the firmware flag, so there is nothing to run")
+
+
 def snapshot_info() -> dict:
     """Snapshot id + manifest sha256 when running from a published harness snapshot, else nulls."""
     m = HERE / "manifest.json"
@@ -2039,6 +2519,11 @@ def main() -> None:
         print(f"refusing to write into old evidence run {args.run!r}; use --run x2")
         sys.exit(2)
     snap = snapshot_info()
+    try:
+        snap["transfer"] = transfer_mode()  # on|off firmware under test; every result row carries it
+    except ValueError as e:
+        print(str(e))
+        sys.exit(2)
     if snap["snapshot_id"] is None and os.environ.get("PMX_ALLOW_LIVE") != "1":
         print("refusing to run device cases from the live harness files: run through run_case.py "
               "(immutable snapshot), or set PMX_ALLOW_LIVE=1 for a local dry run")
