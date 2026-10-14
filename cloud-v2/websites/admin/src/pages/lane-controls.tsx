@@ -52,7 +52,7 @@ export function LaneControls({hostId, laneId, mode, fresh, lane}: {hostId: strin
   const clearPending = () => {uncertain.current = null; setRestored(null); try {sessionStorage.removeItem(storageKey)} catch {}}
   const mutation = useMutation({retry: false, mutationFn: (input: LaneControlInput) =>
     api<LaneControlView>('/api/admin/test-runs/lanes/controls', {method: 'POST', body: input, timeoutMs: 5000}),
-    onSuccess: () => {clearPending(); setShowPurpose(false); setRecoveryTarget(null); void client.invalidateQueries({queryKey: key}); void client.invalidateQueries({queryKey: ['lane-overview']})}})
+    onSuccess: () => {clearPending(); setShowPurpose(false); setRecoveryTarget(null); setChangedConditions(''); void client.invalidateQueries({queryKey: key}); void client.invalidateQueries({queryKey: ['lane-overview']})}})
   useEffect(() => {
     if (restored && query.data?.controls.some(row => row.operationId === restored.operationId)) clearPending()
   }, [query.data, restored])
@@ -80,13 +80,17 @@ export function LaneControls({hostId, laneId, mode, fresh, lane}: {hostId: strin
     uncertain.current = input; try {sessionStorage.setItem(storageKey, JSON.stringify(input))} catch {} mutation.mutate(input)
   }
   const blocked = Boolean(disabledReason || mutation.isPending || mutation.isError || restored)
+  const openRecovery = () => {
+    if (!repair) return
+    setChangedConditions('')
+    setRecoveryTarget({interruptionId: repair.interruptionId, expectedHaltDecisionId: repair.haltDecisionId!, changedConditions: ''})
+  }
   const button = (action: LaneControlInput['action'], label: string, reason?: string) => {
     const disabled = blocked || Boolean(reason)
     return <Tooltip key={action} content={<>{laneControlDescriptions[action]}{reason || disabledReason ? <> {reason ?? disabledReason}</> : null}</>} disabled={disabled}>
       <TestingButton disabled={disabled} busy={mutation.isPending && mutation.variables?.action === action}
         onClick={() => action === 'reserve' ? setShowPurpose(value => !value)
-          : action === 'reopen-repair' && repair ? setRecoveryTarget({interruptionId: repair.interruptionId,
-            expectedHaltDecisionId: repair.haltDecisionId!, changedConditions: ''}) : submit(action)}>{label}</TestingButton>
+          : action === 'reopen-repair' ? openRecovery() : submit(action)}>{label}</TestingButton>
     </Tooltip>
   }
   return <div className="mt-3 border-t border-[#e0e4de] pt-3">

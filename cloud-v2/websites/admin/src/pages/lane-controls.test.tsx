@@ -114,6 +114,10 @@ test('recovery click posts exactly the current halt and human change through the
   expect(posts[0]!.body).toMatchObject({hostId:'air',laneId:'phone',action:'reopen-repair',repair:{interruptionId:'repair:phone:98',expectedHaltDecisionId:'halt:original',changedConditions:'I allowed microphone access.'}})
   expect(posts[0]!.body.operationId).toMatch(/^[a-f0-9-]{36}$/)
   expect(posts[0]!.body).not.toHaveProperty('mode');expect(posts[0]!.body).not.toHaveProperty('ready')
+  await act(async()=>view.update(<QueryClientProvider client={client}><LaneControls hostId="air" laneId="phone" mode="automatic" fresh lane={{...haltedLane,repair:{...haltedLane.repair,haltDecisionId:'halt:next'}}}/></QueryClientProvider>))
+  await act(async()=>button('Retry recovery').props.onClick())
+  expect(view.root.findByProps({'aria-label':'What changed for recovery'}).props.value).toBe('')
+  expect(button('Confirm recovery retry').props.disabled).toBe(true)
  } finally {await act(async()=>view?.unmount());client.clear();globalThis.fetch=originalFetch}
 })
 
@@ -138,5 +142,8 @@ test('a repair changed after entering the recovery form cannot silently retarget
   await act(async()=>button('Confirm recovery retry').props.onClick())
   expect(posts).toBe(0)
   expect(JSON.stringify(view.toJSON())).toContain('The repair changed.')
+  await act(async()=>button('Retry recovery').props.onClick())
+  expect(view.root.findByProps({'aria-label':'What changed for recovery'}).props.value).toBe('')
+  expect(button('Confirm recovery retry').props.disabled).toBe(true)
  } finally {await act(async()=>view?.unmount());client.clear();globalThis.fetch=originalFetch}
 })
