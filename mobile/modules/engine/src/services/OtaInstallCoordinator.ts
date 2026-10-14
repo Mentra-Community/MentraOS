@@ -357,8 +357,8 @@ class OtaInstallCoordinator {
     this.resetSessionState()
     const initialState = useGlassesStore.getState()
     this.protocolProfile = selectOtaProtocolProfile(
-      initialState.otaStatus,
-      initialState.otaProgress,
+      this.otaStatusForAttempt(initialState.otaStatus),
+      this.otaProgressForAttempt(initialState.otaProgress),
       initialState.buildNumber,
     )
     // A late completion from the previous OTA step can clear the store's offer
@@ -1035,6 +1035,9 @@ class OtaInstallCoordinator {
         this.setErrorMsg("")
         this.versionChangeConverged = true
         this.emitInternalChange()
+        // Derivation ran before convergence. Queue the complete-state pass so
+        // transport cleanup happens even when no subsequent store event arrives.
+        this.react()
       }
     }
 
@@ -1243,6 +1246,7 @@ class OtaInstallCoordinator {
     }
 
     console.log(`[OTA_PROGRESS] ${label}: reconnected, sending ota_query_status`)
+    this.maybeStartGlobalTimeout()
     if (this.otaStartOwnership?.outcome === "pending") {
       void this.sendOtaStartWithWatchdogs()
     }
@@ -1281,15 +1285,18 @@ class OtaInstallCoordinator {
     }
 
     const storeState = useGlassesStore.getState()
+    const otaStatus = this.otaStatusForAttempt(storeState.otaStatus)
+    const otaProgress = this.otaProgressForAttempt(storeState.otaProgress)
 
     // Initial mount (prev === current === true). If no session yet, kick off ota_start.
     // An idle ota_status has an empty sessionId; treat it as no session so ota_start
     // still begins an explicit install.
-    const isIdleStatus = !!storeState.otaStatus && storeState.otaStatus.sessionId === ""
-    const noSessionYet = (!storeState.otaStatus && !storeState.otaProgress) || isIdleStatus
+    const isIdleStatus = !!otaStatus && otaStatus.sessionId === ""
+    const noSessionYet = (!otaStatus && !otaProgress) || isIdleStatus
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
+        this.maybeStartGlobalTimeout()
         void BluetoothSdk.queryOtaStatus().catch(() => {})
         this.armQueryReplyFallback("initial-mount")
         return
@@ -1306,6 +1313,7 @@ class OtaInstallCoordinator {
       void this.sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
+      this.maybeStartGlobalTimeout()
       void BluetoothSdk.queryOtaStatus().catch(() => {})
       this.armQueryReplyFallback("initial-mount")
     }
@@ -1790,8 +1798,10 @@ class OtaInstallCoordinator {
       // leftover, not a reply — a NEW legacy event would have cleared this timer
       // through the reaction pass. Only a unified reply suppresses the fallback.
       const legacySession = this.isLegacySessionShapeNow()
-      if (!legacySession && hasRecoveringOtaReply(state.otaStatus, state.otaProgress)) return
-      const explicitIdle = state.otaStatus?.status === "idle"
+      const otaStatus = this.otaStatusForAttempt(state.otaStatus)
+      const otaProgress = this.otaProgressForAttempt(state.otaProgress)
+      if (!legacySession && hasRecoveringOtaReply(otaStatus, otaProgress)) return
+      const explicitIdle = otaStatus?.status === "idle"
       const rejectedStart = this.otaStartOwnership?.outcome === "rejected"
       if (!legacySession && !explicitIdle && !rejectedStart) {
         console.log(
