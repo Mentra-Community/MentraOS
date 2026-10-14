@@ -1,9 +1,15 @@
 import type {AppPermissionReceipt, AppPermissionSnapshot} from "@mentra/engine"
-import {AppState} from "react-native"
+import {AppState, type AppStateStatus} from "react-native"
 const mockWrite = jest.fn()
 const mockStatus = jest.fn()
 const mockRequest = jest.fn()
-let mockAppState = "active"
+let mockAppState: AppStateStatus = "active"
+let appStateListener: ((state: AppStateStatus) => void) | undefined
+const mockRemoveListener = jest.fn()
+const changeState = (state: AppStateStatus) => {
+  mockAppState = state
+  appStateListener?.(state)
+}
 jest.mock("@mentra/engine", () => ({
   engine: {
     permissions: {
@@ -47,6 +53,11 @@ beforeEach(() => {
   jest.useFakeTimers()
   jest.clearAllMocks()
   mockAppState = "active"
+  appStateListener = undefined
+  jest.spyOn(AppState, "addEventListener").mockImplementation((_event, listener) => {
+    appStateListener = listener
+    return {remove: mockRemoveListener}
+  })
   current = snapshot()
   mockWrite.mockImplementation(async (requestId: string): Promise<AppPermissionReceipt> => ({...current, requestId}))
   mockStatus.mockImplementation(async () => current)
@@ -62,6 +73,7 @@ test("selected features request once, observe between requests, and publish a di
   expect(result.receipt.permissions.camera.status).toBe("denied") // true is not grant proof
   expect(result.actions.every((action) => action.action === "requested")).toBe(true)
   expect(jest.getTimerCount()).toBe(0)
+  expect(mockRemoveListener).toHaveBeenCalledTimes(1)
 })
 test("granted, denied, restricted and unknown states stay passive", async () => {
   current.permissions.camera = {status: "granted", rawStatus: "authorized"}
@@ -224,4 +236,37 @@ test("a native affirmative final observation leaves no missing selected requirem
   const result = await requestAttendedPermissions(link("camera"))
   expect(result.missing).toEqual([])
   expect(result.receipt.permissions.camera.status).toBe("granted")
+})
+
+test("a background-and-return departure while consent is pending never resumes later prompts", async () => {
+  let settle!: (value: boolean) => void
+  mockRequest.mockImplementationOnce(
+    () =>
+      new Promise<boolean>((resolve) => {
+        settle = resolve
+      }),
+  )
+  const pending = requestAttendedPermissions(link("camera,microphone", "left"))
+  const rejected = expect(pending).rejects.toThrow("foregrounded")
+  await Promise.resolve()
+  await Promise.resolve()
+  changeState("background")
+  changeState("active")
+  await expect(requestAttendedPermissions(link("camera", "overlap"))).rejects.toThrow("still settling")
+  expect(mockRemoveListener).not.toHaveBeenCalled()
+  settle(true)
+  await rejected
+  expect(mockRequest.mock.calls).toEqual([["camera"]])
+  expect(mockWrite.mock.calls).toEqual([["left"]])
+  expect(mockRemoveListener).toHaveBeenCalledTimes(1)
+})
+test("an inactive native-consent transition and return does not count as leaving the attended session", async () => {
+  mockRequest.mockImplementationOnce(async () => {
+    changeState("inactive")
+    changeState("active")
+    return true
+  })
+  await requestAttendedPermissions(link("camera,microphone"))
+  expect(mockRequest.mock.calls).toEqual([["camera"], ["microphone"]])
+  expect(mockRemoveListener).toHaveBeenCalledTimes(1)
 })

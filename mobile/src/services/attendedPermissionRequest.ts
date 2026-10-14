@@ -90,6 +90,16 @@ export async function requestAttendedPermissions(link: string): Promise<Attended
   const assertWithinDeadline = () => {
     if (deadlineReached || Date.now() >= deadline) throw deadlineError
   }
+  let backgrounded = false
+  const appStateSubscription = AppState.addEventListener("change", (state) => {
+    // Native consent can temporarily make the app inactive; actual background
+    // departure ends the attended session even if it returns before settlement.
+    if (state === "background") backgrounded = true
+  })
+  const assertAttended = () => {
+    if (backgrounded || AppState.currentState !== "active")
+      throw new Error("Keep the Mentra App foregrounded for attended permission requests")
+  }
   let timer: number | undefined
   const expired = new Promise<never>((_resolve, reject) => {
     timer = BgTimer.setTimeout(() => {
@@ -105,8 +115,7 @@ export async function requestAttendedPermissions(link: string): Promise<Attended
       assertWithinDeadline()
       if (index > 0) snapshot = {...(await engine.permissions.status()), requestId: input.requestId}
       assertWithinDeadline()
-      if (AppState.currentState !== "active")
-        throw new Error("Keep the Mentra App foregrounded for attended permission requests")
+      assertAttended()
       const state = snapshot.permissions[feature]
       if (feature === "location" && !snapshot.locationServicesEnabled) {
         actions.push({feature, action: "not-requested", nextAction: "enable-location-services"})
@@ -124,8 +133,10 @@ export async function requestAttendedPermissions(link: string): Promise<Attended
       }
     }
     assertWithinDeadline()
+    assertAttended()
     const receipt = await engine.permissions.writeStatusReceipt(input.readbackId)
     assertWithinDeadline()
+    assertAttended()
     const missing = input.features.flatMap((feature) => {
       const disabledLocation = feature === "location" && !receipt.locationServicesEnabled
       if (receipt.permissions[feature].status === "granted" && !disabledLocation) return []
@@ -143,9 +154,11 @@ export async function requestAttendedPermissions(link: string): Promise<Attended
   activeBatch = operation
   void operation.then(
     () => {
+      appStateSubscription.remove()
       if (activeBatch === operation) activeBatch = undefined
     },
     () => {
+      appStateSubscription.remove()
       if (activeBatch === operation) activeBatch = undefined
     },
   )
