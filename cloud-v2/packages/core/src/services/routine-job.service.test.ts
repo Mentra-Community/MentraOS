@@ -623,3 +623,28 @@ test('permanent preparation reports use the settled fence consumed by rerun read
  const attempt=await (reruns as any).requestAttempt(selection.requestId,{parent:{kind:'request',requestId:selection.requestId},memberId:selection.requestId,attemptNumber:1,attemptId:'attempt'});
  expect(attempt).toMatchObject({status:'not-run',publicationComplete:false,reason:'Routine new-routine does not support android.'});
 });
+
+
+test('an expired app grant refuses fleet binding before consuming the pending job; a fresh exact grant admits it', async () => {
+  const selected = {...definition, resourceRequirements: definition.resourceRequirements.map(resource => resource.kind === 'app'
+    ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource)};
+  const f = fixture(selected), prepared = await f.prepare(), frozen = structuredClone(f.row), time = Date.parse('2026-10-08T00:00:00Z');
+  const binding = {version: 938, revision: 'a'.repeat(40), installationId: 'accepted', configurationSha256: 'b'.repeat(64),
+    runtimeSha256: 'c'.repeat(64), routineApiVersion: 37, publicApiSha256: 'd'.repeat(64)};
+  const lane = structuredClone(f.lane);
+  const observed = {permission: 'camera' as const, status: 'granted' as const, rawStatus: 'authorized', observedAt: new Date(time - 120_001).toISOString(), binding,
+    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'verified lifetime', launchedAt: time - 1000,
+      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.3.0', build: '100', teamId: 'T5XXXL6N36', codeRequirement: 'verified signed requirement',
+      selectedBuild: {headSha: 'c'.repeat(40), archiveSha256: 'd'.repeat(64), receiptSha256: 'e'.repeat(64)}}, evidence: {sha256: 'f'.repeat(64)}};
+  lane.resources.find(resource => resource.kind === 'app')!.permissionObservations = [observed];
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), frameworkBinding: binding, lanes: [lane]};
+  f.offer([host]);
+  const input = {inputSha256: prepared.inputSha256, laneId: lane.id, descriptorRevision: lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
+  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('current accepting compatible lane');
+  expect(f.row).toEqual(frozen);
+  observed.observedAt = new Date(time).toISOString(); f.offer([host]);
+  expect((await f.service.bind(selection.requestId, host.hostId, input)).execute).toBe(true);
+  expect(f.row!.fleetBinding!.hostId).toBe(host.hostId);
+});

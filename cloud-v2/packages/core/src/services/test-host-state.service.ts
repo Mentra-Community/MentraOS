@@ -13,6 +13,7 @@ import {
   laneActivitySchema,
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
+import {permissionObservationsSchema} from "../types/resource-permissions.types"
 import {TestRunError} from "./test-result-error"
 import {routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
@@ -22,6 +23,7 @@ const resource = z
     kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]),
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
+    permissionObservations: permissionObservationsSchema.optional(),
   })
   .strict()
 export const glassesInventorySchema = z

@@ -4,6 +4,7 @@ import {type RoutineEnrollment} from "../types/routine-definition.types";
 import {firmwareManifestSchema, selectedBuildInput, type GlassesSoftwareRef, type TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
 import {TestRunError} from "./test-result-error";
+import {permissionObservationMatches, permissionContext} from "../types/resource-permissions.types";
 
 const laneBinding = z.object({hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema}).strict();
 export const routineLaneBindingsSchema = z.object({android: laneBinding.optional(), "ios-on-mac": laneBinding.optional()}).strict();
@@ -56,9 +57,15 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (matches.length !== 1) throw new TestRunError(409, `Configured lane must bind exactly one ${kind} resource.`);
     if (kind === "glasses" && matches[0]!.id !== glassesResourceId)
       throw new TestRunError(409, "Compatible glasses inventory differs from its declared allocation resource.");
-    const requiredCapabilities = definition.definition.resourceRequirements.find(value => value.kind === kind)!.capabilities;
+    const requirement = definition.definition.resourceRequirements.find(value => value.kind === kind)!;
+    const requiredCapabilities = requirement.capabilities;
     if (!requiredCapabilities.every(capability => matches[0]!.capabilities?.includes(capability)))
       throw new TestRunError(409, `Configured lane has no required ${kind} resource capabilities.`);
+    const context = permissionContext(host.frameworkBinding, build, now);
+    for (const value of requirement.permissions ?? []) if (!context || !permissionObservationMatches(
+      matches[0]!.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
+      {...context, recipient: value.recipient}))
+      throw new TestRunError(409, `Configured lane has no current granted ${value.permission} permission for its ${value.recipient} recipient on ${kind}.`);
     const {capabilities: _, ...resource} = matches[0]!;
     return resource;
   });
