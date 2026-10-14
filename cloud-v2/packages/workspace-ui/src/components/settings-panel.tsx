@@ -15,7 +15,7 @@ import { describeDeletionHolds, type WorkspaceDeletionHold, type WorkspaceDetail
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceApi } from "../api";
 import { isWorkspaceHeldError } from "../errors";
-import { membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
+import { membersQuery, settingsDetailQuery, useWorkspaceMutation } from "../queries";
 import { can } from "../roles";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -36,11 +36,19 @@ interface SettingsPanelProps {
 
 export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
   const { api, workspaceId } = props;
-  const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
+  const detailResult = useQuery(settingsDetailQuery(api, workspaceId));
   return (
     <QueryGate result={detailResult}>
       {/* Keyed by workspace so one workspace's half-typed name or delete confirmation never carries to another. */}
-      {(detail) => <SettingsForms key={workspaceId} {...props} detail={detail} />}
+      {(detail) => (
+        <SettingsForms
+          key={workspaceId}
+          {...props}
+          detail={detail}
+          checkingHolds={detailResult.isFetching}
+          onCheckHolds={() => void detailResult.refetch()}
+        />
+      )}
     </QueryGate>
   );
 }
@@ -52,7 +60,9 @@ function SettingsForms({
   onLeft,
   deleteNotice,
   detail,
-}: SettingsPanelProps & { detail: WorkspaceDetail }) {
+  checkingHolds,
+  onCheckHolds,
+}: SettingsPanelProps & { detail: WorkspaceDetail; checkingHolds: boolean; onCheckHolds(): void }) {
   const [name, setName] = useState(detail.name);
   const nameId = useId();
 
@@ -151,6 +161,8 @@ function SettingsForms({
               <DeleteSection
                 workspaceName={detail.name}
                 holds={detail.deletionHolds ?? []}
+                checkingHolds={checkingHolds}
+                onCheckHolds={onCheckHolds}
                 deleteNotice={deleteNotice}
                 busy={busy}
                 error={remove.error}
@@ -217,11 +229,14 @@ export function LeaveSection({
 
 /**
  * Deleting: the workspace's name typed back, then the button. While a service holds the workspace
- * (`holds`) the form is disabled and says why instead. A refusal shows right under the form.
+ * (`holds`) the form is disabled and says why instead, with Check again (`onCheckHolds`) for when the
+ * cause has been cleared elsewhere. A refusal shows right under the form.
  */
 export function DeleteSection({
   workspaceName,
   holds = [],
+  checkingHolds = false,
+  onCheckHolds,
   deleteNotice,
   busy,
   error,
@@ -230,6 +245,10 @@ export function DeleteSection({
   workspaceName: string;
   /** What holds the workspace from deletion; deleting is offered only when there is nothing. */
   holds?: WorkspaceDeletionHold[];
+  /** Whether the holds are being looked up again. */
+  checkingHolds?: boolean;
+  /** Look the holds up again. */
+  onCheckHolds?(): void;
   deleteNotice?: ReactNode;
   busy: boolean;
   error: unknown;
@@ -256,9 +275,16 @@ export function DeleteSection({
         </p>
       </div>
       {held ? (
-        <p id={heldId} role="note" className="rounded-notice bg-info text-info-foreground max-w-xl px-4 py-3 text-sm">
-          {describeDeletionHolds(holds)}
-        </p>
+        <div className="flex max-w-xl flex-wrap items-start gap-3">
+          <p id={heldId} role="note" className="rounded-notice bg-info text-info-foreground flex-1 px-4 py-3 text-sm">
+            {describeDeletionHolds(holds)}
+          </p>
+          {onCheckHolds ? (
+            <Button type="button" variant="secondary" size="sm" disabled={checkingHolds} onClick={onCheckHolds}>
+              Check again
+            </Button>
+          ) : null}
+        </div>
       ) : deleteNotice ? (
         <div role="note" className="rounded-notice bg-error text-error-foreground max-w-xl px-4 py-3 text-sm">
           {deleteNotice}

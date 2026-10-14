@@ -494,6 +494,8 @@ describe("settings panel", () => {
     expect(section).toMatch(new RegExp(`<input[^>]*aria-describedby="${reasonId}"[^>]*disabled=""`));
     expect(section).toMatch(new RegExp(`<button[^>]*aria-describedby="${reasonId}"[^>]*disabled=""[^>]*>Delete workspace</button>`));
     expect(section).not.toContain("Host notice about deleting.");
+    // Once the miniapps are gone, the person checks again here rather than reloading the page.
+    expect(section).toMatch(/<button[^>]*>Check again<\/button>/);
 
     // An organization admin sees the same: holds bind everyone.
     const admin = renderSeeded(
@@ -507,6 +509,7 @@ describe("settings panel", () => {
     for (const detail of [{ ...detailFor("owner"), deletionHolds: [] }, detailFor("owner")]) {
       const free = renderSeeded(api, { detail }, <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />);
       expect(free).not.toContain("still owns");
+      expect(free).not.toContain("Check again");
       expect(free).not.toMatch(/<input[^>]*aria-labelledby="[^"]+"[^>]*disabled=""/);
     }
   });

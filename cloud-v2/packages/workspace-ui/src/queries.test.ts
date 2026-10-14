@@ -2,7 +2,13 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError, errorMessage } from "./errors";
 import { createWorkspaceApi } from "./api";
-import { invitationPreviewQuery, shouldRetry, workspaceKeys, workspaceMutationOptions } from "./queries";
+import {
+  invitationPreviewQuery,
+  settingsDetailQuery,
+  shouldRetry,
+  workspaceKeys,
+  workspaceMutationOptions,
+} from "./queries";
 import { detailFor, membersFor, offlineApi, seedClient, WORKSPACE_ID } from "./test-fixtures";
 
 const OTHER_ID = "ws_other";
@@ -101,6 +107,22 @@ describe("workspaceMutationOptions", () => {
     const admin = { basePath: "/api/workspaces" };
     const store = { basePath: "/api/console/workspaces" };
     expect(workspaceKeys.detail(admin, WORKSPACE_ID)).not.toEqual(workspaceKeys.detail(store, WORKSPACE_ID));
+  });
+});
+
+describe("settingsDetailQuery", () => {
+  test("shares the workspace detail's cache, and refetches on focus while a service holds the workspace", () => {
+    const { api } = offlineApi();
+    const options = settingsDetailQuery(api, WORKSPACE_ID);
+    expect([...options.queryKey]).toEqual([...workspaceKeys.detail(api, WORKSPACE_ID)]);
+    // Hosts turn refetch-on-focus off; a held workspace is the exception, since its hold is cleared
+    // elsewhere (the Developer Console) while this tab is in the background.
+    const onFocus = options.refetchOnWindowFocus as (query: { state: { data: unknown } }) => boolean;
+    const held = { ...detailFor("owner"), deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 1 }] };
+    expect(onFocus({ state: { data: held } })).toBe(true);
+    expect(onFocus({ state: { data: { ...detailFor("owner"), deletionHolds: [] } } })).toBe(false);
+    expect(onFocus({ state: { data: detailFor("owner") } })).toBe(false);
+    expect(onFocus({ state: { data: undefined } })).toBe(false);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   type QueryClient,
   type UseMutationOptions,
 } from "@tanstack/react-query";
+import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "./api";
 import { isWorkspaceChangedError, isWorkspaceHeldError, WorkspaceApiError } from "./errors";
 
@@ -56,6 +57,19 @@ export const workspaceDetailQuery = (api: WorkspaceApi, workspaceId: string) =>
     queryKey: workspaceKeys.detail(api, workspaceId),
     queryFn: () => api.getWorkspace(workspaceId),
     retry: shouldRetry,
+  });
+
+/**
+ * The workspace detail as the settings screen reads it: the same cache entry, refetched when the window
+ * regains focus while a service holds the workspace from deletion. Hosts turn refetch-on-focus off, but
+ * a hold is cleared elsewhere (the Store clears it once the Developer Console has deleted the miniapps),
+ * so a person coming back to this tab sees Delete offered again without reloading.
+ */
+export const settingsDetailQuery = (api: WorkspaceApi, workspaceId: string) =>
+  queryOptions({
+    ...workspaceDetailQuery(api, workspaceId),
+    refetchOnWindowFocus: (query: { state: { data: WorkspaceDetail | undefined } }) =>
+      (query.state.data?.deletionHolds?.length ?? 0) > 0,
   });
 
 export const membersQuery = (api: WorkspaceApi, workspaceId: string) =>
