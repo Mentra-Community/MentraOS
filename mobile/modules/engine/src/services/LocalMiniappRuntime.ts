@@ -2446,15 +2446,6 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
-    // One stream per miniapp: opening a second closes the first.
-    const previous = app.activeSpeakerStreamId
-    if (previous) {
-      app.activeSpeakerStreamId = undefined
-      await audioPlaybackService.abortStream(previous).catch((error) => {
-        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
-      })
-    }
-
     const sampleRate = typeof payload.sampleRate === "number" ? payload.sampleRate : 16000
     if (!LocalMiniappRuntime.SPEAKER_STREAM_SAMPLE_RATES.has(sampleRate)) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2478,6 +2469,15 @@ class LocalMiniappRuntime {
         message: "speaker stream volume must be between 0 and 1",
       })
       return
+    }
+
+    // One stream per miniapp: opening a second closes the first.
+    const previous = app.activeSpeakerStreamId
+    if (previous) {
+      app.activeSpeakerStreamId = undefined
+      await audioPlaybackService.abortStream(previous).catch((error) => {
+        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
+      })
     }
 
     const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`

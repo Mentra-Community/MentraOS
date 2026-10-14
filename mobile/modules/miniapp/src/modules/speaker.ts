@@ -344,15 +344,13 @@ export class SpeakerModule {
     this._state = "playing"
     const stream = new SpeakerStreamWriter(this.session, res.streamId, () => {
       this.activeStreams.delete(res.streamId)
-      if (this.activeStreams.size === 0 && this._state === "playing") {
-        this._state = "stopped"
-      }
     })
     return stream
   }
 
   /** Stop any audio this miniapp is currently playing. */
   stop(): void {
+    this.activeStreams.clear()
     this.session.sendOneShot({type: MiniappRequestType.STOP_AUDIO})
   }
 
@@ -367,6 +365,9 @@ export class SpeakerModule {
 
   /** @internal — applied by MiniappSession on inbound SPEAKER_STATE envelope. */
   _applyState(event: SpeakerStateEvent): void {
+    if (event.state === "stopped" || event.state === "idle" || event.state === "error") {
+      this.activeStreams.clear()
+    }
     // Idempotent: skip if state didn't change. Error events are transient
     // and are not deduped against the prior state — they're informational
     // and the phone immediately follows up with `stopped`.
