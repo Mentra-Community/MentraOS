@@ -163,7 +163,7 @@ function InvitationRoute() {
 
 export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { invitePending?: boolean; loginUrl?: string }) {
   return (
-    <BrandPage title="Sign into the Mentra Workspace Portal">
+    <BrandPage title="Sign into Mentra Portal">
       <p className="text-muted-foreground mb-7">
         {invitePending
           ? "Sign in with the email address your invitation was sent to, then accept it."

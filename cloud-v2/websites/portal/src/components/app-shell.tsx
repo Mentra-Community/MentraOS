@@ -1,7 +1,7 @@
 import { Avatar, Button } from "@mentra/workspace-ui";
 import { ArrowUpRight, LogOut, Menu, MoreHorizontal, X, type LucideIcon } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { MentraLogo } from "@/components/brand";
+import { MentraMark } from "@/components/brand";
 import { Link } from "@/lib/navigation";
 import { useDismiss } from "@/lib/use-dismiss";
 import { cn } from "@/lib/utils";
@@ -90,8 +90,15 @@ export function AppShell({
           mobileSidebarOpen ? "shadow-dialog translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-16 shrink-0 items-center justify-between pr-3 pl-6">
-          <MentraLogo className="h-[22px]" />
+        <div className="flex h-16 shrink-0 items-center justify-between gap-3 pr-3 pl-6">
+          {/* The admin portal's header: the mark, the site's name and the platform under it. */}
+          <div className="flex min-w-0 items-center gap-3">
+            <MentraMark className="h-[22px] shrink-0" />
+            <div className="min-w-0">
+              <div className="font-display truncate text-[15px] leading-5 font-bold text-[#14151b]">Mentra Portal</div>
+              <div className="truncate text-xs leading-4 text-[#8a8d95]">MentraOS</div>
+            </div>
+          </div>
           <Button
             variant="ghost"
             size="icon-sm"
