@@ -34,6 +34,7 @@ export const laneOverviewFields = {
   'snapshot.restoration.schemaVersion': 1, 'snapshot.restoration.attempts.executionId': 1,
   'snapshot.restoration.attempts.interruptionId': 1, 'snapshot.restoration.attempts.laneId': 1,
   'snapshot.restoration.attempts.state': 1, 'snapshot.restoration.attempts.current': 1,
+  'snapshot.restoration.attempts.haltDecisionId': 1,
   'snapshot.restoration.attempts.startedAt': 1, 'snapshot.restoration.attempts.finishedAt': 1,
   'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.deployment': 1,
   frameworkHistory: {$slice: -1}, receivedAt: 1, deploymentObservation: 1, deploymentReceivedAt: 1, _id: 0,

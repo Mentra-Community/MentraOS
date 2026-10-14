@@ -6,12 +6,14 @@ import {laneControlInputSchema, laneControlRecordSchema, laneControlReceiptSchem
   type LaneControlRecord, type LaneControlsView} from '../types/lane-control.types'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
+import {laneRepairStatusSchema, type LaneRepairStatus, type LaneActivity} from '../types/lane-restoration.types'
 
 const recordsSchema = z.array(laneControlRecordSchema).max(100)
 export const laneControlExchangeSchema = z.object({schemaVersion: z.literal(1),
-  receipts: z.array(laneControlReceiptSchema).max(100)}).strict()
+  receipts: z.array(laneControlReceiptSchema).max(100), reopenRepair: z.literal(true).optional()}).strict()
 export type LaneControlHost = {hostId: string; laneControlVersion?: number; laneControls?: unknown;
-  receivedAt: Date; observedAt: Date; snapshot: {laneControls?: unknown; lanes: Array<{id: string; dispatchMode: string}>}}
+  receivedAt: Date; observedAt: Date; snapshot: {laneControls?: unknown; restoration?: {attempts: LaneRepairStatus[]};
+    lanes: Array<{id: string; dispatchMode: string; state?: string; activity?: LaneActivity}>}}
 export interface LaneControlRepository {
   get(hostId: string): Promise<LaneControlHost | null>
   replace(hostId: string, version: number, records: LaneControlRecord[]): Promise<boolean>
@@ -19,7 +21,11 @@ export interface LaneControlRepository {
 const repository: LaneControlRepository = {
   async get(hostId) {
     return await TestHostStateModel.findOne({hostId}).select({hostId: 1, laneControls: 1, laneControlVersion: 1,
-      receivedAt: 1, observedAt: 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.dispatchMode': 1, 'snapshot.laneControls': 1})
+      receivedAt: 1, observedAt: 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
+      'snapshot.restoration.attempts.executionId': 1, 'snapshot.restoration.attempts.interruptionId': 1,
+      'snapshot.restoration.attempts.laneId': 1, 'snapshot.restoration.attempts.state': 1,
+      'snapshot.restoration.attempts.current': 1, 'snapshot.restoration.attempts.startedAt': 1,
+      'snapshot.restoration.attempts.finishedAt': 1, 'snapshot.restoration.attempts.haltDecisionId': 1, 'snapshot.laneControls': 1})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as LaneControlHost | null
   },
   async replace(hostId, version, records) {
@@ -30,6 +36,8 @@ const repository: LaneControlRepository = {
     return Boolean(row)
   },
 }
+const supportsRepairReopen = (host: LaneControlHost) =>
+  (host.snapshot.laneControls as {reopenRepair?: unknown} | undefined)?.reopenRepair === true
 const operatorIdentity = (operator: string) => createHash('sha256').update(`admin-lane:${operator}`).digest('hex')
 const activeReservation = (row: LaneControlRecord) => row.receipt?.result.status === 'accepted' &&
   row.receipt.result.reservation && ['waiting', 'granted', 'returning'].includes(row.receipt.result.reservation.state)
@@ -56,7 +64,7 @@ export class LaneControlsService {
   async list(hostId: string, operator: string): Promise<LaneControlsView> {
     const host = await this.rows.get(hostId)
     if (!host) throw new TestRunError(404, 'Testing computer was not found')
-    return {enabled: Boolean(host.snapshot.laneControls), fresh: fresh(host, this.now()), observedAt: host.observedAt.toISOString(), controls: reconcileReservations(recordsSchema.parse(host.laneControls ?? []))
+    return {enabled: Boolean(host.snapshot.laneControls), reopenRepair: supportsRepairReopen(host), fresh: fresh(host, this.now()), observedAt: host.observedAt.toISOString(), controls: reconcileReservations(recordsSchema.parse(host.laneControls ?? []))
       .filter(row => row.command.operatorId === operatorIdentity(operator)).map(view)}
   }
   async submit(value: unknown, operator: string) {
@@ -75,6 +83,17 @@ export class LaneControlsService {
       if (!lane) throw new TestRunError(404, 'Lane was not found on this computer')
       if (!fresh(host, this.now()) || !host.snapshot.laneControls)
         throw new TestRunError(409, 'Refresh lane status; this controller is not currently accepting dashboard controls')
+      if (input.action === 'reopen-repair') {
+        if (!supportsRepairReopen(host)) throw new TestRunError(409, 'This controller has not enabled recovery retries')
+        const attempts = host.snapshot.restoration?.attempts.filter(row => row.laneId === lane.id &&
+          row.executionId === lane.activity?.owner.id) ?? []
+        const attempt = attempts.length === 1 ? laneRepairStatusSchema.safeParse(attempts[0]) : null
+        if (lane.state !== 'out-of-service' || lane.activity?.owner.kind !== 'fixer' || !attempt?.success ||
+          attempt.data.state !== 'halted' || attempt.data.current ||
+          attempt.data.interruptionId !== input.repair!.interruptionId ||
+          attempt.data.haltDecisionId !== input.repair!.expectedHaltDecisionId)
+          throw new TestRunError(409, 'Recovery changed; refresh and retry only the current halted repair')
+      }
       if (input.action === 'reserve' && lane.dispatchMode === 'paused')
         throw new TestRunError(409, 'Resume scheduling before reserving this lane')
       const row: LaneControlRecord = {command: {...input, operatorId}}
@@ -125,10 +144,16 @@ function reconcileReceipt(row: LaneControlRecord, receipt: NonNullable<LaneContr
   const result = receipt.result, prior = row.receipt
   if (result.status === 'accepted') {
     const modeAction = row.command.action === 'pause' || row.command.action === 'resume'
-    if (modeAction ? result.mode !== (row.command.action === 'pause' ? 'paused' : 'automatic') || result.reservation !== undefined
-      : result.mode !== undefined || !result.reservation || result.reservation.laneId !== row.command.laneId ||
-        (row.command.action === 'reserve' ? result.reservation.purpose !== row.command.purpose
-          : result.reservation.id !== row.command.reservation!.id || result.reservation.generation !== row.command.reservation!.generation))
+    const repairAction = row.command.action === 'reopen-repair'
+    const matches = modeAction
+      ? result.mode === (row.command.action === 'pause' ? 'paused' : 'automatic') && !result.reservation && !result.repair
+      : repairAction
+        ? !result.mode && !result.reservation && result.repair?.interruptionId === row.command.repair!.interruptionId &&
+          result.repair.laneId === row.command.laneId
+        : !result.mode && !result.repair && result.reservation?.laneId === row.command.laneId &&
+          (row.command.action === 'reserve' ? result.reservation.purpose === row.command.purpose
+            : result.reservation.id === row.command.reservation!.id && result.reservation.generation === row.command.reservation!.generation)
+    if (!matches)
       throw new TestRunError(409, 'Lane control receipt does not match its requested action')
   }
   if (!prior) return receipt
