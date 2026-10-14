@@ -120,10 +120,10 @@ export interface ClientApp extends AppletInterface {
   hidden: boolean
   /**
    * When a native built-in (an offline app with no JS context) is executing, for usage reporting. `"open"`: while it
-   * is running and shown in the foreground, the way a screen such as Gallery works. `"running"`: whenever it is
-   * running, the way a helper such as Notify works without a screen. A native built-in without it is part of the
-   * Mentra App's own interface (Settings, Feedback), not a miniapp, and none of its launches or run time is reported.
-   * Local miniapps ignore it: they execute while their JS context runs.
+   * is running and on screen (foregrounded, with the Mentra App in the foreground), the way a screen such as Gallery
+   * works. `"running"`: whenever it is running, the way a helper such as Notify works without a screen. A native
+   * built-in without it is part of the Mentra App's own interface (Settings, Feedback), not a miniapp, and none of
+   * its launches or run time is reported. Local miniapps ignore it: they execute while their JS context runs.
    */
   nativeExecution?: "open" | "running"
   onStart?: () => void

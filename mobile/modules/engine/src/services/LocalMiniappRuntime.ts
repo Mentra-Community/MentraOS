@@ -95,7 +95,7 @@ import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} fro
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
-import {useAppStatusStore} from "../stores/apps"
+import {useAppStatusStore, visibleMiniappPackage} from "../stores/apps"
 import appRegistry, {getDevAppRecords, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
@@ -880,7 +880,7 @@ class LocalMiniappRuntime {
   }
 
   private currentVisiblePackage(): string | null {
-    return AppState.currentState === "active" ? useAppStatusStore.getState().foregroundedPackage : null
+    return visibleMiniappPackage()
   }
 
   private updateVisibility(): void {

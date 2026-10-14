@@ -11,6 +11,7 @@
  */
 
 import {useMemo} from "react"
+import {AppState} from "react-native"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import {create} from "zustand"
 
@@ -684,24 +685,34 @@ miniappRunningRegistry.subscribe(() => {
   }
 })
 
+/**
+ * The miniapp the user can see: the foregrounded one, while the Mentra App itself is in the foreground. The store
+ * keeps a miniapp foregrounded when the app goes to the background or the phone locks; it is not visible then.
+ */
+export function visibleMiniappPackage(
+  state: Pick<AppStatusState, "foregroundedPackage"> = useAppStatusStore.getState(),
+): string | null {
+  return AppState.currentState === "active" ? state.foregroundedPackage : null
+}
+
 // Native built-ins have no JS context, so they never enter miniappRunningRegistry. Which of them is executing is
-// derived here, from the store every open, minimize and stop goes through: one that executes while open (Gallery)
-// only while it is running and foregrounded, one that executes while running (Notify) whenever it runs. A running
-// flag alone is not execution for the first kind: it outlives a minimize, and even a restart.
+// derived here, from the store every open, minimize and stop goes through, and from the app state: one that executes
+// while open (Gallery) only while it is running and visible, one that executes while running (Notify) whenever it
+// runs. A running flag alone is not execution for the first kind: it outlives a minimize, and even a restart.
 function executingNativeMiniapps(state: AppStatusState): string[] {
+  const visible = visibleMiniappPackage(state)
   const executing: string[] = []
   for (const app of state.apps) {
     if (app.local || !app.running) continue
-    if (
-      app.nativeExecution === "running" ||
-      (app.nativeExecution === "open" && app.packageName === state.foregroundedPackage)
-    ) {
+    if (app.nativeExecution === "running" || (app.nativeExecution === "open" && app.packageName === visible)) {
       executing.push(app.packageName)
     }
   }
   return executing
 }
-useAppStatusStore.subscribe((state) => nativeMiniappExecution.set(executingNativeMiniapps(state)))
+const publishNativeExecution = () => nativeMiniappExecution.set(executingNativeMiniapps(useAppStatusStore.getState()))
+useAppStatusStore.subscribe(publishNativeExecution)
+AppState.addEventListener("change", publishNativeExecution)
 
 // The display-manager's core (foreground) slot is DERIVED state: always the
 // currently-running standard app, no matter HOW it came to run — user tap

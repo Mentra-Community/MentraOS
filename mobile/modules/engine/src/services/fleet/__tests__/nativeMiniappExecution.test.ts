@@ -50,6 +50,17 @@ function advance(ms: number): void {
   clock.mono = target
 }
 
+/** Every AppState listener, the apps store's as well as the collector's: a change reaches all of them. */
+const appStateListeners = new Set<(state: string) => void>()
+reactNativeAppState.addEventListener = ((_type: string, listener: (state: string) => void) => {
+  appStateListeners.add(listener)
+  return {remove: () => appStateListeners.delete(listener)}
+}) as never
+function setAppState(state: string): void {
+  reactNativeAppState.currentState = state
+  for (const listener of [...appStateListeners]) listener(state)
+}
+
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 mock.module("expo-constants", () => ({
   default: {nativeAppVersion: "3.4.5", nativeBuildVersion: "345", expoConfig: {version: "3.4.5"}},
@@ -187,7 +198,8 @@ beforeEach(() => {
   resetFakeMmkv()
   resetForTests()
   configure({auth: {}})
-  reactNativeAppState.currentState = "background"
+  // A tap on Home happens with the Mentra App in the foreground.
+  reactNativeAppState.currentState = "active"
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
   apps.setState({
     apps: [gallery, mirror, notify, settings, feedback, developer],
@@ -239,6 +251,39 @@ describe("a built-in with a screen of its own", () => {
     expect(reopened.id).not.toBe(first.id)
   })
 
+  test("it stops executing when the Mentra App goes to the background, and runs again when it comes back", async () => {
+    await openFromHome(gallery)
+    advance(20_000)
+    // Locking the phone or switching apps leaves Gallery foregrounded in the store, but nobody can see it.
+    setAppState("background")
+    expect(apps.getState().foregroundedPackage).toBe(gallery.packageName)
+    expect(executions()).toEqual([
+      expect.objectContaining({packageName: "com.mentra.camera", elapsedMs: 20_000, ended: true}),
+    ])
+
+    advance(60 * 60_000)
+    expect(executions()).toHaveLength(1)
+
+    setAppState("active")
+    advance(5_000)
+    collector.flushCheckpoint()
+    const [back, first] = executions()
+    expect(back).toMatchObject({packageName: "com.mentra.camera", elapsedMs: 5_000, ended: false})
+    expect(back.id).not.toBe(first.id)
+  })
+
+  test("opened while the Mentra App is in the background, it is not executing until the app is in front", async () => {
+    setAppState("background")
+    await openFromHome(mirror)
+    advance(10_000)
+    collector.flushCheckpoint()
+    expect(executions()).toEqual([])
+    setAppState("active")
+    advance(10_000)
+    collector.flushCheckpoint()
+    expect(executions()[0]).toMatchObject({packageName: "com.mentra.mirror", elapsedMs: 10_000, ended: false})
+  })
+
   test("one left running in the switcher from before is not executing until it is opened", async () => {
     collector.stop("engine_stopped")
     apps.setState({apps: [{...gallery, running: true}, notify], foregroundedPackage: null})
@@ -250,18 +295,22 @@ describe("a built-in with a screen of its own", () => {
 })
 
 describe("a built-in that works without a screen", () => {
-  test("Notify executes for as long as it runs, whether or not its settings are open", async () => {
+  test("Notify executes for as long as it runs, with no screen and with the Mentra App in the background", async () => {
     expect(await openFromHome(notify)).toBe(true)
     expect(apps.getState().foregroundedPackage).toBeNull()
-    advance(45_000)
+    advance(15_000)
+    setAppState("background")
+    advance(30_000)
     await close(notify.packageName)
-    expect(executions()).toEqual([
-      expect.objectContaining({packageName: "cloud.augmentos.notify", elapsedMs: 45_000, ended: true}),
-    ])
+    const [last] = executions()
+    expect(last).toMatchObject({packageName: "cloud.augmentos.notify", elapsedMs: 45_000, ended: true})
+    // One session throughout: the app leaving the foreground did not interrupt it.
+    expect(new Set(executions().map((execution) => execution.id))).toEqual(new Set([last.id]))
   })
 
   test("Notify already running when the collector starts is executing from then on", async () => {
     collector.stop("engine_stopped")
+    setAppState("background")
     apps.setState({apps: [{...notify, running: true}], foregroundedPackage: null})
     collector.start({partition: PARTITION, collectorSessionId: "COLLECTOR-SESSION-2"})
     advance(30_000)
