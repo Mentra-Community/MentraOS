@@ -56,6 +56,24 @@ export const mongoReadinessCheck: ReadinessCheck = {
 };
 
 /**
+ * How many `cause`s down the classifiers below look. Real chains are one or two deep (`withTransaction`
+ * wraps the failure once); the cap only stops a cause that leads back to itself, which would otherwise
+ * overflow the stack and hide the error being classified behind a RangeError.
+ */
+const MAX_CAUSE_DEPTH = 5;
+
+/** Whether `matches` holds for `err` or any of its `cause`s, down to {@link MAX_CAUSE_DEPTH}. */
+function someInCauseChain(err: unknown, matches: (candidate: Error) => boolean): boolean {
+  let candidate: unknown = err;
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth++) {
+    if (!(candidate instanceof Error)) return false;
+    if (matches(candidate)) return true;
+    candidate = candidate.cause;
+  }
+  return false;
+}
+
+/**
  * True only for the two known "this deployment cannot run transactions"
  * failures, as opposed to a failure of the work inside the transaction or of
  * the deployment (a failover, a network error, a timeout, a write conflict that
@@ -75,12 +93,15 @@ export const mongoReadinessCheck: ReadinessCheck = {
  * the exact message prefix keeps unrelated errors from being reclassified.
  */
 export function isTransactionsUnsupportedError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  if (err.cause !== undefined && isTransactionsUnsupportedError(err.cause)) return true;
-  if ((err as { code?: unknown }).code === 20) {
-    return /^Transaction numbers are only allowed on a replica set member or mongos/.test(err.message);
-  }
-  return err.name === "MongoCompatibilityError" && /^Current topology does not support sessions/.test(err.message);
+  return someInCauseChain(err, (candidate) => {
+    if ((candidate as { code?: unknown }).code === 20) {
+      return /^Transaction numbers are only allowed on a replica set member or mongos/.test(candidate.message);
+    }
+    return (
+      candidate.name === "MongoCompatibilityError" &&
+      /^Current topology does not support sessions/.test(candidate.message)
+    );
+  });
 }
 
 /**
@@ -97,13 +118,13 @@ export function isTransactionsUnsupportedError(err: unknown): boolean {
  * tombstone) do not want applied to every transaction on Cosmos.
  */
 export function isCrossCollectionTransactionUnsupported(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  if (err.cause !== undefined && isCrossCollectionTransactionUnsupported(err.cause)) return true;
-  return (
-    err.name === "MongoServerError" &&
-    (err as { code?: unknown }).code === 2 &&
-    err.message.includes("Transaction is not active") &&
-    err.message.includes("Substatus: 1101")
+  return someInCauseChain(
+    err,
+    (candidate) =>
+      candidate.name === "MongoServerError" &&
+      (candidate as { code?: unknown }).code === 2 &&
+      candidate.message.includes("Transaction is not active") &&
+      candidate.message.includes("Substatus: 1101"),
   );
 }
 

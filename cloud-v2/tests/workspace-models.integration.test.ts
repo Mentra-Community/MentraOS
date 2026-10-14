@@ -250,6 +250,63 @@ describe("withTransaction (error mapping, no Mongo)", () => {
     }
   })
 
+  describe("a cause that leads back to itself", () => {
+    // `Error.cause` can be set to anything, including an error further up its own chain. The classifiers
+    // look a fixed number of causes down, so such a chain ends in "no" rather than in a RangeError that
+    // hides the failure being classified.
+    const cycle = (...errors: Error[]) => {
+      errors.forEach((error, index) => {
+        error.cause = errors[(index + 1) % errors.length]
+      })
+      return errors[0]!
+    }
+    const classifiers = [
+      ["isTransactionsUnsupportedError", isTransactionsUnsupportedError],
+      ["isCrossCollectionTransactionUnsupported", isCrossCollectionTransactionUnsupported],
+    ] as const
+
+    test("is not a match and does not throw, whether it loops through itself or through another error", () => {
+      for (const [name, classify] of classifiers) {
+        const self = new Error("a failure")
+        self.cause = self
+        const pair = cycle(new Error("outer"), new Error("inner"))
+
+        expect([name, classify(self)]).toEqual([name, false])
+        expect([name, classify(pair)]).toEqual([name, false])
+      }
+    })
+
+    test("still finds the signature in a cycle, wherever the loop closes", () => {
+      const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
+        code: 20,
+      })
+      const cosmos = new (WorkspaceModel.base.mongo.MongoServerError)({
+        message:
+          "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
+          'Reason: (Message: {"Errors":["Transaction is not active"]}\r\n)\'',
+        code: 2,
+        errorLabels: [],
+      })
+
+      expect(isTransactionsUnsupportedError(cycle(new Error("outer"), standalone))).toBe(true)
+      expect(isCrossCollectionTransactionUnsupported(cycle(new Error("outer"), cosmos))).toBe(true)
+    })
+
+    test("looks five causes down and no further", () => {
+      const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
+        code: 20,
+      })
+      const wrapped = (depth: number) => {
+        let error: Error = standalone
+        for (let i = 0; i < depth; i++) error = new Error(`wrapper ${i}`, {cause: error})
+        return error
+      }
+
+      expect(isTransactionsUnsupportedError(wrapped(5))).toBe(true)
+      expect(isTransactionsUnsupportedError(wrapped(6))).toBe(false)
+    })
+  })
+
   describe("Azure Cosmos DB for MongoDB's refusal of a transaction across collections", () => {
     const cosmosMessage =
       "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
