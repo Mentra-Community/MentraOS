@@ -2,10 +2,11 @@
  * The Fleet collector: what the engine observes about the phone, its glasses and its miniapps, as Fleet records in
  * the durable queue.
  *
- * It listens to the engine's own state (the glasses store, the running-miniapp registry, the app state) and to
- * `fleetEvents` (launches and photo stages, emitted by lifecycle hooks), never to UI screens. It writes records;
- * the uploader (a separate piece) delivers them. One collector run belongs to one `start()`: its partition and
- * collector-session ID are fixed for its life, and everything it holds is dropped by `stop()`.
+ * It listens to the engine's own state (the glasses store, the running-miniapp registry, the native built-ins
+ * executing, the app state) and to `fleetEvents` (launches and photo stages, emitted by lifecycle hooks), never to UI
+ * screens. It writes records; the uploader (a separate piece) delivers them. One collector run belongs to one
+ * `start()`: its partition and collector-session ID are fixed for its life, and everything it holds is dropped by
+ * `stop()`.
  *
  * Usage is measured as sessions: an activity (the engine running, the Mentra App in the foreground, glasses
  * connected, one miniapp executing) opens a session when it begins and closes it when it ends. A session's
@@ -49,6 +50,7 @@ import {
 import {useGlassesStore} from "../../stores/glasses"
 import {BgTimer} from "../../utils/timers"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
+import {nativeMiniappExecution} from "../NativeMiniappExecution"
 import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import type {FleetQueue} from "./fleetQueue"
@@ -327,6 +329,7 @@ class CollectorRun {
     this.cleanups.push(
       useGlassesStore.subscribe(glassesFingerprint, () => this.guard("glasses change", () => this.onStateChange())),
       miniappRunningRegistry.subscribe(() => this.guard("miniapp change", () => this.onStateChange())),
+      nativeMiniappExecution.subscribe(() => this.guard("miniapp change", () => this.onStateChange())),
       fleetEvents.subscribe({
         launch: (event) => this.guard("launch", () => this.onLaunch(event)),
         photo: (event) => this.guard("photo", () => this.onPhoto(event)),
@@ -473,7 +476,8 @@ class CollectorRun {
     wanted.set("engine_active", {activity: "engine_active"})
     if (isForeground()) wanted.set("app_foreground", {activity: "app_foreground"})
     if (realGlassesConnected()) wanted.set("glasses_connection", {activity: "glasses_connection"})
-    for (const name of miniappRunningRegistry.getAll()) {
+    // Local miniapps execute while their JS context runs; native built-ins as the apps store derives it.
+    for (const name of [...miniappRunningRegistry.getAll(), ...nativeMiniappExecution.getAll()]) {
       const packageName = text(name)
       if (packageName) wanted.set(`miniapp_execution:${packageName}`, {activity: "miniapp_execution", packageName})
     }

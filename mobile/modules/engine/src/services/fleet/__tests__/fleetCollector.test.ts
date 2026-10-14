@@ -126,6 +126,7 @@ function setAppState(state: string, notify = true): void {
 }
 
 const {miniappRunningRegistry} = await import("../../MiniappRunningRegistry")
+const {nativeMiniappExecution} = await import("../../NativeMiniappExecution")
 const {createFleetQueue} = await import("../fleetQueue")
 const {phoneDeviceId} = await import("../fleetIds")
 const {fleetEvents} = await import("../fleetEvents")
@@ -174,6 +175,7 @@ beforeEach(() => {
   resetFakeMmkv()
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
+  nativeMiniappExecution.set([])
   Object.assign(reactNative.Platform as object, {OS: "android", Version: 35, constants: {Release: "15"}})
   appStateListener = null
   reactNativeAppState.currentState = "background"
@@ -244,6 +246,18 @@ describe("start", () => {
       product: "Mentra Live",
       serial: "SN-LIVE-1",
     })
+  })
+
+  test("a native built-in executing is a miniapp session like a local miniapp's, closed when it stops", () => {
+    nativeMiniappExecution.set(["com.mentra.camera"])
+    start()
+    advance(30_000)
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(10_000)
+    nativeMiniappExecution.set([])
+    const [closing] = checkpoints()
+    expect(entry(closing, "miniapp_execution", "com.mentra.camera")).toMatchObject({elapsedMs: 40_000, ended: true})
+    expect(entry(closing, "miniapp_execution", "com.mentra.notes")).toMatchObject({elapsedMs: 10_000, ended: false})
   })
 
   test("does not count glasses that are only scanning or connecting", () => {
@@ -796,6 +810,7 @@ describe("stop", () => {
     collector.stop("engine_stopped")
     const count = all().length
     miniappRunningRegistry.add("com.a")
+    nativeMiniappExecution.set(["com.mentra.camera"])
     connectLive()
     setAppState("active")
     fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})

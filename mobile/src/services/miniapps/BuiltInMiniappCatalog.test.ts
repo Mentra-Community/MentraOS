@@ -3,7 +3,15 @@ import {Platform} from "react-native"
 
 import {appRegistry} from "@mentra/engine-host-internal"
 
-import {mentraCallPackageName, miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
+import {
+  cameraPackageName,
+  feedbackPackageName,
+  mentraCallPackageName,
+  miniappDeveloperPackageName,
+  mirrorPackageName,
+  notifyPackageName,
+  settingsPackageName,
+} from "@/constants/miniapps"
 import {SETTINGS, engine} from "@mentra/engine"
 
 import builtInMiniappCatalog from "./BuiltInMiniappCatalog"
@@ -68,6 +76,21 @@ describe("BuiltInMiniappCatalog", () => {
     } finally {
       Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
     }
+  })
+
+  it("declares how each built-in miniapp executes, and leaves the Mentra App's own screens out of Fleet", () => {
+    const registered = new Map(
+      (appRegistry.installOfflineApp as jest.Mock).mock.calls.map(([app]) => [app.packageName, app.nativeExecution]),
+    )
+
+    expect(Object.fromEntries(registered)).toEqual({
+      [cameraPackageName]: "open",
+      [mirrorPackageName]: "open",
+      [notifyPackageName]: "running",
+      [settingsPackageName]: undefined,
+      [feedbackPackageName]: undefined,
+      [miniappDeveloperPackageName]: undefined,
+    })
   })
 
   it("registers the Miniapp Developer launcher hidden by default and follows its home-screen setting", () => {
