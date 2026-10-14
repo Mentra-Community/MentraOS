@@ -9,7 +9,7 @@
  * their account signs in to their Core again, or expire into a coverage gap; they are never sent as anyone else.
  *
  * Uploads go a minute after records arrive, or at once when 100 are waiting, at most 500 records (and 1 MB of them)
- * per request. What each answer does:
+ * per request. With nothing waiting the uploader sets no timer: the next record wakes it. What each answer does:
  * - accepted or duplicate: the record is removed. Rejected: removed, with a `record_rejected` gap over its
  *   observation time. Retryable: kept, and the next request waits at least its Retry-After.
  * - not installed: collection stops and the partition is dropped, until the next sign-in or engine start.
@@ -150,6 +150,8 @@ interface Next {
 }
 const AFTER_INTERVAL: Next = {delayMs: UPLOAD_INTERVAL_MS, backingOff: false}
 const AT_ONCE: Next = {delayMs: 0, backingOff: false}
+/** Nothing is waiting: the uploader sets no timer until a record arrives. */
+const ASLEEP = null
 
 export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter {
   const cloud = deps.cloud ?? cloudClientService
@@ -217,7 +219,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     run = r
     collector.start({partition, collectorSessionId: r.collectorSessionId})
     collector.flushCheckpoint()
-    schedule(r, queue.size(partition) >= UPLOAD_NOW_RECORDS ? AT_ONCE : AFTER_INTERVAL)
+    schedule(r, afterSend(r))
   }
 
   function endRun(reason: "engine_stopped" | "account_changed" | "not_installed"): void {
@@ -303,9 +305,14 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
 
   // --- the upload loop -----------------------------------------------------------------------------------------
 
-  function schedule(r: Run, next: Next): void {
+  function schedule(r: Run, next: Next | typeof ASLEEP): void {
     if (r.ended) return
     if (r.timer !== null) BgTimer.clearTimeout(r.timer)
+    r.timer = null
+    if (next === ASLEEP) {
+      r.backingOff = false
+      return
+    }
     r.backingOff = next.backingOff
     r.dueAt = now() + next.delayMs
     r.timer = BgTimer.setTimeout(() => {
@@ -314,11 +321,16 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     }, next.delayMs)
   }
 
+  /**
+   * A record arrived. An uploader that was asleep is woken (a minute from now, or at once when 100 wait); one that is
+   * due anyway is hurried once 100 wait. Deferred to a timer either way: this runs inside whatever the collector is
+   * reacting to. While a request is out or the loop is backing off, the next attempt picks the record up.
+   */
   function onEnqueued(partition: string): void {
     const r = run
-    if (!r || r.partition !== partition || r.uploading || r.backingOff || r.dueAt <= now()) return
-    // Deferred to a timer: this runs inside whatever the collector is reacting to.
-    if (queue.size(partition) >= UPLOAD_NOW_RECORDS && r.batchLimit > 1) schedule(r, AT_ONCE)
+    if (!r || r.partition !== partition || r.uploading || r.backingOff) return
+    if (r.timer === null) schedule(r, afterSend(r))
+    else if (r.dueAt > now() && queue.size(partition) >= UPLOAD_NOW_RECORDS && r.batchLimit > 1) schedule(r, AT_ONCE)
   }
 
   function sweepIfDue(at: number): void {
@@ -337,7 +349,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
 
   async function upload(r: Run): Promise<void> {
     r.uploading = true
-    let next: Next
+    let next: Next | typeof ASLEEP
     try {
       next = await attempt(r)
     } catch (error) {
@@ -350,21 +362,21 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     if (r === run) schedule(r, next)
   }
 
-  async function attempt(r: Run): Promise<Next> {
+  async function attempt(r: Run): Promise<Next | typeof ASLEEP> {
     const at = now()
     // takeLosses clears the counts it returns, so their gap is queued before anything else can happen.
     recordLosses(r, queue.takeLosses(r.partition, at), at)
     const records = queue.nextBatch(r.partition, r.batchLimit, MAX_BATCH_BYTES)
-    if (records.length === 0) return AFTER_INTERVAL
+    if (records.length === 0) return ASLEEP
     let outcome: FleetSendOutcome
     try {
       outcome = await send(r, records)
     } catch (error) {
-      if (r.ended) return AFTER_INTERVAL
+      if (r.ended) return ASLEEP
       throw error
     }
     // An answer for a run that is over changes nothing: its records are sent again as their own account later.
-    if (r.ended) return AFTER_INTERVAL
+    if (r.ended) return ASLEEP
     return answered(r, records, outcome)
   }
 
@@ -411,16 +423,16 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     }
   }
 
-  function answered(r: Run, records: FleetRecord[], outcome: FleetSendOutcome): Next {
+  function answered(r: Run, records: FleetRecord[], outcome: FleetSendOutcome): Next | typeof ASLEEP {
     switch (outcome.kind) {
       case "results":
         return settle(r, records, outcome.ack.results)
       case "not_installed":
         stopForSession(r, true)
-        return AFTER_INTERVAL
+        return ASLEEP
       case "no_fleet_route":
         stopForSession(r, false)
-        return AFTER_INTERVAL
+        return ASLEEP
       case "unavailable":
         return failed(r, outcome.retryAfterSeconds)
       case "unauthorized":
@@ -457,7 +469,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     return {delayMs, backingOff: true}
   }
 
-  function settle(r: Run, records: FleetRecord[], results: AckResult[]): Next {
+  function settle(r: Run, records: FleetRecord[], results: AckResult[]): Next | typeof ASLEEP {
     const removed: string[] = []
     const rejected: FleetRecord[] = []
     const reasons = new Map<string, number>()
@@ -509,11 +521,14 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
   }
 
   /**
-   * The next send goes at once while 100 or more records wait, unless it would carry a single record: single records
-   * are spaced by the normal minute, so a run reduced to them cannot fire one request after another.
+   * When to send next, by what waits: nothing, and the uploader sleeps until a record arrives; 100 or more, and the
+   * next send goes at once, unless it would carry a single record (single records are spaced by the normal minute,
+   * so a run reduced to them cannot fire one request after another); otherwise a minute from now.
    */
-  function afterSend(r: Run): Next {
-    return queue.size(r.partition) >= UPLOAD_NOW_RECORDS && r.batchLimit > 1 ? AT_ONCE : AFTER_INTERVAL
+  function afterSend(r: Run): Next | typeof ASLEEP {
+    const waiting = queue.size(r.partition)
+    if (waiting === 0) return ASLEEP
+    return waiting >= UPLOAD_NOW_RECORDS && r.batchLimit > 1 ? AT_ONCE : AFTER_INTERVAL
   }
 
   /**

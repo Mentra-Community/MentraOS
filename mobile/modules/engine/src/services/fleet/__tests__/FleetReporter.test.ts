@@ -22,13 +22,25 @@ interface FakeTimer {
   at: number
   every: number | null
   run: () => void
+  /** Which Fleet source set the timer: the nearest of the two in the stack that called BgTimer. */
+  source: "reporter" | "collector" | "other"
 }
 const timers = new Map<number, FakeTimer>()
 let nextTimerId = 1
+/** Every timer that fired, by the source that set it: the process wake-ups Fleet asked for. */
+const wakeUps = {reporter: 0, collector: 0, other: 0}
+
+function sourceOf(stack: string | undefined): FakeTimer["source"] {
+  for (const line of (stack ?? "").split("\n")) {
+    if (line.includes("FleetReporter.ts")) return "reporter"
+    if (line.includes("fleetCollector.ts")) return "collector"
+  }
+  return "other"
+}
 
 function schedule(run: () => void, delay: number, every: number | null): number {
   const id = nextTimerId++
-  timers.set(id, {id, at: clock.mono + Math.max(0, delay), every, run})
+  timers.set(id, {id, at: clock.mono + Math.max(0, delay), every, run, source: sourceOf(new Error().stack)})
   return id
 }
 
@@ -314,6 +326,7 @@ async function advance(ms: number): Promise<void> {
     clock.mono = due.at
     if (due.every === null) timers.delete(due.id)
     else due.at += due.every
+    wakeUps[due.source] += 1
     due.run()
     await settle()
   }
@@ -352,6 +365,7 @@ beforeEach(() => {
   clock.wall = Date.UTC(2026, 9, 13, 12, 0, 0)
   clock.mono = 50_000
   timers.clear()
+  wakeUps.reporter = wakeUps.collector = wakeUps.other = 0
   resetFakeMmkv()
   origin.clear()
   core.session = {coreUrl: CORE_X, mentraUserId: A}
@@ -443,19 +457,24 @@ describe("starting", () => {
     expect(collector.runs.map((run) => run.partition)).toEqual([partitionKey(CORE_X, A)])
   })
 
-  test("sweeps expired partitions at start, then at most hourly", async () => {
+  test("sweeps expired partitions at start, then at most hourly, from the upload loop", async () => {
     const sweep = spyOn(queue, "sweepExpired")
     reporter.start()
     expect(sweep).toHaveBeenCalledTimes(1)
-    observe(1)
-    await advance(59 * MINUTE)
+    // A record every 15 minutes, as the collector writes them when only the engine is active.
+    for (let quarter = 0; quarter < 4; quarter += 1) {
+      observe(1)
+      await advance(15 * MINUTE)
+    }
     expect(sweep).toHaveBeenCalledTimes(1)
+    observe(1)
     await advance(MINUTE)
     expect(sweep).toHaveBeenCalledTimes(2)
-    await advance(59 * MINUTE)
+    for (let quarter = 0; quarter < 3; quarter += 1) {
+      observe(1)
+      await advance(15 * MINUTE)
+    }
     expect(sweep).toHaveBeenCalledTimes(2)
-    await advance(MINUTE)
-    expect(sweep).toHaveBeenCalledTimes(3)
   })
 })
 
@@ -477,6 +496,43 @@ describe("uploading", () => {
     reporter.start()
     await advance(3 * HOUR)
     expect(core.calls).toEqual([])
+  })
+
+  test("with nothing queued the uploader sleeps: a record wakes it, and it sleeps again once the queue drains", async () => {
+    reporter.start()
+    await advance(3 * HOUR)
+    expect(timers.size).toBe(0)
+    expect(wakeUps.reporter).toBe(0)
+    observe(2)
+    expect(timers.size).toBe(1)
+    await advance(MINUTE)
+    expect(core.calls).toHaveLength(1)
+    expect(queued(CORE_X, A)).toEqual([])
+    expect(timers.size).toBe(0)
+    expect(wakeUps.reporter).toBe(1)
+    await advance(3 * HOUR)
+    expect(wakeUps.reporter).toBe(1)
+  })
+
+  test("a run that starts with records waiting sends them a minute later", async () => {
+    backlog(3)
+    reporter.start()
+    await advance(MINUTE)
+    expect(core.calls.map((call) => call.records.length)).toEqual([3])
+    expect(timers.size).toBe(0)
+  })
+
+  test("while backing off the uploader stays armed even though new records arrive", async () => {
+    reporter.start()
+    observe(1)
+    core.respond = () => unavailable(600)
+    await advance(MINUTE)
+    observe(1)
+    expect(timers.size).toBe(1)
+    core.respond = (rs) => acceptAll(rs)
+    expect(await untilNextCall()).toBe(600 * SECOND)
+    expect(queued(CORE_X, A)).toEqual([])
+    expect(timers.size).toBe(0)
   })
 
   test("100 queued records go at once, without waiting for the minute", async () => {
@@ -1299,6 +1355,28 @@ describe("stopping", () => {
 describe("with the real collector", () => {
   beforeEach(() => {
     reporter = makeReporter((q) => createFleetCollector({queue: q, now: () => clock.wall, monotonic: () => clock.mono}))
+  })
+
+  test("an engine-only phone all day: about 100 records, and about 100 uploads and upload wake-ups", async () => {
+    reactNativeAppState.currentState = "background"
+    reporter.start()
+    await advance(DAY)
+    const sent = core.sent.flatMap((call) => call.records)
+    // The checkpoint written at the 24-hour mark is still waiting for its upload a minute later.
+    const written = [...sent, ...queued(CORE_X, A)]
+    const byKind = new Map<string, number>()
+    for (const record of written) byKind.set(record.kind, (byKind.get(record.kind) ?? 0) + 1)
+    // Measured, for the record: what one day costs.
+    console.info(
+      `engine-only day: ${written.length} records ${JSON.stringify(Object.fromEntries(byKind))}, ` +
+        `${core.calls.length} uploads, timer wake-ups ${JSON.stringify(wakeUps)}`,
+    )
+    expect(written.length).toBeLessThanOrEqual(100)
+    expect(byKind.get("snapshot")).toBe(1)
+    expect(queued(CORE_X, A).length).toBeLessThanOrEqual(1)
+    expect(core.calls.length).toBeLessThanOrEqual(100)
+    expect(wakeUps.reporter).toBeLessThanOrEqual(100)
+    expect(wakeUps.collector).toBeLessThanOrEqual(100)
   })
 
   test("a launch reported right after start() is recorded: the collector listens before the host restores miniapps", () => {
