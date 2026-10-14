@@ -122,50 +122,92 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
-    fun secureTargetIsNotReadyUntilBonded() {
-        assertTrue(
-                MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(true, BluetoothDevice.BOND_BONDING)
-        )
-        assertTrue(MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(true, BluetoothDevice.BOND_NONE))
-        assertFalse(
-                MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(true, BluetoothDevice.BOND_BONDED)
-        )
-        assertFalse(
-                MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(false, BluetoothDevice.BOND_NONE)
-        )
+    fun secureTargetIsNotReadyUntilBondedAndOwnerCommitted() {
+        assertTrue(defer(bond = BluetoothDevice.BOND_BONDING, committed = true))
+        assertTrue(defer(bond = BluetoothDevice.BOND_NONE, committed = true))
+        assertTrue(defer(bond = BluetoothDevice.BOND_NONE, committed = false))
+        assertFalse(defer(bond = BluetoothDevice.BOND_BONDED, committed = true))
+        assertFalse(defer(secure = false, bond = BluetoothDevice.BOND_NONE, committed = false))
+    }
+
+    @Test
+    fun staleBondWithoutOwnerCommitStillDefersAnExplicitSecurePair() {
+        // A leftover BOND_BONDED (or a Classic-only bond on the same public address) is not
+        // proof that the glasses committed this phone as owner.
+        assertTrue(defer(bond = BluetoothDevice.BOND_BONDED, committed = false))
+    }
+
+    @Test
+    fun bondedAndOwnerCommittedIsNotDeferred() {
+        assertFalse(defer(bond = BluetoothDevice.BOND_BONDED, committed = true))
+    }
+
+    @Test
+    fun lateOwnerCommitAfterBondAllowsReady() {
+        // glasses_ready and the bond arrive first: parked.
+        assertTrue(defer(bond = BluetoothDevice.BOND_BONDED, committed = false))
+        // The late pairing_info carries owner_committed: ready is allowed now.
+        assertTrue(MentraLiveOwnerLossPolicy.pairingInfoConfirmsOwner(true))
+        assertFalse(defer(bond = BluetoothDevice.BOND_BONDED, committed = true))
+    }
+
+    @Test
+    fun pairingInfoWithoutOwnerCommitDoesNotConfirmOwner() {
+        assertFalse(MentraLiveOwnerLossPolicy.pairingInfoConfirmsOwner(false))
+        assertTrue(MentraLiveOwnerLossPolicy.pairingInfoConfirmsOwner(true))
+    }
+
+    @Test
+    fun legacyTargetIsNeverGated() {
+        for (bond in listOf(BluetoothDevice.BOND_NONE, BluetoothDevice.BOND_BONDING, null)) {
+            for (committed in listOf(true, false)) {
+                assertFalse(defer(secure = false, bond = bond, committed = committed))
+                assertTrue(audioReady(secure = false, bond = bond, committed = committed))
+            }
+        }
     }
 
     @Test
     fun classicAudioDoesNotCommitAnUnbondedSecurePair() {
-        assertFalse(
-                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
-                        explicitPairing = true,
-                        securePairingTarget = true,
-                        bondState = BluetoothDevice.BOND_BONDING,
-                )
-        )
-        assertFalse(
-                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
-                        explicitPairing = true,
-                        securePairingTarget = true,
-                        bondState = BluetoothDevice.BOND_NONE,
-                )
-        )
-        assertTrue(
-                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
-                        explicitPairing = true,
-                        securePairingTarget = true,
-                        bondState = BluetoothDevice.BOND_BONDED,
-                )
-        )
-        assertTrue(
-                MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
-                        explicitPairing = false,
-                        securePairingTarget = true,
-                        bondState = BluetoothDevice.BOND_NONE,
-                )
-        )
+        assertFalse(audioReady(bond = BluetoothDevice.BOND_BONDING, committed = false))
+        assertFalse(audioReady(bond = BluetoothDevice.BOND_NONE, committed = false))
+        assertTrue(audioReady(bond = BluetoothDevice.BOND_BONDED, committed = true))
     }
+
+    @Test
+    fun classicAudioFirstWithoutOwnerCommitDoesNotMarkReadyDuringExplicitPairing() {
+        assertFalse(audioReady(bond = BluetoothDevice.BOND_BONDED, committed = false))
+        // Once the commit arrives the same audio-first state may complete.
+        assertTrue(audioReady(bond = BluetoothDevice.BOND_BONDED, committed = true))
+    }
+
+    @Test
+    fun reconnectOutsideExplicitPairingIsNeverGated() {
+        for (bond in listOf(BluetoothDevice.BOND_NONE, BluetoothDevice.BOND_BONDING, null)) {
+            for (committed in listOf(true, false)) {
+                assertTrue(audioReady(explicit = false, bond = bond, committed = committed))
+            }
+        }
+    }
+
+    private fun defer(
+            secure: Boolean = true,
+            bond: Int?,
+            committed: Boolean,
+    ): Boolean = MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(secure, bond, committed)
+
+    private fun audioReady(
+            explicit: Boolean = true,
+            secure: Boolean = true,
+            bond: Int?,
+            committed: Boolean,
+    ): Boolean =
+            MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                    explicitPairing = explicit,
+                    securePairingTarget = secure,
+                    bondState = bond,
+                    ownerCommitted = committed,
+            )
 
     private fun gattRejection(
             status: Int,

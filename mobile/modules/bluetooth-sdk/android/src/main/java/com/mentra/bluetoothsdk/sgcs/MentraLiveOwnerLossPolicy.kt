@@ -113,22 +113,42 @@ internal object MentraLiveOwnerLossPolicy {
                     .coerceIn(PAIRING_WINDOW_MIN_MS, PAIRING_WINDOW_ABSOLUTE_MS)
 
     /**
-     * Secure glasses commit an owner only on a BLE bond. Until Android reports it, GATT readiness
-     * inside the open window does not mean the phone paired.
+     * `secure_pairing_capable` only means the firmware can do secure pairing. Ownership is the
+     * separate `owner_committed` bit the glasses set after the BLE bond. Mirrors iOS
+     * `MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner`.
      */
-    fun shouldDeferReadyForBond(securePairingTarget: Boolean, bondState: Int?): Boolean =
-            securePairingTarget && bondState != BluetoothDevice.BOND_BONDED
+    fun pairingInfoConfirmsOwner(ownerCommitted: Boolean): Boolean = ownerCommitted
+
+    /**
+     * Secure glasses commit an owner only on a BLE bond, and announce it with `pairing_info`
+     * `owner_committed`. A stale BOND_BONDED (or a Classic-only bond on the same public address)
+     * does not prove the glasses committed this phone, so readiness inside the open window needs
+     * both the bond and the owner commit. Callers apply this only to explicit pairing attempts;
+     * non-secure (legacy) targets are never gated.
+     */
+    fun shouldDeferReadyForBond(
+            securePairingTarget: Boolean,
+            bondState: Int?,
+            ownerCommitted: Boolean,
+    ): Boolean =
+            securePairingTarget &&
+                    (bondState != BluetoothDevice.BOND_BONDED ||
+                            !pairingInfoConfirmsOwner(ownerCommitted))
 
     /** How long an explicit secure pair may wait for a bond result before the attempt fails. */
     const val SECURE_BOND_WAIT_MS = 40_000L
 
     /**
-     * Classic audio can come up before the BLE bond. During an explicit secure pair that must
-     * not save this phone. A reconnect of an already-paired phone can still mark ready.
+     * Classic audio can come up before the BLE bond or the owner commit. During an explicit
+     * secure pair that must not save this phone. A reconnect of an already-paired phone can still
+     * mark ready.
      */
     fun shouldMarkReadyFromAudio(
             explicitPairing: Boolean,
             securePairingTarget: Boolean,
             bondState: Int?,
-    ): Boolean = !explicitPairing || !shouldDeferReadyForBond(securePairingTarget, bondState)
+            ownerCommitted: Boolean,
+    ): Boolean =
+            !explicitPairing ||
+                    !shouldDeferReadyForBond(securePairingTarget, bondState, ownerCommitted)
 }
