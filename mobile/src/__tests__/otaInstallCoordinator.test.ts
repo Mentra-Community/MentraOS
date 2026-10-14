@@ -161,8 +161,10 @@ beforeEach(() => {
   mockHotspotTeardown.mockReset().mockResolvedValue(undefined)
 })
 
-afterEach(() => {
+afterEach(async () => {
   otaInstallCoordinator.detach()
+  // Detaching the view no longer abandons an acknowledged recovery transaction.
+  await otaInstallCoordinator.discard()
   useGlassesStore.getState().setGlassesInfo({
     connection: {state: "connected", fullyBooted: true},
     wifi: {state: "connected", ssid: "test"},
@@ -680,10 +682,11 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
 
 describe("OtaInstallCoordinator version-change detour retry gate", () => {
   const target = 49000000
-  const prepareDowngrade = (versionCode = target) => {
+  const prepareDowngrade = (versionCode = target, transport: "wifi" | "hotspot" = "wifi") => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
-      wifi: {state: "connected", ssid: "test"},
+      hotspotOtaVersion: 1,
+      wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
     })
     const checked = {
       ...checkResult(),
@@ -825,6 +828,117 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
     expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the APK-only detour bounded after a late BES completion during hotspot staging", async () => {
+    let finishStaging!: (url: string) => void
+    mockHotspotPrepare.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finishStaging = resolve
+        }),
+    )
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "303000317"})
+    prepareDowngrade(302010070, "hotspot")
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    // Prior BES OTA traffic arrives while the new APK-only endpoint is being prepared.
+    useGlassesStore.getState().setOtaStatus(
+      inProgressStatus({
+        stepType: "bes",
+        phase: "install",
+        status: "complete",
+        stepPercent: 100,
+        overallPercent: 100,
+      }),
+    )
+    useGlassesStore.getState().setOtaUpdateAvailable(null)
+    useGlassesStore.getState().setOtaProgress({
+      currentUpdate: "bes",
+      stage: "install",
+      status: "FINISHED",
+      progress: 100,
+      bytesDownloaded: 0,
+      totalBytes: 0,
+    })
+    finishStaging("http://192.168.43.2:8791/version.json")
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "33"})
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    await jest.advanceTimersByTimeAsync(LEGACY_GLOBAL_OTA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
+  })
+
+  it("preserves the acknowledged detour and original deadline through a progress-screen remount", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "303000317"})
+    prepareDowngrade(302010070)
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    await jest.advanceTimersByTimeAsync(LEGACY_GLOBAL_OTA_TIMEOUT_MS / 2)
+    otaInstallCoordinator.detach()
+    await jest.advanceTimersByTimeAsync(1_000)
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+    await jest.advanceTimersByTimeAsync(LEGACY_GLOBAL_OTA_TIMEOUT_MS / 2 - 1_000)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.globalTimeout)
+  })
+
+  it("completes without another start when the exact target arrives while the progress screen is detached", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "303000317"})
+    prepareDowngrade(302010070)
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    otaInstallCoordinator.detach()
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "302010070"})
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.queryOtaStatus).not.toHaveBeenCalled()
+  })
+
+  it("still recognizes a BES restart when BES belongs to the prepared offer", async () => {
+    const checked = prepareDowngrade()
+    otaInstallCoordinator.prepare({
+      ...checked,
+      isApkDowngrade: false,
+      updates: ["bes"],
+      updateInfo: {...checked.updateInfo, isDowngrade: false, updates: ["bes"]},
+    })
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(
+      inProgressStatus({
+        stepType: "bes",
+        phase: "install",
+        status: "complete",
+        stepPercent: 100,
+        overallPercent: 100,
+      }),
+    )
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
   })
 
   it("retry during a latched detour re-enters the wait without sending ota_start", async () => {
