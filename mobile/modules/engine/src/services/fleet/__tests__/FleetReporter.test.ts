@@ -623,6 +623,48 @@ describe("not installed", () => {
     expect(core.calls).toHaveLength(2)
   })
 
+  test("a Core without the Fleet route stops the run for the session but keeps the queue; a sign-in asks once more", async () => {
+    reporter.start()
+    const records = observe(3)
+    core.respond = () => ({kind: "no_fleet_route"})
+    await advance(MINUTE)
+    expect(core.calls).toHaveLength(1)
+    expect(collector.stops).toEqual(["not_installed"])
+    expect(ids(queued(CORE_X, A))).toEqual(ids(records))
+
+    // Nothing more is collected or sent in this session, not even after a rebuilt client.
+    await advance(3 * HOUR)
+    reconnectTo(CORE_X)
+    await advance(HOUR)
+    expect(core.calls).toHaveLength(1)
+    expect(collector.runs).toHaveLength(1)
+
+    signIn(A)
+    await settle()
+    expect(collector.runs).toHaveLength(2)
+    await advance(MINUTE)
+    expect(core.calls).toHaveLength(2)
+    expect(ids(core.calls[1].records)).toEqual(ids(records))
+    // Still no route: one request for the new session, and the records are still kept.
+    await advance(3 * HOUR)
+    expect(core.calls).toHaveLength(2)
+    expect(ids(queued(CORE_X, A))).toEqual(ids(records))
+  })
+
+  test("a Core without the Fleet route is asked again at the next engine start, with the records it kept", async () => {
+    reporter.start()
+    const records = observe(2)
+    core.respond = () => ({kind: "no_fleet_route"})
+    await advance(MINUTE)
+    await reporter.stop()
+    core.respond = (rs) => acceptAll(rs)
+    reporter.start()
+    await advance(MINUTE)
+    expect(core.calls).toHaveLength(2)
+    expect(ids(core.calls[1].records)).toEqual(ids(records))
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
   test("another Core is collected for even while this one has no Fleet", async () => {
     reporter.start()
     observe(1)
@@ -1114,6 +1156,22 @@ describe("with the real collector", () => {
     reporter.start()
     fleetEvents.launch({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
     expect(queued(CORE_X, A).filter((record) => record.kind === "miniapp_launch")).toHaveLength(1)
+  })
+
+  test("no_fleet_route stops collection and keeps what was queued, its final checkpoint included", async () => {
+    reporter.start()
+    core.respond = () => ({kind: "no_fleet_route"})
+    await advance(MINUTE)
+    const kept = queued(CORE_X, A)
+    expect(kept.map((record) => record.kind)).toEqual(expect.arrayContaining(["snapshot", "usage_checkpoint"]))
+    const finalCheckpoint = kept.filter((record) => record.kind === "usage_checkpoint").at(-1)
+    expect(finalCheckpoint?.kind === "usage_checkpoint" && finalCheckpoint.payload.sessions.every((s) => s.ended)).toBe(
+      true,
+    )
+    fleetEvents.launch({packageName: "com.mentra.notes", start: "user", outcome: "started"})
+    await advance(2 * HOUR)
+    expect(queued(CORE_X, A)).toHaveLength(kept.length)
+    expect(core.calls).toHaveLength(1)
   })
 
   test("not_installed stops collection and drops what was queued", async () => {

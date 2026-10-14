@@ -188,14 +188,27 @@ describe("Fleet.report status mapping", () => {
     await expect(outcomeFor(() => json(404, {error: "fleet_not_installed"}))).resolves.toEqual({kind: "not_installed"})
   })
 
-  test("a 404 that is not Fleet's own answer never drops the queue", async () => {
-    await expect(outcomeFor(() => json(404, {error: "not_found"}))).resolves.toEqual({
-      kind: "unavailable",
-      retryAfterSeconds: null,
+  test("a plain-text 404 (a Core without the Fleet route) is no_fleet_route, not not_installed", async () => {
+    await expect(outcomeFor(() => new Response("404 Not Found", {status: 404}))).resolves.toEqual({
+      kind: "no_fleet_route",
     })
     await expect(outcomeFor(() => new Response("<html>Not Found</html>", {status: 404}))).resolves.toEqual({
-      kind: "unavailable",
-      retryAfterSeconds: null,
+      kind: "no_fleet_route",
+    })
+    await expect(outcomeFor(() => new Response(null, {status: 404}))).resolves.toEqual({kind: "no_fleet_route"})
+  })
+
+  test("a JSON 404 with any other code, or none, is no_fleet_route", async () => {
+    await expect(outcomeFor(() => json(404, {error: "not_found"}))).resolves.toEqual({kind: "no_fleet_route"})
+    await expect(outcomeFor(() => json(404, {code: "route_missing"}))).resolves.toEqual({kind: "no_fleet_route"})
+    await expect(outcomeFor(() => json(404, {message: "Not Found"}))).resolves.toEqual({kind: "no_fleet_route"})
+  })
+
+  test("a 404 with a Retry-After is still no_fleet_route", async () => {
+    await expect(
+      outcomeFor(() => new Response("Not Found", {status: 404, headers: {"Retry-After": "30"}})),
+    ).resolves.toEqual({
+      kind: "no_fleet_route",
     })
   })
 

@@ -211,7 +211,17 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
     r.controller.abort()
     // The collector writes its final checkpoints into the run's partition.
     collector.stop(reason)
-    if (reason === "not_installed") queue.clearPartition(r.partition)
+  }
+
+  /**
+   * Core said Fleet is not there for this session: nothing more is collected for or sent from the partition until the
+   * next sign-in or engine start. Only Fleet's own "not installed" drops what was queued; a Core without the route
+   * (or a proxy answering for it) proves nothing about Fleet, so its records wait in the queue, and expire there.
+   */
+  function stopForSession(r: Run, drop: boolean): void {
+    notInstalled = r.partition
+    endRun("not_installed")
+    if (drop) queue.clearPartition(r.partition)
   }
 
   /** Collects for `session` if it names an account; otherwise collects for no one. */
@@ -348,8 +358,10 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       case "results":
         return settle(r, records, outcome.ack.results)
       case "not_installed":
-        notInstalled = r.partition
-        endRun("not_installed")
+        stopForSession(r, true)
+        return AFTER_INTERVAL
+      case "no_fleet_route":
+        stopForSession(r, false)
         return AFTER_INTERVAL
       case "unavailable":
         return failed(r, outcome.retryAfterSeconds)

@@ -14,8 +14,13 @@ const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
 export type FleetReportOutcome =
   /** Core answered 200 with a valid per-record acknowledgement. */
   | {kind: "results"; ack: FleetReportAck}
-  /** Core answered 404 `fleet_not_installed`. */
+  /** Core answered 404 `fleet_not_installed`: Fleet is not installed on this Core. */
   | {kind: "not_installed"}
+  /**
+   * Something answered 404 without Fleet's own code: a Core from before Fleet, which has no such route, or a proxy in
+   * front of it. Not proof that Fleet is not installed, so a caller stops asking for now but keeps what it holds.
+   */
+  | {kind: "no_fleet_route"}
   /**
    * Fleet or the network is not answering usefully right now: 503, 429, any other server or unexpected failure, a
    * network error or timeout, or a 200 whose body is not a valid acknowledgement. `retryAfterSeconds` is the server's
@@ -50,9 +55,9 @@ function outcomeForHttpError(error: HttpError): FleetReportOutcome {
     case 0:
       return unavailable()
     case 404:
-      // Only Fleet's own answer means "not installed". A bare 404 (an older Core without the route, a proxy) must
+      // Only Fleet's own answer means "not installed". Any other 404 (an older Core without the route, a proxy) must
       // not read as it, because not_installed makes the caller drop its queue.
-      return error.code === FLEET_NOT_INSTALLED ? {kind: "not_installed"} : unavailable(error.retryAfterSeconds)
+      return error.code === FLEET_NOT_INSTALLED ? {kind: "not_installed"} : {kind: "no_fleet_route"}
     case 413:
       return {kind: "batch_too_large"}
     case 400:
