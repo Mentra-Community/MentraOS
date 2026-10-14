@@ -52,12 +52,16 @@ class ClassicAudioServiceDiscoveryTest {
         assertThat(shadowOf(target).fetchUuidsWithSdpCount).isZero()
     }
 
-    @Test fun `missing UUID result never treats a bond as profile readiness`() {
+    @Test fun `early empty UUID broadcast preserves the wait for the actual SDP result`() {
+        shadowOf(target).setUuids(arrayOf(zero))
         shadowOf(target).setFetchUuidsWithSdpResult(true)
         request()
         discovery.onUuids(target)
         assertThat(connects).isZero()
-        assertThat(messages.last()).contains("without A2DP Sink UUID")
+        shadowOf(target).setUuids(arrayOf(sink))
+        discovery.onUuids(target)
+        assertThat(connects).isEqualTo(1)
+        assertThat(shadowOf(target).fetchUuidsWithSdpCount).isEqualTo(1)
     }
 
     @Test fun `unrelated device and duplicate requests cannot complete or multiply discovery`() {
@@ -86,7 +90,9 @@ class ClassicAudioServiceDiscoveryTest {
     @Test fun `missing UUID broadcast times out without connecting on a late event`() {
         shadowOf(target).setFetchUuidsWithSdpResult(true)
         request()
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(20))
+        discovery.onUuids(target)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(10))
         shadowOf(target).setUuids(arrayOf(sink))
         discovery.onUuids(target)
         assertThat(connects).isZero()

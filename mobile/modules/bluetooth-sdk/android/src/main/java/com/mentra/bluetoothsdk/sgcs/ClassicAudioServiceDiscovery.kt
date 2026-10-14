@@ -48,12 +48,13 @@ internal class ClassicAudioServiceDiscovery(
     fun onUuids(device: BluetoothDevice) {
         val request = pending ?: return
         if (device.address != request.device.address) return
-        cancel()
         if (hasAudioSink(request.device)) {
+            cancel()
             log("Discovered A2DP Sink UUID for ${device.address}")
             request.ready()
         } else {
-            log("SDP completed without A2DP Sink UUID for ${device.address}; Classic audio remains disconnected")
+            // Bonding can announce cached UUIDs before SDP finishes. Keep the original deadline.
+            log("UUID event without A2DP Sink for ${device.address}; waiting for SDP within the existing deadline")
         }
     }
 
