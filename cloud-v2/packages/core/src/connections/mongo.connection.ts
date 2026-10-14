@@ -36,6 +36,37 @@ export async function connectMongo(uri: string): Promise<void> {
     // Fail fast on initial connect; afterwards Mongoose auto-retries.
     serverSelectionTimeoutMS: 10_000,
   });
+  // Mongoose builds each registered model's collection and indexes in the
+  // background once connected, and the startup migrations then build the same
+  // ones explicitly. Azure Cosmos DB refuses two concurrent builds on one
+  // collection ("already exists", or RetryWith), so the background builds
+  // finish first.
+  await settleModelBuilds();
+}
+
+/** The part of a Mongoose instance `settleModelBuilds` reads. */
+export type ModelRegistry = {
+  modelNames(): string[];
+  model(name: string): { init(): Promise<unknown> };
+};
+
+/**
+ * Wait for Mongoose's automatic collection and index builds of every model
+ * registered so far. `init()` returns the build Mongoose already started. A
+ * failed build is logged and does not throw: the model's explicit build in the
+ * startup migrations decides whether Core starts, as it did before.
+ */
+export async function settleModelBuilds(registry: ModelRegistry = mongoose): Promise<void> {
+  const names = registry.modelNames();
+  const results = await Promise.allSettled(names.map((name) => registry.model(name).init()));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.warn(
+        { model: names[index], error: (result.reason as Error)?.message },
+        "automatic collection or index build failed",
+      );
+    }
+  });
 }
 
 /** Close the Mongo connection. Call from graceful-shutdown handlers. */
