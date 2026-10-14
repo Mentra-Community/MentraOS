@@ -141,11 +141,17 @@ device_cid() {
 pin_adb_transport() {
   local transport="$1"
   local serial="${2:-}"
-  local real dir selector_flag selector_value
+  local real dir selector_flag selector_value serial_matches=0
   real="$(command -v adb)"
   [ -n "$real" ] || return 1
   [ -n "$transport" ] || return 1
+  # A real serial is the stable selector, but only when it maps to exactly one
+  # ready device. The placeholder is shared by design, and distinct glasses can
+  # report the same real serial, so count the ready matches before trusting it.
   if [ -n "$serial" ] && [ "$serial" != "$PLACEHOLDER_ADB_SERIAL" ]; then
+    serial_matches="$(list_ready_transports | awk -F '\t' -v s="$serial" '$1==s {c++} END{print c+0}')"
+  fi
+  if [ "$serial_matches" -eq 1 ]; then
     selector_flag="-s"
     selector_value="$serial"
   else

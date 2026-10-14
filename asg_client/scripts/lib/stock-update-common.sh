@@ -1122,6 +1122,13 @@ run_stock_firmware_update() {
     phase "Returning to the installed third-party ASG Client"
     enable_thirdparty_runtime
     echo "$DEV_PKG is active again; its APK and app data were preserved."
+  else
+    # Stock is the launcher, so restore the recovery heartbeat and legacy OTA
+    # updater that disable_competing_launchers turned off before mutation.
+    # restore-stock.sh and the failure cleanup both treat these as part of
+    # stock, so a successful run must leave them enabled too.
+    "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
   fi
   SUCCESS=true
   phase "Update finished"

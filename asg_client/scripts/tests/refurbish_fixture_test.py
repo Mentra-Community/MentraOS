@@ -405,6 +405,22 @@ class RefurbFixtureTests(unittest.TestCase):
         self.assertTrue(all(call[2] == "2" for call in installs))
         self.assertNotIn("1", [call[2] for call in installs])
 
+    def test_duplicate_real_serial_selected_by_cid_pins_transport(self):
+        body = self.current_body()
+        other = device(serial="DUP123", cid="1501003458364b4d4203b71dcc5eb7b3",
+                       mac="2C:BA:CA:25:E5:11", asg_code="1", asg_name="1.0")
+        target = device(serial="DUP123", asg_code="9", asg_name="9.0")
+        fix = Fixture(self.temp.name, [other, target], self.documents_for(body), pin_for(body))
+        result = fix.run(REFURB, ["--track", "dev", "--cid", target["cid"]])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The shared real serial is ambiguous, so it must never become the -s
+        # selector; every pinned call targets the CID-selected unit's transport.
+        self.assertFalse(any(call[:2] == ["adb", "-s"] for call in fix.calls()))
+        installs = [call for call in fix.calls() if call[:2] == ["adb", "-t"] and "install" in call]
+        self.assertTrue(installs)
+        self.assertTrue(all(call[2] == "2" for call in installs))
+        self.assertNotIn("1", [call[2] for call in installs])
+
     def test_unique_real_serial_works_without_cid(self):
         body = self.current_body()
         fix = Fixture(self.temp.name, [device()], self.documents_for(body), pin_for(body))
@@ -416,6 +432,12 @@ class RefurbFixtureTests(unittest.TestCase):
         self.assertNotEqual(report["device"]["adbSerial"], PLACEHOLDER)
         self.assertEqual(report["result"], "PASS")
         self.assertGreaterEqual(report["elapsedSeconds"], 0)
+        # A successful stock refurb must re-enable the recovery heartbeat and
+        # legacy OTA updater it disabled before mutation; stock is the launcher.
+        enabled = {call[-1] for call in fix.calls()
+                   if call[0] == "adb" and "pm" in call and "enable" in call}
+        self.assertIn("com.mentra.recovery", enabled)
+        self.assertIn("com.augmentos.otaupdater", enabled)
 
     def test_current_glasses_do_not_flash(self):
         body = self.current_body()
