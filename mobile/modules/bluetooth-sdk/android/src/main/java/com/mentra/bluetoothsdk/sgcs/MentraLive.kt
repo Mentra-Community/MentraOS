@@ -1839,11 +1839,22 @@ class MentraLive : SGCManager() {
             return
         }
         val requestEpoch = ++connectionRequestEpoch
+        classicAudioServiceDiscovery.cancel()
         // Never replace a still-open GATT. Its disconnect/close must finish first.
         bluetoothGatt?.let { beginGattTeardown(it) }
         gattTeardownBarrier.runWhenIdle {
             if (requestEpoch == connectionRequestEpoch && !isKilled && !pairingYieldActive) {
-                connectToDeviceWhenIdle(device)
+                connectionTimeoutRunnable?.let { connectionTimeoutHandler.removeCallbacks(it) }
+                connectionTimeoutRunnable = null
+                isConnecting = true
+                updateConnectionState(ConnTypes.CONNECTING)
+                classicAudioServiceDiscovery.beforeBle(device) {
+                    // Discovery is asynchronous; disconnect, replacement and pairing yield revoke
+                    // this request just as they revoke a pending GATT teardown continuation.
+                    if (requestEpoch == connectionRequestEpoch && !isKilled && !pairingYieldActive) {
+                        connectToDeviceWhenIdle(device)
+                    }
+                }
             }
         }
     }

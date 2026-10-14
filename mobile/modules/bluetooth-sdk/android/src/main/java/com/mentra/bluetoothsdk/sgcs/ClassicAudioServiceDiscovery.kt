@@ -10,12 +10,24 @@ internal class ClassicAudioServiceDiscovery(
     private val timeoutMs: Long,
     private val log: (String) -> Unit,
 ) {
-    private class Pending(val device: BluetoothDevice, val ready: () -> Unit) {
+    private class Pending(val device: BluetoothDevice, val unavailable: () -> Unit, val ready: () -> Unit) {
         lateinit var timeout: Runnable
     }
     private var pending: Pending? = null
 
-    fun connectWhenDiscovered(device: BluetoothDevice, ready: () -> Unit) {
+    /** AUTO discovery on a dual-mode device with only LE connected searches GATT, not SDP.
+     * Discover an existing bond's Classic services before opening our LE connection. A failed
+     * discovery must still permit BLE; it must never manufacture an audio connection. */
+    fun beforeBle(device: BluetoothDevice, ready: () -> Unit) {
+        if (device.bondState != BluetoothDevice.BOND_BONDED ||
+                device.type !in arrayOf(BluetoothDevice.DEVICE_TYPE_DUAL, BluetoothDevice.DEVICE_TYPE_CLASSIC)) {
+            ready()
+            return
+        }
+        connectWhenDiscovered(device, unavailable = ready, ready = ready)
+    }
+
+    fun connectWhenDiscovered(device: BluetoothDevice, unavailable: () -> Unit = {}, ready: () -> Unit) {
         if (hasAudioSink(device)) {
             cancel()
             ready()
@@ -23,24 +35,27 @@ internal class ClassicAudioServiceDiscovery(
         }
         if (pending?.device?.address == device.address) return
         cancel()
-        val request = Pending(device, ready)
+        val request = Pending(device, unavailable, ready)
         request.timeout = Runnable {
             if (pending === request) {
                 cancel()
                 log("SDP timed out for ${device.address}; Classic audio remains disconnected")
+                request.unavailable()
             }
         }
         pending = request
         handler.postDelayed(request.timeout, timeoutMs)
-        try {
+        val accepted = try {
             log("Refreshing Classic service UUIDs for ${device.address}")
-            if (!device.fetchUuidsWithSdp()) {
-                cancel()
-                log("SDP request rejected for ${device.address}; Classic audio remains disconnected")
-            }
+            device.fetchUuidsWithSdp()
         } catch (error: Exception) {
-            cancel()
             log("SDP request failed for ${device.address}: ${error.message}")
+            false
+        }
+        if (!accepted) {
+            cancel()
+            log("SDP request rejected for ${device.address}; Classic audio remains disconnected")
+            request.unavailable()
         }
     }
 

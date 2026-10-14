@@ -29,6 +29,58 @@ class ClassicAudioServiceDiscoveryTest {
         discovery.connectWhenDiscovered(device) { connects++ }
     }
 
+    @Test fun `bonded dual mode device discovers Audio Sink before BLE is opened`() {
+        shadowOf(target).setBondState(BluetoothDevice.BOND_BONDED)
+        shadowOf(target).setType(BluetoothDevice.DEVICE_TYPE_DUAL)
+        shadowOf(target).setUuids(arrayOf(zero))
+        shadowOf(target).setFetchUuidsWithSdpResult(true)
+        var bleStarts = 0
+        discovery.beforeBle(target) { bleStarts++ }
+        assertThat(bleStarts).isZero()
+        discovery.onUuids(target)
+        assertThat(bleStarts).isZero()
+        shadowOf(target).setUuids(arrayOf(sink))
+        discovery.onUuids(target)
+        assertThat(bleStarts).isEqualTo(1)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
+        assertThat(bleStarts).isEqualTo(1)
+    }
+
+    @Test fun `pre BLE discovery timeout preserves BLE without claiming audio readiness`() {
+        shadowOf(target).setBondState(BluetoothDevice.BOND_BONDED)
+        shadowOf(target).setType(BluetoothDevice.DEVICE_TYPE_DUAL)
+        shadowOf(target).setFetchUuidsWithSdpResult(true)
+        var bleStarts = 0
+        discovery.beforeBle(target) { bleStarts++ }
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
+        assertThat(bleStarts).isEqualTo(1)
+        assertThat(ClassicAudioServiceDiscovery.hasAudioSink(target)).isFalse()
+        discovery.onUuids(target)
+        assertThat(bleStarts).isEqualTo(1)
+    }
+
+    @Test fun `first pairing does not wait for Classic discovery before bonding`() {
+        shadowOf(target).setBondState(BluetoothDevice.BOND_NONE)
+        shadowOf(target).setType(BluetoothDevice.DEVICE_TYPE_DUAL)
+        var bleStarts = 0
+        discovery.beforeBle(target) { bleStarts++ }
+        assertThat(bleStarts).isEqualTo(1)
+        assertThat(shadowOf(target).fetchUuidsWithSdpCount).isZero()
+    }
+
+    @Test fun `cancelling pre BLE discovery cannot start an obsolete connection`() {
+        shadowOf(target).setBondState(BluetoothDevice.BOND_BONDED)
+        shadowOf(target).setType(BluetoothDevice.DEVICE_TYPE_DUAL)
+        shadowOf(target).setFetchUuidsWithSdpResult(true)
+        var bleStarts = 0
+        discovery.beforeBle(target) { bleStarts++ }
+        discovery.cancel()
+        shadowOf(target).setUuids(arrayOf(sink))
+        discovery.onUuids(target)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
+        assertThat(bleStarts).isZero()
+    }
+
     @Test fun `bonded Samsung zero UUID inventory waits for real Audio Sink discovery`() {
         shadowOf(target).setBondState(BluetoothDevice.BOND_BONDED)
         shadowOf(target).setUuids(arrayOf(zero))
