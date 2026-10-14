@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-bad-0002",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 0,
+      "observedAt": "2026-10-13T11:00:00Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "snapshot",
+      "deviceBinding": {
+        "kind": "serial",
+        "manufacturer": "Mentra",
+        "product": "mentra_live",
+        "serial": "ML2A-0042-7731"
+      },
+      "payload": {
+        "phone": {
+          "model": "Pixel 8",
+          "os": "android",
+          "osVersion": "15",
+          "appVersion": "3.4.0",
+          "appBuild": "3400",
+          "engineVersion": "1.12.0",
+          "sdkVersion": "0.9.2"
+        },
+        "glasses": {
+          "model": "mentra_live",
+          "firmware": {
+            "apk": "1.7.3",
+            "mtk": "2.1.0",
+            "bes": "0.8.5"
+          },
+          "connection": {
+            "state": "connected",
+            "observedAt": "2026-10-13T11:00:00Z"
+          },
+          "battery": {
+            "state": "measured",
+            "observedAt": "2026-10-13T11:00:00Z",
+            "level": 76,
+            "charging": false
+          }
+        }
+      },
+      "email": "someone@example.com"
+    }
+  ]
+}

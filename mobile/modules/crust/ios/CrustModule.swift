@@ -76,6 +76,11 @@ public class CrustModule: Module {
             ProcessInfo.processInfo.isiOSAppOnMac
         }
 
+        AsyncFunction("getPermissionStatus") { (requestId: String?) -> [String: Any] in
+            if let requestId { return try await PermissionStatusReceipt.publish(requestId: requestId) }
+            return await PermissionStatusReceipt.current()
+        }
+
         Constant("PI") {
             Double.pi
         }

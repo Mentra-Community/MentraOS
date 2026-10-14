@@ -8,6 +8,7 @@ import {requestInputDigest} from './test-request.service';
 import {compatibleRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {TestHostStateService, type ReceivedTestHostState} from './test-host-state.service';
 import {TestRunError} from './test-result-error';
+import {permissionContext} from '../types/resource-permissions.types';
 import {pendingRequestFilter} from './test-request-activity';
 
 /** Read-only projection; compatible hardware is distinct from current acceptance. */
@@ -49,7 +50,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
         glassesModels: (lane.glasses ?? []).map(value => value.model), state: lane.state, dispatchMode: lane.dispatchMode,
         fresh: Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000}})));
   return {...item, compatibilityKnown: !!requirements,
-    compatibleLanes: requirements ? lanes.filter(({lane}) => compatibleRoutineLane(requirements, lane)).map(value => value.label) : [],
+    compatibleLanes: requirements ? lanes.filter(({host, lane}) => compatibleRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, selected.build, now))).map(value => value.label) : [],
     platformCandidates: requirements ? [] : lanes.map(value => value.label)};
 }
 /** Bad persisted rows cannot hide valid neighbors, including malformed timestamps. */

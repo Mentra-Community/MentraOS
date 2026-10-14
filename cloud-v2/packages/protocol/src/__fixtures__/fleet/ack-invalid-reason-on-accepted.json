@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "results": [
+    {
+      "index": 0,
+      "recordId": "rec-x-0002",
+      "status": "accepted",
+      "reasonCode": "schema_invalid"
+    }
+  ]
+}

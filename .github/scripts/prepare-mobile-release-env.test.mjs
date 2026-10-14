@@ -30,6 +30,7 @@ test("separates the observable release identity from native store version fields
   assert.match(output, /^EXPO_PUBLIC_BUILD_ENV=staging$/m)
   assert.match(output, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.staging\.us-west-2\.mentraglass\.com$/m)
   assert.match(output, /^EXPO_PUBLIC_CLOUD_RUNTIME_URL=https:\/\/runtime\.staging\.us-west-2\.mentraglass\.com$/m)
+  assert.match(output, /^EXPO_PUBLIC_STORE_URL=https:\/\/api\.apps\.staging\.mentraglass\.com$/m)
 })
 
 test("requires beta builds to target staging services", () => {
@@ -67,6 +68,7 @@ test("renders production candidates from production plans and endpoints", () => 
   assert.match(output, /^EXPO_PUBLIC_BUILD_ENV=prod$/m)
   assert.match(output, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.us-west-2\.mentraglass\.com$/m)
   assert.match(output, /^EXPO_PUBLIC_CLOUD_RUNTIME_URL=https:\/\/runtime\.us-west-2\.mentraglass\.com$/m)
+  assert.match(output, /^EXPO_PUBLIC_STORE_URL=https:\/\/api\.apps\.mentraglass\.com$/m)
   assert.match(output, /^MENTRAOS_PINNED_BUILD_NUMBER=310000099$/m)
 })
 

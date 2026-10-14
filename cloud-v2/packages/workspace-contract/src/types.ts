@@ -104,6 +104,94 @@ export interface ResolveEmailResponse {
   mentraUserId: string
 }
 
+// --- Change feed ------------------------------------------------------------
+
+/**
+ * One entry of Core's change feed (`GET /changes`). `eventId` identifies the event; `seq` is its
+ * position in the feed, assigned in commit order, and is the only thing to page by: pass the last
+ * `seq` you processed, as a decimal string, as the next request's `after`. The feed leaves out
+ * organization-level events (operator keys), so consecutive events can skip `seq` numbers. A
+ * skipped number is never a missed event.
+ *
+ * `workspaceId` is null only for user-level tombstones ({@link USER_DELETED_ACTION}). `action`
+ * names the change (`"user.deleted"`, `"workspace.created"`, ...); a receiver treats an action it
+ * does not know as a no-op. `target`, `before` and `after` are snapshots whose shape depends on
+ * `action` (see the event catalog in Core's `docs/fleet-integration.md`), null when the event has
+ * none, with every credential-looking key (`token`, `secret`, `hash`, `password`) removed at any
+ * depth.
+ */
+export interface WorkspaceChangeEvent {
+  eventId: string
+  seq: number
+  workspaceId: string | null
+  action: string
+  occurredAt: string
+  target: Record<string, unknown> | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}
+
+/**
+ * Response of `GET /changes`: events in `seq` order. `next` is the cursor for the following page
+ * (the last event's `seq`), or null when the page was not full and there is nothing more yet.
+ */
+export interface WorkspaceChangesResponse {
+  events: WorkspaceChangeEvent[]
+  next: string | null
+}
+
+/**
+ * `action` of the tombstone recorded when a Mentra account is deleted: `workspaceId` is null and
+ * `target` is `{mentraUserId}`. A service that keeps data keyed by that user deletes it. Each
+ * membership the deletion ended was recorded before it, as a `membership.removed` event.
+ */
+export const USER_DELETED_ACTION = "user.deleted"
+
+// --- Forwarded principals (Core -> Fleet) ----------------------------------
+
+/**
+ * The headers Core adds to a request it forwards to the Fleet integration, beyond the service
+ * signature headers (`SERVICE_HEADERS`, with `x-mentra-service: core`). `principal` is the caller as
+ * base64url JSON ({@link ForwardedPrincipal}); `principalSignature` is a base64url HMAC-SHA256,
+ * keyed with the same secret as the service signature, over `<timestamp>\n<principal header>`.
+ * Verify both with `verifyForwardedPrincipal` from `@mentra/workspace-contract/server`.
+ */
+export const FORWARDED_PRINCIPAL_HEADERS = {
+  principal: "x-mentra-principal",
+  principalSignature: "x-mentra-principal-signature",
+} as const
+
+/** The `x-mentra-service` value of every request Core forwards. */
+export const FORWARDING_SERVICE = "core"
+
+/**
+ * What a signed-in person's Fleet request covers, decided by Core: the whole organization, or one
+ * workspace (a team).
+ */
+export type FleetScope = {kind: "organization"} | {kind: "workspace"; workspaceId: string}
+
+/**
+ * Who a forwarded request is from. Only people reach Fleet: `/v1/client` only ever receives `phone`
+ * principals and `/v1/admin` only `user` principals.
+ *
+ * - `phone`: a signed-in phone session. `email` is the account's verified email, or null; it is a
+ *   display attribute and never an identity key.
+ * - `user`: a signed-in person. `isOrganizationAdmin` comes from a verified identity email; `email`
+ *   may be unverified (`emailVerified`) and is never an authorization. `organizationCapabilities` is
+ *   what Core decided the person may do to the organization, and `scope` is what this request covers.
+ */
+export type ForwardedPrincipal =
+  | {kind: "phone"; mentraUserId: string; tenantId: string; sessionId: string; email: string | null}
+  | {
+      kind: "user"
+      mentraUserId: string
+      email: string | null
+      emailVerified: boolean
+      isOrganizationAdmin: boolean
+      organizationCapabilities: OrganizationCapability[]
+      scope: FleetScope
+    }
+
 /**
  * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`
  * from `/principal` as "this bearer token is not valid"; anything else is a service-level failure.

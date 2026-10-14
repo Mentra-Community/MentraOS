@@ -28,10 +28,11 @@ export const ORGANIZATION_CAPABILITIES = [
   "organization.supportProfiles.read",
   "organization.testing.read",
   "organization.testing.manage",
+  "organization.fleet.administer",
 ] as const
 export type OrganizationCapability = (typeof ORGANIZATION_CAPABILITIES)[number]
 
-/** Scopes an operator key may carry; never workspace administration. */
+/** Scopes an operator key may carry; never workspace administration or Fleet administration. */
 export const OPERATOR_KEY_SCOPES: readonly OrganizationCapability[] = [
   "organization.incidents.read",
   "organization.supportProfiles.read",

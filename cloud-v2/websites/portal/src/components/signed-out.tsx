@@ -11,7 +11,7 @@ import { BrandPage } from "./brand";
  */
 export function SignedOutScreen({ signOutUrl, signInHref = "/" }: { signOutUrl: string | null; signInHref?: string }) {
   return (
-    <BrandPage title="Signed out of the workspace portal">
+    <BrandPage title="Signed out of Mentra Portal">
       <p className="text-muted-foreground mb-7">
         {signOutUrl
           ? "Your Mentra account is still signed in on this browser. Sign out of it too, for example to switch accounts."

@@ -25,6 +25,7 @@ import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/co
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -73,6 +74,7 @@ const MODELS: Model<any>[] = [
   WorkspaceMembershipModel,
   WorkspaceInvitationModel,
   AccessCredentialModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
 ]
 

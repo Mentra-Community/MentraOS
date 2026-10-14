@@ -13,6 +13,8 @@
  *   /api/client/reports/*       — device-filed reports
  *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
  *                                 unauthenticated (called from customer apps)
+ *   /api/client/fleet/*         — a phone's Fleet reports, forwarded to the optional Fleet
+ *                                 service (404 fleet_not_installed without one)
  *   /api/client/miniapps/*      — LEGACY: the frozen preinstalled catalog that
  *                                 released Mentra App versions still install from
  *   /api/agent/reports/*        — read-only private dev-agent access
@@ -21,7 +23,9 @@
  *   /api/admin/auth/*, /api/portal/auth/*
  *                               — portal sign-in (the deployment's identity provider)
  *   /api/admin/*                — the admin portal's API (capability-gated), incl.
- *                                 /api/admin/workspaces and /api/admin/organization
+ *                                 /api/admin/workspaces and /api/admin/organization, and
+ *                                 /api/admin/fleet/*, forwarded to the optional Fleet
+ *                                 service for an Organization Admin
  *   /api/portal/*               — the workspace portal's API, incl. /api/portal/workspaces
  *   /api/workspaces/*, /api/organization/*
  *                               — the same workspace and organization handlers, for
@@ -70,6 +74,7 @@ import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
 import clientMiniapps from "./client/miniapps.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
+import { clientFleetApi } from "./fleet/fleet-forwarding";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import cliApi from "./cli/cli.api";
@@ -134,6 +139,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
+  // Fleet is optional and lives in its own service; Core authenticates the phone (its own gate) and forwards.
+  app.route("/api/client/fleet", clientFleetApi);
   app.route("/api/agent/reports", reportAgent);
   app.route("/api/cli", cliApi);
   // Service calls carry small JSON bodies; the limit applies before the signature check reads one.

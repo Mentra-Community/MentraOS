@@ -30,7 +30,7 @@ export type ClientKind = (typeof CLIENT_KINDS)[number]
 
 const DEFAULT_NAMES: Record<ClientKind, string> = {
   admin_portal: "Mentra admin portal",
-  workspace_portal: "Mentra workspace portal",
+  workspace_portal: "Mentra Portal",
   console: "Mentra Developer Console",
   cli: "Mentra CLI",
 }

@@ -48,7 +48,11 @@ For UI or system-sheet failures, inspect the saved failure screenshot or relevan
 recording interval alongside the accessibility tree before concluding the cause.
 Use existing video when no screenshot was captured, and record missing or failed
 captures. A missing screenshot alone does not justify replaying inputs or asking
-the human for a photo.
+the human for a photo. For permission or preflight stalls, first inspect both app
+and full-desktop captures and follow
+[the permission diagnosis guidance](../investigate-routine-failure/SKILL.md#inspect-permission-stalls-before-another-attempt).
+Report the exact observed host/dialog/action promptly and verify the blocked
+operation after a grant; selected-app AX and worker readiness are insufficient.
 
 For network failures, distinguish glasses station Wi-Fi from the glasses SoftAP,
 phone Internet and host routing. API33 station-Wi-Fi routines declare

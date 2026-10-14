@@ -28,6 +28,7 @@ import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mo
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -59,6 +60,7 @@ const MODELS = [
   AccessCredentialModel,
   BrowserSessionModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,

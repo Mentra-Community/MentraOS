@@ -20,8 +20,42 @@ let macHotspotOwner: {caller: symbol; nativeId: string} | null = null
 export type LocalNetworkErrorDetails = {
   code?: string | number
   domain?: string
+  message?: string
   underlying?: {code?: string | number; domain?: string}
   native?: {code: number; domain: string; completed: true; underlying?: {code: number; domain: string}}
+}
+
+// Existing native builds wrap these app-authored LocalMediaError causes in ERR_UNEXPECTED.
+// Expo keeps the cause in Error.message, but normal Error serialization omits it.
+// Recover only exact owned causes, never arbitrary NSError descriptions or network identities.
+const legacyHotspotCauses = new Set([
+  "Previous hotspot session has not been released",
+  "Previous hotspot session has not finished cleaning up",
+  "Invalid hotspot access purpose",
+  "The glasses reported an invalid hotspot gateway",
+  "The glasses did not report their hotspot gateway",
+  "The glasses hotspot is already in use",
+  "Hotspot join timed out",
+  "Hotspot join cancelled",
+  "Location access is required to identify the glasses hotspot on Mac",
+  "Mac hotspot Location authorization is unavailable",
+  "Location access is required to verify the current Mac Wi-Fi network",
+  "Mac Wi-Fi did not associate with the requested glasses hotspot",
+  "Mac Wi-Fi framework is unavailable",
+  "Mac Wi-Fi interface is unavailable",
+  "Mac Wi-Fi interface does not support hotspot association",
+  "Mac Wi-Fi interface has no identity",
+  "Mac Wi-Fi interface disappeared during association",
+  "The requested glasses hotspot was not found by Mac Wi-Fi",
+  "Mac Wi-Fi has no verified glasses hotspot address",
+  "Local connection to the glasses timed out",
+])
+
+function legacyHotspotCause(message: string): string | undefined {
+  if (message.length > 2048) return undefined
+  const cause = message.split("\n→ Caused by: ").at(-1)!
+  if (legacyHotspotCauses.has(cause)) return cause
+  return /^Mac Wi-Fi (scan|association) failed \([A-Za-z0-9_.-]{1,128}, -?\d{1,12}\)$/.test(cause) ? cause : undefined
 }
 
 /** Keep native connection facts ahead of large stacks and private NSError userInfo. */
@@ -39,6 +73,15 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
     }
   }
   const details = facts(error)
+  const message = error && typeof error === "object" && "message" in error && typeof error.message === "string"
+    ? error.message
+    : undefined
+  const hotspotMessage =
+    typeof details.code === "string" &&
+    ["ERR_HOTSPOT_JOIN", "ERR_HOTSPOT_CANCELLED", "ERR_HOTSPOT_NATIVE"].includes(details.code) &&
+    message !== undefined
+      ? message.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 512)
+      : details.code === "ERR_UNEXPECTED" && message !== undefined ? legacyHotspotCause(message) : undefined
   const userInfo = (error as {userInfo?: unknown} | null | undefined)?.userInfo
   const underlying = facts(
     userInfo && typeof userInfo === "object"
@@ -60,6 +103,7 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
   const nativeUnderlying = facts((nativeValue as {underlying?: unknown} | undefined)?.underlying)
   return {
     ...details,
+    ...(hotspotMessage ? {message: hotspotMessage} : {}),
     ...(Object.keys(underlying).length ? {underlying} : {}),
     ...(native
       ? {

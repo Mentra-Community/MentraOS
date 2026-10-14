@@ -90,10 +90,12 @@ jobs:
 
       - name: Run website sign-in tests
         working-directory: cloud-v2
-        # Mentra's sign-in page, and the portal sites' sign-in, sign-out and
-        # Pages relay. Browserless: React views render to static markup.
+        # Mentra's sign-in page, the portal sites' sign-in, sign-out and Pages
+        # relay, and the Pages deployment's per-environment settings.
+        # Browserless: React views render to static markup.
         run: |
           bun test --max-concurrency=1 \
+            scripts/deploy-pages.test.ts \
             websites/account/src \
             websites/account/functions \
             websites/portal/src \
@@ -104,7 +106,8 @@ jobs:
             websites/admin/src/lib/shared-react.test.ts \
             websites/admin/src/components/signed-out.test.tsx \
             websites/admin/src/pages/workspaces.test.tsx \
-            websites/admin/src/pages/operator-keys.test.tsx
+            websites/admin/src/pages/operator-keys.test.tsx \
+            websites/admin/src/pages/fleet.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -202,6 +205,8 @@ jobs:
             tests/workspaces-api.integration.test.ts \
             tests/admin-capabilities.integration.test.ts \
             tests/workspaces-internal-api.integration.test.ts \
+            tests/workspace-change-feed.integration.test.ts \
+            tests/fleet-forwarding.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
             tests/account-deletion.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
@@ -312,6 +317,13 @@ jobs:
             echo "::error title=Core does not start on Cosmos DB::A new Private Cloud install of this change fails at Core startup. See the log above."
             exit 1
           }
+          # Core logs an index its database refuses and carries on, so /ready does not show it. verify
+          # also deletes a throwaway account, which records its user.deleted tombstone without a
+          # transaction on Cosmos DB, a path only this database can run.
+          bun "$CHECK" verify "$FRESH_URL" || {
+            echo "::error title=Core did not build its schema on Cosmos DB::A new Private Cloud install of this change starts but is missing a collection or index Core needs, or cannot record an account deletion's user.deleted tombstone. See the log above."
+            exit 1
+          }
 
       - name: Upgrade the base branch's Core, with data, to this change
         working-directory: cloud-v2
@@ -321,6 +333,10 @@ jobs:
           bun "$CHECK" seed "$UPGRADE_URL"
           bun "$CHECK" start . "$UPGRADE_URL" || {
             echo "::error title=Core upgrade fails on Cosmos DB::Existing Private Cloud deployments could not start this change's Core. Cosmos DB cannot, for example, add a unique index to a collection that already holds documents. See the log above."
+            exit 1
+          }
+          bun "$CHECK" verify "$UPGRADE_URL" || {
+            echo "::error title=Core upgrade did not build its schema on Cosmos DB::Core starts on an existing Private Cloud database but could not build a collection or index it needs there, or cannot record an account deletion's user.deleted tombstone. See the log above."
             exit 1
           }
 

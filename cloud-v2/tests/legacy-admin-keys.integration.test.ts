@@ -29,6 +29,7 @@ import {runStartupMigrations} from "../packages/core/src/migrations/startup.migr
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {ReportModel} from "../packages/core/src/models/report.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -58,6 +59,7 @@ const MODELS = [
   AccessCredentialModel,
   ReportModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,

@@ -186,7 +186,9 @@ export async function prepareArtifacts(
               reportProgress(res.bytesWritten, res.contentLength)
             },
           }).promise
-      if (downloadResult.statusCode !== 200) {
+      // A resumed native download can finish with 206. Accept it only through
+      // the same full-file manifest SHA256 verification below.
+      if (downloadResult.statusCode !== 200 && downloadResult.statusCode !== 206) {
         throw new OtaArtifactError(
           "artifact_download_failed",
           `Download of ${entry.kind} artifact failed with HTTP ${downloadResult.statusCode}`,

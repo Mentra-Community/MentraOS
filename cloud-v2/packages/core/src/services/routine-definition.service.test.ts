@@ -195,7 +195,7 @@ test("lifecycle definitions retain optional hook metadata and unique action IDs 
   ]) await expect(submit(invalid)).rejects.toThrow("Invalid routine definition");
 });
 
-test('collection manifest freezes membership, version and rows across retries and concurrent reads', async () => {
+test('collection manifest freezes membership and waits for bounded, settled promotion batches', async () => {
   const rows = new Map<string, any>(), collections = new Map<string, any>();
   const identity = (query: any) => query.routineId + ':' + query.platform + ':' + query.definitionRevision;
   const chain = (get: () => unknown) => ({read() {return this;}, readConcern() {return this;}, sort() {return this;}, select() {return this;}, session() {return this;}, lean: async () => get()});
@@ -267,6 +267,46 @@ test('collection manifest freezes membership, version and rows across retries an
     rows.set(identity(legacy), {...legacy, routineSource: undefined});
     await expect(service.publishCollection({commit:legacy.definitionRevision, version:50, definitions:[legacy]})).rejects.toThrow('bytes conflict');
     expect(await service.current()).toEqual([next]);
+
+    const promoting = Array.from({length: 17}, (_, index) => at('f'.repeat(40), `promote-${index}`));
+    const started: string[] = [], pending: (() => void)[] = [], waiting = new Map<number, () => void>();
+    let active = 0, maximum = 0, responseSettled = false;
+    const waitFor = (count: number) => started.length >= count ? Promise.resolve() : new Promise<void>(resolve => waiting.set(count, resolve));
+    const promotionService = new RoutineDefinitionService(undefined, undefined, {async enroll(row) {
+      expect(collections.get(row.definitionRevision)?.members).toHaveLength(17);
+      started.push(row.routineId); maximum = Math.max(maximum, ++active);
+      const ready = new Promise<void>(resolve => pending.push(resolve));
+      for (const [count, resolve] of waiting) if (started.length >= count) {waiting.delete(count); resolve();}
+      await ready; active--;
+    }});
+    const response = promotionService.publishCollection({commit: promoting[0]!.definitionRevision, version: 60, definitions: promoting})
+      .finally(() => responseSettled = true);
+    await waitFor(8); expect(responseSettled).toBe(false); expect(started).toHaveLength(8);
+    pending.splice(0).reverse().forEach(resolve => resolve());
+    await waitFor(16); expect(responseSettled).toBe(false); expect(started).toHaveLength(16);
+    pending.splice(0).reverse().forEach(resolve => resolve());
+    await waitFor(17); expect(responseSettled).toBe(false); pending.splice(0).forEach(resolve => resolve());
+    expect(await response).toEqual({commit: 'f'.repeat(40), version: 60, definitions: 17});
+    expect(maximum).toBe(8); expect(active).toBe(0);
+    expect(started).toEqual([...promoting].sort((left, right) => left.routineId.localeCompare(right.routineId)).map(row => row.routineId));
+
+    let releasePeer!: () => void, peerStarted!: () => void, failedSettled = false;
+    const peer = new Promise<void>(resolve => releasePeer = resolve), peerRunning = new Promise<void>(resolve => peerStarted = resolve);
+    const failedStarted: string[] = [], failure = Error('Promotion failed');
+    const failedPromotion = new RoutineDefinitionService(undefined, undefined, {async enroll(row) {
+      expect(collections.get(row.definitionRevision)?.members).toHaveLength(9);
+      failedStarted.push(row.routineId);
+      if (row.routineId === 'fail-0') throw failure;
+      if (row.routineId === 'fail-1') {peerStarted(); await peer;}
+    }});
+    const failed = failedPromotion.publishCollection({commit: '6'.repeat(40), version: 70,
+      definitions: Array.from({length: 9}, (_, index) => at('6'.repeat(40), `fail-${index}`))}).finally(() => failedSettled = true);
+    const outcome = failed.then(() => null, error => error);
+    await peerRunning; await Promise.resolve(); expect(failedSettled).toBe(false);
+    releasePeer(); expect(await outcome).toBe(failure);
+    expect(failedStarted).toHaveLength(8); expect(failedSettled).toBe(true);
+    // A post-commit failure does not erase the already committed collection.
+    expect(collections.get('6'.repeat(40))?.members).toHaveLength(9);
   } finally {find.mockRestore(); publication.mockRestore(); all.mockRestore(); insert.mockRestore(); savePublication.mockRestore(); update.mockRestore(); transaction.mockRestore();}
 });
 

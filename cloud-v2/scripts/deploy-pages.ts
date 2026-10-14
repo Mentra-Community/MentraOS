@@ -7,19 +7,8 @@ const sites = {
   account: "mentra-account",
 } as const;
 
-type Environment = typeof environments[number];
+export type Environment = typeof environments[number];
 type Site = keyof typeof sites;
-
-const env = process.argv[2] as Environment | undefined;
-const requestedSite = process.argv[3] as Site | "all" | undefined;
-
-if (!env || !environments.includes(env)) {
-  fail(`Usage: bun scripts/deploy-pages.ts <${environments.join("|")}> [${Object.keys(sites).join("|")}|all]`);
-}
-
-if (requestedSite && requestedSite !== "all" && !(requestedSite in sites)) {
-  fail(`Unknown site "${requestedSite}"`);
-}
 
 const coreUrls: Record<Environment, string> = {
   dev: "https://core.dev.us-west-2.mentraglass.com",
@@ -46,20 +35,54 @@ const accountConfig = {
 };
 const accountConfigured = Object.values(accountConfig).every(Boolean);
 
-const selectedSites: Site[] = [];
-if (requestedSite && requestedSite !== "all") {
-  selectedSites.push(requestedSite);
-} else {
-  selectedSites.push("admin", "portal");
-  if (accountConfigured) selectedSites.push("account");
-  else console.log("Skipping the account site: its ACCOUNT_* configuration is not set.");
+// The Developer Console each environment's workspace portal links to from its
+// sidebar, given to the portal's build as DEVELOPER_CONSOLE_URL.
+export const developerConsoleUrls: Record<Environment, string> = {
+  dev: "https://console.dev.mentraglass.com",
+  staging: "https://console.staging.mentraglass.com",
+  prod: "https://console.mentraglass.com",
+};
+
+/** The public build-time configuration of the workspace portal for `env`. */
+export function portalBuildConfig(env: Environment): Record<string, string> {
+  return { DEVELOPER_CONSOLE_URL: developerConsoleUrls[env] };
 }
 
-for (const site of selectedSites) {
+if (import.meta.main) main();
+
+function main() {
+  const env = process.argv[2] as Environment | undefined;
+  const requestedSite = process.argv[3] as Site | "all" | undefined;
+
+  if (!env || !environments.includes(env)) {
+    fail(`Usage: bun scripts/deploy-pages.ts <${environments.join("|")}> [${Object.keys(sites).join("|")}|all]`);
+  }
+
+  if (requestedSite && requestedSite !== "all" && !(requestedSite in sites)) {
+    fail(`Unknown site "${requestedSite}"`);
+  }
+
+  const selectedSites: Site[] = [];
+  if (requestedSite && requestedSite !== "all") {
+    selectedSites.push(requestedSite);
+  } else {
+    selectedSites.push("admin", "portal");
+    if (accountConfigured) selectedSites.push("account");
+    else console.log("Skipping the account site: its ACCOUNT_* configuration is not set.");
+  }
+
+  for (const site of selectedSites) {
+    deploySite(site, env);
+  }
+}
+
+function deploySite(site: Site, env: Environment) {
   const project = site === "account" ? accountProjects[env] : `${sites[site]}-${env}`;
   if (site === "account") {
     if (!accountConfigured) fail("The account site needs ACCOUNT_SUPABASE_URL and ACCOUNT_SUPABASE_PUBLISHABLE_KEY.");
     run(["bun", "--cwd", "websites/account", "build"], { env: accountConfig });
+  } else if (site === "portal") {
+    run(["bun", "--cwd", "websites/portal", "build"], { env: portalBuildConfig(env) });
   } else {
     run(["bun", "--cwd", `websites/${site}`, "build"]);
   }

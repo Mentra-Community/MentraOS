@@ -9,6 +9,13 @@ import type {AppEnv} from '../../types/hono.types';
 import {testRunIngestAuth} from '../middleware/test-run-ingest-auth.middleware';
 import {createTestHostAuth, type TestHostEnv} from '../middleware/test-host-auth.middleware';
 import {frameworkBodyLimit, frameworkJson} from './framework-json';
+const failureDiagnostic = (error: unknown) => {
+  if (error instanceof TestRunError) return {status: error.status, errorKind: 'routine_job_error'};
+  if (error instanceof TestDispatchError) return {status: error.status, errorKind: 'routine_job_error'};
+  if (error instanceof TestRequestConflict) return {status: 409, errorKind: 'routine_job_conflict'};
+  if (error instanceof ZodError) return {status: 400, errorKind: 'invalid_routine_job'};
+  return {status: 503, errorKind: 'routine_job_unavailable'};
+};
 const failure = (error: Error, c: Context) => {
   if (error instanceof ZodError) return c.json({error: 'invalid_routine_job'}, 400);
   if (error instanceof TestRunError || error instanceof TestDispatchError)
@@ -39,7 +46,20 @@ export function createRoutineJobsApi(service = new RoutineJobService(), authors 
     return new Response(bytes, {headers: {'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.byteLength),
       'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}});
   });
-  app.get('/:jobId/observation', async c => c.json(await fallback(() => service.observation(c.req.param('jobId')), () => authors.observation(c.req.param('jobId')))));
+  app.get('/:jobId/observation', async c => {
+    const startedAt = Date.now(); let phase = 'request';
+    const diagnostic = () => ({phase, elapsedMs: Math.max(0, Date.now() - startedAt)});
+    const timer = setTimeout(() => c.var.logger?.warn(diagnostic(), 'routine job observation is slow'), 10_000);
+    try {
+      const response = c.json(await fallback(() => service.observation(c.req.param('jobId'), value => {phase = value;}),
+        () => {phase = 'author'; return authors.observation(c.req.param('jobId'));}));
+      if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), status: response.status}, 'slow routine job observation completed');
+      return response;
+    } catch (error) {
+      if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), ...failureDiagnostic(error), errorName: error instanceof Error ? error.name : 'unknown'}, 'slow routine job observation failed');
+      throw error;
+    } finally {clearTimeout(timer);}
+  });
   app.post('/:jobId/actions', frameworkBodyLimit(4096), async c => {
     const input = await frameworkJson(c), jobId = c.req.param('jobId');
     return c.json(await fallback(() => service.actions(jobId, input), () => authors.actions(jobId, input)));

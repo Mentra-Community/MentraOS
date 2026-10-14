@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-13.1",
+  "contractVersion": "2026-10-13.2",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -180,7 +180,14 @@
     "CLOUD_CORE_ADMIN_PORTAL_URL",
     "CLOUD_CORE_ADMIN_STATIC_DIR",
     "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
+    "CLOUD_CORE_ENABLED_FEATURES",
     "CLOUD_CORE_ENTERPRISE_PORTAL_URL",
+    "CLOUD_CORE_FLEET_MAX_ASSET_BYTES",
+    "CLOUD_CORE_FLEET_MAX_BODY_BYTES",
+    "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES",
+    "CLOUD_CORE_FLEET_SECRET",
+    "CLOUD_CORE_FLEET_TIMEOUT_MS",
+    "CLOUD_CORE_FLEET_URL",
     "CLOUD_CORE_ISSUER",
     "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
     "CLOUD_CORE_OIDC_CLIENTS",

@@ -29,7 +29,9 @@ or answer names an organization: the Store knows which Core it talks to from the
 URL it is configured with, and the shared secret proves both sides.
 
 Core's `CLOUD_CORE_SERVICE_SECRETS` is `{"store": ["<newest>", "<older>"]}`; the
-Store holds one value from that list. Keep both in the secret manager.
+Store holds one value from that list. Keep both in the secret manager. Fleet is the
+other service Core knows: it adds a `"fleet"` list, with `x-mentra-service: fleet`
+([Fleet integration](fleet-integration.md#following-cores-changes)).
 
 ## Routes
 
@@ -39,6 +41,7 @@ Store holds one value from that list. Keep both in the secret manager.
 | `POST /principal` | `PrincipalResponse`: the principal behind a bearer token and its workspaces, or `401 invalid_token`. |
 | `POST /memberships/check` | `{memberships}`: one person's role and capabilities in up to 100 workspaces, `null` where they are not a member. |
 | `GET /workspaces/:workspaceId` | `WorkspaceSummary` (name, status, authorization revision), or `404 workspace_not_found`. |
+| `GET /changes?after=&limit=` | The change feed: workspace events and `user.deleted` tombstones in commit order, for the Store and Fleet ([Fleet integration](fleet-integration.md#the-change-feed)). |
 | `POST /credentials` | `{credentialId, token}`: a workspace key limited to the named packages, minted for the Store on behalf of a staff member (`issuedBy.actorEmail`). The token is returned once. |
 | `POST /users/resolve-email` | `{mentraUserId}` of the Mentra account whose confirmed email this is (the Core user is created on first use), or `404 user_not_found`. |
 

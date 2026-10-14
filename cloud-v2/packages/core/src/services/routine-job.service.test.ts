@@ -58,6 +58,24 @@ test('bound observation never substitutes prepared input before executable prepa
   expect(bound.observation).not.toHaveProperty('boundInputSha256');
 });
 
+test('observation phase diagnostics follow existing reads without changing original custody or outcome',async()=>{
+  const f=fixture(),prepared=await f.prepare(), phases:string[]=[];
+  await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+  const before=structuredClone(f.row),result=await f.service.observation(selection.requestId,value=>phases.push(value));
+  expect(phases).toEqual(['request','delivery','result','projection']);expect(f.row).toEqual(before);
+  expect(result).toMatchObject({state:'preparing',terminal:false});expect(result).not.toHaveProperty('result');
+});
+
+test('deadline cancellation propagates phase through its nested observation and subsequent outer reload',async()=>{
+  const f=fixture(),prepared=await f.prepare(),phases:string[]=[];
+  await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+  f.advance(3*3600000+1);
+  const result=await f.service.observation(selection.requestId,value=>phases.push(value));
+  expect(phases).toEqual(['request','delivery','cancellation','request','delivery','result','projection','request','result','projection']);
+  expect(result).toMatchObject({state:'terminal',terminal:false});expect(f.row?.fleetCancellation?.reason).toContain('three-hour deadline');
+  expect(result).not.toHaveProperty('dispatchCompletion');
+});
+
 for (const state of ['queued', 'accepted'] as const) {
   test(`${state} observation exposes the retained executable digest without changing prepared identity or custody`, async () => {
     const f = fixture(), prepared = await f.prepare(), executableDigest = 'c'.repeat(64);
@@ -604,4 +622,29 @@ test('permanent preparation reports use the settled fence consumed by rerun read
  const reruns=new TestRerunService(undefined,undefined,undefined,{async get(){return f.row as any},async prepare(){throw Error('No admission')}});
  const attempt=await (reruns as any).requestAttempt(selection.requestId,{parent:{kind:'request',requestId:selection.requestId},memberId:selection.requestId,attemptNumber:1,attemptId:'attempt'});
  expect(attempt).toMatchObject({status:'not-run',publicationComplete:false,reason:'Routine new-routine does not support android.'});
+});
+
+
+test('an expired app grant refuses fleet binding before consuming the pending job; a fresh exact grant admits it', async () => {
+  const selected = {...definition, resourceRequirements: definition.resourceRequirements.map(resource => resource.kind === 'app'
+    ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource)};
+  const f = fixture(selected), prepared = await f.prepare(), frozen = structuredClone(f.row), time = Date.parse('2026-10-08T00:00:00Z');
+  const binding = {version: 938, revision: 'a'.repeat(40), installationId: 'accepted', configurationSha256: 'b'.repeat(64),
+    runtimeSha256: 'c'.repeat(64), routineApiVersion: 37, publicApiSha256: 'd'.repeat(64)};
+  const lane = structuredClone(f.lane);
+  const observed = {permission: 'camera' as const, status: 'granted' as const, rawStatus: 'authorized', observedAt: new Date(time - 120_001).toISOString(), binding,
+    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'verified lifetime', launchedAt: time - 1000,
+      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.3.0', build: '100', teamId: 'T5XXXL6N36', codeRequirement: 'verified signed requirement',
+      selectedBuild: {headSha: 'c'.repeat(40), archiveSha256: 'd'.repeat(64), receiptSha256: 'e'.repeat(64)}}, evidence: {sha256: 'f'.repeat(64)}};
+  lane.resources.find(resource => resource.kind === 'app')!.permissionObservations = [observed];
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), frameworkBinding: binding, lanes: [lane]};
+  f.offer([host]);
+  const input = {inputSha256: prepared.inputSha256, laneId: lane.id, descriptorRevision: lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
+  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('current accepting compatible lane');
+  expect(f.row).toEqual(frozen);
+  observed.observedAt = new Date(time).toISOString(); f.offer([host]);
+  expect((await f.service.bind(selection.requestId, host.hostId, input)).execute).toBe(true);
+  expect(f.row!.fleetBinding!.hostId).toBe(host.hostId);
 });
