@@ -68,3 +68,21 @@ test('discovery never interprets the provider result ceiling as absence', async 
  await expect(actions.runs('suite:one','2026-10-08T00:00:00Z')).rejects.toThrow('1,000-result GitHub bound');
  expect(calls).toBe(10);
 });
+
+test('concurrent members share one bounded discovery but retain exact filtering and fresh later reads',async()=>{
+ const rows=Array.from({length:512},(_,index)=>({id:index+1,display_title:`routine-job:member-${index%26}`,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/routine-device.yml',created_at:index===0?'2026-10-08T00:00:00Z':'2026-10-08T00:00:45Z',status:'queued',conclusion:null}));
+ let calls=0,status='queued';
+ const actions=new GithubRoutineJobActions({async token(){return 'test-token'}},async(url)=>{calls++;const page=Number(new URL(url).searchParams.get('page'));await Promise.resolve();return Response.json({workflow_runs:rows.slice((page-1)*100,page*100).map(row=>({...row,status}))})});
+ const found=await Promise.all(Array.from({length:26},(_,index)=>actions.runs(`member-${index}`,new Date(Date.parse('2026-10-08T00:00:35Z')+index*1000).toISOString())));
+ expect(calls).toBe(6);expect(found[0]!.some(row=>row.actionsRunId==='1')).toBe(false);
+ for(let index=0;index<26;index++)expect(found[index]!.every(row=>rows[Number(row.actionsRunId)-1]!.display_title===`routine-job:member-${index}`)).toBe(true);
+ status='completed';expect((await actions.runs('member-0','2026-10-08T00:00:35Z')).every(row=>row.status==='completed')).toBe(true);expect(calls).toBe(12);
+});
+
+test('shared discovery failures are discarded and cannot become cancellation absence proof',async()=>{
+ let calls=0,failed=true;
+ const actions=new GithubRoutineJobActions({async token(){return 'test-token'}},async()=>{calls++;return failed?new Response(null,{status:403}):Response.json({workflow_runs:[]})});
+ const results=await Promise.allSettled(Array.from({length:26},(_,index)=>actions.runs(`member-${index}`,'2026-10-08T00:00:00Z')));
+ expect(calls).toBe(1);expect(results.every(result=>result.status==='rejected')).toBe(true);
+ failed=false;expect(await actions.runs('member-0','2026-10-08T00:00:00Z')).toEqual([]);expect(calls).toBe(2);
+});
