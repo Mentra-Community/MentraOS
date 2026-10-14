@@ -911,6 +911,7 @@ extension MentraLive: CBCentralManagerDelegate {
                 "gatt_connect",
                 "id=\(peripheral.identifier.uuidString) name=\(peripheral.name ?? "-")"
             )
+            Self.clearStaleIosBondPrompt()
 
             self.stopConnectionTimeout()
             self.clearPendingReconnectTracking()
@@ -1014,6 +1015,12 @@ extension MentraLive: CBCentralManagerDelegate {
                 return
             }
 
+            // The glasses deleted the BLE bond. iOS will not open GATT until the user
+            // forgets the glasses in Bluetooth settings, so retrying only repeats error 14.
+            if self.stopForStaleIosBond(error) {
+                return
+            }
+
             // Entering pairing forgets the owner, so repeated auth failures while reconnecting
             // saved secure glasses mean this phone lost ownership even if it missed
             // entering_pairing_mode. One failure alone is not enough.
@@ -1052,6 +1059,12 @@ extension MentraLive: CBCentralManagerDelegate {
             self.closeL2capFileChannel()
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
+
+            // The glasses deleted the BLE bond. iOS will not open GATT until the user
+            // forgets the glasses in Bluetooth settings, so retrying only repeats error 14.
+            if self.stopForStaleIosBond(error) {
+                return
+            }
 
             // Entering pairing forgets the owner, so repeated auth failures while reconnecting
             // saved secure glasses mean this phone lost ownership even if it missed
@@ -1959,9 +1972,44 @@ class MentraLive: NSObject, SGCManager {
                 || error.code == CBATTError.insufficientEncryption.rawValue
         }
         if error.domain == CBErrorDomain {
-            return error.code == CBError.peerRemovedPairingInformation.rawValue
+            return Self.isPeerRemovedPairingInformation(error)
         }
         return false
+    }
+
+    static func isPeerRemovedPairingInformation(_ error: Error?) -> Bool {
+        guard let error = error as NSError?, error.domain == CBErrorDomain else { return false }
+        return error.code == CBError.peerRemovedPairingInformation.rawValue
+    }
+
+    static let staleIosBondPromptedAtKey = "mentra_live_stale_ios_bond_prompted_at"
+    static let staleIosBondPairFailure = "errors:iosForgetGlassesBluetooth"
+
+    /// A new pairing attempt should be allowed to show the prompt again if it still fails.
+    static func clearStaleIosBondPrompt() {
+        UserDefaults.standard.removeObject(forKey: staleIosBondPromptedAtKey)
+    }
+
+    /// Error 14 means this phone's Bluetooth keys no longer match the glasses. Show the
+    /// forget-in-Settings prompt once, and do not schedule another reconnect from this failure.
+    private func stopForStaleIosBond(_ error: Error?) -> Bool {
+        let peerRemoved = Self.isPeerRemovedPairingInformation(error)
+        guard peerRemoved else { return false }
+        cancelPendingReconnect(reason: "stale_ios_bond")
+        let now = Date().timeIntervalSince1970
+        let promptedAt = UserDefaults.standard.double(forKey: Self.staleIosBondPromptedAtKey)
+        guard MentraLiveConnectionAttemptPolicy.shouldPromptToForgetStaleIosBond(
+            peerRemovedPairingInformation: true,
+            promptedAt: promptedAt,
+            now: now
+        ) else {
+            pairFlow("stale_ios_bond", "prompt=suppressed")
+            return true
+        }
+        UserDefaults.standard.set(now, forKey: Self.staleIosBondPromptedAtKey)
+        pairFlow("stale_ios_bond", "prompt=forget_bluetooth")
+        Bridge.sendPairFailureEvent(Self.staleIosBondPairFailure)
+        return true
     }
 
     /// The saved glasses run secure-pairing firmware, learned from their last `pairing_info`.

@@ -9,6 +9,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
+import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR} from "@/utils/pairing/iosStaleBond"
+import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
 export default function PairingFailureScreen() {
   const {theme} = useAppTheme()
@@ -42,6 +44,15 @@ export default function PairingFailureScreen() {
     clearHistoryAndGoHome()
   }
 
+  const needsBluetoothForget = error === IOS_FORGET_GLASSES_BLUETOOTH_ERROR
+
+  const handleOpenSettings = async () => {
+    const success = await SettingsNavigationUtils.openBluetoothSettings()
+    if (!success) {
+      console.error("Failed to open Bluetooth settings")
+    }
+  }
+
   return (
     <Screen preset="fixed" className="" safeAreaEdges={["top", "bottom"]}>
       <Header />
@@ -66,7 +77,16 @@ export default function PairingFailureScreen() {
         />
 
         <View className="w-full gap-3 flex-grow items-end justify-end">
-          <Button tx="common:tryAgain" preset="primary" onPress={handleRetry} className="w-full" />
+          {needsBluetoothForget ? (
+            <Button tx="pairing:openSettings" preset="primary" onPress={handleOpenSettings} className="w-full" />
+          ) : null}
+
+          <Button
+            tx="common:tryAgain"
+            preset={needsBluetoothForget ? "alternate" : "primary"}
+            onPress={handleRetry}
+            className="w-full"
+          />
 
           <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} className="w-full" />
         </View>

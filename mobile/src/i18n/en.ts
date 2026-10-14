@@ -1264,6 +1264,8 @@ const en = {
     g2ConnectionTimedOut: "Couldn't finish connecting both G2 arms.",
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
+    iosForgetGlassesBluetooth:
+      "Your iPhone still has an old Bluetooth pairing for these glasses, and the glasses removed theirs. Open Settings, tap Bluetooth, and forget the glasses. Put the glasses in pairing mode, then try again.",
   },
   phoneWifi: {
     videoReason: "Your phone needs Wi-Fi to receive video from your glasses.",

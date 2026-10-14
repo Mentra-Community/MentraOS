@@ -192,6 +192,26 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         XCTAssertTrue(MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: true))
     }
 
+    func testStaleIosBondPromptsOnceUntilTheCooldownPasses() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertTrue(
+            Policy.shouldPromptToForgetStaleIosBond(peerRemovedPairingInformation: true, promptedAt: 0, now: 100)
+        )
+        XCTAssertFalse(
+            Policy.shouldPromptToForgetStaleIosBond(peerRemovedPairingInformation: true, promptedAt: 90, now: 100)
+        )
+        XCTAssertTrue(
+            Policy.shouldPromptToForgetStaleIosBond(
+                peerRemovedPairingInformation: true,
+                promptedAt: 100,
+                now: 100 + Policy.staleIosBondPromptCooldownSeconds
+            )
+        )
+        XCTAssertFalse(
+            Policy.shouldPromptToForgetStaleIosBond(peerRemovedPairingInformation: false, promptedAt: 0, now: 100)
+        )
+    }
+
     func testOnlySecureFirmwareOutsideExplicitPairingRejectsAnOwner() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         XCTAssertTrue(Policy.isOwnerRejection(isAuthFailure: true, explicitPairing: false, secureFirmware: true))

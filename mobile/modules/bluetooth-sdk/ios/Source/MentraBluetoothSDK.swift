@@ -548,6 +548,9 @@ public final class MentraBluetoothSDK {
                 cancelConnectionAttempt()
             }
         }
+        if !isController {
+            MentraLive.clearStaleIosBondPrompt()
+        }
         if options.saveAsDefault && !isController {
             setDefaultDevice(device)
         } else if !isController {

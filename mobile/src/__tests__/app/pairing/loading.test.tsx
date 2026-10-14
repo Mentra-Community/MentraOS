@@ -191,6 +191,19 @@ describe("pairing loading screen", () => {
     },
   )
 
+  it("routes an iOS stale Bluetooth bond to the forget-glasses prompt", async () => {
+    render(<GlassesPairingLoadingScreen />)
+    await startPairingKickoff()
+    await act(async () => {
+      emitBluetoothSdkEvent("pair_failure", {error: "errors:iosForgetGlassesBluetooth"})
+    })
+    expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+      error: "errors:iosForgetGlassesBluetooth",
+      deviceModel: "Mentra Live",
+    })
+    expect(replace).not.toHaveBeenCalledWith("/pairing/unpair-even", expect.anything())
+  })
+
   it("shows booting after glasses_not_ready and routes pair failures to the failure screen", async () => {
     const {getByText} = render(<GlassesPairingLoadingScreen />)
     await startPairingKickoff()

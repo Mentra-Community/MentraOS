@@ -207,6 +207,22 @@ enum MentraLiveConnectionAttemptPolicy {
         ok
     }
 
+    /// iOS CoreBluetooth error 14: the glasses deleted their BLE bond and this phone still
+    /// has the old keys. GATT never opens, so the glasses cannot ask for a wipe. Stop
+    /// reconnecting and tell the user to forget the glasses in Bluetooth settings.
+    /// `promptedAt` is 0 when this phone has not shown that prompt yet.
+    static let staleIosBondPromptCooldownSeconds: TimeInterval = 30
+
+    static func shouldPromptToForgetStaleIosBond(
+        peerRemovedPairingInformation: Bool,
+        promptedAt: TimeInterval,
+        now: TimeInterval
+    ) -> Bool {
+        guard peerRemovedPairingInformation else { return false }
+        if promptedAt <= 0 { return true }
+        return now - promptedAt >= staleIosBondPromptCooldownSeconds
+    }
+
     /// A connect-time authentication failure on saved secure glasses. Legacy firmware never
     /// rejects a non-owner on purpose, and during an explicit pairing attempt the user is
     /// pairing anew. This is one observation; `MentraLiveOwnerRejectionStreak` decides when it
