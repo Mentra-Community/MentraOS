@@ -119,6 +119,10 @@ push/PR/review/merge outcomes before retrying. Continue this lifecycle without
 asking for authorization already supplied by the task. Keep credentials, private
 logs and recordings out of public PRs/comments.
 
+Before merging a fixing MentraOS PR, check for its active ordinary or tagged
+`Routine tests` children and follow [PR check sequencing](../select-pr-routines/SKILL.md#verify-a-fix-against-its-original-failure).
+Frozen build inputs do not let a check-owned run continue after PR closure.
+
 ## Choose useful verification
 
 First assess whether the evidence supports a one-shot fix: the cause is clear, the
