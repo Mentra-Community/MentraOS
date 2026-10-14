@@ -166,6 +166,16 @@ describe("record", () => {
     expect(FleetRecordSchema.safeParse(record).success).toBe(false)
   })
 
+  test("a snapshot carries a glasses binding exactly when it includes glasses", () => {
+    const record = loadRecord("report-valid-snapshot.json")
+    const {glasses, ...phoneOnly} = record.payload
+    expect(glasses).toBeDefined()
+    const issues = (candidate: Json) => FleetRecordSchema.safeParse(candidate).error?.issues ?? []
+    expect(issues({...record, payload: phoneOnly}).map((issue) => issue.path)).toEqual([["deviceBinding"]])
+    const {deviceBinding: _binding, ...unbound} = record
+    expect(FleetRecordSchema.safeParse({...unbound, payload: phoneOnly}).success).toBe(true)
+  })
+
   test("a photo stage failed names the stage it failed at, and only then", () => {
     const record = loadRecord("report-valid-photo-operation.json")
     const parse = (payload: Json) => FleetRecordSchema.safeParse({...record, payload}).success
