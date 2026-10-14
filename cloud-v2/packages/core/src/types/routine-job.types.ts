@@ -27,6 +27,15 @@ export const portableRequirementsSchema = z.object({platform: routinePlatformSch
   });
 export const routineJobPreparationSchema = z.object({routineSource: routineSourceRefSchema, definitionSha256: jobHashSchema,
   definition: publishedRoutineDefinitionSchema, requirements: portableRequirementsSchema}).strict();
+/** Read-only probe candidate; this is not a product binding or execution acknowledgement. */
+export const routineQualificationTargetSchema = z.object({jobId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
+  laneId: frameworkIdentitySchema, inputSha256: jobHashSchema, deadline: z.string().datetime({offset: true}),
+  selection: portableRoutineSelectionSchema, requirements: portableRequirementsSchema,
+  target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
+    value.selection.platform === 'ios-on-mac' && value.requirements.platform === value.selection.platform &&
+    (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)),
+  'Qualification target differs from its selected job, platform or explicit lane constraint');
+export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;
 export const completeRoutineJobPreparationSchema = routineJobPreparationSchema.omit({requirements: true}).extend({inputSha256: jobHashSchema});
 export const routineJobBindingSchema = z.object({jobId: frameworkIdentitySchema, requestId: frameworkIdentitySchema,
   hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema, descriptorRevision: jobHashSchema,
