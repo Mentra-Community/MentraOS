@@ -214,8 +214,10 @@ never files an incident, starts recording, scans Bluetooth or joins a network.
 
 An attended operator may separately send
 `com.mentra://test/request-permissions?request_id=<batch>&readback_id=<fresh-nonce>&features=camera,microphone,location,bluetooth&timeout_ms=125000`
-to the already selected, foregrounded Mentra App. `mobile/scripts/request-app-permissions.sh`
-constructs and opens that URL. The caller owns the normal app reservation and must
+to the already selected, foregrounded Mentra App through the owning framework's
+verified original-PID/lifetime URL carrier. A bare `open` or default scheme handler
+can target another installed build and is not a commissioning entrypoint.
+The caller owns the normal app reservation and must
 show the person which selected recipient and permissions are about to be requested.
 The app validates distinct bounded IDs, a nonempty unique subset of those four
 features and a 1–125 second budget. It records the initial raw snapshot under the
