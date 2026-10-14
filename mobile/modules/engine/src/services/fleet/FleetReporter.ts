@@ -133,7 +133,7 @@ interface Run {
   /** The next attempt waits out a backoff the server or a failure asked for. */
   backingOff: boolean
   uploading: boolean
-  /** Failed attempts since the last answer: the n of the backoff. */
+  /** Failed attempts since the last answer that settled a record: the n of the backoff. */
   failures: number
   batchLimit: number
   /** Below the batch sizes Core refused lately: the limit does not grow back to a refused size for a while. */

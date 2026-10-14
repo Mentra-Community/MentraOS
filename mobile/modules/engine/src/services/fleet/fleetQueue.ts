@@ -82,7 +82,8 @@ export interface FleetQueue {
    * sequence counters, and its loss counters too once they are themselves older than 7 days: a gap report that
    * old, for an account that never returned, can never be delivered. Never throws.
    *
-   * The reporter calls this at start and on each upload tick. `now` defaults to the queue's clock.
+   * The reporter calls this at start, and then at most hourly from its upload loop (only when an upload is due, so
+   * an idle reporter does not wake to sweep). `now` defaults to the queue's clock.
    */
   sweepExpired(now?: number): void
   /** Forgets everything held for the partition: records, losses and sequence counters. */

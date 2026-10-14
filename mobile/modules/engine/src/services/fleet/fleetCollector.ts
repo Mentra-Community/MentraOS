@@ -20,10 +20,16 @@
  * wake-up and an upload. While only the engine is active that 15-minute snapshot is written only if it would say
  * something new. A phone running only the engine all day so writes about 100 records: a checkpoint every 15 minutes.
  *
- * Time counts only while the collector was watching. The monotonic clock runs while the device is awake, so a
- * wall-clock jump (the device slept, or the clock was changed) ends the sessions at the monotonic time that was
- * observed and records the jump as a gap; a checkpoint that is overdue by the monotonic clock means the process was
- * suspended while the device was awake, and the sessions end at their last checkpoint instead.
+ * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
+ * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
+ * below handle both:
+ * - On Android it is CLOCK_MONOTONIC, which pauses in deep sleep. A sleep shows as the wall clock running ahead of
+ *   it: the sessions end at the monotonic time that was observed, and the jump is a gap.
+ * - On iOS libc++'s steady clock reads CLOCK_MONOTONIC_RAW, which keeps counting through sleep. A sleep shows as a
+ *   checkpoint overdue by the monotonic clock: nothing ran, so the sessions end at their last checkpoint, and the
+ *   span since it is a gap.
+ * On either platform, a checkpoint overdue by the monotonic clock means the process was suspended while that clock
+ * ran, and a wall-clock jump the monotonic clock did not share is a clock that was changed.
  *
  * Nothing here may break or slow the paths it watches: every entry point catches its own failures, and nothing
  * thrown by the queue, the clock or a store reaches a caller.
@@ -622,12 +628,15 @@ class CollectorRun {
    * Whether the span since the last checkpoint can be believed, and what to do if it cannot. Returns true if it
    * handled a break (the sessions have then been closed and started again).
    *
-   * The monotonic clock stops while the device sleeps, so it measures awake time, and a timer that was due and did
-   * not fire means the process was not running. Two things can be wrong with the span:
-   * - The checkpoint is overdue by the monotonic clock: the device was awake and nothing here was running. None of
-   *   it was observed, so the sessions end at their last checkpoint.
-   * - The wall clock parted from the monotonic clock: the device slept, or somebody changed the clock. The
-   *   monotonic time was observed and counts, so the sessions end at it; only the jump itself is a gap.
+   * The monotonic clock runs while the device is awake; through sleep it pauses on Android and keeps counting on iOS
+   * (see the file header). A timer that was due by it and did not fire means the process was not running. Two things
+   * can be wrong with the span:
+   * - The checkpoint is overdue by the monotonic clock: nothing here was running while that clock ran (the process
+   *   was suspended, or on iOS the device also slept). None of it was observed, so the sessions end at their last
+   *   checkpoint.
+   * - The wall clock parted from the monotonic clock: the device slept with a clock that pauses in sleep (Android),
+   *   or somebody changed the clock. The monotonic time was observed and counts, so the sessions end at it; only the
+   *   jump itself is a gap.
    * The first wins: a reporter that was not running observed nothing, whatever the wall clock did.
    */
   private checkClock(): boolean {
