@@ -1,3 +1,4 @@
+import type {Logger} from "@mentra/cloud-shared"
 import {afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test} from "bun:test"
 import * as trustedEmail from "../account/trusted-email.service"
 import {PHONE_EMAIL_CACHE_MAX, phoneEmail, resetPhoneEmailCache} from "./phone-email"
@@ -90,5 +91,75 @@ describe("the phone principal's email", () => {
     expect(lookup).toHaveBeenCalledTimes(PHONE_EMAIL_CACHE_MAX + 1)
     await phoneEmail("mu_1")
     expect(lookup).toHaveBeenCalledTimes(PHONE_EMAIL_CACHE_MAX + 2)
+  })
+})
+
+describe("the warning for a lookup that failed", () => {
+  interface Warning {
+    fields: Record<string, unknown>
+    message: string
+  }
+
+  /** A request's logger: it records what it is given, bound to `bound` as `requestContext` binds the request id. */
+  function recordingLogger(bound: Record<string, unknown> = {}) {
+    const warnings: Warning[] = []
+    const log = {
+      warn: (fields: Record<string, unknown>, message: string) => warnings.push({fields: {...bound, ...fields}, message}),
+    } as unknown as Logger
+    return {log, warnings}
+  }
+
+  test("is logged on the request's logger, so it names the request, and carries why and never the email", async () => {
+    lookup.mockRejectedValue(new Error("the directory said person@example.test is unreachable"))
+    const {log, warnings} = recordingLogger({reqId: "req_1"})
+
+    expect(await phoneEmail("mu_a", {log})).toBeNull()
+
+    expect(warnings).toEqual([
+      {fields: {reqId: "req_1", reason: "Error"}, message: "Fleet phone principal sent without an email"},
+    ])
+    expect(JSON.stringify(warnings)).not.toContain("person@example.test")
+  })
+
+  test("is logged at most once a minute, however many phones fail, and then says how many it left out", async () => {
+    lookup.mockRejectedValue(new Error("account directory unavailable"))
+    const {log, warnings} = recordingLogger({reqId: "req_1"})
+
+    for (let i = 0; i < 50; i++) await phoneEmail(`mu_${i}`, {log})
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]!.fields).not.toHaveProperty("suppressed")
+
+    setSystemTime(new Date(Date.now() + 60_000 - 1))
+    for (let i = 50; i < 60; i++) await phoneEmail(`mu_${i}`, {log})
+    expect(warnings).toHaveLength(1)
+
+    setSystemTime(new Date(Date.now() + 2))
+    await phoneEmail("mu_late", {log})
+    expect(warnings).toHaveLength(2)
+    // 49 failures after the first one, then ten more, were left out before this one.
+    expect(warnings[1]!.fields).toMatchObject({reason: "Error", suppressed: 59})
+
+    // The count starts over: the next minute's warning has nothing before it.
+    setSystemTime(new Date(Date.now() + 60_000))
+    await phoneEmail("mu_next", {log})
+    expect(warnings).toHaveLength(3)
+    expect(warnings[2]!.fields).not.toHaveProperty("suppressed")
+  })
+
+  test("a lookup that is answered from the cache, or that succeeds, is not a failure to warn about", async () => {
+    const {log, warnings} = recordingLogger()
+    lookup.mockRejectedValueOnce(new Error("down"))
+
+    await phoneEmail("mu_a", {log})
+    await phoneEmail("mu_a", {log})
+    await phoneEmail("mu_ok", {log})
+
+    expect(warnings).toHaveLength(1)
+  })
+
+  test("goes to Core's own logger when the caller names none", async () => {
+    lookup.mockRejectedValue(new Error("account directory unavailable"))
+
+    expect(await phoneEmail("mu_a")).toBeNull()
   })
 })

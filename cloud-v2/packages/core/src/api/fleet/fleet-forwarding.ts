@@ -38,15 +38,29 @@
  *  - an upstream 401 reaches the caller as a 403 with Fleet's body: phones and the admin dashboard
  *    read a 401 as "your session ended, sign in again", and a Fleet answer never means that. Fleet
  *    should answer 403 for "not allowed" itself;
+ *  - an upstream 2xx whose body is not JSON (a `content-type` other than `application/json`, with or
+ *    without parameters, or none): 503 `{error: "fleet_unavailable"}`, logged at warn with the `reason`
+ *    `content_type_not_json`. A 204, 205 or 304, a `HEAD` answer and an empty body have nothing to render
+ *    and are not checked;
  *  - any other upstream status and body pass through, with `content-type`, `cache-control` and
  *    `retry-after` only. A 204, 205 or 304, and any answer to a `HEAD`, has no body: Core does not
  *    read one and adds no `content-type` of its own.
+ *
+ * What the browser is told. The admin session cookie is `SameSite=Lax`, so a top-level `GET` to
+ * `/api/admin/fleet/<rest>` carries it and what comes back is read as a document of the admin origin
+ * (on a Private Cloud, of Core's own, where `/api/*` has no portal CSP). Every answer of the JSON routes
+ * therefore carries `x-content-type-options: nosniff` and `content-security-policy: default-src 'none';
+ * frame-ancestors 'none'; sandbox`, Core's own refusals (a gate's 401 or 403, a 400, a 404, a 413, a 503)
+ * and Fleet's relayed answers alike, and only JSON is relayed as a success. The labels are set before the
+ * gates run and Fleet cannot replace them: its `content-security-policy` and `x-content-type-options` are
+ * not among the headers relayed.
  *
  * Correlation. Core sends Fleet its request id (`x-request-id`, the id `requestContext` gave this
  * request) and answers with Fleet's `x-request-id` when Fleet returns one, Core's otherwise. Each
  * request that reaches Fleet is logged once with `{reqId, upstreamRequestId, status, ms}`: at debug
  * for a success, at info for an answer Fleet gave that is not one (a 403, a 429, a 404...), and at
- * warn for what Core could not relay as Fleet said it (a failure, a timeout, an upstream 401).
+ * warn for what Core could not relay as Fleet said it (a failure, a timeout, an upstream 401, a success
+ * that is not JSON).
  * Never a body, a header, a query or a secret.
  *
  * A 503 Core gives for an upstream 5xx repeats Fleet's `Retry-After` when it is a whole number of
@@ -94,7 +108,9 @@
  *  - the caller gets `content-type`, `etag`, `last-modified`, `cache-control` and `vary` (added to any `Vary`
  *    already on the response), `content-length` (the length of the body it gets) and `x-request-id` as above.
  *    Core adds `x-content-type-options: nosniff` and `cross-origin-resource-policy: same-origin` to every
- *    answer of the route, its own refusals included;
+ *    answer of the route, its own refusals included. The JSON routes' sandbox policy (above) is on the
+ *    route's own JSON refusals but not on a relayed asset, which has to run in the portal: it carries
+ *    only SVG's policy, below;
  *  - the content type is checked first, for an error answer too: `text/javascript`, `application/javascript`,
  *    `text/css`, `image/png|jpeg|webp|gif|avif`, `font/woff2|woff` and `application/json` are relayed as
  *    Fleet sent them. `image/svg+xml` is relayed under Core's own `content-security-policy: default-src 'none';
@@ -151,6 +167,15 @@ const FORWARDED_REQUEST_HEADERS = ["content-type", "accept"] as const
 
 /** The only upstream headers copied back, besides `x-request-id`. */
 const PASSED_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after"] as const
+
+/** Core's labels on every answer of the JSON routes: data, which nothing may render, frame or run. */
+const JSON_ANSWER_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'; sandbox",
+} as const
+
+/** The only media type a successful JSON-route answer may have: what the Fleet API speaks, and nothing a browser renders. */
+const JSON_MEDIA_TYPE = "application/json"
 
 /** Statuses that never carry a body. */
 const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304])
@@ -350,10 +375,10 @@ function callerOf(c: AppContext, audience: Audience): Caller | Response {
  * The caller as Fleet is told about it. Built from the authenticated caller only: nothing in the
  * request's query, body or headers reaches it.
  */
-async function principalOf(caller: Caller): Promise<ForwardedPrincipal> {
+async function principalOf(caller: Caller, log: Logger): Promise<ForwardedPrincipal> {
   if (caller.audience === "client") {
     const {mentraUserId, tenantId, sessionId} = caller.phone
-    return {kind: "phone", mentraUserId, tenantId, sessionId, email: await phoneEmail(mentraUserId)}
+    return {kind: "phone", mentraUserId, tenantId, sessionId, email: await phoneEmail(mentraUserId, {log})}
   }
   const {person} = caller
   return {
@@ -439,11 +464,11 @@ async function signRequest(
   request: {method: string; body: string; copy: readonly string[]},
 ): Promise<SignedRequest> {
   const {caller, fleet, suffix, query} = admitted
-  const principal = await principalOf(caller)
+  const requestId = c.get("reqId") ?? ulid()
+  const principal = await principalOf(caller, requestLogger(c, requestId))
   // The one URL that is signed and sent, so the signature covers exactly the path and query on the wire.
   const target = upstreamTarget(fleet.baseUrl, caller.audience, suffix, query)
   const timestampMs = Date.now()
-  const requestId = c.get("reqId") ?? ulid()
 
   const headers = new Headers()
   for (const name of request.copy) {
@@ -562,6 +587,13 @@ function forward(audience: Audience): Handler<AppEnv> {
           logged({status: 503, upstreamStatus: status, upstreamRequestId})
           return unavailable(c)
         }
+        // A success is JSON or it is not Fleet's API: what the caller's browser could render as a page is
+        // not relayed. An empty body has nothing to render. An error answer is relayed as Fleet gave it,
+        // under the labels every answer carries.
+        if (status >= 200 && status < 300 && payload.byteLength > 0 && !isJsonContentType(upstreamHeaders.get("content-type"))) {
+          logged({status: 503, upstreamStatus: status, upstreamRequestId, reason: "content_type_not_json"})
+          return unavailable(c)
+        }
       }
     } catch (err) {
       // A network error or the timeout: what failed is named, never what was said.
@@ -602,6 +634,11 @@ function declaredLength(headers: Headers): number | null {
 /** The media type of a `content-type`: lowercase, no parameters (`Text/JavaScript; charset=x` is `text/javascript`). */
 function mediaType(contentType: string | null): string {
   return (contentType ?? "").split(";", 1)[0]!.trim().toLowerCase()
+}
+
+/** Whether a `content-type` is JSON: `application/json` with or without parameters, and a single value (a comma means a list). */
+function isJsonContentType(contentType: string | null): boolean {
+  return contentType !== null && !contentType.includes(",") && mediaType(contentType) === JSON_MEDIA_TYPE
 }
 
 /** Whether the body is sent as it is (no content-encoding), so a declared length is the length of what is relayed. */
@@ -712,11 +749,13 @@ function forwardAsset(): Handler<AppEnv> {
     if (vary) c.header("vary", vary, {append: true})
     if (hasRepresentation) {
       if (contentType) c.header("content-type", contentType)
-      if (contentSecurityPolicy) c.header("content-security-policy", contentSecurityPolicy)
       // The length of what is sent; for a HEAD, the length Fleet declared for the body a GET would get.
       if (payload) c.header("content-length", String(payload.byteLength))
       else if (declared !== null) c.header("content-length", String(declared))
     }
+    // A relayed asset runs in the portal, so the JSON routes' sandbox policy (set ahead of the gates) must not
+    // stay on it: it carries SVG's own policy, which replaces any Fleet sent, or none.
+    c.header("content-security-policy", contentSecurityPolicy ?? undefined)
     // Replaces the id `requestContext` set: the caller gets Fleet's when Fleet returned one.
     c.header(REQUEST_ID_HEADER, upstreamRequestId || signed.requestId)
     // A 401 from Core means "sign in again" to every client; Fleet's never does, so it is relayed as a 403.
@@ -724,6 +763,16 @@ function forwardAsset(): Handler<AppEnv> {
     logged({status: relayed, upstreamStatus: status, upstreamRequestId})
     return c.newResponse(payload, relayed)
   }
+}
+
+/**
+ * Core's labels on every answer of a JSON route, set ahead of the gates so that their refusals carry them
+ * too. They are set on the context, so a relayed answer, a refusal and the caller's rotated session cookie
+ * all keep them; Fleet's headers are copied one by one and none of these is among them.
+ */
+const jsonAnswerHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
+  for (const [name, value] of Object.entries(JSON_ANSWER_HEADERS)) c.header(name, value)
+  await next()
 }
 
 /** Core's security headers on every answer of the asset route, its own refusals included. */
@@ -761,7 +810,7 @@ const phoneAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
  * request with no user on the context is refused (401).
  */
 export const clientFleetApi = new Hono<AppEnv>()
-clientFleetApi.use("*", phoneAuth)
+clientFleetApi.use("*", jsonAnswerHeaders, phoneAuth)
 clientFleetApi.all("/*", limitBody, forward("client"))
 
 /**
@@ -769,7 +818,12 @@ clientFleetApi.all("/*", limitBody, forward("client"))
  * (a key gets 403) who holds `organization.fleet.administer`. A request with no principal is refused (401).
  */
 export const adminFleetApi = new Hono<AppEnv>()
-adminFleetApi.use("*", requireUserPrincipal("admin"), requireOrganizationCapability("organization.fleet.administer"))
+adminFleetApi.use(
+  "*",
+  jsonAnswerHeaders,
+  requireUserPrincipal("admin"),
+  requireOrganizationCapability("organization.fleet.administer"),
+)
 // The UI assets, ahead of the JSON forwarder and behind the gates above: GET and HEAD relay the asset, any
 // other method is a 405. Only the asset route may answer under `ui`; the forwarder refuses it.
 adminFleetApi.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)

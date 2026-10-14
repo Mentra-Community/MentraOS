@@ -851,7 +851,7 @@ describe("limits and failures", () => {
 
   test("a response exactly at the cap passes through", async () => {
     configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16"})
-    respond = () => new Response("x".repeat(16), {headers: {"content-type": "text/plain"}})
+    respond = () => new Response("x".repeat(16), {headers: {"content-type": "application/json"}})
 
     const response = await phone("/devices")
 
@@ -863,11 +863,11 @@ describe("limits and failures", () => {
     const MIB10 = 10 * 1024 * 1024
     for (const value of [undefined, "0", "-5", "abc", "1.5", ""]) {
       configure(value === undefined ? {} : {CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: value})
-      respond = () => new Response("x".repeat(MIB10), {headers: {"content-type": "text/plain"}})
+      respond = () => new Response("x".repeat(MIB10), {headers: {"content-type": "application/json"}})
       const atCap = await phone("/devices")
       expect([value, atCap.status, (await atCap.arrayBuffer()).byteLength]).toEqual([value, 200, MIB10])
 
-      respond = () => new Response("x".repeat(MIB10 + 1), {headers: {"content-type": "text/plain"}})
+      respond = () => new Response("x".repeat(MIB10 + 1), {headers: {"content-type": "application/json"}})
       const overCap = await phone("/devices")
       expect([value, overCap.status]).toEqual([value, 503])
     }
@@ -1135,6 +1135,249 @@ describe("what comes back", () => {
   })
 })
 
+describe("what the JSON routes answer with", () => {
+  // The admin session cookie is SameSite=Lax, so a top-level GET to `/api/admin/fleet/<rest>` carries it, and
+  // what the route answers is read by the browser as a document of the admin origin. Core therefore labels
+  // every answer of the JSON routes as data nothing may render or run, and relays only JSON.
+  const NOSNIFF = "nosniff"
+  const SANDBOX_CSP = "default-src 'none'; frame-ancestors 'none'; sandbox"
+  const ROTATED = "__Host-mentra_admin_session=rotated-value; Path=/; HttpOnly; Secure; SameSite=Lax"
+
+  const securityHeaders = (response: Response) => ({
+    nosniff: response.headers.get("x-content-type-options"),
+    csp: response.headers.get("content-security-policy"),
+  })
+  const labelled = {nosniff: NOSNIFF, csp: SANDBOX_CSP}
+
+  /** One request on each surface, as the caller each needs. */
+  const surfaces: Array<[string, (rest: string, init?: Init) => Promise<Response> | Response]> = [
+    ["the phone's", (rest, init) => phone(rest, init)],
+    ["the admin's", (rest, init) => admin(as("organization-admin", person(true)), rest, init)],
+  ]
+
+  test("every answer carries nosniff and a sandbox CSP: relayed ones, Fleet's failures and Core's own", async () => {
+    const organizationAdmin = as("organization-admin", person(true))
+    const answers: Record<string, [() => Response | Promise<Response>, Init?]> = {
+      "a 200": [() => Response.json({ok: true})],
+      "a 201 with a charset": [
+        () => new Response("{}", {status: 201, headers: {"content-type": "application/json; charset=utf-8"}}),
+      ],
+      "a 4xx": [() => Response.json({error: "nope"}, {status: 404})],
+      "a 204": [() => new Response(null, {status: 204})],
+      "a 304": [() => new Response(null, {status: 304})],
+      "a HEAD": [() => new Response(null, {status: 200, headers: {"content-type": "application/json"}}), {method: "HEAD"}],
+      "an upstream 401, relayed as 403": [() => Response.json({error: "x"}, {status: 401})],
+      "an upstream 500, answered 503": [() => Response.json({error: "x"}, {status: 500})],
+      "an upstream redirect, answered 503": [() => new Response(null, {status: 302, headers: {location: "/x"}})],
+      "an html answer, answered 503": [() => new Response("<script>1</script>", {headers: {"content-type": "text/html"}})],
+    }
+
+    configure()
+    for (const [name, [reply, init]] of Object.entries(answers)) {
+      respond = reply
+      for (const response of [await phone("/overview", init), await admin(organizationAdmin, "/overview", init)]) {
+        expect([name, securityHeaders(response)]).toEqual([name, labelled])
+      }
+    }
+
+    // Core's own answers, before anything is forwarded.
+    const own: Record<string, () => Promise<Response> | Response> = {
+      "a Fleet that is not installed": () => {
+        delete process.env.CLOUD_CORE_FLEET_URL
+        return admin(organizationAdmin, "/overview")
+      },
+      "a Fleet that is misconfigured": () => {
+        process.env.CLOUD_CORE_FLEET_URL = upstreamUrl()
+        delete process.env.CLOUD_CORE_FLEET_SECRET
+        return phone("/overview")
+      },
+      "a body that is too large": () => {
+        configure({CLOUD_CORE_FLEET_MAX_BODY_BYTES: "4"})
+        return admin(organizationAdmin, "/overview", {method: "POST", body: "too long for it"})
+      },
+      "a body that is not UTF-8": () => {
+        configure()
+        return admin(organizationAdmin, "/overview", {method: "POST", body: new Uint8Array([0xff])})
+      },
+      "an unsafe path": () => {
+        configure()
+        return root.fetch(rawUrlRequest("http://localhost/api/client/fleet/a/../b", {authorization: "Bearer phone:mu_phone"}))
+      },
+      "an unsafe admin path": () => {
+        configure()
+        return root.fetch(rawUrlRequest("http://localhost/api/admin/fleet/a/../b", {"x-test-principal": organizationAdmin}))
+      },
+      "a spelling of ui the forwarder refuses": () => {
+        configure()
+        return admin(organizationAdmin, "/UI/entry.js")
+      },
+      "a phone with no token": () => {
+        configure()
+        return root.request("http://localhost/api/client/fleet/overview")
+      },
+      "a person without the capability": () => {
+        configure()
+        return admin(as("member", person(false)), "/overview")
+      },
+      "a key": () => {
+        configure()
+        return admin(as("operator-key", key("organization", [...OPERATOR_KEY_SCOPES])), "/overview")
+      },
+      "a person without the capability, Fleet not installed": () => {
+        delete process.env.CLOUD_CORE_FLEET_URL
+        return admin(as("member", person(false)), "/overview")
+      },
+    }
+    for (const [name, answer] of Object.entries(own)) {
+      const response = await answer()
+      expect([name, response.status >= 400, securityHeaders(response)]).toEqual([name, true, labelled])
+    }
+  })
+
+  test("the labels are set on the context, so a rotated session cookie and Fleet's headers survive beside them", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    respond = () =>
+      new Response('{"a":1}', {
+        status: 201,
+        headers: {"content-type": "application/json", "cache-control": "no-store", "x-request-id": "fleet-1"},
+      })
+
+    const response = await admin(organizationAdmin, "/overview", {headers: {"x-test-set-cookie": ROTATED}})
+
+    expect(response.status).toBe(201)
+    expect(securityHeaders(response)).toEqual(labelled)
+    expect(response.headers.getSetCookie()).toEqual([ROTATED])
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    expect(response.headers.get("x-request-id")).toBe("fleet-1")
+  })
+
+  test("Fleet cannot loosen the labels: its own x-content-type-options and content-security-policy are not relayed", async () => {
+    configure()
+    respond = () =>
+      Response.json(
+        {ok: true},
+        {headers: {"x-content-type-options": "", "content-security-policy": "default-src *", "x-frame-options": "ALLOWALL"}},
+      )
+
+    for (const [, request] of surfaces) {
+      const response = await request("/overview")
+      expect(securityHeaders(response)).toEqual(labelled)
+      expect(response.headers.get("x-frame-options")).toBeNull()
+    }
+  })
+
+  test("the UI asset route keeps its own headers: no sandbox on a script, and SVG's own policy", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    respond = () => new Response("export {}", {headers: {"content-type": "text/javascript"}})
+
+    const script = await admin(organizationAdmin, "/ui/entry.js")
+
+    expect(script.status).toBe(200)
+    expect(script.headers.get("x-content-type-options")).toBe(NOSNIFF)
+    expect(script.headers.get("content-security-policy")).toBeNull()
+    expect(script.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+  })
+
+  test("a 2xx that is not JSON is a 503 fleet_unavailable and none of its body or headers reach the caller", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    const notJson: Array<[string, () => Response]> = [
+      ["text/html", () => new Response("<script>alert(1)</script>", {headers: {"content-type": "text/html; charset=utf-8"}})],
+      ["text/html with a 201", () => new Response("<b>created</b>", {status: 201, headers: {"content-type": "text/html"}})],
+      ["text/plain", () => new Response("hello", {headers: {"content-type": "text/plain"}})],
+      ["text/javascript", () => new Response("alert(1)", {headers: {"content-type": "text/javascript"}})],
+      ["image/svg+xml", () => new Response("<svg onload=alert(1)/>", {headers: {"content-type": "image/svg+xml"}})],
+      ["application/xhtml+xml", () => new Response("<html/>", {headers: {"content-type": "application/xhtml+xml"}})],
+      ["a vendor json type", () => new Response("{}", {headers: {"content-type": "application/vnd.fleet+json"}})],
+      ["a body with no content type", () => new Response(new Uint8Array([0x7b, 0x7d]))],
+      ["a list holding html", () => new Response("<b/>", {headers: {"content-type": "application/json, text/html"}})],
+      ["json as a parameter of html", () => new Response("<b/>", {headers: {"content-type": "text/html; profile=application/json"}})],
+      ["json as a prefix", () => new Response("{}", {headers: {"content-type": "application/jsonp"}})],
+    ]
+
+    for (const [name, answer] of notJson) {
+      for (const [surface, request] of [
+        ["phone", (rest: string) => phone(rest)],
+        ["admin", (rest: string) => admin(organizationAdmin, rest)],
+      ] as const) {
+        respond = answer
+        logs = []
+
+        const response = await request("/overview")
+
+        expect([name, surface, response.status]).toEqual([name, surface, 503])
+        expect([name, surface, await response.json()]).toEqual([name, surface, {error: "fleet_unavailable"}])
+        expect([name, surface, response.headers.get("content-type")]).toEqual([name, surface, "application/json"])
+        expect([name, surface, securityHeaders(response)]).toEqual([name, surface, labelled])
+        // The refusal is a warning that names why, never what was said.
+        const line = logs.find(entry => entry.message === "Fleet request forwarded")
+        expect([name, surface, line?.level, line?.fields]).toEqual([
+          name,
+          surface,
+          "warn",
+          expect.objectContaining({status: 503, upstreamStatus: answer().status, reason: "content_type_not_json"}),
+        ])
+      }
+    }
+  })
+
+  test("JSON passes, with or without parameters and whatever its case", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    for (const contentType of [
+      "application/json",
+      "application/json; charset=utf-8",
+      "application/json;charset=UTF-8",
+      "Application/JSON",
+      "application/json ; charset=utf-8",
+    ]) {
+      respond = () => new Response('{"ok":true}', {status: 201, headers: {"content-type": contentType}})
+      for (const response of [await phone("/overview"), await admin(organizationAdmin, "/overview")]) {
+        expect([contentType, response.status]).toEqual([contentType, 201])
+        expect(await response.json()).toEqual({ok: true})
+        expect(response.headers.get("content-type")).toBe(contentType)
+      }
+    }
+  })
+
+  test("no body, no check: a 204, 205, 304, a HEAD and an empty answer pass whatever they are labelled", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    const bodiless: Array<[string, () => Response, Init?]> = [
+      ["a 204", () => new Response(null, {status: 204, headers: {"content-type": "text/html"}})],
+      ["a 205", () => new Response(null, {status: 205, headers: {"content-type": "text/html"}})],
+      ["a 304", () => new Response(null, {status: 304, headers: {"content-type": "text/html"}})],
+      ["a HEAD", () => new Response(null, {status: 200, headers: {"content-type": "text/html", "content-length": "99"}}), {method: "HEAD"}],
+      ["a HEAD with no content type", () => new Response(null, {status: 200}), {method: "HEAD"}],
+      ["an empty 200", () => new Response(null, {status: 200})],
+      ["an empty 200 labelled html", () => new Response("", {status: 200, headers: {"content-type": "text/html"}})],
+    ]
+
+    for (const [name, reply, init] of bodiless) {
+      respond = reply
+      for (const response of [await phone("/overview", init), await admin(organizationAdmin, "/overview", init)]) {
+        expect([name, response.status]).toEqual([name, reply().status])
+        expect([name, await response.text()]).toEqual([name, ""])
+        expect([name, securityHeaders(response)]).toEqual([name, labelled])
+      }
+    }
+  })
+
+  test("an error answer is relayed whatever it is labelled: the labels make it inert, and it is Fleet's status to give", async () => {
+    configure()
+    respond = () => new Response("<h1>Bad gateway page</h1>", {status: 404, headers: {"content-type": "text/html"}})
+
+    for (const [, request] of surfaces) {
+      const response = await request("/overview")
+      expect(response.status).toBe(404)
+      expect(response.headers.get("content-type")).toBe("text/html")
+      expect(securityHeaders(response)).toEqual(labelled)
+    }
+  })
+})
+
 describe("what Core logs", () => {
   test("one line per forwarded request: request id, Fleet's request id, status and duration, nothing else of the request", async () => {
     configure()
@@ -1238,7 +1481,12 @@ describe("what Core logs", () => {
       [304, {}],
     ] as const) {
       logs = []
-      respond = () => new Response(status === 204 || status === 304 ? null : "{}", {status, ...init})
+      respond = () =>
+        new Response(status === 204 || status === 304 ? null : "{}", {
+          status,
+          headers: {"content-type": "application/json"},
+          ...init,
+        })
 
       expect((await phone("/devices")).status).toBe(status)
 
@@ -2356,6 +2604,24 @@ describe("the phone principal's email", () => {
 
     expect(response.status).toBe(200)
     expect(decodePrincipal(calls[0].headers.get(FLEET_HEADERS.principal)).email).toBeNull()
+  })
+
+  test("a lookup that fails is warned about on the request's logger, so the warning names the request", async () => {
+    configure()
+    emailLookup.mockRejectedValue(new Error("account directory unavailable"))
+    const withContext = new Hono<AppEnv>()
+    withContext.use("/api/*", requestContext)
+    withContext.route("/", root)
+
+    const response = await withContext.request("http://localhost/api/client/fleet/report", {
+      method: "POST",
+      body: "{}",
+      headers: {"authorization": "Bearer phone:mu_directory_down", "x-request-id": "caller-chosen-id"},
+    })
+
+    expect(response.status).toBe(200)
+    const warning = logs.find(line => line.message === "Fleet phone principal sent without an email")
+    expect(warning).toMatchObject({level: "warn", fields: {reqId: "caller-chosen-id", reason: "Error"}})
   })
 
   test("is looked up once for a phone that reports again soon", async () => {
