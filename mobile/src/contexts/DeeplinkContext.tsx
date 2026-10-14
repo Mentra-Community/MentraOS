@@ -3,9 +3,10 @@ import * as WebBrowser from "expo-web-browser"
 import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
+import {cameraPackageName} from "@/constants/miniapps"
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
-import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
+import {BgTimer, engine, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
 import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
@@ -121,9 +122,18 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   },
   {
     pattern: "/asg/gallery",
-    handler: (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      nav.push("/asg/gallery")
+    // Opened the way a tap on Home opens it: the apps store starts it (or refuses, with its alert) and shows it in
+    // the overlay, so it runs and is counted like any other open. Before the built-in miniapps are registered, the
+    // screen is pushed on its own.
+    handler: async () => {
+      const gallery = engine.miniapps.list().find((app) => app.packageName === cameraPackageName)
+      if (!gallery) {
+        useNavigationStore.getState().push("/asg/gallery")
+        return
+      }
+      if (await engine.miniapps.start(gallery, {trigger: "user", skipNavigation: true})) {
+        await engine.miniapps.setForeground(cameraPackageName)
+      }
     },
     requiresAuth: true,
   },

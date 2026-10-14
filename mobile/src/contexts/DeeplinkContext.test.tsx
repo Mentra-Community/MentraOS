@@ -38,8 +38,18 @@ jest.mock("expo-linking", () => ({
   getInitialURL: jest.fn(async () => null),
 }))
 jest.mock("expo-web-browser", () => ({dismissBrowser: jest.fn()}))
+const mockMiniappsList = jest.fn((): Array<{packageName: string; name: string}> => [])
+const mockMiniappsStart = jest.fn()
+const mockSetForeground = jest.fn()
 jest.mock("@mentra/engine", () => ({
   BgTimer: {setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay)},
+  engine: {
+    miniapps: {
+      list: () => mockMiniappsList(),
+      start: (...args: unknown[]) => mockMiniappsStart(...args),
+      setForeground: (...args: unknown[]) => mockSetForeground(...args),
+    },
+  },
 }))
 jest.mock("@/contexts/SplashLoaderProvider", () => ({
   useSplashLoader: () => ({setSplashEnabled: mockSetSplashEnabled}),
@@ -449,4 +459,57 @@ it("explicit attended route requests without auth, an extra page, or splash and 
   expect(mockPush).not.toHaveBeenCalled()
   expect(mockReplaceAll).not.toHaveBeenCalled()
   expect(mockSetSplashEnabled).not.toHaveBeenCalled()
+})
+
+describe("the Gallery link", () => {
+  const gallery = {packageName: "com.mentra.camera", name: "Gallery"}
+  const galleryUrl = "com.mentra://asg/gallery"
+
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+    mockMiniappsList.mockReturnValue([gallery])
+  })
+
+  it("opens Gallery the way a tap on Home does: a user start, then on screen", async () => {
+    mockMiniappsStart.mockResolvedValue(true)
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(galleryUrl)
+    })
+    expect(mockMiniappsStart).toHaveBeenCalledWith(gallery, {trigger: "user", skipNavigation: true})
+    expect(mockSetForeground).toHaveBeenCalledWith("com.mentra.camera")
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("shows nothing when the start is refused, as Home does (glasses not connected, an update running)", async () => {
+    mockMiniappsStart.mockResolvedValue(false)
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(galleryUrl)
+    })
+    expect(mockSetForeground).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it("still opens the Gallery screen before the built-in miniapps are registered", async () => {
+    mockMiniappsList.mockReturnValue([])
+    render(
+      <DeeplinkProvider>
+        <Probe />
+      </DeeplinkProvider>,
+    )
+    await act(async () => {
+      await processUrl(galleryUrl)
+    })
+    expect(mockMiniappsStart).not.toHaveBeenCalled()
+    expect(mockPush).toHaveBeenCalledWith("/asg/gallery")
+  })
 })
