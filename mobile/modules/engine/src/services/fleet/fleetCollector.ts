@@ -237,6 +237,7 @@ interface KnownGlasses {
   firmware: Firmware
 }
 
+/** The battery of the pair `known` describes: it goes when a new connection starts or another pair is identified. */
 interface BatteryReading {
   level: number
   charging: boolean
@@ -397,7 +398,7 @@ class CollectorRun {
     this.evaluateSnapshotTriggers()
   }
 
-  /** Notes what the glasses store says now: the connection, the battery, and the glasses' identity and versions. */
+  /** Notes what the glasses store says now: the connection, the glasses' identity and versions, and the battery. */
   private trackGlasses(wall: number): void {
     const s = useGlassesStore.getState()
     const state = mapConnection(s.connection.state)
@@ -406,9 +407,11 @@ class CollectorRun {
       // identified afresh, from what the glasses say, before anything is attributed to a device. Only a new
       // connection forgets: while one is tearing down the native layer clears the identity (model first) before it
       // reports disconnected, and the departing pair is still the pair its last records are about.
-      if (this.connection.state === "disconnected") this.known = null
+      if (this.connection.state === "disconnected") this.forgetGlasses()
       this.connection = {state, observedAt: wall}
     }
+    // The pair first: a battery reading belongs to the pair it was seen on, and another pair starts without one.
+    this.rememberGlasses(s)
     const simulated = isSimulatedGlasses(s.deviceModel)
     // A battery value in the store is only believed while real glasses are connected; afterwards the last reading
     // keeps the time it was seen.
@@ -419,7 +422,12 @@ class CollectorRun {
     ) {
       this.battery = {level: s.batteryLevel, charging: s.charging, observedAt: wall}
     }
-    this.rememberGlasses(s)
+  }
+
+  /** Nothing seen of the glasses so far is about the pair that comes next: not its identity, versions or battery. */
+  private forgetGlasses(): void {
+    this.known = null
+    this.battery = null
   }
 
   private rememberGlasses(s: GlassesState): void {
@@ -428,7 +436,7 @@ class CollectorRun {
     const binding = glassesBinding(s, this.phoneId)
     if (!binding) {
       // The store names glasses that are no device (the simulated ones): the pair remembered before is not them.
-      this.known = null
+      this.forgetGlasses()
       return
     }
     const peripheral = glassesPeripheral(s)
@@ -440,6 +448,8 @@ class CollectorRun {
       before.model === model &&
       ((peripheral !== null && peripheral === before.peripheral) ||
         (binding.kind === "serial" && before.binding.kind === "serial" && before.binding.serial === binding.serial))
+    // Another pair, swapped in with no disconnect between: the last reading was the other pair's battery.
+    if (before !== null && !samePair) this.battery = null
     // A serial seen once for this pair is not given up for a provisional stand-in.
     const kept =
       samePair && before.binding.kind === "serial" && binding.kind === "provisional" ? before.binding : binding

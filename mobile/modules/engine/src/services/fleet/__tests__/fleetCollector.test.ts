@@ -1364,6 +1364,38 @@ describe("a second pair of the same model", () => {
     expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
   })
 
+  test("does not inherit the first pair's battery reading, even when it shows the same level", () => {
+    start()
+    connectLive({batteryLevel: 80})
+    advance(10 * 60_000)
+    disconnectLive()
+    advance(5_000)
+    // The native layer leaves the battery in the store, and B happens to show the same level and charging state.
+    connectLive({...LIVE_B, batteryLevel: 80})
+    const bConnectedAt = clock.wall
+    advance(15 * 60_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.deviceBinding).toMatchObject({kind: "provisional"})
+    expect(latest.payload.glasses?.battery).toEqual({
+      state: "measured",
+      observedAt: iso(bConnectedAt),
+      level: 80,
+      charging: false,
+    })
+  })
+
+  test("a pair swapped in place does not inherit the first pair's battery reading either", () => {
+    start()
+    connectLive({batteryLevel: 80})
+    advance(10 * 60_000)
+    connectLive({...LIVE_B, batteryLevel: 80})
+    const bSeenAt = clock.wall
+    advance(15 * 60_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.deviceBinding).toMatchObject({kind: "provisional"})
+    expect(latest.payload.glasses?.battery).toMatchObject({level: 80, observedAt: iso(bSeenAt)})
+  })
+
   test("the same pair coming back is the same device", () => {
     start()
     connectLive(LIVE_B)
@@ -1445,6 +1477,23 @@ describe("a disconnect in the order the native layer does it", () => {
       .find((entry) => entry.activity === "glasses_connection")
     expect(session).toMatchObject({elapsedMs: 30_000, ended: true, deviceBinding: {serial: "SN-LIVE-1"}})
     expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.connection.state).toBe("disconnected")
+  })
+
+  test("a new connection dates the battery from when the glasses showed it again, even for the same pair", () => {
+    start()
+    connectLive({batteryLevel: 80})
+    advance(60_000)
+    disconnectLive()
+    advance(5_000)
+    glassesStore.setState({connection: {state: "connecting"}})
+    advance(5_000)
+    connectLive({batteryLevel: 80})
+    const seenAgainAt = clock.wall
+    advance(15 * 60_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.battery).toMatchObject({
+      level: 80,
+      observedAt: iso(seenAgainAt),
+    })
   })
 
   test("the next connection still starts from nothing", () => {
