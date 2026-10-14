@@ -316,7 +316,7 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
     expect(session.speaker.isPlaying).toBe(false)
   })
 
-  test("5. Host-driven stopped, idle, or error event clears active streams immediately", async () => {
+  test("5. Un-scoped host terminal envelope does not clobber active stream, while speaker.stop() does", async () => {
     const {transport, session} = await setupSession()
 
     const streamPromise = session.speaker.createStream()
@@ -325,19 +325,30 @@ describe("Speaker Stream State & Lifecycle (Issue #3892)", () => {
       {
         type: MiniappResponseType.REQUEST_RESULT,
         ok: true,
-        data: {streamId: "stream_host_stop_test"},
+        data: {streamId: "stream_unscoped_test"},
       },
       openReq.requestId,
     )
     await streamPromise
     expect(session.speaker.isPlaying).toBe(true)
 
-    // Host pushes error
+    // A late terminal envelope from an earlier speak() or predecessor stream arrives
     transport.deliverFromPhone({
       type: MiniappResponseType.SPEAKER_STATE,
-      state: "error",
-      errorCode: "INTERNAL",
+      state: "stopped",
     })
+    // Host-level envelopes are not stream-scoped; live stream writer keeps isPlaying true
+    expect(session.speaker.isPlaying).toBe(true)
+
+    // A late idle envelope also does not clobber active stream
+    transport.deliverFromPhone({
+      type: MiniappResponseType.SPEAKER_STATE,
+      state: "idle",
+    })
+    expect(session.speaker.isPlaying).toBe(true)
+
+    // Calling session.speaker.stop() explicitly clears active streams and transitions isPlaying to false
+    session.speaker.stop()
     expect(session.speaker.isPlaying).toBe(false)
   })
 })
