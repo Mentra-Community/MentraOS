@@ -21,6 +21,11 @@ describe("package entry points", () => {
     expect(root.SERVICE_UNAUTHORIZED_ERROR).toBe("service_unauthorized")
     expect(root.WORKSPACE_NOT_FOUND_ERROR).toBe("workspace_not_found")
     expect(root.USER_NOT_FOUND_ERROR).toBe("user_not_found")
+    expect(root.WORKSPACE_HAS_HOLDS_ERROR).toBe("workspace_has_holds")
+    expect(root.OWNS_MINIAPPS_HOLD_REASON).toBe("owns_miniapps")
+    // The portals put holds in words with the same function Core uses for its 409.
+    expect(typeof root.describeDeletionHold).toBe("function")
+    expect(typeof root.describeDeletionHolds).toBe("function")
     expect(root.FORWARDED_PRINCIPAL_HEADERS).toEqual({
       principal: "x-mentra-principal",
       principalSignature: "x-mentra-principal-signature",
@@ -46,6 +51,8 @@ describe("package entry points", () => {
     expect(server.FORWARDING_SERVICE).toBe("core")
     expect(server.SERVICE_HEADERS.service).toBe("x-mentra-service")
     expect(server.INVALID_TOKEN_ERROR).toBe("invalid_token")
+    expect(server.WORKSPACE_HAS_HOLDS_ERROR).toBe("workspace_has_holds")
+    expect(typeof server.describeDeletionHolds).toBe("function")
   })
 
   test("package.json maps the root to the browser-safe entry and ./server to the Node entry", () => {

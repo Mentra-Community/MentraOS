@@ -104,6 +104,50 @@ export interface ResolveEmailResponse {
   mentraUserId: string
 }
 
+// --- Deletion holds ---------------------------------------------------------
+
+/**
+ * A service's hold on a workspace. While a workspace has any hold, nobody can delete it, an
+ * Organization Admin included: the delete is refused with 409 {@link WORKSPACE_HAS_HOLDS_ERROR}
+ * until the service clears its hold. Each service has at most one hold per workspace, which it sets
+ * with `PUT /workspaces/:workspaceId/deletion-holds/:service` (replacing its previous one) and clears
+ * with `DELETE` on the same path.
+ *
+ * `service` is the service that placed it (`store`); `reason` is a lowercase code
+ * ({@link DELETION_HOLD_REASON_PATTERN}, for example `owns_miniapps`); `count`, when present, is how
+ * many of the things the reason names the workspace still has. `describeDeletionHold` puts a hold in
+ * words.
+ */
+export interface WorkspaceDeletionHold {
+  service: string
+  reason: string
+  count?: number
+}
+
+/** Response of `PUT` and `DELETE /workspaces/:workspaceId/deletion-holds/:service`: every hold on the workspace after the call. */
+export interface DeletionHoldsResponse {
+  workspaceId: string
+  holds: WorkspaceDeletionHold[]
+}
+
+/** What a hold's `reason` must match: a lowercase code of at most 64 letters, digits and underscores, starting with a letter. */
+export const DELETION_HOLD_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
+
+/** The Store's hold `reason` while a workspace still owns published miniapps; its `count` is how many. */
+export const OWNS_MINIAPPS_HOLD_REASON = "owns_miniapps"
+
+/**
+ * `error` of the 409 that deleting a workspace answers while any service holds it. The body is
+ * {@link WorkspaceHasHoldsErrorBody}: `error_description` says why in words and `holds` lists every hold.
+ */
+export const WORKSPACE_HAS_HOLDS_ERROR = "workspace_has_holds"
+
+export interface WorkspaceHasHoldsErrorBody {
+  error: typeof WORKSPACE_HAS_HOLDS_ERROR
+  error_description: string
+  holds: WorkspaceDeletionHold[]
+}
+
 // --- Change feed ------------------------------------------------------------
 
 /**
@@ -227,6 +271,11 @@ export interface WorkspaceDetail extends WorkspaceSummary {
    * Optional for servers that predate it.
    */
   organizationAdmin?: boolean
+  /**
+   * What holds the workspace from deletion: deleting it is refused while this is not empty. Optional for
+   * servers that predate holds.
+   */
+  deletionHolds?: WorkspaceDeletionHold[]
 }
 
 /**
