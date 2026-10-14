@@ -56,6 +56,11 @@
       "groups": ["miniapp-store-dev-doppler"]
     },
     {
+      "name": "mfm-development",
+      "cluster": 5692,
+      "groups": ["mfm-dev-doppler"]
+    },
+    {
       "name": "miniapp-store-staging",
       "cluster": 5692,
       "groups": ["miniapp-store-staging-doppler"]
@@ -711,6 +716,22 @@
         "MENTRA_STORE_WORKSPACE_CORE_JWKS_URL",
         "MONGO_URL",
         "NODE_ENV"
+      ]
+    },
+    {
+      "name": "mfm-dev-doppler",
+      "cluster": 5692,
+      "project": "cloud-v2",
+      "config": "mfm_dev",
+      "keys": [
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "LOG_STDOUT_JSON",
+        "MFM_CORE_FORWARDING_SECRETS",
+        "MFM_CORE_SERVICE_SECRET",
+        "MFM_CORE_URL",
+        "MONGO_URL"
       ]
     },
     {
