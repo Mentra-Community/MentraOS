@@ -607,61 +607,6 @@ query_firmware_versions() {
   return 1
 }
 
-return_bes_to_rendezvous_before_bridge() {
-  local request_id deadline logs versions bes installed_version
-  request_id="devsetup_$$_$RANDOM"
-
-  echo "=== Preparing BES for firmware maintenance ==="
-  installed_version="$(package_version_code "$STOCK_PKG")"
-  if [[ "$installed_version" =~ ^[0-9]+$ ]] \
-    && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
-    echo "Installed stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; using it as the transition controller."
-  else
-    echo "Installing the manifest-pinned stock ASG as the transition controller..."
-    "${ADB[@]}" install -r "$TARGET_APK_PATH"
-    installed_version="$(package_version_code "$STOCK_PKG")"
-    [ "$installed_version" = "$TARGET_VERSION_CODE" ] \
-      || fail "Rendezvous controller expected versionCode $TARGET_VERSION_CODE, got ${installed_version:-unknown}"
-  fi
-  enable_stock_runtime
-  sleep 20
-
-  versions="$(query_firmware_versions || true)"
-  bes="${versions%%|*}"
-  if [ -z "$bes" ] || ! valid_bes_version "$bes"; then
-    # Current ASG scans both supported bauds. No proof normally identifies the
-    # factory BES generation that needs ASG 36's legacy protocol; stop the
-    # probe client and let the bridge attempt its fail-closed version query.
-    "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
-    sleep 2
-    echo "Current stock ASG found no BES link; continuing with compatibility recovery."
-    return 0
-  fi
-  echo "Current stock ASG found BES $bes before firmware maintenance."
-
-  "${ADB[@]}" logcat -c >/dev/null 2>&1 || true
-  "${ADB[@]}" shell "am broadcast -a com.mentra.asg_client.ACTION_SEND_COMMAND --es json '{\"type\":\"reboot_bes_for_mtk_flash\",\"mId\":424243,\"request_id\":\"$request_id\"}' -n $COMMAND_RECEIVER" >/dev/null \
-    || fail "Could not dispatch the BES rendezvous reset"
-
-  deadline=$((SECONDS + 30))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    logs="$("${ADB[@]}" logcat -d 2>/dev/null | grep -F "MTK_FLASH_BES_RESET request_id=$request_id" || true)"
-    if printf '%s\n' "$logs" | grep -Fq 'uart_write=true'; then
-      # BES is now resetting to 460800. Stop the current client before it can
-      # rediscover the chip and renegotiate fast baud ahead of ASG 36.
-      "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
-      sleep 5
-      echo "BES reset completed; compatibility update is ready."
-      return 0
-    fi
-    if printf '%s\n' "$logs" | grep -Eq 'uart_write=false|queued=false|failed'; then
-      fail "Current stock ASG could not write the BES rendezvous reset"
-    fi
-    sleep 1
-  done
-  fail "Timed out waiting for proof that the BES rendezvous reset reached UART"
-}
-
 wait_for_bes_success() {
   local target_version="$1"
   local deadline logs versions bes

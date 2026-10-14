@@ -421,6 +421,17 @@ class RefurbFixtureTests(unittest.TestCase):
         self.assertTrue(all(call[2] == "2" for call in installs))
         self.assertNotIn("1", [call[2] for call in installs])
 
+    def test_recovery_and_legacy_updater_are_re_enabled_after_success(self):
+        body = self.current_body()
+        fix = Fixture(self.temp.name, [device(asg_code="9", asg_name="9.0")], self.documents_for(body), pin_for(body))
+        result = fix.run(REFURB, ["--track", "dev", "--serial", "ABC123"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = [" ".join(call) for call in fix.calls() if call[0] == "adb"]
+        for package in ("com.mentra.recovery", "com.augmentos.otaupdater"):
+            disabled = max(i for i, line in enumerate(text) if "disable-user" in line and package in line)
+            enabled = max(i for i, line in enumerate(text) if " pm enable " in line and package in line)
+            self.assertGreater(enabled, disabled, package)
+
     def test_unique_real_serial_works_without_cid(self):
         body = self.current_body()
         fix = Fixture(self.temp.name, [device()], self.documents_for(body), pin_for(body))
