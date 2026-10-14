@@ -9,10 +9,12 @@
  *     database refuses and carries on, so /ready alone proves little about them.
  *   bun database-upgrade-check.ts verify <mongo url>
  *     Require what the current Core builds at startup that a database can
- *     refuse (REQUIRED below), then delete a throwaway account the way Core does
- *     and require its `user.deleted` tombstone on the change feed (see
- *     `verifyAccountDeletion`). Run it after `start` of the current checkout, on
- *     a fresh and on an upgraded database; not after a base branch's `start`.
+ *     refuse (REQUIRED below), waiting up to two minutes for one a database
+ *     builds in the background (Azure Cosmos DB does), then delete a throwaway
+ *     account the way Core does and require its `user.deleted` tombstone on the
+ *     change feed (see `verifyAccountDeletion`). Run it after `start` of the
+ *     current checkout, on a fresh and on an upgraded database; not after a
+ *     base branch's `start`.
  *   bun database-upgrade-check.ts seed <mongo url>
  *     Put one document in every empty collection, so the next start meets
  *     populated collections, as an upgrade of a running deployment does.
@@ -25,6 +27,7 @@ import {randomUUID} from "node:crypto"
 import {join, resolve} from "node:path"
 import {pathToFileURL} from "node:url"
 import mongoose from "mongoose"
+import {waitForSchema, type RequiredSchema} from "./database-schema-wait"
 
 const SWEEP_AGE_MS = 6 * 60 * 60 * 1000
 
@@ -34,7 +37,7 @@ const SWEEP_AGE_MS = 6 * 60 * 60 * 1000
  * index on `workspace_audit_events.seq` that the feed sorts and pages by. Azure Cosmos DB for MongoDB
  * (RU) needs that index to sort at all.
  */
-const REQUIRED = {
+const REQUIRED: RequiredSchema = {
   collections: ["workspace_audit_counters"],
   indexes: [{collection: "workspace_audit_events", key: {seq: 1}}],
 }
@@ -66,25 +69,20 @@ async function withDatabase(mongoUrl: string, run: (db: mongoose.mongo.Db) => Pr
   }
 }
 
+/**
+ * Require REQUIRED, waiting for it (`waitForSchema`): Azure Cosmos DB for MongoDB builds an index in the
+ * background, so a database that accepted Core's `createIndex` and let it report ready may not list the index
+ * for another second or more. Only what is still missing at the deadline, or a unique index, fails.
+ */
 async function verifySchema(db: mongoose.mongo.Db): Promise<void> {
-  const problems: string[] = []
-  const existing = new Set((await db.listCollections({}, {nameOnly: true}).toArray()).map(({name}) => name))
-  for (const name of REQUIRED.collections) {
-    if (!existing.has(name)) problems.push(`collection ${name} does not exist`)
-  }
-  for (const {collection, key} of REQUIRED.indexes) {
-    const indexes = existing.has(collection) ? await db.collection(collection).indexes() : []
-    const found = indexes.find(index => JSON.stringify(index.key) === JSON.stringify(key))
-    if (!found) problems.push(`${collection} has no index on ${JSON.stringify(key)}`)
-    else if (found.unique) problems.push(`${collection}'s index on ${JSON.stringify(key)} is unique`)
-  }
-  if (problems.length > 0) {
-    throw new Error(
-      `Core started on ${db.databaseName}, but its startup did not build what it needs: ${problems.join("; ")}. ` +
-        "Core logs a refused collection or index (\"failed to create workspace collection indexes\") and keeps going, " +
-        "so look for that line in the log above. The database probably refused it.",
-    )
-  }
+  await waitForSchema(
+    {
+      collectionNames: async () => (await db.listCollections({}, {nameOnly: true}).toArray()).map(({name}) => name),
+      indexes: collection => db.collection(collection).indexes(),
+    },
+    REQUIRED,
+    {label: db.databaseName},
+  )
   console.log(`${db.databaseName} has ${REQUIRED.collections.join(", ")} and an index on ${REQUIRED.indexes.map(i => `${i.collection}${JSON.stringify(i.key)}`).join(", ")}`)
 }
 
@@ -173,6 +171,8 @@ async function verifyAccountDeletion(mongoUrl: string): Promise<void> {
 
 async function verify(mongoUrl: string): Promise<void> {
   await withDatabase(mongoUrl, verifySchema)
+  // The deletion check never sorts or pages by `seq` (it filters on workspaceId, action and target, and
+  // inserts), so a background index build cannot fail it; it runs after verifySchema all the same.
   await verifyAccountDeletion(mongoUrl)
 }
 
