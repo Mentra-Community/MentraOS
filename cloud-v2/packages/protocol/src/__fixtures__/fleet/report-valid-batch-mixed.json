@@ -13,7 +13,9 @@
         "glasses_battery",
         "glasses_versions",
         "miniapp_execution",
-        "engine_active"
+        "app_foreground",
+        "engine_active",
+        "photo_operations"
       ],
       "kind": "snapshot",
       "deviceBinding": {

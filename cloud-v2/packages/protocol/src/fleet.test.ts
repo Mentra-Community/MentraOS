@@ -35,6 +35,7 @@ const INVALID_RECORDS: Record<string, {path: (string | number)[]; code: ZodIssue
   "report-invalid-negative-elapsed.json": {path: ["payload", "sessions", 0, "elapsedMs"], code: "too_small"},
   "report-invalid-offset-time.json": {path: ["observedAt"], code: "invalid_string"},
   "report-invalid-photo-without-operation-id.json": {path: ["operationId"], code: "invalid_type"},
+  "report-invalid-snapshot-glasses-without-binding.json": {path: ["deviceBinding"], code: "custom"},
 }
 const INVALID_ENVELOPES = ["report-invalid-empty-batch.json"]
 
