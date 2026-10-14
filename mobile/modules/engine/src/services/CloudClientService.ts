@@ -98,6 +98,10 @@ const LOCAL_AUTH_PORT = 3002
 let client: CloudClient | null = null
 /** The Core URL `client` was built with (null without a client or without a Core). */
 let clientCoreUrl: string | null = null
+/** Bumped by `stop()`: work begun for a client before then must not build another after it. */
+let clientLifecycle = 0
+/** The client whose Core credentials a sign-in is clearing, until the client for the new session is built. */
+let replacingCoreSessionOf: CloudClient | null = null
 let connected = false
 let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 let persistentFailureNotified = false
@@ -366,6 +370,33 @@ function extractUnsubscribe(sub: unknown): (() => void) | null {
   return null
 }
 
+/**
+ * A sign-in replaced the host's session while `previous` holds Core credentials exchanged from the session before it,
+ * which may be another account's. The client keeps them, and its refresh token is persisted, so a client rebuilt over
+ * the same storage would resume them too. Clear them (revoking that Core session, as logout does), and only then
+ * build the client that exchanges the new session's subject token. Listeners hear of the sign-in once that client
+ * exists. A stop (logout) while the credentials are being cleared leaves everything to the next start.
+ */
+async function replaceCoreSession(previous: CloudClient): Promise<void> {
+  const lifecycle = clientLifecycle
+  replacingCoreSessionOf = previous
+  try {
+    await previous.auth.clearSession()
+  } catch (err) {
+    // Local credentials are gone either way; Core may keep the old session until it expires.
+    console.warn(`${LOG_TAG}: revoking the previous Core session failed: ${(err as Error)?.message ?? err}`)
+  } finally {
+    if (replacingCoreSessionOf === previous) replacingCoreSessionOf = null
+  }
+  if (lifecycle !== clientLifecycle || !client) return
+  console.log(`${LOG_TAG}: signed in; rebuilding the client for the new session`)
+  try {
+    cloudClientService.reconnect()
+  } finally {
+    emitCoreSessionChanged("signed_in")
+  }
+}
+
 function ensureAuthWatch(): void {
   if (authStateUnsubscribe) return
   authStateUnsubscribe = () => {}
@@ -384,6 +415,13 @@ function ensureAuthWatch(): void {
       // A new sign-in may belong to a different account. Force the next
       // storage request to resolve and persist that account's Core identity.
       if (event === "SIGNED_IN") localMiniappUserIdentity.forget()
+      // The client's Core credentials were exchanged from the session this sign-in replaced: rebuild from the new one,
+      // whether or not the Runtime is connected. A replacement already under way covers this sign-in too.
+      const current = client
+      if (event === "SIGNED_IN" && session?.token && current?.core) {
+        if (replacingCoreSessionOf !== current) void replaceCoreSession(current)
+        return
+      }
       try {
         if (!session?.token) return
         if (connected || reconnectPending) return
@@ -763,6 +801,8 @@ export const cloudClientService = {
     const wasConnected = connected
     client = null
     clientCoreUrl = null
+    clientLifecycle += 1
+    replacingCoreSessionOf = null
     // stop() is part of the logout lifecycle and runs before the host emits
     // SIGNED_OUT. Remove the persisted namespace owner here so a later account
     // can never inherit it. A force-stop/process kill does not call stop(), so

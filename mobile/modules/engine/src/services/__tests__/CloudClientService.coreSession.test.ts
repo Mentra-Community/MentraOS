@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
-import {AuthExpiredError, AuthUnavailableError, HttpError} from "@mentra/cloud-client"
+import {AuthExpiredError, AuthUnavailableError, HttpError, SessionRevocationError} from "@mentra/cloud-client"
 import type {FleetReport} from "@mentra/cloud-protocol"
 
 import type {FleetSendOutcome} from "../CloudClientService"
@@ -29,27 +29,52 @@ function tokenFor(account: string | null): string {
   return `eyJhbGciOiJub25lIn0.${claims.toString("base64url")}.signature`
 }
 
-/** A Core token source: whose token it hands out, and how the next request for one goes. */
+/**
+ * A Core token source: whose token it hands out, and how the next request for one goes. Like the real client it
+ * persists the refresh token, so a client built later resumes the stored account's Core session instead of
+ * exchanging the host's current subject token; `clearSession` removes it and leaves the client inert.
+ */
 class FakeAuth {
   /** The account the client's stored token belongs to (what `identity` reads). */
-  account: string | null = nextAccount
+  account: string | null = storedAccount ?? nextAccount
   /** Hands out another account's token than `identity` reports, to tell the two apart. */
   issueAs: string | null | undefined = undefined
   mode: TokenMode = nextTokenMode
+  /** How the next `clearSession` goes: at once, held until `releaseClear`, or failing to revoke. */
+  clearMode: TokenMode = "ok"
   private holding = false
+  private cleared = false
   private pending: Array<() => void> = []
+  private pendingClears: Array<() => void> = []
 
   readonly getCoreToken = mock(async (opts?: {forceRefresh?: boolean}): Promise<string> => {
     void opts
+    if (this.cleared) throw new AuthExpiredError("auth session was cleared")
     if (this.mode === "hang") await new Promise<void>((resolve) => this.pending.push(resolve))
+    if (this.cleared) throw new AuthExpiredError("auth session was cleared")
     if (this.mode instanceof Error) throw this.mode
     this.holding = true
+    storedAccount = this.account
     return tokenFor(this.issueAs === undefined ? this.account : this.issueAs)
+  })
+
+  /** Local credentials go at once (the stored one included); the revocation that follows may be held or fail. */
+  readonly clearSession = mock(async (): Promise<void> => {
+    this.cleared = true
+    this.holding = false
+    storedAccount = null
+    if (this.clearMode === "hang") await new Promise<void>((resolve) => this.pendingClears.push(resolve))
+    if (this.clearMode instanceof Error) throw this.clearMode
   })
 
   /** Lets the token requests waiting in "hang" mode finish, in the mode now set. */
   release(): void {
     for (const resolve of this.pending.splice(0)) resolve()
+  }
+
+  /** Lets a held `clearSession` finish, in the clear mode now set. */
+  releaseClear(): void {
+    for (const resolve of this.pendingClears.splice(0)) resolve()
   }
 
   get identity(): {mentraUserId: string; tenantId: string} {
@@ -63,6 +88,7 @@ const ACK: FleetSendOutcome = {kind: "results", ack: {schemaVersion: 1, results:
 
 class FakeCloudClient {
   static built: FakeCloudClient[] = []
+  private readonly connectedHandlers: Array<() => void> = []
   readonly auth = new FakeAuth()
   readonly core?: {fleet: {report: ReturnType<typeof mock>}}
   readonly runtime = {
@@ -70,7 +96,9 @@ class FakeCloudClient {
     onTranscript: () => () => {},
     onTranslation: () => () => {},
     getStatus: () => ({status: "idle", audioTransport: null}),
-    onConnected: () => {},
+    onConnected: (handler: () => void) => {
+      this.connectedHandlers.push(handler)
+    },
     onDisconnected: () => {},
     onError: () => {},
     connect: async () => {},
@@ -82,7 +110,14 @@ class FakeCloudClient {
     FakeCloudClient.built.push(this)
     if (config.endpoints.core) this.core = {fleet: {report: mock(async () => ACK)}}
   }
+
+  /** The Runtime's live session comes up. */
+  connectRuntime(): void {
+    for (const handler of this.connectedHandlers) handler()
+  }
 }
+/** The account of the Core refresh token in the secure store, which a new client resumes. */
+let storedAccount: string | null = null
 let nextAccount: string | null = A
 let nextTokenMode: TokenMode = "ok"
 const latest = () => FakeCloudClient.built[FakeCloudClient.built.length - 1]
@@ -167,15 +202,27 @@ function reportOf(client: FakeCloudClient) {
 
 beforeEach(() => {
   FakeCloudClient.built = []
+  storedAccount = null
   nextAccount = A
   nextTokenMode = "ok"
   endpoints.current = {core: CORE_X, runtime: RUNTIME}
   kept.clear()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // Nothing a test held may outlive it: a token request left hanging would keep the engine's Bluetooth token sync
+  // (one at a time, process-wide) waiting into the next test.
+  nextTokenMode = "ok"
+  for (const built of FakeCloudClient.built) {
+    built.auth.mode = "ok"
+    built.auth.clearMode = "ok"
+    built.auth.release()
+    built.auth.releaseClear()
+  }
   cloudClientService.reconnect(null)
   cloudClientService.stop()
+  // Token requests the teardown started must not land in the next test's secure store.
+  await settle()
 })
 
 describe("the Core session", () => {
@@ -399,7 +446,33 @@ describe("Core session changes", () => {
     nextTokenMode = "hang"
     const changes = listen()
     authCallback?.("SIGNED_IN", {token: "t"})
-    // Disconnected, so the sign-in rebuilds the client; neither change may name the old account.
+    await settle()
+    // The sign-in rebuilds the client; neither change may name the old account.
+    expect(changes).toEqual([
+      {reason: "reconnect", coreUrl: CORE_X, mentraUserId: null},
+      {reason: "signed_in", coreUrl: CORE_X, mentraUserId: null},
+    ])
+    // The rebuilt client exchanges the new sign-in rather than resuming the previous account's stored session.
+    latest().auth.mode = "ok"
+    latest().auth.release()
+    expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: B})
+  })
+
+  test("a sign-in while the Runtime is connected replaces the previous account's Core session too", async () => {
+    cloudClientService.init()
+    await settle()
+    const previous = latest()
+    previous.connectRuntime()
+    expect(cloudClientService.isConnected()).toBe(true)
+    expect(cloudClientService.getCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: A})
+    nextAccount = B
+    // The new client's first token is an exchange, a network round trip away.
+    nextTokenMode = "hang"
+    const changes = listen()
+    authCallback?.("SIGNED_IN", {token: "t"})
+    await settle()
+    expect(previous.auth.clearSession).toHaveBeenCalledTimes(1)
+    expect(latest()).not.toBe(previous)
     expect(changes).toEqual([
       {reason: "reconnect", coreUrl: CORE_X, mentraUserId: null},
       {reason: "signed_in", coreUrl: CORE_X, mentraUserId: null},
@@ -407,6 +480,108 @@ describe("Core session changes", () => {
     latest().auth.mode = "ok"
     latest().auth.release()
     expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: B})
+    // Nothing is sent as the account that signed in before.
+    expect(await cloudClientService.core.fleet.reportAs({coreUrl: CORE_X, mentraUserId: A}, BATCH)).toEqual({
+      kind: "session_changed",
+    })
+    expect(reportOf(previous)).not.toHaveBeenCalled()
+    expect(reportOf(latest())).not.toHaveBeenCalled()
+  })
+
+  test("the new client is built only once the previous credentials are gone, and nothing is sent in between", async () => {
+    cloudClientService.init()
+    await settle()
+    const previous = latest()
+    previous.auth.clearMode = "hang"
+    nextAccount = B
+    const changes = listen()
+    authCallback?.("SIGNED_IN", {token: "t"})
+    await settle()
+    expect(FakeCloudClient.built).toHaveLength(1)
+    expect(changes).toEqual([])
+    expect(cloudClientService.getCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: null})
+    expect(await cloudClientService.core.fleet.reportAs({coreUrl: CORE_X, mentraUserId: A}, BATCH)).toEqual({
+      kind: "unauthorized",
+    })
+    expect(reportOf(previous)).not.toHaveBeenCalled()
+    previous.auth.releaseClear()
+    await settle()
+    expect(FakeCloudClient.built).toHaveLength(2)
+    expect(changes.map((change) => change.reason)).toEqual(["reconnect", "signed_in"])
+  })
+
+  test("a revocation that fails still leaves a client for the new sign-in", async () => {
+    cloudClientService.init()
+    await settle()
+    const previous = latest()
+    previous.auth.clearMode = new SessionRevocationError("Core session revocation failed")
+    nextAccount = B
+    const warn = mock(() => {})
+    const originalWarn = console.warn
+    console.warn = warn
+    try {
+      authCallback?.("SIGNED_IN", {token: "t"})
+      await settle()
+    } finally {
+      console.warn = originalWarn
+    }
+    expect(previous.auth.clearSession).toHaveBeenCalledTimes(1)
+    expect(latest()).not.toBe(previous)
+    expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: B})
+  })
+
+  test("sign-ins in a row clear the previous credentials once and rebuild once", async () => {
+    cloudClientService.init()
+    await settle()
+    const previous = latest()
+    previous.auth.clearMode = "hang"
+    authCallback?.("SIGNED_IN", {token: "t"})
+    authCallback?.("SIGNED_IN", {token: "t"})
+    await settle()
+    previous.auth.releaseClear()
+    await settle()
+    expect(previous.auth.clearSession).toHaveBeenCalledTimes(1)
+    expect(FakeCloudClient.built).toHaveLength(2)
+  })
+
+  test("a logout while the previous credentials are being cleared builds nothing", async () => {
+    cloudClientService.init()
+    await settle()
+    const previous = latest()
+    previous.auth.clearMode = "hang"
+    const changes = listen()
+    authCallback?.("SIGNED_IN", {token: "t"})
+    await settle()
+    cloudClientService.stop()
+    previous.auth.releaseClear()
+    await settle()
+    expect(FakeCloudClient.built).toHaveLength(1)
+    expect(changes).toEqual([])
+  })
+
+  test("a sign-in that carries no session to exchange leaves the Core credentials alone", async () => {
+    cloudClientService.init()
+    await settle()
+    const previous = latest()
+    previous.connectRuntime()
+    const changes = listen()
+    authCallback?.("SIGNED_IN", {token: null})
+    await settle()
+    expect(previous.auth.clearSession).not.toHaveBeenCalled()
+    expect(FakeCloudClient.built).toHaveLength(1)
+    expect(changes.map((change) => change.reason)).toEqual(["signed_in"])
+  })
+
+  test("without a Core, a sign-in while the Runtime is connected leaves the client as it is", async () => {
+    endpoints.current = {runtime: RUNTIME}
+    cloudClientService.init()
+    await settle()
+    latest().connectRuntime()
+    const changes = listen()
+    authCallback?.("SIGNED_IN", {token: "t"})
+    await settle()
+    expect(FakeCloudClient.built).toHaveLength(1)
+    expect(changes).toEqual([{reason: "signed_in", coreUrl: null, mentraUserId: null}])
   })
 
   test("a reconnect to another Core reaches listeners with that Core", async () => {
