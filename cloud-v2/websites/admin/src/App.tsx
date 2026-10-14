@@ -869,7 +869,7 @@ export function LoginGate({ denied = false, onSignOut, signingOut = false }: { d
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
-                ? "You're signed in, but this account has no administrator access here: that needs a verified email on the Core admin allowlist. Manage your own workspaces in the workspace portal, switch accounts, or ask for your email to be added."
+                ? "You're signed in, but this account has no administrator access here: that needs a verified email on the Core admin allowlist. Manage your own workspaces in Mentra Portal, switch accounts, or ask for your email to be added."
                 : "Triage incidents, follow test runs, and manage workspaces and other internal operations."}
             </p>
 
