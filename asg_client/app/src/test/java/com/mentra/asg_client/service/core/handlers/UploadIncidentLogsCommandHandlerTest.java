@@ -63,12 +63,18 @@ public class UploadIncidentLogsCommandHandlerTest {
         when(bluetooth.isFileTransferInProgress()).thenAnswer(invocation -> active.get());
         doAnswer(
                         invocation -> {
-                            Consumer<String> callback = invocation.getArgument(3);
-                            callback.accept("{\"source\":\"glasses_firmware\",\"entries\":[]}");
-                            return null;
+                            Consumer<String> callback = invocation.getArgument(4);
+                            BesLogManager session =
+                                    new BesLogManager(
+                                            invocation.getArgument(0),
+                                            RuntimeEnvironment.getApplication(),
+                                            configuration,
+                                            callback);
+                            session.onLogPacketReceived(255, "end");
+                            return session;
                         })
                 .when(bes)
-                .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+                .requestBesLogs(anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
         when(bluetooth.sendFile(anyString()))
                 .thenAnswer(
                         invocation -> {
@@ -403,7 +409,8 @@ public class UploadIncidentLogsCommandHandlerTest {
             assertThat(secondAttempting.await(5, TimeUnit.SECONDS)).isTrue();
             awaitBlocked(ble);
             verify(bes, org.mockito.Mockito.never())
-                    .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+                    .requestBesLogs(
+                            anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
         } finally {
             releaseCapture.countDown();
             http.join(5_000);
@@ -482,6 +489,123 @@ public class UploadIncidentLogsCommandHandlerTest {
         }
     }
 
+    @Test
+    public void bleCaptureExpirySettlesExactSessionBeforeFilesAndRetainsPartialLogs()
+            throws Exception {
+        CountDownLatch callbackEntered = new CountDownLatch(1);
+        CountDownLatch releaseCallback = new CountDownLatch(1);
+        CountDownLatch callbackFinished = new CountDownLatch(1);
+        AtomicInteger deliveries = new AtomicInteger();
+        BesLogManager session =
+                spy(
+                        new BesLogManager(
+                                "rep_expired_ble",
+                                RuntimeEnvironment.getApplication(),
+                                configuration,
+                                json -> {
+                                    callbackEntered.countDown();
+                                    try {
+                                        releaseCallback.await();
+                                        deliveries.incrementAndGet();
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    } finally {
+                                        callbackFinished.countDown();
+                                    }
+                                }));
+        session.onLogPacketReceived(0, "retained partial firmware");
+        // Model an expired ownership deadline with the native main-loop watchdog still delayed.
+        doAnswer(invocation -> session.awaitCollection(0, TimeUnit.SECONDS))
+                .when(session)
+                .awaitCollection(25, TimeUnit.SECONDS);
+        when(bes.requestBesLogs(
+                        eq("rep_expired_ble"),
+                        any(),
+                        eq(configuration),
+                        eq(""),
+                        any(Consumer.class)))
+                .thenReturn(session);
+        AtomicReference<String> transferredFirmware = new AtomicReference<>();
+        doAnswer(
+                        invocation -> {
+                            assertThat(session.isFinished())
+                                    .as("capture settles before any file starts")
+                                    .isTrue();
+                            File file = new File(invocation.getArgument(0, String.class));
+                            JSONObject payload =
+                                    new JSONObject(
+                                            new String(
+                                                    Files.readAllBytes(file.toPath()),
+                                                    StandardCharsets.UTF_8));
+                            if (payload.getString("source").equals("glasses_firmware")) {
+                                transferredFirmware.set(
+                                        payload.getJSONArray("entries")
+                                                .getJSONObject(0)
+                                                .getString("message"));
+                            }
+                            active.set(true);
+                            return true;
+                        })
+                .when(bluetooth)
+                .sendFile(anyString());
+        waits.add(true);
+        waits.add(true);
+        try {
+            handler.relayLogsViaBle("rep_expired_ble");
+            assertThat(callbackEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(callbackFinished.getCount()).isEqualTo(1);
+            assertThat(transferredFirmware.get()).isEqualTo("retained partial firmware");
+            verify(bluetooth, times(2)).sendFile(anyString());
+            session.onLogPacketReceived(255, "end");
+        } finally {
+            releaseCallback.countDown();
+        }
+        assertThat(callbackFinished.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(deliveries.get()).isEqualTo(1);
+    }
+
+    @Test
+    public void interruptedBleCaptureSettlesItsSessionBeforeOwnershipReturnsAndNextReportRuns()
+            throws Exception {
+        CountDownLatch delivered = new CountDownLatch(1);
+        AtomicInteger deliveries = new AtomicInteger();
+        BesLogManager session =
+                new BesLogManager(
+                        "rep_interrupted_ble",
+                        RuntimeEnvironment.getApplication(),
+                        configuration,
+                        json -> {
+                            deliveries.incrementAndGet();
+                            delivered.countDown();
+                        });
+        when(bes.requestBesLogs(
+                        eq("rep_interrupted_ble"),
+                        any(),
+                        eq(configuration),
+                        eq(""),
+                        any(Consumer.class)))
+                .thenReturn(session);
+        Thread.currentThread().interrupt();
+        try {
+            handler.relayLogsViaBle("rep_interrupted_ble");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(session.isFinished()).isTrue();
+            verify(bluetooth, org.mockito.Mockito.never()).sendFile(anyString());
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+        session.onLogPacketReceived(255, "end");
+        assertThat(deliveries.get()).isEqualTo(1);
+        starts.add(true);
+        starts.add(true);
+        waits.add(true);
+        waits.add(true);
+        handler.relayLogsViaBle("rep_after_interrupted_ble");
+        assertThat(sentSources).containsExactly("glasses_firmware", "glasses");
+        assertFilesRemoved();
+    }
+
     private void assertConcurrentReportsRemainSequential(
             boolean firstFirmwareRefused, boolean secondUsesHttp) throws Exception {
         CountDownLatch firstCapturing = new CountDownLatch(1);
@@ -497,12 +621,18 @@ public class UploadIncidentLogsCommandHandlerTest {
                                 firstCapturing.countDown();
                                 assertThat(releaseFirst.await(5, TimeUnit.SECONDS)).isTrue();
                             }
-                            Consumer<String> callback = invocation.getArgument(3);
-                            callback.accept("{\"source\":\"glasses_firmware\",\"entries\":[]}");
-                            return null;
+                            Consumer<String> callback = invocation.getArgument(4);
+                            BesLogManager session =
+                                    new BesLogManager(
+                                            invocation.getArgument(0),
+                                            RuntimeEnvironment.getApplication(),
+                                            configuration,
+                                            callback);
+                            session.onLogPacketReceived(255, "end");
+                            return session;
                         })
                 .when(bes)
-                .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+                .requestBesLogs(anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
         BesLogManager httpSession = mock(BesLogManager.class);
         when(httpSession.awaitCollection(25, TimeUnit.SECONDS)).thenReturn(true);
         when(bes.requestBesLogs(
@@ -543,7 +673,8 @@ public class UploadIncidentLogsCommandHandlerTest {
             assertThat(secondAttempting.await(5, TimeUnit.SECONDS)).isTrue();
             awaitBlocked(second);
             verify(bes, times(1))
-                    .requestBesLogs(anyString(), any(), eq(configuration), any(Consumer.class));
+                    .requestBesLogs(
+                            anyString(), any(), eq(configuration), eq(""), any(Consumer.class));
         } finally {
             releaseFirst.countDown();
             first.join(5_000);

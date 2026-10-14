@@ -65,6 +65,7 @@ public class BesLogManager {
   private boolean mIsReceiving = false;
   private final AtomicBoolean mFinished = new AtomicBoolean(false);
   private final CountDownLatch mCollectionFinished = new CountDownLatch(1);
+  private String mCollectedLog;
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -174,13 +175,21 @@ public class BesLogManager {
     }
   }
 
+  /** Return the frozen firmware payload after collection settlement, without waiting for callbacks. */
+  public String getCollectedFirmwareJson() {
+    if (mCollectionFinished.getCount() != 0) {
+      throw new IllegalStateException("BES collection has not settled");
+    }
+    return buildFirmwareUploadJson(mCollectedLog);
+  }
+
   /**
    * Process one incoming {@code sr_log} packet.
    *
    * @param cur  packet sequence number; 255 signals end of stream
    * @param body log text chunk, or {@code "end"} for the terminator packet
    */
-  public void onLogPacketReceived(int cur, String body) {
+  public synchronized void onLogPacketReceived(int cur, String body) {
     if (mFinished.get()) return;
 
     if (!mIsReceiving) {
@@ -209,12 +218,13 @@ public class BesLogManager {
    *
    * @param timeoutReason null on normal completion, otherwise a reason string
    */
-  private void finish(String timeoutReason) {
+  private synchronized void finish(String timeoutReason) {
     if (!mFinished.compareAndSet(false, true)) return;
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
 
     String fullLog = mLogBuffer.toString();
+    mCollectedLog = fullLog;
     mCollectionFinished.countDown();
 
     if (timeoutReason != null) {
