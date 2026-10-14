@@ -8,7 +8,7 @@
  * does not know shows its readable changes instead.
  */
 
-import { WORKSPACE_ROLES, type AuditEventView, type WorkspaceRole } from "@mentra/workspace-contract";
+import { OWNS_MINIAPPS_HOLD_REASON, WORKSPACE_ROLES, type AuditEventView, type WorkspaceRole } from "@mentra/workspace-contract";
 import { ROLE_LABELS } from "../roles";
 import { formatDate, formatDateTime } from "./format";
 
@@ -27,6 +27,8 @@ const ACTION_LABELS: Record<string, string> = {
   "workspace.created": "Workspace created",
   "workspace.renamed": "Workspace renamed",
   "workspace.deleted": "Workspace deleted",
+  "workspace.deletion_hold_set": "Deletion hold set",
+  "workspace.deletion_hold_cleared": "Deletion hold cleared",
   "membership.added": "Member added",
   "membership.role_changed": "Role changed",
   "membership.removed": "Member removed",
@@ -116,6 +118,19 @@ export function describeAuditEvent(event: AuditEventView): AuditDescription {
       const name = text(before.name);
       return done(name ? ["Deleted the workspace ", strong(name)] : ["Deleted the workspace"]);
     }
+    case "workspace.deletion_hold_set": {
+      // The panel names the service beside the sentence, so the sentence says only what holds the workspace.
+      const reason = text(after.reason);
+      const held = typeof after.count === "number" ? after.count : null;
+      if (text(target.service) === "store" && reason === OWNS_MINIAPPS_HOLD_REASON) {
+        const owned = held === null ? "published miniapps" : plural(held, "published miniapp", "published miniapps");
+        return done([`Held the workspace from deletion while it owns ${owned}`]);
+      }
+      const why = reason ? ` (${reason.replace(/_/g, " ")}${held === null ? "" : `: ${held}`})` : "";
+      return done([`Held the workspace from deletion${why}`]);
+    }
+    case "workspace.deletion_hold_cleared":
+      return done(["Stopped holding the workspace from deletion"]);
     case "membership.added": {
       const as = role(after.role);
       const asRole: AuditText = as ? [" as ", strong(as)] : [];

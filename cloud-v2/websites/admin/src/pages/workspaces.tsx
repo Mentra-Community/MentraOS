@@ -34,11 +34,12 @@ export const ORGANIZATION_WORKSPACES_KEY = [...workspaceKeys.list(adminWorkspace
 const ALL_WORKSPACES_PAGE_SIZE = 50;
 
 /**
- * Core deletes a workspace without asking the Mentra Miniapp Store, so the page says what happens to the
- * miniapps the workspace publishes there.
+ * The Mentra Miniapp Store holds a workspace from deletion while it owns published miniapps (the settings
+ * screen says so instead of offering the delete). It does not hold one for miniapps that are not
+ * published, so the page says what happens to those.
  */
 export const STORE_DELETE_NOTICE =
-  "Miniapps this workspace publishes in the Mentra Miniapp Store stay published, and nobody can manage them until a Store operator assigns them to another workspace.";
+  "Unpublished miniapps this workspace has in the Mentra Miniapp Store stay there, and nobody can manage them until a Store operator assigns them to another workspace.";
 
 type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";
 const TABS: ReadonlyArray<readonly [TabKey, string]> = [

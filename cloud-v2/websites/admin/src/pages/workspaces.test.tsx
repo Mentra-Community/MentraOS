@@ -56,18 +56,37 @@ describe("the Workspaces page", () => {
     expect(render(<WorkspacesPage />)).toContain("Loading workspaces");
   });
 
-  test("warns that the Mentra Miniapp Store keeps the workspace's miniapps until an operator reassigns them", () => {
+  test("warns that the Mentra Miniapp Store keeps the workspace's unpublished miniapps until an operator reassigns them", () => {
     const owner: WorkspaceDetail = {
       ...everyone[0]!,
       membership: null,
       capabilities: [...capabilitiesForRole("owner")],
+      deletionHolds: [],
     };
     const markup = render(
       <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
       { details: [owner] },
     );
-    expect(markup).toContain("stay published");
+    expect(markup).toContain("Unpublished miniapps");
     expect(markup).toContain("until a Store operator assigns them to another workspace");
+  });
+
+  test("a workspace that still owns published miniapps says so where the delete is, and cannot be deleted from here", () => {
+    const held: WorkspaceDetail = {
+      ...everyone[0]!,
+      membership: null,
+      capabilities: [...capabilitiesForRole("owner")],
+      organizationAdmin: true,
+      deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 3 }],
+    };
+    const markup = render(
+      <WorkspaceSettingsPanel api={adminWorkspaceApi} workspaceId="ws_acme" deleteNotice={STORE_DELETE_NOTICE} />,
+      { details: [held] },
+    );
+    const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
+    expect(section).toContain("This workspace still owns 3 published miniapps. Delete them in the Developer Console first.");
+    expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
+    expect(section).not.toContain(STORE_DELETE_NOTICE);
   });
 });
 

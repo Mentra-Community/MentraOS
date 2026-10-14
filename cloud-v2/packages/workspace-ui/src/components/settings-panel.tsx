@@ -4,14 +4,17 @@
  * Rename needs `workspace.settings.manage`, delete needs `workspace.delete` and the workspace's name
  * typed back, and leaving is offered to anyone who is a member (an organization admin acting from
  * outside the workspace has nothing to leave). The only owner cannot leave, so for them Leave is
- * disabled and says why. A host adds what deleting means in its context with `deleteNotice`. A refused
- * action says why next to the control that caused it.
+ * disabled and says why. A workspace a service holds (`deletionHolds`, such as the Store's while it
+ * owns published miniapps) cannot be deleted by anyone, so for them Delete is disabled and says why.
+ * A host adds what deleting means in its context with `deleteNotice`. A refused action says why next
+ * to the control that caused it.
  */
 
 import { useQuery } from "@tanstack/react-query";
-import type { WorkspaceDetail } from "@mentra/workspace-contract";
+import { describeDeletionHolds, type WorkspaceDeletionHold, type WorkspaceDetail } from "@mentra/workspace-contract";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceApi } from "../api";
+import { isWorkspaceHeldError } from "../errors";
 import { membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
 import { Button } from "../ui/button";
@@ -147,6 +150,7 @@ function SettingsForms({
             {canDelete ? (
               <DeleteSection
                 workspaceName={detail.name}
+                holds={detail.deletionHolds ?? []}
                 deleteNotice={deleteNotice}
                 busy={busy}
                 error={remove.error}
@@ -211,15 +215,21 @@ export function LeaveSection({
   );
 }
 
-/** Deleting: the workspace's name typed back, then the button. A refusal shows right under the form. */
+/**
+ * Deleting: the workspace's name typed back, then the button. While a service holds the workspace
+ * (`holds`) the form is disabled and says why instead. A refusal shows right under the form.
+ */
 export function DeleteSection({
   workspaceName,
+  holds = [],
   deleteNotice,
   busy,
   error,
   onDelete,
 }: {
   workspaceName: string;
+  /** What holds the workspace from deletion; deleting is offered only when there is nothing. */
+  holds?: WorkspaceDeletionHold[];
   deleteNotice?: ReactNode;
   busy: boolean;
   error: unknown;
@@ -228,10 +238,12 @@ export function DeleteSection({
   const [confirmName, setConfirmName] = useState("");
   const confirmId = useId();
   const labelId = useId();
+  const heldId = useId();
+  const held = holds.length > 0;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (confirmName !== workspaceName) return;
+    if (held || confirmName !== workspaceName) return;
     onDelete(confirmName);
   }
 
@@ -243,7 +255,11 @@ export function DeleteSection({
           Deleting a workspace ends every membership and invitation and revokes every key. It cannot be undone.
         </p>
       </div>
-      {deleteNotice ? (
+      {held ? (
+        <p id={heldId} role="note" className="rounded-notice bg-info text-info-foreground max-w-xl px-4 py-3 text-sm">
+          {describeDeletionHolds(holds)}
+        </p>
+      ) : deleteNotice ? (
         <div role="note" className="rounded-notice bg-error text-error-foreground max-w-xl px-4 py-3 text-sm">
           {deleteNotice}
         </div>
@@ -259,17 +275,25 @@ export function DeleteSection({
           <Input
             id={confirmId}
             aria-labelledby={labelId}
+            aria-describedby={held ? heldId : undefined}
             autoComplete="off"
             className="w-72"
             value={confirmName}
             onChange={(event) => setConfirmName(event.target.value)}
+            disabled={held}
           />
         </div>
-        <Button type="submit" variant="destructive" disabled={busy || confirmName !== workspaceName}>
+        <Button
+          type="submit"
+          variant="destructive"
+          aria-describedby={held ? heldId : undefined}
+          disabled={held || busy || confirmName !== workspaceName}
+        >
           Delete workspace
         </Button>
       </form>
-      <ErrorNotice error={error} />
+      {/* A refusal for holds the note above already names would only repeat it. */}
+      {held && isWorkspaceHeldError(error) ? null : <ErrorNotice error={error} />}
     </section>
   );
 }

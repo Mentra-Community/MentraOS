@@ -45,6 +45,27 @@ describe("workspaceMutationOptions", () => {
     expect(stale(client, workspaceKeys.members(api, WORKSPACE_ID))).toBe(true);
   });
 
+  test("409 workspace_has_holds refetches the workspace, so the screen shows what holds it", async () => {
+    const { api, client } = seeded();
+    const held = new WorkspaceApiError(409, "workspace_has_holds", "held", [
+      { service: "store", reason: "owns_miniapps", count: 1 },
+    ]);
+    const observer = new MutationObserver(
+      client,
+      workspaceMutationOptions(
+        client,
+        api,
+        WORKSPACE_ID,
+        async () => {
+          throw held;
+        },
+        { workspaceGone: true },
+      ),
+    );
+    expect(await observer.mutate(undefined).catch((e: unknown) => e)).toBe(held);
+    expect(stale(client, workspaceKeys.detail(api, WORKSPACE_ID))).toBe(true);
+  });
+
   test("any other failure leaves the cache alone", async () => {
     const { api, client } = seeded();
     for (const failure of [

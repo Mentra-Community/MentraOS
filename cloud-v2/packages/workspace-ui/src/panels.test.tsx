@@ -475,6 +475,55 @@ describe("settings panel", () => {
     expect(deleted).toMatch(/Delete workspace<\/button><\/form><p role="alert"[^>]*>You do not have permission to do that.<\/p><\/section>$/);
   });
 
+  test("a workspace a service holds says why it cannot be deleted, where the delete is, and offers no delete", () => {
+    const { api } = offlineApi();
+    const held = { ...detailFor("owner"), deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 3 }] };
+    const markup = renderSeeded(
+      api,
+      { detail: held },
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} deleteNotice="Host notice about deleting." />,
+    );
+    const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
+    expect(section).toContain(
+      "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+    );
+    // The reason names the confirmation field and the button, both disabled; the host's notice about what
+    // deleting does waits until deleting is possible.
+    const reasonId = /<p id="([^"]+)"[^>]*>This workspace still owns/.exec(section)?.[1];
+    expect(reasonId).toBeTruthy();
+    expect(section).toMatch(new RegExp(`<input[^>]*aria-describedby="${reasonId}"[^>]*disabled=""`));
+    expect(section).toMatch(new RegExp(`<button[^>]*aria-describedby="${reasonId}"[^>]*disabled=""[^>]*>Delete workspace</button>`));
+    expect(section).not.toContain("Host notice about deleting.");
+
+    // An organization admin sees the same: holds bind everyone.
+    const admin = renderSeeded(
+      api,
+      { detail: { ...organizationAdminDetail(), deletionHolds: held.deletionHolds } },
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+    expect(admin).toContain("This workspace still owns 3 published miniapps.");
+
+    // Without holds (or from a server that predates them) nothing is said and the form works as before.
+    for (const detail of [{ ...detailFor("owner"), deletionHolds: [] }, detailFor("owner")]) {
+      const free = renderSeeded(api, { detail }, <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />);
+      expect(free).not.toContain("still owns");
+      expect(free).not.toMatch(/<input[^>]*aria-labelledby="[^"]+"[^>]*disabled=""/);
+    }
+  });
+
+  test("a delete refused because a service holds the workspace says why in words", () => {
+    const refused = new WorkspaceApiError(409, "workspace_has_holds", "workspace_has_holds", [
+      { service: "store", reason: "owns_miniapps", count: 1 },
+    ]);
+    const markup = renderToStaticMarkup(
+      <DeleteSection workspaceName={WORKSPACE_NAME} busy={false} error={refused} onDelete={() => {}} />,
+    );
+    expect(markup).toContain(
+      'role="alert"',
+    );
+    expect(markup).toContain("This workspace still owns 1 published miniapp. Delete it in the Developer Console first.");
+  });
+
   test("every field has an accessible name: the name field and the delete confirmation", () => {
     const markup = render(detailFor("owner"));
     for (const input of markup.match(/<input[^>]*>/g) ?? []) {
