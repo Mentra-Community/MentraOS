@@ -16,7 +16,7 @@ import {permissionObservationMatches, permissionContext} from '../types/resource
 import type {FrameworkBinding} from '../types/framework-version.types';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {RoutineDefinitionService} from './routine-definition.service';
-import {TestHostStateService, type ReceivedTestHostState} from './test-host-state.service';
+import {TestHostStateService, type RoutingTestHostState} from './test-host-state.service';
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
@@ -167,12 +167,12 @@ export function routinePortableRequirements(definition: RoutineEnrollment): Port
     ...(body.glasses ? {glasses: {models: body.glasses.models, capabilities: [...body.resourceRequirements.find(value => value.kind === "glasses")!.capabilities]}} : {}),
     resources: body.resourceRequirements});
 }
-export function routineLaneDescriptorRevision(lane: ReceivedTestHostState['lanes'][number]): string {
+export function routineLaneDescriptorRevision(lane: RoutingTestHostState['lanes'][number]): string {
   return requestInputDigest({id: lane.id, platform: lane.platform,
     resources: lane.resources.map(({permissionObservations: _, ...resource}) => ({...resource, capabilities: [...resource.capabilities ?? []].sort()})).sort((a, b) => a.id.localeCompare(b.id)),
     glasses: (lane.glasses ?? []).map(glasses => ({...glasses, capabilities: [...glasses.capabilities].sort()})).sort((a, b) => a.resourceId.localeCompare(b.resourceId))});
 }
-export function compatibleRoutineLane(requirements: PortableRequirements, lane: ReceivedTestHostState['lanes'][number],
+export function compatibleRoutineLane(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
   context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}}) {
   if (lane.platform !== requirements.platform || (lane.glasses?.length ?? 0) > 1 ||
     new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length) return false;
@@ -199,7 +199,7 @@ export function routineRequirementLabels(requirements: PortableRequirements, mod
     ...(target?.laneId ? [`mentra-lane-${token(`${target.hostId}:${target.laneId}`)}`] : [])])].sort();
 }
 /** Queue model choice follows current accepting lanes; the portable alternatives stay immutable. */
-export function routineJobRouting(requirements: PortableRequirements, hosts: ReceivedTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget'],
+export function routineJobRouting(requirements: PortableRequirements, hosts: RoutingTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget'],
   build?: {headSha: string; archive?: {sha256: string}; receipt?: {sha256: string}}) {
   const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000 &&
     (!target?.hostId || target.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
