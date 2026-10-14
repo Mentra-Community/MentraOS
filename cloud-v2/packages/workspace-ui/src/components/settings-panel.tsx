@@ -45,6 +45,7 @@ export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
           key={workspaceId}
           {...props}
           detail={detail}
+          detailUpdatedAt={detailResult.dataUpdatedAt}
           checkingHolds={detailResult.isFetching}
           onCheckHolds={() => void detailResult.refetch()}
         />
@@ -60,9 +61,15 @@ function SettingsForms({
   onLeft,
   deleteNotice,
   detail,
+  detailUpdatedAt,
   checkingHolds,
   onCheckHolds,
-}: SettingsPanelProps & { detail: WorkspaceDetail; checkingHolds: boolean; onCheckHolds(): void }) {
+}: SettingsPanelProps & {
+  detail: WorkspaceDetail;
+  detailUpdatedAt: number;
+  checkingHolds: boolean;
+  onCheckHolds(): void;
+}) {
   const [name, setName] = useState(detail.name);
   const nameId = useId();
 
@@ -165,7 +172,11 @@ function SettingsForms({
                 onCheckHolds={onCheckHolds}
                 deleteNotice={deleteNotice}
                 busy={busy}
-                error={remove.error}
+                error={deleteRefusalToShow(remove.error, {
+                  held: (detail.deletionHolds?.length ?? 0) > 0,
+                  submittedAt: remove.submittedAt,
+                  detailUpdatedAt,
+                })}
                 onDelete={(typed) => {
                   rename.reset();
                   leave.reset();
@@ -225,6 +236,19 @@ export function LeaveSection({
       ) : null}
     </section>
   );
+}
+
+/**
+ * The delete refusal to show. A refusal for holds (409 `workspace_has_holds`) is answered by the holds'
+ * note while they last, and is stale once the workspace has been looked up again since it (Check again,
+ * the window regaining focus) and is no longer held. Every other refusal shows until the next attempt.
+ */
+export function deleteRefusalToShow(
+  error: unknown,
+  state: { held: boolean; submittedAt: number; detailUpdatedAt: number },
+): unknown {
+  if (!isWorkspaceHeldError(error)) return error ?? null;
+  return state.held || state.detailUpdatedAt > state.submittedAt ? null : error;
 }
 
 /**

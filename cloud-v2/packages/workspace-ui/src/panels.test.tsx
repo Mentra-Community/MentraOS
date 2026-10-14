@@ -26,7 +26,7 @@ import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
 import { WorkspacePicker } from "./components/workspace-picker";
-import { DeleteSection, LeaveSection, WorkspaceSettingsPanel } from "./components/settings-panel";
+import { deleteRefusalToShow, DeleteSection, LeaveSection, WorkspaceSettingsPanel } from "./components/settings-panel";
 import { invitationPreviewQuery } from "./queries";
 import {
   AUDIT_EVENTS,
@@ -525,6 +525,21 @@ describe("settings panel", () => {
       'role="alert"',
     );
     expect(markup).toContain("This workspace still owns 1 published miniapp. Delete it in the Developer Console first.");
+  });
+
+  test("a refusal for holds stops showing once a later look-up of the workspace has replaced it", () => {
+    const held = new WorkspaceApiError(409, "workspace_has_holds", "held", [{ service: "store", reason: "owns_miniapps", count: 1 }]);
+    const submittedAt = 1_000;
+    // While the workspace is held, the note says it; the refusal would only repeat it.
+    expect(deleteRefusalToShow(held, { held: true, submittedAt, detailUpdatedAt: 2_000 })).toBeNull();
+    // Looked up again after the refusal (Check again, focus) and no longer held: the refusal is stale.
+    expect(deleteRefusalToShow(held, { held: false, submittedAt, detailUpdatedAt: 2_000 })).toBeNull();
+    // Not looked up since (the refetch failed): the refusal is the only word on why.
+    expect(deleteRefusalToShow(held, { held: false, submittedAt, detailUpdatedAt: 500 })).toBe(held);
+    // Every other refusal stays until the next attempt.
+    const forbidden = new WorkspaceApiError(403, "forbidden", "forbidden");
+    expect(deleteRefusalToShow(forbidden, { held: false, submittedAt, detailUpdatedAt: 2_000 })).toBe(forbidden);
+    expect(deleteRefusalToShow(null, { held: false, submittedAt: 0, detailUpdatedAt: 0 })).toBeNull();
   });
 
   test("every field has an accessible name: the name field and the delete confirmation", () => {
