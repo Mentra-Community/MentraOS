@@ -557,9 +557,6 @@ public class WhipStreamingService extends Service {
   }
 
   private void stopStreaming(boolean forReconnect) {
-    if (mHardwareManager != null) {
-      mHardwareManager.stopAudioPlayback();
-    }
     if (!forReconnect) mSessionGeneration++;
     boolean hasWebRtcResources = hasWebRtcResources();
     synchronized (mStateLock) {
@@ -570,6 +567,11 @@ public class WhipStreamingService extends Service {
         return;
       }
       mStreamState = StreamState.STOPPING;
+    }
+    // Only a stop that actually tears the stream down. A second stop, including
+    // onDestroy while STOPPING, must not cut the stop cue this call is about to play.
+    if (mHardwareManager != null) {
+      mHardwareManager.stopAudioPlayback();
     }
 
     mMainHandler.removeCallbacks(mStatsRunnable);

@@ -580,7 +580,8 @@ public class I2SAudioController {
         finishCameraOverlay(token);
         closeI2SIfIdle();
         refreshControlFlag();
-        signalPrimaryAwait();
+        // An overlay failure is not the primary cue. Releasing primaryAwait here would
+        // let startStream open the microphone while the recording ding is still playing.
     }
 
     private boolean ensureI2sOpen() {
