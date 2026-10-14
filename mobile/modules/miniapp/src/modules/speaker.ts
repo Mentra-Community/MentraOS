@@ -351,6 +351,7 @@ export class SpeakerModule {
   /** Stop any audio this miniapp is currently playing. */
   stop(): void {
     this.activeStreams.clear()
+    this._state = "stopped"
     this.session.sendOneShot({type: MiniappRequestType.STOP_AUDIO})
   }
 
@@ -365,9 +366,6 @@ export class SpeakerModule {
 
   /** @internal — applied by MiniappSession on inbound SPEAKER_STATE envelope. */
   _applyState(event: SpeakerStateEvent): void {
-    if (event.state === "stopped" || event.state === "idle" || event.state === "error") {
-      this.activeStreams.clear()
-    }
     // Idempotent: skip if state didn't change. Error events are transient
     // and are not deduped against the prior state — they're informational
     // and the phone immediately follows up with `stopped`.
