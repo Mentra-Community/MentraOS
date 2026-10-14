@@ -1,0 +1,18 @@
+# Helm values for the existing Porter cloud-dev-runtime subchart.
+cloud-dev-runtime:
+  podDisruptionBudget:
+    enabled: true
+    minAvailablePercentage: 50
+  deploymentStrategy:
+    kind: rolling
+    rolling:
+      maxUnavailable: 0
+      maxSurge: 1
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: cloud-dev
+              app.kubernetes.io/name: cloud-dev-runtime
+          topologyKey: kubernetes.io/hostname

@@ -40,7 +40,7 @@ services:
     type: web
     run: bun packages/runtime/src/index.ts
     port: 3001
-    instances: 1
+    instances: 2
     cpuCores: 0.5
     ramMegabytes: 2048
     domains:

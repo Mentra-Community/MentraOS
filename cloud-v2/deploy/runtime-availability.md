@@ -1,0 +1,11 @@
+# Dev Runtime availability
+
+The single dev Runtime pod was voluntarily evicted by Karpenter for underutilization at 20:44:13 UTC on 14 October 2026. Its replacement began running at 20:44:17 and became available at 20:44:34. Two original Mac app processes received HTTP 503 from `/api/client/min-version` at 20:44:23.501 and 20:44:25.574. Core continued serving sessions during this interval.
+
+`porter.dev.yaml` requests two Runtime replicas. `porter.dev.overrides.yaml` configures the existing Porter Runtime chart with a 50% minimum-available PodDisruptionBudget, required hostname anti-affinity, and rolling updates with zero unavailable replicas and one surge replica. The existing `/ready` probe and five-second pre-stop delay remain in place. The ordinary coordinated deployment passes the matching source-owned Helm overrides to `porter apply`; no independent Kubernetes objects are applied.
+
+This adds 0.5 requested CPU and 2048 MB of memory in steady state. Required anti-affinity needs two eligible nodes in steady state and a third eligible node for the surge replica during a rollout. A rollout waits safely if the third placement cannot be scheduled. Capacity approval and measured scheduling capacity are required before activation. Staging and production are outside this change.
+
+The budget uses the Deployment desired replica count of two and blocks voluntary eviction when it would leave fewer than one healthy Runtime replica. The rolling strategy independently requires both desired replicas available during a rollout. It does not prevent abrupt node failure or guarantee uninterrupted existing WebSocket streams. REST requests are pod-agnostic; audio sessions use existing Redis ownership and UDP forwarding. The policy request failures above demonstrate serving unavailability, not an authentication or routine assertion fault.
+
+Before activation, render the exact Porter chart with these service overrides and verify the deployment selector, replica count, anti-affinity, rolling strategy, readiness and pre-stop settings, plus the budget selector. Use the normal Porter server dry-run. After approved deployment, record two ready endpoints on different nodes and the budget's desired healthy count. Keep active device work and its frozen build unchanged.
