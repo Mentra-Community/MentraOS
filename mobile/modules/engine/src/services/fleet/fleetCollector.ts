@@ -15,6 +15,11 @@
  * once when a session ends. A session also ends when it reaches the longest time one record may carry (7 days),
  * and a new one carries on from there.
  *
+ * Snapshots come at start, after a change worth one (the connection, a battery move of 5 points or a charging change,
+ * a new version), and with the first checkpoint 15 minutes or more after the last snapshot, so the two share a
+ * wake-up and an upload. While only the engine is active that 15-minute snapshot is written only if it would say
+ * something new. A phone running only the engine all day so writes about 100 records: a checkpoint every 15 minutes.
+ *
  * Time counts only while the collector was watching. The monotonic clock runs while the device is awake, so a
  * wall-clock jump (the device slept, or the clock was changed) ends the sessions at the monotonic time that was
  * observed and records the jump as a gap; a checkpoint that is overdue by the monotonic clock means the process was
@@ -284,8 +289,10 @@ class CollectorRun {
 
   private checkpointTimer: number | null = null
   private checkpointDueMono = 0
-  private snapshotInterval: number | null = null
   private snapshotDebounce: number | null = null
+  /** When the last snapshot was written (monotonic), and what it said, so a repeat of it can be skipped. */
+  private lastSnapshotMono = 0
+  private lastSnapshotKey: string | null = null
 
   private known: KnownGlasses | null = null
   private battery: BatteryReading | null = null
@@ -328,10 +335,6 @@ class CollectorRun {
 
     this.takeSnapshot()
     this.arm(this.cadence())
-    this.snapshotInterval = BgTimer.setInterval(
-      () => this.guard("snapshot", () => this.takeSnapshot()),
-      SNAPSHOT_INTERVAL_MS,
-    )
   }
 
   /** Ends every session in the partition, then stops listening. */
@@ -355,8 +358,7 @@ class CollectorRun {
     this.stopped = true
     if (this.checkpointTimer !== null) BgTimer.clearTimeout(this.checkpointTimer)
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
-    if (this.snapshotInterval !== null) BgTimer.clearInterval(this.snapshotInterval)
-    this.checkpointTimer = this.snapshotDebounce = this.snapshotInterval = null
+    this.checkpointTimer = this.snapshotDebounce = null
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup()
@@ -510,6 +512,7 @@ class CollectorRun {
     if (this.stopped || this.checkpointTimer !== fired) return
     try {
       this.flush()
+      this.guard("snapshot", () => this.periodicSnapshot())
     } finally {
       // A checkpoint that failed part-way must not end the cadence.
       if (!this.stopped && this.checkpointTimer === fired) this.arm(this.cadence())
@@ -741,6 +744,16 @@ class CollectorRun {
     this.snapshotDebounce = timer
   }
 
+  /**
+   * The 15-minute snapshot. It has no timer of its own: it is written with the checkpoint that falls due 15 minutes or
+   * more after the last snapshot, so the two share a wake-up and an upload. While only the engine is active it is
+   * written only if it would say something the last snapshot did not.
+   */
+  private periodicSnapshot(): void {
+    if (this.env.monotonic() - this.lastSnapshotMono < SNAPSHOT_INTERVAL_MS) return
+    this.takeSnapshot(!this.isFast())
+  }
+
   /** A change in the connection, a battery move of 5 points or a charging change, or a new version, is worth a snapshot. */
   private evaluateSnapshotTriggers(): void {
     const last = this.marks
@@ -758,11 +771,12 @@ class CollectorRun {
     if (changed) this.scheduleSnapshot()
   }
 
-  private takeSnapshot(): void {
-    if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
-    this.snapshotDebounce = null
+  /** Writes a snapshot; with `onlyIfNew`, only if it would say something the last one did not. */
+  private takeSnapshot(onlyIfNew = false): void {
     const phone = phoneInfo()
     if (!phone) {
+      if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
+      this.snapshotDebounce = null
       console.warn("FleetCollector: no snapshot, this platform has no value in the Fleet contract")
       return
     }
@@ -779,6 +793,15 @@ class CollectorRun {
             battery: this.batteryPayload(wall),
           }
         : null
+    // What the snapshot says, leaving out the time an unknown battery with no reading is stamped with (it is now).
+    const key = JSON.stringify([
+      binding && glasses ? binding : null,
+      phone,
+      glasses && !this.battery ? {...glasses, battery: {state: glasses.battery?.state}} : glasses,
+    ])
+    if (onlyIfNew && key === this.lastSnapshotKey) return
+    if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
+    this.snapshotDebounce = null
     this.emit(wall, (base) => ({
       ...base,
       kind: "snapshot",
@@ -786,6 +809,8 @@ class CollectorRun {
       payload: {phone, ...(glasses ? {glasses} : {})},
     }))
     this.marks = this.currentMarks()
+    this.lastSnapshotMono = this.env.monotonic()
+    this.lastSnapshotKey = key
   }
 
   // --- launches and photos -------------------------------------------------------------------------------------

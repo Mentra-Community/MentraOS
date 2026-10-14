@@ -1034,14 +1034,67 @@ describe("snapshots", () => {
     expect(latest.deviceBinding).toMatchObject({kind: "serial", serial: "SN-LIVE-1"})
   })
 
-  test("a snapshot comes every 15 minutes", () => {
+  test("while active, a snapshot comes every 15 minutes, written with that minute's checkpoint", () => {
+    setAppState("active", false)
     start()
     advance(14 * 60_000 + 59_000)
     expect(snapshots()).toHaveLength(1)
     advance(1_000)
     expect(snapshots()).toHaveLength(2)
+    // In the same breath as a checkpoint, so the two go out in one upload.
+    expect(snapshots()[1].observedAt).toBe(checkpoints().at(-1)!.observedAt)
     advance(15 * 60_000)
     expect(snapshots()).toHaveLength(3)
+  })
+
+  test.each([
+    ["glasses are connected", () => connectLive()],
+    ["a miniapp is executing", () => miniappRunningRegistry.add("com.mentra.notes")],
+  ])("while %s, a snapshot comes every 15 minutes", (_name, activate) => {
+    activate()
+    start()
+    advance(30 * 60_000)
+    expect(snapshots()).toHaveLength(3)
+  })
+
+  test("with only the engine active, the 15-minute snapshot is skipped while it would say nothing new", () => {
+    start()
+    advance(24 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints()).toHaveLength(96)
+  })
+
+  test("with only the engine active, a snapshot that would say something new is taken with the 15-minute checkpoint", () => {
+    start()
+    advance(20 * 60_000)
+    // Something the snapshot reports changed without a change the collector listens for.
+    ;(reactNative.Platform as {constants: {Release: string}}).constants.Release = "16"
+    advance(9 * 60_000 + 59_000)
+    expect(snapshots()).toHaveLength(1)
+    advance(1_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(snapshots()[1].payload.phone.osVersion).toBe("16")
+    expect(snapshots()[1].observedAt).toBe(checkpoints().at(-1)!.observedAt)
+    advance(60 * 60_000)
+    expect(snapshots()).toHaveLength(2)
+  })
+
+  test("a change worth a snapshot is still one when only the engine is active", () => {
+    connectLive()
+    start()
+    disconnectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    glassesStore.setState({connection: {state: "connecting"}, deviceModel: "Mentra Live", serialNumber: "SN-LIVE-1"})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(3)
+  })
+
+  test("with only the engine active, the collector keeps one timer, the checkpoint's", () => {
+    start()
+    expect(timers.size).toBe(1)
+    advance(60 * 60_000)
+    expect(timers.size).toBe(1)
   })
 
   test("a later snapshot does not make an old battery reading look fresh", () => {
