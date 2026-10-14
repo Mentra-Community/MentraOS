@@ -35,7 +35,10 @@ every Core variable.
   Fleet to be installed; a Core that lists other features and not `fleet.managed`
   has no Fleet, whatever its Fleet URL says. Feature names are case-sensitive
   (`Fleet.Managed` is not `fleet.managed`), and a value of nothing but separators
-  lists no feature.
+  lists no feature. Core logs one warning per process, naming
+  `CLOUD_CORE_FLEET_URL` and `CLOUD_CORE_ENABLED_FEATURES` and no value, when a
+  Fleet URL is set and this list switches Fleet off, since every phone then gets
+  the `404` of an absent Fleet.
 - `CLOUD_CORE_FLEET_MAX_BODY_BYTES`: the largest request body Core forwards.
   Default `1048576` (1 MiB).
 - `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`: the largest response body Core buffers
@@ -44,6 +47,10 @@ every Core variable.
 - `CLOUD_CORE_FLEET_TIMEOUT_MS`: how long Fleet has to answer, body included.
   Default `10000`. A value above `2147483647`, the longest a timer holds, is
   treated as `2147483647`.
+- `CLOUD_CORE_FLEET_MAX_ASSET_BYTES`: the largest Fleet UI asset Core relays
+  (see [Fleet UI assets](#fleet-ui-assets)). A larger one is a
+  `503 {"error":"fleet_unavailable"}`. Default `26214400` (25 MiB); the JSON
+  routes' response limit does not apply to assets.
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
   its calls to Core with (below), for example
   `{"store": ["<newest>", "<older>"], "fleet": ["<newest>", "<older>"]}`. Without
@@ -124,10 +131,31 @@ signs.
 - Core copies only the `content-type` and `accept` request headers. Everything
   else the caller sent, including every `x-mentra-*` header, `authorization` and
   `cookie`, is dropped.
-- Fleet's response passes through (status and body) with only its
-  `content-type`, `cache-control`, `retry-after` and `x-request-id` headers. A
-  `429` with `Retry-After` reaches the caller with it. Redirects are never
-  followed.
+- On the JSON routes (`/api/client/fleet/<rest>` and `/api/admin/fleet/<rest>`
+  other than `ui/`), Fleet's response passes through (status and body) with only
+  its `content-type`, `cache-control`, `retry-after` and `x-request-id` headers.
+  A `429` with `Retry-After` reaches the caller with it. Redirects are never
+  followed. The [UI asset route](#fleet-ui-assets) relays a different set of
+  headers under different rules.
+- **The JSON routes relay JSON.** A `2xx` answer with a body must have the
+  content type `application/json`, with or without parameters
+  (`application/json; charset=utf-8`) and in any case, and a single value. Any
+  other (`text/html`, `text/plain`, a vendor type, none at all) is
+  `503 {"error":"fleet_unavailable"}`, logged at warn with the reason
+  `content_type_not_json`, and none of Fleet's body or headers reach the caller.
+  A `204`, `205` or `304`, an answer to a `HEAD` and an empty body are not
+  checked, and neither is an error answer (`4xx`): those are relayed as Fleet
+  gave them, under the headers below.
+- **Every JSON answer is labelled as data.** Core's own answers (a `401`, `403`,
+  `404`, `400`, `413` or `503`, the gates' refusals included) and Fleet's relayed
+  ones carry `x-content-type-options: nosniff` and `content-security-policy:
+  default-src 'none'; frame-ancestors 'none'; sandbox`. The admin session cookie
+  is `SameSite=Lax`, so a top-level `GET` to `/api/admin/fleet/<rest>` carries
+  it, and the browser would treat whatever came back as a document of the admin
+  origin (on a Private Cloud, of Core's own origin, where `/api/*` has no portal
+  policy). Fleet's own `x-content-type-options` and `content-security-policy` are
+  not relayed, so Fleet cannot loosen these. Fleet should answer every JSON
+  endpoint with `Content-Type: application/json`.
 - A `204`, `205` or `304` from Fleet, and any answer to a `HEAD` request, has no
   body. Core does not read one (a `HEAD` answer's `content-length` is not held
   against the response limit) and adds no `content-type` Fleet did not send.
@@ -147,8 +175,8 @@ Core logs every request that reaches Fleet once, with its request id, Fleet's
 request id, the status Core answered, Fleet's status and the time taken. A
 success is logged at debug, an answer Fleet gives that is not a success (a `403`,
 a `429`, a `404`) at info, and what Core could not relay as Fleet said it (a
-network error, a timeout, a `5xx`, a redirect, an oversized body, a `401`) at
-warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
+network error, a timeout, a `5xx`, a redirect, an oversized body, a `401`, a
+success that is not JSON) at warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
 shows in the log at the production level. Core never logs a body, a header, a
 query, an email or a secret.
 
@@ -236,6 +264,153 @@ not know. The consequence for Core is one rule: **a future restriction on what a
 caller may do must change the value of a field that exists, never add a field.**
 A field an older Fleet does not know would be ignored, and the restriction with
 it.
+
+## Fleet UI assets
+
+`GET` and `HEAD` `/api/admin/fleet/ui/<rest>` are relayed to
+`${CLOUD_CORE_FLEET_URL}/v1/admin/ui/<rest>`. This is how the admin portal gets
+the Fleet UI module it imports and mounts (`ui/entry.js`, see
+[the UI module contract](#the-fleet-ui-module-contract)): through Core, so that it
+loads from the portal's own origin under the portal's `script-src 'self'`. What
+this route relays therefore **runs in the admin portal**, which is why its rules
+are stricter than the JSON routes' and differ from them.
+
+The route is behind the same gates as the rest of `/api/admin/fleet` (a signed-in
+Organization Admin; `401` or `403` otherwise), then answers `404
+fleet_not_installed`, `503 fleet_unavailable` or `400 invalid_path` as the JSON
+routes do. The request Fleet receives is signed and carries the principal like
+any other.
+
+- **Methods.** Only `GET` and `HEAD`. Any other method is
+  `405 {"error":"method_not_allowed"}` with `Allow: GET, HEAD`. The JSON
+  forwarder refuses every other spelling of the `ui` segment (`UI`, `//ui` and
+  the like) with `404 {"error":"not_found"}`, so nothing under `ui` is ever
+  relayed by the JSON rules.
+- **What Fleet receives.** The caller's `if-none-match` and `if-modified-since`,
+  and no other header of theirs, plus Core's `accept-encoding: identity` (outside
+  the signature) so that the bytes Core relays are the bytes Fleet sent.
+- **What the caller gets.** `content-type`, `etag`, `last-modified`,
+  `cache-control` and `vary` (added to any `Vary` already on the response),
+  `content-length` (the length of the body the caller gets, set by Core from the
+  bytes it holds) and `x-request-id` as for the JSON routes. Core adds
+  `x-content-type-options: nosniff` and `cross-origin-resource-policy:
+  same-origin` to every answer of the route, its own refusals included. The
+  JSON routes' sandbox policy is on this route's own JSON refusals but not on a
+  relayed asset, which has to run in the portal.
+- **Content types.** The content type is checked first, for an error answer too.
+  `text/javascript`, `application/javascript`, `text/css`,
+  `image/png|jpeg|webp|gif|avif`, `font/woff2|woff` and `application/json` are
+  relayed as Fleet sent them. `image/svg+xml` is relayed under Core's own
+  `content-security-policy: default-src 'none'; style-src 'unsafe-inline'`, which
+  replaces any Fleet sent. Anything else, `text/html` above all, is
+  `503 fleet_unavailable`. So is a value holding a comma (a browser keeps the last
+  of several, so `text/javascript, text/html` would be read as html) and an
+  answer with no content type, unless it declares an empty body (a bare `404`).
+  A `204`, `205` or `304` has no representation: it is relayed with its
+  validators and is not checked, so a revalidation (`If-None-Match`) works.
+- **No commas, no encodings.** Besides the comma above, any `content-encoding`
+  but `identity` is refused: Core asks for none, `fetch` would decode it and the
+  declared length would no longer describe the body. Serve assets uncompressed
+  (compress at the edge in front of Fleet, if at all).
+- **Buffered, not streamed.** Core reads the whole body, under
+  `CLOUD_CORE_FLEET_MAX_ASSET_BYTES` (default 25 MiB) and
+  `CLOUD_CORE_FLEET_TIMEOUT_MS` (the wait for the answer and the read of the
+  whole body), and answers only when the body is complete and as long as the
+  `content-length` Fleet declared. Bun turns a stream that fails (a short body, a
+  reset, a timeout, the cap) into a normal end of the response, so a browser
+  would otherwise take a truncated module for a complete, cacheable `200` with
+  Fleet's `etag` and `cache-control`. Otherwise the answer is a
+  `503 fleet_unavailable` with none of Fleet's headers, logged at warn with a
+  `reason`: a declared length over the cap (a `HEAD`'s included, refused before
+  any of the body is read), a body over the cap with no (or a wrong) length, a
+  body of another length than declared, a Fleet that resets the connection or
+  stalls past the timeout after its headers, and a `content-encoding` other than
+  `identity`. Send an exact `content-length` and an `etag`.
+- **The rest is the JSON routes'.** Not installed, misconfigured, an unsafe path,
+  an upstream `5xx` (with its `Retry-After`), a redirect (never followed), a `401`
+  turned into a `403`, a network error, a timeout before the headers, and the
+  logging.
+
+## The Fleet UI module contract
+
+The module that `ui/entry.js` serves is an ES module whose default export is a
+`FleetUiModule`. The types and the contract version live in
+`@mentra/workspace-contract/fleet-ui` (import that path, not the package root: it
+names DOM types), and the host, the admin portal's Fleet page
+(`websites/admin/src/pages/fleet.tsx`), and the module share them.
+
+```ts
+import {FLEET_UI_CONTRACT_VERSION, type FleetUiContext, type FleetUiModule} from "@mentra/workspace-contract/fleet-ui"
+
+const module: FleetUiModule = {
+  contractVersion: FLEET_UI_CONTRACT_VERSION, // 1
+  mount(element, ctx) {
+    // Render into `element` (an open ShadowRoot); route with ctx.route; call Fleet at ctx.apiBase.
+    return {
+      unmount() { /* remove everything the module added */ },
+      setRoute(route) { /* optional: the host's route changed */ },
+    }
+  },
+}
+export default module
+```
+
+- **Loading.** The portal imports `/api/admin/fleet/ui/entry.js` once per open
+  Fleet page and checks the default export: it must be an object with a numeric
+  `contractVersion` and a `mount` function, and `contractVersion` must equal the
+  host's `FLEET_UI_CONTRACT_VERSION` (1). A module that cannot be imported (the
+  `404` and `503` Core answers while Fleet is absent or down), is not a module,
+  or speaks another version is not mounted: the page says Fleet is unavailable
+  and offers Retry.
+- **`mount(element, ctx)`.** `element` is an `HTMLElement | ShadowRoot`; the host
+  passes an open shadow root, which keeps the module's styles and the portal's
+  apart, so the module's styles go inside it. It returns a handle,
+  `{unmount(), setRoute?(route)}`. `unmount` removes everything the module added.
+  A `mount` that throws leaves the page on "Fleet could not start" with Retry.
+- **`FleetUiContext`.** `contractVersion` (`1`); `apiBase` (`/api/admin/fleet`:
+  the module sends its API requests to `${apiBase}/<rest>` on the portal's own
+  origin, with the portal's session cookie; Core forwards them to Fleet as
+  `/v1/admin/<rest>`); `me` (`{authenticated: true, user: {mentraUserId, email} |
+  null, organization: {capabilities}, fleet: {installed}}`, all the host tells the
+  module about the caller); `route` (`{path, query}` when the module mounts);
+  `navigate(path, {replace?})`; and `onSessionExpired()`, which the module calls
+  when the API answers `401`, so that the host can send the caller to sign in
+  (a Fleet `401` reaches the module as a `403`; see
+  [Not installed versus unavailable](#not-installed-versus-unavailable)).
+- **Routes.** The host owns the route. It lives in the portal's address as
+  `?fleet=<path and query>`, so a Fleet screen has a link and Back and Forward
+  work. A path is normalized: leading slashes collapse to one, and a control
+  character or more than 2048 characters gives `/`. `ctx.route` splits it into
+  `path` and `query` (with its `?`, or `""`). `navigate(path)` asks the host to go
+  there (a new history entry, or with `replace` the current one replaced); only
+  the module that is on screen can move the page.
+- **A route change after mount** (the module's own `navigate`, Back, Forward)
+  reaches the module through the handle's `setRoute(route)`, when it has one, and
+  does not remount it. A module without `setRoute` is unmounted and mounted again
+  with the new `ctx.route`, in one synchronous step, in the same shadow root, so
+  it loses its state on every route change; a `setRoute` that throws falls back to
+  the same remount. Provide `setRoute`.
+- **One evaluation, and Retry.** The module is imported once per open Fleet page;
+  a route change and a Retry after a failed `mount` reuse it (a module with
+  import-time side effects, a `customElements.define` say, runs them once). A
+  Retry after a failed *import* asks for `/api/admin/fleet/ui/entry.js?retry=<n>`,
+  with `<n>` a millisecond timestamp, because browsers remember a module, and some
+  a failed import, by URL. **The entry route must ignore the `?retry=` query**: it
+  serves the same module for any value of it. Core forwards the query to Fleet
+  unchanged and signs it with the rest of the path.
+- **The policy the module runs under.** It runs in the admin portal, under the
+  portal's Content Security Policy when Core serves the portal (a Private Cloud):
+  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+  img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`. In practice:
+  scripts only from the portal's origin, so the entry and every chunk it imports
+  come from `/api/admin/fleet/ui/` (use relative import specifiers), with no
+  inline `<script>`, no `eval` and no `new Function`; styles from the same origin
+  or inline; images from the same origin or `data:`; fonts from the same origin
+  (`font-src` follows `default-src`, so no `data:` fonts); and connections
+  (`fetch`, XHR, WebSocket, EventSource) to the same origin only, so Fleet is
+  reached through `apiBase` and nowhere else. A deployment whose portal is served
+  elsewhere may not enforce the policy yet; a module that needs more would break
+  wherever it is enforced.
 
 ## Following Core's changes
 
@@ -377,8 +552,9 @@ sending", the other "try again".
 - `503 {"error":"fleet_unavailable"}`: Fleet is configured but cannot answer. The
   URL is unusable or the secret is missing (logged by variable name, never value),
   or there was a network error, a timeout, an upstream 5xx, an upstream 3xx other
-  than `304`, or a response body over the limit. Never an empty success. Retry
-  later.
+  than `304`, a response body over the limit, or a `2xx` that is not JSON (on the
+  JSON routes), or an asset that fails the checks of the
+  [UI asset route](#fleet-ui-assets). Never an empty success. Retry later.
 - `401 {"error":"unauthorized"}`: the caller is not signed in. A phone treats it
   as an expired session and refreshes.
 - `403 {"error":"forbidden"}`: the admin caller is a key, or lacks
