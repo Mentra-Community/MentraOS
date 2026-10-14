@@ -8,11 +8,13 @@ import type {ClientApp} from "../../types/applet"
 const compatible = {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
 const installedApps = mock(async (): Promise<ClientApp[]> => [])
 const ensureRunning = mock(async (): Promise<unknown> => ({}))
+const saveSetting = mock((_key: string, _value: unknown): {is_ok: () => boolean} => ({is_ok: () => true}))
+let modelAvailable = true
 mock.module("../../services/AppRegistry", () => ({
   default: {
     getInstalledMiniapps: installedApps,
     uninstall: mock(async () => Res.ok(undefined)),
-    requiresLocalSttModel: () => false,
+    requiresLocalSttModel: (packageName: string) => packageName === "com.test.speech",
     subscribe: () => () => {},
   },
 }))
@@ -22,12 +24,12 @@ mock.module("../../services/MiniappRunningRegistry", () => ({
 }))
 mock.module("../../services/LocalDisplayManager", () => ({default: {onCoreAppChange: () => {}}}))
 mock.module("../../services/NotificationsEmitter", () => ({islandNotifications: {emit: () => {}}}))
-mock.module("../../services/STTModelManager", () => ({default: {isModelAvailable: async () => true}}))
+mock.module("../../services/STTModelManager", () => ({default: {isModelAvailable: async () => modelAvailable}}))
 mock.module("../../services/SystemMiniappPolicy", () => ({isStoreMiniappPackage: () => false}))
 mock.module("../../utils/hardware/hardware", () => ({HardwareCompatibility: {checkCompatibility: () => compatible}}))
 mock.module("../../types/hardware", () => ({getModelCapabilities: () => ({})}))
 mock.module("../../utils/storage/storage", () => ({
-  storage: {load: () => ({is_ok: () => false}), save: () => ({is_ok: () => true})},
+  storage: {load: () => ({is_ok: () => false}), save: saveSetting},
 }))
 mock.module("@mentra/bluetooth-sdk", () => ({default: {clearDisplay: () => {}}}))
 mock.module("../settings", () => ({
@@ -78,6 +80,9 @@ beforeEach(() => {
   stopListening = fleetEvents.subscribe({launch: (event) => launches.push(event)})
   ensureRunning.mockReset()
   ensureRunning.mockResolvedValue({})
+  saveSetting.mockReset()
+  saveSetting.mockImplementation(() => ({is_ok: () => true}))
+  modelAvailable = true
   installedApps.mockReset()
   installedApps.mockResolvedValue([target])
   apps.setState({apps: [target], updatingPackages: new Set(), foregroundedPackage: null})
@@ -111,29 +116,61 @@ describe("launch reports", () => {
     expect(launches[0].start).toBe("automatic")
   })
 
-  test("a start that was refused is reported as failed", async () => {
+  test("a start refused while the miniapp is updating is not a launch", async () => {
     apps.setState({updatingPackages: new Set([target.packageName])})
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
-    expect(launches).toEqual([
-      {packageName: "com.test.notes", miniappName: "Notes", versionName: "1.0.30", start: "user", outcome: "failed"},
-    ])
+    expect(launches).toEqual([])
   })
 
-  test("a miniapp that cannot work with these glasses is reported as failed", async () => {
+  test("a miniapp that cannot work with these glasses is not a launch", async () => {
     const incompatible = {...target, compatibility: {...compatible, isCompatible: false}}
     apps.setState({apps: [incompatible]})
     expect(await apps.getState().start(incompatible, {trigger: "user"})).toBe(false)
-    expect(launches.map((launch) => launch.outcome)).toEqual(["failed"])
+    expect(launches).toEqual([])
+  })
+
+  test("a second tap while another miniapp is loading is not a launch", async () => {
+    const other = {...target, packageName: "com.test.other", name: "Other", loading: true}
+    apps.setState({apps: [target, other]})
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([])
+    expect(ensureRunning).not.toHaveBeenCalled()
+  })
+
+  test("a miniapp waiting for its speech model is not a launch", async () => {
+    const speech = {...target, packageName: "com.test.speech", name: "Speech"}
+    apps.setState({apps: [speech]})
+    modelAvailable = false
+    expect(await apps.getState().start(speech, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([])
+  })
+
+  test("a package the store does not know, or one the host made unavailable, is not a launch", async () => {
+    const stranger = {...target, packageName: "com.test.unknown", name: "Unknown"}
+    expect(await apps.getState().start(stranger, {trigger: "user"})).toBe(false)
+    configure({auth: {}, config: {isMiniappAvailable: () => false}})
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([])
   })
 
   test("a context that fails to spawn is reported as failed, and the failure behaves as before", async () => {
     ensureRunning.mockRejectedValueOnce(new Error("spawn failed"))
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
-    expect(launches.map((launch) => launch.outcome)).toEqual(["failed"])
+    expect(launches).toEqual([
+      {packageName: "com.test.notes", miniappName: "Notes", versionName: "1.0.30", start: "user", outcome: "failed"},
+    ])
     expect(apps.getState().apps[0].running).toBe(false)
   })
 
-  test("a start that throws is reported as failed, and still throws", async () => {
+  test("a start that throws once it began is reported as failed, and still throws", async () => {
+    saveSetting.mockImplementation(() => {
+      throw new Error("storage failed")
+    })
+    await expect(apps.getState().start(target, {trigger: "user"})).rejects.toThrow("storage failed")
+    expect(launches.map((launch) => launch.outcome)).toEqual(["failed"])
+  })
+
+  test("a start that throws before it began records nothing, and still throws", async () => {
     await expect(
       apps.getState().start(target, {
         trigger: "user",
@@ -142,7 +179,7 @@ describe("launch reports", () => {
         },
       }),
     ).rejects.toThrow("host navigation failed")
-    expect(launches.map((launch) => launch.outcome)).toEqual(["failed"])
+    expect(launches).toEqual([])
   })
 
   test("opening a miniapp that is already running is not a launch", async () => {
@@ -150,20 +187,6 @@ describe("launch reports", () => {
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
     expect(launches).toEqual([])
     expect(ensureRunning).not.toHaveBeenCalled()
-  })
-
-  test("a package the store does not know is still a failed attempt", async () => {
-    const stranger = {...target, packageName: "com.test.unknown", name: "Unknown"}
-    expect(await apps.getState().start(stranger, {trigger: "user"})).toBe(false)
-    expect(launches).toEqual([
-      {
-        packageName: "com.test.unknown",
-        miniappName: "Unknown",
-        versionName: "1.0.30",
-        start: "user",
-        outcome: "failed",
-      },
-    ])
   })
 
   test("a reporter that fails never changes the result of a start", async () => {
@@ -205,6 +228,10 @@ describe("useStart", () => {
 
   test("resolves to the same answer as the store's start", async () => {
     apps.setState({updatingPackages: new Set([target.packageName])})
+    expect(await useStart()(target)).toBe(false)
+    expect(launches).toEqual([])
+    ensureRunning.mockRejectedValueOnce(new Error("spawn failed"))
+    apps.setState({updatingPackages: new Set()})
     expect(await useStart()(target)).toBe(false)
     expect(launches.map((launch) => launch.outcome)).toEqual(["failed"])
   })

@@ -301,24 +301,33 @@ function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): b
   )
 }
 
+/** Called by a start once it is past every gate and actually starts the miniapp. */
+interface LaunchAttempt {
+  begin(): void
+}
+
 /**
- * Tells Fleet how each start attempt went, around the launch and without touching it: the result, or the failure it
- * throws, is returned as the launch gave it. Re-opening a miniapp that is already running starts nothing and is not
- * reported. Fleet's `launch` never throws.
+ * Tells Fleet how each start went, around the launch and without touching it: the result, or the failure it throws,
+ * is returned as the launch gave it. Only a start that got past every gate is a launch: `started` when it succeeded,
+ * `failed` when the spawn or start itself failed. A refusal (another miniapp is loading, incompatible glasses, a
+ * missing speech model, an update in progress, a package that is not available) and re-opening a miniapp that is
+ * already running start nothing and are not reported. Fleet's `launch` never throws.
  */
 function reportingLaunches(
-  launch: (app: ClientApp, opts?: StartOptions) => Promise<boolean>,
+  launch: (app: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => Promise<boolean>,
 ): (app: ClientApp, opts?: StartOptions) => Promise<boolean> {
   return async (clientApp, opts) => {
-    const alreadyRunning = useAppStatusStore
-      .getState()
-      .apps.some((a) => a.packageName === clientApp.packageName && a.running)
+    let attempted = false
     let started = false
     try {
-      started = await launch(clientApp, opts)
+      started = await launch(clientApp, opts, {
+        begin: () => {
+          attempted = true
+        },
+      })
       return started
     } finally {
-      if (!alreadyRunning) {
+      if (attempted) {
         fleetEvents.launch({
           packageName: clientApp.packageName,
           miniappName: clientApp.name,
@@ -380,7 +389,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
   },
 
-  start: reportingLaunches(async (clientApp: ClientApp, opts?: StartOptions) => {
+  start: reportingLaunches(async (clientApp: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => {
     const state = get()
     const packageName = clientApp.packageName
     if (!isMiniappAvailable(packageName)) return false
@@ -467,6 +476,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       saveLastOpenTime(packageName)
       return true
     }
+
+    // Past every gate: from here on this is a launch, reported to Fleet as started or failed.
+    attempt.begin()
 
     // Foreground-only-one rule: stop other running standard apps.
     if (app.type === "standard") {
