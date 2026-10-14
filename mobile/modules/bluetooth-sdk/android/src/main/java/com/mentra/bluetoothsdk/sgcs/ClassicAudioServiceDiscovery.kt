@@ -9,23 +9,17 @@ internal class ClassicAudioServiceDiscovery(
     private val handler: Handler,
     private val timeoutMs: Long,
     private val log: (String) -> Unit,
+    private val searchClassic: (BluetoothDevice, ParcelUuid) -> Boolean = { device, uuid ->
+        // Unlike fetchUuidsWithSdp(AUTO), this searches SDP over BR/EDR even with LE up.
+        // Some Android releases hide this API; callers retain the public discovery fallback.
+        device.javaClass.getMethod("sdpSearch", ParcelUuid::class.java).invoke(device, uuid) as Boolean
+    },
 ) {
     private class Pending(val device: BluetoothDevice, val unavailable: () -> Unit, val ready: () -> Unit) {
         lateinit var timeout: Runnable
+        var refreshedOnClassic = false
     }
     private var pending: Pending? = null
-
-    /** AUTO discovery on a dual-mode device with only LE connected searches GATT, not SDP.
-     * Discover an existing bond's Classic services before opening our LE connection. A failed
-     * discovery must still permit BLE; it must never manufacture an audio connection. */
-    fun beforeBle(device: BluetoothDevice, ready: () -> Unit) {
-        if (device.bondState != BluetoothDevice.BOND_BONDED ||
-                device.type !in arrayOf(BluetoothDevice.DEVICE_TYPE_DUAL, BluetoothDevice.DEVICE_TYPE_CLASSIC)) {
-            ready()
-            return
-        }
-        connectWhenDiscovered(device, unavailable = ready, ready = ready)
-    }
 
     fun connectWhenDiscovered(device: BluetoothDevice, unavailable: () -> Unit = {}, ready: () -> Unit) {
         if (hasAudioSink(device)) {
@@ -45,6 +39,28 @@ internal class ClassicAudioServiceDiscovery(
         }
         pending = request
         handler.postDelayed(request.timeout, timeoutMs)
+        val classicAccepted = try {
+            log("Requesting BR/EDR Audio Sink SDP for ${device.address}")
+            searchClassic(device, AUDIO_SINK)
+        } catch (error: Exception) {
+            log("Explicit Classic SDP unavailable for ${device.address}: ${error.cause ?: error}")
+            false
+        }
+        if (!classicAccepted) refreshUuids(request)
+    }
+
+    /** Refresh the UUID cache while the target's Classic ACL is live, so AUTO selects BR/EDR.
+     * A transport connection or SDP record alone is never evidence that audio is ready. */
+    fun onAclConnected(device: BluetoothDevice, transport: Int) {
+        val request = pending ?: return
+        if (device.address != request.device.address || transport != BluetoothDevice.TRANSPORT_BREDR ||
+                request.refreshedOnClassic) return
+        request.refreshedOnClassic = true
+        refreshUuids(request)
+    }
+
+    private fun refreshUuids(request: Pending) {
+        val device = request.device
         val accepted = try {
             log("Refreshing Classic service UUIDs for ${device.address}")
             device.fetchUuidsWithSdp()

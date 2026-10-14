@@ -647,9 +647,9 @@ class MentraLive : SGCManager() {
     private var isA2dpProxyRegistered = false
     private var a2dpConnectAttempts = 0
     private val classicAudioServiceDiscovery =
-            ClassicAudioServiceDiscovery(handler, CONNECTION_TIMEOUT_MS.toLong()) {
+            ClassicAudioServiceDiscovery(handler, CONNECTION_TIMEOUT_MS.toLong(), log = {
                 Bridge.log("LIVE: Classic: $it")
-            }
+            })
 
     private data class OutgoingBleCommandTraceInfo(
             val commandType: String,
@@ -1844,17 +1844,7 @@ class MentraLive : SGCManager() {
         bluetoothGatt?.let { beginGattTeardown(it) }
         gattTeardownBarrier.runWhenIdle {
             if (requestEpoch == connectionRequestEpoch && !isKilled && !pairingYieldActive) {
-                connectionTimeoutRunnable?.let { connectionTimeoutHandler.removeCallbacks(it) }
-                connectionTimeoutRunnable = null
-                isConnecting = true
-                updateConnectionState(ConnTypes.CONNECTING)
-                classicAudioServiceDiscovery.beforeBle(device) {
-                    // Discovery is asynchronous; disconnect, replacement and pairing yield revoke
-                    // this request just as they revoke a pending GATT teardown continuation.
-                    if (requestEpoch == connectionRequestEpoch && !isKilled && !pairingYieldActive) {
-                        connectToDeviceWhenIdle(device)
-                    }
-                }
+                connectToDeviceWhenIdle(device)
             }
         }
     }
@@ -7432,6 +7422,13 @@ class MentraLive : SGCManager() {
         classicAudioReceiver =
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
+                        if (intent?.action == BluetoothDevice.ACTION_ACL_CONNECTED) {
+                            intent.bluetoothDeviceExtra()?.let {
+                                classicAudioServiceDiscovery.onAclConnected(it,
+                                        intent.getIntExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.TRANSPORT_AUTO))
+                            }
+                            return
+                        }
                         if (intent?.action == BluetoothDevice.ACTION_UUID) {
                             intent.bluetoothDeviceExtra()?.let { classicAudioServiceDiscovery.onUuids(it) }
                             return
@@ -7453,6 +7450,7 @@ class MentraLive : SGCManager() {
             val filter =
                     IntentFilter().apply {
                         addAction(BluetoothDevice.ACTION_UUID)
+                        addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
                         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
                         addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
                     }
