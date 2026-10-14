@@ -11,15 +11,17 @@
  * Usage is measured as sessions: an activity (the engine running, the Mentra App in the foreground, glasses
  * connected, one miniapp executing) opens a session when it begins and closes it when it ends. A session's
  * `elapsedMs` is cumulative monotonic time, and each checkpoint packs every open session, so a session that is
- * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected, a miniapp
- * is executing or the Mentra App is in the foreground, every 15 minutes when only the engine is active, and at
- * once when a session ends. A session also ends when it reaches the longest time one record may carry (7 days),
- * and a new one carries on from there.
+ * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected or the Mentra
+ * App is in the foreground, every 15 minutes otherwise (only the engine active, or miniapps executing in the
+ * background without glasses, such as Notify), and at once when a session ends. The slower cadence reports the same
+ * time, only less often; what it risks is the time since the last checkpoint if the process dies. A session also
+ * ends when it reaches the longest time one record may carry (7 days), and a new one carries on from there.
  *
  * Snapshots come at start, after a change worth one (the connection, a battery move of 5 points or a charging change,
  * a new version), and with the first checkpoint 15 minutes or more after the last snapshot, so the two share a
- * wake-up and an upload. While only the engine is active that 15-minute snapshot is written only if it would say
- * something new. A phone running only the engine all day so writes about 100 records: a checkpoint every 15 minutes.
+ * wake-up and an upload. On the 15-minute cadence that snapshot is written only if it would say something new. A
+ * phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
+ * checkpoint every 15 minutes, whether or not miniapps execute in the background.
  *
  * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
  * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
@@ -531,8 +533,11 @@ class CollectorRun {
     this.ensureCadence()
   }
 
+  /** 60-second checkpoints while glasses are connected or the Mentra App is in the foreground; 15 minutes otherwise. */
   private isFast(): boolean {
-    for (const session of this.sessions.values()) if (session.activity !== "engine_active") return true
+    for (const session of this.sessions.values()) {
+      if (session.activity === "glasses_connection" || session.activity === "app_foreground") return true
+    }
     return false
   }
 
@@ -790,8 +795,8 @@ class CollectorRun {
 
   /**
    * The 15-minute snapshot. It has no timer of its own: it is written with the checkpoint that falls due 15 minutes or
-   * more after the last snapshot, so the two share a wake-up and an upload. While only the engine is active it is
-   * written only if it would say something the last snapshot did not.
+   * more after the last snapshot, so the two share a wake-up and an upload. On the 15-minute cadence it is written
+   * only if it would say something the last snapshot did not.
    */
   private periodicSnapshot(): void {
     if (this.env.monotonic() - this.lastSnapshotMono < SNAPSHOT_INTERVAL_MS) return

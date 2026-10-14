@@ -332,7 +332,8 @@ describe("checkpoints", () => {
     expect(checkpoints().map((c) => entry(c, "app_foreground")?.elapsedMs)).toEqual([60_000, 120_000])
   })
 
-  test("a checkpoint comes every 60 s while a miniapp is executing", () => {
+  test("a miniapp executing while the Mentra App is in the foreground is checkpointed every 60 s with it", () => {
+    setAppState("active", false)
     start()
     miniappRunningRegistry.add("com.mentra.notes")
     advance(60_000)
@@ -340,6 +341,30 @@ describe("checkpoints", () => {
     expect(checkpoints().map((c) => entry(c, "miniapp_execution", "com.mentra.notes")?.elapsedMs)).toEqual([
       60_000, 120_000,
     ])
+  })
+
+  test("Notify running alone, with no glasses and the Mentra App in the background, checkpoints every 15 minutes", () => {
+    start()
+    nativeMiniappExecution.set(["cloud.augmentos.notify"])
+    advance(15 * 60_000 - 1_000)
+    expect(checkpoints()).toHaveLength(0)
+    advance(1_000)
+    advance(15 * 60_000)
+    // Fewer checkpoints, the same time: each carries the session's exact monotonic elapsed time.
+    expect(checkpoints().map((c) => entry(c, "miniapp_execution", "cloud.augmentos.notify")?.elapsedMs)).toEqual([
+      15 * 60_000,
+      30 * 60_000,
+    ])
+  })
+
+  test("a miniapp executing in the background goes to 60 s checkpoints once glasses connect", () => {
+    start()
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(5 * 60_000)
+    expect(checkpoints()).toHaveLength(0)
+    connectLive()
+    advance(60_000)
+    expect(checkpoints().map((c) => entry(c, "miniapp_execution", "com.mentra.notes")?.elapsedMs)).toEqual([6 * 60_000])
   })
 
   test("a session that ends is checkpointed at once with ended true, and the other sessions carry on", () => {
@@ -1064,12 +1089,20 @@ describe("snapshots", () => {
 
   test.each([
     ["glasses are connected", () => connectLive()],
-    ["a miniapp is executing", () => miniappRunningRegistry.add("com.mentra.notes")],
+    ["the Mentra App is in the foreground", () => setAppState("active", false)],
   ])("while %s, a snapshot comes every 15 minutes", (_name, activate) => {
     activate()
     start()
     advance(30 * 60_000)
     expect(snapshots()).toHaveLength(3)
+  })
+
+  test("with only miniapps executing in the background, the 15-minute snapshot is skipped while it would say nothing new", () => {
+    miniappRunningRegistry.add("com.mentra.notes")
+    start()
+    advance(2 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints()).toHaveLength(8)
   })
 
   test("with only the engine active, the 15-minute snapshot is skipped while it would say nothing new", () => {
