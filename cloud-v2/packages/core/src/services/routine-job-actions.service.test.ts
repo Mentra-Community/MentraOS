@@ -49,3 +49,22 @@ test('discovery stops streaming an oversized provider response before decoding i
  const actions=new GithubRoutineJobActions({async token(){return 'test-token'}},async()=>new Response(body));
  await expect(actions.runs('one','2026-10-08T00:00:00Z')).rejects.toThrow('exceeds its bound');expect(cancelled).toBe(true);
 });
+
+test('a full suite retry history beyond five pages retains exact active-run proof', async () => {
+ const rows=Array.from({length:512},(_,index)=>({id:index+1,display_title:index===511?'routine-job:suite:one':'routine-job:other',event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/routine-device.yml',created_at:'2026-10-08T00:00:00Z',status:index===511?'queued':'completed',conclusion:index===511?null:'failure'}));
+ const calls:string[]=[];
+ const actions=new GithubRoutineJobActions({async token(){return 'test-token'}},async(url)=>{calls.push(url);const page=Number(new URL(url).searchParams.get('page'));return Response.json({workflow_runs:rows.slice((page-1)*100,page*100)})});
+ const runs=await actions.runs('suite:one','2026-10-08T00:00:00Z');
+ expect(runs).toEqual([{actionsRunId:'512',status:'queued',conclusion:null}]);
+ expect(calls).toHaveLength(6);
+ const {routineActionsRetry}=await import('./routine-job-actions.service');
+ expect(routineActionsRetry({attempts:19,lastAttemptAt:'2026-10-08T00:00:00Z',acknowledgedAt:'2026-10-08T00:00:00Z'},runs,Date.parse('2026-10-08T00:10:00Z'))).toBe(false);
+});
+
+test('discovery never interprets the provider result ceiling as absence', async () => {
+ const rows=Array.from({length:100},(_,index)=>({id:index+1,display_title:'routine-job:other',event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/routine-device.yml',created_at:'2026-10-08T00:00:00Z',status:'completed',conclusion:'failure'}));
+ let calls=0;
+ const actions=new GithubRoutineJobActions({async token(){return 'test-token'}},async()=>{calls++;return Response.json({workflow_runs:rows})});
+ await expect(actions.runs('suite:one','2026-10-08T00:00:00Z')).rejects.toThrow('1,000-result GitHub bound');
+ expect(calls).toBe(10);
+});

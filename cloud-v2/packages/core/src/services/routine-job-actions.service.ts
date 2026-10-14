@@ -58,7 +58,9 @@ export class GithubRoutineJobActions implements RoutineJobActions {
     frameworkIdentitySchema.parse(jobId);
     const start=Date.parse(z.string().datetime({offset:true}).parse(since))-30_000;
     const result:RoutineActionsRun[]=[];
-    for(let page=1;page<=5;page++) {
+    // GitHub caps this filtered endpoint at 1,000 results. A 26-member suite
+    // can create 520 bounded preparation attempts, so five pages is incomplete.
+    for(let page=1;page<=10;page++) {
       const query=new URLSearchParams({event:'workflow_dispatch',branch:'main',created:`>=${new Date(start).toISOString()}`,per_page:'100',page:String(page)});
       const response=await this.request(`workflows/routine-device.yml/runs?${query}`);
       const text=await boundedRunBody(response);
@@ -69,7 +71,7 @@ export class GithubRoutineJobActions implements RoutineJobActions {
         result.push({actionsRunId:String(item.id),status:item.status,conclusion:item.conclusion});
       if(value.workflow_runs.length<100)return result;
     }
-    throw new TestRunError(503,'Actions run discovery exceeds five bounded pages; retain the job for reconciliation');
+    throw new TestRunError(503,'Actions run discovery reached the 1,000-result GitHub bound; retain the job for reconciliation');
   }
   async cancel(actionsRunId: string) {
     if (!/^[1-9][0-9]{0,19}$/.test(actionsRunId)) throw new TestRunError(400, 'Invalid Actions run identity');
