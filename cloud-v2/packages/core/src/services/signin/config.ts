@@ -69,11 +69,12 @@ export class ConfigurationError extends Error {
 /**
  * Whether this process is a deployed Core: `NODE_ENV=production`, or
  * `CLOUD_CORE_ENVIRONMENT` is dev, staging, prod or production. Local runs and
- * tests are not.
+ * tests are not. `env` is the process environment unless a caller that reads a
+ * snapshot of it (`services/fleet/fleet-config.ts`) passes its own.
  */
-export function isDeployedEnvironment(): boolean {
-  if (process.env.NODE_ENV === "production") return true
-  return DEPLOYED_ENVIRONMENTS.has((process.env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
+export function isDeployedEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.NODE_ENV === "production") return true
+  return DEPLOYED_ENVIRONMENTS.has((env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
 }
 
 // Each variable is read as a literal process.env property so the production config

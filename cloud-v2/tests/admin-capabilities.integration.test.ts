@@ -36,6 +36,7 @@ import {BrowserSessionModel} from "../packages/core/src/models/browser-session.m
 import {ReportAssetModel} from "../packages/core/src/models/report-asset.model"
 import {ReportModel} from "../packages/core/src/models/report.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -73,6 +74,7 @@ const MODELS = [
   ReportAssetModel,
   ReportModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
@@ -273,6 +275,8 @@ describe("GET /api/admin/me", () => {
       credential: null,
       organization: {capabilities: [...ORGANIZATION_CAPABILITIES]},
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
     }
 
     const bySession = await call("GET", "/api/admin/me", {as: admin})
@@ -332,6 +336,8 @@ describe("GET /api/admin/me", () => {
         capabilities: ["organization.incidents.read", "organization.testing.read"],
       },
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
     })
     expect(reply.text).not.toContain(key.token)
   })
@@ -348,6 +354,8 @@ describe("GET /api/admin/me", () => {
       credential: {credentialId: ws.credentialId, credentialKind: "workspace", label: "ci"},
       organization: {capabilities: []},
       workspaces: [],
+      // This suite sets no Fleet URL.
+      fleet: {installed: false},
     })
     expect(reply.text).not.toContain(ws.token)
   })

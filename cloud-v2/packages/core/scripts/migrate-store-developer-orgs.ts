@@ -134,6 +134,7 @@ import {withTransaction} from "../src/connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../src/models/access-credential.model"
 import {LegacyBrowserIdentityModel} from "../src/models/legacy-browser-identity.model"
 import {UserModel} from "../src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../src/models/workspace-membership.model"
@@ -224,13 +225,17 @@ const STORE_SERVICE = "store"
 const SOURCE_ROW_MEMBERSHIP_ID = /^wm_[0-9a-f]{24}$/
 const SYSTEM_ACTOR = {kind: "system"} as const
 
-/** The Core collections this script writes: created, with their indexes, before an apply. */
+/**
+ * The Core collections this script writes: created, with their indexes, before an apply. The audit
+ * events take their change-feed `seq` from the counter, so the counter is written too.
+ */
 const TARGET_MODELS = [
   WorkspaceModel,
   WorkspaceMembershipModel,
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
 ] as unknown as Array<Pick<Model<unknown>, "createCollection" | "createIndexes">>
 
 // --- Errors and report -----------------------------------------------------

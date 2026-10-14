@@ -37,9 +37,10 @@ Roles are cumulative: each holds everything the one before it holds.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.testing.read`,
-`organization.testing.manage`) and act as Owner in every workspace, which is how
-they recover a workspace whose Owners are gone. Recovery names an existing
-account; a deleted account is refused (`404 user_not_found`).
+`organization.testing.manage`, `organization.fleet.administer`) and act as Owner
+in every workspace, which is how they recover a workspace whose Owners are gone.
+Recovery names an existing account; a deleted account is refused
+(`404 user_not_found`).
 
 ## The workspace portal
 
@@ -105,7 +106,9 @@ at `/enterprise` until it returns as workspace settings.
   rows, the creator's email and user id on their keys, their address on keys a
   service issued at their request, and the inviter's email and user id on their
   invitations. Membership rows keep the opaque user id their history is keyed
-  by, and audit events keep what they recorded.
+  by, and audit events keep what they recorded. The last write of the transaction
+  that ends the memberships is a `user.deleted` event, on the change feed services
+  read ([Fleet integration](fleet-integration.md#account-deletion)).
 
 ## Keys
 
@@ -163,8 +166,11 @@ person.
 (`organization.incidents.read`), support profiles
 (`organization.supportProfiles.read`), test runs, the routine catalog and
 system health (`organization.testing.read`, and `organization.testing.manage`
-to write). `/api/admin/me` answers any caller with its capabilities. The Store
-calls Core through a signed service API ([Store integration](store-integration.md)).
+to write). `/api/admin/me` answers any caller with its capabilities and whether
+Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
+to the optional Fleet service for a person holding `organization.fleet.administer`
+(an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
+The Store calls Core through a signed service API ([Store integration](store-integration.md)).
 
 ## Configuration
 
@@ -174,7 +180,8 @@ calls Core through a signed service API ([Store integration](store-integration.m
 | `CLOUD_CORE_WORKSPACE_CREATION` | Optional. `open` (default) or `organization-admins`. Any other value stops Core at startup. |
 | `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` | Optional. The invitation link, an absolute URL containing `{token}`. Default `<CLOUD_CORE_ENTERPRISE_PORTAL_URL origin>/?workspaceInvite={token}`, the workspace portal. With neither set, inviting answers `503 invitations_unavailable`. |
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
-| `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets, `{"store": ["<newest>", "<older>"]}`. Unset: every service call is refused. |
+| `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets by service (`store`, `fleet`), `{"store": ["<newest>", "<older>"], "fleet": ["<newest>"]}`. Unset: every service call is refused. |
+| `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they

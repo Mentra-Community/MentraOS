@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-bad-0003",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 1,
+      "observedAt": "2026-10-13T11:03:10Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "usage_checkpoint",
+      "payload": {
+        "sessions": [
+          {
+            "activity": "miniapp_execution",
+            "activitySessionId": "act-8d02",
+            "packageName": "com.mentra.notes",
+            "startedAt": "2026-10-13T11:02:10Z",
+            "elapsedMs": -5,
+            "ended": false
+          }
+        ]
+      }
+    }
+  ]
+}

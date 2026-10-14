@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-mix-0001",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 10,
+      "observedAt": "2026-10-13T11:00:00Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "snapshot",
+      "deviceBinding": {
+        "kind": "serial",
+        "manufacturer": "Mentra",
+        "product": "mentra_live",
+        "serial": "ML2A-0042-7731"
+      },
+      "payload": {
+        "phone": {
+          "model": "Pixel 8",
+          "os": "android",
+          "osVersion": "15",
+          "appVersion": "3.4.0",
+          "appBuild": "3400",
+          "engineVersion": "1.12.0",
+          "sdkVersion": "0.9.2"
+        },
+        "glasses": {
+          "model": "mentra_live",
+          "firmware": {
+            "apk": "1.7.3",
+            "mtk": "2.1.0",
+            "bes": "0.8.5"
+          },
+          "connection": {
+            "state": "connected",
+            "observedAt": "2026-10-13T11:00:00Z"
+          },
+          "battery": {
+            "state": "measured",
+            "observedAt": "2026-10-13T11:00:00Z",
+            "level": 76,
+            "charging": false
+          }
+        }
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-mix-0002",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 11,
+      "observedAt": "2026-10-13T11:02:10Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "miniapp_launch",
+      "payload": {
+        "packageName": "com.mentra.notes",
+        "miniappName": "Mentra Notes",
+        "versionName": "2.0.1",
+        "start": "user",
+        "outcome": "started"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-mix-0003",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 12,
+      "observedAt": "2026-10-13T11:03:10Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "usage_checkpoint",
+      "payload": {
+        "sessions": [
+          {
+            "activity": "glasses_connection",
+            "activitySessionId": "act-conn-01",
+            "deviceBinding": {
+              "kind": "serial",
+              "manufacturer": "Mentra",
+              "product": "mentra_live",
+              "serial": "ML2A-0042-7731"
+            },
+            "startedAt": "2026-10-13T10:59:00Z",
+            "elapsedMs": 250000,
+            "ended": false
+          },
+          {
+            "activity": "miniapp_execution",
+            "activitySessionId": "act-8d02",
+            "packageName": "com.mentra.notes",
+            "startedAt": "2026-10-13T11:02:10Z",
+            "elapsedMs": 60000,
+            "ended": false
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-mix-0004",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 13,
+      "observedAt": "2026-10-13T11:04:00Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "photo_operation",
+      "operationId": "op-photo-41c9",
+      "deviceBinding": {
+        "kind": "serial",
+        "manufacturer": "Mentra",
+        "product": "mentra_live",
+        "serial": "ML2A-0042-7731"
+      },
+      "payload": {
+        "stage": "requested"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-mix-0005",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 14,
+      "observedAt": "2026-10-13T11:04:02Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "photo_operation",
+      "operationId": "op-photo-41c9",
+      "deviceBinding": {
+        "kind": "serial",
+        "manufacturer": "Mentra",
+        "product": "mentra_live",
+        "serial": "ML2A-0042-7731"
+      },
+      "payload": {
+        "stage": "captured"
+      }
+    }
+  ]
+}

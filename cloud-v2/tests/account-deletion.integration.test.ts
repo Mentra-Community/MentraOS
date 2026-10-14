@@ -6,7 +6,9 @@
  * memberships created and every invitation the person sent, in one transaction, before the account
  * itself is deleted; then their operator keys are revoked and their identity is cleared from the rows
  * that stay. Nothing else about workspaces changes: other people's memberships and keys, service keys,
- * and invitations addressed to the person stay.
+ * and invitations addressed to the person stay. The last write of that transaction is the
+ * `user.deleted` tombstone on the change feed, which tells a service keeping data keyed by the
+ * person to delete it.
  *
  * Real rows on a local replica set: users, one-time codes, memberships, credentials, invitations and
  * audit events. The account directory (GoTrue's admin API, where the account is deleted) is a fake
@@ -28,6 +30,7 @@ import {BrowserSessionModel} from "../packages/core/src/models/browser-session.m
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -41,6 +44,7 @@ import {
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
+import {listChanges} from "../packages/core/src/services/workspaces/audit.service"
 import {
   createOperatorKey,
   createWorkspaceCredential,
@@ -83,6 +87,7 @@ const MODELS = [
   RefreshTokenModel,
   SupportProfileModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
@@ -282,9 +287,11 @@ describe("confirmAccountDeletion", () => {
       expect((await getWorkspace(previous.workspaceId))!.authorizationRevision).toBeGreaterThan(previous.authorizationRevision)
     }
 
-    // The audit trail: one membership.removed per membership, in its workspace, and nothing else.
-    const added = (await WorkspaceAuditEventModel.find({}).lean()).filter(event => !eventsBefore.has(event.eventId))
-    expect(added.map(event => event.action)).toEqual(["membership.removed", "membership.removed"])
+    // The audit trail: one membership.removed per membership, in its workspace, then the tombstone.
+    const added = (await WorkspaceAuditEventModel.find({}).sort({seq: 1}).lean()).filter(
+      event => !eventsBefore.has(event.eventId),
+    )
+    expect(added.map(event => event.action)).toEqual(["membership.removed", "membership.removed", "user.deleted"])
     const byMembership = new Map(added.map(event => [(event.target as {membershipId: string}).membershipId, event]))
     expect(byMembership.get(s.teamMembershipId)).toMatchObject({
       workspaceId: s.team.workspaceId,
@@ -299,9 +306,11 @@ describe("confirmAccountDeletion", () => {
       before: {role: "owner", status: "active"},
       after: {status: "ended", endedReason: "account_deleted", revokedCredentialIds: [s.soloKey.credential.credentialId]},
     })
-    // No organization-level record of the person is kept.
-    expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: null})).toBe(0)
-    expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
+    // The only organization-level record of the person is the tombstone, and it names the opaque id alone.
+    const organizational = await WorkspaceAuditEventModel.find({workspaceId: null}).lean()
+    expect(organizational.map(event => event.action)).toEqual(["user.deleted"])
+    expect(organizational[0]).toMatchObject({target: {mentraUserId: s.mentraUserId}})
+    expect(JSON.stringify(organizational[0])).not.toContain(s.email)
   })
 
   test("a last owner's deletion is not refused: the workspace is left without an owner for recovery", async () => {
@@ -530,7 +539,7 @@ describe("confirmAccountDeletion", () => {
 })
 
 describe("removeDeletedUserFromWorkspaces", () => {
-  test("a second run ends nothing more and records nothing", async () => {
+  test("a second run ends nothing more and records nothing, the tombstone included", async () => {
     const s = await scenario()
 
     expect((await removeDeletedUserFromWorkspaces(s.mentraUserId)).endedMembershipIds.sort()).toEqual(
@@ -551,7 +560,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
     }
   })
 
-  test("a person with no active membership needs no transaction and changes no workspace", async () => {
+  test("a person with no active membership changes no workspace and records only the tombstone", async () => {
     const {mentraUserId: lonely} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-lonely"})
     const {mentraUserId: former} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-former"})
     const team = await createWorkspace(actor("mu_owner"), {name: "Team"})
@@ -567,9 +576,11 @@ describe("removeDeletedUserFromWorkspaces", () => {
           result: {endedMembershipIds: [], revokedInvitationIds: [], revokedOperatorKeyIds: []},
         })
       }
-      expect(startSession).not.toHaveBeenCalled()
+      // Each has a tombstone to record, which takes a transaction of its own.
+      expect(startSession).toHaveBeenCalledTimes(3)
 
-      // Someone with a membership does go through a transaction.
+      // Someone with a membership goes through one transaction, tombstone included.
+      startSession.mockClear()
       const {mentraUserId: member} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-member"})
       const membershipId = await addMember(team.workspaceId, {mentraUserId: member, role: "member"})
       expect(await removeDeletedUserFromWorkspaces(member)).toEqual({
@@ -578,11 +589,23 @@ describe("removeDeletedUserFromWorkspaces", () => {
         revokedOperatorKeyIds: [],
       })
       expect(startSession).toHaveBeenCalledTimes(1)
+
+      // Running it again changes nothing, and does not even open a transaction.
+      startSession.mockClear()
+      for (const mentraUserId of [lonely, former, "mu_never_seen", member]) await removeDeletedUserFromWorkspaces(mentraUserId)
+      expect(startSession).not.toHaveBeenCalled()
     } finally {
       startSession.mockRestore()
     }
-    // Only the member's removal changed anything.
-    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(eventsBefore + 1)
+    // The three tombstones, the member's removal and the member's tombstone: nothing else was recorded.
+    const added = await WorkspaceAuditEventModel.find({}).sort({seq: 1}).lean()
+    expect(added.slice(eventsBefore).map(event => event.action)).toEqual([
+      "user.deleted",
+      "user.deleted",
+      "user.deleted",
+      "membership.removed",
+      "user.deleted",
+    ])
     expect((await getWorkspace(team.workspaceId))!.authorizationRevision).toBe(revision + 1)
   })
 
@@ -601,6 +624,326 @@ describe("removeDeletedUserFromWorkspaces", () => {
     expect(await WorkspaceMembershipModel.findOne({membershipId}).lean()).toMatchObject({
       status: "ended",
       endedReason: "account_deleted",
+    })
+  })
+
+  test("records user.deleted last, after the membership.removed events of the same deletion, on the change feed", async () => {
+    const s = await scenario()
+    const {events: before} = await listChanges({})
+
+    await removeDeletedUserFromWorkspaces(s.mentraUserId)
+
+    const {events, next} = await listChanges({after: String(before.at(-1)!.seq)})
+    expect(events.map(event => event.action)).toEqual(["membership.removed", "membership.removed", "user.deleted"])
+    expect(events.slice(0, 2).map(event => event.workspaceId).sort()).toEqual(
+      [s.team.workspaceId, s.solo.workspaceId].sort(),
+    )
+    // Strictly increasing: the tombstone follows both removals in the feed's own order.
+    expect(events[0]!.seq).toBeLessThan(events[1]!.seq)
+    expect(events[1]!.seq).toBeLessThan(events[2]!.seq)
+    expect(events.at(-1)).toMatchObject({
+      workspaceId: null,
+      action: "user.deleted",
+      target: {mentraUserId: s.mentraUserId},
+      before: null,
+      after: null,
+    })
+    expect(next).toBeNull()
+    const tombstone = (await WorkspaceAuditEventModel.findOne({action: "user.deleted"}).lean())!
+    expect(tombstone.actor).toMatchObject({kind: "user", mentraUserId: s.mentraUserId})
+  })
+
+  test("a person in no workspace still gets a tombstone, and only one however often or at once it runs", async () => {
+    const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-nobody"})
+
+    await Promise.all([removeDeletedUserFromWorkspaces(mentraUserId), removeDeletedUserFromWorkspaces(mentraUserId)])
+    await removeDeletedUserFromWorkspaces(mentraUserId)
+
+    const {events} = await listChanges({})
+    expect(events.map(event => [event.action, event.workspaceId, event.target])).toEqual([
+      ["user.deleted", null, {mentraUserId}],
+    ])
+  })
+
+  test("concurrent runs for a person in workspaces end each membership once and record one tombstone", async () => {
+    const s = await scenario()
+
+    await Promise.all([removeDeletedUserFromWorkspaces(s.mentraUserId), removeDeletedUserFromWorkspaces(s.mentraUserId)])
+
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.removed"})).toBe(2)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(1)
+  })
+
+  test("the tombstone is the deletion's last write, in its transaction: if it cannot be written, nothing is ended", async () => {
+    const s = await scenario()
+    const events = await WorkspaceAuditEventModel.countDocuments({})
+    const create = WorkspaceAuditEventModel.create.bind(WorkspaceAuditEventModel) as (...args: any[]) => Promise<unknown>
+    const failing = spyOn(WorkspaceAuditEventModel, "create").mockImplementation(((docs: any, options: any) => {
+      if (docs?.[0]?.action === "user.deleted") return Promise.reject(new Error("tombstone write failed"))
+      return create(docs, options)
+    }) as any)
+    try {
+      await expect(removeDeletedUserFromWorkspaces(s.mentraUserId)).rejects.toThrow("tombstone write failed")
+    } finally {
+      failing.mockRestore()
+    }
+
+    // The failure rolled back the memberships it had ended before it, and their events.
+    for (const membershipId of [s.teamMembershipId, s.soloMembershipId]) {
+      expect((await WorkspaceMembershipModel.findOne({membershipId}).lean())!.status).toBe("active")
+    }
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.sentInvitationId}).lean())!.status).toBe("pending")
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+    const counter = await WorkspaceAuditCounterModel.findOne({}).lean()
+    expect((await listChanges({limit: 500})).events.at(-1)?.seq).toBe(counter?.seq)
+  })
+
+  /**
+   * The driver and the Mongoose class that carries queries, taken from the connection under test (`mongoose`
+   * itself is not a dependency of this folder).
+   */
+  const mongoose = WorkspaceModel.base
+  const driver = mongoose.mongo
+
+  /**
+   * Make a command a session sends fail with `error`, as the server answers a command of a transaction: the
+   * driver's real `withTransaction` aborts and rethrows it, and Core's rewraps what it recognizes. By default
+   * the first command fails; with `model`, the commands on that model's collection do (the earlier ones run).
+   * Returns how many commands failed.
+   */
+  function failFirstTransactionCommand(error: Error, model?: unknown) {
+    const exec = mongoose.Query.prototype.exec
+    let failed = 0
+    const spy = spyOn(mongoose.Query.prototype, "exec").mockImplementation(function (this: any, ...args: any[]) {
+      if (!this.getOptions().session || (model !== undefined && this.model !== model)) return exec.apply(this, args)
+      failed += 1
+      return Promise.reject(error)
+    } as any)
+    return {sent: () => failed, restore: () => spy.mockRestore()}
+  }
+
+  /**
+   * What Azure Cosmos DB for MongoDB (RU, API 4.2) answers the write that touches a transaction's second
+   * collection (probed on the CI account): code 2, no error labels, and this text (the tail after the
+   * message body is abbreviated).
+   */
+  const cosmosSecondCollection = (overrides: Record<string, unknown> = {}) =>
+    new driver.MongoServerError({
+      message:
+        "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; " +
+        'ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21; Reason: (Message: {"Errors":["Transaction is not active"]}\r\n' +
+        "ActivityId: 0b9d3a52-6a38-4f0e-9c1d-5c0e3f8a7e21, Request URI: /apps/.../partitions/..., RequestStats: ...)'",
+      code: 2,
+      errorLabels: [],
+      ...overrides,
+    })
+
+  /** A standalone mongod's answer to the first command of a transaction (code 20, `IllegalOperation`). */
+  const standaloneMongod = () =>
+    new driver.MongoServerError({
+      message: "Transaction numbers are only allowed on a replica set member or mongos",
+      code: 20,
+      codeName: "IllegalOperation",
+    })
+
+  describe("on a database that cannot run transactions", () => {
+    test("a standalone mongod: a person with no workspace state still gets a tombstone, written without one", async () => {
+      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-no-transactions"})
+      const failing = failFirstTransactionCommand(standaloneMongod())
+      try {
+        expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
+          endedMembershipIds: [],
+          revokedInvitationIds: [],
+          revokedOperatorKeyIds: [],
+        })
+        // A second run finds the first one's tombstone and has no transaction to attempt.
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+        expect(failing.sent()).toBe(1)
+      } finally {
+        failing.restore()
+      }
+
+      const {events} = await listChanges({})
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
+    })
+
+    test("Azure Cosmos DB for MongoDB: the second collection's write fails, and the tombstone is written without a transaction", async () => {
+      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-cosmos"})
+      // The transaction's read of the audit events (one collection) runs; the counter's write (the second) fails.
+      const failing = failFirstTransactionCommand(cosmosSecondCollection(), WorkspaceAuditCounterModel)
+      try {
+        expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
+          endedMembershipIds: [],
+          revokedInvitationIds: [],
+          revokedOperatorKeyIds: [],
+        })
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+        expect(failing.sent()).toBe(1)
+      } finally {
+        failing.restore()
+      }
+
+      const {events} = await listChanges({})
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
+    })
+
+    test("the recognized path is routine, so it is logged at info without the database's error, never as a warning", async () => {
+      // The logger is the service's own, so the deletions run in a process of their own, with the real logger
+      // writing JSON, against this test's database. In it the transactions fail as they do on each kind of
+      // database that cannot run them (the first command of a standalone mongod, the counter's write on Cosmos).
+      const root = new URL("..", import.meta.url).pathname
+      const script = `
+        import {connectMongo, disconnectMongo} from ${JSON.stringify(`${root}packages/core/src/connections/mongo.connection`)}
+        import {WorkspaceAuditCounterModel} from ${JSON.stringify(`${root}packages/core/src/models/workspace-audit-counter.model`)}
+        import {removeDeletedUserFromWorkspaces} from ${JSON.stringify(`${root}packages/core/src/services/workspaces/account-deletion.service`)}
+        const mongoose = WorkspaceAuditCounterModel.base
+        const failures = [
+          [null, new mongoose.mongo.MongoServerError({message: "Transaction numbers are only allowed on a replica set member or mongos", code: 20})],
+          [WorkspaceAuditCounterModel, new mongoose.mongo.MongoServerError({
+            message: "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; Reason: (Message: {\\"Errors\\":[\\"Transaction is not active\\"]})'",
+            code: 2,
+            errorLabels: [],
+          })],
+        ]
+        await connectMongo(${JSON.stringify(databaseUrl)})
+        const exec = mongoose.Query.prototype.exec
+        for (const [index, [model, error]] of failures.entries()) {
+          mongoose.Query.prototype.exec = function (...args) {
+            if (!this.getOptions().session || (model && this.model !== model)) return exec.apply(this, args)
+            return Promise.reject(error)
+          }
+          await removeDeletedUserFromWorkspaces("mu_log_check_" + index)
+        }
+        mongoose.Query.prototype.exec = exec
+        await disconnectMongo()
+      `
+      const child = Bun.spawn([process.execPath, "-e", script], {
+        env: {...process.env, LOG_STDOUT_JSON: "true", LOG_LEVEL: "debug"},
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect([code, stderr]).toEqual([0, ""])
+
+      const lines = stdout
+        .split("\n")
+        .filter(line => line.startsWith("{"))
+        .map(line => JSON.parse(line) as Record<string, unknown>)
+        .filter(line => line.service === "account-deletion")
+      expect(lines.map(line => [line.level, line.mentraUserId, line.reason])).toEqual([
+        ["info", "mu_log_check_0", "transactions_unsupported"],
+        ["info", "mu_log_check_1", "cross_collection_transaction_unsupported"],
+      ])
+      // The database's own error text is not repeated on every deletion.
+      expect(lines.every(line => !("err" in line))).toBe(true)
+      // Both tombstones were written.
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(2)
+    })
+
+    test("Azure Cosmos DB for MongoDB: a person with workspace state is not ended half way either", async () => {
+      const s = await scenario()
+      const events = await WorkspaceAuditEventModel.countDocuments({})
+      const failing = failFirstTransactionCommand(cosmosSecondCollection(), WorkspaceAuditCounterModel)
+      try {
+        const err = await removeDeletedUserFromWorkspaces(s.mentraUserId).then(
+          () => null,
+          (caught: unknown) => caught,
+        )
+        expect(err).toBeInstanceOf(driver.MongoServerError)
+      } finally {
+        failing.restore()
+      }
+
+      expect((await WorkspaceMembershipModel.findOne({membershipId: s.teamMembershipId}).lean())!.status).toBe("active")
+      expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
+    })
+
+    test("a topology without sessions is recognized before any command is sent", async () => {
+      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-no-sessions"})
+      const startSession = spyOn(WorkspaceModel.db, "startSession").mockRejectedValue(
+        new driver.MongoCompatibilityError("Current topology does not support sessions"),
+      )
+      try {
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+      } finally {
+        startSession.mockRestore()
+      }
+
+      expect((await listChanges({})).events.map(event => [event.seq, event.action])).toEqual([[1, "user.deleted"]])
+    })
+
+    test("a person with workspace state is not ended half way: the deletion fails and nothing changes", async () => {
+      const s = await scenario()
+      const events = await WorkspaceAuditEventModel.countDocuments({})
+      const failing = failFirstTransactionCommand(standaloneMongod())
+      try {
+        const err = await removeDeletedUserFromWorkspaces(s.mentraUserId).then(
+          () => null,
+          (caught: unknown) => caught as Error,
+        )
+        expect(err?.message).toMatch(/replica set/i)
+      } finally {
+        failing.restore()
+      }
+
+      expect((await WorkspaceMembershipModel.findOne({membershipId: s.teamMembershipId}).lean())!.status).toBe("active")
+      expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
+    })
+  })
+
+  describe("on a replica set, a transaction that fails for any other reason", () => {
+    // What is left once `withTransaction` has used its retries (it retries labeled transient errors for two
+    // minutes): a time limit, a failover with no primary, a dropped connection.
+    const failures = () => [
+      ["a time limit", new driver.MongoServerError({message: "operation exceeded time limit", code: 50, codeName: "MaxTimeMSExpired"})],
+      ["no server to select", new driver.MongoServerSelectionError("Server selection timed out after 30000 ms", {} as any)],
+      ["a dropped connection", new driver.MongoNetworkError("connection 3 to 127.0.0.1:27017 closed")],
+      ["a look-alike without the standalone code", Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {code: 11000})],
+      // Code 2 without the whole Cosmos signature is any other server error, not "transactions unsupported".
+      ["code 2 with another message", new driver.MongoServerError({message: "BadValue: unknown operator", code: 2})],
+      ["code 2 with only Transaction is not active", cosmosSecondCollection({message: "Error=2, Details='Transaction is not active'"})],
+      ["code 2 with only Substatus 1101", cosmosSecondCollection({message: "Error=2, Details='BadRequest (400); Substatus: 1101'"})],
+      ["the Cosmos text under another code", cosmosSecondCollection({code: 112})],
+      ["the Cosmos text on a plain Error", Object.assign(new Error(cosmosSecondCollection().message), {code: 2})],
+    ] as const
+
+    test("propagates, and writes no tombstone outside the transaction, so a poller cannot pass it", async () => {
+      for (const [reason, error] of failures()) {
+        const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: `sb-transient-${counter++}`})
+        const eventsBefore = await WorkspaceAuditEventModel.countDocuments({})
+        const counterBefore = (await WorkspaceAuditCounterModel.findOne({}).lean())?.seq ?? 0
+        const failing = failFirstTransactionCommand(error)
+        try {
+          const thrown = await removeDeletedUserFromWorkspaces(mentraUserId).then(
+            () => null,
+            (caught: unknown) => caught,
+          )
+          expect({reason, thrown}).toEqual({reason, thrown: error})
+          expect(failing.sent()).toBe(1)
+        } finally {
+          failing.restore()
+        }
+
+        // No event, and the counter did not move: nothing was written, in or out of a transaction.
+        expect({reason, events: await WorkspaceAuditEventModel.countDocuments({})}).toEqual({reason, events: eventsBefore})
+        expect({reason, seq: (await WorkspaceAuditCounterModel.findOne({}).lean())?.seq ?? 0}).toEqual({
+          reason,
+          seq: counterBefore,
+        })
+
+        // The sweep's retry then records it, in a transaction, with the next number.
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+        const tombstones = await WorkspaceAuditEventModel.find({action: "user.deleted", "target.mentraUserId": mentraUserId}).lean()
+        expect({reason, seqs: tombstones.map(event => event.seq)}).toEqual({reason, seqs: [counterBefore + 1]})
+      }
     })
   })
 

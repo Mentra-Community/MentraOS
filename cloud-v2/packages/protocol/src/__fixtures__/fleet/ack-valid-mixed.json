@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "results": [
+    {
+      "index": 0,
+      "recordId": "rec-mix-0001",
+      "status": "accepted"
+    },
+    {
+      "index": 1,
+      "recordId": "rec-mix-0002",
+      "status": "duplicate"
+    },
+    {
+      "index": 2,
+      "recordId": "rec-mix-0003",
+      "status": "retryable",
+      "retryAfterSeconds": 30
+    },
+    {
+      "index": 3,
+      "recordId": "rec-mix-0004",
+      "status": "rejected",
+      "reasonCode": "content_mismatch"
+    },
+    {
+      "index": 4,
+      "recordId": "rec-mix-0005",
+      "status": "rejected",
+      "reasonCode": "outside_replay_window"
+    }
+  ]
+}
