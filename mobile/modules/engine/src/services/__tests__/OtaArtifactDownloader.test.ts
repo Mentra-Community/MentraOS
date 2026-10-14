@@ -226,6 +226,42 @@ describe("prepareArtifacts", () => {
     const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     await expect(prepareArtifacts(plan)).rejects.toMatchObject({code: "artifact_download_failed"})
   })
+
+  test("accepts a completed native 206 download only after its full-file hash verifies", async () => {
+    const nativeDownload = mock(async (_entry: unknown, destination: string) => {
+      files.set(destination, "apk")
+      return {statusCode: 206}
+    })
+    const prepared = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], undefined, nativeDownload)
+    expect(nativeDownload).toHaveBeenCalledTimes(1)
+    expect(prepared[0].filePath).toBe(`/docs/ota_artifacts/${hashes.apk}`)
+    expect(files.get(prepared[0].filePath)).toBe("apk")
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
+
+  test("rejects a partial native 206 body and removes it from staging", async () => {
+    const nativeDownload = mock(async (_entry: unknown, destination: string) => {
+      files.set(destination, "truncated apk")
+      return {statusCode: 206}
+    })
+    await expect(
+      prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], undefined, nativeDownload),
+    ).rejects.toMatchObject({code: "artifact_verify_failed"})
+    expect(files.has(`/docs/ota_artifacts/${hashes.apk}`)).toBe(false)
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
+
+  test("does not accept other successful HTTP statuses such as 204", async () => {
+    downloadImpl = async ({toFile}) => {
+      files.set(toFile, "apk")
+      return {statusCode: 204}
+    }
+    await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+      code: "artifact_download_failed",
+    })
+    expect(files.has(`/docs/ota_artifacts/${hashes.apk}`)).toBe(false)
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
 })
 
 describe("rewriteManifestForLocalServer", () => {
