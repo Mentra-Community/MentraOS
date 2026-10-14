@@ -3,11 +3,13 @@
  * that shares a secret with its Core (the Store, Fleet). Every request is signed over its timestamp, method,
  * path and body hash (`service-signature.ts`); no request names an organization.
  */
+import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
+  DeletionHoldsResponse,
   MembershipCheckEntry,
   PrincipalResponse,
   WorkspaceChangeEvent,
@@ -71,6 +73,19 @@ export interface CoreWorkspaceClient {
    * first use). Null only when Core says no account has it verified (HTTP 404 `user_not_found`).
    */
   resolveEmail(email: string): Promise<string | null>
+  /**
+   * Hold the workspace from deletion for this service, replacing its previous hold: while any service
+   * holds a workspace, Core refuses to delete it (409 `workspace_has_holds`). `reason` is a lowercase
+   * code (`owns_miniapps`); `count`, when given, is a positive whole number of what the reason names.
+   * Setting the hold the service already has changes nothing. Resolves to every hold on the workspace
+   * afterwards. Core refuses an unknown workspace (404) and a deleted one (410).
+   */
+  setDeletionHold(workspaceId: string, hold: {reason: string; count?: number}): Promise<DeletionHoldsResponse>
+  /**
+   * Clear this service's hold, if it has one (clearing nothing changes nothing, on a deleted workspace
+   * too). Resolves to the holds left on the workspace. Core refuses an unknown workspace (404).
+   */
+  clearDeletionHold(workspaceId: string): Promise<DeletionHoldsResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -137,9 +152,19 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return workspace
   }
 
+  /** Every hold on a workspace, as `PUT` and `DELETE` on a deletion hold answer it. */
+  function checkHolds(path: string, value: unknown): DeletionHoldsResponse {
+    const raw = checkRecord(path, value, "the deletion holds")
+    if (typeof raw.workspaceId !== "string") throw badResponse(path, "the deletion holds have no workspaceId")
+    if (!Array.isArray(raw.holds) || !raw.holds.every(isWorkspaceDeletionHold)) {
+      throw badResponse(path, "holds is not a list of deletion holds")
+    }
+    return {workspaceId: raw.workspaceId, holds: raw.holds}
+  }
+
   /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
   async function call(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     pathWithQuery: string,
     payload?: unknown,
     nullOn?: (status: number, error: string | undefined) => boolean,
@@ -158,7 +183,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         timestampMs,
       }),
     }
-    if (method === "POST") headers["content-type"] = "application/json"
+    if (payload !== undefined) headers["content-type"] = "application/json"
 
     let status: number
     let text: string
@@ -166,7 +191,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       const response = await doFetch(`${baseUrl}${pathWithQuery}`, {
         method,
         headers,
-        body: method === "POST" ? body : undefined,
+        body: payload === undefined ? undefined : body,
         redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
       })
@@ -300,5 +325,22 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       }
       return raw.mentraUserId
     },
+
+    async setDeletionHold(workspaceId, hold) {
+      const path = deletionHoldPath(workspaceId)
+      // Only what was given: an absent count is "no count", never a null Core would have to read.
+      const body = hold.count === undefined ? {reason: hold.reason} : {reason: hold.reason, count: hold.count}
+      return checkHolds(path, await call("PUT", path, body))
+    },
+
+    async clearDeletionHold(workspaceId) {
+      const path = deletionHoldPath(workspaceId)
+      return checkHolds(path, await call("DELETE", path))
+    },
+  }
+
+  /** This service's own hold on a workspace: the service in the path is always the one that signs. */
+  function deletionHoldPath(workspaceId: string): string {
+    return `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/deletion-holds/${encodeURIComponent(opts.service)}`
   }
 }

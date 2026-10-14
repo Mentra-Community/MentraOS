@@ -44,6 +44,11 @@ import {
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
+import {
+  clearDeletionHold,
+  listDeletionHolds,
+  setDeletionHold,
+} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {listChanges} from "../packages/core/src/services/workspaces/audit.service"
 import {
   createOperatorKey,
@@ -59,6 +64,7 @@ import {
 import {
   countActiveOwners,
   createWorkspace,
+  deleteWorkspace,
   getWorkspace,
   leaveWorkspace,
   listWorkspacesForUser,
@@ -329,6 +335,28 @@ describe("confirmAccountDeletion", () => {
     const {mentraUserId: heir} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-heir"})
     await recoverOwnership({kind: "system"}, s.solo.workspaceId, heir)
     expect(await countActiveOwners(s.solo.workspaceId)).toBe(1)
+  })
+
+  test("a deletion hold never stands in the way: account deletion deletes no workspace, and the held one keeps its hold", async () => {
+    const s = await scenario()
+    await setDeletionHold("store", s.solo.workspaceId, {reason: "owns_miniapps", count: 2})
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    expect(await accountExists(s.tenantUserId)).toBe(false)
+    expect((await getWorkspace(s.solo.workspaceId))!.status).toBe("active")
+    expect(await countActiveOwners(s.solo.workspaceId)).toBe(0)
+    expect(await listDeletionHolds(s.solo.workspaceId)).toEqual([{service: "store", reason: "owns_miniapps", count: 2}])
+
+    // The owner an Organization Admin recovers still cannot delete it while the Store holds it.
+    const {mentraUserId: heir} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-heir"})
+    await recoverOwnership({kind: "system"}, s.solo.workspaceId, heir)
+    const heirActor: Actor = {kind: "user", mentraUserId: heir, email: null, emailVerified: true, isOrganizationAdmin: false}
+    const refused = await deleteWorkspace(heirActor, s.solo.workspaceId, {confirmName: "Solo"}).catch(err => err)
+    expect({code: refused.code, status: refused.status}).toEqual({code: "workspace_has_holds", status: 409})
+    await clearDeletionHold("store", s.solo.workspaceId)
+    await deleteWorkspace(heirActor, s.solo.workspaceId, {confirmName: "Solo"})
+    expect((await getWorkspace(s.solo.workspaceId))!.status).toBe("deleted")
   })
 
   test("invitations the user sent end with their membership; invitations to the user's email stay valid", async () => {

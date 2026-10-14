@@ -3,7 +3,14 @@ import {CoreWorkspaceClientError, createCoreWorkspaceClient} from "./client"
 import {SERVICE_HEADERS, verifyServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
 import type {WorkspaceRole} from "./capabilities"
-import type {AuthorizeResponse, PrincipalResponse, WorkspaceChangeEvent, WorkspaceSummary} from "./types"
+import type {
+  AuthorizeResponse,
+  DeletionHoldsResponse,
+  PrincipalResponse,
+  WorkspaceChangeEvent,
+  WorkspaceDeletionHold,
+  WorkspaceSummary,
+} from "./types"
 
 const SECRET = "client-secret"
 const BASE = "https://core.test"
@@ -569,6 +576,82 @@ describe("failures", () => {
     await expectClientError(notJson.client.getWorkspace("ws_1"), "bad_response")
     const wrongShape = clientFor(() => json({name: "no id"}))
     await expectClientError(wrongShape.client.getWorkspace("ws_1"), "bad_response")
+  })
+})
+
+describe("deletion holds", () => {
+  const holds = (...entries: WorkspaceDeletionHold[]): DeletionHoldsResponse => ({workspaceId: "ws 1", holds: entries})
+  const verifies = (call: Recorded) => {
+    const url = new URL(call.url)
+    const timestampMs = Number(call.headers.get(SERVICE_HEADERS.timestamp))
+    return verifyServiceRequest({
+      secrets: [SECRET],
+      method: call.method,
+      pathWithQuery: `${url.pathname}${url.search}`,
+      body: call.body,
+      timestampMs,
+      signature: call.headers.get(SERVICE_HEADERS.signature) ?? "",
+      nowMs: timestampMs,
+    })
+  }
+
+  test("setDeletionHold PUTs the reason and count to this service's own hold, signed over the exact path and body", async () => {
+    const answer = holds({service: "store", reason: "owns_miniapps", count: 3})
+    const {client, calls} = clientFor(() => json(answer))
+
+    expect(await client.setDeletionHold("ws 1", {reason: "owns_miniapps", count: 3})).toEqual(answer)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].method).toBe("PUT")
+    // The service in the path is always the one the client signs as: a service sets only its own hold.
+    expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws%201/deletion-holds/store`)
+    expect(calls[0].headers.get("content-type")).toBe("application/json")
+    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps", count: 3})
+    expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("setDeletionHold sends no count when it is given none", async () => {
+    const {client, calls} = clientFor(() => json(holds({service: "store", reason: "owns_miniapps"})))
+    await client.setDeletionHold("ws_1", {reason: "owns_miniapps"})
+    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps"})
+  })
+
+  test("clearDeletionHold DELETEs this service's hold with an empty body, and returns the holds left", async () => {
+    const answer = holds({service: "fleet", reason: "manages_devices"})
+    const {client, calls} = clientFor(() => json(answer))
+
+    expect(await client.clearDeletionHold("ws 1")).toEqual(answer)
+
+    expect(calls[0].method).toBe("DELETE")
+    expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws%201/deletion-holds/store`)
+    expect(calls[0].body).toBe("")
+    expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("a refusal is an error with Core's status: an unknown workspace, a deleted one, another service's hold", async () => {
+    const unknown = clientFor(() => json({error: "workspace_not_found"}, 404))
+    expect((await expectClientError(unknown.client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "bad_request")).status).toBe(404)
+    expect((await expectClientError(unknown.client.clearDeletionHold("ws_1"), "bad_request")).status).toBe(404)
+    const deleted = clientFor(() => json({error: "workspace_deleted"}, 410))
+    expect((await expectClientError(deleted.client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "bad_request")).status).toBe(410)
+    const forbidden = clientFor(() => json({error: "forbidden"}, 403))
+    await expectClientError(forbidden.client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "forbidden")
+  })
+
+  test("fails closed on an answer that does not have the holds shape", async () => {
+    for (const body of [
+      {},
+      {workspaceId: "ws_1"},
+      {workspaceId: "ws_1", holds: {}},
+      {workspaceId: 5, holds: []},
+      {workspaceId: "ws_1", holds: [{service: "store"}]},
+      {workspaceId: "ws_1", holds: [{service: "store", reason: "owns_miniapps", count: "3"}]},
+      {workspaceId: "ws_1", holds: [{service: "store", reason: "owns_miniapps", count: 0}]},
+    ]) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "bad_response")
+      await expectClientError(client.clearDeletionHold("ws_1"), "bad_response")
+    }
   })
 })
 

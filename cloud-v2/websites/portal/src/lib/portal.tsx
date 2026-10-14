@@ -12,11 +12,13 @@ import type { LinkInvitation, PendingInvitation } from "./invitations";
 export const portalWorkspaceApi = createWorkspaceApi({ basePath: "/api/portal/workspaces" });
 
 /**
- * Core deletes a workspace without asking the Mentra Miniapp Store, so the page says what happens to the
- * miniapps the workspace publishes there.
+ * The Mentra Miniapp Store holds a workspace from deletion while it owns published miniapps (the settings
+ * screen says so instead of offering the delete). Whatever the workspace still has there when it is
+ * deleted (miniapps that are not published, or published ones the Store had not held it for) stays, so
+ * the page says what happens to it.
  */
 export const STORE_DELETE_NOTICE =
-  "Miniapps this workspace publishes in the Mentra Miniapp Store stay published, and nobody can manage them until a Store operator assigns them to another workspace.";
+  "Miniapps this workspace still has in the Mentra Miniapp Store stay there, and nobody can manage them until a Store operator assigns them to another workspace.";
 
 /** Whether this person may create a workspace, as `/api/portal/me` reports it. */
 export interface WorkspaceCreation {

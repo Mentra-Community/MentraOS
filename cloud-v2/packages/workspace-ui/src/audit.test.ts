@@ -156,6 +156,25 @@ describe("audit events as sentences", () => {
     );
   });
 
+  test("deletion holds say what holds the workspace, by the service that holds it", () => {
+    const STORE = { kind: "service" as const, email: null, credentialId: null, service: "store" };
+    const target = { workspaceId: "ws_1", service: "store" };
+    const held = (after: Record<string, unknown>, before: Record<string, unknown> | null = null) =>
+      event("workspace.deletion_hold_set", { actor: STORE, target, before, after });
+    expect(say(held({ reason: "owns_miniapps", count: 3 }))).toBe("Held the workspace from deletion while it owns 3 published miniapps");
+    expect(say(held({ reason: "owns_miniapps", count: 1 }, { reason: "owns_miniapps", count: 2 }))).toBe(
+      "Held the workspace from deletion while it owns 1 published miniapp",
+    );
+    expect(say(held({ reason: "owns_miniapps", count: null }))).toBe("Held the workspace from deletion while it owns published miniapps");
+    expect(
+      say(event("workspace.deletion_hold_set", { actor: STORE, target: { ...target, service: "fleet" }, after: { reason: "manages_devices", count: 4 } })),
+    ).toBe("Held the workspace from deletion (manages devices: 4)");
+    expect(
+      say(event("workspace.deletion_hold_cleared", { actor: STORE, target, before: { reason: "owns_miniapps", count: 1 }, after: null })),
+    ).toBe("Stopped holding the workspace from deletion");
+    expect(actorLabel(STORE)).toBe("Store service");
+  });
+
   test("names are marked to stand out, and nothing internal shows in the sentence", () => {
     const { summary } = describeAuditEvent(
       event("membership.role_changed", {

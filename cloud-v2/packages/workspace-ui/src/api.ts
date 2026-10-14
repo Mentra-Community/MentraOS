@@ -20,6 +20,7 @@ import type {
   WorkspaceRole,
   WorkspaceSummary,
 } from "@mentra/workspace-contract";
+import { isWorkspaceDeletionHold, WORKSPACE_HAS_HOLDS_ERROR, type WorkspaceDeletionHold } from "@mentra/workspace-contract";
 import { WorkspaceApiError } from "./errors";
 
 /** One row of the caller's workspace list: the workspace, their membership and what they may do there. */
@@ -196,18 +197,25 @@ export function createWorkspaceApi(opts: {
   };
 }
 
-/** The typed error for a non-2xx response: Core's `{error, error_description}` body when it sent one. */
+/**
+ * The typed error for a non-2xx response: Core's `{error, error_description}` body when it sent one, with
+ * the `holds` of a 409 `workspace_has_holds` (only when every one has a hold's shape).
+ */
 async function failure(response: Response): Promise<WorkspaceApiError> {
   let code = `http_${response.status}`;
   let message = response.statusText || `request failed with status ${response.status}`;
+  let holds: WorkspaceDeletionHold[] = [];
   try {
-    const body = (await response.json()) as { error?: unknown; error_description?: unknown } | null;
+    const body = (await response.json()) as { error?: unknown; error_description?: unknown; holds?: unknown } | null;
     if (typeof body?.error === "string" && body.error) {
       code = body.error;
       message = typeof body.error_description === "string" && body.error_description ? body.error_description : code;
+      if (code === WORKSPACE_HAS_HOLDS_ERROR && Array.isArray(body.holds) && body.holds.every(isWorkspaceDeletionHold)) {
+        holds = body.holds;
+      }
     }
   } catch {
     // Not JSON (a proxy's error page, for instance): keep the status-based code and message.
   }
-  return new WorkspaceApiError(response.status, code, message);
+  return new WorkspaceApiError(response.status, code, message, holds);
 }

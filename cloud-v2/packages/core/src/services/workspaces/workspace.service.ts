@@ -32,9 +32,11 @@
 import {
   canChangeRole,
   capabilitiesForRole,
+  describeDeletionHolds,
   roleAtLeast,
   WORKSPACE_ROLES,
   type PrincipalResponse,
+  type WorkspaceDeletionHold,
   type WorkspaceRole,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract"
@@ -287,11 +289,16 @@ export async function renameWorkspace(
  * revision, and keeps the workspace row (`status: "deleted"`) so audit history
  * stays resolvable and its id is never reused. It records `workspace.deleted`.
  *
- * Core asks no other service first. Services that keep records owned by a
- * workspace decide what happens to them: the Store refuses a Developer Console
- * delete while the workspace publishes miniapps, and holds the miniapps of a
- * workspace deleted elsewhere until a Store operator assigns them to another
- * workspace.
+ * Only an owner (an Organization Admin, the system) may, and not while any
+ * service holds the workspace (`deletion-hold.service`): that is 409
+ * `workspace_has_holds`, whoever asks, with the holds in the error's details and
+ * what they mean in its message. The holds are checked after who may delete
+ * (someone who may not learns nothing about them) and before the typed name.
+ *
+ * Core asks no other service at delete time: a service that needs a workspace
+ * kept holds it beforehand. The Store holds a workspace while it owns published
+ * miniapps. Whatever else a service keeps for a deleted workspace is that
+ * service's to handle; it learns of the deletion from the change feed.
  */
 export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {confirmName: string}): Promise<void> {
   await withTransaction(async session => {
@@ -325,6 +332,10 @@ async function assertCanDelete(
   const workspace = await loadActiveWorkspace(session, workspaceId)
   const role = await actingRole(session, actor, workspaceId)
   if (role !== "owner") fail("forbidden", "only a workspace owner or an organization admin can delete a workspace")
+  // A hold set concurrently writes this same document, so the delete's write conflicts with it and the
+  // retried transaction sees the hold here.
+  const holds = deletionHoldsOf(workspace)
+  if (holds.length > 0) fail("workspace_has_holds", describeDeletionHolds(holds), {holds})
   if (confirmName !== workspace.name) fail("invalid_request", "confirmName does not match the workspace name")
   return workspace
 }
@@ -498,7 +509,22 @@ export async function recoverOwnership(
 // The exported ones (`isId`, `isWorkspaceRole`, `validateName`, `loadActiveWorkspace`, `actingRole`,
 // `requireMembershipManager`, `bumpRevision`, `touchWorkspace`, `endMembership`, `auditActor`) are shared
 // with `invitation.service`, `credential.service` and `account-deletion.service`, which follow the same
-// mutation shape.
+// mutation shape. `deletionHoldsOf` is shared with `deletion-hold.service`.
+
+/**
+ * The workspace's deletion holds in the contract's shape, sorted by service (`count` only where the
+ * service gave one). A workspace written before holds existed has none.
+ */
+export function deletionHoldsOf(row: Pick<WorkspaceRow, "deletionHolds">): WorkspaceDeletionHold[] {
+  const stored = (row.deletionHolds ?? []) as Array<{service: string; reason: string; count?: number | null}>
+  return stored
+    .map(hold => ({
+      service: hold.service,
+      reason: hold.reason,
+      ...(typeof hold.count === "number" ? {count: hold.count} : {}),
+    }))
+    .sort((a, b) => (a.service < b.service ? -1 : a.service > b.service ? 1 : 0))
+}
 
 function toSummary(
   row: Pick<WorkspaceRow, "workspaceId" | "name" | "status" | "authorizationRevision">,

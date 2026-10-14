@@ -1,6 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { createWorkspaceApi } from "./api";
-import { errorMessage, isWorkspaceChangedError, WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError } from "./errors";
+import {
+  errorMessage,
+  isWorkspaceChangedError,
+  isWorkspaceHeldError,
+  WORKSPACE_CHANGED_MESSAGE,
+  WorkspaceApiError,
+} from "./errors";
 
 interface Recorded {
   url: string;
@@ -256,6 +262,31 @@ describe("createWorkspaceApi: errors", () => {
     expect(refused).toMatchObject({ status: 409, code: "workspace_has_miniapps" });
     expect(isWorkspaceChangedError(refused)).toBe(false);
     expect(errorMessage(refused)).toBe("Move or delete this workspace's miniapps before deleting it.");
+  });
+
+  test("a 409 workspace_has_holds carries the holds, and reads as what holds the workspace", async () => {
+    const holds = [{ service: "store", reason: "owns_miniapps", count: 3 }];
+    const rec = recordingFetch(
+      Response.json(
+        { error: "workspace_has_holds", error_description: "a service holds this workspace", holds },
+        { status: 409 },
+      ),
+      // A body whose holds are not holds keeps the server's own words.
+      Response.json({ error: "workspace_has_holds", error_description: "held by something", holds: [{ nope: 1 }] }, { status: 409 }),
+    );
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+
+    const refused = await api.deleteWorkspace("ws_1", "Acme").catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 409, code: "workspace_has_holds", holds });
+    expect(isWorkspaceHeldError(refused)).toBe(true);
+    expect(isWorkspaceChangedError(refused)).toBe(false);
+    expect(errorMessage(refused)).toBe(
+      "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+    );
+
+    const odd = await api.deleteWorkspace("ws_1", "Acme").catch((e: unknown) => e);
+    expect(odd).toMatchObject({ status: 409, code: "workspace_has_holds", holds: [] });
+    expect(errorMessage(odd)).toBe("Held by something");
   });
 
   test("a network failure becomes a status-0 error", async () => {
