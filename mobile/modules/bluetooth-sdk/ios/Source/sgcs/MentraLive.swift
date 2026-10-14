@@ -3152,7 +3152,7 @@ class MentraLive: NSObject, SGCManager {
 
         case "pairing_info":
             Bridge.log(
-                "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) code=\(json["pairing_code"] as? String ?? "-")"
+                "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) code=<redacted>"
             )
             let ownerCommitted = json["owner_committed"] as? Bool == true
             if MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner(ownerCommitted: ownerCommitted) {
