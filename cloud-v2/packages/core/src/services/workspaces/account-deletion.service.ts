@@ -107,7 +107,13 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
       if (workspaceState || !(isTransactionsUnsupportedError(err) || isCrossCollectionTransactionUnsupported(err))) {
         throw err
       }
-      logger.warn({err, mentraUserId}, "transactions are unsupported here; recording the user.deleted tombstone without one")
+      // Expected, and on Azure Cosmos DB for MongoDB it happens at every deletion of a person with no
+      // workspace state: routine, so info, naming which signature matched rather than carrying the
+      // database's error (long, and its text is not Core's to repeat on every deletion).
+      logger.info(
+        {mentraUserId, reason: isTransactionsUnsupportedError(err) ? "transactions_unsupported" : "cross_collection_transaction_unsupported"},
+        "transactions are unsupported here; recording the user.deleted tombstone without one",
+      )
       if (!(await tombstoneRecorded(mentraUserId, null))) await recordFeedEventWithoutTransaction(tombstone)
     }
   }

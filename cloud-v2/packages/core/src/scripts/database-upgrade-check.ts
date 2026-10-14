@@ -9,8 +9,10 @@
  *     database refuses and carries on, so /ready alone proves little about them.
  *   bun database-upgrade-check.ts verify <mongo url>
  *     Require what the current Core builds at startup that a database can
- *     refuse (REQUIRED below). Run it after `start` of the current checkout, on a
- *     fresh and on an upgraded database; not after a base branch's `start`.
+ *     refuse (REQUIRED below), then delete a throwaway account the way Core does
+ *     and require its `user.deleted` tombstone on the change feed (see
+ *     `verifyAccountDeletion`). Run it after `start` of the current checkout, on
+ *     a fresh and on an upgraded database; not after a base branch's `start`.
  *   bun database-upgrade-check.ts seed <mongo url>
  *     Put one document in every empty collection, so the next start meets
  *     populated collections, as an upgrade of a running deployment does.
@@ -19,6 +21,7 @@
  *     Drop this database, or every `ci-<epoch seconds>-…` database older than six hours.
  */
 
+import {randomUUID} from "node:crypto"
 import {join, resolve} from "node:path"
 import {pathToFileURL} from "node:url"
 import mongoose from "mongoose"
@@ -63,7 +66,7 @@ async function withDatabase(mongoUrl: string, run: (db: mongoose.mongo.Db) => Pr
   }
 }
 
-async function verify(db: mongoose.mongo.Db): Promise<void> {
+async function verifySchema(db: mongoose.mongo.Db): Promise<void> {
   const problems: string[] = []
   const existing = new Set((await db.listCollections({}, {nameOnly: true}).toArray()).map(({name}) => name))
   for (const name of REQUIRED.collections) {
@@ -83,6 +86,94 @@ async function verify(db: mongoose.mongo.Db): Promise<void> {
     )
   }
   console.log(`${db.databaseName} has ${REQUIRED.collections.join(", ")} and an index on ${REQUIRED.indexes.map(i => `${i.collection}${JSON.stringify(i.key)}`).join(", ")}`)
+}
+
+/**
+ * Delete a throwaway account the way Core does, on this database, and require its `user.deleted` tombstone.
+ *
+ * The tombstone is what tells a service that keeps data about a person (Fleet) to delete it, so an account
+ * deletion that cannot record one must fail loudly here, not in production. Azure Cosmos DB for MongoDB
+ * commits a transaction within one collection and fails one across two, and the tombstone's transaction
+ * touches the feed's counter and its events: there, `removeDeletedUserFromWorkspaces` recognizes the refusal
+ * and records the tombstone without a transaction, a path no test could run against Cosmos itself. On a
+ * replica set the same call takes the transactional path. Either way the feed must end with exactly one
+ * `user.deleted` event for the person, carrying a numeric `seq`.
+ *
+ * The person is a real `users` row (what account deletion acts on); they belong to no workspace, so the
+ * tombstone is the whole of their deletion, as it is for most accounts. The row and the event are removed
+ * afterwards, so a database that is kept (a local one) is left as it was, but for one step of the feed's
+ * counter; `seq` numbers may skip, which the feed allows.
+ */
+async function verifyAccountDeletion(mongoUrl: string): Promise<void> {
+  // Core's own modules, loaded here and one after the other: `start` loads another checkout's Core, which
+  // `verify` must not touch, and the logger every one of them imports has a top-level await, so importing
+  // them at once races it.
+  const {findOrCreateUser} = await import("../services/user.service")
+  const {UserModel} = await import("../models/user.model")
+  const {WorkspaceAuditEventModel} = await import("../models/workspace-audit-event.model")
+  const {removeDeletedUserFromWorkspaces} = await import("../services/workspaces/account-deletion.service")
+  const {USER_DELETED_ACTION} = await import("@mentra/workspace-contract")
+
+  // No index or collection building: `start` built what the database accepts, and a model's own attempt to
+  // create the rest on connect is not what is under test (and a refused one must not change this run).
+  await mongoose.connect(mongoUrl, {serverSelectionTimeoutMS: 30_000, autoIndex: false, autoCreate: false})
+  const database = mongoose.connection.name
+  let mentraUserId: string | null = null
+  try {
+    const user = await findOrCreateUser({tenantId: "database-upgrade-check", tenantUserId: `check-${randomUUID()}`})
+    mentraUserId = user.mentraUserId
+    const tombstones = () =>
+      WorkspaceAuditEventModel.find({
+        workspaceId: null,
+        action: USER_DELETED_ACTION,
+        "target.mentraUserId": mentraUserId,
+      }).lean()
+
+    try {
+      await removeDeletedUserFromWorkspaces(mentraUserId)
+    } catch (error) {
+      throw new Error(
+        `Deleting a throwaway account on ${database} failed instead of recording its user.deleted tombstone: ` +
+          `${error instanceof Error ? error.message : String(error)}. Account deletion must work on every database ` +
+          "a deployment uses; a Private Cloud on Azure Cosmos DB for MongoDB cannot run a transaction across collections.",
+        {cause: error},
+      )
+    }
+
+    const events = await tombstones()
+    const seqs = events.map(event => event.seq)
+    if (events.length !== 1) {
+      throw new Error(
+        `Deleting a throwaway account on ${database} recorded ${events.length} user.deleted events for it; ` +
+          "exactly one is required, or a service that keeps data about the person is never told to delete it (or is told twice).",
+      )
+    }
+    if (typeof seqs[0] !== "number" || !Number.isFinite(seqs[0])) {
+      throw new Error(
+        `The user.deleted event for a deleted throwaway account on ${database} has no numeric seq (${JSON.stringify(seqs[0])}); ` +
+          "the change feed only serves events that have one, so a service would never see it.",
+      )
+    }
+    console.log(`${database}: deleting an account recorded one user.deleted event, seq ${seqs[0]}`)
+  } finally {
+    // Whatever happened, leave neither the throwaway person nor an event naming them behind.
+    if (mentraUserId) {
+      await WorkspaceAuditEventModel.deleteMany({
+        workspaceId: null,
+        action: USER_DELETED_ACTION,
+        "target.mentraUserId": mentraUserId,
+      }).catch(error => console.error(`could not remove the throwaway account's tombstone: ${error}`))
+      await UserModel.deleteOne({mentraUserId}).catch(error =>
+        console.error(`could not remove the throwaway account ${mentraUserId}: ${error}`),
+      )
+    }
+    await mongoose.disconnect()
+  }
+}
+
+async function verify(mongoUrl: string): Promise<void> {
+  await withDatabase(mongoUrl, verifySchema)
+  await verifyAccountDeletion(mongoUrl)
 }
 
 async function seed(db: mongoose.mongo.Db): Promise<void> {
@@ -108,7 +199,7 @@ async function sweep(db: mongoose.mongo.Db): Promise<void> {
 const [command, ...args] = process.argv.slice(2)
 try {
   if (command === "start" && args.length === 2) await start(args[0]!, args[1]!)
-  else if (command === "verify" && args.length === 1) await withDatabase(args[0]!, verify)
+  else if (command === "verify" && args.length === 1) await verify(args[0]!)
   else if (command === "seed" && args.length === 1) await withDatabase(args[0]!, seed)
   else if (command === "drop" && args.length === 1) await withDatabase(args[0]!, db => db.dropDatabase().then(() => {}))
   else if (command === "sweep" && args.length === 1) await withDatabase(args[0]!, sweep)

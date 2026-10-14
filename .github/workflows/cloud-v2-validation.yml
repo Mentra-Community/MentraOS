@@ -317,9 +317,11 @@ jobs:
             echo "::error title=Core does not start on Cosmos DB::A new Private Cloud install of this change fails at Core startup. See the log above."
             exit 1
           }
-          # Core logs an index its database refuses and carries on, so /ready does not show it.
+          # Core logs an index its database refuses and carries on, so /ready does not show it. verify
+          # also deletes a throwaway account, which records its user.deleted tombstone without a
+          # transaction on Cosmos DB, a path only this database can run.
           bun "$CHECK" verify "$FRESH_URL" || {
-            echo "::error title=Core did not build its schema on Cosmos DB::A new Private Cloud install of this change starts but is missing a collection or index Core needs. See the log above."
+            echo "::error title=Core did not build its schema on Cosmos DB::A new Private Cloud install of this change starts but is missing a collection or index Core needs, or cannot record an account deletion's user.deleted tombstone. See the log above."
             exit 1
           }
 
@@ -334,7 +336,7 @@ jobs:
             exit 1
           }
           bun "$CHECK" verify "$UPGRADE_URL" || {
-            echo "::error title=Core upgrade did not build its schema on Cosmos DB::Core starts on an existing Private Cloud database but could not build a collection or index it needs there. See the log above."
+            echo "::error title=Core upgrade did not build its schema on Cosmos DB::Core starts on an existing Private Cloud database but could not build a collection or index it needs there, or cannot record an account deletion's user.deleted tombstone. See the log above."
             exit 1
           }
 

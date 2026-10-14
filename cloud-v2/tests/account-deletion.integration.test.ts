@@ -789,6 +789,63 @@ describe("removeDeletedUserFromWorkspaces", () => {
       expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
     })
 
+    test("the recognized path is routine, so it is logged at info without the database's error, never as a warning", async () => {
+      // The logger is the service's own, so the deletions run in a process of their own, with the real logger
+      // writing JSON, against this test's database. In it the transactions fail as they do on each kind of
+      // database that cannot run them (the first command of a standalone mongod, the counter's write on Cosmos).
+      const root = new URL("..", import.meta.url).pathname
+      const script = `
+        import {connectMongo, disconnectMongo} from ${JSON.stringify(`${root}packages/core/src/connections/mongo.connection`)}
+        import {WorkspaceAuditCounterModel} from ${JSON.stringify(`${root}packages/core/src/models/workspace-audit-counter.model`)}
+        import {removeDeletedUserFromWorkspaces} from ${JSON.stringify(`${root}packages/core/src/services/workspaces/account-deletion.service`)}
+        const mongoose = WorkspaceAuditCounterModel.base
+        const failures = [
+          [null, new mongoose.mongo.MongoServerError({message: "Transaction numbers are only allowed on a replica set member or mongos", code: 20})],
+          [WorkspaceAuditCounterModel, new mongoose.mongo.MongoServerError({
+            message: "Error=2, Details='Response status code does not indicate success: BadRequest (400); Substatus: 1101; Reason: (Message: {\\"Errors\\":[\\"Transaction is not active\\"]})'",
+            code: 2,
+            errorLabels: [],
+          })],
+        ]
+        await connectMongo(${JSON.stringify(databaseUrl)})
+        const exec = mongoose.Query.prototype.exec
+        for (const [index, [model, error]] of failures.entries()) {
+          mongoose.Query.prototype.exec = function (...args) {
+            if (!this.getOptions().session || (model && this.model !== model)) return exec.apply(this, args)
+            return Promise.reject(error)
+          }
+          await removeDeletedUserFromWorkspaces("mu_log_check_" + index)
+        }
+        mongoose.Query.prototype.exec = exec
+        await disconnectMongo()
+      `
+      const child = Bun.spawn([process.execPath, "-e", script], {
+        env: {...process.env, LOG_STDOUT_JSON: "true", LOG_LEVEL: "debug"},
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect([code, stderr]).toEqual([0, ""])
+
+      const lines = stdout
+        .split("\n")
+        .filter(line => line.startsWith("{"))
+        .map(line => JSON.parse(line) as Record<string, unknown>)
+        .filter(line => line.service === "account-deletion")
+      expect(lines.map(line => [line.level, line.mentraUserId, line.reason])).toEqual([
+        ["info", "mu_log_check_0", "transactions_unsupported"],
+        ["info", "mu_log_check_1", "cross_collection_transaction_unsupported"],
+      ])
+      // The database's own error text is not repeated on every deletion.
+      expect(lines.every(line => !("err" in line))).toBe(true)
+      // Both tombstones were written.
+      expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(2)
+    })
+
     test("Azure Cosmos DB for MongoDB: a person with workspace state is not ended half way either", async () => {
       const s = await scenario()
       const events = await WorkspaceAuditEventModel.countDocuments({})
