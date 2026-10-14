@@ -16,6 +16,7 @@ export class GithubRoutineSourceGateway {
   private readonly blobs = new Map<string, Uint8Array>();
   private readonly blobFlights = new Map<string, {size: number; work: Promise<Uint8Array>}>();
   private blobBytes = 0;
+  private pendingBlobBytes = 0;
   constructor(private readonly app: Pick<TestRunGithubApp, 'token'> = new TestRunGithubApp(),
     private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch,
     private readonly report: (value: SourceDiagnostic) => void = value => logger.error(value, 'Exact routine source download failed')) {}
@@ -97,7 +98,9 @@ export class GithubRoutineSourceGateway {
       if (flight.size !== file.size) throw new TestRunError(503, 'GitHub routine blob differs from its exact inventory');
       return Uint8Array.from(await flight.work);
     }
-    if (this.blobFlights.size >= 512) throw new TestRunError(503, 'Routine source downloads exceed their concurrent bound');
+    if (this.blobFlights.size >= 512 || this.pendingBlobBytes + file.size > 64 * 1024 ** 2)
+      throw new TestRunError(503, 'Routine source downloads exceed their concurrent bound');
+    this.pendingBlobBytes += file.size;
     const work = this.readBlob(file).then(bytes => {
       if (bytes.byteLength <= 16 * 1024 ** 2) {
         while (this.blobs.size >= 512 || this.blobBytes + bytes.byteLength > 16 * 1024 ** 2) {
@@ -107,7 +110,7 @@ export class GithubRoutineSourceGateway {
         this.blobs.set(file.gitBlobSha1, bytes); this.blobBytes += bytes.byteLength;
       }
       return bytes;
-    }).finally(() => this.blobFlights.delete(file.gitBlobSha1));
+    }).finally(() => {this.pendingBlobBytes -= file.size; this.blobFlights.delete(file.gitBlobSha1);});
     this.blobFlights.set(file.gitBlobSha1, {size: file.size, work});
     return Uint8Array.from(await work);
   }

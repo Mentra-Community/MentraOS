@@ -89,3 +89,21 @@ test('failed or corrupt downloads never populate the verified blob cache', async
   await expect(service.blob(file)).rejects.toThrow('differs');
   expect(await service.blob(file)).toEqual(bytes); expect(reads).toBe(2);
 });
+
+test('in-flight byte admission preserves one64MiB blob and releases failed capacity without evicting a shared download', async () => {
+  let finish!: (value: Response) => void, reads = 0;
+  const service = new GithubRoutineSourceGateway({async token() {return 'private';}}, async () => {
+    reads++; return new Promise<Response>(resolve => {finish = resolve;});
+  }, () => {});
+  const large = {gitBlobSha1: 'a'.repeat(40), size: 64 * 1024 ** 2};
+  const first = service.blob(large), shared = service.blob(large);
+  const failed = Promise.allSettled([first, shared]);
+  await expect(service.blob({gitBlobSha1: blob, size: bytes.length})).rejects.toThrow('concurrent bound');
+  await Promise.resolve(); finish(new Response('unavailable', {status: 503}));
+  expect(await failed).toEqual([{status: 'rejected', reason: expect.objectContaining({status: 503})},
+    {status: 'rejected', reason: expect.objectContaining({status: 503})}]);
+  expect(reads).toBe(1);
+  const next = service.blob({gitBlobSha1: blob, size: bytes.length});
+  await Promise.resolve(); finish(new Response(bytes));
+  expect(await next).toEqual(bytes); expect(reads).toBe(2);
+});
