@@ -1175,6 +1175,82 @@ describe("capabilities", () => {
   })
 })
 
+describe("glasses that cannot report a battery", () => {
+  /** A collector for which `model` is a model without battery reporting. */
+  function withoutBattery(model = "Mentra Live"): void {
+    collector = createFleetCollector({
+      queue,
+      now: () => clock.wall,
+      monotonic: () => clock.mono,
+      modelsWithoutBattery: new Set([model]),
+    })
+  }
+
+  test("have an unsupported battery, and no record while they are connected claims glasses_battery", () => {
+    withoutBattery()
+    connectLive({batteryLevel: -1})
+    start()
+    collector.flushCheckpoint()
+    expect(snapshots()[0].payload.glasses?.battery).toEqual({state: "unsupported", observedAt: iso(clock.wall)})
+    const measured = FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery").sort()
+    expect(all().map((record) => record.kind)).toEqual(["snapshot", "usage_checkpoint"])
+    for (const record of all()) expect([...record.capabilities].sort()).toEqual(measured)
+  })
+
+  test("a level left in the store is not taken for theirs, and its changes are no reason for a snapshot", () => {
+    withoutBattery()
+    connectLive({batteryLevel: 80, charging: true})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery?.state).toBe("unsupported")
+    glassesStore.setState({batteryLevel: 20, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(1)
+  })
+
+  test("stay unsupported once disconnected, which is no reason for a new 15-minute snapshot", () => {
+    withoutBattery()
+    connectLive()
+    start()
+    disconnectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(snapshots()[1].payload.glasses?.battery?.state).toBe("unsupported")
+    advance(2 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(2)
+  })
+
+  test("other models are measured as before", () => {
+    withoutBattery("Even Realities G1")
+    connectLive()
+    start()
+    expect(snapshots()[0].payload.glasses?.battery).toMatchObject({state: "measured", level: 80})
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+
+  test("a model that reports a battery but has not yet is unknown, and still claims to measure it", () => {
+    connectLive({batteryLevel: -1})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery?.state).toBe("unknown")
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+
+  test.each([
+    "Even Realities G1",
+    "Even Realities G2",
+    "Mentra Live",
+    "Mentra Display",
+    "Mentra Mach1",
+    "Vuzix Z100",
+    "NIMO",
+    "AR99",
+  ])("%s reports its battery: no model the SDK connects today is without one", (model) => {
+    connectLive({deviceModel: model})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery).toMatchObject({state: "measured", level: 80})
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+})
+
 // --- launches and photos ----------------------------------------------------------------------------------------
 
 describe("launches", () => {

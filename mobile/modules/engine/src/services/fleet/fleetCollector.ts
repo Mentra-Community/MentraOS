@@ -100,7 +100,18 @@ const MAX_TEXT = 128
 const MAX_CAP_TURNS = 8
 const FLEET_ID = /^[A-Za-z0-9._:-]+$/
 
-/** What the phone measures without glasses. With glasses connected it measures all of them. */
+/**
+ * Glasses models that have no battery reporting. Their battery is `unsupported`, not `unknown`, and a record made
+ * while they are connected does not claim `glasses_battery`. Every model the Bluetooth SDK connects today reports one
+ * (G1, G2, Mentra Live, Mentra Display, Mach1, Z100, NIMO and AR99 all set the glasses' `batteryLevel`), so the list
+ * is empty; a model that comes without one is named here, as `deviceModel` names it.
+ */
+const MODELS_WITHOUT_BATTERY: ReadonlySet<string> = new Set<string>()
+
+/**
+ * What the phone measures without glasses. With glasses connected it measures all of them, less the battery of glasses
+ * that cannot report one.
+ */
 const PHONE_CAPABILITIES: Capability[] = [
   "glasses_connection",
   "miniapp_execution",
@@ -279,6 +290,7 @@ interface Env {
   queue: FleetQueue
   now: () => number
   monotonic: () => number
+  modelsWithoutBattery: ReadonlySet<string>
 }
 
 const NONE: ReadonlySet<string> = new Set()
@@ -416,9 +428,12 @@ class CollectorRun {
     // The pair first: a battery reading belongs to the pair it was seen on, and another pair starts without one.
     this.rememberGlasses(s)
     const simulated = isSimulatedGlasses(s.deviceModel)
-    // A battery value in the store is only believed while real glasses are connected; afterwards the last reading
-    // keeps the time it was seen.
-    if (
+    if (this.batteryUnsupported()) {
+      // Glasses that cannot report a battery have no reading: a level in the store is not theirs.
+      this.battery = null
+    } else if (
+      // A battery value in the store is only believed while real glasses are connected; afterwards the last reading
+      // keeps the time it was seen.
       s.connection.state === "connected" &&
       !simulated &&
       (!this.battery || this.battery.level !== s.batteryLevel || this.battery.charging !== s.charging)
@@ -462,6 +477,11 @@ class CollectorRun {
       binding: kept,
       firmware: samePair ? {...before.firmware, ...firmwareOf(s)} : firmwareOf(s),
     }
+  }
+
+  /** The pair known here is a model without battery reporting. */
+  private batteryUnsupported(): boolean {
+    return this.known !== null && this.env.modelsWithoutBattery.has(this.known.model)
   }
 
   private currentBinding(): FleetDeviceBinding | null {
@@ -723,6 +743,7 @@ class CollectorRun {
   // --- snapshots -----------------------------------------------------------------------------------------------
 
   private batteryPayload(wall: number): BatteryPayload {
+    if (this.batteryUnsupported()) return {state: "unsupported", observedAt: iso(wall)}
     const reading = this.battery
     if (!reading || !Number.isFinite(reading.level) || reading.level < 0) {
       return {state: "unknown", observedAt: iso(reading?.observedAt ?? wall)}
@@ -816,7 +837,8 @@ class CollectorRun {
             battery: this.batteryPayload(wall),
           }
         : null
-    // What the snapshot says, leaving out the time an unknown battery with no reading is stamped with (it is now).
+    // What the snapshot says, leaving out the time a battery with no reading is stamped with (it is now): an unknown
+    // one, or one the glasses cannot report.
     const key = JSON.stringify([
       binding && glasses ? binding : null,
       phone,
@@ -879,7 +901,10 @@ class CollectorRun {
   // --- records -------------------------------------------------------------------------------------------------
 
   private capabilities(): Capability[] {
-    return realGlassesConnected() ? [...FLEET_CAPABILITIES] : [...PHONE_CAPABILITIES]
+    if (!realGlassesConnected()) return [...PHONE_CAPABILITIES]
+    // Glasses that cannot report a battery leave nothing to measure about it.
+    if (this.batteryUnsupported()) return FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery")
+    return [...FLEET_CAPABILITIES]
   }
 
   private base(observedAt: number): RecordBase {
@@ -905,18 +930,20 @@ class CollectorRun {
 }
 
 /**
- * The collector over `deps.queue`, which must be the app's shared queue (`createFleetQueue()`); the clocks are
- * injectable for tests. It collects nothing until `start`.
+ * The collector over `deps.queue`, which must be the app's shared queue (`createFleetQueue()`); the clocks and the
+ * models without battery reporting are injectable for tests. It collects nothing until `start`.
  */
 export function createFleetCollector(deps: {
   queue: FleetQueue
   now?: () => number
   monotonic?: () => number
+  modelsWithoutBattery?: ReadonlySet<string>
 }): FleetCollector {
   const env: Env = {
     queue: deps.queue,
     now: deps.now ?? Date.now,
     monotonic: deps.monotonic ?? (() => performance.now()),
+    modelsWithoutBattery: deps.modelsWithoutBattery ?? MODELS_WITHOUT_BATTERY,
   }
   let current: CollectorRun | null = null
 
