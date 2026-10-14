@@ -2,23 +2,26 @@
  * The Fleet collector: what the engine observes about the phone, its glasses and its miniapps, as Fleet records in
  * the durable queue.
  *
- * It listens to the engine's own state (the glasses store, the running-miniapp registry, the app state) and to
- * `fleetEvents` (launches and photo stages, emitted by lifecycle hooks), never to UI screens. It writes records;
- * the uploader (a separate piece) delivers them. One collector run belongs to one `start()`: its partition and
- * collector-session ID are fixed for its life, and everything it holds is dropped by `stop()`.
+ * It listens to the engine's own state (the glasses store, the running-miniapp registry, the native built-ins
+ * executing, the app state) and to `fleetEvents` (launches and photo stages, emitted by lifecycle hooks), never to UI
+ * screens. It writes records; the uploader (a separate piece) delivers them. One collector run belongs to one
+ * `start()`: its partition and collector-session ID are fixed for its life, and everything it holds is dropped by
+ * `stop()`.
  *
  * Usage is measured as sessions: an activity (the engine running, the Mentra App in the foreground, glasses
  * connected, one miniapp executing) opens a session when it begins and closes it when it ends. A session's
  * `elapsedMs` is cumulative monotonic time, and each checkpoint packs every open session, so a session that is
- * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected, a miniapp
- * is executing or the Mentra App is in the foreground, every 15 minutes when only the engine is active, and at
- * once when a session ends. A session also ends when it reaches the longest time one record may carry (7 days),
- * and a new one carries on from there.
+ * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected or the Mentra
+ * App is in the foreground, every 15 minutes otherwise (only the engine active, or miniapps executing in the
+ * background without glasses, such as Notify), and at once when a session ends. The slower cadence reports the same
+ * time, only less often; what it risks is the time since the last checkpoint if the process dies. A session also
+ * ends when it reaches the longest time one record may carry (7 days), and a new one carries on from there.
  *
  * Snapshots come at start, after a change worth one (the connection, a battery move of 5 points or a charging change,
  * a new version), and with the first checkpoint 15 minutes or more after the last snapshot, so the two share a
- * wake-up and an upload. While only the engine is active that 15-minute snapshot is written only if it would say
- * something new. A phone running only the engine all day so writes about 100 records: a checkpoint every 15 minutes.
+ * wake-up and an upload. On the 15-minute cadence that snapshot is written only if it would say something new. A
+ * phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
+ * checkpoint every 15 minutes, whether or not miniapps execute in the background.
  *
  * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
  * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
@@ -49,6 +52,7 @@ import {
 import {useGlassesStore} from "../../stores/glasses"
 import {BgTimer} from "../../utils/timers"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
+import {nativeMiniappExecution} from "../NativeMiniappExecution"
 import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import type {FleetQueue} from "./fleetQueue"
@@ -98,7 +102,18 @@ const MAX_TEXT = 128
 const MAX_CAP_TURNS = 8
 const FLEET_ID = /^[A-Za-z0-9._:-]+$/
 
-/** What the phone measures without glasses. With glasses connected it measures all of them. */
+/**
+ * Glasses models that have no battery reporting. Their battery is `unsupported`, not `unknown`, and a record made
+ * while they are connected does not claim `glasses_battery`. Every model the Bluetooth SDK connects today reports one
+ * (G1, G2, Mentra Live, Mentra Display, Mach1, Z100, NIMO and AR99 all set the glasses' `batteryLevel`), so the list
+ * is empty; a model that comes without one is named here, as `deviceModel` names it.
+ */
+const MODELS_WITHOUT_BATTERY: ReadonlySet<string> = new Set<string>()
+
+/**
+ * What the phone measures without glasses. With glasses connected it measures all of them, less the battery of glasses
+ * that cannot report one.
+ */
 const PHONE_CAPABILITIES: Capability[] = [
   "glasses_connection",
   "miniapp_execution",
@@ -277,6 +292,7 @@ interface Env {
   queue: FleetQueue
   now: () => number
   monotonic: () => number
+  modelsWithoutBattery: ReadonlySet<string>
 }
 
 const NONE: ReadonlySet<string> = new Set()
@@ -327,6 +343,7 @@ class CollectorRun {
     this.cleanups.push(
       useGlassesStore.subscribe(glassesFingerprint, () => this.guard("glasses change", () => this.onStateChange())),
       miniappRunningRegistry.subscribe(() => this.guard("miniapp change", () => this.onStateChange())),
+      nativeMiniappExecution.subscribe(() => this.guard("miniapp change", () => this.onStateChange())),
       fleetEvents.subscribe({
         launch: (event) => this.guard("launch", () => this.onLaunch(event)),
         photo: (event) => this.guard("photo", () => this.onPhoto(event)),
@@ -413,9 +430,12 @@ class CollectorRun {
     // The pair first: a battery reading belongs to the pair it was seen on, and another pair starts without one.
     this.rememberGlasses(s)
     const simulated = isSimulatedGlasses(s.deviceModel)
-    // A battery value in the store is only believed while real glasses are connected; afterwards the last reading
-    // keeps the time it was seen.
-    if (
+    if (this.batteryUnsupported()) {
+      // Glasses that cannot report a battery have no reading: a level in the store is not theirs.
+      this.battery = null
+    } else if (
+      // A battery value in the store is only believed while real glasses are connected; afterwards the last reading
+      // keeps the time it was seen.
       s.connection.state === "connected" &&
       !simulated &&
       (!this.battery || this.battery.level !== s.batteryLevel || this.battery.charging !== s.charging)
@@ -461,6 +481,11 @@ class CollectorRun {
     }
   }
 
+  /** The pair known here is a model without battery reporting. */
+  private batteryUnsupported(): boolean {
+    return this.known !== null && this.env.modelsWithoutBattery.has(this.known.model)
+  }
+
   private currentBinding(): FleetDeviceBinding | null {
     this.rememberGlasses(useGlassesStore.getState())
     return this.known?.binding ?? null
@@ -473,7 +498,8 @@ class CollectorRun {
     wanted.set("engine_active", {activity: "engine_active"})
     if (isForeground()) wanted.set("app_foreground", {activity: "app_foreground"})
     if (realGlassesConnected()) wanted.set("glasses_connection", {activity: "glasses_connection"})
-    for (const name of miniappRunningRegistry.getAll()) {
+    // Local miniapps execute while their JS context runs; native built-ins as the apps store derives it.
+    for (const name of [...miniappRunningRegistry.getAll(), ...nativeMiniappExecution.getAll()]) {
       const packageName = text(name)
       if (packageName) wanted.set(`miniapp_execution:${packageName}`, {activity: "miniapp_execution", packageName})
     }
@@ -507,8 +533,11 @@ class CollectorRun {
     this.ensureCadence()
   }
 
+  /** 60-second checkpoints while glasses are connected or the Mentra App is in the foreground; 15 minutes otherwise. */
   private isFast(): boolean {
-    for (const session of this.sessions.values()) if (session.activity !== "engine_active") return true
+    for (const session of this.sessions.values()) {
+      if (session.activity === "glasses_connection" || session.activity === "app_foreground") return true
+    }
     return false
   }
 
@@ -719,6 +748,7 @@ class CollectorRun {
   // --- snapshots -----------------------------------------------------------------------------------------------
 
   private batteryPayload(wall: number): BatteryPayload {
+    if (this.batteryUnsupported()) return {state: "unsupported", observedAt: iso(wall)}
     const reading = this.battery
     if (!reading || !Number.isFinite(reading.level) || reading.level < 0) {
       return {state: "unknown", observedAt: iso(reading?.observedAt ?? wall)}
@@ -765,8 +795,8 @@ class CollectorRun {
 
   /**
    * The 15-minute snapshot. It has no timer of its own: it is written with the checkpoint that falls due 15 minutes or
-   * more after the last snapshot, so the two share a wake-up and an upload. While only the engine is active it is
-   * written only if it would say something the last snapshot did not.
+   * more after the last snapshot, so the two share a wake-up and an upload. On the 15-minute cadence it is written
+   * only if it would say something the last snapshot did not.
    */
   private periodicSnapshot(): void {
     if (this.env.monotonic() - this.lastSnapshotMono < SNAPSHOT_INTERVAL_MS) return
@@ -812,7 +842,8 @@ class CollectorRun {
             battery: this.batteryPayload(wall),
           }
         : null
-    // What the snapshot says, leaving out the time an unknown battery with no reading is stamped with (it is now).
+    // What the snapshot says, leaving out the time a battery with no reading is stamped with (it is now): an unknown
+    // one, or one the glasses cannot report.
     const key = JSON.stringify([
       binding && glasses ? binding : null,
       phone,
@@ -875,7 +906,10 @@ class CollectorRun {
   // --- records -------------------------------------------------------------------------------------------------
 
   private capabilities(): Capability[] {
-    return realGlassesConnected() ? [...FLEET_CAPABILITIES] : [...PHONE_CAPABILITIES]
+    if (!realGlassesConnected()) return [...PHONE_CAPABILITIES]
+    // Glasses that cannot report a battery leave nothing to measure about it.
+    if (this.batteryUnsupported()) return FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery")
+    return [...FLEET_CAPABILITIES]
   }
 
   private base(observedAt: number): RecordBase {
@@ -901,18 +935,20 @@ class CollectorRun {
 }
 
 /**
- * The collector over `deps.queue`, which must be the app's shared queue (`createFleetQueue()`); the clocks are
- * injectable for tests. It collects nothing until `start`.
+ * The collector over `deps.queue`, which must be the app's shared queue (`createFleetQueue()`); the clocks and the
+ * models without battery reporting are injectable for tests. It collects nothing until `start`.
  */
 export function createFleetCollector(deps: {
   queue: FleetQueue
   now?: () => number
   monotonic?: () => number
+  modelsWithoutBattery?: ReadonlySet<string>
 }): FleetCollector {
   const env: Env = {
     queue: deps.queue,
     now: deps.now ?? Date.now,
     monotonic: deps.monotonic ?? (() => performance.now()),
+    modelsWithoutBattery: deps.modelsWithoutBattery ?? MODELS_WITHOUT_BATTERY,
   }
   let current: CollectorRun | null = null
 

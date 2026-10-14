@@ -126,6 +126,7 @@ function setAppState(state: string, notify = true): void {
 }
 
 const {miniappRunningRegistry} = await import("../../MiniappRunningRegistry")
+const {nativeMiniappExecution} = await import("../../NativeMiniappExecution")
 const {createFleetQueue} = await import("../fleetQueue")
 const {phoneDeviceId} = await import("../fleetIds")
 const {fleetEvents} = await import("../fleetEvents")
@@ -174,6 +175,7 @@ beforeEach(() => {
   resetFakeMmkv()
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
+  nativeMiniappExecution.set([])
   Object.assign(reactNative.Platform as object, {OS: "android", Version: 35, constants: {Release: "15"}})
   appStateListener = null
   reactNativeAppState.currentState = "background"
@@ -244,6 +246,18 @@ describe("start", () => {
       product: "Mentra Live",
       serial: "SN-LIVE-1",
     })
+  })
+
+  test("a native built-in executing is a miniapp session like a local miniapp's, closed when it stops", () => {
+    nativeMiniappExecution.set(["com.mentra.camera"])
+    start()
+    advance(30_000)
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(10_000)
+    nativeMiniappExecution.set([])
+    const [closing] = checkpoints()
+    expect(entry(closing, "miniapp_execution", "com.mentra.camera")).toMatchObject({elapsedMs: 40_000, ended: true})
+    expect(entry(closing, "miniapp_execution", "com.mentra.notes")).toMatchObject({elapsedMs: 10_000, ended: false})
   })
 
   test("does not count glasses that are only scanning or connecting", () => {
@@ -318,7 +332,8 @@ describe("checkpoints", () => {
     expect(checkpoints().map((c) => entry(c, "app_foreground")?.elapsedMs)).toEqual([60_000, 120_000])
   })
 
-  test("a checkpoint comes every 60 s while a miniapp is executing", () => {
+  test("a miniapp executing while the Mentra App is in the foreground is checkpointed every 60 s with it", () => {
+    setAppState("active", false)
     start()
     miniappRunningRegistry.add("com.mentra.notes")
     advance(60_000)
@@ -326,6 +341,30 @@ describe("checkpoints", () => {
     expect(checkpoints().map((c) => entry(c, "miniapp_execution", "com.mentra.notes")?.elapsedMs)).toEqual([
       60_000, 120_000,
     ])
+  })
+
+  test("Notify running alone, with no glasses and the Mentra App in the background, checkpoints every 15 minutes", () => {
+    start()
+    nativeMiniappExecution.set(["cloud.augmentos.notify"])
+    advance(15 * 60_000 - 1_000)
+    expect(checkpoints()).toHaveLength(0)
+    advance(1_000)
+    advance(15 * 60_000)
+    // Fewer checkpoints, the same time: each carries the session's exact monotonic elapsed time.
+    expect(checkpoints().map((c) => entry(c, "miniapp_execution", "cloud.augmentos.notify")?.elapsedMs)).toEqual([
+      15 * 60_000,
+      30 * 60_000,
+    ])
+  })
+
+  test("a miniapp executing in the background goes to 60 s checkpoints once glasses connect", () => {
+    start()
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(5 * 60_000)
+    expect(checkpoints()).toHaveLength(0)
+    connectLive()
+    advance(60_000)
+    expect(checkpoints().map((c) => entry(c, "miniapp_execution", "com.mentra.notes")?.elapsedMs)).toEqual([6 * 60_000])
   })
 
   test("a session that ends is checkpointed at once with ended true, and the other sessions carry on", () => {
@@ -796,6 +835,7 @@ describe("stop", () => {
     collector.stop("engine_stopped")
     const count = all().length
     miniappRunningRegistry.add("com.a")
+    nativeMiniappExecution.set(["com.mentra.camera"])
     connectLive()
     setAppState("active")
     fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
@@ -1049,12 +1089,20 @@ describe("snapshots", () => {
 
   test.each([
     ["glasses are connected", () => connectLive()],
-    ["a miniapp is executing", () => miniappRunningRegistry.add("com.mentra.notes")],
+    ["the Mentra App is in the foreground", () => setAppState("active", false)],
   ])("while %s, a snapshot comes every 15 minutes", (_name, activate) => {
     activate()
     start()
     advance(30 * 60_000)
     expect(snapshots()).toHaveLength(3)
+  })
+
+  test("with only miniapps executing in the background, the 15-minute snapshot is skipped while it would say nothing new", () => {
+    miniappRunningRegistry.add("com.mentra.notes")
+    start()
+    advance(2 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints()).toHaveLength(8)
   })
 
   test("with only the engine active, the 15-minute snapshot is skipped while it would say nothing new", () => {
@@ -1157,6 +1205,82 @@ describe("capabilities", () => {
       expect(record.capabilities).not.toContain("glasses_battery")
       expect(record.capabilities).not.toContain("glasses_versions")
     }
+  })
+})
+
+describe("glasses that cannot report a battery", () => {
+  /** A collector for which `model` is a model without battery reporting. */
+  function withoutBattery(model = "Mentra Live"): void {
+    collector = createFleetCollector({
+      queue,
+      now: () => clock.wall,
+      monotonic: () => clock.mono,
+      modelsWithoutBattery: new Set([model]),
+    })
+  }
+
+  test("have an unsupported battery, and no record while they are connected claims glasses_battery", () => {
+    withoutBattery()
+    connectLive({batteryLevel: -1})
+    start()
+    collector.flushCheckpoint()
+    expect(snapshots()[0].payload.glasses?.battery).toEqual({state: "unsupported", observedAt: iso(clock.wall)})
+    const measured = FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery").sort()
+    expect(all().map((record) => record.kind)).toEqual(["snapshot", "usage_checkpoint"])
+    for (const record of all()) expect([...record.capabilities].sort()).toEqual(measured)
+  })
+
+  test("a level left in the store is not taken for theirs, and its changes are no reason for a snapshot", () => {
+    withoutBattery()
+    connectLive({batteryLevel: 80, charging: true})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery?.state).toBe("unsupported")
+    glassesStore.setState({batteryLevel: 20, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(1)
+  })
+
+  test("stay unsupported once disconnected, which is no reason for a new 15-minute snapshot", () => {
+    withoutBattery()
+    connectLive()
+    start()
+    disconnectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(snapshots()[1].payload.glasses?.battery?.state).toBe("unsupported")
+    advance(2 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(2)
+  })
+
+  test("other models are measured as before", () => {
+    withoutBattery("Even Realities G1")
+    connectLive()
+    start()
+    expect(snapshots()[0].payload.glasses?.battery).toMatchObject({state: "measured", level: 80})
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+
+  test("a model that reports a battery but has not yet is unknown, and still claims to measure it", () => {
+    connectLive({batteryLevel: -1})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery?.state).toBe("unknown")
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+
+  test.each([
+    "Even Realities G1",
+    "Even Realities G2",
+    "Mentra Live",
+    "Mentra Display",
+    "Mentra Mach1",
+    "Vuzix Z100",
+    "NIMO",
+    "AR99",
+  ])("%s reports its battery: no model the SDK connects today is without one", (model) => {
+    connectLive({deviceModel: model})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery).toMatchObject({state: "measured", level: 80})
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
   })
 })
 

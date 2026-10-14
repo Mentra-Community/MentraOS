@@ -1,6 +1,8 @@
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 import {result as Res} from "typesafe-ts"
 
+// The store reads the app state to tell which miniapp is visible.
+import "../../services/__tests__/reactNativeTestMock"
 import {configure, resetForTests} from "../../runtime/bootstrap"
 import {fleetEvents, type FleetLaunchEvent} from "../../services/fleet/fleetEvents"
 import type {ClientApp} from "../../types/applet"
