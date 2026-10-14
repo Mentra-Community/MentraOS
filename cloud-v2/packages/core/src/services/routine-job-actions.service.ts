@@ -37,6 +37,7 @@ async function boundedRunBody(response: Response) {
   return Buffer.concat(chunks).toString('utf8');
 }
 export class GithubRoutineJobActions implements RoutineJobActions {
+  private readonly discoveryFlights = new Map<number, Promise<z.infer<typeof run>[]>>();
   constructor(private readonly app: Pick<TestRunGithubApp, 'token'> = new TestRunGithubApp(),
     private readonly transport: (url: string, init: RequestInit) => Promise<Response> = fetch) {}
   private async request(path: string, method = 'GET', body?: unknown) {
@@ -57,7 +58,21 @@ export class GithubRoutineJobActions implements RoutineJobActions {
   async runs(jobId: string, since: string): Promise<RoutineActionsRun[]> {
     frameworkIdentitySchema.parse(jobId);
     const start=Date.parse(z.string().datetime({offset:true}).parse(since))-30_000;
-    const result:RoutineActionsRun[]=[];
+    // Widen only the provider query. Exact original timestamps remain filtered below.
+    const lowerBound=Math.floor(start/60_000)*60_000;
+    let flight=this.discoveryFlights.get(lowerBound);
+    if(!flight) {
+      if(this.discoveryFlights.size>=20)throw new TestRunError(503,'Concurrent Actions discovery exceeds its bound; retain the job for reconciliation');
+      flight=this.discover(lowerBound).finally(()=>this.discoveryFlights.delete(lowerBound));
+      this.discoveryFlights.set(lowerBound,flight);
+    }
+    return (await flight).filter(item=>item.event==='workflow_dispatch' && item.head_branch==='main' &&
+      ['.github/workflows/routine-device.yml','.github/workflows/routine-device.yml@refs/heads/main'].includes(item.path) &&
+      item.display_title===`routine-job:${jobId}` && Date.parse(item.created_at)>=start)
+      .map(item=>({actionsRunId:String(item.id),status:item.status,conclusion:item.conclusion}));
+  }
+  private async discover(start: number): Promise<z.infer<typeof run>[]> {
+    const result:z.infer<typeof run>[]=[];
     // GitHub caps this filtered endpoint at 1,000 results. A 26-member suite
     // can create 520 bounded preparation attempts, so five pages is incomplete.
     for(let page=1;page<=10;page++) {
@@ -65,10 +80,7 @@ export class GithubRoutineJobActions implements RoutineJobActions {
       const response=await this.request(`workflows/routine-device.yml/runs?${query}`);
       const text=await boundedRunBody(response);
       const value=z.object({workflow_runs:z.array(run).max(100)}).passthrough().parse(JSON.parse(text));
-      for(const item of value.workflow_runs) if(item.event==='workflow_dispatch' && item.head_branch==='main' &&
-        ['.github/workflows/routine-device.yml','.github/workflows/routine-device.yml@refs/heads/main'].includes(item.path) &&
-        item.display_title===`routine-job:${jobId}` && Date.parse(item.created_at)>=start)
-        result.push({actionsRunId:String(item.id),status:item.status,conclusion:item.conclusion});
+      result.push(...value.workflow_runs);
       if(value.workflow_runs.length<100)return result;
     }
     throw new TestRunError(503,'Actions run discovery reached the 1,000-result GitHub bound; retain the job for reconciliation');
