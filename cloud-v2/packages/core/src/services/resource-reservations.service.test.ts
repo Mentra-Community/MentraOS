@@ -137,3 +137,17 @@ test('a claimed idle lane without its recorded release or exact repair lineage c
   await expect(f.service.giveBack(wrong, 'air1')).rejects.toThrow('recorded normal local release lineage')
   expect(f.rows.get('mini')!.resourceReservations).toHaveLength(1)
 })
+
+test('exact cancelled-before-allocation proof returns a claim without inventing cleanup or releasing another owner', async () => {
+  const f = fixture(), request = {...intent('air1', 'cancelled'), operationId: 'run:cancelled'}
+  const claim = (await f.service.acquire(request, 'air1')).claims[0]!, host = f.observe('air1')
+  const proof = returned(claim, host)
+  proof.release.neverStarted = {requestId: 'cancelled', reason: 'cancelled-before-allocation'}
+  const {controller: _, ...local} = proof
+  host.snapshot.resourceReservations = {claims: [claim], returns: [local]}
+  await expect(f.service.giveBack({...proof, release: {...proof.release, neverStarted: {requestId: 'another-request', reason: 'cancelled-before-allocation'}}}, 'air1'))
+    .rejects.toThrow('recorded normal local release lineage')
+  expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+  expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
+})

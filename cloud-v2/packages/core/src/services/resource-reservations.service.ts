@@ -114,7 +114,10 @@ export class ResourceReservationsService {
         isDeepStrictEqual(receipt, (({controller: _, ...proof}) => proof)(returned))) ||
       !returned.release.lineage.some(owner => isDeepStrictEqual({id: owner.id, kind: owner.kind}, returned.originalOwner)) ||
       !isDeepStrictEqual(returned.release.lineage.at(-1), returned.release.owner) ||
-      returned.release.lineage.some((owner, index, lineage) => index > 0 && owner.generation <= lineage[index - 1]!.generation))
+      returned.release.lineage.some((owner, index, lineage) => index > 0 && owner.generation <= lineage[index - 1]!.generation) ||
+      returned.release.neverStarted && (returned.originalOwner.kind !== 'run' ||
+        returned.release.neverStarted.requestId !== returned.originalOwner.id || returned.release.lineage.length !== 1 ||
+        !isDeepStrictEqual({...returned.originalOwner, generation: returned.release.owner.generation}, returned.release.owner)))
       throw new TestRunError(409, 'Return requires fresh idle custody and its exact recorded normal local release lineage')
     for (let attempt = 0; attempt < 3; attempt++) {
       const authority = await this.host(returned.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
@@ -122,6 +125,7 @@ export class ResourceReservationsService {
       if (!claim) return {status: 'returned' as const, claimId: returned.claimId}
       if (claim.id !== returned.claimId || claim.intentSha256 !== returned.intentSha256 || claim.inputSha256 !== returned.inputSha256 ||
         claim.borrowerHostId !== hostId || claim.laneId !== returned.laneId || !isDeepStrictEqual(claim.owner, returned.originalOwner) ||
+        returned.release.neverStarted && claim.operationId !== `run:${returned.release.neverStarted.requestId}` ||
         releasedAt < Date.parse(claim.reservedAt) || returned.controller.generation < claim.controllerGeneration ||
         returned.controller.generation === claim.controllerGeneration && (returned.controller.incarnation !== claim.controllerIncarnation ||
           returned.controller.sequence <= claim.borrowerSequence))

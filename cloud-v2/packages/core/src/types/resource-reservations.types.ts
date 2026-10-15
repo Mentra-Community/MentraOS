@@ -50,6 +50,7 @@ export const exclusiveResourceReturnSchema = z.object({claimId: z.string().uuid(
   release: z.object({eventId: identity, owner: exclusiveResourceOwnerSchema.extend({generation: z.number().int().positive().safe()}),
     releasedAt: z.string().datetime(),
     lineage: z.array(exclusiveResourceOwnerSchema.extend({generation: z.number().int().positive().safe()})).min(1).max(100),
+    neverStarted: z.object({requestId: identity, reason: z.literal('cancelled-before-allocation')}).strict().optional(),
   }).strict(),
   controller: z.object({incarnation: identity, generation: z.number().int().positive().safe(),
     sequence: z.number().int().nonnegative().safe()}).strict(), laneId: identity,
