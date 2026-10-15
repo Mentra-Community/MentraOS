@@ -35,6 +35,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   const glassesRequirement = definition.definition.glasses;
   let software: GlassesSoftwareRef | undefined;
   let startingSoftware: GlassesSoftwareRef | undefined;
+  let glassesModel: 'nimo' | undefined;
   let glassesResourceId: string | undefined;
   if (glassesRequirement) {
     if (execution.resourceKinds.filter(kind => kind === "glasses").length !== 1)
@@ -43,14 +44,22 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
       && (definition.definition.resourceRequirements.find(value => value.kind === "glasses")?.capabilities ?? []).every(capability => value.capabilities.includes(capability))) ?? [];
     if (offered.length !== 1) throw new TestRunError(409, "Configured lane has no unique compatible glasses model and provider capabilities.");
     glassesResourceId = offered[0]!.resourceId;
-    if (offered[0]!.model !== "mentra-live") throw new TestRunError(409, "Selected glasses model has no supported software selection contract.");
-    const manifest = firmwareManifestSchema.safeParse(build.manifest);
-    if (!manifest.success || build.manifestSha256 !== manifest.data.sha256)
-      throw new TestRunError(409, "Selected build has no matching immutable glasses manifest reference.");
-    software = {model: "mentra-live", manifest: manifest.data};
-    startingSoftware = glassesRequirement.startSoftware ?? software;
-    if (startingSoftware.model !== offered[0]!.model)
-      throw new TestRunError(409, "Starting software differs from the selected compatible glasses model.");
+    if (offered[0]!.model === 'nimo') {
+      const capabilities = definition.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities;
+      if (definition.platform !== 'android' || glassesRequirement.startSoftware || capabilities.some(capability => capability !== 'connection') ||
+        offered[0]!.capabilities.some(capability => capability !== 'connection') || !/^(?:[A-F0-9]{2}:){5}[A-F0-9]{2}$/.test(offered[0]!.deviceId))
+        throw new TestRunError(409, 'NIMO requires the exact Android connection-only physical provider without Mentra Live firmware.');
+      glassesModel = 'nimo';
+    } else {
+      if (offered[0]!.model !== "mentra-live") throw new TestRunError(409, "Selected glasses model has no supported software selection contract.");
+      const manifest = firmwareManifestSchema.safeParse(build.manifest);
+      if (!manifest.success || build.manifestSha256 !== manifest.data.sha256)
+        throw new TestRunError(409, "Selected build has no matching immutable glasses manifest reference.");
+      software = {model: "mentra-live", manifest: manifest.data};
+      startingSoftware = glassesRequirement.startSoftware ?? software;
+      if (startingSoftware.model !== offered[0]!.model)
+        throw new TestRunError(409, "Starting software differs from the selected compatible glasses model.");
+    }
   } else if (execution.resourceKinds.includes("glasses"))
     throw new TestRunError(409, "Glasses execution requires an explicit routine model declaration.");
   const resources = execution.resourceKinds.map(kind => {
@@ -80,5 +89,6 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     ...(options.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: options.minimumFrameworkVersion} : {}), platform: definition.platform, laneId: lane.id, resources,
     ...(execution.policy ? {policy: execution.policy} : {}), build: {...selectedBuildInput(build, definition.platform),
       ...(software ? {manifest: software.manifest, manifestSha256: software.manifest.sha256} : {})},
+    ...(glassesModel ? {glassesModel} : {}),
     ...(software ? {glassesStart: startingSoftware, glassesReturn: software} : {})})));
 }

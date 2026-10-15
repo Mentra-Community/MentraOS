@@ -35,6 +35,7 @@ const frozenFrameworkRequestInputSchema = z.object({
     kind: resource.kind, capabilities: resource.capabilities,
   }).success, "Resource capabilities must match their declared kind")),
   policy: z.record(z.unknown()).optional(),
+  glassesModel: z.literal('nimo').optional(),
   glassesStart: glassesSoftwareRefSchema.optional(),
   glassesReturn: glassesSoftwareRefSchema.optional(),
   verification: candidateVerificationSchema.optional(),
@@ -46,7 +47,9 @@ function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema
   if (input.routineSource && input.routineSource.commit !== input.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Routine source differs from its definition revision'});
   const glasses = input.resources.some(resource => resource.kind === "glasses");
-  if (glasses !== (input.glassesStart !== undefined && input.glassesReturn !== undefined) ||
+  if (input.glassesModel && (!glasses || input.platform !== 'android' || input.glassesStart || input.glassesReturn))
+    ctx.addIssue({code: 'custom', message: 'NIMO requires its selected Android glasses resource without Mentra Live firmware references'});
+  if ((glasses && !input.glassesModel && !(input.glassesStart && input.glassesReturn)) || (!glasses && (input.glassesStart || input.glassesReturn)) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
     ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
   if (input.glassesStart && input.glassesReturn) {
