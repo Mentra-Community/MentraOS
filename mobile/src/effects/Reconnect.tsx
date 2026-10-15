@@ -6,6 +6,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {REPLACE_OWNER_ROUTE, shouldRouteToReplaceOwner} from "@/utils/pairing/replaceOwner"
+import {isReplaceOwnerConfirmSettling} from "@/utils/pairing/replaceOwnerConfirm"
 import {isMentraLiveOwnershipTransferSupported} from "@/utils/pairing/securePairingFeature"
 import {decideReconnect, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {DeviceTypes} from "@mentra/engine"
@@ -66,7 +67,16 @@ export function Reconnect() {
         return
       }
       const nav = useNavigationStore.getState()
-      if (nav.getCurrentRoute() === REPLACE_OWNER_ROUTE) return
+      const route = nav.getCurrentRoute()
+      if (route === REPLACE_OWNER_ROUTE) return
+      // The loading screen routes its own explicit pair. Both pushing stacked two confirm
+      // screens: the first tap popped one and the other showed again.
+      if (route === "/pairing/loading") return
+      // A stale awaiting_confirm queued before the user confirmed must not reopen the screen.
+      if (isReplaceOwnerConfirmSettling()) {
+        console.log("PAIRFLOW: replace_owner_prompt suppressed (confirm in flight or just done)")
+        return
+      }
       console.log("PAIRFLOW: replace_owner_prompt source=pairing_info")
       nav.push(REPLACE_OWNER_ROUTE, {deviceModel: "Mentra Live"})
     })

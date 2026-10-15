@@ -14,6 +14,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
+import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR} from "@/utils/pairing/iosStaleBond"
 import {
   BT_CLASSIC_ROUTE,
   IOS_CLASSIC_SETTLE_MS,
@@ -21,6 +22,7 @@ import {
   classicWaitState,
   shouldRouteToReplaceOwner,
 } from "@/utils/pairing/replaceOwner"
+import {isReplaceOwnerConfirmSettling} from "@/utils/pairing/replaceOwnerConfirm"
 import {
   advertisedSecurePairingCapable,
   isMentraLiveOwnershipTransferSupported,
@@ -184,6 +186,8 @@ export default function GlassesPairingLoadingScreen() {
       ) {
         // One push per awaiting_confirm episode; replayed pairing_info must not stack screens.
         if (replaceOwnerRoutedRef.current || hasNavigatedRef.current || pairingStoppedRef.current) return
+        // A queued awaiting_confirm from before the user's tap must not reopen the screen.
+        if (isReplaceOwnerConfirmSettling()) return
         replaceOwnerRoutedRef.current = true
         console.log(
           `PAIRFLOW: loading_navigate route=${REPLACE_OWNER_ROUTE} model=${deviceModel} name=${deviceName ?? ""}`,
@@ -240,7 +244,11 @@ export default function GlassesPairingLoadingScreen() {
         replace("/pairing/unpair-even", {deviceModel, error})
         return
       }
-      replace("/pairing/failure", {error, deviceModel, deviceName})
+      // Only the forget-in-Settings screen names the glasses.
+      replace(
+        "/pairing/failure",
+        error === IOS_FORGET_GLASSES_BLUETOOTH_ERROR ? {error, deviceModel, deviceName} : {error, deviceModel},
+      )
     },
     [deviceModel, deviceName, replace],
   )

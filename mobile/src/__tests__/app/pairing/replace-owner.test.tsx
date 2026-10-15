@@ -9,7 +9,11 @@ import {useNavigationStore} from "@/stores/navigation"
 // The glasses store is private to the local engine workspace and has no public test export.
 // eslint-disable-next-line no-restricted-imports
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
-import {resetReplaceOwnerConfirm} from "@/utils/pairing/replaceOwnerConfirm"
+import {
+  isReplaceOwnerConfirmSettling,
+  REPLACE_OWNER_PROMPT_SUPPRESS_AFTER_OK_MS,
+  resetReplaceOwnerConfirm,
+} from "@/utils/pairing/replaceOwnerConfirm"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -138,6 +142,20 @@ describe("replace owner confirm screen", () => {
     expect(goBack).toHaveBeenCalledTimes(1)
     expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalled()
+  })
+
+  it("suppresses replace-owner prompts while the confirm is in flight and briefly after it succeeds", () => {
+    expect(isReplaceOwnerConfirmSettling()).toBe(false)
+
+    const {getByText} = render(<ReplaceOwnerScreen />)
+    pressConfirm(getByText)
+    expect(isReplaceOwnerConfirmSettling()).toBe(true)
+
+    act(() => {
+      emitBluetoothSdkEvent("confirm_replace_owner_result", {ok: true})
+    })
+    expect(isReplaceOwnerConfirmSettling()).toBe(true)
+    expect(isReplaceOwnerConfirmSettling(Date.now() + REPLACE_OWNER_PROMPT_SUPPRESS_AFTER_OK_MS + 1)).toBe(false)
   })
 
   it("treats no_owner as success and continues", () => {

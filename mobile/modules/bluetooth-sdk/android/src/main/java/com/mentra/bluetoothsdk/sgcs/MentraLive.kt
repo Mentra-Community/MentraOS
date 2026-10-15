@@ -2033,7 +2033,10 @@ class MentraLive : SGCManager() {
      * Ownership transfer: the glasses kept this phone as owner but refuse it for the pairing
      * window. Make no connection attempt for [yieldDurationMs], keep the saved glasses and the
      * Classic/BLE bonds, and resume reconnecting when the window ends. Unlike
-     * [standDownAfterOwnerLoss] this never calls [destroy] and never sets owner-lost.
+     * [standDownAfterOwnerLoss] this never calls [destroy] and never sets owner-lost itself.
+     * The app marks owner-lost from `entering_pairing_mode.owner_retained`, so Home shows
+     * "Glasses unpaired" and the phone reconnects only through Pair again (an explicit pair is
+     * never blocked and the glasses reclaim this phone as owner).
      */
     private fun enterPairingYield(yieldDurationMs: Long) {
         if (postGattLifecycle { enterPairingYield(yieldDurationMs) }) return
@@ -3955,6 +3958,20 @@ class MentraLive : SGCManager() {
         handler.postDelayed({ checkMessageAck(messageId, sessionGeneration) }, ACK_TIMEOUT_MS)
     }
 
+    /** Stops ACK tracking and retries for `confirm_replace_owner`; its result is the reply. */
+    private fun clearPendingReplaceOwnerConfirm() {
+        val confirmIds =
+                pendingMessages
+                        .filter { (_, pending) ->
+                            pending.messageData.contains("\"type\":\"confirm_replace_owner\"")
+                        }
+                        .keys
+        for (messageId in confirmIds) {
+            val pending = pendingMessages.remove(messageId) ?: continue
+            handler.removeCallbacks(pending.retryRunnable)
+        }
+    }
+
     /** Process ACK response from glasses */
     private fun processAckResponse(messageId: Long) {
         val pendingMessage = pendingMessages.remove(messageId)
@@ -4487,6 +4504,9 @@ class MentraLive : SGCManager() {
                 val reason = jsonNullableString(json, "reason")
                 if (reason != null) body["reason"] = reason
                 Bridge.log("LIVE: confirm_replace_owner_result ok=$ok reason=${reason ?: ""}")
+                // The BES answers with this result, never with msg_ack. Without this the confirm
+                // is resent after each ACK timeout and the glasses repeat the wipe and the result.
+                clearPendingReplaceOwnerConfirm()
                 if (MentraLiveOwnerLossPolicy.shouldRearmSecureBondWaitAfterConfirm(ok)) {
                     // The glasses wiped the old owner and sent the security request; the bond
                     // follows. glasses_ready was withheld, so park until owner_committed.

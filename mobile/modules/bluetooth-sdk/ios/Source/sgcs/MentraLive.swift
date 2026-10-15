@@ -1906,7 +1906,10 @@ class MentraLive: NSObject, SGCManager {
     /// Ownership transfer: the glasses kept this phone as owner but refuse it for the pairing
     /// window. Make no connection attempt for `yieldDurationMs`, keep the saved glasses and the
     /// bonds, and resume reconnecting when the window ends. Unlike `standDownAfterOwnerLoss`
-    /// this never calls `destroy()` and never sets owner-lost.
+    /// this never calls `destroy()` and never sets owner-lost itself. The app marks owner-lost
+    /// from `entering_pairing_mode.owner_retained`, so Home shows "Glasses unpaired" and the
+    /// phone reconnects only through Pair again (an explicit pair is never blocked and the
+    /// glasses reclaim this phone as owner). `connectById` then defers to the next pairing mode.
     private func enterPairingYield(yieldDurationMs: Int) {
         cancelPendingReconnect(reason: "pairing_yield")
         pairingYieldActive = true

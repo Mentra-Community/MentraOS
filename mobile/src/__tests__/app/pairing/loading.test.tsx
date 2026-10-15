@@ -145,6 +145,9 @@ describe("pairing loading screen", () => {
     })
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, goBack, push})
     ;(engine.pairing.waitForBluetoothClassic as jest.Mock)?.mockResolvedValue?.(true)
+    // The shared mock resolves false (a timed-out wait), which the screen turns into a pairing
+    // failure at once. Keep the wait pending unless a test drives it.
+    ;(engine.pairing.waitForReady as jest.Mock).mockImplementation(() => new Promise<boolean>(() => {}))
   })
 
   afterEach(() => {

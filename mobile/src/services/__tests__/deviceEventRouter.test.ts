@@ -13,6 +13,13 @@ import localSttFallbackCoordinator from "../../../modules/engine/src/services/Lo
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
+// The store object is shared across tests, so a spy created earlier can still hold its calls.
+const spyOnSetSetting = () => {
+  const spy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+  spy.mockClear()
+  return spy
+}
+
 describe("DeviceEventRouter", () => {
   beforeEach(() => {
     resetBluetoothSdkMock()
@@ -139,13 +146,13 @@ describe("DeviceEventRouter", () => {
   })
 
   it("marks the saved Mentra Live owner-lost when another phone takes ownership", () => {
-    const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+    const setSpy = spyOnSetSetting()
     emitBluetoothSdkEvent("owner_replaced", {reason: "gatt_auth_status_5"})
     expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
   })
 
   it("marks owner-lost the moment the glasses announce pairing mode (R15 notice, no yield window)", () => {
-    const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+    const setSpy = spyOnSetSetting()
     emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
     expect(setSpy).toHaveBeenCalledTimes(1)
     expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
@@ -153,7 +160,7 @@ describe("DeviceEventRouter", () => {
 
   describe("entering_pairing_mode owner_retained (ownership transfer)", () => {
     it("marks owner-lost when the glasses kept this phone as owner but disconnected it", () => {
-      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      const setSpy = spyOnSetSetting()
       emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 300_000, reason: "user_gesture", owner_retained: true})
       expect(setSpy).toHaveBeenCalledTimes(1)
       expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
@@ -163,7 +170,7 @@ describe("DeviceEventRouter", () => {
       ["owner_retained false", {window_ms: 120_000, owner_retained: false}],
       ["owner_retained absent", {window_ms: 120_000}],
     ])("waits for owner_replaced with %s", (_label, event) => {
-      const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+      const setSpy = spyOnSetSetting()
       emitBluetoothSdkEvent("entering_pairing_mode", event)
       expect(setSpy).not.toHaveBeenCalled()
       // Native stands down and announces the loss as owner_replaced.

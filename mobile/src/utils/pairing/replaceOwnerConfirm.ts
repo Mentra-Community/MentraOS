@@ -69,10 +69,23 @@ const surfaceError = (error: ReplaceOwnerError) => {
   if (route !== REPLACE_OWNER_ROUTE) nav.push(REPLACE_OWNER_ROUTE, target)
 }
 
+/**
+ * `pairing_info` events queued before the confirm took effect can still say
+ * `awaiting_confirm` after the user tapped Replace owner. They must not bring the confirm
+ * screen back, so prompts stay suppressed while the confirm is in flight and briefly after
+ * it succeeds.
+ */
+export const REPLACE_OWNER_PROMPT_SUPPRESS_AFTER_OK_MS = 10_000
+let lastConfirmOkAtMs = 0
+
+export const isReplaceOwnerConfirmSettling = (nowMs: number = Date.now()): boolean =>
+  state.phase === "busy" || nowMs - lastConfirmOkAtMs < REPLACE_OWNER_PROMPT_SUPPRESS_AFTER_OK_MS
+
 const handleResult = (event: ConfirmReplaceOwnerResultEvent) => {
   console.log(`PAIRFLOW: replace_owner_result ok=${event.ok} reason=${event.reason ?? ""}`)
   const action = classifyReplaceOwnerResult(event)
   if (action.kind === "continue") {
+    lastConfirmOkAtMs = Date.now()
     const proceed = onContinue
     resetReplaceOwnerConfirm()
     proceed?.()
@@ -114,6 +127,7 @@ export const setReplaceOwnerContinue = (proceed: (() => void) | null): void => {
 export const startReplaceOwnerConfirm = (params: {deviceModel?: string; deviceName?: string}): void => {
   if (state.phase === "busy") return
   console.log("PAIRFLOW: replace_owner_confirm")
+  lastConfirmOkAtMs = 0
   target = params
   clearTimer()
   stopListening()
