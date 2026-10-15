@@ -86,7 +86,7 @@ cluster is sized for development load; prod sizing TBD based on traffic.
 
 We provision NLBs manually via a `Service type=LoadBalancer` manifest
 in `deploy/audio-udp-nlb.yaml` — Porter doesn't create NLBs for `additionalPorts`
-in `porter.yaml`. See [`deploy/udp-nlb-aws.md`](./deploy/udp-nlb-aws.md).
+in `cloud-v2/deploy/porter.shared.yaml`. See [`deploy/udp-nlb-aws.md`](./deploy/udp-nlb-aws.md).
 
 When applied, you'll see a new NLB in AWS Console → EC2 → Load Balancers.
 Name pattern: `<random>.elb.us-west-2.amazonaws.com`. Custom domain via
