@@ -9,7 +9,8 @@
  * `stop()`.
  *
  * Usage is measured as sessions: an activity (the engine running, the Mentra App in the foreground, glasses
- * connected, one miniapp executing) opens a session when it begins and closes it when it ends. A session's
+ * connected, one miniapp executing) opens a session when it begins and closes it when it ends; the foreground with
+ * hysteresis (see FOREGROUND_SETTLE_MS), so the app state's blips are not sessions of their own. A session's
  * `elapsedMs` is cumulative monotonic time, and each checkpoint packs every open session, so a session that is
  * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected or the Mentra
  * App is in the foreground, every 15 minutes otherwise (only the engine active, or miniapps executing in the
@@ -69,7 +70,10 @@ import {
 } from "./glassesIdentity"
 
 export interface FleetCollector {
-  /** Opens the engine session, the foreground session if the app is active, the glasses and running miniapps, and takes a snapshot. */
+  /**
+   * Opens the engine session, the glasses and running miniapps, and the foreground session once the app has been
+   * active long enough to count, and takes a snapshot.
+   */
   start(ctx: {partition: string; collectorSessionId: string}): void
   /** Checkpoints every open session as ended, into the partition `start` was given, and stops listening. */
   stop(reason: "engine_stopped" | "account_changed" | "not_installed"): void
@@ -113,6 +117,20 @@ const BATTERY_SNAPSHOT_STEP = 5
  * while still identifying a pair that has none well before its first 60-second checkpoint.
  */
 const IDENTITY_SETTLE_MS = 15_000
+/**
+ * The Mentra App is in the foreground, to Fleet, from the moment it becomes active, once it has been active for
+ * FOREGROUND_SETTLE_MS since then; and it stays there through a departure shorter than FOREGROUND_GRACE_MS, which, if
+ * the app does not come back, ends the visit when the app left. The app state flaps: Android reports the activities
+ * around a launch, such as a permission dialog, as the app going to the background, and iOS goes inactive for
+ * Control Center, a notification pulled down, Face ID or a system alert. A third of foreground sessions in the device
+ * evidence lasted under a second, and a foreground session makes its account active.
+ *
+ * 2 s is longer than any of those flickers and shorter than a person's look at the app. 5 s spans a dialog or an
+ * overlay a person dismisses, which is still one visit; a departure that long is counted in it, at most 5 s a time.
+ */
+const FOREGROUND_SETTLE_MS = 2_000
+const FOREGROUND_GRACE_MS = 5_000
+const FOREGROUND_KEY = "app_foreground"
 /** At most this many photo stages wait for glasses being identified; a burst beyond it in those seconds is dropped. */
 const MAX_HELD_PHOTOS = 32
 const MAX_TEXT = 128
@@ -162,6 +180,11 @@ function isForeground(): boolean {
 function realGlassesConnected(): boolean {
   const s = useGlassesStore.getState()
   return s.connection.state === "connected" && !isSimulatedGlasses(s.deviceModel)
+}
+
+/** Glasses connected or the Mentra App in the foreground: checkpoints every 60 s. */
+function isFastActivity(activity: FleetActivity): boolean {
+  return activity === "glasses_connection" || activity === "app_foreground"
 }
 
 function mapConnection(state: string): ConnectionState {
@@ -343,6 +366,11 @@ interface SnapshotMarks {
   versions: string
 }
 
+interface Instant {
+  wall: number
+  mono: number
+}
+
 interface Session {
   key: string
   activity: FleetActivity
@@ -354,11 +382,15 @@ interface Session {
   startedMono: number
   /** The elapsed time at the last checkpoint that carried this session; null until it has been reported. */
   reportedElapsedMs: number | null
+  /** Its activity stopped then: the session is counted up to there, and ends there unless it resumes in its grace. */
+  endAt?: Instant
 }
 
 interface SessionSpec {
   activity: FleetActivity
   packageName?: string
+  /** When the activity began, if before the session opens. */
+  since?: Instant
 }
 
 interface Env {
@@ -382,6 +414,14 @@ class CollectorRun {
   private anchorMono = 0
   /** The Mentra App left the foreground since the anchor: a silent gap then looks like suspension. */
   private leftForeground = false
+
+  /** The visit to the Mentra App going on: when it began, and when the app left it, within the grace. */
+  private visitStart: Instant | null = null
+  private visitLeftAt: Instant | null = null
+  /** The visit has settled into a foreground session (see FOREGROUND_SETTLE_MS). */
+  private foreground = false
+  private foregroundTimer: number | null = null
+  private foregroundDueMono = 0
 
   private checkpointTimer: number | null = null
   private checkpointDueMono = 0
@@ -410,6 +450,7 @@ class CollectorRun {
     this.anchorWall = wall
     this.anchorMono = this.env.monotonic()
     this.leftForeground = !isForeground()
+    this.followForeground()
     this.connection = {state: mapConnection(useGlassesStore.getState().connection.state), observedAt: wall}
     this.trackGlasses(wall)
     this.openMissing()
@@ -457,7 +498,8 @@ class CollectorRun {
     this.stopped = true
     if (this.checkpointTimer !== null) BgTimer.clearTimeout(this.checkpointTimer)
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
-    this.checkpointTimer = this.snapshotDebounce = null
+    if (this.foregroundTimer !== null) BgTimer.clearTimeout(this.foregroundTimer)
+    this.checkpointTimer = this.snapshotDebounce = this.foregroundTimer = null
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup()
@@ -485,6 +527,7 @@ class CollectorRun {
   // --- reacting to the engine ----------------------------------------------------------------------------------
 
   private onStateChange(): void {
+    this.followForeground()
     this.trackGlasses(this.env.now())
     if (!this.checkClock()) this.reconcileSessions()
     this.releasePhotos()
@@ -597,12 +640,73 @@ class CollectorRun {
     return known.binding
   }
 
+  // --- the foreground ------------------------------------------------------------------------------------------
+
+  private instant(): Instant {
+    return {wall: this.env.now(), mono: this.env.monotonic()}
+  }
+
+  /**
+   * Follows the app state into the foreground as Fleet counts it (see FOREGROUND_SETTLE_MS): a visit begins when the
+   * app becomes active, becomes a foreground session once the app is active 2 s after that, and is over once the app
+   * has been away for 5 s, ending when it left. Writes nothing: the sessions follow it.
+   */
+  private followForeground(): void {
+    const now = this.instant()
+    const active = isForeground()
+    // Away for the grace, the visit is over, even if the app is back by now: back that late (the process was
+    // suspended in between, and the timer could not fire), it is a new visit.
+    if (this.visitLeftAt && now.mono - this.visitLeftAt.mono >= FOREGROUND_GRACE_MS) {
+      this.visitStart = this.visitLeftAt = null
+      this.foreground = false
+    }
+    const session = this.sessions.get(FOREGROUND_KEY)
+    if (active) {
+      if (this.visitLeftAt) {
+        // Back within the grace: the same visit, the time away included.
+        this.visitLeftAt = null
+        if (session) delete session.endAt
+      }
+      this.visitStart ??= now
+      if (!this.foreground && now.mono - this.visitStart.mono >= FOREGROUND_SETTLE_MS) this.foreground = true
+    } else if (this.visitStart && !this.visitLeftAt) {
+      this.visitLeftAt = now
+      if (session) session.endAt = now
+    }
+    this.armForegroundTimer(now, active)
+  }
+
+  /** When the foreground can next change with the app state unchanged: the visit settling, or its grace ending. */
+  private armForegroundTimer(now: Instant, active: boolean): void {
+    let due: number | null = null
+    if (this.visitLeftAt) due = this.visitLeftAt.mono + FOREGROUND_GRACE_MS
+    else if (active && this.visitStart && !this.foreground) due = this.visitStart.mono + FOREGROUND_SETTLE_MS
+    if (due !== null && this.foregroundTimer !== null && due === this.foregroundDueMono) return
+    if (this.foregroundTimer !== null) BgTimer.clearTimeout(this.foregroundTimer)
+    this.foregroundTimer = null
+    if (due === null) return
+    this.foregroundDueMono = due
+    const timer: number = BgTimer.setTimeout(
+      () =>
+        this.guard("app state", () => {
+          if (this.foregroundTimer !== timer) return
+          this.foregroundTimer = null
+          this.onStateChange()
+        }),
+      Math.max(0, due - now.mono),
+    )
+    this.foregroundTimer = timer
+  }
+
   // --- sessions ------------------------------------------------------------------------------------------------
 
   private desiredSessions(): Map<string, SessionSpec> {
     const wanted = new Map<string, SessionSpec>()
     wanted.set("engine_active", {activity: "engine_active"})
-    if (isForeground()) wanted.set("app_foreground", {activity: "app_foreground"})
+    // From when the visit began, which is before it settled.
+    if (this.foreground) {
+      wanted.set(FOREGROUND_KEY, {activity: "app_foreground", ...(this.visitStart ? {since: this.visitStart} : {})})
+    }
     if (realGlassesConnected()) wanted.set("glasses_connection", {activity: "glasses_connection"})
     // Local miniapps execute while their JS context runs; native built-ins as the apps store derives it.
     for (const name of [...miniappRunningRegistry.getAll(), ...nativeMiniappExecution.getAll()]) {
@@ -612,16 +716,18 @@ class CollectorRun {
     return wanted
   }
 
-  private open(key: string, spec: SessionSpec): void {
-    this.sessions.set(key, {
+  private open(key: string, spec: SessionSpec): Session {
+    const session: Session = {
       key,
       activity: spec.activity,
       id: newId(),
       ...(spec.packageName ? {packageName: spec.packageName} : {}),
-      startedWall: this.env.now(),
-      startedMono: this.env.monotonic(),
+      startedWall: spec.since?.wall ?? this.env.now(),
+      startedMono: spec.since?.mono ?? this.env.monotonic(),
       reportedElapsedMs: null,
-    })
+    }
+    this.sessions.set(key, session)
+    return session
   }
 
   private openMissing(): void {
@@ -635,15 +741,18 @@ class CollectorRun {
     for (const key of this.sessions.keys()) if (!wanted.has(key)) ending.add(key)
     // Close first: a session opened in the same breath is not reported until a checkpoint after its identity settles.
     if (ending.size > 0) this.writeCheckpoint(ending)
-    for (const [key, spec] of wanted) if (!this.sessions.has(key)) this.open(key, spec)
-    this.ensureCadence()
+    let fastSince: number | null = null
+    for (const [key, spec] of wanted) {
+      if (this.sessions.has(key)) continue
+      const session = this.open(key, spec)
+      if (isFastActivity(session.activity)) fastSince = Math.min(fastSince ?? Infinity, session.startedMono)
+    }
+    this.ensureCadence(fastSince)
   }
 
   /** 60-second checkpoints while glasses are connected or the Mentra App is in the foreground; 15 minutes otherwise. */
   private isFast(): boolean {
-    for (const session of this.sessions.values()) {
-      if (session.activity === "glasses_connection" || session.activity === "app_foreground") return true
-    }
+    for (const session of this.sessions.values()) if (isFastActivity(session.activity)) return true
     return false
   }
 
@@ -675,13 +784,19 @@ class CollectorRun {
     }
   }
 
-  /** Activity that needs a 60 s checkpoint brings the next one forward; a 15-minute wait does not outlast it. */
-  private ensureCadence(): void {
+  /**
+   * Activity that needs a 60 s checkpoint brings the next one forward, to 60 s after it began (`fastSince`, by default
+   * now); a 15-minute wait does not outlast it.
+   */
+  private ensureCadence(fastSince: number | null = null): void {
     if (this.checkpointTimer === null) {
       this.arm(this.cadence())
-    } else if (this.isFast() && this.checkpointDueMono - this.env.monotonic() > FAST_CHECKPOINT_MS) {
-      this.arm(FAST_CHECKPOINT_MS)
+      return
     }
+    if (!this.isFast()) return
+    const now = this.env.monotonic()
+    const due = Math.max(now, (fastSince ?? now) + FAST_CHECKPOINT_MS)
+    if (this.checkpointDueMono > due) this.arm(due - now)
   }
 
   // --- checkpoints ---------------------------------------------------------------------------------------------
@@ -736,6 +851,11 @@ class CollectorRun {
    * clock had given it by `wallLimit`, and never more than a session may report.
    */
   private entryFor(session: Session, mono: number, wallLimit: number, ended: boolean): UsageSession | null {
+    if (session.endAt) {
+      // The activity stopped then: no time after it is the session's, whether or not it ends now.
+      mono = Math.min(mono, session.endAt.mono)
+      wallLimit = Math.min(wallLimit, session.endAt.wall)
+    }
     let binding: FleetDeviceBinding | undefined
     if (session.activity === "glasses_connection") {
       // Fixed at the first report, so a serial that arrives later never splits a connection into two devices. Not
@@ -852,6 +972,14 @@ class CollectorRun {
     this.anchorWall = wall
     this.anchorMono = mono
     this.leftForeground = !isForeground()
+    // The break closed the visit: one the app had left is over, and one still going on starts again from now.
+    if (this.visitLeftAt) {
+      this.visitStart = this.visitLeftAt = null
+      this.foreground = false
+    } else if (this.visitStart) {
+      this.visitStart = {wall, mono}
+    }
+    this.armForegroundTimer({wall, mono}, isForeground())
     this.openMissing()
     this.arm(this.cadence())
     this.scheduleSnapshot()

@@ -266,9 +266,10 @@ describe("a built-in with a screen of its own", () => {
     setAppState("active")
     advance(5_000)
     collector.flushCheckpoint()
-    const [back, first] = executions()
+    const [back] = executions()
+    const first = executions().find((execution) => execution.ended)
     expect(back).toMatchObject({packageName: "com.mentra.camera", elapsedMs: 5_000, ended: false})
-    expect(back.id).not.toBe(first.id)
+    expect(back.id).not.toBe(first?.id as string)
   })
 
   test("opened while the Mentra App is in the background, it is not executing until the app is in front", async () => {

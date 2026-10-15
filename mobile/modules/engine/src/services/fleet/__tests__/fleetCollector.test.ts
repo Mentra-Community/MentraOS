@@ -227,11 +227,15 @@ describe("start", () => {
     expect(checkpoint.payload.sessions.map((s) => s.activity)).toEqual(["engine_active"])
   })
 
-  test("opens the foreground session when the Mentra App is in the foreground", () => {
+  test("opens the foreground session once the Mentra App has been in the foreground for two seconds", () => {
     setAppState("active", false)
     start()
+    advance(2_000)
     collector.flushCheckpoint()
-    expect(checkpoints()[0].payload.sessions.map((s) => s.activity)).toEqual(["engine_active", "app_foreground"])
+    expect(checkpoints()[0].payload.sessions.map((s) => [s.activity, s.elapsedMs])).toEqual([
+      ["engine_active", 2_000],
+      ["app_foreground", 2_000],
+    ])
   })
 
   test("opens a session for glasses already connected and for miniapps already running", () => {
@@ -402,7 +406,8 @@ describe("checkpoints", () => {
     setAppState("active", false)
     start()
     advance(30_000)
-    setAppState("background") // the foreground session ends: an immediate checkpoint
+    setAppState("background")
+    advance(5_000) // the foreground session ends once the grace is over: an immediate checkpoint
     expect(checkpoints()).toHaveLength(1)
     expect(entry(checkpoints()[0], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: true})
     advance(14 * 60_000 + 59_000)
@@ -415,10 +420,12 @@ describe("checkpoints", () => {
     start()
     setAppState("active")
     advance(20_000)
-    setAppState("inactive")
+    setAppState("background")
+    advance(10_000)
     setAppState("active")
     advance(10_000)
     setAppState("background")
+    advance(10_000)
     const sessions = checkpoints().flatMap((c) => c.payload.sessions.filter((s) => s.activity === "app_foreground"))
     const ended = sessions.filter((s) => s.ended)
     expect(ended.map((s) => s.elapsedMs)).toEqual([20_000, 10_000])
@@ -469,6 +476,147 @@ describe("checkpoints", () => {
   })
 })
 
+describe("the foreground", () => {
+  /** Every foreground session the checkpoints carried, by ID, as last reported. */
+  function visits(): Checkpoint[] {
+    const byId = new Map<string, Checkpoint>()
+    for (const c of checkpoints()) {
+      for (const s of c.payload.sessions) if (s.activity === "app_foreground") byId.set(s.activitySessionId, s)
+    }
+    return [...byId.values()]
+  }
+
+  test("an app that is active for less than two seconds is no foreground session", () => {
+    start()
+    setAppState("active")
+    advance(1_500)
+    setAppState("background")
+    advance(30 * 60_000)
+    collector.stop("engine_stopped")
+    expect(visits()).toEqual([])
+  })
+
+  test("the flicker of an app starting up is one visit, counted from when it first became active", () => {
+    start()
+    const firstActiveAt = clock.wall
+    for (const [state, ms] of [
+      ["active", 300],
+      ["background", 200],
+      ["active", 400],
+      ["background", 100],
+      ["active", 30_000],
+    ] as const) {
+      setAppState(state)
+      advance(ms)
+    }
+    collector.stop("engine_stopped")
+    expect(visits()).toEqual([expect.objectContaining({startedAt: iso(firstActiveAt), elapsedMs: 31_000, ended: true})])
+  })
+
+  test("a visit that settles is counted from when the app became active, checkpointed every 60 s from then", () => {
+    start()
+    const activeAt = clock.wall
+    setAppState("active")
+    advance(1_999)
+    collector.flushCheckpoint()
+    expect(visits()).toEqual([])
+    advance(1)
+    advance(58_000)
+    const checkpoint = checkpoints().at(-1) as Kind<"usage_checkpoint">
+    expect(checkpoint.observedAt).toBe(iso(activeAt + 60_000))
+    expect(entry(checkpoint, "app_foreground")).toMatchObject({startedAt: iso(activeAt), elapsedMs: 60_000})
+  })
+
+  test("an inactive blip, such as a pull-down or Face ID, does not end the visit", () => {
+    start()
+    setAppState("active")
+    advance(20_000)
+    setAppState("inactive")
+    advance(1_500)
+    setAppState("active")
+    advance(10_000)
+    setAppState("inactive")
+    setAppState("background")
+    advance(10_000)
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 31_500, ended: true})])
+  })
+
+  test("a departure longer than the grace ends the visit when the app left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    advance(4_999)
+    expect(visits().filter((visit) => visit.ended)).toEqual([])
+    advance(1)
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 30_000, ended: true})])
+  })
+
+  test("a checkpoint while the app is away reports the visit only up to when it left", () => {
+    start()
+    setAppState("active")
+    advance(58_000)
+    setAppState("background")
+    advance(3_000) // the 60-second checkpoint falls inside the grace
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 58_000, ended: false})])
+    advance(2_000)
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 58_000, ended: true})])
+  })
+
+  test("coming back after the grace is a new visit", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    advance(6_000)
+    setAppState("active")
+    advance(10_000)
+    collector.stop("engine_stopped")
+    expect(visits().map((visit) => [visit.elapsedMs, visit.ended])).toEqual([
+      [30_000, true],
+      [10_000, true],
+    ])
+  })
+
+  test("coming back late because the process was suspended is a new visit, the first ending when the app left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    // Suspended for 40 s: both clocks ran on, and no timer fired.
+    clock.wall += 40_000
+    clock.mono += 40_000
+    setAppState("active")
+    advance(5_000)
+    collector.stop("engine_stopped")
+    expect(visits().map((visit) => [visit.elapsedMs, visit.ended])).toEqual([
+      [30_000, true],
+      [5_000, true],
+    ])
+  })
+
+  test("stopping while the app is away ends the visit when it left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    advance(2_000)
+    collector.stop("engine_stopped")
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 30_000, ended: true})])
+  })
+
+  test("a collector started while the app is active counts the visit from its start, once it settles", () => {
+    setAppState("active", false)
+    start()
+    const startedAt = clock.wall
+    collector.flushCheckpoint()
+    expect(visits()).toEqual([])
+    advance(2_000)
+    collector.flushCheckpoint()
+    expect(visits()).toEqual([expect.objectContaining({startedAt: iso(startedAt), elapsedMs: 2_000})])
+  })
+})
+
 describe("glasses binding in checkpoints", () => {
   test("a serial that arrives after the connection but before the first report is the binding", () => {
     start()
@@ -508,13 +656,13 @@ describe("glasses binding in checkpoints", () => {
   })
 
   test("glasses that connect just as another session ends are not reported before they are identified", () => {
-    setAppState("active", false)
+    miniappRunningRegistry.add("com.a")
     start()
-    // The foreground session ends and the glasses connect in the same moment, with no serial yet.
-    reactNativeAppState.currentState = "background"
+    // The glasses connect, with no serial yet, and a miniapp stops in the same moment.
     connectLive({serialNumber: ""})
+    miniappRunningRegistry.remove("com.a")
     expect(checkpoints().map((c) => c.payload.sessions.map((s) => s.activity))).toEqual([
-      ["engine_active", "app_foreground"],
+      ["engine_active", "miniapp_execution"],
     ])
     glassesStore.setState({serialNumber: "SN-SETTLED"})
     advance(60_000)
@@ -574,9 +722,10 @@ describe("clock changes and suspension", () => {
     expect(closing.observedAt).toBe(observedUntil)
     expect(closing.payload.sessions.map((s) => [s.activity, s.packageName, s.elapsedMs, s.ended])).toEqual([
       ["engine_active", undefined, 120_000, true],
-      ["app_foreground", undefined, 120_000, true],
       ["glasses_connection", undefined, 120_000, true],
       ["miniapp_execution", "com.a", 120_000, true],
+      // Opened once it settled, counted from when the app was active.
+      ["app_foreground", undefined, 120_000, true],
     ])
     expect(closing.payload.sessions.map((s) => s.activitySessionId)).toEqual(firstIds)
 
