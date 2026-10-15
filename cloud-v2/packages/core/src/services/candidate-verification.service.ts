@@ -44,6 +44,8 @@ export class CandidateVerificationService implements CandidateAuthorization {
       requestInputDigest(view.data.details.review)!==requestInputDigest(original.data.details.review)))
       throw new TestRunError(409,'Candidate completion retry differs from the retained original source, request or review')
     const glasses = row?.work.requirements.resources.find(value => value.kind === 'glasses')
+    if (selected.build !== undefined && row?.work.requirements.glasses.length === 1 && row.work.requirements.glasses[0] === 'nimo' && selected.glassesModel !== 'nimo')
+      throw new TestRunError(409, 'NIMO candidate differs from its accepted model and connection requirement')
     if (selected.glassesModel && (row?.work.requirements.platform !== 'android' || !row.work.requirements.glasses.includes('nimo') ||
       glasses?.capabilities.length !== 1 || glasses.capabilities[0] !== 'connection'))
       throw new TestRunError(409, 'NIMO candidate differs from its accepted model and connection requirement')
