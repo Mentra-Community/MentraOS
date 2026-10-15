@@ -315,6 +315,9 @@ interface LaunchAttempt {
  * missing speech model, an update in progress, a package that is not available) and re-opening a miniapp that is
  * already running start nothing and are not reported. Nor is opening one of the Mentra App's own screens (a native
  * built-in that declares no `nativeExecution`), which is not a miniapp to Fleet. Fleet's `launch` never throws.
+ *
+ * From the moment it begins, the start claims the miniapp (`fleetEvents.claimLaunch`): the spawn it causes, which the
+ * launcher reports for every other path, and the Compositor's own call to the launcher are this launch, not more.
  */
 function reportingLaunches(
   launch: (app: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => Promise<boolean>,
@@ -322,10 +325,12 @@ function reportingLaunches(
   return async (clientApp, opts) => {
     let attempted = false
     let started = false
+    const claim: {release?: () => void} = {}
     try {
       started = await launch(clientApp, opts, {
         begin: () => {
           attempted = true
+          claim.release ??= fleetEvents.claimLaunch(clientApp.packageName)
         },
       })
       return started
@@ -339,6 +344,7 @@ function reportingLaunches(
           outcome: started ? "started" : "failed",
         })
       }
+      claim.release?.()
     }
   }
 }
@@ -710,7 +716,36 @@ function executingNativeMiniapps(state: AppStatusState): string[] {
   }
   return executing
 }
-const publishNativeExecution = () => nativeMiniappExecution.set(executingNativeMiniapps(useAppStatusStore.getState()))
+/** The built-ins that execute while they run (Notify) that were executing at the last publish. */
+let executingWhileRunning: ReadonlySet<string> = new Set()
+
+/**
+ * A built-in that executes while it runs, and starts running without the store's `start`, was restored: its running
+ * flag was read back after a process death. That is an automatic launch. A `start` claims, and reports, its own.
+ */
+function reportRestoredBuiltIns(state: AppStatusState, executing: readonly string[]): void {
+  const now = new Set<string>()
+  for (const app of state.apps) {
+    if (app.local || app.nativeExecution !== "running" || !executing.includes(app.packageName)) continue
+    now.add(app.packageName)
+    if (executingWhileRunning.has(app.packageName)) continue
+    fleetEvents.launchUnlessClaimed({
+      packageName: app.packageName,
+      miniappName: app.name,
+      versionName: app.version,
+      start: "automatic",
+      outcome: "started",
+    })
+  }
+  executingWhileRunning = now
+}
+
+const publishNativeExecution = () => {
+  const state = useAppStatusStore.getState()
+  const executing = executingNativeMiniapps(state)
+  reportRestoredBuiltIns(state, executing)
+  nativeMiniappExecution.set(executing)
+}
 useAppStatusStore.subscribe(publishNativeExecution)
 AppState.addEventListener("change", publishNativeExecution)
 

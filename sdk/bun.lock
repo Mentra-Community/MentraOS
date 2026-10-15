@@ -369,6 +369,7 @@
         "@types/react": "*",
         "axios": "*",
         "expo": "~55.0.24",
+        "expo-application": "~55.0.15",
         "expo-audio": "~55.0.14",
         "expo-battery": "^55.0.13",
         "expo-calendar": "~55.0.14",

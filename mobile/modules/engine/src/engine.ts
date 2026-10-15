@@ -122,7 +122,7 @@ export const engine = {
       startSupportProfileSync()
       // Fleet: after the token sync above, so the account is usually known and the collector starts synchronously,
       // here inside start(), before the host restores miniapps (MantleManager awaits engine.start() before
-      // autostartLocalMiniapps()); otherwise those launches would reach no listener.
+      // autostartLocalMiniapps()). When the account is not known yet, those launches wait for the collector.
       startFleetReporter()
     }
     // Push device-setting changes to the glasses for ANY host, so
