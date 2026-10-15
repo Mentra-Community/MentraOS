@@ -132,7 +132,9 @@ test('normal deployment renders frozen inputs and always passes their Helm polic
   assert.match(workflow, /--helm-overrides-file "\$overrides"/)
   assert.match(workflow, /get deployments,poddisruptionbudgets/)
   assert.match(workflow, /node release-tooling\/\.github\/scripts\/verify-runtime-deployment-policy.mjs/)
-  assert.ok(workflow.indexOf('Require the deployed Runtime disruption policy') < workflow.indexOf('Record observed deployment evidence'))
+  const settledReadback = workflow.split('      - name: Require settled deployment and Runtime disruption policy\n')[1]
+  assert.ok(settledReadback)
+  assert.ok(settledReadback.indexOf('verify-runtime-deployment-policy.mjs') < settledReadback.indexOf('coordinated-cloud-v2-records.mjs create'))
   assert.match(workflow, /cloud-v2-runtime-policy-proof.json/)
   assert.doesNotMatch(workflow, /PORTER_APP_NAME.*==.*cloud-dev/)
   assert.match(workflow, /cancel-in-progress: false/)
