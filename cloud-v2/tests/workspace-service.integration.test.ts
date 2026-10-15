@@ -60,6 +60,7 @@ import {
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {membershipRow} from "./support/membership-row"
 
 const MODELS: Model<any>[] = [
@@ -1160,18 +1161,27 @@ describe("deletion holds", () => {
   const storeHold = (count?: number) => ({service: "store", reason: OWNS, ...(count === undefined ? {} : {count})})
   const holdEvents = (ws: string) =>
     WorkspaceAuditEventModel.find({workspaceId: ws, action: /^workspace\.deletion_hold_/}).sort({seq: 1}).lean()
+  const asOf = nextHoldAsOf
+  const applied = (...holds: Array<{service: string; reason: string; count?: number}>) => ({holds, ignored: false})
+  const ignored = (...holds: Array<{service: string; reason: string; count?: number}>) => ({holds, ignored: true})
+  /** Instants an hour ago, `seconds` apart: for tests that send calls out of order. */
+  const clock = () => {
+    const base = Date.now() - 60 * 60_000
+    return (seconds: number) => new Date(base + seconds * 1000).toISOString()
+  }
+  const workspaceRow = async (ws: string) => WorkspaceModel.findOne({workspaceId: ws}).lean()
 
   test("a service sets its hold, replaces it, and clears it; each change is audited as the service", async () => {
     const ws = await newWorkspace()
     const revision = await revisionOf(ws)
 
-    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3})).toEqual([storeHold(3)])
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: asOf()})).toEqual(applied(storeHold(3)))
     expect(await listDeletionHolds(ws)).toEqual([storeHold(3)])
     // Setting again replaces the service's hold: still one, with the new count.
-    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 2})).toEqual([storeHold(2)])
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 2, asOf: asOf()})).toEqual(applied(storeHold(2)))
     // A count is optional.
-    expect(await setDeletionHold("store", ws, {reason: OWNS})).toEqual([storeHold()])
-    expect(await clearDeletionHold("store", ws)).toEqual([])
+    expect(await setDeletionHold("store", ws, {reason: OWNS, asOf: asOf()})).toEqual(applied(storeHold()))
+    expect(await clearDeletionHold("store", ws, {asOf: asOf()})).toEqual(applied())
     expect(await listDeletionHolds(ws)).toEqual([])
 
     expect((await holdEvents(ws)).map(event => [event.action, event.actor, event.target, event.before, event.after])).toEqual([
@@ -1184,28 +1194,143 @@ describe("deletion holds", () => {
     expect(await revisionOf(ws)).toBe(revision)
   })
 
-  test("setting the hold a service already has, or clearing one it does not have, writes and records nothing", async () => {
+  test("setting the hold a service already has, or clearing one it does not have, changes and records nothing", async () => {
     const ws = await newWorkspace()
-    expect(await clearDeletionHold("store", ws)).toEqual([])
-    await setDeletionHold("store", ws, {reason: OWNS, count: 3})
-    const written = (await WorkspaceModel.findOne({workspaceId: ws}).lean())!.updatedAt
+    expect(await clearDeletionHold("store", ws, {asOf: asOf()})).toEqual(applied())
+    await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: asOf()})
+    const written = (await workspaceRow(ws))!.updatedAt
 
-    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3})).toEqual([storeHold(3)])
-    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, ignored: true} as never)).toEqual([storeHold(3)])
-    expect(await clearDeletionHold("fleet", ws)).toEqual([storeHold(3)])
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: asOf()})).toEqual(applied(storeHold(3)))
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: asOf(), ignored: true} as never)).toEqual(applied(storeHold(3)))
+    expect(await clearDeletionHold("fleet", ws, {asOf: asOf()})).toEqual(applied(storeHold(3)))
 
     expect((await holdEvents(ws)).map(event => event.action)).toEqual(["workspace.deletion_hold_set"])
-    expect((await WorkspaceModel.findOne({workspaceId: ws}).lean())!.updatedAt).toEqual(written)
+    // Only the newer asOf is kept: the workspace itself has not changed.
+    expect((await workspaceRow(ws))!.updatedAt).toEqual(written)
+  })
+
+  test("a set or clear older than the newest one applied is ignored: Core answers its holds and writes and records nothing", async () => {
+    const ws = await newWorkspace()
+    const at = clock()
+    await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: at(10)})
+    const before = await workspaceRow(ws)
+
+    // A call the Store gave up on, applied late: it must not undo the newer hold.
+    expect(await clearDeletionHold("store", ws, {asOf: at(5)})).toEqual(ignored(storeHold(3)))
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 7, asOf: at(9)})).toEqual(ignored(storeHold(3)))
+    expect(await workspaceRow(ws)).toEqual(before)
+
+    // A clear is remembered too: a set computed before it cannot bring the hold back.
+    expect(await clearDeletionHold("store", ws, {asOf: at(20)})).toEqual(applied())
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: at(15)})).toEqual(ignored())
+    expect(await listDeletionHolds(ws)).toEqual([])
+
+    expect((await holdEvents(ws)).map(event => [event.action, event.after])).toEqual([
+      ["workspace.deletion_hold_set", {reason: OWNS, count: 3}],
+      ["workspace.deletion_hold_cleared", null],
+    ])
+  })
+
+  test("a newer set or clear is applied, and its asOf kept even when the hold does not change", async () => {
+    const ws = await newWorkspace()
+    const at = clock()
+    await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: at(10)})
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: at(30)})).toEqual(applied(storeHold(3)))
+    // So a late call from between the two is stale.
+    expect(await clearDeletionHold("store", ws, {asOf: at(20)})).toEqual(ignored(storeHold(3)))
+
+    expect(await clearDeletionHold("store", ws, {asOf: at(40)})).toEqual(applied())
+    expect(await clearDeletionHold("store", ws, {asOf: at(60)})).toEqual(applied())
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 2, asOf: at(50)})).toEqual(ignored())
+
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 2, asOf: at(70)})).toEqual(applied(storeHold(2)))
+    expect((await holdEvents(ws)).map(event => event.action)).toEqual([
+      "workspace.deletion_hold_set",
+      "workspace.deletion_hold_cleared",
+      "workspace.deletion_hold_set",
+    ])
+  })
+
+  test("the same call again, with the same asOf, is answered as applied; another hold with that asOf is ignored", async () => {
+    const ws = await newWorkspace()
+    const at = clock()
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: at(10)})).toEqual(applied(storeHold(3)))
+    // A retry of a call whose answer was lost.
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: at(10)})).toEqual(applied(storeHold(3)))
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 4, asOf: at(10)})).toEqual(ignored(storeHold(3)))
+    expect(await setDeletionHold("store", ws, {reason: OWNS, asOf: at(10)})).toEqual(ignored(storeHold(3)))
+    expect(await clearDeletionHold("store", ws, {asOf: at(10)})).toEqual(ignored(storeHold(3)))
+
+    expect(await clearDeletionHold("store", ws, {asOf: at(20)})).toEqual(applied())
+    expect(await clearDeletionHold("store", ws, {asOf: at(20)})).toEqual(applied())
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: at(20)})).toEqual(ignored())
+
+    expect((await holdEvents(ws)).map(event => event.action)).toEqual([
+      "workspace.deletion_hold_set",
+      "workspace.deletion_hold_cleared",
+    ])
+  })
+
+  test("each service's asOf is its own", async () => {
+    const ws = await newWorkspace()
+    const at = clock()
+    await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: at(100)})
+    expect(await setDeletionHold("fleet", ws, {reason: "manages_devices", asOf: at(50)})).toEqual(
+      applied({service: "fleet", reason: "manages_devices"}, storeHold(1)),
+    )
+    expect(await clearDeletionHold("fleet", ws, {asOf: at(60)})).toEqual(applied(storeHold(1)))
+    expect(await clearDeletionHold("store", ws, {asOf: at(70)})).toEqual(ignored(storeHold(1)))
+  })
+
+  test("a hold set before Core kept asOf is replaced by the first call that carries one", async () => {
+    const ws = await newWorkspace()
+    await WorkspaceModel.updateOne({workspaceId: ws}, {$set: {deletionHolds: [{service: "store", reason: OWNS, count: 4}]}})
+    expect(await clearDeletionHold("store", ws, {asOf: clock()(0)})).toEqual(applied())
+  })
+
+  test("a missing or malformed asOf, or one more than five minutes ahead of Core's clock, is 400 invalid_request", async () => {
+    const ws = await newWorkspace()
+    const minutesAhead = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString()
+    const bad: unknown[] = [
+      undefined,
+      null,
+      Date.now(),
+      "",
+      "yesterday",
+      "2026-10-14",
+      "2026-10-14T12:00",
+      "2026-10-14T12:00:00",
+      "2026-10-14T12:00:00+00:00",
+      "2026-10-14T14:00:00+02:00",
+      "2026-10-14T12:00:00.0001Z",
+      "2026-02-30T12:00:00Z",
+      "2026-10-14T24:00:00Z",
+      "2026-12-31T23:59:60Z",
+      "+012026-10-14T12:00:00.000Z",
+      minutesAhead(5.5),
+      minutesAhead(60),
+    ]
+    for (const value of bad) {
+      const set = await thrown(() => setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: value}))
+      expect({value, code: set.code, status: set.status}).toEqual({value, code: "invalid_request", status: 400})
+      const clear = await thrown(() => clearDeletionHold("store", ws, {asOf: value}))
+      expect({value, code: clear.code, status: clear.status}).toEqual({value, code: "invalid_request", status: 400})
+    }
+    expect(await holdEvents(ws)).toEqual([])
+    expect((await workspaceRow(ws))!.deletionHoldAsOf).toBeUndefined()
+
+    // A clock a little ahead of Core's is fine, and so is a fraction of fewer than three digits.
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: minutesAhead(4)})).toEqual(applied(storeHold(1)))
+    expect(await clearDeletionHold("store", ws, {asOf: minutesAhead(4.5).replace(/\.\d{3}Z$/, ".5Z")})).toEqual(applied())
   })
 
   test("each service has its own hold, listed by service, and clears only its own", async () => {
     const ws = await newWorkspace()
-    await setDeletionHold("store", ws, {reason: OWNS, count: 1})
-    expect(await setDeletionHold("fleet", ws, {reason: "manages_devices", count: 4})).toEqual([
-      {service: "fleet", reason: "manages_devices", count: 4},
-      storeHold(1),
-    ])
-    expect(await clearDeletionHold("fleet", ws)).toEqual([storeHold(1)])
+    await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()})
+    expect(await setDeletionHold("fleet", ws, {reason: "manages_devices", count: 4, asOf: asOf()})).toEqual(
+      applied({service: "fleet", reason: "manages_devices", count: 4}, storeHold(1)),
+    )
+    expect(await clearDeletionHold("fleet", ws, {asOf: asOf()})).toEqual(applied(storeHold(1)))
     expect(await listDeletionHolds(ws)).toEqual([storeHold(1)])
   })
 
@@ -1225,26 +1350,27 @@ describe("deletion holds", () => {
       {reason: OWNS, count: Number.MAX_SAFE_INTEGER + 1},
     ]
     for (const input of bad) {
-      const err = await thrown(() => setDeletionHold("store", ws, input as {reason: unknown}))
+      const err = await thrown(() => setDeletionHold("store", ws, {...input, asOf: asOf()} as {reason: unknown; asOf: unknown}))
       expect({input, code: err.code, status: err.status}).toEqual({input, code: "invalid_request", status: 400})
     }
+    expect((await workspaceRow(ws))!.deletionHoldAsOf).toBeUndefined()
     // A null count is no count.
-    expect(await setDeletionHold("store", ws, {reason: OWNS, count: null})).toEqual([storeHold()])
+    expect(await setDeletionHold("store", ws, {reason: OWNS, count: null, asOf: asOf()})).toEqual(applied(storeHold()))
     expect((await holdEvents(ws)).map(event => event.action)).toEqual(["workspace.deletion_hold_set"])
-    await expectError(() => setDeletionHold("", ws, {reason: OWNS}), "invalid_request", 400)
-    await expectError(() => clearDeletionHold(" ", ws), "invalid_request", 400)
+    await expectError(() => setDeletionHold("", ws, {reason: OWNS, asOf: asOf()}), "invalid_request", 400)
+    await expectError(() => clearDeletionHold(" ", ws, {asOf: asOf()}), "invalid_request", 400)
   })
 
   test("an unknown workspace is not_found; a deleted one takes no hold (410) and has none to clear", async () => {
-    await expectError(() => setDeletionHold("store", "ws_missing", {reason: OWNS}), "not_found", 404)
-    await expectError(() => clearDeletionHold("store", "ws_missing"), "not_found", 404)
+    await expectError(() => setDeletionHold("store", "ws_missing", {reason: OWNS, asOf: asOf()}), "not_found", 404)
+    await expectError(() => clearDeletionHold("store", "ws_missing", {asOf: asOf()}), "not_found", 404)
     await expectError(() => listDeletionHolds("ws_missing"), "not_found", 404)
-    await expectError(() => setDeletionHold("store", "", {reason: OWNS}), "not_found", 404)
+    await expectError(() => setDeletionHold("store", "", {reason: OWNS, asOf: asOf()}), "not_found", 404)
 
     const ws = await newWorkspace()
     await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
-    await expectError(() => setDeletionHold("store", ws, {reason: OWNS, count: 1}), "workspace_deleted", 410)
-    expect(await clearDeletionHold("store", ws)).toEqual([])
+    await expectError(() => setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}), "workspace_deleted", 410)
+    expect(await clearDeletionHold("store", ws, {asOf: asOf()})).toEqual(applied())
     expect(await holdEvents(ws)).toEqual([])
   })
 
@@ -1252,7 +1378,7 @@ describe("deletion holds", () => {
     const ws = await newWorkspace(user("mu_owner"), "Acme")
     const memberId = await addMember(ws, "mu_member", "member")
     const key = await seedCredential(ws, memberId)
-    await setDeletionHold("store", ws, {reason: OWNS, count: 3})
+    await setDeletionHold("store", ws, {reason: OWNS, count: 3, asOf: asOf()})
     const revision = await revisionOf(ws)
 
     for (const actor of [user("mu_owner"), orgAdmin, system]) {
@@ -1270,7 +1396,7 @@ describe("deletion holds", () => {
     expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws, action: "workspace.deleted"})).toBe(0)
 
     // Once the service clears its hold, the delete goes through.
-    await clearDeletionHold("store", ws)
+    await clearDeletionHold("store", ws, {asOf: asOf()})
     await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
     expect((await getWorkspace(ws))!.status).toBe("deleted")
   })
@@ -1278,7 +1404,7 @@ describe("deletion holds", () => {
   test("who may delete is checked first, then the holds, then the typed name", async () => {
     const ws = await newWorkspace(user("mu_owner"), "Acme")
     await addMember(ws, "mu_admin", "admin")
-    await setDeletionHold("store", ws, {reason: OWNS, count: 1})
+    await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()})
 
     // Someone who may not delete learns nothing about the holds.
     await expectError(() => deleteWorkspace(user("mu_admin"), ws, {confirmName: "Acme"}), "forbidden", 403)
@@ -1292,10 +1418,10 @@ describe("deletion holds", () => {
       const ws = await newWorkspace(user("mu_owner"), "Acme")
       const [deleted, held] = await Promise.allSettled([
         deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
-        setDeletionHold("store", ws, {reason: OWNS, count: 1}),
+        setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}),
       ])
       const status = (await getWorkspace(ws))!.status
-      const holds = (await WorkspaceModel.findOne({workspaceId: ws}).lean())!.deletionHolds ?? []
+      const holds = (await workspaceRow(ws))!.deletionHolds ?? []
       if (status === "deleted") {
         expect(deleted.status).toBe("fulfilled")
         expect(held.status).toBe("rejected")
@@ -1310,13 +1436,27 @@ describe("deletion holds", () => {
     }
   })
 
+  test("a delete and a newer copy of the hold the workspace already has: the delete still waits for the hold", async () => {
+    for (let round = 0; round < 4; round++) {
+      const ws = await newWorkspace(user("mu_owner"), "Acme")
+      await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()})
+      const [deleted, held] = await Promise.allSettled([
+        deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
+        setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}),
+      ])
+      expect(deleted.status).toBe("rejected")
+      expect((deleted as PromiseRejectedResult).reason.code).toBe("workspace_has_holds")
+      expect(held).toEqual({status: "fulfilled", value: applied(storeHold(1))})
+    }
+  })
+
   test("holds leave everything but deletion alone: rename, roles, removal, leaving and recovery work as before", async () => {
     await accounts("mu_member")
     const ws = await newWorkspace(user("mu_owner"), "Acme")
     const memberId = await addMember(ws, "mu_member", "member")
     await addMember(ws, "mu_leaver", "developer")
     const removedId = await addMember(ws, "mu_removed", "member")
-    await setDeletionHold("store", ws, {reason: OWNS, count: 2})
+    await setDeletionHold("store", ws, {reason: OWNS, count: 2, asOf: asOf()})
 
     await renameWorkspace(user("mu_owner"), ws, "Acme Two", await revisionOf(ws))
     await changeRole(user("mu_owner"), ws, memberId, "admin", await revisionOf(ws))

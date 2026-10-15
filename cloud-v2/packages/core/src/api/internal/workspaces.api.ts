@@ -44,11 +44,13 @@
  * A deletion hold (`deletion-hold.service`) is a service's reason a workspace must
  * not be deleted yet. Any service Core knows may hold a workspace, but only under
  * its own name: `:service` must be the service that signed the request (403
- * `forbidden` otherwise, as for `issuedBy.service`). `PUT` takes `{reason, count?}`
- * and replaces that service's hold; `DELETE` clears it. Both are idempotent and
- * answer every hold on the workspace afterwards. An unknown workspace is 404
- * `workspace_not_found`; holding a deleted one is 410 `workspace_deleted`, and
- * clearing there finds nothing to clear.
+ * `forbidden` otherwise, as for `issuedBy.service`). `PUT` takes
+ * `{reason, count?, asOf}` and replaces that service's hold; `DELETE` takes
+ * `{asOf}` and clears it. `asOf` is when the service computed the call: one that
+ * is not newer than the service's last applied call is ignored. Both answer every
+ * hold on the workspace afterwards and whether the call was `ignored`. An unknown
+ * workspace is 404 `workspace_not_found`; holding a deleted one is 410
+ * `workspace_deleted`, and clearing there finds nothing to clear.
  *
  * `POST /users/resolve-email` turns an account email into the opaque Mentra
  * user id (the Store's private-miniapp and beta invitations). Core stays the
@@ -82,7 +84,11 @@ import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "../../serv
 import {listChanges} from "../../services/workspaces/audit.service"
 import {authorize} from "../../services/workspaces/authorization.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
-import {clearDeletionHold, setDeletionHold} from "../../services/workspaces/deletion-hold.service"
+import {
+  clearDeletionHold,
+  setDeletionHold,
+  type DeletionHoldChange,
+} from "../../services/workspaces/deletion-hold.service"
 import {WorkspaceError} from "../../services/workspaces/workspace-error"
 import {getWorkspace, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
@@ -217,14 +223,17 @@ app.put("/workspaces/:workspaceId/deletion-holds/:service", async c => {
   if (!service) return holdForbidden(c)
   const body = jsonBody(c)
   const workspaceId = c.req.param("workspaceId")
-  return holdsAnswer(c, workspaceId, () => setDeletionHold(service, workspaceId, {reason: body.reason, count: body.count}))
+  return holdsAnswer(c, workspaceId, () =>
+    setDeletionHold(service, workspaceId, {reason: body.reason, count: body.count, asOf: body.asOf}),
+  )
 })
 
 app.delete("/workspaces/:workspaceId/deletion-holds/:service", async c => {
   const service = ownHoldService(c)
   if (!service) return holdForbidden(c)
+  const body = jsonBody(c)
   const workspaceId = c.req.param("workspaceId")
-  return holdsAnswer(c, workspaceId, () => clearDeletionHold(service, workspaceId))
+  return holdsAnswer(c, workspaceId, () => clearDeletionHold(service, workspaceId, {asOf: body.asOf}))
 })
 
 // --- People ----------------------------------------------------------------
@@ -343,13 +352,10 @@ function holdForbidden(c: AppContext) {
  * The workspace's holds after `change`, or the contract's 404 `workspace_not_found` for a workspace that
  * does not exist (any other failure is the error handler's).
  */
-async function holdsAnswer(
-  c: AppContext,
-  workspaceId: string,
-  change: () => Promise<DeletionHoldsResponse["holds"]>,
-) {
+async function holdsAnswer(c: AppContext, workspaceId: string, change: () => Promise<DeletionHoldChange>) {
   try {
-    const answer: DeletionHoldsResponse = {workspaceId, holds: await change()}
+    const {holds, ignored} = await change()
+    const answer: DeletionHoldsResponse = {workspaceId, holds, ignored}
     return c.json(answer)
   } catch (err) {
     if (err instanceof WorkspaceError && err.code === "not_found") return c.json({error: WORKSPACE_NOT_FOUND_ERROR}, 404)

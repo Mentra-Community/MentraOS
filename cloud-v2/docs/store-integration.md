@@ -44,8 +44,8 @@ other service Core knows: it adds a `"fleet"` list, with `x-mentra-service: flee
 | `GET /changes?after=&limit=` | The change feed: workspace events and `user.deleted` tombstones in commit order, for the Store and Fleet ([Fleet integration](fleet-integration.md#the-change-feed)). |
 | `POST /credentials` | `{credentialId, token}`: a workspace key limited to the named packages, minted for the Store on behalf of a staff member (`issuedBy.actorEmail`). The token is returned once. |
 | `POST /users/resolve-email` | `{mentraUserId}` of the Mentra account whose confirmed email this is (the Core user is created on first use), or `404 user_not_found`. |
-| `PUT /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds}`: the calling service holds the workspace from deletion, replacing its previous hold ([Deletion holds](#deletion-holds)). |
-| `DELETE /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds}`: the calling service's hold is cleared. |
+| `PUT /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds, ignored}`: the calling service holds the workspace from deletion, replacing its previous hold ([Deletion holds](#deletion-holds)). |
+| `DELETE /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds, ignored}`: the calling service's hold is cleared. |
 
 - **Principals.** A bearer credential is what a person or a key presented to the
   Store: a Core access token from the Core's sign-in server (issued to the
@@ -80,12 +80,16 @@ API), to its owners and to Organization Admins alike, until the Store clears the
 hold.
 
 ```ts
+// Take asOf just before counting, so the count reflects every change made before it.
+const asOf = new Date()
+const published = await countPublishedMiniapps(workspaceId)
+
 // Before a publish takes effect: hold for what the workspace will own. If Core refuses, refuse the publish.
-await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published + 1})
+await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published + 1, asOf})
 
 // After an unpublish, a miniapp delete or a failed publish, from the Store's own records:
-if (published > 0) await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published})
-else await core.clearDeletionHold(workspaceId)
+if (published > 0) await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published, asOf})
+else await core.clearDeletionHold(workspaceId, {asOf})
 ```
 
 - **Hold first, release last.** Take the hold before a publish takes effect, and
@@ -99,6 +103,14 @@ else await core.clearDeletionHold(workspaceId)
   updates of one workspace that race can land in the wrong order: a stale
   count, or a clear after a publish. Serialize hold updates per workspace:
   count and call Core under one per-workspace lock.
+- **Newest wins.** Every set and clear carries `asOf`, the instant the Store
+  computed it: take it just before reading the count. Core keeps the newest
+  `asOf` it has applied for the Store's hold, a clear's included, and ignores a
+  call that is not newer. So a call that timed out but reaches Core later never
+  overwrites a newer one: a late clear cannot leave a workspace deletable while
+  it owns miniapps, and a late set cannot bring back a hold a newer clear
+  removed. The lock keeps the Store's own calls in order; `asOf` covers the ones
+  Core applies after the Store gave up on them.
 - **Reconcile.** At startup, and on a schedule, set every workspace's hold from
   the Store's records: hold the workspaces that own published miniapps, clear
   the rest. This repairs a call that failed. The first run is the backfill for
@@ -106,25 +118,35 @@ else await core.clearDeletionHold(workspaceId)
   not held.
 
 - **The calls.** `PUT /api/internal/workspaces/workspaces/:workspaceId/deletion-holds/store`
-  with `{"reason": "owns_miniapps", "count": 3}` sets the hold; `DELETE` on the
-  same path, with an empty body, clears it. Both are signed like every other
-  call, and `:service` must be the service that signs (`store`); naming another
-  service is `403 {"error":"forbidden"}`. The client's `setDeletionHold` and
-  `clearDeletionHold` fill it in.
+  with `{"reason": "owns_miniapps", "count": 3, "asOf": "2026-10-14T12:00:00.000Z"}`
+  sets the hold; `DELETE` on the same path, with `{"asOf": "2026-10-14T12:00:00.000Z"}`,
+  clears it. Both are signed like every other call, and `:service` must be the
+  service that signs (`store`); naming another service is
+  `403 {"error":"forbidden"}`. The client's `setDeletionHold` and
+  `clearDeletionHold` fill it in from a `Date`.
 - **The hold.** `reason` is a lowercase code of letters, digits and underscores
   (`owns_miniapps` for the Store); `count` is optional and, when sent, a positive
-  whole number. Anything else is `400 invalid_request`. Each service has one hold
-  per workspace: setting replaces it.
+  whole number. `asOf` is required: an ISO 8601 UTC instant ending in `Z`, to the
+  millisecond at most (what `toISOString()` gives), no more than five minutes
+  ahead of Core's clock. Anything else is `400 invalid_request`. Each service has
+  one hold per workspace: setting replaces it.
 - **Idempotent.** Setting the hold the Store already has, or clearing one it does
-  not have, changes nothing and records nothing, so the Store can set the current
+  not have, changes no hold and records nothing, so the Store can set the current
   count after every change, or reconcile every workspace at startup, without
-  bookkeeping. Every change is recorded in the workspace's audit log and on the
-  change feed (`workspace.deletion_hold_set`, `workspace.deletion_hold_cleared`).
-- **Answers.** `200 {workspaceId, holds}`: every hold on the workspace afterwards,
-  each `{service, reason, count?}`. An unknown workspace is
-  `404 workspace_not_found`. Holding a deleted workspace is
-  `410 workspace_deleted`; clearing on one answers `200` with no holds, since a
-  workspace with a hold is never deleted.
+  bookkeeping. A newer `asOf` is still kept. Every change is recorded in the
+  workspace's audit log and on the change feed (`workspace.deletion_hold_set`,
+  `workspace.deletion_hold_cleared`).
+- **Stale calls.** A set or clear whose `asOf` is older than the newest one
+  Core applied for the Store, or equal to it with a different hold, is ignored:
+  Core answers `200` with the holds it keeps and `"ignored": true`, and writes and
+  records nothing. It is not a failure: a newer call has already said what holds
+  the workspace. The same call again with the same `asOf` (a retry) is answered
+  as applied.
+- **Answers.** `200 {workspaceId, holds, ignored}`: every hold on the workspace
+  afterwards, each `{service, reason, count?}`, and whether Core ignored the call
+  as stale. An unknown workspace is `404 workspace_not_found`. Holding a deleted
+  workspace is `410 workspace_deleted`; clearing on one answers `200` with no
+  holds, since a workspace with a hold is never deleted.
 - **What a delete gets.** `409 {"error": "workspace_has_holds",
   "error_description": "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
   "holds": [...]}`. The portals show the same sentence where the delete is, before

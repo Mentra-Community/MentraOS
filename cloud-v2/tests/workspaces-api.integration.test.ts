@@ -40,6 +40,7 @@ import {clearDeletionHold, setDeletionHold} from "../packages/core/src/services/
 import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {
   coreAccessToken,
   ADMIN_COOKIE,
@@ -829,7 +830,7 @@ describe("workspaces", () => {
 
     test("a workspace a service holds is refused with 409 workspace_has_holds and the holds, on every route group, to an owner and an Organization Admin alike", async () => {
       const ws = await newWorkspace()
-      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3})
+      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3, asOf: nextHoldAsOf()})
       const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
       const callers: Array<[string, Person | Session]> = [
         ["/api/workspaces", ws.owner],
@@ -855,7 +856,7 @@ describe("workspaces", () => {
       expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws.workspaceId, action: "workspace.deleted"})).toBe(0)
 
       // The Store clears its hold once the workspace owns no published miniapp; then the delete goes through.
-      await clearDeletionHold("store", ws.workspaceId)
+      await clearDeletionHold("store", ws.workspaceId, {asOf: nextHoldAsOf()})
       expect(
         (await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner, body: {confirmName: "Acme"}})).status,
       ).toBe(204)
@@ -863,7 +864,7 @@ describe("workspaces", () => {
 
     test("someone who may not delete is refused as before, and learns nothing about the holds", async () => {
       const ws = await newWorkspace()
-      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3})
+      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3, asOf: nextHoldAsOf()})
 
       const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.admin, body: {confirmName: "Acme"}})
       expect(reply.status).toBe(403)
@@ -876,8 +877,8 @@ describe("workspaces", () => {
     const holdsSeenBy = async (as: Person) => (await call("GET", `/api/workspaces/${ws.workspaceId}`, {as})).json.deletionHolds
 
     expect(await holdsSeenBy(ws.owner)).toEqual([])
-    await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 2})
-    await setDeletionHold("fleet", ws.workspaceId, {reason: "manages_devices"})
+    await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 2, asOf: nextHoldAsOf()})
+    await setDeletionHold("fleet", ws.workspaceId, {reason: "manages_devices", asOf: nextHoldAsOf()})
     const expected = [
       {service: "fleet", reason: "manages_devices"},
       {service: "store", reason: "owns_miniapps", count: 2},

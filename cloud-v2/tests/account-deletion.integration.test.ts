@@ -75,6 +75,7 @@ import {
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {
   applyEnv,
   HOSTED_ENV,
@@ -339,7 +340,7 @@ describe("confirmAccountDeletion", () => {
 
   test("a deletion hold never stands in the way: account deletion deletes no workspace, and the held one keeps its hold", async () => {
     const s = await scenario()
-    await setDeletionHold("store", s.solo.workspaceId, {reason: "owns_miniapps", count: 2})
+    await setDeletionHold("store", s.solo.workspaceId, {reason: "owns_miniapps", count: 2, asOf: nextHoldAsOf()})
 
     await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
 
@@ -354,7 +355,7 @@ describe("confirmAccountDeletion", () => {
     const heirActor: Actor = {kind: "user", mentraUserId: heir, email: null, emailVerified: true, isOrganizationAdmin: false}
     const refused = await deleteWorkspace(heirActor, s.solo.workspaceId, {confirmName: "Solo"}).catch(err => err)
     expect({code: refused.code, status: refused.status}).toEqual({code: "workspace_has_holds", status: 409})
-    await clearDeletionHold("store", s.solo.workspaceId)
+    await clearDeletionHold("store", s.solo.workspaceId, {asOf: nextHoldAsOf()})
     await deleteWorkspace(heirActor, s.solo.workspaceId, {confirmName: "Solo"})
     expect((await getWorkspace(s.solo.workspaceId))!.status).toBe("deleted")
   })

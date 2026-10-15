@@ -10,6 +10,7 @@ import type {
   AuthorizeRequest,
   AuthorizeResponse,
   DeletionHoldsResponse,
+  DeletionHoldUpdate,
   MembershipCheckEntry,
   PrincipalResponse,
   WorkspaceChangeEvent,
@@ -77,15 +78,21 @@ export interface CoreWorkspaceClient {
    * Hold the workspace from deletion for this service, replacing its previous hold: while any service
    * holds a workspace, Core refuses to delete it (409 `workspace_has_holds`). `reason` is a lowercase
    * code (`owns_miniapps`); `count`, when given, is a positive whole number of what the reason names.
-   * Setting the hold the service already has changes nothing. Resolves to every hold on the workspace
-   * afterwards. Core refuses an unknown workspace (404) and a deleted one (410).
+   * `asOf` is when the service computed the hold, taken just before reading what it counts: Core
+   * ignores the call (`ignored: true`, changing nothing) when it has applied a newer one from this
+   * service, so a late call never overwrites a newer hold. Setting the hold the service already has
+   * changes no hold. Resolves to every hold on the workspace afterwards. Core refuses an unknown
+   * workspace (404), a deleted one (410) and an `asOf` more than five minutes ahead of its clock
+   * (400). An invalid `asOf` throws a `RangeError` before anything is sent.
    */
-  setDeletionHold(workspaceId: string, hold: {reason: string; count?: number}): Promise<DeletionHoldsResponse>
+  setDeletionHold(workspaceId: string, hold: {reason: string; count?: number; asOf: Date}): Promise<DeletionHoldsResponse>
   /**
-   * Clear this service's hold, if it has one (clearing nothing changes nothing, on a deleted workspace
-   * too). Resolves to the holds left on the workspace. Core refuses an unknown workspace (404).
+   * Clear this service's hold, if it has one (clearing nothing changes no hold, on a deleted workspace
+   * too). `asOf` is as for `setDeletionHold`: Core remembers it after the clear, so a set computed
+   * before it and applied late is ignored too. Resolves to the holds left on the workspace. Core
+   * refuses an unknown workspace (404).
    */
-  clearDeletionHold(workspaceId: string): Promise<DeletionHoldsResponse>
+  clearDeletionHold(workspaceId: string, update: {asOf: Date}): Promise<DeletionHoldsResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -159,7 +166,9 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     if (!Array.isArray(raw.holds) || !raw.holds.every(isWorkspaceDeletionHold)) {
       throw badResponse(path, "holds is not a list of deletion holds")
     }
-    return {workspaceId: raw.workspaceId, holds: raw.holds}
+    // Fail closed on a Core that does not say: one that predates `asOf` would apply a late call.
+    if (typeof raw.ignored !== "boolean") throw badResponse(path, "ignored is not a boolean")
+    return {workspaceId: raw.workspaceId, holds: raw.holds, ignored: raw.ignored}
   }
 
   /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
@@ -328,14 +337,16 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
 
     async setDeletionHold(workspaceId, hold) {
       const path = deletionHoldPath(workspaceId)
+      const asOf = hold.asOf.toISOString()
       // Only what was given: an absent count is "no count", never a null Core would have to read.
-      const body = hold.count === undefined ? {reason: hold.reason} : {reason: hold.reason, count: hold.count}
+      const body = hold.count === undefined ? {reason: hold.reason, asOf} : {reason: hold.reason, count: hold.count, asOf}
       return checkHolds(path, await call("PUT", path, body))
     },
 
-    async clearDeletionHold(workspaceId) {
+    async clearDeletionHold(workspaceId, update) {
       const path = deletionHoldPath(workspaceId)
-      return checkHolds(path, await call("DELETE", path))
+      const body: DeletionHoldUpdate = {asOf: update.asOf.toISOString()}
+      return checkHolds(path, await call("DELETE", path, body))
     },
   }
 
