@@ -1,6 +1,6 @@
 import {RoutineWorkModel} from '../models/routine-work.model'
 import {candidateVerificationSchema, type CandidateVerification} from '../types/candidate-verification.types'
-import {authoringJobViewSchema, type AuthoringWork} from '../types/routine-work.types'
+import {authoringJobViewSchema, routineWorkVerificationIdentitySchema, type AuthoringWork} from '../types/routine-work.types'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
 
@@ -10,6 +10,8 @@ export interface CandidateWorkRecord {
   work: AuthoringWork
   acceptance?: {hostId: string; inputSha256: string}
   status?: {details: unknown}
+  verification?: {identity:unknown;status:{details:unknown}}
+  fleetCancellation?:unknown
 }
 export interface CandidateAuthorization {
   authorize(binding: CandidateVerification, hostId: string, selected: {
@@ -20,14 +22,25 @@ export interface CandidateAuthorization {
 /** The authenticated supervisor observes GitHub; Core checks its accepted current attempt. */
 export class CandidateVerificationService implements CandidateAuthorization {
   constructor(private readonly get: (workId: string) => Promise<CandidateWorkRecord | null> = async workId =>
-    await RoutineWorkModel.findOne({workId}).read('primary').readConcern('majority').lean() as CandidateWorkRecord | null) {}
+    await RoutineWorkModel.findOne({workId}).read('primary').readConcern('majority').lean() as CandidateWorkRecord | null,
+    private readonly now:()=>number=Date.now) {}
 
   async authorize(binding: CandidateVerification, hostId: string, selected: {
     routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown
   }) {
     const parsed = candidateVerificationSchema.safeParse(binding)
     const row = parsed.success ? await this.get(parsed.data.workId) : null
-    const view = authoringJobViewSchema.safeParse(row?.status?.details)
+    const retry=routineWorkVerificationIdentitySchema.safeParse(row?.verification?.identity)
+    const original=authoringJobViewSchema.safeParse(row?.status?.details)
+    const retryCurrent=Boolean(retry.success&&retry.data.previousFailure.code==='permission-required'&&original.success&&
+      original.data.state==='failed'&&!row?.fleetCancellation&&
+      (original.data.details.requestId===undefined||retry.data.admission?.requestId===original.data.details.requestId)&&
+      Date.parse(retry.data.deadline)>this.now())
+    const view = authoringJobViewSchema.safeParse(retryCurrent?row?.verification?.status.details:row?.status?.details)
+    if(retryCurrent&&view.success&&(view.data.details.requestId!==retry.data!.admission!.requestId||
+      !original.success||view.data.attemptId!==original.data.attemptId||view.data.details.sourceRevision!==original.data.details.sourceRevision||
+      requestInputDigest(view.data.details.review)!==requestInputDigest(original.data.details.review)))
+      throw new TestRunError(409,'Candidate completion retry differs from the retained original source, request or review')
     if (!parsed.success || !row?.acceptance || !view.success || row.hostId !== hostId ||
         row.acceptance.hostId !== hostId || row.acceptance.inputSha256 !== row.inputSha256 ||
         row.work.workId !== binding.workId || view.data.workId !== binding.workId ||
