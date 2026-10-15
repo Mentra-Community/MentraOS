@@ -437,3 +437,12 @@ asg_client/StreamPackLite.zip
 # Local temp artifacts and generated decks
 tmp/
 output/
+
+# Concrete deployment inputs are rendered from the frozen shared Cloud V2 source.
+/cloud-v2/porter.dev.yaml
+/cloud-v2/porter.staging.yaml
+/cloud-v2/porter.prod.yaml
+/cloud-v2/porter.dev.overrides.yaml
+/cloud-v2/porter.staging.overrides.yaml
+/cloud-v2/porter.prod.overrides.yaml
+/cloud-v2-rendered-config.json

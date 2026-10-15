@@ -8,7 +8,7 @@ layering, and what changes when you `porter apply`.
 Cloud V2 deploys use one Porter app per environment in the AWS us-west-2
 cluster:
 
-| Release source                              | Coordinated owner              | Porter app      | Manifest              | Public hosts                                                                          |
+| Release source                              | Coordinated owner              | Porter app      | Generated manifest    | Public hosts                                                                          |
 | ------------------------------------------- | ------------------------------ | --------------- | --------------------- | ------------------------------------------------------------------------------------- |
 | `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
 | `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
@@ -29,7 +29,7 @@ Do not add a second branch-push deploy workflow for these Porter apps. A manual
 repair should rerun the exact coordinated job/source so its result remains
 attached to the release record.
 
-`cloud-debug` is intentionally outside this promotion path. Treat it as an
+`cloud-debug` and `cloud-isaiah` are intentionally outside this promotion path and retain their explicit sandbox manifests. Treat it as an
 explicit shared debugging environment and do not use it as a default test
 target unless the person currently using it agrees.
 
@@ -45,7 +45,41 @@ image — each just runs a different process from it:
 
 (The proxy service from `packages/proxy/` joins once it has real code.)
 
-This shape is in the environment-specific `porter.*.yaml` manifests. The build is in
+Service behavior lives once in [`deploy/porter.shared.yaml`](../../../deploy/porter.shared.yaml).
+[`deploy/runtime-policy.yaml`](../../../deploy/runtime-policy.yaml) owns the shared
+Runtime disruption budget and rolling strategy. The existing guarded target table
+in `.github/scripts/coordinated-cloud-v2-records.mjs` supplies only app identity,
+linked Doppler group, domains and deployment target. There is no per-environment
+service override or generic merge layer.
+
+The reusable deployer renders both inputs from the **exact frozen release source**,
+using the workflow revision's renderer. Generated `porter.dev.yaml`,
+`porter.staging.yaml`, `porter.prod.yaml` and their `.overrides.yaml` files are
+ignored outputs, not copies to edit. They retain the existing logical names used
+by deployment records. CI renders all three environments and checks service parity,
+Runtime PDB100 and rolling zero-unavailable/one-surge.
+
+To inspect one environment without deploying:
+
+```bash
+bun .github/scripts/render-cloud-v2-config.mjs --source-root . --environment staging
+```
+
+Run this from the repository root. Concrete outputs stay in `cloud-v2/` so the
+Docker build context remains unchanged. Both dry-run validation and normal deploy
+use these same inputs; actual apply always passes the Helm override. Rendered
+files and SHA256 receipts accompany the deployment artifact. After apply, the
+normal job checks actual Runtime Deployment/PDB selectors, current generations,
+configured replicas, rolling strategy, 100% healthy budget and zero allowed
+disruptions. Missing or weaker protection blocks a successful deployment record.
+The measured policy receipt accompanies the existing artifact.
+
+A release source predating this consolidation lacks the shared inputs and fails
+before apply. Qualify a new completed beta containing the consolidation before
+production promotion. Do not substitute newer policy files into an older release
+or restore an alternate legacy deployment path.
+
+The build is in
 [`docker/Dockerfile`](../../../docker/Dockerfile). Note the share-an-image
 approach — single build, multiple entry points. v1 was monolithic; v2's
 three-process model could have been three Docker images, but one image
@@ -54,7 +88,7 @@ MB per service since they all bundle the same node_modules).
 
 ## What `porter apply -f porter.<env>.yaml` actually does
 
-1. Reads the environment manifest.
+1. Reads the rendered manifest and its required Runtime Helm policy.
 2. Builds the Docker image (Dockerfile multi-stage build).
 3. Pushes to our AWS ECR — `042724764545.dkr.ecr.us-west-2.amazonaws.com/...`.
 4. Creates a new app **revision** (Porter's term for a deploy).
@@ -67,22 +101,11 @@ get layer-cached so re-builds are faster).
 
 ## Where do env vars come from?
 
-Three layers, in increasing priority:
-
-1. **Service-level `env:` in `porter.yaml`** — non-secret values like
-   `LOG_STDOUT_JSON=true`, `AUDIO_UDP_PORT=8000`.
-2. **Linked env groups** (referenced in `envGroups:` in `porter.yaml`).
-   We use `cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`, and
-   `cloud-v2-prod-doppler-sync`. See
-   [`doppler/porter-integration.md`](../doppler/porter-integration.md).
-3. **App-level env** (rarely set) — overrides env-group values per-app.
-
-Verify what a pod actually sees:
-
-```bash
-porter env pull --app cloud-dev --merged | grep MENTRA_JWT
-# Shows the merged env, including env-group values
-```
+Doppler is authoritative. The renderer links `cloud-v2-dev-doppler`,
+`cloud-v2-staging-doppler`, or `cloud-v2-prod-doppler-sync` for the selected target.
+Application settings and secrets do not belong in the shared YAML or Porter app
+overrides. CI renders every release environment before running the source guard.
+See [`doppler/porter-integration.md`](../doppler/porter-integration.md).
 
 ## Watching a deploy
 
@@ -178,35 +201,16 @@ through read-only `porter kubectl`; those immutable observations are stored in
 
 ## Resource limits
 
-Defined in `porter.yaml` per service:
+The shared source requests one Core replica at 0.25 CPU / 1024 MiB and one
+Runtime replica at 0.5 CPU / 2048 MiB in every release environment. Change shared
+service resources once; promotion carries the same behavior through staging and
+production. Explicit sandbox manifests are outside this contract.
 
-```yaml
-- name: core
-  cpuCores: 1
-  ramMegabytes: 1024
-- name: audio
-  cpuCores: 2
-  ramMegabytes: 2048
-```
-
-Bump these in `porter.yaml` and re-apply when:
-
-- OOM kills happen (check with `porter app logs ... --search OOMKilled`)
-- CPU throttling shows up in metrics (the event-loop-lag gauge)
-- You're scaling user count beyond what the current size handles
-
-## Replica count
-
-By default Porter runs 1 replica per service. To scale up:
-
-```yaml
-- name: audio
-  instances: 3 # multi-replica
-```
-
-For audio specifically, multi-replica is REAL multi-pod, exercised by the
-multi-pod integration tests. UDP and WS distribute across replicas via
-the cluster's LB layer (ALB for WS, NLB for UDP).
+Runtime's PDB requires 100% healthy pods and its rolling update allows zero
+unavailable and one temporary surge. See
+[`Runtime voluntary disruption`](../../../deploy/runtime-disruption.md) for the
+maintenance and availability limits. This protects ordinary voluntary singleton
+eviction; it does not qualify abrupt node loss or uninterrupted WebSockets.
 
 ## Gotchas
 
