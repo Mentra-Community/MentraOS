@@ -141,6 +141,7 @@
     "expo-clipboard": "~55.0.13",
     "expo-calendar": "~55.0.14",
     "expo-application": "~55.0.15",
+    "expo-asset": "~55.0.17",
     "expo-constants": "~55.0.16",
     "expo-device": "~55.0.17",
     "expo-location": "~55.1.10",
