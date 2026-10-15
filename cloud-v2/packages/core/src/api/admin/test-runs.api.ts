@@ -60,7 +60,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   })
   app.post('/lanes/controls', frameworkBodyLimit(32768), async c => {
     if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
-    return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId), 202)
+    return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId, c.var.developer.email), 202)
   })
   app.get("/lanes/overview", async c => c.json(await restoration.overview()));
   app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));

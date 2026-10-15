@@ -190,3 +190,18 @@ test('recovery admission refuses old halt, changed repair, active fixer, missing
   await expect(f.service.submit({...input, action: 'resume'}, 'alice')).rejects.toThrow()
   await expect(f.service.submit({...input, repair: {...input.repair!, assumeReady: true}}, 'alice')).rejects.toThrow()
 })
+
+test('admin email stays in Core metadata and never changes authenticated command delivery or retries', async () => {
+  const f = fixture(), input = f.input('reserve', {purpose: 'Manual work'})
+  const first = await f.service.submit(input, 'alice-id', 'alice@example.com')
+  expect(f.rows()[0].operatorEmail).toBe('alice@example.com')
+  expect(f.rows()[0].command).not.toHaveProperty('operatorEmail')
+  expect(await f.service.submit(input, 'alice-id', 'new-address@example.com')).toEqual(first)
+  expect(f.rows()[0].operatorEmail).toBe('alice@example.com')
+  const delivery = await f.service.exchange('air', {schemaVersion: 1, receipts: []})
+  expect(delivery.commands).toEqual([f.rows()[0].command])
+  expect(JSON.stringify(delivery)).not.toContain('alice@example.com')
+  expect(JSON.stringify(await f.service.list('air', 'alice-id'))).not.toContain('alice@example.com')
+  await expect(f.service.submit({...input, operatorEmail: 'spoof@example.com'}, 'alice-id')).rejects.toThrow()
+  await expect(f.service.submit(input, 'bob-id', 'alice@example.com')).rejects.toThrow('identity changed')
+})
