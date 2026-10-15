@@ -12,6 +12,11 @@ export const recorderStorageObservationSchema = z.object({poolId: z.string().min
 }).strict().refine(value => new Set(value.reservations.map(row => row.requestId)).size === value.reservations.length,
   'Recorder storage reservations must have unique request identities')
 export type RecorderStorageObservation = z.infer<typeof recorderStorageObservationSchema>
+export function recorderCapacityRequirement(estimatedOutputBytes: unknown, declared?: z.infer<typeof recorderStorageRequirementSchema>) {
+  if (!Number.isSafeInteger(estimatedOutputBytes) || (estimatedOutputBytes as number) < 0 ||
+    !Number.isSafeInteger((estimatedOutputBytes as number) + STORAGE_MARGIN_BYTES)) return undefined
+  return {minimumAvailableBytes: Math.max(declared?.minimumAvailableBytes ?? 0, (estimatedOutputBytes as number) + STORAGE_MARGIN_BYTES)}
+}
 export function recorderStorageAvailable(observation: RecorderStorageObservation | undefined,
   requirement: z.infer<typeof recorderStorageRequirementSchema>, now: number, unobservedOutputBytes = 0) {
   const parsed = recorderStorageObservationSchema.safeParse(observation)
@@ -23,3 +28,11 @@ export function recorderStorageAvailable(observation: RecorderStorageObservation
   return Number.isSafeInteger(reserved) && value.availableBytes >= requirement.minimumAvailableBytes + reserved &&
     value.stagingBudgetBytes >= value.pendingEvidenceBytes + reserved + Math.max(0, requirement.minimumAvailableBytes - STORAGE_MARGIN_BYTES)
 }
+
+/** Capacity claims stay on the existing host resource record; requests retain the selected receipt. */
+export const recorderHostReservationSchema = z.object({id: z.string().uuid(), requestId: z.string().min(1).max(240),
+  fleetInputSha256: z.string().regex(/^[a-f0-9]{64}$/), hostId: z.string().min(1).max(240), laneId: z.string().min(1).max(240),
+  poolId: z.string().min(1).max(240), minimumAvailableBytes: bytes, reservedAt: z.string().datetime(), chosenModel: z.string().optional()}).strict()
+export const recorderHostReservationsSchema = z.array(recorderHostReservationSchema).max(1000).refine(values =>
+  new Set(values.map(value => value.requestId)).size === values.length, 'Host recorder claims require unique request identities')
+export type RecorderHostReservation = z.infer<typeof recorderHostReservationSchema>

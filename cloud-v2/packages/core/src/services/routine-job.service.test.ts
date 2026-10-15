@@ -5,7 +5,7 @@ import {TestRequestModel} from '../models/test-request.model';
 import {createRoutineJobsApi} from '../api/internal/routine-jobs.api';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {requestInputDigest, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
-import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineJobInputDigest, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
 const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttempt:2};
@@ -26,7 +26,8 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
       row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}}:{})};return copy(row)},
     async reserveResources(id,digest,hostId,laneId,now) {if(!row||row.requestId!==id||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
-      row={...row,fleetResourceReservation:{hostId,laneId,poolId:`${hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:now.toISOString(), ...(row.fleetPreparation?.requirements.glasses ? {chosenModel: offeredHosts?.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model} : {})}};return copy(row)},
+      if(row.fleetResourceReservation)return row.fleetResourceReservation.hostId===hostId&&row.fleetResourceReservation.laneId===laneId?copy(row):null;
+      row={...row,fleetResourceReservation:{id:'591e0c34-ee97-41df-a0ec-5e2d0c7503ee',requestId:id,fleetInputSha256:digest,hostId,laneId,poolId:`${hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:now.toISOString(), ...(row.fleetPreparation?.requirements.glasses ? {chosenModel: offeredHosts?.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model} : {})}};return copy(row)},
     async bind(id,digest,binding,intent,now){if(!row||row.requestId!==id||row.state!=='awaiting-runner'||row.fleetBinding||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,hostId:binding.hostId,fleetBinding:copy(binding),dispatchIntent:copy(intent),dispatchIntentSha256:requestInputDigest(intent),state:'preparing'};return copy(row)},
     async dispatch(id,previous,value){if(!row||requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null)||row.fleetCancellation||row.fleetBinding)return null;row={...row,fleetDispatch:copy(value)};return copy(row)},
@@ -49,7 +50,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
-  return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
+  return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
 test('bound observation never substitutes prepared input before executable preparation', async () => {
   const f = fixture(), prepared = await f.prepare();
@@ -139,6 +140,34 @@ test('offline requirements and exact app/source freeze before host selection; re
   await expect(f.service.submit({...selection,source:{...source,buildRunId:56}})).rejects.toThrow('changed');
   await expect(f.service.prepared(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest({...definition,minimumRoutineApiVersion:2}),definition:{...definition,minimumRoutineApiVersion:2}})).rejects.toThrow();
 });
+test('a prepared request from before capacity admission retains its exact digest while the same policy gains a current claim', async () => {
+  const f=fixture(); await f.prepare();
+  const original=structuredClone(f.row!);
+  original.fleetPreparation!.requirements.resources=original.fleetPreparation!.requirements.resources.map(({storage:_,...resource})=>resource);
+  delete original.fleetResourceReservation;
+  original.fleetInputSha256=routineJobInputDigest(original); f.restore(original);
+  await f.service.prepared(selection.requestId,{inputSha256:original.fleetSelectionSha256,
+    routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(definition),definition});
+  expect(f.row).toEqual(original);
+  const input={inputSha256:original.fleetInputSha256!,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
+  expect((await f.service.bind(selection.requestId,'mini',input)).execute).toBe(true);
+  expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256);
+  expect(f.row!.fleetPreparation).toEqual(original.fleetPreparation);
+  expect(f.row!.fleetResourceReservation).toMatchObject({requestId:selection.requestId,hostId:'mini',minimumAvailableBytes:3*1024**3});
+});
+test('a retained target never changes runner labels when another host becomes available', async () => {
+  const f=fixture(), prepared=await f.prepare(), time=Date.parse('2026-10-08T00:00:00Z');
+  const report=(hostId:string,state:'idle'|'offline'):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,
+    observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[{...structuredClone(f.lane),state}]});
+  f.offer([report('mini','offline'),report('other','idle')]);
+  const reserve=f.rows.reserveResources!;
+  f.rows.reserveResources=async()=>null;
+  const waiting=await f.service.preparation(selection.requestId);
+  expect(waiting).toMatchObject({inputSha256:prepared.inputSha256,resourceTarget:{hostId:'mini',laneId:'android'},
+    waitingReason:'Awaiting a compatible enrolled runner'});
+  expect(waiting.routingLabels).toEqual(prepared.routingLabels);
+  f.rows.reserveResources=reserve;
+});
 test('concurrent automatic source choices have one insert winner and its cancellation fences default retries',async()=>{
   const f=fixture(),choices=await Promise.allSettled([f.service.submit(selection),
     f.service.submit({...selection,routineRevision:'b'.repeat(40)})]);
@@ -183,14 +212,14 @@ test('reviewed fixture operations exclude generic fixtures from routing and bind
   const generic = lane([]), decoderOnly = lane(['media-decode']);
   f.offer([observed('air', generic), observed('decoder-only', decoderOnly)]);
   const prepared = await f.prepare(), frozen = structuredClone(f.row!.fleetPreparation);
-  expect(prepared.waitingReason).toBe('Awaiting an idle compatible runner with fresh recorder disk capacity');
+  expect(prepared.waitingReason).toBe('Awaiting a compatible enrolled runner');
   expect(prepared.prepared!.requirements.resources.find(resource => resource.kind === 'fixture-data')!.capabilities)
     .toEqual(['reviewed-miniapp-appearance', 'media-decode']);
   expect(prepared.routingLabels).toContain('mentra-cap-3d8d7338377d1ab81665e28e');
   expect(prepared.routingLabels).toContain('mentra-cap-a8e5ce48dfc27e77cac4aaf5');
   for (const [hostId, offered] of [['air', generic], ['decoder-only', decoderOnly]] as const)
     await expect(f.service.bind(selection.requestId, hostId, {inputSha256: prepared.inputSha256, laneId: offered.id,
-      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('reserved recorder capacity');
+      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible lane descriptor');
   expect(f.row!.fleetBinding).toBeUndefined();
   const capable = lane(['reviewed-miniapp-appearance', 'media-decode']);
   expect(capable.descriptorRevision).not.toBe(generic.descriptorRevision);
@@ -646,7 +675,7 @@ test('an expired app grant refuses fleet binding before consuming the pending jo
     observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), frameworkBinding: binding, lanes: [lane]};
   f.offer([host]);
   const input = {inputSha256: prepared.inputSha256, laneId: lane.id, descriptorRevision: lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
-  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('reserved recorder capacity');
+  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('compatible lane descriptor');
   expect(f.row).toEqual(frozen);
   observed.observedAt = new Date(time).toISOString(); f.offer([host]);
   await f.service.preparation(selection.requestId);

@@ -76,7 +76,7 @@ function row(id: string, platform: "android" | "ios-on-mac", nightlyEnabled = tr
         requirements: [],
         fixtures: [],
         steps: [{id: "check", instruction: "Check", expected: "Checked"}],
-        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"]},
+        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"],policy:{estimatedOutputBytes:1024**3}},
         source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: `routines/${id}/routine.ts`},
       },
     }),
@@ -709,6 +709,7 @@ test('actual fleet service preserves every nightly member through preparation, b
       const next = {...value, state: 'awaiting-runner' as const, fleetPreparation: preparation, fleetInputSha256: inputSha256};
       requestRows.set(id, next); return copy(next);
     },
+    async reserveResources(id, digest, hostId, laneId) {const value=requestRows.get(id);if(!value||value.fleetCancellation||value.fleetInputSha256!==digest)return null;value.fleetResourceReservation??={id:'bb5736e3-7031-44c3-af88-b7fd1c07ee3c',requestId:id,fleetInputSha256:digest,hostId,laneId,poolId:'real-host:disk:1',minimumAvailableBytes:3*1024**3,reservedAt:new Date(clock).toISOString()};return copy(value);},
     async bind(id, digest, binding, intent) {
       const value = requestRows.get(id); if (!value || value.fleetCancellation || value.fleetBinding || value.fleetInputSha256 !== digest) return null;
       const next = {...value, state: 'preparing' as const, hostId: binding.hostId, fleetBinding: binding,
@@ -727,13 +728,13 @@ test('actual fleet service preserves every nightly member through preparation, b
   };
   const lanes = ['android', 'ios-on-mac'].map(platform => {
     const lane = {id: platform, platform: platform as 'android' | 'ios-on-mac', state: 'idle' as const, dispatchMode: 'automatic' as const,
-      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const}]};
+      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const, storage:{poolId:'real-host:disk:1',observedAt:new Date(clock).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}]};
     return {...lane, descriptorRevision: routineLaneDescriptorRevision(lane)};
   });
   const requests = {async get(id: string) {reads++; return copy(requestRows.get(id) ?? null) as any;}, async cancel() {return null;}};
   const summary = {async summary(id: string) {const result = results.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, 'No result'); return result;}, async detail() {throw new TestRunError(404, 'No result');}};
   const jobs = new RoutineJobService(rows, undefined, undefined, {async getExact() {return null;}},
-    {async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    {async list(){return [{hostId:'real-host',receivedAt:new Date(clock).toISOString(),lanes}];},async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
       observedAt: new Date(clock).toISOString(), receivedAt: new Date(clock).toISOString(), lanes};}}, requests, summary, () => clock,
     {async dispatch() {dispatches++;}, async cancel() {}});
   const repository = {...cancellationRepository(), async get() {return copy(plan);}, async freeze(value: NightlyPlan) {plan ??= copy(value); return copy(plan);},

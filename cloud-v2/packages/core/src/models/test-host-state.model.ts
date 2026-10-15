@@ -14,6 +14,7 @@ const schema = new Schema(
     frameworkStopReceipts: {type: [Schema.Types.Mixed], default: []},
     laneControls: {type: [Schema.Types.Mixed], default: []},
     resourceReservationVersion: {type: Number, default: 0},
+    resourceReservations: {type: [Schema.Types.Mixed], default: []},
     laneControlVersion: {type: Number, default: 0},
     deploymentObservation: {type: Schema.Types.Mixed},
     deploymentGeneration: {type: Number, default: 0},

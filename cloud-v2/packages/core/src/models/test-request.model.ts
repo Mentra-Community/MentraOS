@@ -44,7 +44,6 @@ const schema = new Schema({
 schema.index({state: 1, createdAt: 1, requestId: 1});
 schema.index({"fleetSelection.source.channel": 1, fleetSupersessionCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, state: 1});
-schema.index({'fleetResourceReservation.hostId': 1}, {partialFilterExpression: {fleetResourceReservation: {$exists: true}}});
 schema.index({hostId: 1, state: 1, preparationCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, "hostCancellation.requestedAt": 1, requestId: 1},
   {partialFilterExpression: {hostCancellation: {$exists: true}}});

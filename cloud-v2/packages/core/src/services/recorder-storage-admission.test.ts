@@ -1,26 +1,32 @@
 import {expect, test, spyOn} from 'bun:test'
-import {routineJobRepository, unobservedRecorderReservations, compatibleRoutineLane, routinePortableRequirements} from './routine-job.service'
+import {routineJobRepository, reconcileRecorderHostReservations, unobservedRecorderHostReservations, compatibleRoutineLane, routinePortableRequirements} from './routine-job.service'
 import {recorderStorageAvailable, STORAGE_MARGIN_BYTES} from '../types/recorder-storage.types'
 import {TestRequestModel} from '../models/test-request.model'
 import {TestHostStateModel} from '../models/test-host-state.model'
-import * as mongo from '../connections/mongo.connection'
 const now=new Date('2026-10-15T12:00:00Z'),gib=1024**3,required={minimumAvailableBytes:7*gib}
 const offer={poolId:'host:disk:1',observedAt:now.toISOString(),availableBytes:8*gib,stagingBudgetBytes:10*gib,pendingEvidenceBytes:0,reservations:[]}
-const claim=(id:string)=>({requestId:id,fleetDeadline:new Date(now.getTime()+3600000),fleetResourceReservation:{hostId:'host',laneId:'mac',poolId:offer.poolId,minimumAvailableBytes:7*gib,reservedAt:now.toISOString()}} as any)
-test('unobserved claims count across lanes and match exact accepted input only once',()=>{
- const row={...claim('one'),fleetBinding:{hostId:'host'},inputSha256:'a'.repeat(64)}
- expect(unobservedRecorderReservations([row],offer,now.getTime())).toBe(5*gib)
+const claim=(requestId:string)=>({id: requestId==='one'?'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba20':'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba21',
+ requestId,fleetInputSha256:'a'.repeat(64),hostId:'host',laneId:'mac',poolId:offer.poolId,minimumAvailableBytes:7*gib,reservedAt:now.toISOString()})
+const row=(requestId:string)=>({requestId,fleetDeadline:new Date(now.getTime()+3600000),fleetInputSha256:'a'.repeat(64),fleetResourceReservation:claim(requestId)} as any)
+test('unobserved host claims count across lanes and exact accepted input only once',()=>{
+ const request={...row('one'),fleetBinding:{hostId:'host'},inputSha256:'a'.repeat(64)}
+ expect(unobservedRecorderHostReservations([claim('one')],[request],offer)).toBe(5*gib)
  const measured={...offer,reservations:[{requestId:'one',inputSha256:'a'.repeat(64),remainingOutputBytes:3*gib}]}
- expect(unobservedRecorderReservations([row],measured,now.getTime())).toBe(0)
+ expect(unobservedRecorderHostReservations([claim('one')],[request],measured)).toBe(0)
  expect(recorderStorageAvailable(measured,required,now.getTime())).toBe(false)
- expect(unobservedRecorderReservations([{...row,inputSha256:'b'.repeat(64)}],measured,now.getTime())).toBe(5*gib)
+ expect(unobservedRecorderHostReservations([claim('one')],[{...request,inputSha256:'b'.repeat(64)}],measured)).toBe(5*gib)
+ expect(unobservedRecorderHostReservations([claim('one')],[{...request,fleetInputSha256:'b'.repeat(64)}],measured)).toBe(5*gib)
 })
-test('cancellation does not release delivered work; actual completed cleanup needs a later capacity observation',()=>{
- const cancelled={...claim('one'),fleetCancellation:{requestedAt:now.toISOString()}}
- expect(unobservedRecorderReservations([cancelled],offer,now.getTime())).toBe(0)
- expect(unobservedRecorderReservations([{...cancelled,fleetBinding:{hostId:'host'}}],offer,now.getTime())).toBe(5*gib)
- expect(unobservedRecorderReservations([{...cancelled,fleetBinding:{hostId:'host'},dispatchCompletion:{completedAt:new Date(now.getTime()+1).toISOString()}}],offer,now.getTime())).toBe(5*gib)
- expect(unobservedRecorderReservations([{...cancelled,fleetBinding:{hostId:'host'},dispatchCompletion:{completedAt:now.toISOString()}}],offer,now.getTime())).toBe(0)
+test('cancellation cannot release delivered work; cleanup requires a later capacity observation',()=>{
+ const cancelled={...row('one'),fleetCancellation:{requestedAt:now.toISOString()}}
+ expect(reconcileRecorderHostReservations([claim('one')],[cancelled],offer)).toEqual([])
+ expect(reconcileRecorderHostReservations([claim('one')],[{...cancelled,fleetBinding:{hostId:'host'}}],offer)).toHaveLength(1)
+ expect(reconcileRecorderHostReservations([claim('one')],[{...cancelled,fleetBinding:{hostId:'host'},dispatchCompletion:{completedAt:new Date(now.getTime()+1).toISOString()}}],offer)).toHaveLength(1)
+ expect(reconcileRecorderHostReservations([claim('one')],[{...cancelled,fleetBinding:{hostId:'host'},dispatchCompletion:{completedAt:now.toISOString()}}],offer)).toEqual([])
+ expect(reconcileRecorderHostReservations([claim('one')],[{...cancelled,fleetBinding:{hostId:'host'},dispatchCompletion:{completedAt:now.toISOString()}}],
+  {...offer,reservations:[{requestId:'one',inputSha256:'a'.repeat(64),remainingOutputBytes:0}]})).toHaveLength(1)
+ expect(reconcileRecorderHostReservations([claim('one')],[],offer)).toHaveLength(1)
+ expect(reconcileRecorderHostReservations([claim('one')],[{...row('one'),fleetInputSha256:'b'.repeat(64),fleetCancellation:{}}],offer)).toHaveLength(1)
 })
 test('unknown, stale capacity and evidence staging pressure reject the existing recorder requirement',()=>{
  const lane={id:'mac',platform:'ios-on-mac' as const,state:'idle' as const,dispatchMode:'automatic' as const,resources:[{id:'rec',kind:'recorder' as const,storage:offer}]}
@@ -33,19 +39,49 @@ test('unknown, stale capacity and evidence staging pressure reject the existing 
 test('job requirement derives from exact recording policy and preserves the existing disk margin',()=>{
  const row={platform:'ios-on-mac',definition:{execution:{resourceKinds:['recorder'],policy:{estimatedOutputBytes:5*gib}},resourceRequirements:[{kind:'recorder',capabilities:[]}]}} as any
  expect(routinePortableRequirements(row).resources[0]!.storage).toEqual({minimumAvailableBytes:5*gib+STORAGE_MARGIN_BYTES})
+ expect(routinePortableRequirements({...row,definition:{...row.definition,resourceRequirements:[{kind:'recorder',capabilities:[],storage:{minimumAvailableBytes:9*gib}}]}}).resources[0]!.storage)
+  .toEqual({minimumAvailableBytes:9*gib})
  expect(()=>routinePortableRequirements({...row,definition:{...row.definition,execution:{resourceKinds:['recorder']}}})).toThrow('finite estimatedOutputBytes')
 })
-test('two simultaneous lane claims serialize on the existing host record and cannot spend the same bytes',async()=>{
- let chain=Promise.resolve(),claims:any[]=[]
- const transaction=spyOn(mongo,'withTransaction').mockImplementation(((fn:any)=>{const result=chain.then(()=>fn('session'));chain=result.then(()=>undefined,()=>undefined);return result}) as any)
- const first=spyOn(TestRequestModel.collection,'findOne').mockImplementation((async(query:any)=>({...claim(query.requestId),fleetResourceReservation:undefined,fleetInputSha256:'a'.repeat(64),state:'awaiting-runner',fleetPreparation:{requirements:{platform:'ios-on-mac',resources:[{kind:'recorder',capabilities:[],storage:required}]}},fleetSelection:{build:{headSha:'b'.repeat(40)}}})) as any)
- const host=spyOn(TestHostStateModel.collection,'findOneAndUpdate').mockImplementation((async()=>({receivedAt:now,snapshot:{hostId:'host',incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:[{id:'mac',platform:'ios-on-mac',state:'idle',dispatchMode:'automatic',resources:[{id:'rec',kind:'recorder',storage:offer}]}]}})) as any)
- const find=spyOn(TestRequestModel.collection,'find').mockImplementation((()=>({limit(){return this},async toArray(){return claims}})) as any)
- const save=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{const row={...claim(query.requestId),...update.$set};claims.push(row);return row}) as any)
+function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?:boolean;selectionFailure?:boolean}={}) {
+ let host:any={hostId:'host',incarnation:'one',incarnationGeneration:1,sequence:1,receivedAt:now,resourceReservationVersion:0,resourceReservations:[],
+ snapshot:{hostId:'host',incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:offer}]}))}}
+ const requests=new Map<string,any>(), writes:any[]=[];let raced=false,selectionFailed=false
+ const first=spyOn(TestRequestModel.collection,'findOne').mockImplementation((async(query:any)=>{
+  if(!requests.has(query.requestId))requests.set(query.requestId,{...row(query.requestId),fleetResourceReservation:undefined,state:'awaiting-runner',fleetPreparation:{definition:{execution:{policy:{estimatedOutputBytes:5*gib}}},requirements:{platform:'ios-on-mac',resources:[{kind:'recorder',capabilities:[],storage:required}]}},fleetSelection:{build:{headSha:'b'.repeat(40)}}})
+  return structuredClone(requests.get(query.requestId))}) as any)
+ const read=spyOn(TestHostStateModel.collection,'findOne').mockImplementation((async()=>options.missing?null:structuredClone(host)) as any)
+ const hostSave=spyOn(TestHostStateModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{
+  writes.push(query)
+  if(options.reportRace&&!raced){raced=true;host.sequence++;host.snapshot.sequence++;return null}
+  if(query.resourceReservationVersion!==host.resourceReservationVersion||query.sequence!==host.sequence)return null
+  host={...host,...update.$set,resourceReservationVersion:host.resourceReservationVersion+1};return structuredClone(host)}) as any)
+ const find=spyOn(TestRequestModel.collection,'find').mockImplementation(((query:any)=>({limit(){return this},async toArray(){return query.requestId.$in.map((id:string)=>requests.get(id)).filter(Boolean)}})) as any)
+ const save=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{const request=requests.get(query.requestId);if(options.selectionFailure&&!selectionFailed){selectionFailed=true;throw Error('temporary request write failure')}if(request.fleetResourceReservation)return null;Object.assign(request,update.$set);return structuredClone(request)}) as any)
+ return {writes,requests,host:()=>host,restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore()}}
+}
+test('two simultaneous lane claims atomically fence the existing host record and cannot spend the same bytes',async()=>{
+ const f=admissionFixture()
  try{
-  const results=await Promise.all([routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now),routineJobRepository.reserveResources!('two','a'.repeat(64),'host','mac',now)])
-  expect(results.filter(Boolean)).toHaveLength(1);expect(claims).toHaveLength(1)
-  expect(host.mock.calls[0]![1]).toEqual({$inc:{resourceReservationVersion:1}})
-  expect((save.mock.calls[0] as unknown as unknown[])[2]).toMatchObject({session:'session'})
- }finally{transaction.mockRestore();first.mockRestore();host.mockRestore();find.mockRestore();save.mockRestore()}
+  const results=await Promise.all([routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now),routineJobRepository.reserveResources!('two','a'.repeat(64),'host','android',now)])
+  expect(results.filter(Boolean)).toHaveLength(1);expect(f.host().resourceReservations).toHaveLength(1)
+  expect(f.writes[0]).toMatchObject({hostId:'host',sequence:1,resourceReservationVersion:0})
+ }finally{f.restore()}
+})
+test('a host report racing admission requires a fresh snapshot CAS before retaining the receipt',async()=>{
+ const f=admissionFixture({reportRace:true})
+ try{expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).not.toBeNull();expect(f.writes.map(value=>value.sequence)).toEqual([1,2])}finally{f.restore()}
+})
+test('offline or missing hosts cannot reserve recorder capacity',async()=>{
+ for(const options of [{missing:true},{offline:true}]){const f=admissionFixture(options)
+  try{expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).toBeNull();expect(f.writes).toEqual([])}finally{f.restore()}}
+})
+test('a failed target receipt write converges on the same authoritative host claim without leaking another reservation',async()=>{
+ const f=admissionFixture({selectionFailure:true})
+ try{
+  await expect(routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).rejects.toThrow('temporary request write failure')
+  const original=f.host().resourceReservations[0]
+  expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).not.toBeNull()
+  expect(f.host().resourceReservations).toEqual([original]);expect(f.requests.get('one').fleetResourceReservation.id).toBe(original.id)
+ }finally{f.restore()}
 })
