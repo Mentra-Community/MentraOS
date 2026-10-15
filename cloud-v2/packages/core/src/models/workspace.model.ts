@@ -28,6 +28,19 @@ const DeletionHoldSchema = new Schema(
   {_id: false},
 )
 
+/**
+ * The `asOf` of the newest set or clear of one service's hold that Core applied
+ * (`deletion-hold.service.ts`). Kept after a clear too, so a set computed before
+ * the clear and applied late is recognized as stale.
+ */
+const DeletionHoldAsOfSchema = new Schema(
+  {
+    service: {type: String, required: true},
+    asOf: {type: Date, required: true},
+  },
+  {_id: false},
+)
+
 const WorkspaceSchema = new Schema(
   {
     /** `ws_<ulid>`. */
@@ -42,6 +55,11 @@ const WorkspaceSchema = new Schema(
      * such field, which means none. Not indexed: it is read with the workspace, never searched.
      */
     deletionHolds: {type: [DeletionHoldSchema], default: undefined},
+    /**
+     * For each service that has set or cleared a hold, the `asOf` of the newest call Core applied,
+     * sorted by service. Absent until the first; not indexed, like `deletionHolds`.
+     */
+    deletionHoldAsOf: {type: [DeletionHoldAsOfSchema], default: undefined},
   },
   {timestamps: true, collection: "workspaces"},
 )

@@ -113,6 +113,9 @@ export interface ResolveEmailResponse {
  * with `PUT /workspaces/:workspaceId/deletion-holds/:service` (replacing its previous one) and clears
  * with `DELETE` on the same path.
  *
+ * Every set and clear carries `asOf`, the instant the service computed it ({@link DeletionHoldUpdate}),
+ * so a call Core applies late never overwrites a newer one.
+ *
  * `service` is the service that placed it (`store`); `reason` is a lowercase code
  * ({@link DELETION_HOLD_REASON_PATTERN}, for example `owns_miniapps`); `count`, when present, is how
  * many of the things the reason names the workspace still has. `describeDeletionHold` puts a hold in
@@ -124,10 +127,39 @@ export interface WorkspaceDeletionHold {
   count?: number
 }
 
+/**
+ * What every set and clear of a hold carries (`PUT` and `DELETE` bodies both): `asOf`, the instant at
+ * which the service computed the hold, as an ISO 8601 UTC string with at most millisecond precision
+ * (`Date.prototype.toISOString`). Take it just before reading what the hold counts, so the count
+ * reflects every change made before it, and make it later than every `asOf` the service sent for the
+ * workspace before: an equal `asOf` with a different hold is stale too, and wall clocks repeat, step
+ * back and differ between hosts.
+ *
+ * Core keeps, for each service, the newest `asOf` it has applied, a clear's included, and ignores a
+ * set or clear that is not newer (see {@link DeletionHoldsResponse.ignored}): a call that timed out
+ * and reached Core late cannot undo a newer one. The same call again, with the same `asOf`, is
+ * answered as applied. An `asOf` more than {@link DELETION_HOLD_MAX_FUTURE_SKEW_MS} ahead of Core's
+ * clock is 400 `invalid_request`, as is a missing or malformed one.
+ */
+export interface DeletionHoldUpdate {
+  asOf: string
+}
+
+/** How far ahead of Core's clock a hold's `asOf` may be: five minutes. */
+export const DELETION_HOLD_MAX_FUTURE_SKEW_MS = 5 * 60_000
+
 /** Response of `PUT` and `DELETE /workspaces/:workspaceId/deletion-holds/:service`: every hold on the workspace after the call. */
 export interface DeletionHoldsResponse {
   workspaceId: string
   holds: WorkspaceDeletionHold[]
+  /**
+   * True when Core ignored the call because it has already applied a set or clear from this service
+   * with a newer `asOf`, or the same `asOf` and a different hold. Core wrote and recorded nothing, and
+   * `holds` are the holds it keeps. A stale call changes nothing, so it is not a failure, but a caller
+   * that needs the workspace held (before a publication takes effect) must find its own hold in
+   * `holds`: an ignored set leaves whatever the newer call did, a clear included.
+   */
+  ignored: boolean
 }
 
 /** What a hold's `reason` must match: a lowercase code of at most 64 letters, digits and underscores, starting with a letter. */

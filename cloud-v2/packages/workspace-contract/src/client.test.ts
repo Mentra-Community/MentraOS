@@ -580,7 +580,8 @@ describe("failures", () => {
 })
 
 describe("deletion holds", () => {
-  const holds = (...entries: WorkspaceDeletionHold[]): DeletionHoldsResponse => ({workspaceId: "ws 1", holds: entries})
+  const AS_OF = new Date("2026-10-14T12:34:56.789Z")
+  const holds = (...entries: WorkspaceDeletionHold[]): DeletionHoldsResponse => ({workspaceId: "ws 1", holds: entries, ignored: false})
   const verifies = (call: Recorded) => {
     const url = new URL(call.url)
     const timestampMs = Number(call.headers.get(SERVICE_HEADERS.timestamp))
@@ -595,47 +596,63 @@ describe("deletion holds", () => {
     })
   }
 
-  test("setDeletionHold PUTs the reason and count to this service's own hold, signed over the exact path and body", async () => {
+  test("setDeletionHold PUTs the reason, count and asOf to this service's own hold, signed over the exact path and body", async () => {
     const answer = holds({service: "store", reason: "owns_miniapps", count: 3})
     const {client, calls} = clientFor(() => json(answer))
 
-    expect(await client.setDeletionHold("ws 1", {reason: "owns_miniapps", count: 3})).toEqual(answer)
+    expect(await client.setDeletionHold("ws 1", {reason: "owns_miniapps", count: 3, asOf: AS_OF})).toEqual(answer)
 
     expect(calls).toHaveLength(1)
     expect(calls[0].method).toBe("PUT")
     // The service in the path is always the one the client signs as: a service sets only its own hold.
     expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws%201/deletion-holds/store`)
     expect(calls[0].headers.get("content-type")).toBe("application/json")
-    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps", count: 3})
+    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps", count: 3, asOf: "2026-10-14T12:34:56.789Z"})
     expect(verifies(calls[0])).toBe(true)
   })
 
   test("setDeletionHold sends no count when it is given none", async () => {
     const {client, calls} = clientFor(() => json(holds({service: "store", reason: "owns_miniapps"})))
-    await client.setDeletionHold("ws_1", {reason: "owns_miniapps"})
-    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps"})
+    await client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF})
+    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps", asOf: "2026-10-14T12:34:56.789Z"})
   })
 
-  test("clearDeletionHold DELETEs this service's hold with an empty body, and returns the holds left", async () => {
+  test("clearDeletionHold DELETEs this service's hold with its asOf, and returns the holds left", async () => {
     const answer = holds({service: "fleet", reason: "manages_devices"})
     const {client, calls} = clientFor(() => json(answer))
 
-    expect(await client.clearDeletionHold("ws 1")).toEqual(answer)
+    expect(await client.clearDeletionHold("ws 1", {asOf: AS_OF})).toEqual(answer)
 
     expect(calls[0].method).toBe("DELETE")
     expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws%201/deletion-holds/store`)
-    expect(calls[0].body).toBe("")
+    expect(calls[0].headers.get("content-type")).toBe("application/json")
+    expect(JSON.parse(calls[0].body)).toEqual({asOf: "2026-10-14T12:34:56.789Z"})
     expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("an update Core ignored as stale resolves with the holds Core keeps and ignored: true", async () => {
+    const answer: DeletionHoldsResponse = {workspaceId: "ws 1", holds: [{service: "store", reason: "owns_miniapps", count: 2}], ignored: true}
+    const {client} = clientFor(() => json(answer))
+    expect(await client.clearDeletionHold("ws 1", {asOf: AS_OF})).toEqual(answer)
+    expect(await client.setDeletionHold("ws 1", {reason: "owns_miniapps", count: 5, asOf: AS_OF})).toEqual(answer)
+  })
+
+  test("an asOf that is not a valid date is refused before anything is sent", async () => {
+    const {client, calls} = clientFor(() => json(holds()))
+    const invalid = new Date(Number.NaN)
+    await expect(client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: invalid})).rejects.toThrow(RangeError)
+    await expect(client.clearDeletionHold("ws_1", {asOf: invalid})).rejects.toThrow(RangeError)
+    expect(calls).toHaveLength(0)
   })
 
   test("a refusal is an error with Core's status: an unknown workspace, a deleted one, another service's hold", async () => {
     const unknown = clientFor(() => json({error: "workspace_not_found"}, 404))
-    expect((await expectClientError(unknown.client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "bad_request")).status).toBe(404)
-    expect((await expectClientError(unknown.client.clearDeletionHold("ws_1"), "bad_request")).status).toBe(404)
+    expect((await expectClientError(unknown.client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "bad_request")).status).toBe(404)
+    expect((await expectClientError(unknown.client.clearDeletionHold("ws_1", {asOf: AS_OF}), "bad_request")).status).toBe(404)
     const deleted = clientFor(() => json({error: "workspace_deleted"}, 410))
-    expect((await expectClientError(deleted.client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "bad_request")).status).toBe(410)
+    expect((await expectClientError(deleted.client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "bad_request")).status).toBe(410)
     const forbidden = clientFor(() => json({error: "forbidden"}, 403))
-    await expectClientError(forbidden.client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "forbidden")
+    await expectClientError(forbidden.client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "forbidden")
   })
 
   test("fails closed on an answer that does not have the holds shape", async () => {
@@ -647,10 +664,14 @@ describe("deletion holds", () => {
       {workspaceId: "ws_1", holds: [{service: "store"}]},
       {workspaceId: "ws_1", holds: [{service: "store", reason: "owns_miniapps", count: "3"}]},
       {workspaceId: "ws_1", holds: [{service: "store", reason: "owns_miniapps", count: 0}]},
+      // A Core that predates asOf says nothing about it, and would have applied a late call.
+      {workspaceId: "ws_1", holds: []},
+      {workspaceId: "ws_1", holds: [], ignored: "true"},
+      {workspaceId: "ws_1", holds: [], ignored: null},
     ]) {
       const {client} = clientFor(() => json(body))
-      await expectClientError(client.setDeletionHold("ws_1", {reason: "owns_miniapps"}), "bad_response")
-      await expectClientError(client.clearDeletionHold("ws_1"), "bad_response")
+      await expectClientError(client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "bad_response")
+      await expectClientError(client.clearDeletionHold("ws_1", {asOf: AS_OF}), "bad_response")
     }
   })
 })
