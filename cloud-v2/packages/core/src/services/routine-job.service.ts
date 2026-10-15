@@ -1,5 +1,6 @@
 import {TestHostStateModel} from '../models/test-host-state.model';
-import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, recorderHostReservationsSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
+import {hostResourceReservationsSchema, isExclusiveHostReservation} from '../types/resource-reservations.types';
+import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
 import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
@@ -98,7 +99,8 @@ export const routineJobRepository: RoutineJobRepository = {
       if (host.hostId !== hostId || !lane || !required || !offered || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' ||
         now.getTime() - hostRow.receivedAt.getTime() > 120_000 || hostRow.receivedAt > now ||
         !compatibleRoutineLane(requirements, {...lane, resources: lane.resources.map(value => value.kind === 'recorder' ? {...value, storage: offered} : value)}, permissionContext(host.frameworkBinding, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
-      const claims = recorderHostReservationsSchema.parse(hostRow.resourceReservations ?? []);
+      const allClaims = hostResourceReservationsSchema.parse(hostRow.resourceReservations ?? []),
+        exclusiveClaims = allClaims.filter(isExclusiveHostReservation), claims = allClaims.filter(value => !isExclusiveHostReservation(value));
       const requests = claims.length ? await TestRequestModel.collection.find({requestId: {$in: claims.map(value => value.requestId)}},
         {projection: {requestId: 1, inputSha256: 1, fleetInputSha256: 1, fleetResourceReservation: 1, fleetBinding: 1, fleetCancellation: 1,
           dispatchCompletion: 1, input: 1, hostId: 1, state: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
@@ -106,7 +108,7 @@ export const routineJobRepository: RoutineJobRepository = {
       const retained = reconcileRecorderHostReservations(claims, requests, offered);
       const own = retained.find(value => value.requestId === requestId && value.fleetInputSha256 === fleetInputSha256);
       if (retained.some(value => value.requestId === requestId && value.fleetInputSha256 !== fleetInputSha256) ||
-        selected && own?.id !== selected.id || own && own.poolId !== offered.poolId || !own && retained.length >= 1000) return null;
+        selected && own?.id !== selected.id || own && own.poolId !== offered.poolId || !own && retained.length + exclusiveClaims.length >= 1000) return null;
       const unobserved = unobservedRecorderHostReservations(retained.filter(value => value !== own), requests, offered);
       if (!recorderStorageAvailable(offered, required, now.getTime(), unobserved)) return null;
       const chosenModel = row.fleetPreparation.requirements.glasses ? lane.glasses!.find(value =>
@@ -117,7 +119,7 @@ export const routineJobRepository: RoutineJobRepository = {
       const savedHost = await TestHostStateModel.collection.findOneAndUpdate({hostId, incarnation: hostRow.incarnation,
         incarnationGeneration: hostRow.incarnationGeneration, sequence: hostRow.sequence,
         resourceReservationVersion: hostRow.resourceReservationVersion ?? {$exists: false}},
-        {$set: {resourceReservations: own ? retained : [...retained, claim]}, $inc: {resourceReservationVersion: 1}},
+        {$set: {resourceReservations: [...exclusiveClaims, ...(own ? retained : [...retained, claim])]}, $inc: {resourceReservationVersion: 1}},
         {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 10_000});
       if (!savedHost) continue;
       if (selected) return row;

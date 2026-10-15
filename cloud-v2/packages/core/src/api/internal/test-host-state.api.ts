@@ -5,7 +5,9 @@ import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth
 import {frameworkBodyLimit, frameworkJson} from "./framework-json"
 import {TestHostStateService} from "../../services/test-host-state.service"
 import {TestRunError} from "../../services/test-result-error"
-export function createTestHostStateApi(service = new TestHostStateService(), credentials?: () => string | undefined, controls = new LaneControlsService()) {
+import {ResourceReservationsService} from '../../services/resource-reservations.service'
+export function createTestHostStateApi(service = new TestHostStateService(), credentials?: () => string | undefined,
+  controls = new LaneControlsService(), resources = new ResourceReservationsService()) {
   const app = new Hono<TestHostEnv>()
   app.use("*", createTestHostAuth(credentials))
   app.onError((error, c) =>
@@ -24,5 +26,9 @@ export function createTestHostStateApi(service = new TestHostStateService(), cre
   app.post("/deployment", frameworkBodyLimit(), async (c) =>
     c.json(await service.reportDeployment(await frameworkJson(c), c.var.testHostId)),
   )
+  app.post('/resource-reservations/acquire', frameworkBodyLimit(16_384), async c =>
+    c.json(await resources.acquire(await frameworkJson(c), c.var.testHostId)))
+  app.post('/resource-reservations/return', frameworkBodyLimit(4096), async c =>
+    c.json(await resources.giveBack(await frameworkJson(c), c.var.testHostId)))
   return app
 }
