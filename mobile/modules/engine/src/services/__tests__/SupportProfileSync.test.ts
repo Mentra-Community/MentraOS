@@ -274,6 +274,28 @@ describe("SupportProfileSync", () => {
     expect(sentSnapshots().map((snapshot) => snapshot.host.failureCode)).toEqual(["bluetooth_unavailable"])
   })
 
+  test("a Core that keeps failing is retried on its backoff, not with every reconnect attempt", async () => {
+    startSupportProfileSync()
+    await flushPromises()
+    updateMock.mockClear()
+    updateMock.mockImplementation(async () => {
+      throw new Error("observedAt is outside the accepted window")
+    })
+
+    disconnectGlasses()
+    await retryGlassesThatAreAway(60)
+
+    // The disconnect, then retries 30 s, 1, 2, 4, 8, 16 and 32 minutes after each failure (the next is at 63.5 min).
+    expect(updateMock).toHaveBeenCalledTimes(7)
+
+    // Something new still goes out without waiting for the next retry: the glasses back, updated.
+    connectGlasses()
+    setGlasses({firmwareVersion: "1.2.4"})
+    await advance(5_000)
+    expect(updateMock).toHaveBeenCalledTimes(8)
+    expect(sentSnapshots().at(-1)?.device?.firmwareVersion).toBe("1.2.4")
+  })
+
   test("does not schedule traffic when an old request finishes after stop", async () => {
     let finish: ((value: {status: "accepted"}) => void) | null = null
     updateMock.mockImplementationOnce(
