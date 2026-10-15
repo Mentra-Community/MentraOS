@@ -45,6 +45,8 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (offered.length !== 1) throw new TestRunError(409, "Configured lane has no unique compatible glasses model and provider capabilities.");
     glassesResourceId = offered[0]!.resourceId;
     if (offered[0]!.model === 'nimo') {
+      if (definition.definition.minimumRoutineApiVersion < 43 || definition.routineSource.minimumRoutineApiVersion < 43)
+        throw new TestRunError(409, 'NIMO connection requires routine API 43 or later.');
       const capabilities = definition.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities;
       if (definition.platform !== 'android' || glassesRequirement.startSoftware || capabilities.length !== 1 || capabilities[0] !== 'connection' ||
         offered[0]!.capabilities.length !== 1 || offered[0]!.capabilities[0] !== 'connection' || !/^(?:[A-F0-9]{2}:){5}[A-F0-9]{2}$/.test(offered[0]!.deviceId))

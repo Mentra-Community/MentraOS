@@ -2,6 +2,7 @@ import {expect, test} from 'bun:test'
 import {testRoutineSource} from "../testing/framework-fixtures"
 import {CandidateVerificationService, type CandidateWorkRecord} from './candidate-verification.service'
 import {authoringWorkSchema} from '../types/routine-work.types'
+import {frameworkExecutableBuild} from '../types/framework-request.types'
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type TestRequestRepository} from './test-request.service'
 
 const sourceRevision = 'c'.repeat(40)
@@ -82,6 +83,7 @@ test('only authenticated candidate intake is admitted; retained local receipt re
   expect(authorizations).toBe(2)
 })
 
+<<<<<<< HEAD
 test('candidate authorization uses only the fresh accepted pre-admission retry of an unchanged failed attempt',async()=>{
  const row=accepted(),original=row.status!.details as any,now=Date.parse('2026-10-15T22:30:00Z')
  original.state='failed';original.details.reason='Original permission refusal'
@@ -113,3 +115,21 @@ test('candidate authorization uses only the fresh accepted pre-admission retry o
  row.verification!.status.details={...(row.verification!.status.details as any),state:'cancelled'}
  expect(await intake.registerLocal(selected,{...receipt,requestId},'mini')).toEqual(admitted)
 })
+||||||| parent of fb6e2a116c (Preserve NIMO candidate and accepted build lineage)
+=======
+test('NIMO candidate authority omits only Live manifest fields for the exact accepted connection job', async () => {
+  const row = accepted(), manifest = {url: 'https://example.com/live.json', sha256: 'f'.repeat(64), size: 100};
+  const original = authoringWorkSchema.parse({...row.work, requirements: {...row.work.requirements, glasses: ['nimo'],
+    resources: [...row.work.requirements.resources, {kind: 'glasses', capabilities: ['connection']}]},
+    build: {...row.work.build, manifest, manifestSha256: manifest.sha256}});
+  const digest = requestInputDigest(original), status = row.status!.details as any;
+  row.work = original; row.inputSha256 = digest; row.acceptance!.inputSha256 = digest; status.work = original; status.inputSha256 = digest;
+  const input = {...selected, glassesModel: 'nimo' as const, build: frameworkExecutableBuild(original.build as any, 'nimo')};
+  const service = new CandidateVerificationService(async () => row);
+  await service.authorize(verification, 'mini', input);
+  await expect(service.authorize(verification, 'mini', {...input, build: {...input.build, archive: {...input.build.archive as any, sha256: 'a'.repeat(64)}}})).rejects.toThrow('accepted current');
+  await expect(service.authorize(verification, 'mini', {...input, glassesModel: undefined})).rejects.toThrow('accepted current');
+  row.work.requirements.resources.find(value => value.kind === 'glasses')!.capabilities = [];
+  await expect(service.authorize(verification, 'mini', input)).rejects.toThrow('accepted model and connection');
+});
+>>>>>>> fb6e2a116c (Preserve NIMO candidate and accepted build lineage)

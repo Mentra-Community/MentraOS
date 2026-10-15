@@ -1,4 +1,4 @@
-import {frameworkRequestInputSchema, recordedFrameworkRequestInputSchema} from '../types/framework-request.types'
+import {frameworkExecutableBuild, frameworkRequestInputSchema, recordedFrameworkRequestInputSchema} from '../types/framework-request.types'
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from '../types/routine-dispatch.types'
 import {portableRoutineSelectionSchema, type PortableRoutineSelection, type StoredRoutineJob} from '../types/routine-job.types'
 import {requestInputDigest, type StoredRequest} from './test-request.service'
@@ -44,7 +44,7 @@ export function readAcceptedRoutineRequest(row: StoredRequest | StoredRoutineJob
  if (!parsed.success || requestInputDigest(parsed.data) !== request.inputSha256 || intent &&
   (parsed.data.routineId !== intent.routineId || parsed.data.platform !== intent.platform || parsed.data.definitionRevision !== intent.routineRevision || parsed.data.laneId !== intent.laneId
    || parsed.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion || intent.routineSource && requestInputDigest(parsed.data.routineSource ?? null) !== requestInputDigest(intent.routineSource)
-   || requestInputDigest(parsed.data.build) !== requestInputDigest(intent.build)))
+   || requestInputDigest(parsed.data.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, parsed.data.glassesModel))))
   throw new TestRunError(503, 'Rerun request differs from its frozen input')
  return {ready: true, input: parsed.data, ...(selection ? {selection} : {})}
 }

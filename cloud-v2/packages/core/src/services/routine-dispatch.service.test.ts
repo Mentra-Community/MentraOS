@@ -5,6 +5,10 @@ import {reconcileRecorderHostReservations} from './routine-job.service';
 import {RoutineDispatchService, recordedRoutineBuild} from './routine-dispatch.service';
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest, type TestRequestRepository} from './test-request.service';
 import {TestRunError} from './test-result-error';
+import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {frameworkRequestInputSchema} from '../types/framework-request.types';
+import {readAcceptedRoutineRequest} from './routine-request-input';
+import {nightlyPreparedInput} from './nightly-routine.service';
 const source = {channel: 'pr' as const, prNumber: 12, buildRunId: 55, publicationAttempt: 2};
 const selected = {requestId: 'pr:12:routine', routineId: 'arbitrary.new-routine', platform: 'android' as const, source};
 function fixture() {
@@ -32,30 +36,44 @@ function fixture() {
     {async resolve(override){sourceResolves++;return override??revision},async inventory(commit){return {commit,files:[{path:`routines/${selected.routineId}/routine.ts`,gitBlobSha1:'f'.repeat(40),size:10}]}}}, null);
   return {service,requests,repository,definition,definitions,get resolves(){return resolves},get sourceResolves(){return sourceResolves},get enrollments(){return enrollments},set revision(value:string){revision=value},set available(value:boolean){available=value},set automatic(value:boolean){automatic=value}};
 }
-test('NIMO prepared dispatch preserves the frozen app identity while removing only incompatible Live firmware', async () => {
+for (const routineApiVersion of [42, 43]) test(`NIMO prepared dispatch preserves app identity and handles routine API ${routineApiVersion} before completion`, async () => {
   const f = fixture(), manifest = {url: 'https://artifactscdn.mentraglass.com/live/manifest.json', sha256: 'f'.repeat(64), size: 100};
-  const row = f.definition(), body = {...row.definition, minimumRoutineApiVersion: 43, glasses: {models: ['nimo']},
+  const row = f.definition(), body = {...row.definition, minimumRoutineApiVersion: routineApiVersion, glasses: {models: ['nimo']},
     resourceRequirements: [...row.definition.resourceRequirements, {kind: 'glasses' as const, capabilities: ['connection']}],
     execution: {...row.definition.execution!, resourceKinds: [...row.definition.execution!.resourceKinds, 'glasses' as const]}};
   const definition = routineEnrollmentSchema.parse({...row, definition: body, definitionSha256: requestInputDigest(body),
-    routineSource: {...row.routineSource, minimumRoutineApiVersion: 43}});
+    routineSource: {...row.routineSource, minimumRoutineApiVersion: routineApiVersion}});
   const original = (f.service as any).builds, hosts = (f.service as any).hosts;
   (f.service as any).builds = {async resolve(...args: unknown[]) {return {...await original.resolve(...args), manifest, manifestSha256: manifest.sha256}}};
   (f.service as any).hosts = {async get(hostId: string) {const state = await hosts.get(hostId), lane = state.lanes[0];
     lane.resources.push({id: 'nimo-pair', kind: 'glasses', capabilities: ['connection']});
     lane.glasses = [{resourceId: 'nimo-pair', deviceId: 'AA:BB:CC:DD:40:27', model: 'nimo', capabilities: ['connection']}]; return state}};
-  const waiting = await f.service.submit(selected), frozen = waiting.dispatchIntent!.build;
+  const waiting = await f.service.submit(selected), intent = routineDispatchIntentSchema.parse(waiting.dispatchIntent), frozen = intent.build;
   expect(frozen.manifest).toEqual(manifest);
   const completion = {dispatchIntentSha256: waiting.dispatchIntentSha256, routineSource: definition.routineSource,
     definitionSha256: definition.definitionSha256, definition: definition.definition};
+  if (routineApiVersion < 43) {
+    await expect(f.service.prepared(selected.requestId, 'mini', completion)).rejects.toMatchObject({status: 409, message: expect.stringContaining('routine API 43')});
+    expect((await f.service.detail(selected.requestId)).request.state).toBe('preparing');
+    expect((await f.requests.get(selected.requestId))).not.toHaveProperty('input');
+    return;
+  }
   const queued = await f.service.prepared(selected.requestId, 'mini', completion);
   if (!isExecutableRequest(queued)) throw new Error('Expected one NIMO executable request');
+  const queuedInput = frameworkRequestInputSchema.parse(queued.input);
   const {manifest: _manifest, manifestSha256: _manifestSha256, ...expectedApp} = frozen;
   expect(queued.input).toMatchObject({glassesModel: 'nimo', build: expectedApp});
-  expect((queued.input as any).build.manifest).toBeUndefined();
-  expect((queued.input as any).build.manifestSha256).toBeUndefined();
-  expect(queued.dispatchIntent).toEqual(waiting.dispatchIntent);
-  expect(await f.service.prepared(selected.requestId, 'mini', completion)).toEqual(queued);
+  expect(queuedInput.build.manifest).toBeUndefined();
+  expect(queuedInput.build.manifestSha256).toBeUndefined();
+  expect(queued.dispatchIntent).toEqual(intent);
+  expect(requestInputDigest(await f.service.prepared(selected.requestId, 'mini', completion))).toBe(requestInputDigest(queued));
+  expect(readAcceptedRoutineRequest(queued)).toEqual({ready: true, input: queuedInput});
+  const member = {memberId: 'nimo-member', requestId: selected.requestId, routineId: intent.routineId, platform: intent.platform,
+    routineRevision: intent.routineRevision, definitionRevision: intent.routineRevision, dispatchIntent: intent};
+  expect(nightlyPreparedInput(member, queuedInput, queued.inputSha256)).toEqual(queuedInput);
+  const forged = {...queuedInput, build: {...queuedInput.build, receipt: {...queuedInput.build.receipt as object, sha256: 'a'.repeat(64)}}};
+  expect(() => readAcceptedRoutineRequest({...queued, input: forged, inputSha256: requestInputDigest(forged)})).toThrow('frozen input');
+  expect(() => nightlyPreparedInput(member, forged, requestInputDigest(forged))).toThrow('frozen input');
   await expect(f.requests.completePreparation(selected.requestId, 'mini', waiting.dispatchIntentSha256!,
     {...queued.input as any, build: {...expectedApp, archive: {...expectedApp.archive as any, sha256: 'a'.repeat(64)}}})).rejects.toThrow('original dispatch intent');
 });

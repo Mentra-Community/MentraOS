@@ -281,6 +281,7 @@ test('only the actual Android connection-only NIMO inventory omits Live software
 });
 test('NIMO never admits a firmware, BLE, other-model or fabricated-identity provider', () => {
   for (const mutate of [
+    (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.minimumRoutineApiVersion = 42; d.routineSource.minimumRoutineApiVersion = 42},
     (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = []},
     (_d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities = []},
     (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.glasses!.startSoftware = {model: 'mentra-live', manifest}},
@@ -292,6 +293,8 @@ test('NIMO never admits a firmware, BLE, other-model or fabricated-identity prov
     const {definition, observed} = nimoSelection(); mutate(definition, observed);
     expect(() => select(definition, build, observed)).toThrow();
   }
+  const old = nimoSelection(); old.definition.definition.minimumRoutineApiVersion = 42; old.definition.routineSource.minimumRoutineApiVersion = 42;
+  expect(() => select(old.definition, build, old.observed)).toThrow(expect.objectContaining({status: 409, message: expect.stringContaining('routine API 43')}));
   // Live remains firmware-bound even when it requests connection only.
   expect(() => select(enrollment(), {...build, manifest: undefined})).toThrow('immutable glasses manifest');
 });
