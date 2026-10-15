@@ -80,12 +80,15 @@ API), to its owners and to Organization Admins alike, until the Store clears the
 hold.
 
 ```ts
-// Take asOf just before counting, so the count reflects every change made before it.
-const asOf = new Date()
+// Under the workspace's lock: an asOf later than the last one sent for this workspace, taken just
+// before counting, so the count reflects every change made before it.
+const asOf = nextAsOf(workspaceId)
 const published = await countPublishedMiniapps(workspaceId)
 
-// Before a publish takes effect: hold for what the workspace will own. If Core refuses, refuse the publish.
-await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published + 1, asOf})
+// Before a publish takes effect: hold for what the workspace will own. If Core refuses, or its answer
+// does not hold the workspace, refuse the publish.
+const answer = await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published + 1, asOf})
+if (!answer.holds.some(hold => hold.service === "store")) throw new Error("the workspace is not held")
 
 // After an unpublish, a miniapp delete or a failed publish, from the Store's own records:
 if (published > 0) await core.setDeletionHold(workspaceId, {reason: "owns_miniapps", count: published, asOf})
@@ -96,7 +99,9 @@ else await core.clearDeletionHold(workspaceId, {asOf})
   lower or clear it only after an unpublish or delete has. A workspace deleted
   between a publish and its hold would leave the miniapp published with nobody
   to manage it. So if Core refuses the hold (`410 workspace_deleted`,
-  `404 workspace_not_found`), refuse the publish. A publish that fails after
+  `404 workspace_not_found`), refuse the publish, and refuse it too when Core's
+  answer does not hold the workspace (`holds` has no `store` hold: Core ignored
+  the update for a newer clear). A publish that fails after
   the hold sets the count back from the Store's records. At worst the workspace
   is held a moment longer than it needs to be, never released early.
 - **One writer per workspace.** Each call replaces the Store's hold, so two
@@ -111,6 +116,13 @@ else await core.clearDeletionHold(workspaceId, {asOf})
   it owns miniapps, and a late set cannot bring back a hold a newer clear
   removed. The lock keeps the Store's own calls in order; `asOf` covers the ones
   Core applies after the Store gave up on them.
+- **Strictly later each time.** Core takes an equal `asOf` with a different
+  hold as stale, and wall clocks repeat a millisecond, step backwards and differ
+  between hosts. So stamp `asOf` under the workspace's lock, from one clock (the
+  Store's database), and later than the last `asOf` sent for that workspace:
+  the greater of now and the previous one plus a millisecond. Then every update
+  the Store makes is newer than the ones before it, and only a call Core applies
+  late is ever ignored.
 - **Reconcile.** At startup, and on a schedule, set every workspace's hold from
   the Store's records: hold the workspaces that own published miniapps, clear
   the rest. This repairs a call that failed. The first run is the backfill for

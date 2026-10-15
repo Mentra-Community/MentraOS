@@ -78,9 +78,11 @@ export interface CoreWorkspaceClient {
    * Hold the workspace from deletion for this service, replacing its previous hold: while any service
    * holds a workspace, Core refuses to delete it (409 `workspace_has_holds`). `reason` is a lowercase
    * code (`owns_miniapps`); `count`, when given, is a positive whole number of what the reason names.
-   * `asOf` is when the service computed the hold, taken just before reading what it counts: Core
-   * ignores the call (`ignored: true`, changing nothing) when it has applied a newer one from this
-   * service, so a late call never overwrites a newer hold. Setting the hold the service already has
+   * `asOf` is when the service computed the hold, taken just before reading what it counts and later
+   * than the service's previous `asOf` for the workspace: Core ignores the call (`ignored: true`,
+   * changing nothing) when it has applied a newer one from this service, so a late call never
+   * overwrites a newer hold. A caller that needs the workspace held must find its own hold in the
+   * answer's `holds`, which an ignored call does not promise. Setting the hold the service already has
    * changes no hold. Resolves to every hold on the workspace afterwards. Core refuses an unknown
    * workspace (404), a deleted one (410) and an `asOf` more than five minutes ahead of its clock
    * (400). An invalid `asOf` throws a `RangeError` before anything is sent.

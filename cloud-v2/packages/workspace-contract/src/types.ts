@@ -131,7 +131,9 @@ export interface WorkspaceDeletionHold {
  * What every set and clear of a hold carries (`PUT` and `DELETE` bodies both): `asOf`, the instant at
  * which the service computed the hold, as an ISO 8601 UTC string with at most millisecond precision
  * (`Date.prototype.toISOString`). Take it just before reading what the hold counts, so the count
- * reflects every change made before it.
+ * reflects every change made before it, and make it later than every `asOf` the service sent for the
+ * workspace before: an equal `asOf` with a different hold is stale too, and wall clocks repeat, step
+ * back and differ between hosts.
  *
  * Core keeps, for each service, the newest `asOf` it has applied, a clear's included, and ignores a
  * set or clear that is not newer (see {@link DeletionHoldsResponse.ignored}): a call that timed out
@@ -153,7 +155,9 @@ export interface DeletionHoldsResponse {
   /**
    * True when Core ignored the call because it has already applied a set or clear from this service
    * with a newer `asOf`, or the same `asOf` and a different hold. Core wrote and recorded nothing, and
-   * `holds` are the holds it keeps. A stale call changes nothing, so it is not a failure.
+   * `holds` are the holds it keeps. A stale call changes nothing, so it is not a failure, but a caller
+   * that needs the workspace held (before a publication takes effect) must find its own hold in
+   * `holds`: an ignored set leaves whatever the newer call did, a clear included.
    */
   ignored: boolean
 }
