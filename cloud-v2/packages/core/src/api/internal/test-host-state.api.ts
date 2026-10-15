@@ -28,6 +28,8 @@ export function createTestHostStateApi(service = new TestHostStateService(), cre
   )
   app.post('/resource-reservations/acquire', frameworkBodyLimit(16_384), async c =>
     c.json(await resources.acquire(await frameworkJson(c), c.var.testHostId)))
+  app.post('/resource-reservations/observe', frameworkBodyLimit(16_384), async c =>
+    c.json(await resources.observe(await frameworkJson(c), c.var.testHostId)))
   app.post('/resource-reservations/return', frameworkBodyLimit(4096), async c =>
     c.json(await resources.giveBack(await frameworkJson(c), c.var.testHostId)))
   return app

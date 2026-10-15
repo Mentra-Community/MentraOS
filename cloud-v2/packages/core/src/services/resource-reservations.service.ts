@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto'
 import {isDeepStrictEqual} from 'node:util'
 import {TestHostStateModel} from '../models/test-host-state.model'
 import {testWriteConcern} from '../models/test-write-concern'
-import {exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, hostResourceReservationsSchema,
+import {exclusiveResourceIntentSchema, exclusiveResourceObservationInputSchema, exclusiveResourceReturnSchema, hostResourceReservationsSchema,
   isExclusiveHostReservation, type ExclusiveHostReservation, type ExclusiveResourceDependency, type ExclusiveResourceIntent,
   type HostResourceReservation} from '../types/resource-reservations.types'
 import {hostStateSchema, type TestHostState} from './test-host-state.service'
@@ -102,6 +102,28 @@ export class ResourceReservationsService {
         return {status: 'reserved' as const, intentSha256, claims: [...current, ...next]}
     }
     throw new TestRunError(409, 'Resource authority changed; retry the unchanged reservation intent')
+  }
+  /** Read the exact old claim after lost transport or restart; this operation can neither acquire nor release anything. */
+  async observe(value: unknown, hostId: string) {
+    const input = exclusiveResourceObservationInputSchema.parse(value), intent = input.intent
+    if (intent.hostId !== hostId) throw new TestRunError(409, 'Original resource intent differs from authenticated controller')
+    const borrower = await this.host(hostId)
+    if (!fresh(borrower, this.now()) || borrower.incarnation !== input.controller.incarnation ||
+      borrower.incarnationGeneration !== input.controller.generation || borrower.sequence !== input.controller.sequence ||
+      input.controller.generation < intent.controller.generation ||
+      input.controller.generation === intent.controller.generation && input.controller.incarnation !== intent.controller.incarnation)
+      throw new TestRunError(409, 'Original claim observation requires the current reporting controller')
+    const selected = dependencies(borrower, intent), intentSha256 = requestInputDigest({...intent,
+      controller: {incarnation: intent.controller.incarnation, generation: intent.controller.generation}, dependencies: selected})
+    if (!selected.length || new Set(selected.map(dependency => dependency.authorityHostId)).size !== 1)
+      throw new TestRunError(409, 'Original exclusive claim observation requires its unchanged canonical authority')
+    const authority = await this.host(selected[0]!.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
+      .filter(isExclusiveHostReservation).filter(claim => selected.some(dependency => dependency.resourceId === claim.resourceId))
+    const matches = claims.length === selected.length && claims.every(claim => claim.intentSha256 === intentSha256 &&
+      claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim.operationId === intent.operationId &&
+      claim.inputSha256 === intent.inputSha256 && isDeepStrictEqual(claim.owner, intent.owner) &&
+      claim.controllerIncarnation === intent.controller.incarnation && claim.controllerGeneration === intent.controller.generation)
+    return matches ? {status: 'reserved' as const, intentSha256, claims} : {status: 'unknown' as const, intentSha256, claims: []}
   }
   async giveBack(value: unknown, hostId: string) {
     const returned = exclusiveResourceReturnSchema.parse(value), borrower = await this.host(hostId)

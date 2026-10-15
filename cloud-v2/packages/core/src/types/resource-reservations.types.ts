@@ -3,6 +3,8 @@ import {recorderHostReservationSchema, type RecorderHostReservation} from './rec
 
 const identity = z.string().min(1).max(240)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
+const controller = z.object({incarnation: identity, generation: z.number().int().positive().safe(),
+  sequence: z.number().int().nonnegative().safe()}).strict()
 /** A scarce dependency of an existing provider, not a new provider or credential store. */
 export const exclusiveResourceDependencySchema = z.object({resourceId: identity, authorityHostId: identity,
   capability: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/)}).strict()
@@ -13,8 +15,7 @@ export type ExclusiveResourceDependency = z.infer<typeof exclusiveResourceDepend
 
 export const exclusiveResourceOwnerSchema = z.object({id: identity, kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer'])}).strict()
 export const exclusiveResourceIntentSchema = z.object({operationId: identity, hostId: identity, laneId: identity,
-  controller: z.object({incarnation: identity, generation: z.number().int().positive().safe(),
-    sequence: z.number().int().nonnegative().safe()}).strict(),
+  controller,
   owner: exclusiveResourceOwnerSchema, inputSha256: hash,
   resources: z.array(z.object({id: identity, capabilities: z.array(identity).max(30)}).strict()).min(1).max(9),
 }).strict().superRefine((value, context) => {
@@ -23,6 +24,8 @@ export const exclusiveResourceIntentSchema = z.object({operationId: identity, ho
     context.addIssue({code: 'custom', message: 'Reservation intent resources and capabilities must be unique'})
 })
 export type ExclusiveResourceIntent = z.infer<typeof exclusiveResourceIntentSchema>
+export const exclusiveResourceObservationInputSchema = z.object({intent: exclusiveResourceIntentSchema,
+  controller}).strict()
 
 /** Stored beside recorder claims on the existing host row; the intent is immutable. */
 export const exclusiveHostReservationSchema = z.object({kind: z.literal('exclusive'), id: z.string().uuid(),

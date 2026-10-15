@@ -151,3 +151,18 @@ test('exact cancelled-before-allocation proof returns a claim without inventing 
   expect(f.rows.get('mini')!.resourceReservations).toEqual([])
   expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: claim.id})
 })
+
+test('a restarted reporter observes the original lost acquisition without renewing it or borrowing a competing claim', async () => {
+  const f = fixture(), original = intent('air1'), claim = (await f.service.acquire(original, 'air1')).claims[0]!
+  const host = f.observe('air1'); host.incarnation = 'air1-new-process'; host.incarnationGeneration = 2
+  host.snapshot.incarnation = host.incarnation; host.snapshot.incarnationGeneration = host.incarnationGeneration
+  const controller = {incarnation: host.incarnation, generation: 2, sequence: host.sequence}
+  const recovered = await f.service.observe({intent: original, controller}, 'air1')
+  expect(recovered).toMatchObject({status: 'reserved', claims: [claim]})
+  expect(f.writes).toHaveLength(1)
+  await expect(f.service.observe({intent: original, controller}, 'air2')).rejects.toThrow('authenticated controller')
+  expect((await f.service.observe({intent: {...original, inputSha256: 'b'.repeat(64)}, controller}, 'air1')).status).toBe('unknown')
+  f.rows.get('mini')!.resourceReservations = []
+  expect(await f.service.observe({intent: original, controller}, 'air1')).toMatchObject({status: 'unknown', claims: []})
+  expect(f.writes).toHaveLength(1)
+})
