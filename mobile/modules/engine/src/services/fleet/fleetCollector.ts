@@ -473,6 +473,11 @@ class CollectorRun {
     this.cleanups.push(() => appState.remove())
 
     this.takeSnapshot()
+    // Launches the engine made before this run could listen: it restores miniapps while the account may still be
+    // being resolved, and the reporter discards them when the account changes, so these are this run's account's.
+    for (const {event, observedAt} of fleetEvents.takeUndeliveredLaunches()) {
+      this.guard("launch", () => this.onLaunch(event, observedAt))
+    }
     this.arm(this.cadence())
   }
 
@@ -1127,14 +1132,14 @@ class CollectorRun {
 
   // --- launches and photos -------------------------------------------------------------------------------------
 
-  private onLaunch(event: FleetLaunchEvent): void {
+  private onLaunch(event: FleetLaunchEvent, observedAt = this.env.now()): void {
     const packageName = text(event.packageName)
     if (!packageName) return
     if (event.start !== "user" && event.start !== "automatic") return
     if (event.outcome !== "started" && event.outcome !== "failed") return
     const miniappName = text(event.miniappName)
     const versionName = text(event.versionName)
-    this.emit(this.env.now(), (base) => ({
+    this.emit(observedAt, (base) => ({
       ...base,
       kind: "miniapp_launch",
       payload: {

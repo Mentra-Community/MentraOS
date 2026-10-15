@@ -177,6 +177,7 @@ beforeEach(() => {
   clock.mono = 50_000
   timers.clear()
   resetFakeMmkv()
+  fleetEvents.discardUndeliveredLaunches()
   nativeApplication("3.4.5", "345")
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
@@ -1582,10 +1583,27 @@ describe("launches", () => {
     expect(ofKind("miniapp_launch")).toHaveLength(0)
   })
 
-  test("launches are not recorded before start", () => {
-    fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
+  test("launches the engine made before the run could listen are recorded when it starts, when they happened", () => {
+    // A miniapp restored after a process death, while the account was still being resolved.
+    const restoredAt = clock.wall
+    const now = spyOn(Date, "now").mockReturnValue(restoredAt)
+    try {
+      fleetEvents.launchUnlessClaimed({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    } finally {
+      now.mockRestore()
+    }
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(30_000)
     start()
-    expect(ofKind("miniapp_launch")).toHaveLength(0)
+    const [launch] = ofKind("miniapp_launch")
+    expect(launch.payload).toEqual({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    expect(launch.observedAt).toBe(iso(restoredAt))
+    // After the start snapshot, in the run's own sequence.
+    expect(all().map((record) => record.kind)).toEqual(["snapshot", "miniapp_launch"])
+    // Taken once: a later run does not hear it again.
+    collector.stop("engine_stopped")
+    start(PARTITION, "COLLECTOR-SESSION-2")
+    expect(ofKind("miniapp_launch")).toHaveLength(1)
   })
 })
 

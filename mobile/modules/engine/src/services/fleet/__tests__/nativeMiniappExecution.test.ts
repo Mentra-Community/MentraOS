@@ -98,6 +98,8 @@ mock.module("../../../stores/settings", () => ({
 
 const {useAppStatusStore: apps, installAppStoreHooks} = await import("../../../stores/apps")
 const {miniappRunningRegistry} = await import("../../MiniappRunningRegistry")
+const {nativeMiniappExecution} = await import("../../NativeMiniappExecution")
+const {fleetEvents} = await import("../fleetEvents")
 const {createFleetQueue} = await import("../fleetQueue")
 const {createFleetCollector} = await import("../fleetCollector")
 
@@ -196,6 +198,7 @@ beforeEach(() => {
   timers.clear()
   resetFakeMmkv()
   resetForTests()
+  fleetEvents.discardUndeliveredLaunches()
   configure({auth: {}})
   // A tap on Home happens with the Mentra App in the foreground.
   reactNativeAppState.currentState = "active"
@@ -295,6 +298,24 @@ describe("a built-in with a screen of its own", () => {
 })
 
 describe("a built-in that works without a screen", () => {
+  test("Notify restored running after a process death is one automatic launch", () => {
+    // The first refresh after the kill reads back the running flag Notify persisted.
+    apps.setState({apps: apps.getState().apps.map((app) => (app === notify ? {...notify, running: true} : app))})
+    expect(ofKind("miniapp_launch").map((record) => record.payload)).toEqual([
+      {packageName: "cloud.augmentos.notify", miniappName: "Notify", start: "automatic", outcome: "started"},
+    ])
+    expect(nativeMiniappExecution.getAll()).toEqual(["cloud.augmentos.notify"])
+    // Later refreshes that find it still running are no new launch.
+    apps.setState({apps: [...apps.getState().apps]})
+    advance(30_000)
+    expect(ofKind("miniapp_launch")).toHaveLength(1)
+  })
+
+  test("Notify started from Home is one user launch, not a restore as well", async () => {
+    expect(await openFromHome(notify)).toBe(true)
+    expect(ofKind("miniapp_launch").map((record) => record.payload.start)).toEqual(["user"])
+  })
+
   test("Notify executes for as long as it runs, with no screen and with the Mentra App in the background", async () => {
     expect(await openFromHome(notify)).toBe(true)
     expect(apps.getState().foregroundedPackage).toBeNull()

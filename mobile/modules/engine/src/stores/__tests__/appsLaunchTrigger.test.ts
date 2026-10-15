@@ -79,6 +79,7 @@ beforeEach(() => {
   resetForTests()
   configure({auth: {}})
   launches.length = 0
+  fleetEvents.discardUndeliveredLaunches()
   stopListening = fleetEvents.subscribe({launch: (event) => launches.push(event)})
   ensureRunning.mockReset()
   ensureRunning.mockResolvedValue({})
@@ -201,6 +202,28 @@ describe("launch reports", () => {
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
     apps.setState({updatingPackages: new Set([target.packageName]), apps: [{...target, running: false}]})
     expect(await apps.getState().start(target, {trigger: "user"})).toBe(false)
+  })
+
+  test("is the only launch: the spawn it causes, which the launcher reports for other paths, is not a second", async () => {
+    // What the launcher does for a spawn: report it, unless a start of the miniapp is under way.
+    ensureRunning.mockImplementation(async () => {
+      fleetEvents.launchUnlessClaimed({packageName: target.packageName, start: "automatic", outcome: "started"})
+      return {}
+    })
+    expect(await apps.getState().start(target, {trigger: "user"})).toBe(true)
+    expect(launches.map((launch) => [launch.packageName, launch.start])).toEqual([["com.test.notes", "user"]])
+    // Once the start is done, another path's launch is reported again.
+    fleetEvents.launchUnlessClaimed({packageName: target.packageName, start: "automatic", outcome: "started"})
+    expect(launches).toHaveLength(2)
+  })
+
+  test("a start refused at a gate claims nothing: another path's launch meanwhile is still reported", async () => {
+    modelAvailable = false
+    const speech = {...target, packageName: "com.test.speech", name: "Speech"}
+    apps.setState({apps: [speech]})
+    expect(await apps.getState().start(speech, {trigger: "user"})).toBe(false)
+    fleetEvents.launchUnlessClaimed({packageName: "com.test.speech", start: "automatic", outcome: "started"})
+    expect(launches.map((launch) => launch.start)).toEqual(["automatic"])
   })
 
   test("with no reporter listening, a start is unchanged", async () => {
