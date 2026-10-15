@@ -1,5 +1,5 @@
 import {TestHostStateModel} from '../models/test-host-state.model';
-import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationsSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
+import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, recorderHostReservationsSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
 import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
@@ -222,7 +222,11 @@ export function reconcileRecorderHostReservations(claims: RecorderHostReservatio
     const row = rows.find(value => value.requestId === claim.requestId);
     if (!row || row.fleetInputSha256 !== claim.fleetInputSha256) return true;
     if (offer.reservations.some(value => value.requestId === claim.requestId)) return true;
-    if (!row.fleetBinding && (row.fleetCancellation || row.fleetResourceReservation && row.fleetResourceReservation.id !== claim.id)) return false;
+    // A different immutable winning receipt cannot ever bind this orphan claim, even after the winner binds or refuses preparation.
+    const selected = recorderHostReservationSchema.safeParse(row.fleetResourceReservation);
+    if (selected.success && selected.data.requestId === claim.requestId && selected.data.fleetInputSha256 === claim.fleetInputSha256 &&
+      selected.data.id !== claim.id && (!row.fleetBinding || row.fleetBinding.hostId === selected.data.hostId && row.fleetBinding.laneId === selected.data.laneId)) return false;
+    if (!row.fleetBinding && row.fleetCancellation) return false;
     // Host-source refusals cannot create executable input or its completion receipt. Their exact terminal fence plus a later empty offer settles the byte claim.
     if (row.fleetBinding?.hostId === claim.hostId && row.fleetBinding.laneId === claim.laneId && row.hostId === claim.hostId &&
       row.state === 'terminal' && row.inputSha256 === undefined && (row as StoredRoutineJob & {input?: unknown}).input === undefined && row.dispatchIntent &&

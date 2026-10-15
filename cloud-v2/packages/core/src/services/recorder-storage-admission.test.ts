@@ -60,21 +60,31 @@ test('job requirement derives from exact recording policy and preserves the exis
  expect(()=>routinePortableRequirements({...row,definition:{...row.definition,execution:{resourceKinds:['recorder']}}})).toThrow('finite estimatedOutputBytes')
 })
 function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?:boolean;selectionFailure?:boolean}={}) {
- let host:any={hostId:'host',incarnation:'one',incarnationGeneration:1,sequence:1,receivedAt:now,resourceReservationVersion:0,resourceReservations:[],
- snapshot:{hostId:'host',incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:offer}]}))}}
+ const hosts=new Map<string,any>(['host','other'].map(hostId=>[hostId,{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,receivedAt:now,resourceReservationVersion:0,resourceReservations:[],
+ snapshot:{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:{...offer,poolId:`${hostId}:disk:1`}}]}))}}]))
  const requests=new Map<string,any>(), writes:any[]=[];let raced=false,selectionFailed=false
  const first=spyOn(TestRequestModel.collection,'findOne').mockImplementation((async(query:any)=>{
   if(!requests.has(query.requestId))requests.set(query.requestId,{...row(query.requestId),fleetResourceReservation:undefined,state:'awaiting-runner',fleetPreparation:{definition:{execution:{policy:{estimatedOutputBytes:5*gib}}},requirements:{platform:'ios-on-mac',resources:[{kind:'recorder',capabilities:[],storage:required}]}},fleetSelection:{build:{headSha:'b'.repeat(40)}}})
   return structuredClone(requests.get(query.requestId))}) as any)
- const read=spyOn(TestHostStateModel.collection,'findOne').mockImplementation((async()=>options.missing?null:structuredClone(host)) as any)
+ const read=spyOn(TestHostStateModel.collection,'findOne').mockImplementation((async(query:any)=>options.missing?null:structuredClone(hosts.get(query.hostId))) as any)
  const hostSave=spyOn(TestHostStateModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{
+  const host=hosts.get(query.hostId)
   writes.push(query)
   if(options.reportRace&&!raced){raced=true;host.sequence++;host.snapshot.sequence++;return null}
   if(query.resourceReservationVersion!==host.resourceReservationVersion||query.sequence!==host.sequence)return null
-  host={...host,...update.$set,resourceReservationVersion:host.resourceReservationVersion+1};return structuredClone(host)}) as any)
+  const saved={...host,...update.$set,resourceReservationVersion:host.resourceReservationVersion+1};hosts.set(query.hostId,saved);return structuredClone(saved)}) as any)
  const find=spyOn(TestRequestModel.collection,'find').mockImplementation(((query:any)=>({limit(){return this},async toArray(){return query.requestId.$in.map((id:string)=>requests.get(id)).filter(Boolean)}})) as any)
- const save=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{const request=requests.get(query.requestId);if(options.selectionFailure&&!selectionFailed){selectionFailed=true;throw Error('temporary request write failure')}if(request.fleetResourceReservation)return null;Object.assign(request,update.$set);return structuredClone(request)}) as any)
- return {writes,requests,host:()=>host,restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore()}}
+ const save=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{
+  const request=requests.get(query.requestId)
+  if(update.$set.fleetBinding){
+   if(request.state!=='awaiting-runner'||request.fleetBinding||request.fleetCancellation||request.fleetResourceReservation?.hostId!==query['fleetResourceReservation.hostId']||request.fleetResourceReservation?.laneId!==query['fleetResourceReservation.laneId'])return null
+  }else{
+   if(options.selectionFailure&&!selectionFailed){selectionFailed=true;throw Error('temporary request write failure')}
+   if(request.fleetResourceReservation)return null
+  }
+  Object.assign(request,update.$set);return structuredClone(request)
+ }) as any)
+ return {writes,requests,host:(hostId='host')=>hosts.get(hostId),restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore()}}
 }
 test('two simultaneous lane claims atomically fence the existing host record and cannot spend the same bytes',async()=>{
  const f=admissionFixture()
@@ -100,4 +110,34 @@ test('a failed target receipt write converges on the same authoritative host cla
   expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).not.toBeNull()
   expect(f.host().resourceReservations).toEqual([original]);expect(f.requests.get('one').fleetResourceReservation.id).toBe(original.id)
  }finally{f.restore()}
+})
+test('a losing host claim converges after another host wins, binds and refuses input-free preparation',async()=>{
+ for(const disposition of ['rejected','cancelled']){
+  const f=admissionFixture({selectionFailure:true})
+  try{
+   await expect(routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).rejects.toThrow('temporary request write failure')
+   const losing=f.host().resourceReservations[0]
+   const winner=await routineJobRepository.reserveResources!('one','a'.repeat(64),'other','mac',now)
+   expect(winner!.fleetResourceReservation!.id).not.toBe(losing.id)
+   const intent={requestId:'one',laneId:'mac'},digest=requestInputDigest(intent)
+   const bound=await routineJobRepository.bind('one','a'.repeat(64),{hostId:'other',laneId:'mac'} as any,intent,now)
+   expect(bound).toMatchObject({state:'preparing',hostId:'other',fleetBinding:{hostId:'other',laneId:'mac'},dispatchIntentSha256:digest})
+   Object.assign(f.requests.get('one'),{state:'terminal',
+    ...(disposition==='rejected'?{preparationRejection:{dispatchIntentSha256:digest,code:'not-applicable',reason:'Unsupported source',rejectedAt:now.toISOString(),disposition:'not-applicable'}}
+     :{preparationCancellation:{requestedAt:now.toISOString(),reason:'Cancelled before executable input'}})})
+   expect(f.requests.get('one')).not.toHaveProperty('inputSha256')
+   expect(reconcileRecorderHostReservations([losing],[f.requests.get('one')],{...offer,reservations:[{requestId:'one',inputSha256:'b'.repeat(64),remainingOutputBytes:0}]})).toEqual([losing])
+   expect(await routineJobRepository.reserveResources!('two','a'.repeat(64),'host','android',now)).not.toBeNull()
+   expect(f.host().resourceReservations.map((value:any)=>value.requestId)).toEqual(['two'])
+  }finally{f.restore()}
+ }
+})
+test('losing claim release requires a valid immutable winner and binding target; unknown ownership stays charged',()=>{
+ const losing=claim('one'),winner={...losing,id:'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba21',hostId:'other',poolId:'other:disk:1'}
+ const selected={...row('one'),fleetResourceReservation:winner,fleetBinding:{hostId:'other',laneId:'mac'}}
+ expect(reconcileRecorderHostReservations([losing],[selected],offer)).toEqual([])
+ for(const changed of [{...selected,fleetResourceReservation:{...winner,requestId:'wrong'}},{...selected,fleetResourceReservation:{...winner,fleetInputSha256:'b'.repeat(64)}},
+  {...selected,fleetResourceReservation:{...winner,id:'invalid'}},{...selected,fleetBinding:{hostId:'host',laneId:'mac'}}]){
+  expect(reconcileRecorderHostReservations([losing],[changed],offer)).toEqual([losing])
+ }
 })
