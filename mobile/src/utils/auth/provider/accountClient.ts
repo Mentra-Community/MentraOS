@@ -14,6 +14,11 @@ import {BgTimer} from "@mentra/engine"
 import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
+import {
+  type AccountLoginPhase,
+  beginAccountLoginObservation,
+  recordAccountLoginFailure,
+} from "@/utils/auth/provider/accountLoginObservation"
 import {randomUrlSafe, s256Challenge} from "@/utils/auth/pkce"
 import {resolvedEndpoints} from "@/services/cloudClient"
 import {deploymentStore} from "@/services/deployment"
@@ -290,25 +295,43 @@ export class AccountAuthProvider extends AuthClient {
 
   public signInWithPassword(credentials: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
     return Res.try_async(async () => {
-      const generation = this.sessionGeneration
-      const res = await fetch(core("/api/account/login"), {
-        method: "POST",
-        headers: {"content-type": "application/json"},
-        body: JSON.stringify(credentials),
-      })
-      if (!res.ok) await throwApiError(res)
-      const body = (await res.json()) as {access_token: string; refresh_token: string}
-      this.assertSessionCurrent(generation)
-      saveTokens({access: body.access_token, refresh: body.refresh_token})
-      const session = await this.getSession()
-      this.assertSessionCurrent(generation)
-      const value = session.is_ok() ? session.value : {token: body.access_token}
-      // Notify synchronously with the session we already fetched (rather than via
-      // notify()'s extra async /me round-trip) so AuthContext.user is populated
-      // before this call resolves and the login screen navigates to "/". Otherwise
-      // the home-boot auth check races the async listener and bounces to /auth/start.
-      authState.emit("SIGNED_IN", value)
-      return {session: value, user: value.user ?? null}
+      const observation = beginAccountLoginObservation()
+      let phase: AccountLoginPhase = "request"
+      let status: number | null = null
+      try {
+        const generation = this.sessionGeneration
+        const url = core("/api/account/login")
+        const bodyJson = JSON.stringify(credentials)
+        phase = "fetch"
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(observation.requestId ? {"x-request-id": observation.requestId} : {}),
+          },
+          body: bodyJson,
+        })
+        status = res.status
+        phase = "http"
+        if (!res.ok) await throwApiError(res)
+        phase = "response-json"
+        const body = (await res.json()) as {access_token: string; refresh_token: string}
+        phase = "session"
+        this.assertSessionCurrent(generation)
+        saveTokens({access: body.access_token, refresh: body.refresh_token})
+        const session = await this.getSession()
+        this.assertSessionCurrent(generation)
+        const value = session.is_ok() ? session.value : {token: body.access_token}
+        // Notify synchronously with the session we already fetched (rather than via
+        // notify()'s extra async /me round-trip) so AuthContext.user is populated
+        // before this call resolves and the login screen navigates to "/". Otherwise
+        // the home-boot auth check races the async listener and bounces to /auth/start.
+        authState.emit("SIGNED_IN", value)
+        return {session: value, user: value.user ?? null}
+      } catch (error) {
+        recordAccountLoginFailure(observation, phase, status, error)
+        throw error
+      }
     })
   }
 
