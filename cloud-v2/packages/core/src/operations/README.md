@@ -31,9 +31,12 @@ lane restoration.
    insufficient. No source record is deleted or mutated.
 5. With the new Core writer still disabled, provision the target's existing
    `MONGO_URL` and artifact storage plus one-time source connection variables
-   `ROUTINE_CASE_SOURCE_MONGO_URL` and `ROUTINE_CASE_SOURCE_DATABASE`. Apply the
-   same files/digests with `apply`. The CLI rechecks the live source graph against
-   the reviewed export before any target write. It inserts cases and migration
+   `ROUTINE_CASE_SOURCE_MONGO_URL` and `ROUTINE_CASE_SOURCE_DATABASE`. Set the
+   two source variables in the operator's shell for this run only, never in a
+   managed Core's configuration: the production release contract forbids them
+   in staging and production. Apply the same files/digests with `apply`. The CLI
+   rechecks the live source graph against the reviewed export before any target
+   write. It inserts cases and migration
    activity transactionally; rerunning the exact conversion keeps identical
    records and refuses to overwrite a changed current case.
 6. Verify target counts, archive digests and original ID/anchor references.
