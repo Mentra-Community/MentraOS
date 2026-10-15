@@ -388,9 +388,9 @@ test('recovery button body uses existing authenticated lane-control admission an
   const {LaneControlsService} = await import('../../services/lane-controls.service')
   const observed: unknown[] = []
   class Controls extends LaneControlsService {
-    override async submit(value: unknown, operator: string) {
+    override async submit(value: unknown, operator: string, operatorLabel?: string) {
       const {laneControlInputSchema} = await import('../../types/lane-control.types')
-      const input = laneControlInputSchema.parse(value); observed.push({input, operator})
+      const input = laneControlInputSchema.parse(value); observed.push({input, operator, operatorLabel})
       return {operationId: input.operationId, hostId: input.hostId, laneId: input.laneId,
         action: input.action, expiresAt: input.expiresAt}
     }
@@ -403,12 +403,36 @@ test('recovery button body uses existing authenticated lane-control admission an
   expect((await route().request('/lanes/controls', options)).status).toBe(403)
   expect(observed).toEqual([])
   const app = new Hono<any>()
-  app.use('*', async (c, next) => {c.set('developer', {developerId: 'signed-in-operator'}); await next()})
+  app.use('*', async (c, next) => {c.set('developer', {developerId: 'signed-in-operator', email: 'signed-in@example.com'}); await next()})
   app.route('/', route())
   const response = await app.request('/lanes/controls', options)
   expect(response.status).toBe(202)
   expect(response.headers.get('Cache-Control')).toBe('no-store')
-  expect(observed).toEqual([{input: body, operator: 'signed-in-operator'}])
+  expect(observed).toEqual([{input: body, operator: 'signed-in-operator', operatorLabel: 'signed-in@example.com'}])
   expect((await app.request('/lanes/controls', {...options, body: JSON.stringify({...body, ready: true})})).status).toBe(400)
   expect(observed).toHaveLength(1)
+})
+
+test('lane reserve forwards an authenticated operator-key label and preserves retries', async () => {
+  const {LaneControlsService} = await import('../../services/lane-controls.service')
+  const now = Date.now()
+  let records: any[] = [], version = 0
+  const controls = new LaneControlsService({async get() {return {hostId: 'air', laneControlVersion: version,
+    laneControls: records, observedAt: new Date(now), receivedAt: new Date(now),
+    snapshot: {laneControls: {schemaVersion: 1, receipts: []}, lanes: [{id: 'mac', dispatchMode: 'automatic'}]}}},
+    async replace(_host, expected, next) {if (expected !== version) return false; records = next; version++; return true}}, () => now)
+  const app = new Hono<any>()
+  app.use('*', async (c, next) => {c.set('developer', {developerId: 'api_key:operator', email: 'credential:operator'}); await next()})
+  app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, undefined, controls))
+  const body = {operationId: '33333333-3333-4333-8333-333333333333', hostId: 'air', laneId: 'mac',
+    expiresAt: now + 120000, action: 'reserve', purpose: 'Manual work'}
+  const options = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}
+  const first = await app.request('/lanes/controls', options)
+  expect(first.status).toBe(202)
+  const repeat = await app.request('/lanes/controls', options)
+  expect(repeat.status).toBe(202)
+  expect(await repeat.json()).toEqual(await first.json())
+  expect(records).toHaveLength(1)
+  expect(records[0].operatorLabel).toBe('credential:operator')
+  expect(records[0].command).not.toHaveProperty('operatorLabel')
 })

@@ -161,7 +161,7 @@ export type LaneRestorationHost = {
   receivedAt: string
   observedAt: string
   lanes: Array<{id: string; platform: "android" | "ios-on-mac"; state: string; dispatchMode: string;
-    glassesModels?: string[]; activity?: LaneActivity; repair?: LaneRepairStatus}>
+    glassesModels?: string[]; reservedBy?: string | null; activity?: LaneActivity; repair?: LaneRepairStatus}>
   restoration: LaneRestorationProjection | null
   frameworkBinding?: FrameworkBinding
   frameworkAcceptedAt?: string

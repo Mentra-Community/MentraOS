@@ -225,3 +225,34 @@ test('current repair exposes only its actual halt decision for fenced recovery d
   expect((await service.list()).hosts[0]!.lanes[0]!.repair!.haltDecisionId).toBe('halt:actual')
   expect(Object.keys(laneOverviewFields)).toContain('snapshot.restoration.attempts.haltDecisionId')
 })
+
+test('admin reservation display follows exact current custody in overview and lane detail', async () => {
+  const operationId = '11111111-1111-4111-8111-111111111111', expiresAt = Date.parse(at) + 120000
+  const lane = {...snapshot.lanes[0], state: 'reserved',
+    activity: {generation: 7, owner: {id: `authoring:local:${expiresAt}:${operationId}`, kind: 'authoring'}}}
+  const record = {command: {operationId, expiresAt, hostId: 'mini', laneId: 'mac', action: 'reserve'},
+    operatorLabel: 'alice@example.com', receipt: {result: {status: 'accepted',
+      reservation: {laneId: 'mac', generation: 7, state: 'granted'}}}}
+  const read = async (records: unknown, changed = lane) => {
+    const row = {snapshot: {...snapshot, lanes: [changed]}, laneControls: records, receivedAt: new Date(at)}
+    const service = new LaneRestorationService({async overview() {return [row]}, async list() {return [row]}})
+    return [(await service.overview()).hosts[0].lanes[0], (await service.list()).hosts[0].lanes[0]]
+  }
+  for (const label of ['alice@example.com', 'credential:operator-key', 'usr_no_email'])
+    for (const result of await read([{...record, operatorLabel: label}])) expect(result.reservedBy).toBe(label)
+  for (const result of await read([{...record, operatorLabel: undefined}])) expect(result.reservedBy).toBeNull()
+  for (const records of [[], [record, record],
+    [{...record, command: {...record.command, hostId: 'other'}}],
+    [{...record, command: {...record.command, laneId: 'other'}}],
+    [{...record, command: {...record.command, action: 'release'}}],
+    [{...record, command: {...record.command, operationId: '22222222-2222-4222-8222-222222222222'}}],
+    [{...record, receipt: {result: {status: 'refused'}}}],
+    ...['waiting', 'returning', 'released', 'cancelled'].map(state => [{...record,
+      receipt: {result: {...record.receipt.result, reservation: {...record.receipt.result.reservation, state}}}}]),
+    [{...record, receipt: {result: {...record.receipt.result, reservation: {...record.receipt.result.reservation, generation: 8}}}}],
+  ]) for (const result of await read(records)) expect(result).not.toHaveProperty('reservedBy')
+  for (const result of await read([record], {...lane, activity: {...lane.activity,
+    owner: {id: 'local-agent', kind: 'authoring'}}})) expect(result).not.toHaveProperty('reservedBy')
+  for (const result of await read([record], {...lane, state: 'running'})) expect(result).not.toHaveProperty('reservedBy')
+  expect(laneOverviewFields['laneControls.operatorLabel']).toBe(1)
+})
