@@ -524,6 +524,8 @@ export class RoutineWorkService {
         !original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
         throw new TestRequestConflict('Recording verification changed its original source, request or review')
     const decision=event.details.events.find(item=>item.eventId===identity.decisionId)
+    if(admission&&!row.verification&&(Date.parse(identity.acceptedAt)>this.now()||!decision||Date.parse(decision.at)>this.now()))
+      throw new TestRequestConflict('Pre-admission retry decision cannot begin in the future')
     if(admission&&(row.fleetCancellation||original.details.details.completion||
       !row.verification&&await this.candidateWasRegistered(admission.requestId)))
       throw new TestRequestConflict('Pre-admission retry requires the original unregistered candidate and uncancelled work')

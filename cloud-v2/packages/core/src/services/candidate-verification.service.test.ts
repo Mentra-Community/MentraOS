@@ -95,9 +95,21 @@ test('candidate authorization uses only the fresh accepted pre-admission retry o
  const snapshot=structuredClone(row)
  for(const mutate of [()=>{(row.verification!.status.details as any).state='cancelled'},()=>{row.fleetCancellation={reason:'Cancel work'}},
   ()=>{(row.verification!.identity as any).deadline=new Date(now-1).toISOString()},
+  ()=>{(row.verification!.identity as any).acceptedAt=new Date(now+1000).toISOString()},
   ()=>{(row.verification!.status.details as any).attemptId=4},()=>{(row.verification!.status.details as any).details.requestId='different'},
   ()=>{(row.verification!.status.details as any).details.review={...original.details.review,reviewUrl:original.details.review.reviewUrl+'different'}}]) {
   Object.assign(row,structuredClone(snapshot));delete row.fleetCancellation;mutate()
   await expect(service.authorize(verification,'mini',selected)).rejects.toThrow()
  }
+ Object.assign(row,structuredClone(snapshot));delete row.fleetCancellation
+ await service.authorize(verification,'mini',{...selected,requestId})
+ await expect(service.authorize(verification,'mini',{...selected,requestId:'different-request'})).rejects.toThrow('original source')
+ const rows=new Map<string,StoredTestRequest>(),repository={async insert(value:StoredTestRequest){rows.set(value.requestId,value)},async get(id:string){return rows.get(id)??null}}as TestRequestRepository
+ const intake=new TestRequestService(repository,service)
+ await expect(intake.submit('different-request','mini',selected,'mini')).rejects.toThrow('original source')
+ const receipt={requestId:'different-request',hostId:'mini',inputSha256:requestInputDigest(selected),acceptedAt:new Date(now).toISOString()}
+ await expect(intake.registerLocal(selected,receipt,'mini')).rejects.toThrow('original source')
+ const admitted=await intake.registerLocal(selected,{...receipt,requestId},'mini')
+ row.verification!.status.details={...(row.verification!.status.details as any),state:'cancelled'}
+ expect(await intake.registerLocal(selected,{...receipt,requestId},'mini')).toEqual(admitted)
 })

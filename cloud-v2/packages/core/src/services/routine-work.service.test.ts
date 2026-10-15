@@ -605,6 +605,9 @@ test('pre-admission verification retains the failed status and admits only its o
  const service=new ActualRoutineWorkService((f.service as any).rows,undefined,undefined,{async publish(){}},undefined,undefined,null,
   async id=>{expect(id).toBe(requestId);reads++;return registered})
  registered=true;await expect(service.verifyRecording({identity,event},row.hostId)).rejects.toThrow('unregistered');registered=false
+ const futureIdentity={...identity,acceptedAt:new Date(Date.now()+60000).toISOString(),deadline:new Date(Date.now()+1800000).toISOString()}
+ const futureEvent=structuredClone(event);futureEvent.details.events.at(-1)!.at=futureIdentity.acceptedAt
+ await expect(service.verifyRecording({identity:futureIdentity,event:futureEvent},row.hostId)).rejects.toThrow('future')
  for(const altered of [{...event,state:'passed'},{...event,hostId:'other'},{...event,sequence:4},
   {...event,details:{...event.details,attemptId:3}},{...event,details:{...event.details,details:{...event.details.details,requestId:'other'}}}])
   await expect(service.verifyRecording({identity,event:altered},row.hostId)).rejects.toThrow()

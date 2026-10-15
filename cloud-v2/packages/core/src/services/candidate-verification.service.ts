@@ -15,7 +15,7 @@ export interface CandidateWorkRecord {
 }
 export interface CandidateAuthorization {
   authorize(binding: CandidateVerification, hostId: string, selected: {
-    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown
+    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string
   }): Promise<void>
 }
 
@@ -26,18 +26,19 @@ export class CandidateVerificationService implements CandidateAuthorization {
     private readonly now:()=>number=Date.now) {}
 
   async authorize(binding: CandidateVerification, hostId: string, selected: {
-    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown
+    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string
   }) {
     const parsed = candidateVerificationSchema.safeParse(binding)
     const row = parsed.success ? await this.get(parsed.data.workId) : null
     const retry=routineWorkVerificationIdentitySchema.safeParse(row?.verification?.identity)
     const original=authoringJobViewSchema.safeParse(row?.status?.details)
-    const retryCurrent=Boolean(retry.success&&retry.data.previousFailure.code==='permission-required'&&original.success&&
+    const at=this.now(),retryCurrent=Boolean(retry.success&&retry.data.previousFailure.code==='permission-required'&&original.success&&
       original.data.state==='failed'&&!row?.fleetCancellation&&
       (original.data.details.requestId===undefined||retry.data.admission?.requestId===original.data.details.requestId)&&
-      Date.parse(retry.data.deadline)>this.now())
+      Date.parse(retry.data.acceptedAt)<=at&&at<Date.parse(retry.data.deadline))
     const view = authoringJobViewSchema.safeParse(retryCurrent?row?.verification?.status.details:row?.status?.details)
-    if(retryCurrent&&view.success&&(view.data.details.requestId!==retry.data!.admission!.requestId||
+    if(retryCurrent&&view.success&&(selected.requestId!==undefined&&selected.requestId!==retry.data!.admission!.requestId||
+      view.data.details.requestId!==retry.data!.admission!.requestId||
       !original.success||view.data.attemptId!==original.data.attemptId||view.data.details.sourceRevision!==original.data.details.sourceRevision||
       requestInputDigest(view.data.details.review)!==requestInputDigest(original.data.details.review)))
       throw new TestRunError(409,'Candidate completion retry differs from the retained original source, request or review')
