@@ -3,6 +3,7 @@ jest.mock("@/services/cloudClient", () => ({resolvedEndpoints: () => ({core: "ht
 jest.mock("@/utils/auth/authClient", () => ({AuthClient: class {}}))
 jest.mock("@/utils/auth/pkce", () => ({randomUrlSafe: jest.fn(() => "abcdefghijklmnopqrstuv")}))
 jest.mock("@mentra/engine", () => ({BgTimer: {}}))
+jest.mock("@/services/deployment", () => ({deploymentStore: {getActive: () => ({kind: "consumer"})}}))
 
 import {result as Res} from "typesafe-ts"
 import {randomUrlSafe} from "@/utils/auth/pkce"
