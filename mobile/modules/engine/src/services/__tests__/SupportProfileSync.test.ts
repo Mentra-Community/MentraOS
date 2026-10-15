@@ -24,13 +24,9 @@ const glassesState = {
   hotspot: {state: "enabled", ssid: "secret", password: "password", localIp: "192.0.2.1"},
 }
 
-mock.module("expo-constants", () => ({
-  default: {
-    nativeAppVersion: "2.4.0",
-    nativeBuildVersion: "240",
-    expoConfig: {version: "2.4.0"},
-  },
-}))
+// expo-constants 55 has no native version or build: only the config's version, which is the family's base version.
+mock.module("expo-constants", () => ({default: {expoConfig: {version: "2.4.0"}}}))
+mock.module("expo-application", () => ({nativeApplicationVersion: "2.4.1", nativeBuildVersion: "240"}))
 mock.module("expo-device", () => ({modelName: "iPhone 17 Pro"}))
 import {reactNative} from "./reactNativeTestMock"
 
@@ -105,6 +101,10 @@ describe("SupportProfileSync", () => {
     expect(serialized).not.toContain("Private Wi-Fi")
     expect(serialized).not.toContain("192.0.2")
     expect(serialized).not.toContain("password")
+  })
+
+  test("reports the native application's version and build number", () => {
+    expect(buildSnapshot().host).toMatchObject({appVersion: "2.4.1", appBuild: "240"})
   })
 
   test("only stale results schedule a retry", () => {

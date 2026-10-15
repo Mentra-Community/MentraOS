@@ -61,9 +61,13 @@ function sleep(ms: number): void {
 }
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
-mock.module("expo-constants", () => ({
-  default: {nativeAppVersion: "3.4.5", nativeBuildVersion: "345", expoConfig: {version: "3.4.5"}},
-}))
+// expo-constants 55 has no native version or build: only the config's version, which is the family's base version.
+mock.module("expo-constants", () => ({default: {expoConfig: {version: "3.4.0"}}}))
+/** The native application's version and build, as expo-application reads them. A test may change them. */
+function nativeApplication(nativeApplicationVersion: string | null, nativeBuildVersion: string | null): void {
+  mock.module("expo-application", () => ({nativeApplicationVersion, nativeBuildVersion}))
+}
+nativeApplication("3.4.5", "345")
 mock.module("expo-device", () => ({modelName: "Pixel 9"}))
 
 const IDENTITY_CLEARED = {
@@ -173,6 +177,7 @@ beforeEach(() => {
   clock.mono = 50_000
   timers.clear()
   resetFakeMmkv()
+  nativeApplication("3.4.5", "345")
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
   nativeMiniappExecution.set([])
@@ -893,6 +898,18 @@ describe("snapshots", () => {
       },
     })
     expect(snapshot.deviceBinding).toBeUndefined()
+  })
+
+  test("the app version and build are the native application's", () => {
+    nativeApplication("3.3.0", "929")
+    start()
+    expect(snapshots()[0].payload.phone).toMatchObject({appVersion: "3.3.0", appBuild: "929"})
+  })
+
+  test("a build the native application does not report is unknown, and the version falls back to the config's", () => {
+    nativeApplication(null, null)
+    start()
+    expect(snapshots()[0].payload.phone).toMatchObject({appVersion: "3.4.0", appBuild: "unknown"})
   })
 
   test("on iOS the OS version is the platform version", () => {

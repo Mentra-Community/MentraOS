@@ -37,6 +37,7 @@
  * Nothing here may break or slow the paths it watches: every entry point catches its own failures, and nothing
  * thrown by the queue, the clock or a store reaches a caller.
  */
+import * as Application from "expo-application"
 import Constants from "expo-constants"
 import * as Device from "expo-device"
 import {AppState, Platform} from "react-native"
@@ -174,10 +175,6 @@ function packageVersions(): {engine?: string; sdk?: string} {
 function phoneInfo(): SnapshotPayload["phone"] | null {
   const os = Platform.OS
   if (os !== "ios" && os !== "android") return null
-  const constants = Constants as typeof Constants & {
-    nativeAppVersion?: string | null
-    nativeBuildVersion?: string | null
-  }
   const osVersion =
     os === "android"
       ? String((Platform.constants as {Release?: string} | undefined)?.Release ?? Platform.Version)
@@ -188,8 +185,9 @@ function phoneInfo(): SnapshotPayload["phone"] | null {
     ...(model ? {model} : {}),
     os,
     osVersion: text(osVersion) ?? "unknown",
-    appVersion: text(constants.nativeAppVersion ?? Constants.expoConfig?.version) ?? "unknown",
-    appBuild: text(constants.nativeBuildVersion) ?? "unknown",
+    // The native application's own version and build number: expo-constants no longer has them.
+    appVersion: text(Application.nativeApplicationVersion ?? Constants.expoConfig?.version) ?? "unknown",
+    appBuild: text(Application.nativeBuildVersion) ?? "unknown",
     ...(engine ? {engineVersion: engine} : {}),
     ...(sdk ? {sdkVersion: sdk} : {}),
   }

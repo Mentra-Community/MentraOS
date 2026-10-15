@@ -1,3 +1,4 @@
+import * as Application from "expo-application"
 import Constants from "expo-constants"
 import * as Device from "expo-device"
 import {Platform} from "react-native"
@@ -163,15 +164,12 @@ export function buildSnapshot(observedAt = new Date()): SupportStateInput {
     buildNumber: optional(glasses.buildNumber),
   }
   const hasDevice = Object.values(device).some(Boolean)
-  const constants = Constants as typeof Constants & {
-    nativeAppVersion?: string | null
-    nativeBuildVersion?: string | null
-  }
   return {
     observedAt: observedAt.toISOString(),
     host: {
-      appVersion: optional(constants.nativeAppVersion ?? Constants.expoConfig?.version),
-      appBuild: optional(constants.nativeBuildVersion),
+      // The native application's own version and build number: expo-constants no longer has them.
+      appVersion: optional(Application.nativeApplicationVersion ?? Constants.expoConfig?.version),
+      appBuild: optional(Application.nativeBuildVersion),
       engineVersion: optional(ENGINE_VERSION),
       bluetoothSdkVersion: optional(BLUETOOTH_SDK_VERSION),
       phonePlatform: Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "unknown",

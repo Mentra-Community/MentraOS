@@ -62,9 +62,8 @@ function setAppState(state: string): void {
 }
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
-mock.module("expo-constants", () => ({
-  default: {nativeAppVersion: "3.4.5", nativeBuildVersion: "345", expoConfig: {version: "3.4.5"}},
-}))
+mock.module("expo-constants", () => ({default: {expoConfig: {version: "3.4.5"}}}))
+mock.module("expo-application", () => ({nativeApplicationVersion: "3.4.5", nativeBuildVersion: "345"}))
 mock.module("expo-device", () => ({modelName: "Pixel 9"}))
 mock.module("../../../stores/glasses", () => ({
   useGlassesStore: create(subscribeWithSelector(() => ({connection: {state: "disconnected"}, deviceModel: ""}))),
