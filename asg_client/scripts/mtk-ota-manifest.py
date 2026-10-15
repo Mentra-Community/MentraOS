@@ -86,10 +86,12 @@ def prepare(path, device_version, end=None, start=None, port=9876, full=False):
         require(end is not None, "--full requires --end-firmware")
         end_suffix = version(end)
         info = inspect_ab_zip(path)
+        require(not info["powerwash"], "Full OTA requests a userdata wipe or powerwash")
+        require(not info["downgrade"], "Full OTA requests a downgrade")
         numeric = lambda item: tuple(map(int, (item + ".0").split(".")[:2]))
-        if numeric(end_suffix) < numeric(device):
-            require(info["downgrade"], "Full downgrade requires ota-downgrade=yes")
-        print(f"Selected A/B ZIP: POWERWASH={int(info['powerwash'])}; target={end}", file=sys.stderr)
+        require(numeric(end_suffix) > numeric(device),
+                "Full OTA target must be newer than the installed firmware")
+        print(f"Selected A/B ZIP: POWERWASH=0; target={end}", file=sys.stderr)
     else:
         match = re.search(r"([0-9]{8}(?:\.[0-9]+)?)_([0-9]{8}(?:\.[0-9]+)?)\.zip$", path.name)
         require(match is not None, "Could not parse patch start/end versions from filename")

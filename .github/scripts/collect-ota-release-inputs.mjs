@@ -14,6 +14,18 @@ if (!Array.isArray(manifest.mtk_patches) || !manifest.bes_firmware) {
   throw new Error(`${input} must contain mtk_patches and bes_firmware`)
 }
 
+function requireSize(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} size must be a positive integer`)
+  }
+}
+
+requireSize(manifest.bes_firmware.size, "bes_firmware")
+if (manifest.mtk_full_ota) requireSize(manifest.mtk_full_ota.size, "mtk_full_ota")
+manifest.mtk_patches.forEach((patch, index) => {
+  if (patch.size !== undefined) requireSize(patch.size, `mtk_patches[${index}]`)
+})
+
 const result = {
   firmwareManifest: {
     path: path.relative(process.cwd(), input),

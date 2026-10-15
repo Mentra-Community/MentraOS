@@ -59,6 +59,7 @@
   "bes_firmware": {
     "version": "26.10.8.0",
     "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.10.8.0.bin",
-    "sha256": "8672188e845c1560782601793d84ed31ea486ae3874e5a31a805a836293d39b4"
+    "sha256": "8672188e845c1560782601793d84ed31ea486ae3874e5a31a805a836293d39b4",
+    "size": 1153903
   }
 }
