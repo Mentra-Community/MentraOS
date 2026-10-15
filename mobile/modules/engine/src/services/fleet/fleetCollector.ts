@@ -59,7 +59,14 @@ import {nativeMiniappExecution} from "../NativeMiniappExecution"
 import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import type {FleetQueue} from "./fleetQueue"
-import {glassesBinding, glassesPeripheral, isSimulatedGlasses} from "./glassesIdentity"
+import {
+  glassesProduct,
+  isSimulatedGlasses,
+  provisionalBinding,
+  serialBinding,
+  usableSerial,
+  type GlassesIdentitySource,
+} from "./glassesIdentity"
 
 export interface FleetCollector {
   /** Opens the engine session, the foreground session if the app is active, the glasses and running miniapps, and takes a snapshot. */
@@ -100,6 +107,14 @@ const SNAPSHOT_DEBOUNCE_MS = 2_000
  */
 const CLOCK_DRIFT_LIMIT_MS = 2 * 60_000
 const BATTERY_SNAPSHOT_STEP = 5
+/**
+ * How long connected glasses may go without showing a serial number before they are identified without one. They send
+ * it, with their Bluetooth address, within a second or two of connecting; this leaves ample room for a slow answer
+ * while still identifying a pair that has none well before its first 60-second checkpoint.
+ */
+const IDENTITY_SETTLE_MS = 15_000
+/** At most this many photo stages wait for glasses being identified; a burst beyond it in those seconds is dropped. */
+const MAX_HELD_PHOTOS = 32
 const MAX_TEXT = 128
 /** A session cannot outlast several caps between two checkpoints; this only bounds a loop. */
 const MAX_CAP_TURNS = 8
@@ -243,13 +258,69 @@ function firmwareOf(s: GlassesState): Firmware {
  * The glasses as last seen in this run. The native layer clears a pair's identity when it disconnects, so the
  * collector keeps what it saw while the glasses were there: a disconnected pair is still described, and still the
  * same device.
+ *
+ * A pair is identified, and its binding fixed for the run, once it has shown its serial number, or once it has been
+ * connected for IDENTITY_SETTLE_MS without one; until then nothing is attributed to it, and a photo stage waits for
+ * it. Glasses are connected a moment before they send their serial and their own Bluetooth address, so a binding
+ * fixed sooner would make a provisional device of every pair that has a serial, and key one that has none by its
+ * Bluetooth name on some connections and by its address on others. A pair that leaves sooner is identified by what
+ * it showed.
  */
 interface KnownGlasses {
+  /** The product (see `glassesProduct`): one pair is one model whatever model string it reports. */
   model: string
-  /** What told this pair from another of its model (see `glassesPeripheral`), or null if it showed nothing. */
-  peripheral: string | null
-  binding: FleetDeviceBinding
+  /** What the pair has shown of who it is, each null until it has. */
+  identity: PairIdentity
+  /** When the pair was first seen connected in this run (monotonic); null while it has only been looked for. */
+  connectedSinceMono: number | null
+  /** Fixed once the pair is identified. A serial that comes later still replaces a provisional binding. */
+  binding: FleetDeviceBinding | null
   firmware: Firmware
+}
+
+/** What tells one pair from another of its model, strongest first: its serial, its own Bluetooth address, its name. */
+interface PairIdentity {
+  serial: string | null
+  address: string | null
+  name: string | null
+}
+
+const IDENTIFIERS = ["serial", "address", "name"] as const
+
+function lowered(value: string | null | undefined): string | null {
+  const trimmed = typeof value === "string" ? value.trim().toLowerCase() : ""
+  return trimmed ? trimmed : null
+}
+
+function pairIdentity(s: GlassesIdentitySource): PairIdentity {
+  return {
+    serial: usableSerial(s),
+    // The address the glasses report as their own, the same on every phone; the left arm's for glasses in two.
+    address: lowered(s.bluetoothMacAddress) ?? lowered(s.leftMacAddress),
+    name: lowered(s.bluetoothName),
+  }
+}
+
+/**
+ * Whether glasses showing `now` are the pair that showed `before`. The strongest identifier both show decides. One
+ * that went blank says nothing (the native layer clears the serial and the address when the link drops), and neither
+ * does showing nothing yet: only a difference tells another pair.
+ */
+function samePair(before: PairIdentity, now: PairIdentity): boolean {
+  for (const field of IDENTIFIERS) {
+    const a = before[field]
+    const b = now[field]
+    if (a !== null && b !== null) return a === b
+  }
+  const shows = (identity: PairIdentity) => IDENTIFIERS.some((field) => identity[field] !== null)
+  return !shows(before) || !shows(now)
+}
+
+/** A photo stage seen while the glasses were being identified, kept to be written against them once they are. */
+interface HeldPhoto {
+  observedAt: number
+  operationId: string
+  payload: Extract<FleetRecord, {kind: "photo_operation"}>["payload"]
 }
 
 /** The battery of the pair `known` describes: it goes when a new connection starts or another pair is identified. */
@@ -262,7 +333,8 @@ interface BatteryReading {
 
 /** What the last snapshot said, so a change worth a new snapshot can be told from one that is not. */
 interface SnapshotMarks {
-  known: boolean
+  /** The binding of the glasses, once they are identified, as a key; "" before. */
+  identity: string
   /** The glasses were connected. The states short of it (scanning, connecting, disconnected) are all "not". */
   linked: boolean
   batteryMeasured: boolean
@@ -319,6 +391,7 @@ class CollectorRun {
   private lastSnapshotKey: string | null = null
 
   private known: KnownGlasses | null = null
+  private heldPhotos: HeldPhoto[] = []
   private battery: BatteryReading | null = null
   private connection: {state: ConnectionState; observedAt: number} = {state: "disconnected", observedAt: 0}
   private marks: SnapshotMarks | null = null
@@ -375,6 +448,7 @@ class CollectorRun {
     } catch (error) {
       warn("final checkpoint", error)
     }
+    this.guard("photos", () => this.releasePhotos(true))
     this.abort()
   }
 
@@ -413,6 +487,7 @@ class CollectorRun {
   private onStateChange(): void {
     this.trackGlasses(this.env.now())
     if (!this.checkClock()) this.reconcileSessions()
+    this.releasePhotos()
     this.evaluateSnapshotTriggers()
   }
 
@@ -447,38 +522,50 @@ class CollectorRun {
 
   /** Nothing seen of the glasses so far is about the pair that comes next: not its identity, versions or battery. */
   private forgetGlasses(): void {
+    // A photo still waiting for the pair that was here is that pair's.
+    this.releasePhotos(true)
     this.known = null
     this.battery = null
   }
 
   private rememberGlasses(s: GlassesState): void {
-    const model = text(s.deviceModel)
-    if (!model) return
-    const binding = glassesBinding(s, this.phoneId)
-    if (!binding) {
+    const reported = text(s.deviceModel)
+    if (!reported) return
+    if (isSimulatedGlasses(reported)) {
       // The store names glasses that are no device (the simulated ones): the pair remembered before is not them.
       this.forgetGlasses()
       return
     }
-    const peripheral = glassesPeripheral(s)
-    // What was learned about the pair before this carries over only if it is the same pair: the same address or
-    // name, or the same serial. A second pair of the same model starts from nothing.
+    const model = glassesProduct(reported)
+    const now = pairIdentity(s)
+    // What was learned about the pair before this carries over only if it is the same pair (see `samePair`). A second
+    // pair of the same model starts from nothing.
     const before = this.known
-    const samePair =
-      before !== null &&
-      before.model === model &&
-      ((peripheral !== null && peripheral === before.peripheral) ||
-        (binding.kind === "serial" && before.binding.kind === "serial" && before.binding.serial === binding.serial))
-    // Another pair, swapped in with no disconnect between: the last reading was the other pair's battery.
-    if (before !== null && !samePair) this.battery = null
-    // A serial seen once for this pair is not given up for a provisional stand-in.
-    const kept =
-      samePair && before.binding.kind === "serial" && binding.kind === "provisional" ? before.binding : binding
+    const same = before !== null && before.model === model && samePair(before.identity, now)
+    if (before !== null && !same) {
+      // Another pair, swapped in with no disconnect between: what waited for the first pair is the first pair's, and
+      // the last reading was its battery.
+      this.releasePhotos(true)
+      this.battery = null
+    }
+    const kept = same ? before : null
+    const identity: PairIdentity = {
+      serial: now.serial ?? kept?.identity.serial ?? null,
+      address: now.address ?? kept?.identity.address ?? null,
+      name: now.name ?? kept?.identity.name ?? null,
+    }
+    // The serial, whenever the pair shows one, is its identity, and replaces a provisional stand-in.
+    const binding =
+      identity.serial !== null && kept?.binding?.kind !== "serial"
+        ? serialBinding(model, identity.serial)
+        : (kept?.binding ?? null)
     this.known = {
       model,
-      peripheral: peripheral ?? (samePair ? before.peripheral : null),
-      binding: kept,
-      firmware: samePair ? {...before.firmware, ...firmwareOf(s)} : firmwareOf(s),
+      identity,
+      connectedSinceMono:
+        kept?.connectedSinceMono ?? (this.connection.state === "connected" ? this.env.monotonic() : null),
+      binding,
+      firmware: kept ? {...kept.firmware, ...firmwareOf(s)} : firmwareOf(s),
     }
   }
 
@@ -487,9 +574,27 @@ class CollectorRun {
     return this.known !== null && this.env.modelsWithoutBattery.has(this.known.model)
   }
 
-  private currentBinding(): FleetDeviceBinding | null {
+  /** The binding of the glasses the store describes now, once they are identified (see `identified`). */
+  private currentBinding(final = false): FleetDeviceBinding | null {
     this.rememberGlasses(useGlassesStore.getState())
-    return this.known?.binding ?? null
+    return this.identified(final)
+  }
+
+  /**
+   * The binding of the glasses known here, or null while they are being identified (see KnownGlasses) or were only
+   * ever looked for. Glasses that have left are identified by what they showed; so are they with `final`, for what
+   * cannot wait.
+   */
+  private identified(final = false): FleetDeviceBinding | null {
+    const known = this.known
+    if (!known || known.binding) return known?.binding ?? null
+    const since = known.connectedSinceMono
+    if (since === null) return null
+    const departed = this.connection.state !== "connected"
+    if (final || departed || this.env.monotonic() - since >= IDENTITY_SETTLE_MS) {
+      known.binding = provisionalBinding(known.model, known.identity.address ?? known.identity.name)
+    }
+    return known.binding
   }
 
   // --- sessions ------------------------------------------------------------------------------------------------
@@ -558,7 +663,12 @@ class CollectorRun {
     if (this.stopped || this.checkpointTimer !== fired) return
     try {
       this.flush()
-      this.guard("snapshot", () => this.periodicSnapshot())
+      // Glasses connected long enough are identified by now, without a change in the store to say so.
+      this.guard("photos", () => this.releasePhotos())
+      this.guard("snapshot", () => {
+        this.evaluateSnapshotTriggers()
+        this.periodicSnapshot()
+      })
     } finally {
       // A checkpoint that failed part-way must not end the cadence.
       if (!this.stopped && this.checkpointTimer === fired) this.arm(this.cadence())
@@ -628,8 +738,9 @@ class CollectorRun {
   private entryFor(session: Session, mono: number, wallLimit: number, ended: boolean): UsageSession | null {
     let binding: FleetDeviceBinding | undefined
     if (session.activity === "glasses_connection") {
-      // Fixed at the first report, so a serial that arrives later never splits a connection into two devices.
-      binding = session.binding ??= this.currentBinding() ?? undefined
+      // Fixed at the first report, so a serial that arrives later never splits a connection into two devices. Not
+      // reported before the glasses are identified, unless the session ends first.
+      binding = session.binding ??= this.currentBinding(ended) ?? undefined
       if (!binding) return null
     }
     const floor = session.reportedElapsedMs ?? 0
@@ -770,8 +881,9 @@ class CollectorRun {
   private currentMarks(): SnapshotMarks {
     const reading = this.battery
     const measured = !!reading && Number.isFinite(reading.level) && reading.level >= 0
+    const binding = this.identified()
     return {
-      known: this.known !== null,
+      identity: binding ? JSON.stringify(binding) : "",
       linked: this.connection.state === "connected",
       batteryMeasured: measured,
       level: measured ? reading.level : -1,
@@ -805,8 +917,8 @@ class CollectorRun {
   }
 
   /**
-   * Glasses connecting or disconnecting is worth a snapshot; while they are connected, so are their identification, a
-   * battery move of 5 points or a charging change, and a new version.
+   * Glasses connecting or disconnecting is worth a snapshot; while they are connected, so are their identification (or
+   * a serial replacing a provisional binding), a battery move of 5 points or a charging change, and a new version.
    *
    * Moves among the states short of connected are not: a phone retrying glasses that are away goes scanning,
    * connecting and disconnected every few seconds, all day, and forgets and finds the glasses' identity with each
@@ -828,8 +940,8 @@ class CollectorRun {
     }
     if (!now.linked) return
     const changed =
-      now.known !== last.known ||
-      (now.known &&
+      now.identity !== last.identity ||
+      (now.identity !== "" &&
         (now.batteryMeasured !== last.batteryMeasured ||
           (now.batteryMeasured &&
             (Math.abs(now.level - last.level) >= BATTERY_SNAPSHOT_STEP || now.charging !== last.charging)) ||
@@ -912,16 +1024,30 @@ class CollectorRun {
     if (typeof operationId !== "string" || operationId.length > MAX_TEXT || !FLEET_ID.test(operationId)) return
     const stage = event.stage
     if (stage !== "requested" && stage !== "captured" && stage !== "delivered" && stage !== "failed") return
-    // A photo is always one pair of glasses' photo.
-    const binding = this.currentBinding()
-    if (!binding) return
     const payload = stage === "failed" ? {stage, failedStage: event.failedStage ?? ("requested" as const)} : {stage}
-    this.emit(this.env.now(), (base) => ({
+    const photo: HeldPhoto = {observedAt: this.env.now(), operationId, payload}
+    // A photo is always one pair of glasses' photo: of connected glasses still being identified, it waits for them.
+    const binding = this.currentBinding()
+    if (binding) this.emitPhoto(photo, binding)
+    else if (this.known?.connectedSinceMono != null && this.heldPhotos.length < MAX_HELD_PHOTOS)
+      this.heldPhotos.push(photo)
+  }
+
+  /** Writes the photo stages that waited for the glasses, once they are identified (or with `final`, as they are). */
+  private releasePhotos(final = false): void {
+    if (this.heldPhotos.length === 0) return
+    const binding = this.identified(final)
+    if (binding) for (const photo of this.heldPhotos.splice(0)) this.emitPhoto(photo, binding)
+    else if (final) this.heldPhotos = []
+  }
+
+  private emitPhoto(photo: HeldPhoto, binding: FleetDeviceBinding): void {
+    this.emit(photo.observedAt, (base) => ({
       ...base,
       kind: "photo_operation",
-      operationId,
+      operationId: photo.operationId,
       deviceBinding: binding,
-      payload,
+      payload: photo.payload,
     }))
   }
 

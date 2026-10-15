@@ -1552,6 +1552,9 @@ describe("a second pair of the same model", () => {
     disconnectLive()
     connectLive(LIVE_B)
     fleetEvents.photo({operationId: "req-b", stage: "requested"})
+    // B shows no serial: its photo waits until B is identified without one.
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    advance(60_000)
     const [photo] = ofKind("photo_operation")
     expect(photo.deviceBinding).toMatchObject({kind: "provisional", product: "Mentra Live"})
     expect(JSON.stringify(photo)).not.toContain("SN-LIVE-1")
@@ -1562,8 +1565,8 @@ describe("a second pair of the same model", () => {
     connectLive()
     connectLive(LIVE_B)
     fleetEvents.photo({operationId: "req-b", stage: "requested"})
+    advance(65_000)
     expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "provisional"})
-    advance(60_000)
     expect(bindingOf(checkpoints().at(-1) as Kind<"usage_checkpoint">)).toMatchObject({kind: "provisional"})
     // Nor does it get the first pair's versions: B reports none for the MTK and BES.
     expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.firmware).toEqual({apk: "live-9 (900)", os: "13"})
@@ -1576,7 +1579,7 @@ describe("a second pair of the same model", () => {
     disconnectLive()
     advance(5_000)
     connectLive(LIVE_B)
-    advance(5_000)
+    advance(65_000)
     const latest = snapshots().at(-1) as Kind<"snapshot">
     expect(latest.deviceBinding).toMatchObject({kind: "provisional"})
     expect(latest.payload.glasses?.firmware).toEqual({apk: "live-9 (900)", os: "13"})
@@ -1651,6 +1654,171 @@ describe("a second pair of the same model", () => {
     glassesStore.setState({serialNumber: ""}) // the same pair, the serial gone blank mid-connection
     fleetEvents.photo({operationId: "req-s", stage: "requested"})
     expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "SN-ARRIVED"})
+  })
+})
+
+describe("one pair of Mentra Live, connection after connection", () => {
+  /**
+   * A connection as the Bluetooth SDK makes it: it names the glasses "Mentra Live" and learns their Bluetooth name while
+   * connecting, and they are connected before their glasses client answers. Its first version message then names the
+   * hardware variant as the model, and its last brings the glasses' Bluetooth address and, if they have one, their
+   * serial number, the address applied first.
+   */
+  function connectAsTheSdkDoes(pair: {serial: string; address: string; name: string}, beforeVersions?: () => void) {
+    glassesStore.setState({connection: {state: "connecting"}, bluetoothName: pair.name})
+    if (!glassesStore.getState().deviceModel) glassesStore.setState({deviceModel: "Mentra Live"})
+    glassesStore.setState({
+      connection: {state: "connected", fullyBooted: true},
+      appVersion: "",
+      buildNumber: "",
+      mtkFirmwareVersion: "",
+      besFirmwareVersion: "",
+      batteryLevel: 80,
+    })
+    beforeVersions?.()
+    advance(300)
+    glassesStore.setState({deviceModel: "K900", appVersion: "live-2", buildNumber: "200", androidVersion: "11"})
+    advance(100)
+    glassesStore.setState({bluetoothMacAddress: pair.address})
+    if (pair.serial) glassesStore.setState({serialNumber: pair.serial})
+    glassesStore.setState({mtkFirmwareVersion: "mtk-1", besFirmwareVersion: "bes-1"})
+  }
+  /** The link drops: the serial and the address go, the model the glasses gave and the name stay. */
+  function linkLoss() {
+    glassesStore.setState({connection: {state: "disconnected"}, serialNumber: "", bluetoothMacAddress: ""})
+  }
+  const NO_SERIAL = {serial: "", address: "1C:2B:3A:00:00:01", name: "MENTRA_LIVE_BLE_0001"}
+  const WITH_SERIAL = {serial: "ML394037B", address: "1C:2B:3A:00:00:02", name: "MENTRA_LIVE_BLE_0002"}
+
+  /** Every glasses binding any record carries. */
+  function bindings(): string[] {
+    const found = new Set<string>()
+    for (const record of all()) {
+      if (record.kind === "usage_checkpoint") {
+        for (const session of record.payload.sessions) {
+          if (session.deviceBinding) found.add(JSON.stringify(session.deviceBinding))
+        }
+      } else if ((record.kind === "snapshot" || record.kind === "photo_operation") && record.deviceBinding) {
+        found.add(JSON.stringify(record.deviceBinding))
+      }
+    }
+    return [...found]
+  }
+
+  test("glasses without a serial are one device across reconnects, from their first report", () => {
+    miniappRunningRegistry.add("com.a")
+    start()
+    // Something else ends a moment after the glasses connect, before they have said who they are.
+    connectAsTheSdkDoes(NO_SERIAL, () => miniappRunningRegistry.remove("com.a"))
+    advance(90_000)
+    fleetEvents.photo({operationId: "req-1", stage: "requested"})
+    linkLoss()
+    advance(20_000)
+    connectAsTheSdkDoes(NO_SERIAL)
+    advance(90_000)
+    fleetEvents.photo({operationId: "req-2", stage: "requested"})
+    collector.stop("engine_stopped")
+
+    expect(bindings()).toHaveLength(1)
+    expect(JSON.parse(bindings()[0])).toMatchObject({kind: "provisional", product: "Mentra Live"})
+    const sessions = checkpoints()
+      .flatMap((c) => c.payload.sessions)
+      .filter((session) => session.activity === "glasses_connection" && session.ended)
+    expect(sessions).toHaveLength(2)
+  })
+
+  test("the same glasses after the app restarts are still the same device", () => {
+    start()
+    connectAsTheSdkDoes(NO_SERIAL)
+    advance(60_000)
+    collector.stop("engine_stopped")
+    start(PARTITION, "COLLECTOR-SESSION-2")
+    advance(60_000)
+    expect(bindings()).toHaveLength(1)
+  })
+
+  test("glasses with a serial are bound by it from their first report, even one that comes before the serial", () => {
+    miniappRunningRegistry.add("com.a")
+    start()
+    connectAsTheSdkDoes(WITH_SERIAL, () => miniappRunningRegistry.remove("com.a"))
+    advance(90_000)
+    linkLoss()
+    advance(20_000)
+    connectAsTheSdkDoes(WITH_SERIAL)
+    advance(90_000)
+    collector.stop("engine_stopped")
+
+    expect(bindings().map((binding) => JSON.parse(binding))).toEqual([
+      {kind: "serial", manufacturer: "Mentra", product: "Mentra Live", serial: "ML394037B"},
+    ])
+  })
+
+  test("the hardware variant the glasses report is still Mentra Live", () => {
+    start()
+    connectAsTheSdkDoes(WITH_SERIAL)
+    advance(5_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.payload.glasses?.model).toBe("Mentra Live")
+    expect(latest.deviceBinding).toEqual({
+      kind: "serial",
+      manufacturer: "Mentra",
+      product: "Mentra Live",
+      serial: "ML394037B",
+    })
+  })
+
+  test("a photo taken before the glasses have said who they are is recorded against them once they have", () => {
+    start()
+    let requestedAt = 0
+    connectAsTheSdkDoes(WITH_SERIAL, () => {
+      requestedAt = clock.wall
+      fleetEvents.photo({operationId: "req-early", stage: "requested"})
+      expect(ofKind("photo_operation")).toHaveLength(0)
+    })
+    const [photo] = ofKind("photo_operation")
+    expect(photo.observedAt).toBe(iso(requestedAt))
+    expect(photo.deviceBinding).toMatchObject({kind: "serial", serial: "ML394037B"})
+  })
+
+  test("glasses that never show a serial are identified 15 s into the connection", () => {
+    start()
+    connectAsTheSdkDoes(NO_SERIAL, () => fleetEvents.photo({operationId: "req-n", stage: "requested"}))
+    advance(10_000)
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    expect(snapshots().every((snapshot) => snapshot.deviceBinding === undefined)).toBe(true)
+    advance(60_000)
+    expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "provisional", product: "Mentra Live"})
+    expect((snapshots().at(-1) as Kind<"snapshot">).deviceBinding).toMatchObject({kind: "provisional"})
+    expect(entry(checkpoints().at(-1) as Kind<"usage_checkpoint">, "glasses_connection")?.deviceBinding).toMatchObject({
+      kind: "provisional",
+    })
+  })
+
+  test("a link loss keeps the pair that left, though the model and name stay behind", () => {
+    start()
+    connectAsTheSdkDoes(WITH_SERIAL)
+    advance(30_000)
+    linkLoss()
+    fleetEvents.photo({operationId: "req-l", stage: "failed", failedStage: "requested"})
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.payload.glasses?.connection.state).toBe("disconnected")
+    expect(latest.deviceBinding).toMatchObject({kind: "serial", serial: "ML394037B"})
+    expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "ML394037B"})
+  })
+
+  test("another phone binds the same glasses with its own provisional identity", () => {
+    start()
+    connectAsTheSdkDoes(NO_SERIAL)
+    advance(60_000)
+    collector.stop("engine_stopped")
+    const first = bindings()
+    resetFakeMmkv() // another phone: its own store, its own phone ID
+    queue = createFleetQueue(new MemoryFleetStore(), {now: () => clock.wall})
+    collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono})
+    start()
+    advance(60_000)
+    expect(bindings()).toHaveLength(1)
+    expect(bindings()).not.toEqual(first)
   })
 })
 
