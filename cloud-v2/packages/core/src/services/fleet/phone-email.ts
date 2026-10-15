@@ -3,7 +3,7 @@
  *
  * Fleet shows the email next to a phone's usage; it is a display attribute and never an identity
  * key, so the lookup is best effort. The answer comes from Core's copy of the account's email
- * (`account-email.service.ts`), which asks the account directory at most once a day per account, so
+ * (`account-email.service.ts`), which asks the account directory about once a day per account, so
  * a phone's reports never put it on the directory. A phone reports often, so each process also
  * remembers an answer for five minutes, a missing email as well as a found one, and reports from
  * one account that arrive together share one lookup. A lookup that fails or runs past its deadline

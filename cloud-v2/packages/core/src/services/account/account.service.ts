@@ -14,11 +14,10 @@ import {sendEmail} from "../email/email.service"
 import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
 import {SigninIdentityModel} from "../../models/signin-identity.model"
-import {AccountEmailModel} from "../../models/account-email.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
-import {recordAccountEmail} from "./account-email.service"
+import {forgetAccountEmail, recordAccountEmail} from "./account-email.service"
 import {removeDeletedUserFromWorkspaces} from "../workspaces/account-deletion.service"
 import {MENTRA_TENANT_ID} from "../signin/config"
 import {createLogger} from "@mentra/cloud-shared"
@@ -231,8 +230,9 @@ export async function confirmAccountDeletion(mentraUserId: string, tenantUserId:
  *  2. end workspace memberships, and revoke what the person created
  *     (`removeDeletedUserFromWorkspaces`), before the account directory is
  *     asked: a deleted account must never be left holding workspace access;
- *  3. remove the operational support profile/outbox, and Core's copies of the
- *     person's email (their sign-in identity and `account_emails`);
+ *  3. remove the operational support profile/outbox and the person's sign-in
+ *     identity, and clear Core's copy of their email (`account_emails`, whose
+ *     emptied row stays as a fence against a lookup still in flight);
  *  4. on hosted Core, delete the account in the account directory (GoTrue).
  *     Everything else human-identifying (email, password, name) lives there.
  * Throws when a step fails; the deletion stays pending and the sweep retries it.
@@ -247,8 +247,8 @@ export async function finishAccountDeletion(mentraUserId: string): Promise<"comp
   await SupportProfileModel.deleteOne({mentraUserId})
   // How the person last signed in to Core's sign-in server, email included.
   await SigninIdentityModel.deleteOne({mentraUserId})
-  // Core's copy of the account's email.
-  await AccountEmailModel.deleteOne({mentraUserId})
+  // Core's copy of the account's email: cleared, and fenced against a lookup still in flight.
+  await forgetAccountEmail(mentraUserId)
   if (user.tenantId === MENTRA_TENANT_ID) await gotrue.deleteUser(user.tenantUserId)
   await UserModel.updateOne(
     {mentraUserId, accountDeletionCompletedAt: null},
