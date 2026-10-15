@@ -7,6 +7,7 @@ import type {SupportStateInput} from "@mentra/cloud-client"
 import {useGlassesStore} from "../stores/glasses"
 import {BgTimer} from "../utils/timers"
 import {cloudClientService} from "./CloudClientService"
+import {isGlassesConnected} from "./GlassesReadiness"
 
 const ENGINE_VERSION = (require("../../package.json") as {version?: string}).version
 const BLUETOOTH_SDK_VERSION = (require("@mentra/bluetooth-sdk/package.json") as {version?: string}).version
@@ -24,17 +25,24 @@ let sendingGeneration: number | null = null
 let syncGeneration = 0
 let consecutiveSendFailures = 0
 let lastFailure: {code: string; stage: string} | null = null
-let lastConnectionState: string | null = null
+let wasConnected = false
 
 /**
  * Keep Cloud V2's canonical support snapshot current without creating an event
  * stream from noisy store updates. Only the explicitly selected fields below
  * leave the phone; Wi-Fi, Bluetooth addresses, location and diagnostics do not.
+ *
+ * An update is sent for a change that matters to support: glasses connecting or
+ * disconnecting, a new failure, and, while glasses are connected, their
+ * identification or a new version. A phone retrying glasses that are away moves
+ * among scanning, connecting and disconnected every few seconds, all day, naming
+ * the glasses with each attempt and clearing them when it gives up. None of that
+ * is a change: like Fleet's snapshots, only reaching or leaving connected is.
  */
 export function startSupportProfileSync(): void {
   if (unsubscribe) return
   const generation = ++syncGeneration
-  lastConnectionState = useGlassesStore.getState().connection.state
+  wasConnected = isGlassesConnected(useGlassesStore.getState().connection)
   unsubscribe = useGlassesStore.subscribe(() => handleGlassesStoreChange(generation))
   heartbeatTimer = BgTimer.setInterval(() => void sendCurrentSnapshot(true, generation), HEARTBEAT_MS)
   void sendCurrentSnapshot(true, generation)
@@ -55,14 +63,14 @@ export function stopSupportProfileSync(): void {
   sendingGeneration = null
   consecutiveSendFailures = 0
   lastFailure = null
-  lastConnectionState = null
+  wasConnected = false
 }
 
 function handleGlassesStoreChange(generation: number): void {
   if (!unsubscribe || generation !== syncGeneration) return
-  const connectionState = useGlassesStore.getState().connection.state
-  if (connectionState === "connected" && lastConnectionState !== "connected") lastFailure = null
-  lastConnectionState = connectionState
+  const connected = isGlassesConnected(useGlassesStore.getState().connection)
+  if (connected && !wasConnected) lastFailure = null
+  wasConnected = connected
   scheduleMeaningfulUpdate(generation)
 }
 
@@ -70,6 +78,8 @@ function scheduleMeaningfulUpdate(generation = syncGeneration): void {
   if (!unsubscribe || generation !== syncGeneration) return
   const fingerprint = snapshotFingerprint(buildSnapshot())
   if (fingerprint === lastSentFingerprint) return
+  // A store update that changes nothing support reads does not hold back the update queued.
+  if (fingerprint === queuedFingerprint && debounceTimer !== null) return
   queuedFingerprint = fingerprint
   armDebounce(generation)
 }
@@ -151,8 +161,15 @@ export function retryDelayForSendFailure(consecutiveFailures: number): number {
   return Math.min(HEARTBEAT_MS, RETRY_MS * 2 ** Math.min(Math.max(consecutiveFailures, 1) - 1, 10))
 }
 
+/**
+ * The profile describes glasses only while they are connected. Short of it, the
+ * store holds what a reconnect attempt has named (a model with no serial) or the
+ * versions of the pair that left without its identity, and Core would file either
+ * as a device of its own. Core keeps the last connected pair as the current one.
+ */
 export function buildSnapshot(observedAt = new Date()): SupportStateInput {
   const glasses = useGlassesStore.getState()
+  const connected = isGlassesConnected(glasses.connection)
   const device = {
     hardwareId: optional(glasses.serialNumber),
     model: optional(glasses.deviceModel),
@@ -163,7 +180,7 @@ export function buildSnapshot(observedAt = new Date()): SupportStateInput {
     appVersion: optional(glasses.appVersion),
     buildNumber: optional(glasses.buildNumber),
   }
-  const hasDevice = Object.values(device).some(Boolean)
+  const hasDevice = connected && Object.values(device).some(Boolean)
   return {
     observedAt: observedAt.toISOString(),
     host: {
@@ -206,8 +223,14 @@ export function recordSupportProfileConnectionFailure(error: unknown, stage: str
   scheduleMeaningfulUpdate()
 }
 
+/**
+ * What an update says, for telling a change that matters from one that does not.
+ * Of the connection only connected or not counts: the states short of it are
+ * still sent as they are, with the next update that has something to say.
+ */
 export function snapshotFingerprint(snapshot: SupportStateInput): string {
-  return JSON.stringify({host: snapshot.host, device: snapshot.device})
+  const {connectionState, ...host} = snapshot.host
+  return JSON.stringify({host, connected: connectionState === "connected", device: snapshot.device})
 }
 
 function optional(value: string | null | undefined): string | undefined {
