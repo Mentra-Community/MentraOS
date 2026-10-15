@@ -1,6 +1,7 @@
 import {expect, test} from 'bun:test';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
+import {reconcileRecorderHostReservations} from './routine-job.service';
 import {RoutineDispatchService, recordedRoutineBuild} from './routine-dispatch.service';
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest, type TestRequestRepository} from './test-request.service';
 import {TestRunError} from './test-result-error';
@@ -120,3 +121,16 @@ test('selected catalog uses exact ordinary definitions while unpublished main re
   (f.service as any).definitions = {async getExact() {const row = f.definition(revision); return {...row, definitionSha256: 'f'.repeat(64)};}};
   await expect(f.service.catalog(revision, ['android-only'])).rejects.toMatchObject({status: 503});
 });
+
+
+test('bound host preparation rejection has an exact terminal fence without creating an executable digest',async()=>{
+ const f=fixture(),waiting=await f.service.submit(selected),at=new Date().toISOString();
+ const rejection={dispatchIntentSha256:waiting.dispatchIntentSha256!,code:'not-applicable',reason:'Exact source does not support platform',rejectedAt:at,disposition:'not-applicable'};
+ const stopped=await f.requests.rejectPreparation(selected.requestId,'mini',rejection);
+ expect(stopped).toMatchObject({state:'terminal',preparationRejection:rejection});expect(stopped).not.toHaveProperty('inputSha256');
+ const claim={id:'591e0c34-ee97-41df-a0ec-5e2d0c7503ee',requestId:selected.requestId,fleetInputSha256:'a'.repeat(64),hostId:'mini',laneId:'android-lane',poolId:'mini:disk:1',minimumAvailableBytes:3*1024**3,reservedAt:at};
+ const row={...stopped,fleetInputSha256:claim.fleetInputSha256,fleetBinding:{hostId:'mini',laneId:'android-lane'}} as any;
+ const measured={poolId:claim.poolId,observedAt:at,availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]};
+ expect(reconcileRecorderHostReservations([claim],[row],measured)).toEqual([]);
+ expect(reconcileRecorderHostReservations([claim],[row],{...measured,reservations:[{requestId:selected.requestId,inputSha256:'b'.repeat(64),remainingOutputBytes:0}]})).toEqual([claim]);
+})

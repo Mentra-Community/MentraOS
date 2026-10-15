@@ -7,7 +7,7 @@ import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
-import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
   routineQualificationTargetSchema, type RoutineQualificationTarget, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
@@ -101,7 +101,8 @@ export const routineJobRepository: RoutineJobRepository = {
       const claims = recorderHostReservationsSchema.parse(hostRow.resourceReservations ?? []);
       const requests = claims.length ? await TestRequestModel.collection.find({requestId: {$in: claims.map(value => value.requestId)}},
         {projection: {requestId: 1, inputSha256: 1, fleetInputSha256: 1, fleetResourceReservation: 1, fleetBinding: 1, fleetCancellation: 1,
-          dispatchCompletion: 1}, readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}).limit(1001).toArray() as unknown as StoredRoutineJob[] : [];
+          dispatchCompletion: 1, input: 1, hostId: 1, state: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
+          preparationCancellation: 1, preparationRejection: 1}, readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}).limit(1001).toArray() as unknown as StoredRoutineJob[] : [];
       const retained = reconcileRecorderHostReservations(claims, requests, offered);
       const own = retained.find(value => value.requestId === requestId && value.fleetInputSha256 === fleetInputSha256);
       if (retained.some(value => value.requestId === requestId && value.fleetInputSha256 !== fleetInputSha256) ||
@@ -222,6 +223,17 @@ export function reconcileRecorderHostReservations(claims: RecorderHostReservatio
     if (!row || row.fleetInputSha256 !== claim.fleetInputSha256) return true;
     if (offer.reservations.some(value => value.requestId === claim.requestId)) return true;
     if (!row.fleetBinding && (row.fleetCancellation || row.fleetResourceReservation && row.fleetResourceReservation.id !== claim.id)) return false;
+    // Host-source refusals cannot create executable input or its completion receipt. Their exact terminal fence plus a later empty offer settles the byte claim.
+    if (row.fleetBinding?.hostId === claim.hostId && row.fleetBinding.laneId === claim.laneId && row.hostId === claim.hostId &&
+      row.state === 'terminal' && row.inputSha256 === undefined && (row as StoredRoutineJob & {input?: unknown}).input === undefined && row.dispatchIntent &&
+      requestInputDigest(row.dispatchIntent) === row.dispatchIntentSha256) {
+      const intent = row.dispatchIntent as {requestId?: unknown; laneId?: unknown};
+      const rejection = preparationRejectionSchema.safeParse(row.preparationRejection);
+      const cancellation = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().safeParse(row.preparationCancellation);
+      const at = rejection.success && rejection.data.dispatchIntentSha256 === row.dispatchIntentSha256 ? rejection.data.rejectedAt
+        : cancellation.success ? cancellation.data.requestedAt : undefined;
+      if (intent.requestId === claim.requestId && intent.laneId === claim.laneId && at && Date.parse(at) <= Date.parse(offer.observedAt)) return false;
+    }
     return !row.dispatchCompletion || Date.parse(row.dispatchCompletion.completedAt) > Date.parse(offer.observedAt);
   });
 }
