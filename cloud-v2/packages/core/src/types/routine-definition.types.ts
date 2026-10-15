@@ -17,7 +17,7 @@ export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 export const routineResourceKindSchema = z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]);
 export const resourceCapabilityMap = {
   app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
-  glasses: ['glasses-ble', 'connection', 'software', 'wifi'], recorder: [],
+  glasses: ['glasses-ble', 'connection', 'software', 'wifi'], recorder: ['quiet-room'],
   audio: ['speech', 'witness', 'synthesis', 'recognition'], browser: ['external-window'],
   network: ['independent-uplink'],
   'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
