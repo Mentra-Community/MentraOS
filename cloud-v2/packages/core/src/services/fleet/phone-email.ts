@@ -10,9 +10,9 @@
  * is `null` for a short while rather than an error or a retry on every request; Fleet keeps the
  * last email it was sent when a report carries none.
  *
- * An email changed through Core is in Core's copy at once, so every process sends it within five
- * minutes, on the account's next report. One changed in the directory itself takes up to a day
- * longer. The email is never logged. An outage of the directory, for an account whose copy is
+ * An email changed through Core marks Core's copy for a check at once, so every process sends the
+ * new address within five minutes, on the account's next report. One changed in the directory
+ * itself takes up to a day longer. The email is never logged. An outage of the directory, for an account whose copy is
  * missing, fails the lookup, so the warning for it is rate limited: one a minute per process,
  * saying how many were left out in between.
  */

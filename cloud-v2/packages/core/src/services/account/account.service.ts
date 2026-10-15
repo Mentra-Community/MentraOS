@@ -17,7 +17,7 @@ import {SigninIdentityModel} from "../../models/signin-identity.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
-import {forgetAccountEmail, recordAccountEmail} from "./account-email.service"
+import {forgetAccountEmail, markAccountEmailChanged} from "./account-email.service"
 import {removeDeletedUserFromWorkspaces} from "../workspaces/account-deletion.service"
 import {MENTRA_TENANT_ID} from "../signin/config"
 import {createLogger} from "@mentra/cloud-shared"
@@ -153,9 +153,10 @@ export async function requestEmailChange(
 
 /**
  * Step 2: consume the code (bound to this user) and apply the new address. Core's
- * copy of the account's email (`account-email.service.ts`) takes it at once, so
- * Fleet shows it within minutes; should that write fail, the copy's daily check
- * with the directory picks the change up, and the change itself stands.
+ * copy of the account's email (`account-email.service.ts`) is then marked for a
+ * check, so its next lookup reads the address the directory ended with and Fleet
+ * shows it within minutes; should that write fail, the copy's daily check picks
+ * the change up, and the change itself stands.
  */
 export async function confirmEmailChange(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   const {payload} = await otc.consumeCode({
@@ -167,9 +168,9 @@ export async function confirmEmailChange(mentraUserId: string, tenantUserId: str
   if (!newEmail) throw new AccountError("code_invalid", "code is invalid", 400)
   await gotrue.setEmail(tenantUserId, newEmail)
   try {
-    await recordAccountEmail(mentraUserId, newEmail)
+    await markAccountEmailChanged(mentraUserId)
   } catch (err) {
-    logger.warn({errorName: (err as Error)?.name, mentraUserId}, "changed email not recorded; the daily check will pick it up")
+    logger.warn({errorName: (err as Error)?.name, mentraUserId}, "changed email not marked for a check; the daily check will pick it up")
   }
 }
 

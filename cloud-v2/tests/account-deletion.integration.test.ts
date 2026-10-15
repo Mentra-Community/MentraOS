@@ -36,7 +36,7 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {accountEmail, recordAccountEmail} from "../packages/core/src/services/account/account-email.service"
+import {accountEmail, markAccountEmailChanged} from "../packages/core/src/services/account/account-email.service"
 import * as trustedEmail from "../packages/core/src/services/account/trusted-email.service"
 import {
   confirmAccountDeletion,
@@ -334,8 +334,11 @@ describe("confirmAccountDeletion", () => {
     const rows = await AccountEmailModel.find({mentraUserId: s.mentraUserId}).lean()
     expect(rows.map(row => ({email: row.email, deleted: row.deletedAt instanceof Date}))).toEqual([{email: null, deleted: true}])
     expect(await accountEmail(s.mentraUserId)).toBeNull()
-    await recordAccountEmail(s.mentraUserId, "late@example.test")
-    expect(await AccountEmailModel.countDocuments({mentraUserId: s.mentraUserId, email: {$ne: null}})).toBe(0)
+    // An email change that finished as the account was deleted leaves the fence as it is.
+    await markAccountEmailChanged(s.mentraUserId)
+    const after = await AccountEmailModel.find({mentraUserId: s.mentraUserId}).lean()
+    expect(after.map(row => ({email: row.email, deleted: row.deletedAt instanceof Date}))).toEqual([{email: null, deleted: true}])
+    expect(await accountEmail(s.mentraUserId)).toBeNull()
   })
 
   test("a lookup still in flight when the account is deleted does not store the email it read", async () => {

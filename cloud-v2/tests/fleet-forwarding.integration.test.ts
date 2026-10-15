@@ -469,7 +469,7 @@ describe("a phone", () => {
     expect(idp.userLookups).toEqual([phone.sub])
   })
 
-  test("an email changed in the Mentra App reaches Fleet without asking the account directory again", async () => {
+  test("an email changed in the Mentra App reaches Fleet with the account's next report, after one directory lookup", async () => {
     const phone = await phoneSession("renamed")
     expect(((await fromPhone(phone, "POST", "/report", {body: "{}"})).json as Echo).principal).toMatchObject({
       email: "renamed@phone.example.test",
@@ -494,7 +494,13 @@ describe("a phone", () => {
     const reply = await fromPhone(phone, "POST", "/report", {body: "{}"})
 
     expect((reply.json as Echo).principal).toMatchObject({kind: "phone", email: "new-address@phone.example.test"})
-    expect(idp.userLookups).toEqual([])
+    // The change marked Core's copy for a check, so the address comes from the directory itself, once.
+    expect(idp.userLookups).toEqual([phone.sub])
+    resetPhoneEmailCache()
+    expect(((await fromPhone(phone, "POST", "/report", {body: "{}"})).json as Echo).principal).toMatchObject({
+      email: "new-address@phone.example.test",
+    })
+    expect(idp.userLookups).toEqual([phone.sub])
   })
 
   test("an account directory that is down when Core's copy is due for a check still lets the email through", async () => {

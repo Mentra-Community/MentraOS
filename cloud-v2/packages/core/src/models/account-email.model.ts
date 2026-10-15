@@ -5,7 +5,8 @@
  * Asking it every time a request wants the email would put every active phone
  * on it, so Core keeps a copy here: one row per account, with the verified
  * email (null when the account has none, its email is unverified, or it is not
- * a Mentra account) and when Core learned it (`checkedAt`).
+ * a Mentra account), when Core learned it (`checkedAt`), and whether Core has
+ * changed the email since (`recheck`).
  * `services/account/account-email.service.ts` reads and writes it.
  *
  * Deleting the account clears the row's email and sets `deletedAt`, once and
@@ -21,8 +22,10 @@ const AccountEmailSchema = new Schema(
   {
     mentraUserId: {type: String, required: true, unique: true},
     email: {type: String, default: null},
-    /** When the directory gave this answer (the time the lookup started), or when Core changed the email itself. */
+    /** When the lookup that gave this answer started, or, once Core changed the email, when it did. */
     checkedAt: {type: Date, required: true},
+    /** Core changed the email in the directory after this answer: the next lookup asks the directory again. */
+    recheck: {type: Boolean, default: false},
     /** When the account was deleted. The row then holds no email, and nothing writes one again. */
     deletedAt: {type: Date, default: null},
   },

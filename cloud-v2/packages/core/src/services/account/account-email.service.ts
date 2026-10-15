@@ -7,12 +7,14 @@
  * and a restart costs none (processes that miss at the same moment each ask once). When the directory cannot
  * answer, the copy Core already has is the answer and stays due for a check; with no copy, the lookup fails.
  *
- * How a change reaches the copy:
- *  - an email changed through Core (`confirmEmailChange`) is written at once (`recordAccountEmail`);
- *  - one changed in the directory itself (its admin console) is picked up within a day.
+ * Only the directory's answers are kept. When Core changes an account's email (`confirmEmailChange`), it marks the
+ * copy for a check (`markAccountEmailChanged`) rather than writing the address it set, so the next lookup reads
+ * whatever the directory ended with, in whatever order concurrent changes reached it. One changed in the directory
+ * itself (its admin console) is picked up within a day.
  *
- * A lookup's answer is kept only if no newer one is: it is stamped with the time the lookup started, and replaces
- * only an older row. So a lookup that read the directory before Core changed the email cannot overwrite the change.
+ * Writes are ordered by `checkedAt`: a lookup is stamped with the time it started and replaces only a row stamped
+ * earlier, and marking a change moves the stamp forward to the time of the change. So a lookup that read the
+ * directory before a change cannot keep the address it read.
  *
  * Deleting the account (`forgetAccountEmail`) leaves the row as a fence with no email. Both writers' filters require
  * a row that is not one, so a lookup or a change still in flight when the account is deleted is refused.
@@ -28,12 +30,15 @@ const DUPLICATE_KEY = 11000
 
 /**
  * The account's verified email, or null when it has none (unverified, not a Mentra account, deleted). Throws only
- * when the copy is missing or a day old and the directory cannot answer. `signal` cancels the directory lookup.
+ * when the copy is missing, a day old or marked for a check and the directory cannot answer, and there is no copy
+ * to fall back on. `signal` cancels the directory lookup.
  */
 export async function accountEmail(mentraUserId: string, options: {signal?: AbortSignal} = {}): Promise<string | null> {
   const stored = await AccountEmailModel.findOne({mentraUserId}).lean()
   if (stored?.deletedAt) return null
-  if (stored && Date.now() - stored.checkedAt.getTime() < ACCOUNT_EMAIL_MAX_AGE_MS) return stored.email ?? null
+  if (stored && !stored.recheck && Date.now() - stored.checkedAt.getTime() < ACCOUNT_EMAIL_MAX_AGE_MS) {
+    return stored.email ?? null
+  }
 
   const checkedAt = new Date()
   let email: string | null
@@ -44,17 +49,21 @@ export async function accountEmail(mentraUserId: string, options: {signal?: Abor
     if (stored) return stored.email ?? null
     throw error
   }
-  await writeUnlessFenced({mentraUserId, deletedAt: null, checkedAt: {$lt: checkedAt}}, {email, checkedAt})
+  await writeUnlessFenced(
+    {mentraUserId, deletedAt: null, checkedAt: {$lt: checkedAt}},
+    {$set: {email, checkedAt, recheck: false}},
+  )
   return email
 }
 
 /**
- * Keeps `email` as the account's verified email from now on, for a change Core made itself in the directory. Called
- * after the directory has the new address, so it replaces whatever a lookup kept, before or since. A deleted
- * account's row is left as it is.
+ * Marks the account's email for a check with the directory, after Core changed it there: the next `accountEmail`
+ * asks the directory, and a lookup that started before now cannot keep what it read. A deleted account's row is
+ * left as it is.
  */
-export async function recordAccountEmail(mentraUserId: string, email: string | null): Promise<void> {
-  await writeUnlessFenced({mentraUserId, deletedAt: null}, {email, checkedAt: new Date()})
+export async function markAccountEmailChanged(mentraUserId: string): Promise<void> {
+  // `$max`: concurrent changes only ever move the stamp forward, whichever finishes last.
+  await writeUnlessFenced({mentraUserId, deletedAt: null}, {$set: {recheck: true}, $max: {checkedAt: new Date()}})
 }
 
 /** Clears the account's email for good, at its deletion: the row stays, with no email, as the fence. Idempotent. */
@@ -62,21 +71,19 @@ export async function forgetAccountEmail(mentraUserId: string): Promise<void> {
   const now = new Date()
   await AccountEmailModel.updateOne(
     {mentraUserId},
-    {$set: {email: null, deletedAt: now}, $setOnInsert: {checkedAt: now}},
+    {$set: {email: null, recheck: false, deletedAt: now}, $setOnInsert: {checkedAt: now}},
     {upsert: true},
   )
 }
 
 /**
- * Upserts `fields` into the row `filter` matches. A row the filter does not match (a newer answer, or the fence) is
- * left as it is: the upsert then tries to insert a second row for the account, which the unique index refuses.
+ * Applies `update` to the row `filter` matches, inserting the account's row when it has none. A row the filter does
+ * not match (a newer answer, or the fence) is left as it is: the upsert then tries to insert a second row for the
+ * account, which the unique index refuses.
  */
-async function writeUnlessFenced(
-  filter: Record<string, unknown>,
-  fields: {email: string | null; checkedAt: Date},
-): Promise<void> {
+async function writeUnlessFenced(filter: Record<string, unknown>, update: Record<string, unknown>): Promise<void> {
   try {
-    await AccountEmailModel.updateOne(filter, {$set: fields}, {upsert: true})
+    await AccountEmailModel.updateOne(filter, update, {upsert: true})
   } catch (error) {
     if ((error as {code?: unknown})?.code !== DUPLICATE_KEY) throw error
   }
