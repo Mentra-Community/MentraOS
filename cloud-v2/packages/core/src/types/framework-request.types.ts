@@ -75,4 +75,5 @@ export interface FrameworkRequestDisplay {
   preparationDisposition?: 'not-run' | 'not-applicable';
   live?: RoutineLiveProgress;
   liveUnavailable?: boolean;
+  waiting?: import('./routine-progress.types').RoutineQueuedBlock;
 }

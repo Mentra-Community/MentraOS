@@ -1,11 +1,13 @@
-import {createHash} from 'node:crypto';
+import {TestHostStateModel} from '../models/test-host-state.model';
+import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, recorderHostReservationsSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
+import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
 import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
-import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
   routineQualificationTargetSchema, type RoutineQualificationTarget, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
@@ -16,7 +18,7 @@ import {permissionObservationMatches, permissionContext} from '../types/resource
 import type {FrameworkBinding} from '../types/framework-version.types';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {RoutineDefinitionService} from './routine-definition.service';
-import {TestHostStateService, type RoutingTestHostState} from './test-host-state.service';
+import {hostStateSchema, TestHostStateService, type RoutingTestHostState} from './test-host-state.service';
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
@@ -30,6 +32,7 @@ export interface RoutineJobRepository {
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
   exhaustPreparation?(jobId: string, completedRunIds: string[], now: Date): Promise<StoredRoutineJob | null>;
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
+  reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number): AsyncIterable<StoredRoutineJob>;
@@ -75,9 +78,62 @@ export const routineJobRepository: RoutineJobRepository = {
         reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}}},
       {returnDocument:'after',writeConcern:testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
+  async reserveResources(requestId, fleetInputSha256, hostId, laneId, now) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
+        fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+        {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
+      if (!row?.fleetPreparation) return null;
+      const selected = row.fleetResourceReservation;
+      if (selected && (selected.hostId !== hostId || selected.laneId !== laneId)) return null;
+      const hostRow = await TestHostStateModel.collection.findOne({hostId},
+        {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000});
+      if (!hostRow) return null;
+      const host = {...hostStateSchema.parse(hostRow.snapshot), receivedAt: hostRow.receivedAt.toISOString()};
+      const requirements = recorderCapacityRequirements(row.fleetPreparation), lane = host.lanes.find(value => value.id === laneId),
+        required = requirements.resources.find(value => value.kind === 'recorder')?.storage;
+      const sourceOffer = lane?.resources.find(value => value.kind === 'recorder')?.storage;
+      const offered = sourceOffer && {...sourceOffer, reservations: sourceOffer.reservations.filter(value =>
+        value.requestId !== requestId || value.inputSha256 !== row.inputSha256)};
+      if (host.hostId !== hostId || !lane || !required || !offered || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' ||
+        now.getTime() - hostRow.receivedAt.getTime() > 120_000 || hostRow.receivedAt > now ||
+        !compatibleRoutineLane(requirements, {...lane, resources: lane.resources.map(value => value.kind === 'recorder' ? {...value, storage: offered} : value)}, permissionContext(host.frameworkBinding, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
+      const claims = recorderHostReservationsSchema.parse(hostRow.resourceReservations ?? []);
+      const requests = claims.length ? await TestRequestModel.collection.find({requestId: {$in: claims.map(value => value.requestId)}},
+        {projection: {requestId: 1, inputSha256: 1, fleetInputSha256: 1, fleetResourceReservation: 1, fleetBinding: 1, fleetCancellation: 1,
+          dispatchCompletion: 1, input: 1, hostId: 1, state: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
+          preparationCancellation: 1, preparationRejection: 1}, readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}).limit(1001).toArray() as unknown as StoredRoutineJob[] : [];
+      const retained = reconcileRecorderHostReservations(claims, requests, offered);
+      const own = retained.find(value => value.requestId === requestId && value.fleetInputSha256 === fleetInputSha256);
+      if (retained.some(value => value.requestId === requestId && value.fleetInputSha256 !== fleetInputSha256) ||
+        selected && own?.id !== selected.id || own && own.poolId !== offered.poolId || !own && retained.length >= 1000) return null;
+      const unobserved = unobservedRecorderHostReservations(retained.filter(value => value !== own), requests, offered);
+      if (!recorderStorageAvailable(offered, required, now.getTime(), unobserved)) return null;
+      const chosenModel = row.fleetPreparation.requirements.glasses ? lane.glasses!.find(value =>
+        row.fleetPreparation!.requirements.glasses!.models.includes(value.model))!.model : undefined;
+      const claim = own ?? {id: randomUUID(), requestId, fleetInputSha256, hostId, laneId, poolId: offered.poolId,
+        minimumAvailableBytes: required.minimumAvailableBytes, reservedAt: now.toISOString(), ...(chosenModel ? {chosenModel} : {})};
+      // This existing host resource record is the sole byte-claim authority. Snapshot and claim CAS fences race both reports and other lanes.
+      const savedHost = await TestHostStateModel.collection.findOneAndUpdate({hostId, incarnation: hostRow.incarnation,
+        incarnationGeneration: hostRow.incarnationGeneration, sequence: hostRow.sequence,
+        resourceReservationVersion: hostRow.resourceReservationVersion ?? {$exists: false}},
+        {$set: {resourceReservations: own ? retained : [...retained, claim]}, $inc: {resourceReservationVersion: 1}},
+        {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 10_000});
+      if (!savedHost) continue;
+      if (selected) return row;
+      // The request retains only the winning target/receipt. A lost race leaves a conservative host claim for normal reconciliation.
+      const selectedRow = await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
+        fleetResourceReservation: {$exists: false}, fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+        {$set: {fleetResourceReservation: claim}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
+      if (selectedRow) return selectedRow;
+      const winner = await this.get(requestId);
+      return winner?.fleetResourceReservation?.id === claim.id ? winner : null;
+    }
+    return null;
+  },
   async bind(requestId, fleetInputSha256, fleetBinding, dispatchIntent, now) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
-      fleetBinding: {$exists: false}, hostId: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+      fleetBinding: {$exists: false}, hostId: {$exists: false}, 'fleetResourceReservation.hostId': fleetBinding.hostId, 'fleetResourceReservation.laneId': fleetBinding.laneId, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
       {$set: {hostId: fleetBinding.hostId, fleetBinding, dispatchIntent, dispatchIntentSha256: requestInputDigest(dispatchIntent),
         state: 'preparing', updatedAt: now}}, {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
@@ -159,25 +215,75 @@ export const routineJobRepository: RoutineJobRepository = {
   },
 };
 
+
+/** A durable cancellation prevents binding; delivered work requires actual cleanup and a later measurement. */
+export function reconcileRecorderHostReservations(claims: RecorderHostReservation[], rows: StoredRoutineJob[], offer: RecorderStorageObservation) {
+  return claims.filter(claim => {
+    const row = rows.find(value => value.requestId === claim.requestId);
+    if (!row || row.fleetInputSha256 !== claim.fleetInputSha256) return true;
+    if (offer.reservations.some(value => value.requestId === claim.requestId)) return true;
+    // A different immutable winning receipt cannot ever bind this orphan claim, even after the winner binds or refuses preparation.
+    const selected = recorderHostReservationSchema.safeParse(row.fleetResourceReservation);
+    if (selected.success && selected.data.requestId === claim.requestId && selected.data.fleetInputSha256 === claim.fleetInputSha256 &&
+      selected.data.id !== claim.id && (!row.fleetBinding || row.fleetBinding.hostId === selected.data.hostId && row.fleetBinding.laneId === selected.data.laneId)) return false;
+    if (!row.fleetBinding && row.fleetCancellation) return false;
+    // Host-source refusals cannot create executable input or its completion receipt. Their exact terminal fence plus a later empty offer settles the byte claim.
+    if (row.fleetBinding?.hostId === claim.hostId && row.fleetBinding.laneId === claim.laneId && row.hostId === claim.hostId &&
+      row.state === 'terminal' && row.inputSha256 === undefined && (row as StoredRoutineJob & {input?: unknown}).input === undefined && row.dispatchIntent &&
+      requestInputDigest(row.dispatchIntent) === row.dispatchIntentSha256) {
+      const intent = row.dispatchIntent as {requestId?: unknown; laneId?: unknown};
+      const rejection = preparationRejectionSchema.safeParse(row.preparationRejection);
+      const cancellation = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().safeParse(row.preparationCancellation);
+      const at = rejection.success && rejection.data.dispatchIntentSha256 === row.dispatchIntentSha256 ? rejection.data.rejectedAt
+        : cancellation.success ? cancellation.data.requestedAt : undefined;
+      if (intent.requestId === claim.requestId && intent.laneId === claim.laneId && at && Date.parse(at) <= Date.parse(offer.observedAt)) return false;
+    }
+    return !row.dispatchCompletion || Date.parse(row.dispatchCompletion.completedAt) > Date.parse(offer.observedAt);
+  });
+}
+/** Exact local accepted input reservations already represent their remaining output in the measured offer. */
+export function unobservedRecorderHostReservations(claims: RecorderHostReservation[], rows: StoredRoutineJob[], offer: RecorderStorageObservation): number {
+  return claims.reduce((total, claim) => {
+    const row = rows.find(value => value.requestId === claim.requestId);
+    if (row?.fleetInputSha256 === claim.fleetInputSha256 && offer.reservations.some(value =>
+      value.requestId === claim.requestId && value.inputSha256 === row.inputSha256)) return total;
+    if (claim.poolId !== offer.poolId) return Number.POSITIVE_INFINITY;
+    return total + Math.max(0, claim.minimumAvailableBytes - STORAGE_MARGIN_BYTES);
+  }, 0);
+}
+
+/** Derive the same recorder prerequisite from the frozen policy, without rewriting prepared source identities. */
+export function recorderCapacityRequirements(preparation: Pick<RoutineJobPreparation, 'requirements' | 'definition'>): PortableRequirements {
+  const estimate = preparation.definition.execution?.policy?.estimatedOutputBytes;
+  return portableRequirementsSchema.parse({...preparation.requirements, resources: preparation.requirements.resources.map(resource => {
+    if (resource.kind !== 'recorder') return resource;
+    const storage = recorderCapacityRequirement(estimate, resource.storage);
+    if (!storage)
+      throw new TestRequestConflict('Recording work requires a finite estimatedOutputBytes reservation');
+    return {...resource, storage};
+  })});
+}
 /** Derive routing only from the exact serialized definition. */
 export function routinePortableRequirements(definition: RoutineEnrollment): PortableRequirements {
-  const body = definition.definition, execution = body.execution;
-  if (!execution) throw new TestRequestConflict('The routine has no execution resource metadata');
-  return portableRequirementsSchema.parse({platform: definition.platform,
+  const body = definition.definition;
+  if (!body.execution) throw new TestRequestConflict('The routine has no execution resource metadata');
+  const requirements = portableRequirementsSchema.parse({platform: definition.platform,
     ...(body.glasses ? {glasses: {models: body.glasses.models, capabilities: [...body.resourceRequirements.find(value => value.kind === "glasses")!.capabilities]}} : {}),
     resources: body.resourceRequirements});
+  return recorderCapacityRequirements({definition: body, requirements});
 }
 export function routineLaneDescriptorRevision(lane: RoutingTestHostState['lanes'][number]): string {
   return requestInputDigest({id: lane.id, platform: lane.platform,
-    resources: lane.resources.map(({permissionObservations: _, ...resource}) => ({...resource, capabilities: [...resource.capabilities ?? []].sort()})).sort((a, b) => a.id.localeCompare(b.id)),
+    resources: lane.resources.map(({permissionObservations: _, storage: _storage, ...resource}) => ({...resource, capabilities: [...resource.capabilities ?? []].sort()})).sort((a, b) => a.id.localeCompare(b.id)),
     glasses: (lane.glasses ?? []).map(glasses => ({...glasses, capabilities: [...glasses.capabilities].sort()})).sort((a, b) => a.resourceId.localeCompare(b.resourceId))});
 }
 export function compatibleRoutineLane(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
-  context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}}) {
+  context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}}, now = context?.now ?? Date.now()) {
   if (lane.platform !== requirements.platform || (lane.glasses?.length ?? 0) > 1 ||
     new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length) return false;
   if (!requirements.resources.every(required => lane.resources.some(offered => offered.kind === required.kind &&
     required.capabilities.every(capability => offered.capabilities?.includes(capability)) &&
+    (!required.storage || recorderStorageAvailable(offered.storage, required.storage, now)) &&
     (required.permissions ?? []).every(value => Boolean(context && permissionObservationMatches(
       offered.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
       {...context, recipient: value.recipient})))))) return false;
@@ -201,9 +307,9 @@ export function routineRequirementLabels(requirements: PortableRequirements, mod
 /** Queue model choice follows current accepting lanes; the portable alternatives stay immutable. */
 export function routineJobRouting(requirements: PortableRequirements, hosts: RoutingTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget'],
   build?: {headSha: string; archive?: {sha256: string}; receipt?: {sha256: string}}) {
-  const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000 &&
+  const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= now && now - Date.parse(host.receivedAt) <= 120_000 &&
     (!target?.hostId || target.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
-      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && compatibleRoutineLane(requirements, lane, build ? permissionContext(host.frameworkBinding, build, now) : undefined)));
+      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && compatibleRoutineLane(requirements, lane, build ? permissionContext(host.frameworkBinding, build, now) : undefined, now)));
   const accepting = compatible.filter(lane => lane.state === 'idle');
   const chosenModel = requirements.glasses ? [...new Set(accepting.flatMap(lane => (lane.glasses ?? []).filter(glasses =>
     requirements.glasses!.models.includes(glasses.model) && requirements.glasses!.capabilities.every(value => glasses.capabilities.includes(value))).map(glasses => glasses.model)))].sort()[0]
@@ -429,7 +535,32 @@ export class RoutineJobService {
       state: row.state, ...routing, selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
   }
   private async routing(row: StoredRoutineJob) {
-    return routineJobRouting(row.fleetPreparation!.requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetTarget, row.fleetSelection.build);
+    const hosts = await this.hosts.list?.() ?? [], requirements = recorderCapacityRequirements(row.fleetPreparation!);
+    const routed = routineJobRouting(requirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build);
+    const inventoryRequirements = {...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)};
+    const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build);
+    const retained = row.fleetResourceReservation;
+    if (retained) {
+      const checked = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, retained.hostId, retained.laneId, new Date(this.now()));
+      if (!checked) {
+        const targetInventory = routineJobRouting(inventoryRequirements, hosts, this.now(), retained, row.fleetSelection.build);
+        return {...routed, chosenModel: retained.chosenModel, resourceTarget: {hostId: retained.hostId, laneId: retained.laneId},
+          routingLabels: routineRequirementLabels(requirements, retained.chosenModel, retained),
+          waitingReason: targetInventory.waitingReason ?? 'Awaiting fresh available recorder capacity on the reserved runner'};
+      }
+      return {...routed, chosenModel: retained.chosenModel, waitingReason: undefined, resourceTarget: {hostId: retained.hostId, laneId: retained.laneId},
+        routingLabels: routineRequirementLabels(requirements, retained.chosenModel, retained)};
+    }
+    if (inventory.waitingReason) return inventory;
+    if (routed.waitingReason) return {...routed, waitingReason: 'Awaiting fresh recorder disk and evidence staging capacity on an idle compatible runner'};
+    for (const host of hosts) for (const lane of host.lanes) {
+      if (row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
+        lane.state !== 'idle' || lane.dispatchMode !== 'automatic' || !compatibleRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now()), this.now())) continue;
+      const saved = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, host.hostId, lane.id, new Date(this.now()));
+      if (saved?.fleetResourceReservation) return {...routed, chosenModel: saved.fleetResourceReservation.chosenModel, resourceTarget: {hostId: saved.fleetResourceReservation.hostId, laneId: saved.fleetResourceReservation.laneId},
+        routingLabels: routineRequirementLabels(requirements, saved.fleetResourceReservation.chosenModel, saved.fleetResourceReservation)};
+    }
+    return {...routed, waitingReason: 'Awaiting unreserved recorder disk capacity on a compatible runner'};
   }
   async preparationStatus(jobId: string, value: unknown) {
     const input = routinePreparationStatusSchema.parse(value), row = await this.job(jobId);
@@ -469,7 +600,7 @@ export class RoutineJobService {
       throw new TestRequestConflict('Offline preparation differs from the selected exact source');
     const {inputSha256: _, ...preparedInput} = input;
     const prepared = routineJobPreparationSchema.parse({...preparedInput, requirements: routinePortableRequirements(definition)});
-    const digest = routineJobInputDigest({...row, fleetPreparation: prepared});
+    const digest = routineJobInputDigest({...row, fleetPreparation: row.fleetPreparation ? {...prepared, requirements: row.fleetPreparation.requirements} : prepared});
     if (row.fleetPreparation) {
       if (digest !== row.fleetInputSha256) throw new TestRequestConflict('Prepared routine requirements changed after their first commit');
       return row;
@@ -481,22 +612,38 @@ export class RoutineJobService {
     return winner;
   }
   async bind(jobId: string, hostId: string, value: unknown) {
-    const input = routineJobBindInputSchema.parse(value), row = await this.supersession(await this.job(jobId));
+    const input = routineJobBindInputSchema.parse(value);
+    let row = await this.supersession(await this.job(jobId));
     if (row.fleetInputSha256 !== input.inputSha256 || !row.fleetPreparation)
       throw new TestRequestConflict('Binding changed its prepared exact inputs');
     if (row.fleetBinding) return this.bindingProjection(row, hostId, input);
     if (row.fleetCancellation || this.now() >= row.fleetDeadline.getTime())
       throw new TestRequestConflict('Cancelled or expired routine job cannot bind');
-    const host = await this.hosts.get(hostId), lane = host?.lanes.find(lane => lane.id === input.laneId);
-    if (!host || host.hostId !== hostId || !Number.isFinite(Date.parse(host.receivedAt)) || this.now() - Date.parse(host.receivedAt) > 120_000 ||
-      !lane || lane.dispatchMode !== 'automatic' || lane.state !== 'idle' ||
-      row.fleetTarget?.hostId && row.fleetTarget.hostId !== hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== input.laneId ||
-      lane.descriptorRevision !== input.descriptorRevision || routineLaneDescriptorRevision(lane) !== input.descriptorRevision ||
-      !compatibleRoutineLane(row.fleetPreparation.requirements, lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now())))
+    if (row.fleetResourceReservation && (row.fleetResourceReservation.hostId !== hostId || row.fleetResourceReservation.laneId !== input.laneId))
+      throw new TestRequestConflict('Device runner differs from its reserved recorder capacity');
+    const requirements = recorderCapacityRequirements(row.fleetPreparation);
+    const accepting = (host: Awaited<ReturnType<TestHostStateService['get']>>) => {
+      const lane = host?.lanes.find(lane => lane.id === input.laneId);
+      return host?.hostId === hostId && Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() &&
+        this.now() - Date.parse(host.receivedAt) <= 120_000 && lane?.dispatchMode === 'automatic' && lane.state === 'idle' &&
+        (!row.fleetTarget?.hostId || row.fleetTarget.hostId === hostId) && (!row.fleetTarget?.laneId || row.fleetTarget.laneId === input.laneId) &&
+        lane.descriptorRevision === input.descriptorRevision && routineLaneDescriptorRevision(lane) === input.descriptorRevision &&
+        compatibleRoutineLane(requirements, {...lane, resources: lane.resources.map(resource => resource.storage ? {...resource,
+          storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
+            value.requestId !== jobId || value.inputSha256 !== row.inputSha256)}} : resource)},
+        permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now()), this.now());
+    };
+    if (!accepting(await this.hosts.get(hostId)))
+      throw new TestRequestConflict('Selected host has no current accepting compatible lane descriptor');
+    const reserved = await this.rows.reserveResources?.(jobId, input.inputSha256, hostId, input.laneId, new Date(this.now()));
+    if (!reserved)
+      throw new TestRequestConflict('Reserved recorder disk capacity is no longer available');
+    row = reserved;
+    if (!accepting(await this.hosts.get(hostId)))
       throw new TestRequestConflict('Selected host has no current accepting compatible lane descriptor');
     const binding: RoutineJobBinding = {jobId, requestId: jobId, hostId, laneId: input.laneId,
       descriptorRevision: input.descriptorRevision, actionsJobId: input.actionsJobId, actionsRunId: input.actionsRunId, boundAt: new Date(this.now()).toISOString()};
-    const intent = routineDispatchIntentSchema.parse({...row.fleetSelection, routineSource: row.fleetPreparation.routineSource, laneId: input.laneId});
+    const intent = routineDispatchIntentSchema.parse({...row.fleetSelection, routineSource: row.fleetPreparation!.routineSource, laneId: input.laneId});
     const saved = await this.rows.bind(jobId, input.inputSha256, binding, intent, new Date(this.now()));
     const winner = saved ?? await this.job(jobId);
     if (!winner.fleetBinding) throw new TestRequestConflict('Routine job was cancelled or expired before binding');

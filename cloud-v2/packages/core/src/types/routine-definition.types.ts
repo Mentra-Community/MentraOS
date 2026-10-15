@@ -1,3 +1,4 @@
+import {recorderStorageRequirementSchema} from './recorder-storage.types';
 import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {permissionRequirementsSchema} from "./resource-permissions.types";
@@ -23,9 +24,10 @@ export const resourceCapabilityMap = {
   workspace: [],
 } as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
-  capabilities: z.array(routineIdentitySchema).max(30), permissions: permissionRequirementsSchema.optional()}).strict().refine(value =>
+  capabilities: z.array(routineIdentitySchema).max(30), storage: recorderStorageRequirementSchema.optional(), permissions: permissionRequirementsSchema.optional()}).strict().refine(value =>
     new Set(value.capabilities).size === value.capabilities.length && value.capabilities.every(capability =>
-      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations');
+      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations')
+  .refine(value => !value.storage || value.kind === 'recorder', 'Storage capacity belongs to the recorder resource');
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
   id,

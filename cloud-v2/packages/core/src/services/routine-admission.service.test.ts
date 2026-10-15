@@ -31,13 +31,13 @@ const enrollment = (glasses = true): RoutineEnrollment => ({
     fixtures: [],
     ...(glasses ? {glasses: {models: ["mentra-live"]}} : {}),
     steps: [{id: "check", instruction: "Check", expected: "Observed"}],
-    execution: {resourceKinds: glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"]},
+    execution: {resourceKinds: glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"], policy: {estimatedOutputBytes: 1024**3}},
     source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: "routines/arbitrary-camera/routine.ts"},
   },
 })
 const host = (glasses = true): ReceivedTestHostState => ({hostId: "mini", incarnation: "boot", incarnationGeneration: 1, sequence: 1,
   receivedAt: new Date(now).toISOString(), observedAt: new Date(now).toISOString(), lanes: [{id: "phone-lane", platform: "android", dispatchMode: "automatic", state: "idle",
-    resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder"}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const, capabilities: ["connection"]}] : [])],
+    resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder", storage: {poolId: "mini:disk:1", observedAt: new Date(now).toISOString(), availableBytes: 64*1024**3, stagingBudgetBytes: 10*1024**3, pendingEvidenceBytes: 0, reservations: []}}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const, capabilities: ["connection"]}] : [])],
     ...(glasses ? {glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities: ["connection"]}]} : {})}]});
 const select = (definition = enrollment(), selected = build, observed = host()) => routineAdmissionInput(definition, selected,
   {hostId: "mini", laneId: "phone-lane"}, observed, now);
@@ -229,7 +229,7 @@ test("projecting known host providers preserves missing real and unknown glasses
 
 test("host preparation independently rechecks generic resource capabilities before concrete allocation", () => {
   const original = enrollment(false), definition: RoutineEnrollment = {...original, definition: {...original.definition,
-    execution: {resourceKinds: ["phone", "app", "recorder", "network"]},
+    execution: {resourceKinds: ["phone", "app", "recorder", "network"], policy: {estimatedOutputBytes: 1024**3}},
     resourceRequirements: [...original.definition.resourceRequirements, {kind: "network" as const, capabilities: ["independent-uplink"]}]}};
   const lane = host(false).lanes[0]!, network = {id: "network-uplink", kind: "network" as const, capabilities: ["independent-uplink"]};
   const offered = {...host(false), lanes: [{...lane, resources: [...lane.resources, network]}]};
@@ -247,4 +247,14 @@ test('typed phone capabilities are enforced before admission without becoming gl
   const input = routineAdmissionInput(enrolled, build, {hostId:'mini',laneId:'phone-lane'}, offered, now)
   expect(input.resources.map(resource => resource.kind)).toEqual(['phone','app','recorder'])
   expect(input.glassesStart).toBeUndefined()
+})
+
+
+test('direct admission enforces the same recording budget and strips measured offers from frozen input', () => {
+  const declared=enrollment(false), measured=host(false), recorder=measured.lanes[0]!.resources.find(value=>value.kind==='recorder')!;
+  expect(select(declared,build,measured).resources.find(value=>value.kind==='recorder')).toEqual({id:'recorder',kind:'recorder'});
+  recorder.storage!.availableBytes=2*1024**3;
+  expect(()=>select(declared,build,measured)).toThrow('recorder disk and evidence staging capacity');
+  recorder.storage!.availableBytes=64*1024**3; recorder.storage!.pendingEvidenceBytes=10*1024**3;
+  expect(()=>select(declared,build,measured)).toThrow('recorder disk and evidence staging capacity');
 })

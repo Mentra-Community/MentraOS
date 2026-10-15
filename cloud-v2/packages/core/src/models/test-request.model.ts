@@ -23,6 +23,7 @@ const schema = new Schema({
   fleetInputSha256: {type: String, immutable: true},
   fleetDeadline: {type: Date, immutable: true},
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
+  fleetResourceReservation: {type: Schema.Types.Mixed},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetCancellation: {type: Schema.Types.Mixed},
   fleetSupersessionCheckedAt: {type: Date},
