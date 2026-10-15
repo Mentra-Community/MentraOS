@@ -262,6 +262,8 @@ test('direct admission enforces the same recording budget and strips measured of
 function nimoSelection() {
   const definition = enrollment(), observed = host();
   definition.definition.glasses = {models: ['nimo']};
+  definition.definition.minimumRoutineApiVersion = 43;
+  definition.routineSource.minimumRoutineApiVersion = 43;
   observed.lanes[0]!.glasses![0] = {resourceId: 'physical-live', deviceId: 'AA:BB:CC:DD:40:27', model: 'nimo', capabilities: ['connection']};
   return {definition, observed};
 }
@@ -274,6 +276,7 @@ test('only the actual Android connection-only NIMO inventory omits Live software
   expect(frameworkRequestInputSchema.safeParse({...input, glassesModel: undefined}).success).toBe(false);
   expect(frameworkRequestInputSchema.safeParse({...input, glassesStart: {model: 'mentra-live', manifest}, glassesReturn: {model: 'mentra-live', manifest}}).success).toBe(false);
   expect(frameworkRequestInputSchema.safeParse({...input, platform: 'ios-on-mac'}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, routineSource: {...input.routineSource, minimumRoutineApiVersion: 42}}).success).toBe(false);
 });
 test('NIMO never admits a firmware, BLE, other-model or fabricated-identity provider', () => {
   for (const mutate of [

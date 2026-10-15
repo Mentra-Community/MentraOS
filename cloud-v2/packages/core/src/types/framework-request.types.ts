@@ -49,6 +49,8 @@ function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema
   const glasses = input.resources.some(resource => resource.kind === "glasses");
   if (input.glassesModel && (!glasses || input.platform !== 'android' || input.glassesStart || input.glassesReturn))
     ctx.addIssue({code: 'custom', message: 'NIMO requires its selected Android glasses resource without Mentra Live firmware references'});
+  if (input.glassesModel && (!input.routineSource || input.routineSource.minimumRoutineApiVersion < 43))
+    ctx.addIssue({code: 'custom', message: 'NIMO connection requires routine API 43 or later'});
   if ((glasses && !input.glassesModel && !(input.glassesStart && input.glassesReturn)) || (!glasses && (input.glassesStart || input.glassesReturn)) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
     ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
