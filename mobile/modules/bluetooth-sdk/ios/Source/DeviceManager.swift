@@ -85,6 +85,8 @@ struct ViewState {
         // Check if device is paired (don't activate to preserve A2DP music playback)
         let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
 
+        publishClassicAudioProfiles(devicePattern: audioDevicePattern)
+
         if isPaired {
             // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
             Bridge.log("Audio: Mentra Live is paired (preserving A2DP for music)")
@@ -98,6 +100,7 @@ struct ViewState {
             AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) {
                 [weak self] (connected: Bool, _: String?) in
                 guard let self = self else { return }
+                self.publishClassicAudioProfiles(devicePattern: audioDevicePattern)
 
                 if connected {
                     Bridge.log("Audio: Device paired and connected")
@@ -267,6 +270,26 @@ struct ViewState {
         get { DeviceStore.shared.get("glasses", "bluetoothClassicConnected") as? Bool ?? false }
         set { DeviceStore.shared.apply("glasses", "bluetoothClassicConnected", newValue) }
     }
+
+    /// An HFP input is available or a matching Bluetooth output is active.
+    private var glassesBluetoothClassicProfilesConnected: Bool {
+        get { DeviceStore.shared.get("glasses", "bluetoothClassicProfilesConnected") as? Bool ?? false }
+        set { DeviceStore.shared.apply("glasses", "bluetoothClassicProfilesConnected", newValue) }
+    }
+
+    /// A matching Bluetooth output is the active audio route.
+    private var glassesBluetoothAudioRouted: Bool {
+        get { DeviceStore.shared.get("glasses", "bluetoothAudioRouted") as? Bool ?? false }
+        set { DeviceStore.shared.apply("glasses", "bluetoothAudioRouted", newValue) }
+    }
+
+    #if !os(macOS)
+    private func publishClassicAudioProfiles(devicePattern: String) {
+        let profiles = AudioSessionMonitor.observeProfiles(devicePattern: devicePattern)
+        glassesBluetoothClassicProfilesConnected = profiles.profilesConnected
+        glassesBluetoothAudioRouted = profiles.audioRouted
+    }
+    #endif
 
     private var micRanking: [String] {
         get {
@@ -957,17 +980,23 @@ struct ViewState {
 
         if audioDevicePattern.isEmpty || audioDevicePattern == DeviceTypes.SIMULATED {
             glassesBluetoothClassicConnected = false
+            glassesBluetoothClassicProfilesConnected = false
+            glassesBluetoothAudioRouted = false
             Bridge.log("MAN: Audio device pattern is empty or simulated, returning")
             return
         }
 
         #if os(macOS)
         glassesBluetoothClassicConnected = AudioSessionMonitor.isAudioDeviceConnected(devicePattern: audioDevicePattern)
+        // macOS only sees active audio devices, so every fact collapses to the same value.
+        glassesBluetoothClassicProfilesConnected = glassesBluetoothClassicConnected
+        glassesBluetoothAudioRouted = glassesBluetoothClassicConnected
         otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
         #else
         // A connected HFP input remains eligible even while another output is
         // selected. Inspect available inputs as well as the active A2DP route.
         glassesBluetoothClassicConnected = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
+        publishClassicAudioProfiles(devicePattern: audioDevicePattern)
         otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
         #endif
     }
@@ -1980,6 +2009,8 @@ struct ViewState {
         #if os(macOS)
         audioRouteObserver = nil
         glassesBluetoothClassicConnected = false
+        glassesBluetoothClassicProfilesConnected = false
+        glassesBluetoothAudioRouted = false
         otherBtConnected = false
         #endif
         sgc?.clearDisplay() // clear the screen

@@ -1642,6 +1642,10 @@ export interface GlassesStatus {
   micEnabled: boolean
   voiceActivityDetectionEnabled: boolean
   bluetoothClassicConnected: boolean
+  /** iOS: an HFP input is available or a matching Bluetooth output is active. Android: same as `bluetoothClassicConnected`. */
+  bluetoothClassicProfilesConnected: boolean
+  /** iOS: a matching Bluetooth output is the active audio route. Android: same as `bluetoothClassicConnected`. */
+  bluetoothAudioRouted: boolean
   signalStrength: number
   /** Milliseconds since epoch when signalStrength was last refreshed by the phone BLE stack. */
   signalStrengthUpdatedAt: number
@@ -1750,6 +1754,13 @@ export interface ConnectOptions {
    * Android accepts this option as a no-op.
    */
   requiresAncs?: boolean
+  /**
+   * iOS Mentra Live only, experimental. When true, CoreBluetooth is asked to bring
+   * up the Classic profiles (A2DP/HFP) after the BLE connection
+   * (CBConnectPeripheralOptionEnableTransportBridgingKey). Defaults to false.
+   * Android accepts this option as a no-op.
+   */
+  enableTransportBridging?: boolean
 }
 
 export type ScanResultsCallback = (devices: Device[]) => void

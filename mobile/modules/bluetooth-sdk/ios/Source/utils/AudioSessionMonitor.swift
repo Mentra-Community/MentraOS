@@ -95,6 +95,55 @@ class AudioSessionMonitor {
         return false
     }
 
+    /// Glasses' Classic audio facts without selecting an input, activating the session, or
+    /// changing audio routing. `profilesConnected` matches `isDevicePaired`; `audioRouted` is
+    /// the stricter "audio is flowing to the glasses" signal.
+    static func observeProfiles(devicePattern: String) -> BluetoothAudioRoute.ProfileObservation {
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs
+        let availableInputs = session.availableInputs
+        let profiles = profileObservation(devicePattern: devicePattern, outputs: outputs, availableInputs: availableInputs)
+        logPairFlow(
+            session: session, devicePattern: devicePattern, outputs: outputs,
+            availableInputs: availableInputs, profiles: profiles
+        )
+        return profiles
+    }
+
+    private static func profileObservation(
+        devicePattern: String,
+        outputs: [AVAudioSessionPortDescription],
+        availableInputs: [AVAudioSessionPortDescription]?
+    ) -> BluetoothAudioRoute.ProfileObservation {
+        BluetoothAudioRoute.observeProfiles(
+            outputs: outputs.map { (name: $0.portName, portType: $0.portType.rawValue) },
+            inputs: availableInputs?.map { (name: $0.portName, portType: $0.portType.rawValue) },
+            target: devicePattern, isIOSAppOnMac: ProcessInfo.processInfo.isiOSAppOnMac
+        )
+    }
+
+    /// One PAIRFLOW line per transition of category, inputs availability, ports, and both facts.
+    /// Port names are the glasses' advertised name or other audio devices; no credentials are logged.
+    private static func logPairFlow(
+        session: AVAudioSession,
+        devicePattern: String,
+        outputs: [AVAudioSessionPortDescription],
+        availableInputs: [AVAudioSessionPortDescription]?,
+        profiles: BluetoothAudioRoute.ProfileObservation
+    ) {
+        let decision = profiles.audioRouted
+            ? "advance_active_output"
+            : (profiles.profilesConnected ? "advance_hfp_input" : "wait_no_route")
+        let outputNames = outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let inputNames = (availableInputs ?? []).map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let pairFlow =
+            "PAIRFLOW: pair_audio decision=\(decision) pattern=\(devicePattern) category=\(session.category.rawValue) inputsNil=\(availableInputs == nil) outputs=[\(outputNames)] inputs=[\(inputNames)] profilesConnected=\(profiles.profilesConnected) audioRouted=\(profiles.audioRouted)"
+        if pairFlow != lastPairFlow {
+            lastPairFlow = pairFlow
+            Bridge.log(pairFlow)
+        }
+    }
+
     /// Check if a Bluetooth device matching the pattern is paired (appears in availableInputs)
     /// Returns true if device is found (paired), WITHOUT activating it
     /// This avoids switching A2DP music playback to HFP microphone mode
@@ -107,6 +156,7 @@ class AudioSessionMonitor {
         )
         let activeTarget = route.matchingOutputCount > 0
         let availableInputs = session.availableInputs
+        let profiles = profileObservation(devicePattern: devicePattern, outputs: outputs, availableInputs: availableInputs)
         let bluetoothInput = availableInputs?.first { input in
             input.portType == .bluetoothHFP
                 && input.portName.localizedCaseInsensitiveContains(devicePattern)
@@ -116,17 +166,10 @@ class AudioSessionMonitor {
         // Keep categorical evidence at notice level without exposing names or
         // selecting an input, activating the session, or changing audio routing.
         readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(session.category.rawValue, privacy: .public) outputs=\(outputs.count, privacy: .public) bluetoothOutputs=\(route.bluetoothOutputCount, privacy: .public) targetNameOutputs=\(route.targetNameOutputCount, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
-        let decision = activeTarget
-            ? "advance_active_output"
-            : (bluetoothInput != nil ? "advance_hfp_input" : "wait_no_route")
-        let outputNames = outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
-        let inputNames = (availableInputs ?? []).map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
-        let pairFlow =
-            "PAIRFLOW: pair_audio decision=\(decision) pattern=\(devicePattern) category=\(session.category.rawValue) outputs=[\(outputNames)] inputs=[\(inputNames)]"
-        if pairFlow != lastPairFlow {
-            lastPairFlow = pairFlow
-            Bridge.log(pairFlow)
-        }
+        logPairFlow(
+            session: session, devicePattern: devicePattern, outputs: outputs,
+            availableInputs: availableInputs, profiles: profiles
+        )
 
         // Check if already active (using A2DP for music or HFP for calls)
         if activeTarget {
@@ -331,6 +374,31 @@ enum BluetoothAudioRoute {
                 matches(name: $0.name, portType: $0.portType, target: target, isIOSAppOnMac: isIOSAppOnMac)
             }.count
         )
+    }
+
+    /// Separate facts about the glasses' Classic audio link. Neither implies a bond:
+    /// a bonded device with no connected audio profile is invisible to AVAudioSession.
+    struct ProfileObservation: Equatable {
+        /// An HFP input is available, or a matching Bluetooth output is active.
+        let profilesConnected: Bool
+        /// A matching Bluetooth output is the active route (A2DP or HFP).
+        let audioRouted: Bool
+    }
+
+    /// `inputs` is nil when `AVAudioSession.availableInputs` is nil (it depends on the session category).
+    static func observeProfiles(
+        outputs: [(name: String, portType: String)],
+        inputs: [(name: String, portType: String)]?,
+        target: String,
+        isIOSAppOnMac: Bool
+    ) -> ProfileObservation {
+        let audioRouted = outputs.contains {
+            matches(name: $0.name, portType: $0.portType, target: target, isIOSAppOnMac: isIOSAppOnMac)
+        }
+        let hfpInput = inputs?.contains {
+            $0.portType == "BluetoothHFP" && matchesName($0.name, target: target)
+        } ?? false
+        return ProfileObservation(profilesConnected: audioRouted || hfpInput, audioRouted: audioRouted)
     }
 
     static func matches(name: String, portType: String, target: String, isIOSAppOnMac: Bool) -> Bool {

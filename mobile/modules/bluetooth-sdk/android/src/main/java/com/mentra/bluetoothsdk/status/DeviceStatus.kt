@@ -35,6 +35,8 @@ internal data class GlassesStatus(
     val voiceActivityDetectionEnabled: Boolean,
     val connectionState: GlassesConnectionState,
     val bluetoothClassicConnected: Boolean,
+    val bluetoothClassicProfilesConnected: Boolean,
+    val bluetoothAudioRouted: Boolean,
     val signalStrength: Int,
     val signalStrengthUpdatedAt: Long,
     val deviceModel: String,
@@ -85,6 +87,8 @@ internal data class GlassesStatus(
             "micEnabled" to micEnabled,
             "voiceActivityDetectionEnabled" to voiceActivityDetectionEnabled,
             "bluetoothClassicConnected" to bluetoothClassicConnected,
+            "bluetoothClassicProfilesConnected" to bluetoothClassicProfilesConnected,
+            "bluetoothAudioRouted" to bluetoothAudioRouted,
             "signalStrength" to signalStrength,
             "signalStrengthUpdatedAt" to signalStrengthUpdatedAt,
             "deviceModel" to deviceModel,
@@ -137,6 +141,9 @@ internal data class GlassesStatus(
                         ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
                 connectionState = GlassesConnectionState.fromValue(stringValue(values, "connectionState")),
                 bluetoothClassicConnected = boolValue(values, "bluetoothClassicConnected") ?: false,
+                // Android has no separate profile/route signal; both mirror the Classic audio state.
+                bluetoothClassicProfilesConnected = boolValue(values, "bluetoothClassicConnected") ?: false,
+                bluetoothAudioRouted = boolValue(values, "bluetoothClassicConnected") ?: false,
                 signalStrength = numberValue(values, "signalStrength") ?: -1,
                 signalStrengthUpdatedAt = longValue(values, "signalStrengthUpdatedAt") ?: 0L,
                 deviceModel = stringValue(values, "deviceModel") ?: "",
@@ -406,6 +413,8 @@ internal data class GlassesStatusUpdate(
     val voiceActivityDetectionEnabled: Boolean? = null,
     val connectionState: GlassesConnectionState? = null,
     val bluetoothClassicConnected: Boolean? = null,
+    val bluetoothClassicProfilesConnected: Boolean? = null,
+    val bluetoothAudioRouted: Boolean? = null,
     val signalStrength: Int? = null,
     val signalStrengthUpdatedAt: Long? = null,
     val deviceModel: String? = null,
@@ -458,6 +467,8 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("micEnabled", micEnabled)
             putIfNotNull("voiceActivityDetectionEnabled", voiceActivityDetectionEnabled)
             putIfNotNull("bluetoothClassicConnected", bluetoothClassicConnected)
+            putIfNotNull("bluetoothClassicProfilesConnected", bluetoothClassicProfilesConnected)
+            putIfNotNull("bluetoothAudioRouted", bluetoothAudioRouted)
             putIfNotNull("signalStrength", signalStrength)
             putIfNotNull("signalStrengthUpdatedAt", signalStrengthUpdatedAt)
             putIfNotNull("deviceModel", deviceModel)
@@ -509,6 +520,8 @@ internal data class GlassesStatusUpdate(
                 voiceActivityDetectionEnabled = optionalBoolValue(values, "voiceActivityDetectionEnabled"),
                 connectionState = GlassesConnectionState.optionalFromValue(optionalStringValue(values, "connectionState")),
                 bluetoothClassicConnected = optionalBoolValue(values, "bluetoothClassicConnected"),
+                bluetoothClassicProfilesConnected = optionalBoolValue(values, "bluetoothClassicProfilesConnected"),
+                bluetoothAudioRouted = optionalBoolValue(values, "bluetoothAudioRouted"),
                 signalStrength = optionalNumberValue(values, "signalStrength"),
                 signalStrengthUpdatedAt = optionalLongValue(values, "signalStrengthUpdatedAt"),
                 deviceModel = optionalStringValue(values, "deviceModel"),

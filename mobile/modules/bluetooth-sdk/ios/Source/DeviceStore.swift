@@ -31,6 +31,8 @@ class DeviceStore {
         store.set("glasses", "micEnabled", false)
         store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         store.set("glasses", "bluetoothClassicConnected", false)
+        store.set("glasses", "bluetoothClassicProfilesConnected", false)
+        store.set("glasses", "bluetoothAudioRouted", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
         store.set("glasses", "caseCharging", false)

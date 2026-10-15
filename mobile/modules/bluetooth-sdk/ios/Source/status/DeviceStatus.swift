@@ -151,6 +151,14 @@ struct GlassesStatus: CustomStringConvertible {
         boolValue(values, "bluetoothClassicConnected") ?? false
     }
 
+    var bluetoothClassicProfilesConnected: Bool {
+        boolValue(values, "bluetoothClassicProfilesConnected") ?? false
+    }
+
+    var bluetoothAudioRouted: Bool {
+        boolValue(values, "bluetoothAudioRouted") ?? false
+    }
+
     var signalStrength: Int {
         intValue(values["signalStrength"]) ?? -1
     }
@@ -686,6 +694,14 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var bluetoothClassicConnected: Bool? {
         optionalBoolValue(values, "bluetoothClassicConnected")
+    }
+
+    var bluetoothClassicProfilesConnected: Bool? {
+        optionalBoolValue(values, "bluetoothClassicProfilesConnected")
+    }
+
+    var bluetoothAudioRouted: Bool? {
+        optionalBoolValue(values, "bluetoothAudioRouted")
     }
 
     var signalStrength: Int? {

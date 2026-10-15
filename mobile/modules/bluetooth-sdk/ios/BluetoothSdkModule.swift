@@ -1075,7 +1075,8 @@ private extension ConnectOptions {
         self.init(
             saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
             cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true,
-            requiresAncs: values?["requiresAncs"] as? Bool ?? true
+            requiresAncs: values?["requiresAncs"] as? Bool ?? true,
+            enableTransportBridging: values?["enableTransportBridging"] as? Bool ?? false
         )
     }
 }

@@ -1359,12 +1359,24 @@ enum MentraLiveConnectionState {
 }
 
 enum MentraLiveConnectionOptions {
-    static func coreBluetoothOptions(requiresAncs: Bool) -> [String: Any]? {
+    /// `enableTransportBridging` asks iOS to bring up the Classic profiles (A2DP/HFP)
+    /// after the BLE link is up (CBConnectPeripheralOptionEnableTransportBridgingKey,
+    /// iOS 13+). Experimental and OFF by default.
+    static func coreBluetoothOptions(
+        requiresAncs: Bool,
+        enableTransportBridging: Bool = false
+    ) -> [String: Any]? {
         #if os(macOS)
             return nil
         #else
-            guard requiresAncs else { return nil }
-            return [CBConnectPeripheralOptionRequiresANCS: true]
+            var options = [String: Any]()
+            if requiresAncs {
+                options[CBConnectPeripheralOptionRequiresANCS] = true
+            }
+            if enableTransportBridging {
+                options[CBConnectPeripheralOptionEnableTransportBridgingKey] = true
+            }
+            return options.isEmpty ? nil : options
         #endif
     }
 }
@@ -1795,6 +1807,10 @@ class MentraLive: NSObject, SGCManager {
     private var pendingReconnectSettleWorkItem: DispatchWorkItem?
     private var reconnectionWorkItem: DispatchWorkItem?
     private var requiresAncs = true
+    /// Experimental iOS transport bridging (Classic profiles after BLE connect). Off by default.
+    /// Static so it can be set from `ConnectOptions` without threading a parameter
+    /// through `DeviceManager`; it applies to every connect issued after it is set.
+    static var enableTransportBridging = false
 
     // MARK: - Initialization
 
@@ -2956,9 +2972,17 @@ class MentraLive: NSObject, SGCManager {
             // The default requirement lets the system complete that authorization flow
             // before the glasses subscribe; apps that do not relay notifications can opt out.
             Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
+            // Test runs can also switch bridging on without a rebuild by launching the app with
+            // MENTRA_LIVE_TRANSPORT_BRIDGING=1 in its environment (xcrun devicectl ... --environment-variables).
+            let bridgingFromEnvironment = ProcessInfo.processInfo.environment["MENTRA_LIVE_TRANSPORT_BRIDGING"] == "1"
+            let enableTransportBridging = Self.enableTransportBridging || bridgingFromEnvironment
+            Bridge.log("LIVE: Transport bridging \(enableTransportBridging ? "enabled" : "disabled")")
             centralManager?.connect(
                 peripheral,
-                options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
+                options: MentraLiveConnectionOptions.coreBluetoothOptions(
+                    requiresAncs: requiresAncs,
+                    enableTransportBridging: enableTransportBridging
+                )
             )
         #endif
     }

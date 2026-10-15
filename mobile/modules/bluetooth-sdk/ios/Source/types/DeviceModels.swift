@@ -172,14 +172,19 @@ public struct ConnectOptions {
     /// Mentra Live on iOS only. Whether CoreBluetooth should require ANCS
     /// authorization while establishing the connection.
     public let requiresAncs: Bool
+    /// Mentra Live on iOS only, experimental. Ask CoreBluetooth to bring up the
+    /// Classic profiles (A2DP/HFP) after the BLE connection. Defaults to false.
+    public let enableTransportBridging: Bool
 
     public init(
         saveAsDefault: Bool = true,
         cancelExistingConnectionAttempt: Bool = true,
-        requiresAncs: Bool = true
+        requiresAncs: Bool = true,
+        enableTransportBridging: Bool = false
     ) {
         self.saveAsDefault = saveAsDefault
         self.cancelExistingConnectionAttempt = cancelExistingConnectionAttempt
         self.requiresAncs = requiresAncs
+        self.enableTransportBridging = enableTransportBridging
     }
 }

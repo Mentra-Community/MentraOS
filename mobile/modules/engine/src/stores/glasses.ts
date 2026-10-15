@@ -118,6 +118,8 @@ const initialState: GlassesStore = {
   g2MissingArm: null,
   micEnabled: false,
   bluetoothClassicConnected: false,
+  bluetoothClassicProfilesConnected: false,
+  bluetoothAudioRouted: false,
   signalStrength: -1,
   signalStrengthUpdatedAt: 0,
   voiceActivityDetectionEnabled: true,
