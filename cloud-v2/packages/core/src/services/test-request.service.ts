@@ -334,7 +334,7 @@ export class TestRequestService {
     await this.enrolled?.(selected);
     if (selected.verification) {
       if (authenticatedHostId !== hostId) throw new TestRequestConflict('Candidate admission requires the authenticated assigned host');
-      await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+      await this.candidates.authorize(selected.verification, authenticatedHostId, {...selected,requestId});
     }
     try {await this.repository.insert(request); return request;}
     catch (error) {
@@ -377,7 +377,7 @@ export class TestRequestService {
     const original = await this.repository.get(receipt.requestId);
     if (!original) {
       await this.enrolled?.(selected);
-      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, {...selected,requestId:receipt.requestId});
     }
     const row: StoredTestRequest = {requestId: receipt.requestId, hostId: authenticatedHostId, input,
       inputSha256: receipt.inputSha256, state: "accepted", hostReceipt: receipt,

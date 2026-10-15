@@ -81,3 +81,35 @@ test('only authenticated candidate intake is admitted; retained local receipt re
   await expect(service.registerLocal(selected, {...receipt, requestId: 'local:another'}, 'mini')).rejects.toThrow('permit retired')
   expect(authorizations).toBe(2)
 })
+
+test('candidate authorization uses only the fresh accepted pre-admission retry of an unchanged failed attempt',async()=>{
+ const row=accepted(),original=row.status!.details as any,now=Date.parse('2026-10-15T22:30:00Z')
+ original.state='failed';original.details.reason='Original permission refusal'
+ const requestId='local:1792177290232:same-candidate'
+ row.verification={identity:{decisionId:'admission-retry',inputSha256:'d'.repeat(64),failureEventId:'permission-failed',failureSha256:'e'.repeat(64),
+  acceptedAt:new Date(now).toISOString(),deadline:new Date(now+1800000).toISOString(),
+  previousFailure:{code:'permission-required',reason:original.details.reason},admission:{requestId,originalAdmissionExpiresAt:1792177290232}},
+  status:{details:{...structuredClone(original),state:'awaiting-installation',sequence:5,details:{...original.details,requestId}}}}
+ const service=new CandidateVerificationService(async()=>row,()=>now)
+ await service.authorize(verification,'mini',selected)
+ const snapshot=structuredClone(row)
+ for(const mutate of [()=>{(row.verification!.status.details as any).state='cancelled'},()=>{row.fleetCancellation={reason:'Cancel work'}},
+  ()=>{(row.verification!.identity as any).deadline=new Date(now-1).toISOString()},
+  ()=>{(row.verification!.identity as any).acceptedAt=new Date(now+1000).toISOString()},
+  ()=>{(row.verification!.status.details as any).attemptId=4},()=>{(row.verification!.status.details as any).details.requestId='different'},
+  ()=>{(row.verification!.status.details as any).details.review={...original.details.review,reviewUrl:original.details.review.reviewUrl+'different'}}]) {
+  Object.assign(row,structuredClone(snapshot));delete row.fleetCancellation;mutate()
+  await expect(service.authorize(verification,'mini',selected)).rejects.toThrow()
+ }
+ Object.assign(row,structuredClone(snapshot));delete row.fleetCancellation
+ await service.authorize(verification,'mini',{...selected,requestId})
+ await expect(service.authorize(verification,'mini',{...selected,requestId:'different-request'})).rejects.toThrow('original source')
+ const rows=new Map<string,StoredTestRequest>(),repository={async insert(value:StoredTestRequest){rows.set(value.requestId,value)},async get(id:string){return rows.get(id)??null}}as TestRequestRepository
+ const intake=new TestRequestService(repository,service)
+ await expect(intake.submit('different-request','mini',selected,'mini')).rejects.toThrow('original source')
+ const receipt={requestId:'different-request',hostId:'mini',inputSha256:requestInputDigest(selected),acceptedAt:new Date(now).toISOString()}
+ await expect(intake.registerLocal(selected,receipt,'mini')).rejects.toThrow('original source')
+ const admitted=await intake.registerLocal(selected,{...receipt,requestId},'mini')
+ row.verification!.status.details={...(row.verification!.status.details as any),state:'cancelled'}
+ expect(await intake.registerLocal(selected,{...receipt,requestId},'mini')).toEqual(admitted)
+})
