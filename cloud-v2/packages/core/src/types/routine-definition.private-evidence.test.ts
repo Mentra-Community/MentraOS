@@ -16,9 +16,9 @@ const definition = {
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40), path: 'routines/data-export/routine.ts'},
 }
 test('Quiet room is an explicit existing-recorder environment requirement, not a new provider or audio operation', () => {
-  const requirement = {kind: 'recorder', capabilities: ['quiet-room']};
+  const requirement = {kind: 'recorder' as const, capabilities: ['quiet-room']};
   expect(routineResourceRequirementSchema.parse(requirement)).toEqual(requirement);
-  const resources = [{kind: 'app', capabilities: []}, requirement];
+  const resources = [{kind: 'app' as const, capabilities: []}, requirement];
   expect(publishedRoutineDefinitionSchema.parse({...definition, resourceRequirements: resources, execution: {resourceKinds: ['app', 'recorder']}}).resourceRequirements).toEqual(resources);
   for (const kind of ['app', 'phone', 'glasses', 'audio', 'browser', 'network', 'workspace'])
     expect(routineResourceRequirementSchema.safeParse({kind, capabilities: ['quiet-room']}).success).toBe(false);
