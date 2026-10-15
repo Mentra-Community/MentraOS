@@ -2027,67 +2027,6 @@ class MentraLive : SGCManager() {
     // }
     // }
 
-    private fun enterPairingYield(windowMs: Long) {
-        if (postGattLifecycle { enterPairingYield(windowMs) }) return
-        connectionRequestEpoch++
-        pairingYieldActive = true
-        pairingYieldAwaitingReclaim = false
-        isReconnecting = false
-        isConnecting = false
-        pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
-        if (connectionTimeoutRunnable != null) {
-            connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable!!)
-            connectionTimeoutRunnable = null
-        }
-        // Stop scans/reconnect work; keep default_wearable / Classic bond.
-        if (isScanning) {
-            stopScan()
-            emitStopScanEvent()
-        }
-        // Drop A2DP/HFP (keep the Classic bond) so glasses can advertise for reclaim.
-        // Do this before nulling connectedDevice — disconnectClassicProfiles needs it.
-        val yieldingDevice = connectedDevice
-        disconnectClassicProfiles(yieldingDevice)
-        // closeGattQuietly nulls bluetoothGatt before the disconnect callback, so
-        // onConnectionStateChange treats it as stale and never publishes DISCONNECTED.
-        // Mirror a real disconnect for UI + session state, then tear GATT down.
-        isConnected = false
-        connectedDevice = null
-        glassesReady = false
-        glassesSessionId = null
-        streamControlVersion = 0
-        readinessCompletedThisBleSession = false
-        glassesReadyReceived = false
-        ctkdInitiatedThisGattSession = false
-        classicAudioServiceDiscovery.cancel()
-        audioConnected = false
-        notificationsEnabled = false
-        processSendQueueRunnable?.let { handler.removeCallbacks(it) }
-        stopReadinessCheckLoop()
-        stopHeartbeat()
-        stopSignalStrengthPolling()
-        stopMicBeat()
-        closeL2capFileChannel()
-        fileProcessingHandler.removeCallbacksAndMessages(null)
-        clearFilePacketBuffer()
-        updateConnectionState(ConnTypes.DISCONNECTED)
-        closeGattQuietly(true)
-        // Stand down for the whole window. Probing GATT during yield races the new
-        // phone for BLE_CONNECTION_MAX=1 and is exactly what entering_pairing_mode forbids.
-        val end =
-                Runnable {
-                    Bridge.log("LIVE: Pairing yield ended — resume reconnect if still owned")
-                    pairingYieldActive = false
-                    pairingYieldAwaitingReclaim = true
-                    pairingYieldEndRunnable = null
-                    if (!isKilled && !isConnected && !isConnecting) {
-                        handleReconnection()
-                    }
-                }
-        pairingYieldEndRunnable = end
-        handler.postDelayed(end, windowMs)
-    }
-
     fun isPairingYieldActive(): Boolean = pairingYieldActive
 
     /**
