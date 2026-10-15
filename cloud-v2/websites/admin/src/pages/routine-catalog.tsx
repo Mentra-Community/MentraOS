@@ -225,6 +225,10 @@ function RequestCard({request, responseReceivedAt, observing, refreshing, onRefr
         })}</TableBody>
       </Table></div>}
     </div>}
+    {request.waiting && <div role="status" className="mt-3 rounded-md border border-[#d0d7de] p-3 text-sm">
+      <strong>Waiting to start:</strong> {request.waiting.reason}
+      <span className="ml-2 text-[#656d76]">Observed {new Date(request.waiting.observedAt).toLocaleString()}. No test steps have started.</span>
+    </div>}
     {request.liveUnavailable && <p role="status" className="mt-3 text-sm text-[#656d76]">Live progress is temporarily unavailable. The request remains accepted and refreshes automatically.</p>}
     <p className="mt-2 text-sm">Request <code>{request.requestId}</code></p>
     <p className="mt-2"><BuildIdentity build={request.build} label="Requested build" /></p>

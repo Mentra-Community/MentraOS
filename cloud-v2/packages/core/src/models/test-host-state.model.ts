@@ -13,6 +13,7 @@ const schema = new Schema(
     frameworkHistory: {type: [Schema.Types.Mixed], default: []},
     frameworkStopReceipts: {type: [Schema.Types.Mixed], default: []},
     laneControls: {type: [Schema.Types.Mixed], default: []},
+    resourceReservationVersion: {type: Number, default: 0},
     laneControlVersion: {type: Number, default: 0},
     deploymentObservation: {type: Schema.Types.Mixed},
     deploymentGeneration: {type: Number, default: 0},

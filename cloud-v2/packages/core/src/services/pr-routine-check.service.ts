@@ -286,6 +286,8 @@ export class PrRoutineCheckService {
     const input = frameworkRequestInputSchema.safeParse(request.input)
     if (request.hostId && request.inputSha256 && input.success) {
       const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId)
+      const waiting = lane?.waiting?.find(value => value.requestId === request.requestId && value.requestDigest === request.inputSha256 && value.acceptedAt === request.hostReceipt?.acceptedAt);
+      if (waiting && !lane?.progress && ['queued', 'accepted'].includes(request.state)) member.waitReason = `${waiting.reason} · observed ${waiting.observedAt}`;
       if (host && lane) member.progress = matchingRoutineProgress(host, lane, request, member.stepIds)
     }
   }

@@ -12,7 +12,7 @@ const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttem
 const selection = {requestId:'job-one',routineId:'new-routine',platform:'android' as const,source,routineRevision:'a'.repeat(40)};
 const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
-  execution:{resourceKinds:['phone','app','recorder','network']},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
+  execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024 ** 3}},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
 function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
@@ -25,6 +25,8 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async exhaustPreparation(id,completed,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.fleetDispatch?.attempts!==20||row.fleetActions?.some(run=>!completed.includes(run.actionsRunId)))return null;row={...row,state:'terminal',terminalStatus:'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}};return copy(row)},
     async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
       row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}}:{})};return copy(row)},
+    async reserveResources(id,digest,hostId,laneId,now) {if(!row||row.requestId!==id||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
+      row={...row,fleetResourceReservation:{hostId,laneId,poolId:`${hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:now.toISOString(), ...(row.fleetPreparation?.requirements.glasses ? {chosenModel: offeredHosts?.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model} : {})}};return copy(row)},
     async bind(id,digest,binding,intent,now){if(!row||row.requestId!==id||row.state!=='awaiting-runner'||row.fleetBinding||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,hostId:binding.hostId,fleetBinding:copy(binding),dispatchIntent:copy(intent),dispatchIntentSha256:requestInputDigest(intent),state:'preparing'};return copy(row)},
     async dispatch(id,previous,value){if(!row||requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null)||row.fleetCancellation||row.fleetBinding)return null;row={...row,fleetDispatch:copy(value)};return copy(row)},
@@ -36,13 +38,13 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async cancel(id,digest,value){if(!row||row.requestId!==id||row.fleetSelectionSha256!==digest||row.fleetCancellation)return null;row={...row,fleetCancellation:copy(value),...(row.dispatchCompletion && row.state!=='terminal'?{state:'terminal',terminalStatus:'cancelled'}:{})};return copy(row)},
   };
   const lane:ReceivedTestHostState['lanes'][number]={id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
-    {id:'phone:android',kind:'phone'}, {id:'app:android',kind:'app'}, {id:'recorder:android',kind:'recorder'}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
+    {id:'phone:android',kind:'phone'}, {id:'app:android',kind:'app'}, {id:'recorder:android',kind:'recorder',storage:{poolId:'mini:disk:1',observedAt:new Date(time).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
   lane.descriptorRevision=routineLaneDescriptorRevision(lane);
-  const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[copy(lane)]});
+  const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[{...copy(lane),resources:lane.resources.map(resource=>resource.storage?{...resource,storage:{...resource.storage,observedAt:new Date(time).toISOString()}}:resource)}]});
   const service=new RoutineJobService(rows,{async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:new Date(time).toISOString(),buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
-    {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? []}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
+    {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? [host('mini')]}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
     {async detail(){throw new TestRunError(404,'missing')}},()=>time);
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
@@ -109,7 +111,7 @@ for (const state of ['queued', 'accepted'] as const) {
 }
 
 test('run routing chooses an accepting alternate model, refreshes availability and retains exact target and input', async () => {
-  const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses']}});
+  const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses'], policy: {estimatedOutputBytes:1024**3}}});
   const time = Date.parse('2026-10-08T00:00:00Z');
   const lane = (model: string, state: ReceivedTestHostState['lanes'][number]['state'], dispatchMode: ReceivedTestHostState['lanes'][number]['dispatchMode']) => ({...f.lane,
     id: model, state, dispatchMode, resources: [...f.lane.resources, {id: `glasses:${model}`, kind: 'glasses' as const, capabilities: ['connection']}],
@@ -119,13 +121,13 @@ test('run routing chooses an accepting alternate model, refreshes availability a
   f.offer([host]);
   const prepared = await f.prepare(), digest = prepared.inputSha256, frozen = structuredClone(f.row!.fleetSelection);
   expect(prepared.chosenModel).toBe('mentra-live'); expect(prepared.waitingReason).toBeUndefined();
-  expect(prepared.routingLabels).toEqual(routineRequirementLabels(prepared.prepared!.requirements, 'mentra-live'));
+  expect(prepared.routingLabels).toEqual(routineRequirementLabels(prepared.prepared!.requirements, 'mentra-live', {hostId:'healthy',laneId:'mentra-live'}));
   host.lanes[0]!.dispatchMode = 'automatic'; host.lanes[0]!.state = 'in-repair'; f.offer([host]);
   expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('mentra-live');
   host.lanes[0]!.state = 'running'; host.lanes[1]!.state = 'running'; f.offer([host]);
-  expect(await f.service.preparation(selection.requestId)).toMatchObject({state: 'awaiting-runner', waitingReason: 'Awaiting an idle compatible enrolled runner', inputSha256: digest});
+  expect(await f.service.preparation(selection.requestId)).toMatchObject({state: 'awaiting-runner', resourceTarget: {hostId:'healthy',laneId:'mentra-live'}, inputSha256: digest});
   host.lanes[0]!.state = 'idle'; f.offer([host]);
-  expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('g1');
+  expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('mentra-live');
   expect(f.row!.fleetSelection).toEqual(frozen); expect(f.row!.fleetInputSha256).toBe(digest);
   const {routineJobRouting} = await import('./routine-job.service');
   expect(routineJobRouting(prepared.prepared!.requirements, [host], time, {hostId: 'elsewhere'})).toMatchObject({waitingReason: 'Awaiting a compatible enrolled runner'});
@@ -153,8 +155,9 @@ test('concurrent automatic source choices have one insert winner and its cancell
 test('single CAS binding retains winner across hosts and duplicate Actions deliveries',async()=>{
   const f=fixture(),prepared=await f.prepare(),input={inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
   const {TestRunError}=await import('./test-result-error');(f.service as any).results={async detail(){throw new TestRunError(404,'missing')}};
-  const bindings=await Promise.all([f.service.bind(selection.requestId,'mini',input),f.service.bind(selection.requestId,'air',{...input,actionsRunId:'11',actionsJobId:'21'})]);
-  expect(bindings.filter(value=>value.execute)).toHaveLength(1);expect(bindings[0]!.binding).toEqual(bindings[1]!.binding);expect(f.row?.hostId).toBe(bindings[0]!.binding.hostId);
+  const attempts=await Promise.allSettled([f.service.bind(selection.requestId,'mini',input),f.service.bind(selection.requestId,'air',{...input,actionsRunId:'11',actionsJobId:'21'})]);
+  const bindings=attempts.flatMap(value=>value.status==='fulfilled'?[value.value]:[]);
+  expect(bindings.filter(value=>value.execute)).toHaveLength(1);expect(f.row?.hostId).toBe('mini');
   const winner=bindings.find(value=>value.execute)!;const repeated=await f.service.bind(selection.requestId,winner.binding.hostId,{...input,actionsRunId:winner.binding.actionsRunId,actionsJobId:'99'});expect(repeated.execute).toBe(false);
 });
 test('descriptor/capability and target fences reject incompatible assignments before binding',async()=>{
@@ -166,7 +169,7 @@ test('descriptor/capability and target fences reject incompatible assignments be
 test('reviewed fixture operations exclude generic fixtures from routing and binding while preserving exact source', async () => {
   const selectedDefinition = {...definition,
     fixtures: [{provider: 'miniapp-appearance', description: 'Owned reviewed references and decoder'}],
-    execution: {resourceKinds: [...definition.execution.resourceKinds, 'fixture-data']},
+    execution: {resourceKinds: [...definition.execution.resourceKinds, 'fixture-data'],policy:definition.execution.policy},
     resourceRequirements: [...definition.resourceRequirements, {kind: 'fixture-data', capabilities: ['reviewed-miniapp-appearance', 'media-decode']}]};
   const f = fixture(selectedDefinition);
   const lane = (capabilities: string[]): ReceivedTestHostState['lanes'][number] => {
@@ -180,14 +183,14 @@ test('reviewed fixture operations exclude generic fixtures from routing and bind
   const generic = lane([]), decoderOnly = lane(['media-decode']);
   f.offer([observed('air', generic), observed('decoder-only', decoderOnly)]);
   const prepared = await f.prepare(), frozen = structuredClone(f.row!.fleetPreparation);
-  expect(prepared.waitingReason).toBe('Awaiting a compatible enrolled runner');
+  expect(prepared.waitingReason).toBe('Awaiting an idle compatible runner with fresh recorder disk capacity');
   expect(prepared.prepared!.requirements.resources.find(resource => resource.kind === 'fixture-data')!.capabilities)
     .toEqual(['reviewed-miniapp-appearance', 'media-decode']);
   expect(prepared.routingLabels).toContain('mentra-cap-3d8d7338377d1ab81665e28e');
   expect(prepared.routingLabels).toContain('mentra-cap-a8e5ce48dfc27e77cac4aaf5');
   for (const [hostId, offered] of [['air', generic], ['decoder-only', decoderOnly]] as const)
     await expect(f.service.bind(selection.requestId, hostId, {inputSha256: prepared.inputSha256, laneId: offered.id,
-      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible');
+      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('reserved recorder capacity');
   expect(f.row!.fleetBinding).toBeUndefined();
   const capable = lane(['reviewed-miniapp-appearance', 'media-decode']);
   expect(capable.descriptorRevision).not.toBe(generic.descriptorRevision);
@@ -457,6 +460,7 @@ test('head changing during binding observation cannot return execution permissio
   const f=fixture(), id=automaticId(), first=await f.service.submit({...selection,requestId:id});
   await f.service.prepared(id,{inputSha256:first.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),
     definitionSha256:requestInputDigest(definition),definition});
+  await f.service.preparation(id);
   const input={inputSha256:f.row!.fleetInputSha256!,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'123',actionsJobId:'124'};
   await f.service.bind(id,'mini',input);
   let checks=0;
@@ -642,9 +646,10 @@ test('an expired app grant refuses fleet binding before consuming the pending jo
     observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), frameworkBinding: binding, lanes: [lane]};
   f.offer([host]);
   const input = {inputSha256: prepared.inputSha256, laneId: lane.id, descriptorRevision: lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
-  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('current accepting compatible lane');
+  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('reserved recorder capacity');
   expect(f.row).toEqual(frozen);
   observed.observedAt = new Date(time).toISOString(); f.offer([host]);
+  await f.service.preparation(selection.requestId);
   expect((await f.service.bind(selection.requestId, host.hostId, input)).execute).toBe(true);
   expect(f.row!.fleetBinding!.hostId).toBe(host.hostId);
 });

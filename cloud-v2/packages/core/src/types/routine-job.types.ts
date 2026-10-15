@@ -76,6 +76,8 @@ export interface StoredRoutineJob {
   fleetDeadline: Date;
   fleetTarget?: z.infer<typeof routineJobTargetSchema>;
   fleetBinding?: RoutineJobBinding;
+  /** Existing request authority retains the shared recorder capacity selected before device dispatch. */
+  fleetResourceReservation?: {hostId: string; laneId: string; poolId: string; minimumAvailableBytes: number; reservedAt: string; chosenModel?: string};
   dispatchCompletion?: RoutineJobCompletion;
   publicationFailure?: RoutinePublicationFailure;
   hostReceipt?: import('../services/test-request.service').HostAcceptance;

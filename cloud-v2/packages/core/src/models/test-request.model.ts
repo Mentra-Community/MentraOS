@@ -23,6 +23,7 @@ const schema = new Schema({
   fleetInputSha256: {type: String, immutable: true},
   fleetDeadline: {type: Date, immutable: true},
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
+  fleetResourceReservation: {type: Schema.Types.Mixed},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetCancellation: {type: Schema.Types.Mixed},
   fleetSupersessionCheckedAt: {type: Date},
@@ -43,6 +44,7 @@ const schema = new Schema({
 schema.index({state: 1, createdAt: 1, requestId: 1});
 schema.index({"fleetSelection.source.channel": 1, fleetSupersessionCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, state: 1});
+schema.index({'fleetResourceReservation.hostId': 1}, {partialFilterExpression: {fleetResourceReservation: {$exists: true}}});
 schema.index({hostId: 1, state: 1, preparationCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, "hostCancellation.requestedAt": 1, requestId: 1},
   {partialFilterExpression: {hostCancellation: {$exists: true}}});

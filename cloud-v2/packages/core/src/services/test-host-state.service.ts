@@ -1,3 +1,4 @@
+import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {laneControlExchangeSchema} from './lane-controls.service'
 import {z} from "zod"
 import {TestHostStateModel} from "../models/test-host-state.model"
@@ -15,7 +16,7 @@ import {
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {permissionObservationsSchema} from "../types/resource-permissions.types"
 import {TestRunError} from "./test-result-error"
-import {routineProgressSchema} from '../types/routine-progress.types'
+import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
 const resource = z
   .object({
@@ -24,6 +25,7 @@ const resource = z
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
+    storage: recorderStorageObservationSchema.optional(),
   })
   .strict()
 export const glassesInventorySchema = z
@@ -133,6 +135,7 @@ export const hostStateSchema = z
             state: z.enum(["idle", "running", "reserved", "in-repair", "out-of-service", "offline"]),
             activity: laneActivitySchema.optional(),
             progress: routineProgressSchema.optional(),
+            waiting: z.array(routineQueuedBlockSchema).max(100).optional(),
             resources: z.array(resource),
             glasses: z.array(glassesInventorySchema).max(1).optional(),
             routineAvailability: z.array(routineAvailability).max(1000).optional(),
@@ -189,6 +192,12 @@ export const hostStateSchema = z
       ctx.addIssue({code: 'custom', message: 'Routine progress differs from its controller observation'})
     if (snapshot.restoration?.attempts.some((attempt) => !snapshot.lanes.some((lane) => lane.id === attempt.laneId)))
       ctx.addIssue({code: "custom", message: "Restoration attempt names an unknown host lane"})
+    const storage = snapshot.lanes.flatMap(lane => lane.resources.flatMap(resource => resource.storage ? [resource.storage] : []))
+    if (storage.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt) || JSON.stringify(value) !== JSON.stringify(storage[0])))
+      ctx.addIssue({code: 'custom', message: 'Recorder offers must share one measured host disk pool'})
+    for (const lane of snapshot.lanes) if (lane.waiting?.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt)) ||
+      new Set(lane.waiting?.map(value => value.requestId)).size !== (lane.waiting?.length ?? 0))
+      ctx.addIssue({code: 'custom', message: 'Queued blocker observations must have unique identities and actual past timestamps'})
     validateHostLaneInventory(snapshot, ctx)
   })
 export type TestHostState = z.infer<typeof hostStateSchema>
@@ -252,6 +261,13 @@ export class TestHostStateService {
   }
   private async reportSnapshot(snapshot: TestHostState, hostId: string) {
     if (snapshot.hostId !== hostId) throw new TestRunError(409, "Host snapshot differs from authenticated controller")
+    for (const lane of snapshot.lanes) for (const waiting of lane.waiting ?? []) {
+      const request = await TestRequestModel.findOne({requestId: waiting.requestId, hostId, inputSha256: waiting.requestDigest,
+        'input.laneId': lane.id, 'hostReceipt.requestId': waiting.requestId, 'hostReceipt.hostId': hostId,
+        'hostReceipt.inputSha256': waiting.requestDigest, 'hostReceipt.acceptedAt': waiting.acceptedAt}).select({requestId: 1})
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
+      if (!request) throw new TestRunError(409, 'Queued blocker differs from its authenticated accepted request')
+    }
     for (const lane of snapshot.lanes) if (lane.progress) {
       const request = await TestRequestModel.findOne({requestId: lane.progress.requestId, hostId,
         inputSha256: lane.progress.requestDigest, 'input.laneId': lane.id,
@@ -423,11 +439,11 @@ export class TestHostStateService {
   /** Run details need one lane's observation, never the host's repair history or diagnostics. */
   async progressObservation(hostId: string, laneId: string) {
     const row = await TestHostStateModel.findOne({hostId}).select({'snapshot.incarnation': 1, 'snapshot.sequence': 1,
-      'snapshot.lanes.id': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, receivedAt: 1, _id: 0})
+      'snapshot.lanes.id': 1, 'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, 'snapshot.lanes.waiting': 1, receivedAt: 1, _id: 0})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean()
     const parsed = z.object({incarnation: frameworkIdentitySchema, sequence: z.number().int().nonnegative().safe(),
       lanes: z.array(z.object({id: frameworkIdentitySchema, activity: laneActivitySchema.optional(),
-        progress: routineProgressSchema.optional()})).max(100)}).safeParse(row?.snapshot)
+        progress: routineProgressSchema.optional(), waiting: z.array(routineQueuedBlockSchema).max(100).optional()})).max(100)}).safeParse(row?.snapshot)
     const receivedAt = z.date().safeParse(row?.receivedAt)
     if (!parsed.success || !receivedAt.success) return null
     const lane = parsed.data.lanes.find(value => value.id === laneId)
