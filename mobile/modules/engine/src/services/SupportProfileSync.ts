@@ -79,9 +79,10 @@ function scheduleMeaningfulUpdate(generation = syncGeneration): void {
   const fingerprint = snapshotFingerprint(buildSnapshot())
   if (fingerprint === lastSentFingerprint) return
   // Only something new is sent sooner. A store update that changes nothing support reads neither holds back the
-  // update queued nor sends one that is waiting out its retry delay: a phone retrying glasses that are away updates
-  // the store every few seconds, and would otherwise retry a Core that keeps failing just as often.
-  if (fingerprint === queuedFingerprint && (debounceTimer !== null || retryTimer !== null)) return
+  // update queued, nor sends again one that is in flight or waiting out its retry delay: a phone retrying glasses that
+  // are away updates the store every few seconds, and would otherwise retry a Core that keeps failing just as often.
+  const pending = debounceTimer !== null || retryTimer !== null || sendingGeneration === generation
+  if (fingerprint === queuedFingerprint && pending) return
   queuedFingerprint = fingerprint
   armDebounce(generation)
 }
@@ -105,6 +106,7 @@ async function sendCurrentSnapshot(force: boolean, generation = syncGeneration):
   const fingerprint = snapshotFingerprint(snapshot)
   if (!force && fingerprint === lastSentFingerprint) return
 
+  queuedFingerprint = fingerprint
   sendingGeneration = generation
   let retryDelayMs: number | null = null
   try {

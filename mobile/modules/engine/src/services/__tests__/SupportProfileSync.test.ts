@@ -296,6 +296,34 @@ describe("SupportProfileSync", () => {
     expect(sentSnapshots().at(-1)?.device?.firmwareVersion).toBe("1.2.4")
   })
 
+  test("a reconnect attempt during a send that then fails does not skip the backoff", async () => {
+    startSupportProfileSync()
+    await flushPromises()
+    updateMock.mockClear()
+    let fail: ((error: Error) => void) | null = null
+    updateMock.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        }),
+    )
+
+    disconnectGlasses()
+    await advance(2_000)
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    setGlasses({connection: {state: "connecting", fullyBooted: false}, deviceModel: "Mentra Live"})
+    updateMock.mockImplementation(async () => {
+      throw new Error("observedAt is outside the accepted window")
+    })
+    fail?.(new Error("observedAt is outside the accepted window"))
+    await flushPromises()
+    await advance(29_000)
+
+    expect(updateMock).toHaveBeenCalledTimes(1)
+    await advance(1_000)
+    expect(updateMock).toHaveBeenCalledTimes(2)
+  })
+
   test("does not schedule traffic when an old request finishes after stop", async () => {
     let finish: ((value: {status: "accepted"}) => void) | null = null
     updateMock.mockImplementationOnce(
