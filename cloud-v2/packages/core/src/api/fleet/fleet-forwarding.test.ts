@@ -20,7 +20,7 @@ import {
 } from "@mentra/workspace-contract/server"
 import {afterAll, afterEach, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import {Hono} from "hono"
-import * as trustedEmail from "../../services/account/trusted-email.service"
+import * as accountEmails from "../../services/account/account-email.service"
 import {resetPhoneEmailCache} from "../../services/fleet/phone-email"
 import * as sessions from "../../services/session.service"
 import type {CorePrincipal} from "../../services/signin/principal.service"
@@ -99,7 +99,7 @@ function recordingLogger(bound: Record<string, unknown>): Logger {
 }
 
 let verifyAccess: ReturnType<typeof spyOn<typeof sessions, "verifyAccessToken">>
-let emailLookup: ReturnType<typeof spyOn<typeof trustedEmail, "trustedAccountEmail">>
+let emailLookup: ReturnType<typeof spyOn<typeof accountEmails, "accountEmail">>
 
 beforeEach(() => {
   calls = []
@@ -112,7 +112,7 @@ beforeEach(() => {
     if (!token.startsWith("phone:")) throw new InvalidGrant("access_token rejected")
     return {mentraUserId: token.slice("phone:".length), tenantId: "tenant_1", sessionId: "sess_1", jti: "jti_1", exp: 0}
   })
-  emailLookup = spyOn(trustedEmail, "trustedAccountEmail").mockResolvedValue("phone@example.test")
+  emailLookup = spyOn(accountEmails, "accountEmail").mockResolvedValue("phone@example.test")
 })
 
 afterEach(() => {

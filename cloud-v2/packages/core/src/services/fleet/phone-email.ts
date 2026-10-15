@@ -2,20 +2,30 @@
  * @fileoverview The verified account email a phone's Fleet principal carries.
  *
  * Fleet shows the email next to a phone's usage; it is a display attribute and never an identity
- * key, so the lookup is best effort. A phone reports often, and the account directory is another
- * service: one lookup per report would put every active phone on it. So an answer is remembered
- * for a few minutes, a missing email as well as a found one, and a lookup that fails or runs past
- * its deadline is `null` for a short while rather than an error or a retry on every request. The
- * email is never logged. An outage of the directory fails every lookup, so the warning for it is
- * rate limited: one a minute per process, saying how many were left out in between.
+ * key, so the lookup is best effort. The answer comes from Core's copy of the account's email
+ * (`account-email.service.ts`), which asks the account directory at most once a day per account, so
+ * a phone's reports never put it on the directory. A phone reports often, so each process also
+ * remembers an answer for five minutes, a missing email as well as a found one, and reports from
+ * one account that arrive together share one lookup. A lookup that fails or runs past its deadline
+ * is `null` for a short while rather than an error or a retry on every request; Fleet keeps the
+ * last email it was sent when a report carries none.
+ *
+ * An email changed through Core is in Core's copy at once, so every process sends it within five
+ * minutes, on the account's next report. One changed in the directory itself takes up to a day
+ * longer. The email is never logged. An outage of the directory, for an account whose copy is
+ * missing, fails the lookup, so the warning for it is rate limited: one a minute per process,
+ * saying how many were left out in between.
  */
 
 import {createLogger, type Logger} from "@mentra/cloud-shared"
-import {trustedAccountEmail} from "../account/trusted-email.service"
+import {accountEmail} from "../account/account-email.service"
 
 const logger = createLogger("core").child({service: "fleet-phone-email"})
 
-/** How long an answer, a missing email included, is reused. */
+/**
+ * How long an answer, a missing email included, is reused: so also how long an email changed through
+ * Core takes to reach every process.
+ */
 const ANSWER_TTL_MS = 5 * 60_000
 /** How long a failed or timed-out lookup is reused, so an outage is not asked about on every report. */
 const FAILURE_TTL_MS = 30_000
@@ -28,6 +38,8 @@ const DEFAULT_LOOKUP_TIMEOUT_MS = 2_000
 export const PHONE_EMAIL_CACHE_MAX = 10_000
 
 const cache = new Map<string, {email: string | null; expiresAt: number}>()
+/** The lookup under way for each person, which reports arriving meanwhile wait for instead of starting their own. */
+const inFlight = new Map<string, Promise<string | null>>()
 
 /** When the next warning may be logged, and how many failures were left out of the log since the last one. */
 let nextWarnAt = 0
@@ -36,6 +48,7 @@ let suppressedWarnings = 0
 /** Forgets every remembered answer, and the warning rate limit with them. */
 export function resetPhoneEmailCache(): void {
   cache.clear()
+  inFlight.clear()
   nextWarnAt = 0
   suppressedWarnings = 0
 }
@@ -83,6 +96,18 @@ export async function phoneEmail(
     return remembered.email
   }
 
+  const pending = inFlight.get(mentraUserId)
+  if (pending) return pending
+  const lookup: Promise<string | null> = lookUp(mentraUserId, options).finally(() => {
+    // Only its own entry: after a reset, a newer lookup may hold the slot.
+    if (inFlight.get(mentraUserId) === lookup) inFlight.delete(mentraUserId)
+  })
+  inFlight.set(mentraUserId, lookup)
+  return lookup
+}
+
+/** One lookup in Core's copy, under the deadline. Never throws. */
+async function lookUp(mentraUserId: string, options: {timeoutMs?: number; log?: Logger}): Promise<string | null> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_LOOKUP_TIMEOUT_MS
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -93,7 +118,7 @@ export async function phoneEmail(
     }, timeoutMs)
   })
   try {
-    const email = await Promise.race([trustedAccountEmail(mentraUserId, {signal: controller.signal}), deadline])
+    const email = await Promise.race([accountEmail(mentraUserId, {signal: controller.signal}), deadline])
     remember(mentraUserId, email, ANSWER_TTL_MS)
     return email
   } catch (error) {
