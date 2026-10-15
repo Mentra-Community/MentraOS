@@ -1076,7 +1076,7 @@ private extension ConnectOptions {
             saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
             cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true,
             requiresAncs: values?["requiresAncs"] as? Bool ?? true,
-            enableTransportBridging: values?["enableTransportBridging"] as? Bool ?? false
+            enableTransportBridging: values?["enableTransportBridging"] as? Bool ?? true
         )
     }
 }

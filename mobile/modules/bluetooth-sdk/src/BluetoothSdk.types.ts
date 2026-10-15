@@ -876,8 +876,10 @@ export type PairingInfoEvent = {
   protocol_version?: number
   /** Present when the glasses build includes ownership transfer. */
   ownership_transfer?: boolean
-  /** PAIRING with a retained owner that has not been confirmed yet. */
+  /** PAIRING with a retained owner that has not been confirmed yet. False on the owner's own link. */
   awaiting_confirm?: boolean
+  /** This phone is the owner the glasses kept. It must leave so another phone can confirm. */
+  retained_owner_link?: boolean
   /** True only after a BLE bond committed the owner and the window closed. */
   owner_committed?: boolean
 }
@@ -1755,9 +1757,10 @@ export interface ConnectOptions {
    */
   requiresAncs?: boolean
   /**
-   * iOS Mentra Live only, experimental. When true, CoreBluetooth is asked to bring
-   * up the Classic profiles (A2DP/HFP) after the BLE connection
-   * (CBConnectPeripheralOptionEnableTransportBridgingKey). Defaults to false.
+   * iOS Mentra Live only. When true, CoreBluetooth is asked to bring up the
+   * Classic profiles (A2DP/HFP) after the BLE connection
+   * (CBConnectPeripheralOptionEnableTransportBridgingKey). Defaults to true:
+   * without it the pairing screen waits for an audio route that never appears.
    * Android accepts this option as a no-op.
    */
   enableTransportBridging?: boolean

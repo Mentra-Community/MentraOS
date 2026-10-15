@@ -60,6 +60,7 @@ export function Reconnect() {
           platformSupported: isMentraLiveOwnershipTransferSupported(),
           awaitingConfirm: event.awaiting_confirm,
           securePairing: event.secure_pairing_capable !== false,
+          retainedOwnerLink: event.retained_owner_link,
         })
       ) {
         return

@@ -98,7 +98,8 @@ class Bridge {
         protocolVersion: Int = 1,
         ownershipTransfer: Bool = false,
         awaitingConfirm: Bool = false,
-        ownerCommitted: Bool = false
+        ownerCommitted: Bool = false,
+        retainedOwnerLink: Bool = false
     ) {
         var body: [String: Any] = [
             "had_previous_bond": hadPreviousBond,
@@ -108,6 +109,7 @@ class Bridge {
             "ownership_transfer": ownershipTransfer,
             "awaiting_confirm": awaitingConfirm,
             "owner_committed": ownerCommitted,
+            "retained_owner_link": retainedOwnerLink,
         ]
         if let pairingCode { body["pairing_code"] = pairingCode }
         Bridge.sendTypedMessage("pairing_info", body: body)

@@ -156,6 +156,15 @@ enum MentraLiveConnectionAttemptPolicy {
         ownerRetained
     }
 
+    /// `pairing_info.retained_owner_link`: this phone is the owner the glasses kept.
+    /// An automatic reconnect that lands here means the glasses are in pairing mode and
+    /// this phone missed the notice, so it stands down for the window. An explicit pair
+    /// is never blocked: the glasses let the owner back in and close the window, so
+    /// whichever phone gets there first wins.
+    static func shouldYieldForRetainedOwnerLink(retainedOwnerLink: Bool, explicitPairing: Bool) -> Bool {
+        retainedOwnerLink && !explicitPairing
+    }
+
     /// Automatic reconnect must not take the single BLE slot while the glasses are still in
     /// pairing mode. An explicit pairing attempt (the new phone, or Pair again) still connects.
     /// Mirrors Android `MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect`.

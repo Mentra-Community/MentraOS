@@ -11,8 +11,8 @@ final class MentraLiveConnectionOptionsTests: XCTestCase {
         XCTAssertFalse(ConnectOptions(requiresAncs: false).requiresAncs)
     }
 
-    func testConnectOptionsDisableTransportBridgingByDefault() {
-        XCTAssertFalse(ConnectOptions().enableTransportBridging)
+    func testConnectOptionsEnableTransportBridgingByDefault() {
+        XCTAssertTrue(ConnectOptions().enableTransportBridging)
     }
 
     func testConnectOptionsCanEnableTransportBridging() {

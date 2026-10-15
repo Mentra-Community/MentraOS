@@ -9,6 +9,7 @@ import {useNavigationStore} from "@/stores/navigation"
 // The glasses store is private to the local engine workspace and has no public test export.
 // eslint-disable-next-line no-restricted-imports
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {resetReplaceOwnerConfirm} from "@/utils/pairing/replaceOwnerConfirm"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -60,6 +61,7 @@ describe("replace owner confirm screen", () => {
   const replace = jest.fn()
   const goBack = jest.fn()
   let currentRoute = "/pairing/replace-owner"
+  let previousRoute = "/"
   const confirmReplaceOwner = jest.fn()
 
   const pressConfirm = (getByText: ReturnType<typeof render>["getByText"]) => {
@@ -71,6 +73,8 @@ describe("replace owner confirm screen", () => {
     resetBluetoothSdkMock()
     jest.clearAllMocks()
     currentRoute = "/pairing/replace-owner"
+    previousRoute = "/"
+    resetReplaceOwnerConfirm()
     useGlassesStore.getState().reset()
     // A live link during pairing, so the link-lost watcher stays quiet unless a test drops it.
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: false}})
@@ -83,6 +87,7 @@ describe("replace owner confirm screen", () => {
       replace,
       goBack,
       getCurrentRoute: () => currentRoute,
+      getPreviousRoute: () => previousRoute,
     }))
     confirmReplaceOwner.mockResolvedValue(undefined)
     // The shared engine mock predates confirmReplaceOwner; attach it here.
@@ -220,7 +225,96 @@ describe("replace owner confirm screen", () => {
     expect(getByText("common:tryAgain")).toBeTruthy()
   })
 
+  describe("with the loading screen underneath", () => {
+    beforeEach(() => {
+      previousRoute = "/pairing/loading"
+    })
+
+    it("pops to the loading screen immediately and still sends the confirm", () => {
+      const {getByText} = render(<ReplaceOwnerScreen />)
+
+      pressConfirm(getByText)
+
+      expect(confirmReplaceOwner).toHaveBeenCalledTimes(1)
+      expect(goBack).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not navigate again when the confirm succeeds after the pop", () => {
+      const {getByText, unmount} = render(<ReplaceOwnerScreen />)
+      pressConfirm(getByText)
+      unmount()
+      currentRoute = "/pairing/loading"
+
+      act(() => {
+        emitBluetoothSdkEvent("confirm_replace_owner_result", {ok: true})
+      })
+
+      expect(goBack).toHaveBeenCalledTimes(1)
+      expect(push).not.toHaveBeenCalled()
+      expect(replace).not.toHaveBeenCalled()
+    })
+
+    it("brings the confirm screen back with the reason when the confirm fails", () => {
+      const {getByText, unmount} = render(<ReplaceOwnerScreen />)
+      pressConfirm(getByText)
+      unmount()
+      currentRoute = "/pairing/loading"
+
+      act(() => {
+        emitBluetoothSdkEvent("confirm_replace_owner_result", {ok: false, reason: "wipe_failed"})
+      })
+
+      expect(push).toHaveBeenCalledWith("/pairing/replace-owner", {
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+      })
+      const again = render(<ReplaceOwnerScreen />)
+      expect(again.getByText("pairing:replaceOwnerWipeFailed")).toBeTruthy()
+    })
+
+    it("brings the confirm screen back on timeout", () => {
+      const {getByText, unmount} = render(<ReplaceOwnerScreen />)
+      pressConfirm(getByText)
+      unmount()
+      currentRoute = "/pairing/loading"
+
+      act(() => {
+        jest.advanceTimersByTime(10_000)
+      })
+
+      expect(push).toHaveBeenCalledTimes(1)
+    })
+
+    it("stays quiet when the user already left for the failure screen", () => {
+      const {getByText, unmount} = render(<ReplaceOwnerScreen />)
+      pressConfirm(getByText)
+      unmount()
+      currentRoute = "/pairing/failure"
+
+      act(() => {
+        jest.advanceTimersByTime(10_000)
+      })
+
+      expect(push).not.toHaveBeenCalled()
+    })
+
+    it("sends the retained owner to the failure screen from the loading screen", () => {
+      const {getByText, unmount} = render(<ReplaceOwnerScreen />)
+      pressConfirm(getByText)
+      unmount()
+      currentRoute = "/pairing/loading"
+
+      act(() => {
+        emitBluetoothSdkEvent("confirm_replace_owner_result", {ok: false, reason: "retained_owner"})
+      })
+
+      expect(replace).toHaveBeenCalledTimes(1)
+      expect(replace.mock.calls[0][0]).toBe("/pairing/failure")
+    })
+  })
+
   it("cancels like the loading screen: abandon the attempt and pop both screens", () => {
+    previousRoute = "/pairing/loading"
     const {getByText} = render(<ReplaceOwnerScreen />)
 
     fireEvent.press(getByText("common:cancel"))
@@ -231,6 +325,7 @@ describe("replace owner confirm screen", () => {
   })
 
   it("does not cancel twice from the header back and a late result", () => {
+    previousRoute = "/pairing/loading"
     const {getByText} = render(<ReplaceOwnerScreen />)
 
     fireEvent.press(getByText("header-back"))

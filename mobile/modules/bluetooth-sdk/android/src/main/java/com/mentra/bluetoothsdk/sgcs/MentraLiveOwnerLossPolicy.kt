@@ -122,6 +122,17 @@ internal object MentraLiveOwnerLossPolicy {
     fun shouldYieldOnEnteringPairingMode(ownerRetained: Boolean): Boolean = ownerRetained
 
     /**
+     * `pairing_info.retained_owner_link`: this phone is the owner the glasses kept. An
+     * automatic reconnect that lands here means the glasses are in pairing mode and this
+     * phone missed the notice, so it stands down for the window. An explicit pair is never
+     * blocked: the glasses let the owner back in and close the window, so whichever phone
+     * gets there first wins. Mirrors iOS
+     * `MentraLiveConnectionAttemptPolicy.shouldYieldForRetainedOwnerLink`.
+     */
+    fun shouldYieldForRetainedOwnerLink(retainedOwnerLink: Boolean, explicitPairing: Boolean): Boolean =
+            retainedOwnerLink && !explicitPairing
+
+    /**
      * Automatic reconnect must not take the single BLE slot while the glasses are still in
      * pairing mode. An explicit pairing attempt (the new phone, or Pair again) still connects.
      * Mirrors iOS `MentraLiveConnectionAttemptPolicy.shouldStandDownInsteadOfReconnect`.
@@ -214,6 +225,18 @@ internal object MentraLiveOwnerLossPolicy {
                     secureTarget &&
                     bondState != BluetoothDevice.BOND_BONDED &&
                     (!pairingInfoSeen || awaitingConfirm)
+
+    /**
+     * The retained owner's link normally encrypts with the phone's saved key and the glasses
+     * reclaim ownership on their own. A phone that has no key left (user forgot it, Pair again)
+     * must start SMP itself; the glasses accept it from the retained owner's address.
+     */
+    fun shouldStartBondForRetainedOwner(
+            retainedOwnerLink: Boolean,
+            explicitPairing: Boolean,
+            bondState: Int,
+    ): Boolean =
+            retainedOwnerLink && explicitPairing && bondState == BluetoothDevice.BOND_NONE
 
     /**
      * Classic audio can come up before the BLE bond or the owner commit. During an explicit

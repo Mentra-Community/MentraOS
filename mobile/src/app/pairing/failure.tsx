@@ -10,13 +10,15 @@ import {useNavigationStore} from "@/stores/navigation"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
 import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR} from "@/utils/pairing/iosStaleBond"
+import {RETAINED_OWNER_PAIRING_ERROR} from "@/utils/pairing/replaceOwner"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
 export default function PairingFailureScreen() {
   const {theme} = useAppTheme()
   const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
 
-  const {error, deviceModel}: {error: string; deviceModel?: string} = useLocalSearchParams()
+  const {error, deviceModel, deviceName}: {error: string; deviceModel?: string; deviceName?: string} =
+    useLocalSearchParams()
 
   const fadeInOpacity = useSharedValue(0)
   const slideUpTranslate = useSharedValue(50)
@@ -45,6 +47,8 @@ export default function PairingFailureScreen() {
   }
 
   const needsBluetoothForget = error === IOS_FORGET_GLASSES_BLUETOOTH_ERROR
+  const alreadyOwnsGlasses = error === RETAINED_OWNER_PAIRING_ERROR
+  const forgetDeviceName = deviceName || deviceModel || "Mentra Live"
 
   const handleOpenSettings = async () => {
     const success = await SettingsNavigationUtils.openBluetoothSettings()
@@ -71,9 +75,12 @@ export default function PairingFailureScreen() {
         />
 
         <Text
-          text={translate(error as TxKeyPath, {glassesModel: deviceModel || "glasses"})}
+          text={translate(error as TxKeyPath, {
+            glassesModel: deviceModel || "glasses",
+            deviceName: forgetDeviceName,
+          })}
           preset="default"
-          className="text-[16px] text-center mb-12 leading-6 px-4 text-text-dim"
+          className={`text-[16px] mb-12 leading-6 px-4 text-text-dim ${needsBluetoothForget ? "text-left" : "text-center"}`}
         />
 
         <View className="w-full gap-3 flex-grow items-end justify-end">
@@ -81,12 +88,14 @@ export default function PairingFailureScreen() {
             <Button tx="pairing:openSettings" preset="primary" onPress={handleOpenSettings} className="w-full" />
           ) : null}
 
-          <Button
-            tx="common:tryAgain"
-            preset={needsBluetoothForget ? "alternate" : "primary"}
-            onPress={handleRetry}
-            className="w-full"
-          />
+          {alreadyOwnsGlasses ? null : (
+            <Button
+              tx="common:tryAgain"
+              preset={needsBluetoothForget ? "alternate" : "primary"}
+              onPress={handleRetry}
+              className="w-full"
+            />
+          )}
 
           <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} className="w-full" />
         </View>

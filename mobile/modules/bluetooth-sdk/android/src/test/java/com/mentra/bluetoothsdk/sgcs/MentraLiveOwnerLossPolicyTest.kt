@@ -156,6 +156,34 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun retainedOwnerLinkYieldsOnlyForAutomaticReconnect() {
+        assertTrue(MentraLiveOwnerLossPolicy.shouldYieldForRetainedOwnerLink(true, false))
+        assertFalse(MentraLiveOwnerLossPolicy.shouldYieldForRetainedOwnerLink(true, true))
+        assertFalse(MentraLiveOwnerLossPolicy.shouldYieldForRetainedOwnerLink(false, false))
+        assertFalse(MentraLiveOwnerLossPolicy.shouldYieldForRetainedOwnerLink(false, true))
+    }
+
+    @Test
+    fun retainedOwnerWithoutAKeyStartsBondingOnExplicitPair() {
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldStartBondForRetainedOwner(
+                        true, true, BluetoothDevice.BOND_NONE)
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldStartBondForRetainedOwner(
+                        true, true, BluetoothDevice.BOND_BONDED)
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldStartBondForRetainedOwner(
+                        true, false, BluetoothDevice.BOND_NONE)
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldStartBondForRetainedOwner(
+                        false, true, BluetoothDevice.BOND_NONE)
+        )
+    }
+
+    @Test
     fun automaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
         assertTrue(
                 MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(

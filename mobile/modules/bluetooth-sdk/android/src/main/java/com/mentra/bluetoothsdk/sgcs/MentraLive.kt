@@ -4503,6 +4503,15 @@ class MentraLive : SGCManager() {
                     maybeInitiateCtkdAudioAfterBleReady()
                 }
                 Bridge.sendTypedMessage("confirm_replace_owner_result", body)
+                if (reason == "retained_owner") {
+                    val yieldDurationMs = MentraLiveOwnerLossPolicy.yieldMs(
+                            MentraLiveOwnerLossPolicy.PAIRING_WINDOW_ABSOLUTE_MS
+                    )
+                    Bridge.log(
+                            "PAIRFLOW: confirm_replace_owner_result retained_owner action=yield_${yieldDurationMs}ms"
+                    )
+                    enterPairingYield(yieldDurationMs)
+                }
             }
             "pairing_info" -> {
                 // Legacy firmware that omits this field is not secure-capable.
@@ -4519,7 +4528,17 @@ class MentraLive : SGCManager() {
                 }
                 // Ownership transfer: while the user is on the confirm screen no bond can
                 // follow, so the secure-bond wait is suspended until the confirm succeeds.
-                val awaitingConfirm = json.optBoolean("awaiting_confirm", false)
+                val retainedOwnerLink = json.optBoolean("retained_owner_link", false)
+                var awaitingConfirm = json.optBoolean("awaiting_confirm", false)
+                // The retained owner's own link is never the confirm screen, yield or not.
+                if (retainedOwnerLink) {
+                    awaitingConfirm = false
+                }
+                val yieldForRetainedOwner =
+                        MentraLiveOwnerLossPolicy.shouldYieldForRetainedOwnerLink(
+                                retainedOwnerLink,
+                                isExplicitPairingAttempt(),
+                        )
                 pairingInfoSeen = true
                 awaitingOwnerConfirm = awaitingConfirm
                 if (!MentraLiveOwnerLossPolicy.shouldRunSecureBondWait(awaitingConfirm)) {
@@ -4532,7 +4551,15 @@ class MentraLive : SGCManager() {
                 } else {
                     cancelUnconfirmedReplaceDisconnect()
                 }
-                maybeInitiateCtkdAudioAfterBleReady()
+                if (!retainedOwnerLink ||
+                                MentraLiveOwnerLossPolicy.shouldStartBondForRetainedOwner(
+                                        retainedOwnerLink,
+                                        isExplicitPairingAttempt(),
+                                        connectedDevice?.bondState ?: BluetoothDevice.BOND_NONE,
+                                )
+                ) {
+                    maybeInitiateCtkdAudioAfterBleReady()
+                }
                 Bridge.sendPairingInfo(
                         json.optBoolean("had_previous_bond", false),
                         jsonNullableString(json, "pairing_code"),
@@ -4542,7 +4569,15 @@ class MentraLive : SGCManager() {
                         json.optBoolean("ownership_transfer", false),
                         awaitingConfirm,
                         ownerCommitted,
+                        retainedOwnerLink,
                 )
+                if (yieldForRetainedOwner) {
+                    val yieldDurationMs = MentraLiveOwnerLossPolicy.yieldMs(
+                            MentraLiveOwnerLossPolicy.PAIRING_WINDOW_ABSOLUTE_MS
+                    )
+                    Bridge.log("PAIRFLOW: pairing_info retained_owner_link action=yield_${yieldDurationMs}ms")
+                    enterPairingYield(yieldDurationMs)
+                }
             }
             "imu_response",
             "imu_stream_response",

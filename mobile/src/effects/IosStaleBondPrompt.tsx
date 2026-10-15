@@ -22,11 +22,12 @@ export function IosStaleBondPrompt() {
       if (route && PAIRING_ROUTES.has(route)) return
       const identity = engine.pairing.identity()
       const deviceModel = identity.kind === "none" ? "Mentra Live" : identity.model
-      console.log(`PAIRFLOW: stale_ios_bond route=${route ?? "-"} model=${deviceModel}`)
+      const deviceName = identity.kind === "paired" ? identity.name : deviceModel
+      console.log(`PAIRFLOW: stale_ios_bond route=${route ?? "-"} model=${deviceModel} name=${deviceName}`)
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Stale iOS bond cleanup failed:", cleanupError)
       })
-      nav.replace("/pairing/failure", {error: event.error, deviceModel})
+      nav.replace("/pairing/failure", {error: event.error, deviceModel, deviceName})
     })
   }, [])
 

@@ -1361,7 +1361,8 @@ enum MentraLiveConnectionState {
 enum MentraLiveConnectionOptions {
     /// `enableTransportBridging` asks iOS to bring up the Classic profiles (A2DP/HFP)
     /// after the BLE link is up (CBConnectPeripheralOptionEnableTransportBridgingKey,
-    /// iOS 13+). Experimental and OFF by default.
+    /// iOS 13+). The product default is on; this helper still omits the key unless
+    /// the caller passes true.
     static func coreBluetoothOptions(
         requiresAncs: Bool,
         enableTransportBridging: Bool = false
@@ -1810,7 +1811,7 @@ class MentraLive: NSObject, SGCManager {
     /// Experimental iOS transport bridging (Classic profiles after BLE connect). Off by default.
     /// Static so it can be set from `ConnectOptions` without threading a parameter
     /// through `DeviceManager`; it applies to every connect issued after it is set.
-    static var enableTransportBridging = false
+    static var enableTransportBridging = true
 
     // MARK: - Initialization
 
@@ -2972,16 +2973,12 @@ class MentraLive: NSObject, SGCManager {
             // The default requirement lets the system complete that authorization flow
             // before the glasses subscribe; apps that do not relay notifications can opt out.
             Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
-            // Test runs can also switch bridging on without a rebuild by launching the app with
-            // MENTRA_LIVE_TRANSPORT_BRIDGING=1 in its environment (xcrun devicectl ... --environment-variables).
-            let bridgingFromEnvironment = ProcessInfo.processInfo.environment["MENTRA_LIVE_TRANSPORT_BRIDGING"] == "1"
-            let enableTransportBridging = Self.enableTransportBridging || bridgingFromEnvironment
-            Bridge.log("LIVE: Transport bridging \(enableTransportBridging ? "enabled" : "disabled")")
+            Bridge.log("LIVE: Transport bridging \(Self.enableTransportBridging ? "enabled" : "disabled")")
             centralManager?.connect(
                 peripheral,
                 options: MentraLiveConnectionOptions.coreBluetoothOptions(
                     requiresAncs: requiresAncs,
-                    enableTransportBridging: enableTransportBridging
+                    enableTransportBridging: Self.enableTransportBridging
                 )
             )
         #endif
@@ -3616,15 +3613,31 @@ class MentraLive: NSObject, SGCManager {
             var resultBody: [String: Any] = ["ok": ok]
             if let reason { resultBody["reason"] = reason }
             Bridge.sendTypedMessage("confirm_replace_owner_result", body: resultBody)
+            if reason == "retained_owner" {
+                let yieldDurationMs = MentraLiveConnectionAttemptPolicy.yieldMs(windowMs: 120_000)
+                Bridge.log(
+                    "PAIRFLOW: confirm_replace_owner_result retained_owner action=yield_\(yieldDurationMs)ms"
+                )
+                enterPairingYield(yieldDurationMs: yieldDurationMs)
+            }
 
         case "pairing_info":
+            let retainedOwnerLink = json["retained_owner_link"] as? Bool ?? false
             Bridge.log(
-                "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) transfer=\(json["ownership_transfer"] as? Bool ?? false) awaiting_confirm=\(json["awaiting_confirm"] as? Bool ?? false) code=<redacted>"
+                "PAIRFLOW: pairing_info secure=\(json["secure_pairing_capable"] as? Bool ?? false) classic_ready=\(json["classic_bond_ready"] as? Bool ?? false) had_previous=\(json["had_previous_bond"] as? Bool ?? false) transfer=\(json["ownership_transfer"] as? Bool ?? false) awaiting_confirm=\(json["awaiting_confirm"] as? Bool ?? false) retained_owner_link=\(retainedOwnerLink) code=<redacted>"
             )
             let ownerCommitted = json["owner_committed"] as? Bool == true
             // Ownership transfer: while the user is on the confirm screen no bond can follow,
             // so the secure pairing wait is suspended until the confirm succeeds.
-            let awaitingConfirm = json["awaiting_confirm"] as? Bool ?? false
+            // The retained owner's own link is not that screen, whether it yields or not.
+            var awaitingConfirm = json["awaiting_confirm"] as? Bool ?? false
+            if retainedOwnerLink {
+                awaitingConfirm = false
+            }
+            let yieldForRetainedOwner = MentraLiveConnectionAttemptPolicy.shouldYieldForRetainedOwnerLink(
+                retainedOwnerLink: retainedOwnerLink,
+                explicitPairing: isExplicitPairingAttempt()
+            )
             awaitingOwnerConfirm = awaitingConfirm
             if !MentraLiveConnectionAttemptPolicy.shouldRunSecurePairingWait(awaitingConfirm: awaitingConfirm) {
                 Bridge.log("LIVE: pairing_info awaiting_confirm — suspending secure pairing wait")
@@ -3655,8 +3668,16 @@ class MentraLive: NSObject, SGCManager {
                 protocolVersion: json["protocol_version"] as? Int ?? 1,
                 ownershipTransfer: json["ownership_transfer"] as? Bool ?? false,
                 awaitingConfirm: awaitingConfirm,
-                ownerCommitted: ownerCommitted
+                ownerCommitted: ownerCommitted,
+                retainedOwnerLink: retainedOwnerLink
             )
+            if yieldForRetainedOwner {
+                let yieldDurationMs = MentraLiveConnectionAttemptPolicy.yieldMs(windowMs: 120_000)
+                Bridge.log(
+                    "PAIRFLOW: pairing_info retained_owner_link action=yield_\(yieldDurationMs)ms"
+                )
+                enterPairingYield(yieldDurationMs: yieldDurationMs)
+            }
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
              "imu_gesture_subscribed", "imu_ack", "imu_error":

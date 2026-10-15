@@ -58,10 +58,14 @@ jest.mock("@/components/ignite", () => {
       </TouchableOpacity>
     )
   }
+  function MockText({tx}: {tx?: string}) {
+    return <RNText>{tx}</RNText>
+  }
   return {
     Header: MockHeader,
     Screen: MockScreen,
     Button: MockButton,
+    Text: MockText,
   }
 })
 
@@ -200,6 +204,7 @@ describe("pairing loading screen", () => {
     expect(replace).toHaveBeenCalledWith("/pairing/failure", {
       error: "errors:iosForgetGlassesBluetooth",
       deviceModel: "Mentra Live",
+      deviceName: "MENTRA_LIVE_BLE_001",
     })
     expect(replace).not.toHaveBeenCalledWith("/pairing/unpair-even", expect.anything())
   })
@@ -673,6 +678,25 @@ describe("pairing loading screen", () => {
       expect(replace).not.toHaveBeenCalled()
     })
 
+    it("does not block the retained owner pairing again: no failure page, no replace prompt", async () => {
+      useTransferFlow()
+      render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+
+      act(() => {
+        emitBluetoothSdkEvent("pairing_info", {
+          had_previous_bond: true,
+          secure_pairing_capable: true,
+          ownership_transfer: true,
+          awaiting_confirm: false,
+          retained_owner_link: true,
+        })
+      })
+
+      expect(push).not.toHaveBeenCalled()
+      expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
+    })
+
     it("routes on awaiting_confirm even when had_previous_bond is false", async () => {
       useTransferFlow()
       render(<GlassesPairingLoadingScreen />)
@@ -726,7 +750,7 @@ describe("pairing loading screen", () => {
       })
     })
 
-    it("opens iOS Settings for Classic audio after the glasses are ready", async () => {
+    it("opens iOS Settings for Classic audio only after the automatic bond does not appear", async () => {
       useTransferFlow("ios")
       render(<GlassesPairingLoadingScreen />)
       await startPairingKickoff()
@@ -740,12 +764,101 @@ describe("pairing loading screen", () => {
       })
       await finishBonding()
 
-      await waitFor(() => {
-        expect(push).toHaveBeenCalledWith("/pairing/btclassic", {
-          device: JSON.stringify({id: "MENTRA_LIVE_BLE_001", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001"}),
-        })
+      expect(push).not.toHaveBeenCalled()
+      act(() => {
+        jest.advanceTimersByTime(30_000)
+      })
+
+      expect(push).toHaveBeenCalledWith("/pairing/btclassic", {
+        device: JSON.stringify({id: "MENTRA_LIVE_BLE_001", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001"}),
       })
       expect(replace).not.toHaveBeenCalled()
+    })
+
+    it("skips Settings when iOS Classic connects during the settle window", async () => {
+      useTransferFlow("ios")
+      render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+
+      act(() => {
+        emitBluetoothSdkEvent("pairing_info", {
+          had_previous_bond: false,
+          secure_pairing_capable: true,
+          owner_committed: true,
+        })
+      })
+      await finishBonding()
+
+      act(() => {
+        useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
+      })
+      act(() => {
+        jest.advanceTimersByTime(1_000)
+      })
+
+      expect(push).not.toHaveBeenCalled()
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {
+        deviceModel: "Mentra Live",
+        ar99ProjectName: undefined,
+      })
+    })
+
+    const reachIosClassicWait = async () => {
+      const screen = render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+
+      act(() => {
+        emitBluetoothSdkEvent("pairing_info", {
+          had_previous_bond: false,
+          secure_pairing_capable: true,
+          owner_committed: true,
+        })
+      })
+      await finishBonding()
+      return screen
+    }
+
+    it("waits for iOS audio without a Connecting audio line, then opens Settings", async () => {
+      useTransferFlow("ios")
+      const screen = await reachIosClassicWait()
+
+      expect(screen.queryByText("pairing:connectingAudio")).toBeNull()
+      expect(push).not.toHaveBeenCalled()
+
+      act(() => {
+        jest.advanceTimersByTime(30_000)
+      })
+
+      expect(push).toHaveBeenCalledWith("/pairing/btclassic", expect.anything())
+    })
+
+    it.each([["bluetoothClassicProfilesConnected"], ["bluetoothAudioRouted"]] as const)(
+      "exits to success without Settings when %s turns true during the wait",
+      async (signal) => {
+        useTransferFlow("ios")
+        const screen = await reachIosClassicWait()
+        expect(screen.queryByText("pairing:connectingAudio")).toBeNull()
+
+        act(() => {
+          useGlassesStore.getState().setGlassesInfo({[signal]: true})
+        })
+        act(() => {
+          jest.advanceTimersByTime(30_000)
+        })
+
+        expect(push).not.toHaveBeenCalled()
+        expect(replace).toHaveBeenCalledWith("/pairing/success", {
+          deviceModel: "Mentra Live",
+          ar99ProjectName: undefined,
+        })
+      },
+    )
+
+    it("does not show Connecting audio on Android", async () => {
+      const screen = render(<GlassesPairingLoadingScreen />)
+      await startPairingKickoff()
+
+      expect(screen.queryByText("pairing:connectingAudio")).toBeNull()
     })
 
     it("keeps today's flow when the ownership transfer flag is off", async () => {

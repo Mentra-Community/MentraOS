@@ -434,10 +434,11 @@ const en = {
     learnAboutOs: "Learn about MentraOS",
     btClassicStep1: "Tap Open Settings",
     btClassicStep2: "Tap Bluetooth",
-    btClassicStep3: 'Select "{{name}}" under My Devices',
+    btClassicStep3: 'Tap "{{name}}" under My Devices. It is already listed, so there is no second pairing.',
     btClassicStep4: 'Return to the app once it says "Connected"',
     btClassicTitle: "Pair Audio",
-    btClassicSubtitle: "Connect {{name}} as a Bluetooth audio device",
+    btClassicSubtitle:
+      "{{name}} is already listed under My Devices in your iPhone Bluetooth settings. It only needs a tap to connect audio.",
     unpairEvenTitle: "Unpair Glasses from Even App",
     unpairEvenSubtitle: "To use Mentra, forget your glasses in Bluetooth settings. Unpair them, then try again.",
     unpairEvenTryAgain: "Try Again",
@@ -631,8 +632,8 @@ const en = {
     setupWithoutGlasses: "Set up without glasses",
     connectGlasses: "Connect glasses",
     pairAgain: "Pair again",
-    liveOwnerLostStatus: "No longer paired",
-    liveOwnerLostTitle: "Pair again",
+    liveOwnerLostStatus: "Glasses unpaired",
+    liveOwnerLostTitle: "Glasses unpaired",
     liveOwnerLostMessage: "This phone is no longer paired with these glasses. Pair again to use them here.",
     liveOwnerLostIosBluetooth: "Then open Settings > Bluetooth on this iPhone and forget Mentra Live.",
     connectRing: "Connect ring",
@@ -1264,8 +1265,10 @@ const en = {
     g2ConnectionTimedOut: "Couldn't finish connecting both G2 arms.",
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
+    pairingAlreadyOwner:
+      "This phone already owns these glasses. Leave it disconnected and pair from the other phone.",
     iosForgetGlassesBluetooth:
-      "Your iPhone still has an old Bluetooth pairing for these glasses, and the glasses removed theirs. Open Settings, tap Bluetooth, and forget the glasses. Put the glasses in pairing mode, then try again.",
+      "This iPhone still has an old Bluetooth pairing for {{deviceName}}, and the glasses removed theirs.\n\n1. Tap Open Settings.\n2. Tap Bluetooth.\n3. Tap the i next to {{deviceName}}.\n4. Tap Forget This Device.\n5. Come back here, put the glasses in pairing mode, and tap Try Again.",
   },
   phoneWifi: {
     videoReason: "Your phone needs Wi-Fi to receive video from your glasses.",

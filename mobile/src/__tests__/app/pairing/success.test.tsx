@@ -116,6 +116,28 @@ describe("pairing success screen", () => {
     expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
+  it("does not push btclassic when Classic is up, on iOS or Android", async () => {
+    for (const os of ["ios", "android"] as const) {
+      jest.clearAllMocks()
+      setPlatformOS(os)
+      ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Mentra Live"}})
+      ;(useNavigationStore.getState as jest.Mock).mockReturnValue({clearHistoryAndGoHome, push})
+      ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)
+      ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
+
+      const {getAllByText, unmount} = render(<PairingSuccessScreen />)
+
+      await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
+      fireEvent.press(getAllByText("onboarding:continueSetup")[1])
+
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
+      expect(push).toHaveBeenCalledTimes(1)
+      expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
+      expect(pushUnder).not.toHaveBeenCalled()
+      unmount()
+    }
+  })
+
   it("finishes non-Live pairing without adding setup routes", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
     await useSettingsStore.getState().setSetting(SETTINGS.onboarding_os_completed.key, true, false)

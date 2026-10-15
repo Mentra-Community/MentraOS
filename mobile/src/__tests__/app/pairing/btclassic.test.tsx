@@ -70,9 +70,21 @@ jest.mock("@/components/ignite", () => {
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))
 
 jest.mock("@/components/onboarding/OnboardingGuide", () => {
-  const {View} = require("react-native")
-  function MockOnboardingGuide() {
-    return <View />
+  const {Text, View} = require("react-native")
+  function MockOnboardingGuide({steps}: {steps: {title?: string; subtitle?: string; numberedBullets?: string[]}[]}) {
+    return (
+      <View>
+        {steps.map((step) => (
+          <View key={step.title}>
+            <Text>{step.title}</Text>
+            <Text>{step.subtitle}</Text>
+            {step.numberedBullets?.map((bullet) => (
+              <Text key={bullet}>{bullet}</Text>
+            ))}
+          </View>
+        ))}
+      </View>
+    )
   }
   return {OnboardingGuide: MockOnboardingGuide}
 })
@@ -88,6 +100,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
 
 const device = {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}
@@ -115,6 +128,18 @@ describe("btclassic pairing screen", () => {
       history: ["/pairing/scan", "/pairing/loading"],
     })
     ;(usePushPrevious as jest.Mock).mockReturnValue(pushPrevious)
+  })
+
+  it("tells the user the glasses are already listed under My Devices and keeps the four steps", () => {
+    const screen = render(<BtClassicPairingScreen />)
+
+    expect(screen.getByText("onboarding:btClassicTitle")).toBeTruthy()
+    expect(screen.getByText("onboarding:btClassicSubtitle")).toBeTruthy()
+    for (const key of ["btClassicStep1", "btClassicStep2", "btClassicStep3", "btClassicStep4"]) {
+      expect(screen.getByText(`onboarding:${key}`)).toBeTruthy()
+    }
+    expect(translate).toHaveBeenCalledWith("onboarding:btClassicSubtitle", {name: device.name})
+    expect(translate).toHaveBeenCalledWith("onboarding:btClassicStep3", {name: device.name})
   })
 
   it("reveals loading once Bluetooth Classic links and lets loading own the connect", async () => {

@@ -294,6 +294,16 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         XCTAssertFalse(watch.onEnteringPairingModeAgain())
     }
 
+    func testRetainedOwnerLinkYieldsOnlyForAutomaticReconnect() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        // The glasses are in pairing mode and this phone missed the notice: stand down.
+        XCTAssertTrue(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: true, explicitPairing: false))
+        // The owner pairs on purpose: never blocked, whoever gets there first wins.
+        XCTAssertFalse(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: true, explicitPairing: true))
+        XCTAssertFalse(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: false, explicitPairing: false))
+        XCTAssertFalse(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: false, explicitPairing: true))
+    }
+
     func testAutomaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         XCTAssertTrue(Policy.shouldStandDownInsteadOfReconnect(

@@ -141,6 +141,7 @@ public class Bridge private constructor() {
             ownershipTransfer: Boolean = false,
             awaitingConfirm: Boolean = false,
             ownerCommitted: Boolean = false,
+            retainedOwnerLink: Boolean = false,
         ) {
             val data = HashMap<String, Any>()
             data["had_previous_bond"] = hadPreviousBond
@@ -151,6 +152,7 @@ public class Bridge private constructor() {
             data["ownership_transfer"] = ownershipTransfer
             data["awaiting_confirm"] = awaitingConfirm
             data["owner_committed"] = ownerCommitted
+            data["retained_owner_link"] = retainedOwnerLink
             sendTypedMessage("pairing_info", data as Map<String, Any>)
         }
 

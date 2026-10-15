@@ -1,4 +1,5 @@
 import {
+  classicWaitState,
   classifyReplaceOwnerResult,
   REPLACE_OWNER_ERROR_TX,
   REPLACE_OWNER_ROUTE,
@@ -23,10 +24,14 @@ describe("shouldRouteToReplaceOwner", () => {
   it("does not accept truthy non-booleans", () => {
     expect(shouldRouteToReplaceOwner({...base, awaitingConfirm: "true" as unknown as boolean})).toBe(false)
   })
+
+  it("does not ask the phone that already owns the glasses", () => {
+    expect(shouldRouteToReplaceOwner({...base, retainedOwnerLink: true})).toBe(false)
+  })
 })
 
 describe("shouldPairClassicAfterBle", () => {
-  it("sends iOS Mentra Live to Settings only when Classic audio is not up yet", () => {
+  it("sends iOS Mentra Live to Settings only when Classic audio is still down", () => {
     expect(
       shouldPairClassicAfterBle({
         platform: "ios",
@@ -58,6 +63,68 @@ describe("shouldPairClassicAfterBle", () => {
   })
 })
 
+describe("classicWaitState", () => {
+  const iosLive = {
+    platform: "ios",
+    deviceModel: "Mentra Live",
+    bluetoothClassicConnected: false,
+    bluetoothClassicProfilesConnected: false,
+    bluetoothAudioRouted: false,
+    settleElapsed: false,
+  }
+
+  it("waits on iOS Mentra Live while nothing is up and the settle window is open", () => {
+    expect(classicWaitState(iosLive)).toBe("waiting")
+  })
+
+  it("falls back to Settings once the settle window passed with nothing up", () => {
+    expect(classicWaitState({...iosLive, settleElapsed: true})).toBe("fallback")
+  })
+
+  it.each([["bluetoothClassicConnected"], ["bluetoothClassicProfilesConnected"], ["bluetoothAudioRouted"]] as const)(
+    "is done as soon as %s is true, before or after the settle window",
+    (signal) => {
+      expect(classicWaitState({...iosLive, [signal]: true})).toBe("done")
+      expect(classicWaitState({...iosLive, [signal]: true, settleElapsed: true})).toBe("done")
+    },
+  )
+
+  it("is done when all three signals are true", () => {
+    expect(
+      classicWaitState({
+        ...iosLive,
+        bluetoothClassicConnected: true,
+        bluetoothClassicProfilesConnected: true,
+        bluetoothAudioRouted: true,
+      }),
+    ).toBe("done")
+  })
+
+  it.each([
+    ["android", "Mentra Live"],
+    ["ios", "Even Realities G1"],
+    ["ios", "Mentra Display"],
+    ["android", "Even Realities G1"],
+    ["web", "Mentra Live"],
+  ])("never waits for %s %s", (platform, deviceModel) => {
+    for (const settleElapsed of [false, true]) {
+      expect(classicWaitState({...iosLive, platform, deviceModel, settleElapsed})).toBe("done")
+    }
+  })
+
+  it("agrees with shouldPairClassicAfterBle when only the bond signal is used", () => {
+    for (const bluetoothClassicConnected of [false, true]) {
+      for (const platform of ["ios", "android"]) {
+        for (const deviceModel of ["Mentra Live", "Even Realities G1"]) {
+          expect(classicWaitState({...iosLive, platform, deviceModel, bluetoothClassicConnected}) !== "done").toBe(
+            shouldPairClassicAfterBle({platform, deviceModel, bluetoothClassicConnected}),
+          )
+        }
+      }
+    }
+  })
+})
+
 describe("classifyReplaceOwnerResult", () => {
   it("continues on success", () => {
     expect(classifyReplaceOwnerResult({ok: true})).toEqual({kind: "continue"})
@@ -76,6 +143,7 @@ describe("classifyReplaceOwnerResult", () => {
       kind: "error",
       error: "wipe_failed",
     })
+    expect(classifyReplaceOwnerResult({ok: false, reason: "retained_owner"})).toEqual({kind: "yield"})
   })
 
   it("maps unknown or missing reasons to a generic failure", () => {
