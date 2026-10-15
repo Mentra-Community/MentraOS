@@ -9,7 +9,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
-import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR} from "@/utils/pairing/iosStaleBond"
+import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR, iosBluetoothDeviceLabel} from "@/utils/pairing/iosStaleBond"
 import {RETAINED_OWNER_PAIRING_ERROR} from "@/utils/pairing/replaceOwner"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
@@ -48,7 +48,9 @@ export default function PairingFailureScreen() {
 
   const needsBluetoothForget = error === IOS_FORGET_GLASSES_BLUETOOTH_ERROR
   const alreadyOwnsGlasses = error === RETAINED_OWNER_PAIRING_ERROR
-  const forgetDeviceName = deviceName || deviceModel || "Mentra Live"
+  const routeDeviceName = Array.isArray(deviceName) ? deviceName[0] : deviceName
+  const routeDeviceModel = Array.isArray(deviceModel) ? deviceModel[0] : deviceModel
+  const forgetDeviceName = iosBluetoothDeviceLabel(routeDeviceName, routeDeviceModel || "Mentra Live")
 
   const handleOpenSettings = async () => {
     const success = await SettingsNavigationUtils.openBluetoothSettings()
@@ -58,7 +60,7 @@ export default function PairingFailureScreen() {
   }
 
   return (
-    <Screen preset="fixed" className="" safeAreaEdges={["top", "bottom"]}>
+    <Screen preset="scroll" className="" safeAreaEdges={["top", "bottom"]}>
       <Header />
 
       <Animated.View style={animatedContainerStyle} className="flex-1 items-center justify-center px-4">
@@ -76,7 +78,7 @@ export default function PairingFailureScreen() {
 
         <Text
           text={translate(error as TxKeyPath, {
-            glassesModel: deviceModel || "glasses",
+            glassesModel: routeDeviceModel || "glasses",
             deviceName: forgetDeviceName,
           })}
           preset="default"

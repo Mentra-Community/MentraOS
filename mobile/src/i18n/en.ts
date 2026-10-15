@@ -1268,7 +1268,7 @@ const en = {
     pairingAlreadyOwner:
       "This phone already owns these glasses. Leave it disconnected and pair from the other phone.",
     iosForgetGlassesBluetooth:
-      "This iPhone still has an old Bluetooth pairing for {{deviceName}}, and the glasses removed theirs.\n\n1. Tap Open Settings.\n2. Tap Bluetooth.\n3. Tap the i next to {{deviceName}}.\n4. Tap Forget This Device.\n5. Come back here, put the glasses in pairing mode, and tap Try Again.",
+      "This iPhone still has an old Bluetooth pairing for these glasses, and the glasses removed theirs.\n\nIn Bluetooth the device is named {{deviceName}}.\n\n1. Tap Open Settings.\n2. Tap Bluetooth.\n3. Tap the ⓘ next to {{deviceName}}.\n4. Tap Forget This Device.\n5. Come back here, put the glasses in pairing mode, and tap Try Again.",
   },
   phoneWifi: {
     videoReason: "Your phone needs Wi-Fi to receive video from your glasses.",

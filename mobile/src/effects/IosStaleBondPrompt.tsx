@@ -2,7 +2,7 @@ import {useEffect} from "react"
 import {Platform} from "react-native"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR} from "@/utils/pairing/iosStaleBond"
+import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR, iosBluetoothDeviceLabel} from "@/utils/pairing/iosStaleBond"
 import {engine} from "@mentra/engine"
 
 const PAIRING_ROUTES = new Set(["/pairing/loading", "/pairing/failure", "/pairing/replace-owner"])
@@ -22,7 +22,10 @@ export function IosStaleBondPrompt() {
       if (route && PAIRING_ROUTES.has(route)) return
       const identity = engine.pairing.identity()
       const deviceModel = identity.kind === "none" ? "Mentra Live" : identity.model
-      const deviceName = identity.kind === "paired" ? identity.name : deviceModel
+      const deviceName = iosBluetoothDeviceLabel(
+        identity.kind === "paired" ? identity.name : undefined,
+        deviceModel,
+      )
       console.log(`PAIRFLOW: stale_ios_bond route=${route ?? "-"} model=${deviceModel} name=${deviceName}`)
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Stale iOS bond cleanup failed:", cleanupError)
