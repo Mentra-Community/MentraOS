@@ -23,7 +23,7 @@ We split the v1 monolith into three:
 
 | Package | Role | Deployable | Talks to |
 | --- | --- | --- | --- |
-| `@mentra/cloud-core` | OEM auth, REST endpoints | yes (`core` service in `porter.yaml`) | MongoDB Atlas |
+| `@mentra/cloud-core` | OEM auth, REST endpoints | yes (`core` service in `cloud-v2/deploy/porter.shared.yaml`) | MongoDB Atlas |
 | `@mentra/cloud-audio` | UDP/WS audio ingress, workers, transcription | yes (`audio` service) | Redis (ElastiCache), Soniox |
 | `@mentra/cloud-proxy` | OEM forwarder / reverse proxy (stub) | yes (planned) | core, audio (downstream) |
 | `@mentra/cloud-shared` | Logger, health, JWT verifier | no (workspace dep) | — |

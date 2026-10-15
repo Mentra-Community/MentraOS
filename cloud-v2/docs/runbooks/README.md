@@ -61,7 +61,7 @@ Decisions that aren't enforced by code but matter for working as a team.
 
 When you find yourself explaining the same thing twice — "wait, why does
 the dev MONGO_URL point at localhost when prod is Atlas?", "what does
-`additionalPorts:` in porter.yaml actually do?" — write it down here.
+`additionalPorts:` in the shared Porter source actually do?" — write it down here.
 
 The format is unstructured but the contract is "an engineer joining the team
 in 6 months should be able to read this and understand the operational

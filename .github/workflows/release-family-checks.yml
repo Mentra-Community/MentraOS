@@ -32,6 +32,8 @@ on:
       - "mobile/modules/engine/scripts/*.mjs"
       - "mobile/modules/jspolyfill/package.json"
       - "mobile/modules/miniapp/package.json"
+      - "cloud-v2/deploy/porter.shared.yaml"
+      - "cloud-v2/deploy/runtime-policy.yaml"
       - "cloud-v2/packages/cloud-client/package.json"
       - "cloud-v2/packages/protocol/package.json"
 
@@ -48,6 +50,9 @@ jobs:
         with:
           node-version: "24"
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
       - name: Reject unresolved conflict markers
         run: |
           if git grep -nE '^(<<<<<<< |\|\|\|\|\|\|\| parent of |>>>>>>> )'; then
@@ -65,6 +70,15 @@ jobs:
           tests+=(mobile/scripts/native-build-cache.test.mjs mobile/ci/pr-ios/xcode-attempt.test.mjs)
           test "${#tests[@]}" -gt 0
           node --test "${tests[@]}"
+      - uses: porter-dev/setup-porter@v0.1.0
+      - name: Validate generated deployment configurations
+        run: |
+          set -euo pipefail
+          for environment in dev staging prod; do
+            bun .github/scripts/render-cloud-v2-config.mjs --source-root . --environment "$environment"
+            (cd cloud-v2 && porter apply validate -f "porter.$environment.yaml")
+          done
+          node .github/scripts/porter-doppler-source.mjs
       - name: Test coordinated Apple package identity
         run: python3 mobile/ci/coordinated-downloads-test.py
       - name: Validate repository definition

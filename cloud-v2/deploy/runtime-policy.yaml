@@ -1,5 +1,5 @@
 # Protect the sole serving Runtime from voluntary node eviction.
-cloud-dev-runtime:
+runtime:
   podDisruptionBudget:
     enabled: true
     minAvailablePercentage: 100

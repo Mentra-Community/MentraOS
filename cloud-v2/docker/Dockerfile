@@ -1,6 +1,6 @@
 # Cloud-v2 image: builds the whole monorepo, no entrypoint.
 #
-# Each Porter service in porter.yaml overrides `run:` to launch a different
+# Each Porter service in deploy/porter.shared.yaml overrides `run:` to launch a different
 # process from this same image (core / audio / proxy). Workspace symlinks
 # mean we copy the whole tree and `bun install` resolves everything in one
 # pass.
@@ -54,7 +54,7 @@ RUN bun run typecheck
 RUN bun run build:admin && mkdir -p /app/admin-dist && cp -R websites/admin/dist/. /app/admin-dist/
 
 # All three service ports (HTTP/WS) + audio UDP. Porter's port mapping picks
-# the right one per-service from porter.yaml.
+# the right one per-service from deploy/porter.shared.yaml.
 EXPOSE 3000 3001 3002 8000
 
-# No CMD — porter.yaml services set their own `run:`.
+# No CMD — rendered Porter services set their own `run:`.
