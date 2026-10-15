@@ -407,14 +407,15 @@ describe("checkpoints", () => {
     setAppState("active", false)
     start()
     advance(30_000)
-    setAppState("background")
-    advance(5_000) // the foreground session ends once the grace is over: an immediate checkpoint
-    expect(checkpoints()).toHaveLength(1)
-    expect(entry(checkpoints()[0], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: true})
-    advance(14 * 60_000 + 59_000)
-    expect(checkpoints()).toHaveLength(1)
-    advance(1_000)
+    setAppState("background") // checkpointed as it goes to the background, in case the process does not survive
+    advance(5_000) // and ended once the grace is over: an immediate checkpoint
     expect(checkpoints()).toHaveLength(2)
+    expect(entry(checkpoints()[0], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: false})
+    expect(entry(checkpoints()[1], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: true})
+    advance(14 * 60_000 + 59_000)
+    expect(checkpoints()).toHaveLength(2)
+    advance(1_000)
+    expect(checkpoints()).toHaveLength(3)
   })
 
   test("the foreground session follows the app state", () => {
@@ -594,6 +595,40 @@ describe("the foreground", () => {
       [30_000, true],
       [5_000, true],
     ])
+  })
+
+  test("a visit cut off by suspension right after the app went to the background keeps its time until it left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("inactive")
+    setAppState("background")
+    // Suspended at once, before the grace is over: both clocks run on and no timer fires.
+    clock.wall += 10 * 60_000
+    clock.mono += 10 * 60_000
+    setAppState("active")
+    expect(visits()[0]).toMatchObject({elapsedMs: 30_000, ended: true})
+    expect(gaps()).toHaveLength(1)
+  })
+
+  test("a visit the process dies in, right after the app went to the background, is already checkpointed", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    // The process is killed now: nothing more is written, and what is queued is what Fleet gets.
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 30_000, ended: false})])
+  })
+
+  test("an inactive blip writes nothing", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    const before = all().length
+    setAppState("inactive")
+    advance(1_000)
+    setAppState("active")
+    expect(all()).toHaveLength(before)
   })
 
   test("stopping while the app is away ends the visit when it left", () => {

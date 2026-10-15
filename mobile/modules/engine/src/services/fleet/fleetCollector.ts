@@ -468,6 +468,10 @@ class CollectorRun {
       this.guard("app state", () => {
         if (state !== "active") this.leftForeground = true
         this.onStateChange()
+        // In the background the process may be suspended or killed before the visit's grace is over: the visit is
+        // checkpointed now, up to when the app left, so that time is not lost with it. A blip that stays short of
+        // the background (iOS inactive) writes nothing.
+        if (state === "background" && this.sessions.get(FOREGROUND_KEY)?.endAt) this.flush()
       }),
     )
     this.cleanups.push(() => appState.remove())
