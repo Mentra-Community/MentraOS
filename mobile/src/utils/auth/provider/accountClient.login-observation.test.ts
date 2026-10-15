@@ -105,7 +105,7 @@ describe("AccountAuthProvider password failure evidence", () => {
       status: 200,
       json: async () => ({access_token: "new-access", refresh_token: "new-refresh"}),
     })
-    jest.spyOn(provider, "getSession").mockResolvedValue(Res.ok({token: "new-access", user: {id: "test"}}))
+    jest.spyOn(provider, "getSession").mockResolvedValue(Res.ok({token: "new-access", user: {id: "test", name: "Test"}}))
     const listener = jest.fn()
     const subscription = provider.onAuthStateChange(listener)
     if (!subscription.is_ok()) throw subscription.error
@@ -113,7 +113,10 @@ describe("AccountAuthProvider password failure evidence", () => {
       const result = await provider.signInWithPassword(credentials)
       expect(result.is_ok()).toBe(true)
       if (!result.is_ok()) throw result.error
-      expect(result.value).toEqual({session: {token: "new-access", user: {id: "test"}}, user: {id: "test"}})
+      expect(result.value).toEqual({
+        session: {token: "new-access", user: {id: "test", name: "Test"}},
+        user: {id: "test", name: "Test"},
+      })
       expect(listener).toHaveBeenCalledWith("SIGNED_IN", result.value.session)
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(warn).not.toHaveBeenCalled()
