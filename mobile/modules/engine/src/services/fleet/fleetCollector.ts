@@ -17,11 +17,13 @@
  * time, only less often; what it risks is the time since the last checkpoint if the process dies. A session also
  * ends when it reaches the longest time one record may carry (7 days), and a new one carries on from there.
  *
- * Snapshots come at start, after a change worth one (the connection, a battery move of 5 points or a charging change,
- * a new version), and with the first checkpoint 15 minutes or more after the last snapshot, so the two share a
- * wake-up and an upload. On the 15-minute cadence that snapshot is written only if it would say something new. A
- * phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
- * checkpoint every 15 minutes, whether or not miniapps execute in the background.
+ * Snapshots come at start, after a change worth one (glasses connecting or disconnecting, and while they are connected
+ * a battery move of 5 points, a charging change or a new version), and with the first checkpoint 15 minutes or more
+ * after the last snapshot, so the two share a wake-up and an upload. On the 15-minute cadence that snapshot is
+ * written only if it would say something new. A phone retrying glasses that are away moves between scanning,
+ * connecting and disconnected every few seconds, all day: none of that is a change worth a snapshot, or something
+ * new. A phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
+ * checkpoint every 15 minutes, whether or not miniapps execute in the background or its glasses are being retried.
  *
  * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
  * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
@@ -261,7 +263,8 @@ interface BatteryReading {
 /** What the last snapshot said, so a change worth a new snapshot can be told from one that is not. */
 interface SnapshotMarks {
   known: boolean
-  connection: ConnectionState
+  /** The glasses were connected. The states short of it (scanning, connecting, disconnected) are all "not". */
+  linked: boolean
   batteryMeasured: boolean
   level: number
   charging: boolean
@@ -769,7 +772,7 @@ class CollectorRun {
     const measured = !!reading && Number.isFinite(reading.level) && reading.level >= 0
     return {
       known: this.known !== null,
-      connection: this.connection.state,
+      linked: this.connection.state === "connected",
       batteryMeasured: measured,
       level: measured ? reading.level : -1,
       charging: measured ? reading.charging : false,
@@ -801,20 +804,36 @@ class CollectorRun {
     this.takeSnapshot(!this.isFast())
   }
 
-  /** A change in the connection, a battery move of 5 points or a charging change, or a new version, is worth a snapshot. */
+  /**
+   * Glasses connecting or disconnecting is worth a snapshot; while they are connected, so are their identification, a
+   * battery move of 5 points or a charging change, and a new version.
+   *
+   * Moves among the states short of connected are not: a phone retrying glasses that are away goes scanning,
+   * connecting and disconnected every few seconds, all day, and forgets and finds the glasses' identity with each
+   * attempt. Their battery and versions are only read while they are connected.
+   *
+   * A disconnect is written at once, while what is known is still the pair that left: the retry that follows within
+   * moments starts a new connection, which forgets them. Only a snapshot in the last two seconds holds it back to the
+   * usual debounce, so a link that flaps is still one snapshot every two seconds at most.
+   */
   private evaluateSnapshotTriggers(): void {
     const last = this.marks
     if (!last) return
     const now = this.currentMarks()
-    let changed = now.known !== last.known
-    if (!changed && now.known) {
-      changed =
-        now.connection !== last.connection ||
-        now.batteryMeasured !== last.batteryMeasured ||
-        (now.batteryMeasured &&
-          (Math.abs(now.level - last.level) >= BATTERY_SNAPSHOT_STEP || now.charging !== last.charging)) ||
-        (now.versions !== "" && now.versions !== last.versions)
+    if (now.linked !== last.linked) {
+      const disconnected = !now.linked
+      if (disconnected && this.env.monotonic() - this.lastSnapshotMono >= SNAPSHOT_DEBOUNCE_MS) this.takeSnapshot()
+      else this.scheduleSnapshot()
+      return
     }
+    if (!now.linked) return
+    const changed =
+      now.known !== last.known ||
+      (now.known &&
+        (now.batteryMeasured !== last.batteryMeasured ||
+          (now.batteryMeasured &&
+            (Math.abs(now.level - last.level) >= BATTERY_SNAPSHOT_STEP || now.charging !== last.charging)) ||
+          (now.versions !== "" && now.versions !== last.versions)))
     if (changed) this.scheduleSnapshot()
   }
 
@@ -841,11 +860,16 @@ class CollectorRun {
           }
         : null
     // What the snapshot says, leaving out the time a battery with no reading is stamped with (it is now): an unknown
-    // one, or one the glasses cannot report.
+    // one, or one the glasses cannot report. Of glasses that are not connected only that is new: retrying them changes
+    // the state short of connected, its time, and what is known of them, with every attempt.
     const key = JSON.stringify([
-      binding && glasses ? binding : null,
       phone,
-      glasses && !this.battery ? {...glasses, battery: {state: glasses.battery?.state}} : glasses,
+      this.connection.state !== "connected"
+        ? "not connected"
+        : [
+            binding && glasses ? binding : null,
+            glasses && !this.battery ? {...glasses, battery: {state: glasses.battery?.state}} : glasses,
+          ],
     ])
     if (onlyIfNew && key === this.lastSnapshotKey) return
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)

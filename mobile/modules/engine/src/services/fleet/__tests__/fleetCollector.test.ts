@@ -1150,7 +1150,7 @@ describe("snapshots", () => {
     disconnectLive()
     advance(5_000)
     expect(snapshots()).toHaveLength(2)
-    glassesStore.setState({connection: {state: "connecting"}, deviceModel: "Mentra Live", serialNumber: "SN-LIVE-1"})
+    connectLive()
     advance(5_000)
     expect(snapshots()).toHaveLength(3)
   })
@@ -1200,6 +1200,101 @@ describe("snapshots", () => {
       level: 80,
       charging: false,
     })
+  })
+})
+
+describe("glasses that are away", () => {
+  /**
+   * What a phone does all day while its paired glasses are out of range: it scans for them, tries to connect, gives
+   * up, and tries again, every 30 s. While it tries, the native layer names the glasses it is looking for, and clears
+   * them when it gives up; the last battery reading stays in the store.
+   */
+  function retry(minutes: number): void {
+    const end = clock.mono + minutes * 60_000
+    while (clock.mono < end) {
+      glassesStore.setState({connection: {state: "scanning"}})
+      glassesStore.setState({deviceModel: "Mentra Live", bluetoothName: "MENTRA_LIVE_BLE_1234"})
+      advance(3_000)
+      glassesStore.setState({connection: {state: "connecting"}})
+      advance(26_000)
+      glassesStore.setState({connection: {state: "disconnected"}, ...IDENTITY_CLEARED})
+      advance(1_000)
+    }
+  }
+
+  test("an hour of reconnect attempts is a handful of records, not one for every attempt", () => {
+    connectLive()
+    start()
+    advance(90_000)
+    const leftAt = clock.wall
+    disconnectLive()
+    retry(60)
+    const sinceLeaving = all().filter((record) => Date.parse(record.observedAt) >= leftAt)
+    // The disconnect's snapshot, the checkpoint that ends the connection, and a checkpoint every 15 minutes.
+    expect(sinceLeaving.map((record) => record.kind)).toEqual([
+      "usage_checkpoint",
+      "snapshot",
+      "usage_checkpoint",
+      "usage_checkpoint",
+      "usage_checkpoint",
+      "usage_checkpoint",
+    ])
+  })
+
+  test("a phone that starts with its glasses away writes no snapshot for its attempts", () => {
+    glassesStore.setState({connection: {state: "scanning"}, deviceModel: "Mentra Live"})
+    start()
+    retry(60)
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints()).toHaveLength(4)
+  })
+
+  test("a disconnect followed at once by an attempt is described as a disconnect of the pair that left", () => {
+    connectLive()
+    start()
+    advance(60_000)
+    const leftAt = clock.wall
+    disconnectLive()
+    advance(500)
+    retry(1)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.observedAt).toBe(iso(leftAt))
+    expect(latest.deviceBinding).toEqual({
+      kind: "serial",
+      manufacturer: "Mentra",
+      product: "Mentra Live",
+      serial: "SN-LIVE-1",
+    })
+    expect(latest.payload.glasses?.connection).toEqual({state: "disconnected", observedAt: iso(leftAt)})
+  })
+
+  test("the glasses coming back is a snapshot, and leaving again another", () => {
+    connectLive()
+    start()
+    disconnectLive()
+    retry(10)
+    expect(snapshots()).toHaveLength(2)
+    connectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(3)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.connection.state).toBe("connected")
+    disconnectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(4)
+  })
+
+  test("a link that flaps is still at most one snapshot every two seconds", () => {
+    connectLive()
+    start()
+    for (let flap = 0; flap < 30; flap += 1) {
+      disconnectLive()
+      advance(500)
+      connectLive()
+      advance(500)
+    }
+    advance(5_000)
+    // 35 s of flapping, start included.
+    expect(snapshots().length).toBeLessThanOrEqual(19)
   })
 })
 
@@ -1493,10 +1588,10 @@ describe("a second pair of the same model", () => {
     advance(10_000)
     disconnectLive()
     advance(5_000)
+    const connectingAt = clock.wall
     glassesStore.setState({connection: {state: "connecting"}}) // the next pair, not yet identified
     advance(5_000)
-    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
-    expect((snapshots().at(-1) as Kind<"snapshot">).deviceBinding).toBeUndefined()
+    expect(all().filter((record) => Date.parse(record.observedAt) >= connectingAt)).toEqual([])
     fleetEvents.photo({operationId: "req-x", stage: "requested"})
     expect(ofKind("photo_operation")).toHaveLength(0)
     // Connected but not yet identified: still nothing claimed about whose it is.
@@ -1644,9 +1739,11 @@ describe("a disconnect in the order the native layer does it", () => {
     advance(5_000)
     glassesStore.setState({connection: {state: "connecting"}}) // another pair, not yet identified
     advance(5_000)
-    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
     fleetEvents.photo({operationId: "req-n", stage: "requested"})
     expect(ofKind("photo_operation")).toHaveLength(0)
+    glassesStore.setState({connection: {state: "connected", fullyBooted: false}})
+    advance(5_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
   })
 })
 
