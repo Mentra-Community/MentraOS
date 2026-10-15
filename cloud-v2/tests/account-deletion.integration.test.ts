@@ -26,6 +26,7 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefault
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {AccountCodeModel} from "../packages/core/src/models/account-code.model"
+import {AccountEmailModel} from "../packages/core/src/models/account-email.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
@@ -35,6 +36,7 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
+import {accountEmail} from "../packages/core/src/services/account/account-email.service"
 import {
   confirmAccountDeletion,
   finishPendingAccountDeletions,
@@ -90,6 +92,7 @@ setDefaultTimeout(30_000)
 const MODELS = [
   AccessCredentialModel,
   AccountCodeModel,
+  AccountEmailModel,
   BrowserSessionModel,
   RefreshTokenModel,
   SupportProfileModel,
@@ -318,6 +321,18 @@ describe("confirmAccountDeletion", () => {
     expect(organizational.map(event => event.action)).toEqual(["user.deleted"])
     expect(organizational[0]).toMatchObject({target: {mentraUserId: s.mentraUserId}})
     expect(JSON.stringify(organizational[0])).not.toContain(s.email)
+  })
+
+  test("Core's copy of the account's email is deleted with the account, and not stored again", async () => {
+    const s = await scenario()
+    expect(await accountEmail(s.mentraUserId)).toBe(s.email)
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    expect(await AccountEmailModel.countDocuments({mentraUserId: s.mentraUserId})).toBe(0)
+    // A Fleet report still in flight for the deleted account learns no email, and keeps none.
+    expect(await accountEmail(s.mentraUserId)).toBeNull()
+    expect(await AccountEmailModel.countDocuments({mentraUserId: s.mentraUserId, email: {$ne: null}})).toBe(0)
   })
 
   test("a last owner's deletion is not refused: the workspace is left without an owner for recovery", async () => {

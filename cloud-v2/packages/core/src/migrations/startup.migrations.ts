@@ -11,6 +11,7 @@ import { BrowserSessionModel } from "../models/browser-session.model";
 import { LoginTransactionModel } from "../models/login-transaction.model";
 import { AuthRateLimitModel } from "../models/auth-rate-limit.model";
 import { SigninIdentityModel } from "../models/signin-identity.model";
+import { AccountEmailModel } from "../models/account-email.model";
 import { ensureOidcCollections } from "../services/oidc/mongo-adapter";
 import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
@@ -67,6 +68,9 @@ export async function runStartupMigrations(): Promise<void> {
   // account indexes) and each person's sign-in identity.
   await ensureOidcCollections();
   await SigninIdentityModel.createIndexes();
+  // Core's copy of each account's email: one row per account (unique), built
+  // with its collection before the first lookup writes one.
+  await AccountEmailModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
