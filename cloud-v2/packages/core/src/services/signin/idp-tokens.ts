@@ -15,7 +15,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import * as jose from "jose"
 
 import {AccountError} from "../account/account-error"
-import {getAccountForSignIn, isGotrueAdminConfigured} from "../account/gotrue.client"
+import {findAccountById, isGotrueAdminConfigured} from "../account/gotrue.client"
 import {findOrCreateUser, isDeletedAccount} from "../user.service"
 import {supabaseProvider, type WebIdentityProvider} from "./config"
 import {canonicalEmail, trustedEmail} from "./email-trust"
@@ -130,7 +130,7 @@ export async function verifySupabaseHandoffToken(token: string, opts: {now?: Dat
   if (isGotrueAdminConfigured()) {
     let account
     try {
-      account = await getAccountForSignIn(subject)
+      account = await findAccountById(subject)
     } catch (err) {
       if (err instanceof AccountError) throw new IdentityProviderUnavailableError("account directory unavailable")
       throw err

@@ -240,8 +240,13 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
 
 - A phone's `email` is the account's **verified** email, or null when the
   account has none or it is unverified. It is a display attribute: never use an
-  email as an identity key, key records by `mentraUserId`. Core remembers the
-  answer for a few minutes, so a change reaches Fleet a little late.
+  email as an identity key, key records by `mentraUserId`. Core reads it from
+  its own copy of the account's email, not from the account directory, so
+  reports cost the directory nothing. An email changed in the Mentra App
+  reaches Fleet within five minutes, with the account's next report; one changed
+  in the directory itself (Supabase's console), within a day. A report also
+  carries null when Core could not learn the email in time, so keep the last
+  email you were sent rather than clearing it on a null.
 - A user's `isOrganizationAdmin` is computed from a verified identity email, so
   Fleet may rely on it. Its `email` may be unverified (`emailVerified` says
   whether the identity provider verified it); even a verified email is not an
