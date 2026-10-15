@@ -194,14 +194,24 @@ test('recovery admission refuses old halt, changed repair, active fixer, missing
 test('admin email stays in Core metadata and never changes authenticated command delivery or retries', async () => {
   const f = fixture(), input = f.input('reserve', {purpose: 'Manual work'})
   const first = await f.service.submit(input, 'alice-id', 'alice@example.com')
-  expect(f.rows()[0].operatorEmail).toBe('alice@example.com')
-  expect(f.rows()[0].command).not.toHaveProperty('operatorEmail')
+  expect(f.rows()[0].operatorLabel).toBe('alice@example.com')
+  expect(f.rows()[0].command).not.toHaveProperty('operatorLabel')
   expect(await f.service.submit(input, 'alice-id', 'new-address@example.com')).toEqual(first)
-  expect(f.rows()[0].operatorEmail).toBe('alice@example.com')
+  expect(f.rows()[0].operatorLabel).toBe('alice@example.com')
   const delivery = await f.service.exchange('air', {schemaVersion: 1, receipts: []})
   expect(delivery.commands).toEqual([f.rows()[0].command])
   expect(JSON.stringify(delivery)).not.toContain('alice@example.com')
   expect(JSON.stringify(await f.service.list('air', 'alice-id'))).not.toContain('alice@example.com')
-  await expect(f.service.submit({...input, operatorEmail: 'spoof@example.com'}, 'alice-id')).rejects.toThrow()
+  await expect(f.service.submit({...input, operatorLabel: 'spoof@example.com'}, 'alice-id')).rejects.toThrow()
   await expect(f.service.submit(input, 'bob-id', 'alice@example.com')).rejects.toThrow('identity changed')
+})
+
+test('authorized credential and user-ID labels can reserve without an email address', async () => {
+  for (const label of ['credential:operator-key', 'usr_no_email']) {
+    const f = fixture(), input = f.input('reserve', {purpose: 'Manual work'})
+    await f.service.submit(input, 'authenticated-id', label)
+    expect(f.rows()[0].operatorLabel).toBe(label)
+    expect(f.rows()[0].command).not.toHaveProperty('operatorLabel')
+    expect((await f.service.exchange('air', {schemaVersion: 1, receipts: []})).commands).toEqual([f.rows()[0].command])
+  }
 })

@@ -39,7 +39,7 @@ export const laneOverviewFields = {
   'snapshot.restoration.attempts.startedAt': 1, 'snapshot.restoration.attempts.finishedAt': 1,
   'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.deployment': 1,
   'laneControls.command.operationId': 1, 'laneControls.command.hostId': 1, 'laneControls.command.laneId': 1,
-  'laneControls.command.action': 1, 'laneControls.command.expiresAt': 1, 'laneControls.operatorEmail': 1,
+  'laneControls.command.action': 1, 'laneControls.command.expiresAt': 1, 'laneControls.operatorLabel': 1,
   'laneControls.receipt.result.status': 1, 'laneControls.receipt.result.reservation': 1,
   frameworkHistory: {$slice: -1}, receivedAt: 1, deploymentObservation: 1, deploymentReceivedAt: 1, _id: 0,
 } as const
@@ -95,7 +95,7 @@ function repairForLane(lane: {id: string; activity?: z.infer<typeof laneActivity
 const reservationDisplayRecordsSchema = z.array(z.object({
   command: z.object({operationId: z.string().uuid(), hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema,
     action: z.string(), expiresAt: z.number().int().positive().safe()}),
-  operatorEmail: z.string().email().max(320).optional(),
+  operatorLabel: z.string().min(1).max(320).optional(),
   receipt: z.object({result: z.object({status: z.string(), reservation: z.object({
     laneId: frameworkIdentitySchema, generation: z.number().int().nonnegative().safe(), state: z.string(),
   }).optional()})}).optional(),
@@ -108,7 +108,7 @@ function reservationDisplay(lane: {id: string; state: string; activity?: z.infer
     row.command.laneId === lane.id && lane.activity!.owner.id === `authoring:local:${row.command.expiresAt}:${row.command.operationId}` &&
     row.receipt?.result.status === 'accepted' && row.receipt.result.reservation?.laneId === lane.id &&
     row.receipt.result.reservation.state === 'granted' && row.receipt.result.reservation.generation === lane.activity!.generation)
-  return matches.length === 1 ? {reservedBy: matches[0].operatorEmail ?? null} : {}
+  return matches.length === 1 ? {reservedBy: matches[0].operatorLabel ?? null} : {}
 }
 /** Controller snapshots are observations, never permission to resume or start a repair agent. */
 export class LaneRestorationService {

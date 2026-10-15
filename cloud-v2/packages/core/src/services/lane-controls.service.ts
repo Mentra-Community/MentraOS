@@ -67,7 +67,7 @@ export class LaneControlsService {
     return {enabled: Boolean(host.snapshot.laneControls), reopenRepair: supportsRepairReopen(host), fresh: fresh(host, this.now()), observedAt: host.observedAt.toISOString(), controls: reconcileReservations(recordsSchema.parse(host.laneControls ?? []))
       .filter(row => row.command.operatorId === operatorIdentity(operator)).map(view)}
   }
-  async submit(value: unknown, operator: string, operatorEmail?: string) {
+  async submit(value: unknown, operator: string, operatorLabel?: string) {
     const input = laneControlInputSchema.parse(value)
     return this.update(input.hostId, (host, records) => {
       const operatorId = operatorIdentity(operator), existing = records.find(row => row.command.operationId === input.operationId)
@@ -97,7 +97,7 @@ export class LaneControlsService {
       if (input.action === 'reserve' && lane.dispatchMode === 'paused')
         throw new TestRunError(409, 'Resume scheduling before reserving this lane')
       const row = laneControlRecordSchema.parse({command: {...input, operatorId},
-        ...(input.action === 'reserve' && operatorEmail ? {operatorEmail} : {})})
+        ...(input.action === 'reserve' && operatorLabel ? {operatorLabel} : {})})
       const returnSlots = pendingReturnSlots([...records, row])
       const unresolved = records.filter(row => !delivered(row) || activeReservation(row))
       const remaining = Math.max(0, 99 - unresolved.length - returnSlots)
