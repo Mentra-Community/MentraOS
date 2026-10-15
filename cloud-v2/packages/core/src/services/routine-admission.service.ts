@@ -46,8 +46,8 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     glassesResourceId = offered[0]!.resourceId;
     if (offered[0]!.model === 'nimo') {
       const capabilities = definition.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities;
-      if (definition.platform !== 'android' || glassesRequirement.startSoftware || capabilities.some(capability => capability !== 'connection') ||
-        offered[0]!.capabilities.some(capability => capability !== 'connection') || !/^(?:[A-F0-9]{2}:){5}[A-F0-9]{2}$/.test(offered[0]!.deviceId))
+      if (definition.platform !== 'android' || glassesRequirement.startSoftware || capabilities.length !== 1 || capabilities[0] !== 'connection' ||
+        offered[0]!.capabilities.length !== 1 || offered[0]!.capabilities[0] !== 'connection' || !/^(?:[A-F0-9]{2}:){5}[A-F0-9]{2}$/.test(offered[0]!.deviceId))
         throw new TestRunError(409, 'NIMO requires the exact Android connection-only physical provider without Mentra Live firmware.');
       glassesModel = 'nimo';
     } else {

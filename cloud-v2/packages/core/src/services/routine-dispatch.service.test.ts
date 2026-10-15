@@ -32,6 +32,33 @@ function fixture() {
     {async resolve(override){sourceResolves++;return override??revision},async inventory(commit){return {commit,files:[{path:`routines/${selected.routineId}/routine.ts`,gitBlobSha1:'f'.repeat(40),size:10}]}}}, null);
   return {service,requests,repository,definition,definitions,get resolves(){return resolves},get sourceResolves(){return sourceResolves},get enrollments(){return enrollments},set revision(value:string){revision=value},set available(value:boolean){available=value},set automatic(value:boolean){automatic=value}};
 }
+test('NIMO prepared dispatch preserves the frozen app identity while removing only incompatible Live firmware', async () => {
+  const f = fixture(), manifest = {url: 'https://artifactscdn.mentraglass.com/live/manifest.json', sha256: 'f'.repeat(64), size: 100};
+  const row = f.definition(), body = {...row.definition, minimumRoutineApiVersion: 43, glasses: {models: ['nimo']},
+    resourceRequirements: [...row.definition.resourceRequirements, {kind: 'glasses' as const, capabilities: ['connection']}],
+    execution: {...row.definition.execution!, resourceKinds: [...row.definition.execution!.resourceKinds, 'glasses' as const]}};
+  const definition = routineEnrollmentSchema.parse({...row, definition: body, definitionSha256: requestInputDigest(body),
+    routineSource: {...row.routineSource, minimumRoutineApiVersion: 43}});
+  const original = (f.service as any).builds, hosts = (f.service as any).hosts;
+  (f.service as any).builds = {async resolve(...args: unknown[]) {return {...await original.resolve(...args), manifest, manifestSha256: manifest.sha256}}};
+  (f.service as any).hosts = {async get(hostId: string) {const state = await hosts.get(hostId), lane = state.lanes[0];
+    lane.resources.push({id: 'nimo-pair', kind: 'glasses', capabilities: ['connection']});
+    lane.glasses = [{resourceId: 'nimo-pair', deviceId: 'AA:BB:CC:DD:40:27', model: 'nimo', capabilities: ['connection']}]; return state}};
+  const waiting = await f.service.submit(selected), frozen = waiting.dispatchIntent!.build;
+  expect(frozen.manifest).toEqual(manifest);
+  const completion = {dispatchIntentSha256: waiting.dispatchIntentSha256, routineSource: definition.routineSource,
+    definitionSha256: definition.definitionSha256, definition: definition.definition};
+  const queued = await f.service.prepared(selected.requestId, 'mini', completion);
+  if (!isExecutableRequest(queued)) throw new Error('Expected one NIMO executable request');
+  const {manifest: _manifest, manifestSha256: _manifestSha256, ...expectedApp} = frozen;
+  expect(queued.input).toMatchObject({glassesModel: 'nimo', build: expectedApp});
+  expect((queued.input as any).build.manifest).toBeUndefined();
+  expect((queued.input as any).build.manifestSha256).toBeUndefined();
+  expect(queued.dispatchIntent).toEqual(waiting.dispatchIntent);
+  expect(await f.service.prepared(selected.requestId, 'mini', completion)).toEqual(queued);
+  await expect(f.requests.completePreparation(selected.requestId, 'mini', waiting.dispatchIntentSha256!,
+    {...queued.input as any, build: {...expectedApp, archive: {...expectedApp.archive as any, sha256: 'a'.repeat(64)}}})).rejects.toThrow('original dispatch intent');
+});
 test('new routine is retained with exact main and app references before publication; retries never substitute newer source',async()=>{
   const f=fixture();expect(await f.service.catalog()).toMatchObject({routineRevision:'a'.repeat(40),routines:[{routineId:selected.routineId}]});
   const first=await f.service.submit(selected);expect(first).toMatchObject({state:'preparing',dispatchIntent:{routineRevision:'a'.repeat(40),source,build:{headSha:'c'.repeat(40)}}});

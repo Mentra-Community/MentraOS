@@ -277,9 +277,12 @@ test('only the actual Android connection-only NIMO inventory omits Live software
   expect(frameworkRequestInputSchema.safeParse({...input, glassesStart: {model: 'mentra-live', manifest}, glassesReturn: {model: 'mentra-live', manifest}}).success).toBe(false);
   expect(frameworkRequestInputSchema.safeParse({...input, platform: 'ios-on-mac'}).success).toBe(false);
   expect(frameworkRequestInputSchema.safeParse({...input, routineSource: {...input.routineSource, minimumRoutineApiVersion: 42}}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, build: {...input.build, manifest, manifestSha256: sha256}}).success).toBe(false);
 });
 test('NIMO never admits a firmware, BLE, other-model or fabricated-identity provider', () => {
   for (const mutate of [
+    (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = []},
+    (_d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities = []},
     (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.glasses!.startSoftware = {model: 'mentra-live', manifest}},
     (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = ['glasses-ble']; h.lanes[0]!.glasses![0]!.capabilities = ['glasses-ble']},
     (d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities.push('software')},

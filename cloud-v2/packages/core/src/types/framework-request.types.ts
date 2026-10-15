@@ -51,6 +51,8 @@ function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema
     ctx.addIssue({code: 'custom', message: 'NIMO requires its selected Android glasses resource without Mentra Live firmware references'});
   if (input.glassesModel && (!input.routineSource || input.routineSource.minimumRoutineApiVersion < 43))
     ctx.addIssue({code: 'custom', message: 'NIMO connection requires routine API 43 or later'});
+  if (input.glassesModel && (input.build.manifest !== undefined || input.build.manifestSha256 !== undefined))
+    ctx.addIssue({code: 'custom', message: 'NIMO executable build cannot contain Mentra Live firmware references'});
   if ((glasses && !input.glassesModel && !(input.glassesStart && input.glassesReturn)) || (!glasses && (input.glassesStart || input.glassesReturn)) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
     ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
@@ -66,6 +68,13 @@ function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema
 export const frameworkRequestInputSchema = frozenFrameworkRequestInputSchema.superRefine(validateFrameworkRequestInput);
 /** Historical display only: preserve requests recorded before bundle provenance, without a fallback source. */
 export const recordedFrameworkRequestInputSchema = recordedInputSchema.superRefine(validateFrameworkRequestInput);
+
+/** Keep the frozen app selection; NIMO has no Live glasses firmware component. */
+export function frameworkExecutableBuild(build: z.infer<typeof frameworkBuildSchema>, glassesModel?: 'nimo') {
+  if (glassesModel !== 'nimo') return build;
+  const {manifest: _manifest, manifestSha256: _manifestSha256, ...app} = build;
+  return app;
+}
 
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {

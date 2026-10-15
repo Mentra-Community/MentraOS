@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
+import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
 import {routineSourceRefSchema} from '../types/framework-version.types';
 import {publishedRoutineDefinitionSchema, routineEnrollmentSchema} from '../types/routine-definition.types';
 import {routineDispatchSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
@@ -137,7 +137,7 @@ export class RoutineDispatchService {
     const build = recordedRoutineBuild(intent.build, intent.source, intent.platform), host = await this.hosts.get(row.hostId);
     const input = routineAdmissionInput(definition, build, {hostId: row.hostId, laneId: intent.laneId}, host, Date.now(),
       {requireAutomatic: false, minimumFrameworkVersion: intent.minimumFrameworkVersion});
-    input.build = intent.build;
+    input.build = frameworkExecutableBuild(intent.build, input.glassesModel);
     return this.requests.completePreparation(row.requestId, row.hostId, row.dispatchIntentSha256!, input);
   }
   private async reconcile(row: StoredRequest): Promise<StoredRequest> {
