@@ -4,7 +4,7 @@ import {mkdtemp, mkdir, readFile, rm, writeFile, symlink, chmod, rename, realpat
 import {tmpdir} from "node:os"
 import path from "node:path"
 import {ANDROID_PUBLICATION_STEP, androidAppIdentity, androidReceiptName, publishAndroidArtifacts, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
-import {inspectNimoDiagnosticBytecode, resolveAndroidSdkAnalyzer, validateNimoDiagnosticBytecode, NIMO_DIAGNOSTIC, NIMO_RECEIVER, NIMO_MANAGER} from "./pr-android-artifacts-diagnostic.mjs"
+import {inspectNimoDiagnosticBytecode, resolveAndroidSdkAnalyzer, validateNimoDiagnosticBytecode, NIMO_DIAGNOSTIC, NIMO_RECEIVER, NIMO_MANAGER, NIMO_SDK, NIMO_DEVICE} from "./pr-android-artifacts-diagnostic.mjs"
 import {runInNewContext} from "node:vm"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -36,6 +36,38 @@ const diagnosticCode = {
  invoke-virtual {v0, v1}, ${desc(NIMO_DIAGNOSTIC)}->start(Landroid/content/Context;)V
 .end method
 `}
+
+
+const guardedMethod = (signature, guards) => `.method public final ${signature}\n${guards.map(name=>` invoke-virtual {v0}, ${desc(NIMO_DIAGNOSTIC)}->${name}(Lkotlin/jvm/functions/Function0;)Z\n move-result v0\n if-eqz v0, :continue\n return-void\n :continue`).join('\n')}\n.end method\n`
+diagnosticCode.diagnostics += `.method public execute$bluetooth_sdk_nimoDiagnostic(Landroid/content/Intent;)V
+ const-string v0, "arm-capture"
+ const-string v0, "capture-status"
+ const-string v0, "cancel-capture"
+ invoke-virtual {v0}, ${desc(NIMO_DEVICE)}->releaseCapturedResource()V
+.end method
+.method private captureSnapshot(Lcom/mentra/bluetoothsdk/sgcs/NimoResourceDiagnostics$Capture;)Lorg/json/JSONObject;
+ const-string v0, "nimo-preconnect-capture-v1"
+.end method
+.method public dispatchCapturedEntry(Lkotlin/jvm/functions/Function0;)Z
+ invoke-virtual {v0}, Landroid/os/Handler;->post(Ljava/lang/Runnable;)Z
+ invoke-virtual {v0}, Ljava/util/concurrent/FutureTask;->get()Ljava/lang/Object;
+ invoke-virtual {v0}, Ljava/util/concurrent/FutureTask;->cancel(Z)Z
+.end method
+`
+diagnosticCode.sdk = `.class public final ${desc(NIMO_SDK)}\n` + [
+ 'connect(Lcom/mentra/bluetoothsdk/types/Device;Lcom/mentra/bluetoothsdk/types/ConnectOptions;)V',
+ 'connectDefault(Lcom/mentra/bluetoothsdk/types/ConnectOptions;)V',
+ 'startScan(Lcom/mentra/bluetoothsdk/types/DeviceModel;)V',
+].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect'])).join('')
+diagnosticCode.manager += ['connectByName(Ljava/lang/String;)V','connectDefault()V'].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect'])).join('')
+diagnosticCode.nimo = `.class public final ${desc(NIMO_DEVICE)}\n` + [
+ ['connectById(Ljava/lang/String;)V',['dispatchCapturedEntry','admit']],
+ ['findCompatibleDevices()V',['dispatchCapturedEntry','admit']],
+ ['connectCompanionGatt(Landroid/bluetooth/BluetoothDevice;)V',['allowPeer']],
+ ['startBond(Landroid/bluetooth/BluetoothDevice;)V',['allowPeer']],
+ ['connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V',['beginTransport']],
+].map(([sig,guards])=>guardedMethod(sig,guards)).join('')
+const codeFor = name => diagnosticCode[({[NIMO_DIAGNOSTIC]:'diagnostics',[NIMO_RECEIVER]:'receiver',[NIMO_MANAGER]:'manager',[NIMO_SDK]:'sdk',[NIMO_DEVICE]:'nimo'})[name]]
 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), fingerprint = "d".repeat(64)
 const ota = artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-42-${head}.json`)
@@ -86,7 +118,7 @@ async function publishing(run, failApk = false, diagnostic = false) {
       if (command.endsWith("/aapt")) return badging + (diagnostic ? "\napplication-debuggable" : "")
       if(command.endsWith('/apkanalyzer')) {
         assert.deepEqual(args.slice(0,3),['dex','code','--class']);assert.equal(args.at(-1),apk)
-        return args[3] === NIMO_DIAGNOSTIC ? diagnosticCode.diagnostics : args[3] === NIMO_RECEIVER ? diagnosticCode.receiver : diagnosticCode.manager
+        return codeFor(args[3])
       }
       if (command === "gh") return "10\n"
       assert.equal(command, process.execPath)
@@ -254,7 +286,7 @@ test('versioned-only SDK layout publishes diagnostic proof without a latest path
 test('SDK discovery canonicalizes latest alias and hashes the actual versioned package',async()=>{
  await sdkLayout(async({sdk,install})=>{
   const actual=await install('19.0');await install('18.0')
-  const exec=(_tool,args)=>args[3]===NIMO_DIAGNOSTIC?diagnosticCode.diagnostics:args[3]===NIMO_RECEIVER?diagnosticCode.receiver:diagnosticCode.manager
+  const exec=(_tool,args)=>codeFor(args[3])
   const before=await inspectNimoDiagnosticBytecode('/fixed/signed.apk',sdk,exec)
   await symlink(actual,path.join(sdk,'cmdline-tools','latest'),'dir')
   assert.equal((await resolveAndroidSdkAnalyzer(sdk)).root,actual)
@@ -281,3 +313,17 @@ test('missing, nonexecutable or unproven SDK tools never fall back to PATH or an
   await assert.rejects(resolveAndroidSdkAnalyzer('caller-relative-tool'),/root must be absolute/)
  })
 })
+
+ test('old receiver-only APKs and missing capture hooks are rejected before publication', () => {
+ for (const code of [
+ {...diagnosticCode,sdk:undefined,nimo:undefined},
+ {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('"arm-capture"','"old-command"')},
+ {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('nimo-preconnect-capture-v1','old-protocol')},
+ {...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('->allowManagerConnect','->unusedGuard')},
+ {...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('move-result','unused-result')},
+ {...diagnosticCode,nimo:diagnosticCode.nimo.replaceAll('->admit','->unusedGuard')},
+ {...diagnosticCode,nimo:diagnosticCode.nimo.replaceAll('->allowPeer','->unusedGuard')},
+ {...diagnosticCode,nimo:diagnosticCode.nimo.replaceAll('->beginTransport','->unusedGuard')},
+ {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('->cancel','->unusedCancel')},
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode(code),/capture/)
+ })
