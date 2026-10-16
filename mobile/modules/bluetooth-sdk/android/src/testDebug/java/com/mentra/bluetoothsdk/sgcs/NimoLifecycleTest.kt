@@ -442,8 +442,7 @@ class NimoLifecycleTest {
     captureCommand("arm-capture", nonce, nonce)
     // No SDK construction/hardware/analytics is needed: a fenced entry must return
     // before accessing collaborators. If the early guard regresses this test fails.
-    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
-    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    val sdk = uninitializedSdk()
     DeviceStore.apply("bluetooth", "default_wearable", "unchanged-default")
     DeviceStore.apply("bluetooth", "pending_wearable", "unchanged-pending")
     val thread = Thread { sdk.connect(com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test")) }
@@ -470,8 +469,7 @@ class NimoLifecycleTest {
   }
 
   @Test fun offMainSdkFailureIsDeliveredToCallerWithoutUncaughtMainException() {
-    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
-    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    val sdk = uninitializedSdk()
     DeviceStore.apply("bluetooth", "default_wearable", "")
     val failure = AtomicReference<Throwable?>()
     val thread = Thread { try { sdk.connectDefault() } catch (error: Throwable) { failure.set(error) } }
@@ -480,6 +478,14 @@ class NimoLifecycleTest {
     thread.join(1000); assertFalse(thread.isAlive)
     assertTrue(failure.get() is com.mentra.bluetoothsdk.BluetoothSdkException)
     assertEquals("default_device_missing", (failure.get() as com.mentra.bluetoothsdk.BluetoothSdkException).code)
+  }
+
+  private fun uninitializedSdk(): com.mentra.bluetoothsdk.MentraBluetoothSdk {
+    // JVM fixture only. Reflection avoids Android bootclasspath references to JDK internals.
+    val type = Class.forName("sun.misc.Unsafe")
+    val allocator = type.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+    return type.getMethod("allocateInstance", Class::class.java)
+      .invoke(allocator, com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
   }
 
   private fun awaitMainDispatch(thread: Thread) {
