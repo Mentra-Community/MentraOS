@@ -1,10 +1,41 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises"
+import {mkdtemp, mkdir, readFile, rm, writeFile, symlink, chmod, rename, realpath} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import {ANDROID_PUBLICATION_STEP, androidAppIdentity, androidReceiptName, publishAndroidArtifacts, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
+import {inspectNimoDiagnosticBytecode, resolveAndroidSdkAnalyzer, validateNimoDiagnosticBytecode, NIMO_DIAGNOSTIC, NIMO_RECEIVER, NIMO_MANAGER} from "./pr-android-artifacts-diagnostic.mjs"
+import {runInNewContext} from "node:vm"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+
+
+const desc = name => `L${name.replaceAll('.', '/')};`
+const diagnosticCode = {
+ diagnostics:`.class public final ${desc(NIMO_DIAGNOSTIC)}
+.method public final start(Landroid/content/Context;)V
+ const-string v0, "com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE"
+ invoke-direct {v3, v0}, Landroid/content/IntentFilter;-><init>(Ljava/lang/String;)V
+ const-string v1, "android.permission.DUMP"
+ sget-object v2, ${desc(NIMO_DIAGNOSTIC)}->receiver:${desc(NIMO_RECEIVER)}
+ invoke-virtual {v0, v2}, Landroid/content/Context;->registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;)Landroid/content/Intent;
+.end method
+.method static constructor <clinit>()V
+ new-instance v0, ${desc(NIMO_RECEIVER)}
+ invoke-direct {v0}, ${desc(NIMO_RECEIVER)}-><init>()V
+.end method
+`,
+ receiver:`.class public final ${desc(NIMO_RECEIVER)}
+.super Landroid/content/BroadcastReceiver;
+.method public onReceive(Landroid/content/Context;Landroid/content/Intent;)V
+ const-string v0, "com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE"
+ invoke-virtual {v0, v1}, ${desc(NIMO_DIAGNOSTIC)}->execute$bluetooth_sdk_nimoDiagnostic(Landroid/content/Intent;)V
+.end method
+`,
+ manager:`.class public final ${desc(NIMO_MANAGER)}
+.method public constructor <init>()V
+ invoke-virtual {v0, v1}, ${desc(NIMO_DIAGNOSTIC)}->start(Landroid/content/Context;)V
+.end method
+`}
 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), fingerprint = "d".repeat(64)
 const ota = artifactUrl("Mentra-Community/MentraOS", "pr-builds", `ota-pr-42-${head}.json`)
@@ -31,17 +62,32 @@ test("staging-targeted PRs package staging and never relabel another backend", (
     assert.throws(() => androidAppIdentity({...identity, backend, baseRef, config: config(), badging}), /PR inputs/)
 })
 
-async function publishing(run, failApk = false) {
+async function publishing(run, failApk = false, diagnostic = false) {
   const dir = await mkdtemp(path.join(tmpdir(), "android-receipt-"))
   try {
     await mkdir(path.join(dir, "build-tools", "35.0.0"), {recursive: true})
+    await mkdir(path.join(dir,'cmdline-tools','latest','bin'),{recursive:true})
+    await mkdir(path.join(dir,'cmdline-tools','latest','lib'),{recursive:true})
+    await writeFile(path.join(dir,'cmdline-tools','latest','source.properties'),'Pkg.Revision=19.0')
+    await writeFile(path.join(dir,'cmdline-tools','latest','bin','apkanalyzer'),'fixed SDK launcher',{mode:0o755})
+    await writeFile(path.join(dir,'cmdline-tools','latest','lib','analyzer.jar'),'fixed SDK analyzer')
     const apk = path.join(dir, "app-release.apk"); await writeFile(apk, "synthetic APK bytes")
     const calls = [], env = {GITHUB_REPOSITORY: "Mentra-Community/MentraOS", PR_NUMBER: "42", PR_HEAD_SHA: head,
       GITHUB_SHA: merge, GITHUB_RUN_ID: "100", GITHUB_RUN_ATTEMPT: "2", ANDROID_HOME: dir, EXPO_PUBLIC_BUILD_ENV: "dev", MENTRA_PR_MOBILE_FINGERPRINT: fingerprint}
+    if (diagnostic) Object.assign(env, {MENTRA_NIMO_DIAGNOSTIC: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', MENTRA_PR_BUILD_SHA: merge})
     const exec = (command, args) => {
       if (command === "git") return `tree ${head}\nparent ${base}\nparent ${head}\n\nMerge PR`
-      if (command === "unzip") return JSON.stringify(config())
-      if (command.endsWith("/aapt")) return badging
+      if (command === "unzip") {
+        if (args.at(-1) === 'assets/nimo-resource-diagnostic.json') { if (diagnostic) return '{"schemaVersion":1,"buildType":"nimoDiagnostic","capability":"nimo-resource-v1"}'; throw new Error('not present') }
+        if (args.at(-1) === 'classes*.dex') return Buffer.from(diagnostic ? 'com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE' : 'ordinary release bytecode')
+        if (args.at(-1) === 'assets/index.android.bundle') return Buffer.from('bundled production JavaScript')
+        return JSON.stringify(config())
+      }
+      if (command.endsWith("/aapt")) return badging + (diagnostic ? "\napplication-debuggable" : "")
+      if(command.endsWith('/apkanalyzer')) {
+        assert.deepEqual(args.slice(0,3),['dex','code','--class']);assert.equal(args.at(-1),apk)
+        return args[3] === NIMO_DIAGNOSTIC ? diagnosticCode.diagnostics : args[3] === NIMO_RECEIVER ? diagnosticCode.receiver : diagnosticCode.manager
+      }
       if (command === "gh") return "10\n"
       assert.equal(command, process.execPath)
       const name = args[args.indexOf("--name") + 1]
@@ -136,4 +182,102 @@ test("the named PR publication step commits the receipt for the exact signed pac
   assert.ok(step.includes("set -euo pipefail\n          " + producer) && step.indexOf(producer) < step.indexOf("publish-immutable-release-asset.mjs"))
   for (const earlier of ["      - name: Package this PR's configuration and sign", "      - name: Verify release signature (not debug)"])
     assert.ok(workflow.indexOf(earlier) > 0 && workflow.indexOf(earlier) < start)
+})
+
+test('diagnostic APK publication has distinct immutable coordinates and requires actual compiled receiver, marker and bundled JavaScript', async () => {
+ await publishing(async ({apk,env,exec,calls}) => {
+  const receipt = await publishAndroidArtifacts(apk,env,{exec});
+  assert.equal(receipt.diagnostic,'nimo-resource-v1');
+  assert.equal(receipt.app.diagnostic,'nimo-resource-v1');
+  assert.match(calls[0],/^mentra-android-nimo-diagnostic-pr-/);
+  assert.throws(() => validateAndroidReceipt(receipt,{pr:42,sha:head,runId:100,attempt:2}),/classification/);
+  validateAndroidReceipt(receipt,{pr:42,sha:head,runId:100,attempt:2,diagnostic:true});
+  for (const missing of ['classes*.dex','assets/nimo-resource-diagnostic.json','assets/index.android.bundle']) {
+   const broken = (command,args,options) => command === 'unzip' && args.at(-1) === missing ? Buffer.alloc(0) : exec(command,args,options);
+   await assert.rejects(publishAndroidArtifacts(apk,env,{exec:broken}));
+  }
+ },false,true);
+});
+
+test('an action literal, a stub class, or absent registration/startup wiring cannot qualify an APK', () => {
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode(diagnosticCode))
+ for(const code of [
+   {diagnostics:'com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE',receiver:'',manager:''},
+   {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('invoke-virtual','no-op')},
+   {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('new-instance','no-op')},
+   {...diagnosticCode,receiver:diagnosticCode.receiver.replace('invoke-virtual','no-op')},
+   {...diagnosticCode,manager:diagnosticCode.manager.replace('invoke-virtual','no-op')},
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode(code),/registration/)
+})
+
+test('diagnostic dispatch concurrency cannot cancel ordinary coverage and ordinary identities stay unchanged', async () => {
+ const workflow=await readFile(new URL('../workflows/mentra-app-android-build.yml',import.meta.url),'utf8')
+ const template=/^  group: (.+)$/m.exec(workflow)[1]
+ const group=inputs=>template.replace(/\$\{\{([\s\S]*?)\}\}/g,(_,expression)=>runInNewContext(expression,{inputs,github:{workflow:'Mobile App Android Build',ref:'refs/heads/dev'},format:(text,...args)=>text.replace(/\{(\d+)\}/g,(_,n)=>args[n])}))
+ const ordinary=group({routine_pr:'12',routine_base:'dev',nimo_diagnostic:false})
+ assert.equal(ordinary,'android-build-Mobile App Android Build-routine-pr-12-dev')
+ assert.equal(group({}), 'android-build-Mobile App Android Build-refs/heads/dev')
+ assert.equal(group({routine_pr:'12',routine_base:'dev',nimo_diagnostic:true}),ordinary+'-nimo-diagnostic')
+})
+
+test('literal-only synthetic DEX cannot publish an authoritative diagnostic receipt', async () => {
+ await publishing(async({apk,env,exec,calls})=>{
+  const literalOnly=(command,args,options)=>command.endsWith('/apkanalyzer')?'com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE':exec(command,args,options)
+  await assert.rejects(publishAndroidArtifacts(apk,env,{exec:literalOnly}),/registration/)
+  assert.deepEqual(calls,[])
+ },false,true)
+})
+
+async function sdkLayout(run) {
+ const directory=await mkdtemp(path.join(tmpdir(),'sdk-analyzer-layout-')),sdk=path.join(directory,'sdk')
+ const install=async(name,revision=name,executable=true)=>{
+  const root=path.join(sdk,'cmdline-tools',name)
+  await mkdir(path.join(root,'bin'),{recursive:true});await mkdir(path.join(root,'lib'),{recursive:true})
+  await writeFile(path.join(root,'source.properties'),`Pkg.Revision=${revision}\n`)
+  await writeFile(path.join(root,'bin','apkanalyzer'),'SDK launcher',{mode:executable?0o755:0o644})
+  await writeFile(path.join(root,'lib','analyzer.jar'),'SDK analyzer implementation')
+  return realpath(root)
+ }
+ try {await mkdir(path.join(sdk,'cmdline-tools'),{recursive:true});await run({directory,sdk,install})}
+ finally {await rm(directory,{recursive:true,force:true})}
+}
+
+test('versioned-only SDK layout publishes diagnostic proof without a latest path', async()=>{
+ await publishing(async({apk,env,exec,dir})=>{
+  await rename(path.join(dir,'cmdline-tools','latest'),path.join(dir,'cmdline-tools','19.0'))
+  const selected=await resolveAndroidSdkAnalyzer(dir)
+  assert.equal(selected.analyzer,await realpath(path.join(dir,'cmdline-tools','19.0','bin','apkanalyzer')))
+  assert.equal((await publishAndroidArtifacts(apk,env,{exec})).diagnosticVerification.analyzer.revision,'19.0')
+ },false,true)
+})
+
+test('SDK discovery canonicalizes latest alias and hashes the actual versioned package',async()=>{
+ await sdkLayout(async({sdk,install})=>{
+  const actual=await install('19.0');await install('18.0')
+  const exec=(_tool,args)=>args[3]===NIMO_DIAGNOSTIC?diagnosticCode.diagnostics:args[3]===NIMO_RECEIVER?diagnosticCode.receiver:diagnosticCode.manager
+  const before=await inspectNimoDiagnosticBytecode('/fixed/signed.apk',sdk,exec)
+  await symlink(actual,path.join(sdk,'cmdline-tools','latest'),'dir')
+  assert.equal((await resolveAndroidSdkAnalyzer(sdk)).root,actual)
+  assert.deepEqual(await inspectNimoDiagnosticBytecode('/fixed/signed.apk',sdk,exec),before)
+ })
+})
+
+test('missing, nonexecutable or unproven SDK tools never fall back to PATH or an outside alias',async()=>{
+ await sdkLayout(async({directory,sdk,install})=>{
+  const outside=path.join(directory,'outside');await mkdir(path.join(outside,'bin'),{recursive:true})
+  await writeFile(path.join(outside,'bin','apkanalyzer'),'outside executable',{mode:0o755})
+  await writeFile(path.join(outside,'source.properties'),'Pkg.Revision=99.0')
+  const previous=process.env.PATH;process.env.PATH=path.join(outside,'bin')
+  try {
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+   await symlink(outside,path.join(sdk,'cmdline-tools','latest'),'dir')
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+   const root=await install('19.0','19.0',false)
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+   await chmod(path.join(root,'bin','apkanalyzer'),0o755)
+   await writeFile(path.join(root,'source.properties'),'not SDK package provenance')
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+  } finally {if(previous===undefined)delete process.env.PATH;else process.env.PATH=previous}
+  await assert.rejects(resolveAndroidSdkAnalyzer('caller-relative-tool'),/root must be absolute/)
+ })
 })
