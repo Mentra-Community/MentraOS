@@ -31,10 +31,11 @@ internal object NimoResourceDiagnostics {
     // One diagnostic attempt per app process. Cancellation is a process-lifetime fence.
     @Volatile private var capture: Capture? = null
 
-    /** Marshal the entire entry point, not only its admission check. A cancelled queued
-     * call re-enters the normal guards before any manager cleanup or connection effect. */
+    /** Debug entries share the main admission queue even before arm, so a call that
+     * starts just before arm cannot resume effects past it. Release builds are no-op.
+     * Queued calls re-enter current capture guards before any connection effect. */
     fun dispatchCapturedEntry(entry: () -> Unit): Boolean {
-        if (capture == null || Looper.myLooper() == main.looper) return false
+        if (Looper.myLooper() == main.looper) return false
         main.post { entry() }
         return true
     }

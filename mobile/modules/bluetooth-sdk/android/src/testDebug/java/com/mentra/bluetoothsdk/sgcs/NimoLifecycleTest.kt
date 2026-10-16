@@ -433,6 +433,29 @@ class NimoLifecycleTest {
     assertFalse(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
   }
 
+  @Test fun sdkConnectQueuedBeforeCancelCannotMutateDefaultOrDisconnectReplacementG2() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    // No SDK construction/hardware/analytics is needed: a fenced entry must return
+    // before accessing collaborators. If the early guard regresses this test fails.
+    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
+    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    DeviceStore.apply("bluetooth", "default_wearable", "unchanged-default")
+    DeviceStore.apply("bluetooth", "pending_wearable", "unchanged-pending")
+    val thread = Thread { sdk.connect(com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test")) }
+    thread.start(); thread.join(1000)
+    captureCommand("cancel-capture", nonce)
+    val replacement = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    manager.sgc = replacement
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertSame(replacement, manager.sgc)
+    assertEquals("unchanged-default", DeviceStore.get("bluetooth", "default_wearable"))
+    assertEquals("unchanged-pending", DeviceStore.get("bluetooth", "pending_wearable"))
+    assertEquals(true, DeviceStore.get("glasses", "connected"))
+  }
+
   private fun captureCommand(mode: String, captureNonce: String, requestNonce: String = java.util.UUID.randomUUID().toString()): JSONObject {
     NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
       .putExtra("nonce", requestNonce).putExtra("mode", mode).putExtra("expectedName", "Nimo-test")

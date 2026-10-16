@@ -2419,6 +2419,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
+        if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable.ifEmpty { defaultWearable }, name)) return
         if (pendingWearable.isEmpty() && !defaultWearable.isEmpty()) {
             Bridge.log("MAN: No pending wearable, using default wearable")
             pendingWearable = defaultWearable

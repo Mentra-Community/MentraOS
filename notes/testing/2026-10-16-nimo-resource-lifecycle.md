@@ -94,3 +94,10 @@ The harness preflight remains disabled until this capture protocol and its owned
 are reviewed and tested together. Native unit CI and actual compiled diagnostic APK proof
 remain required before any candidate admission. No device action or firmware query was
 performed for this source change.
+
+Captured debug SDK connect/default/startScan and their DeviceManager/NIMO entry points
+now serialize the entire entry on the main queue, including calls initiated before arm.
+This guards SDK-level cancel/default/pending writes before lower manager mutation. A
+cancelled or replaced target returns before those writes. Release hooks remain no-op.
+The queued SDK-connect/cancel/G2 regression verifies that the replacement and saved
+identity stay untouched. This supersedes the earlier off-main diagnostic refusal note.
