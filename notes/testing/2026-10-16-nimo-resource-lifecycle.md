@@ -75,3 +75,22 @@ Reconnect and duplicate release requests remain fenced through the short native
 callback observation window and completion callback. The original generation's
 receipt is captured as a detached value before delivery, so a later connection
 cannot be relabeled as evidence for the earlier request nonce.
+
+Pre-connect capture source follow-up (not hardware qualification): fixed `arm-capture`,
+`capture-status`, and `cancel-capture` requests add only comparison-bound `expectedName`
+and `captureNonce` to the existing DUMP receiver. One capture exists per app process;
+arm acknowledgement and generation-zero admission are separate immutable files. Admission
+pins the actual current NIMO instance before discovery/connect effects. The native capture
+allows only the existing exact bonded peer and one transport start; it never creates a
+bond. Cancellation fences late NIMO admission before draining the original instance, and
+can cancel an admitted generation-zero attempt. G2/replacement managers refuse targeted
+cancellation and NIMO manager selection is refused before the existing global disconnect.
+No-admission cancellation is a process-lifetime fence, rather than a claim that a future
+queued connect cannot occur. Expected pair is separate from observed pair; gen-zero has
+no observed peer. Off-main diagnostic admission fails closed. Release builds keep no-op
+hooks and expose no receiver. A stopped reconnect runnable cannot repost itself.
+
+The harness preflight remains disabled until this capture protocol and its owned transport
+are reviewed and tested together. Native unit CI and actual compiled diagnostic APK proof
+remain required before any candidate admission. No device action or firmware query was
+performed for this source change.

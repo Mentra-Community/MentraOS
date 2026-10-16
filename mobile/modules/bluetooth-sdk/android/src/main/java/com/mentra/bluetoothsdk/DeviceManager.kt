@@ -1379,6 +1379,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Auxiliary Commands
 
     fun initSGC(wearable: String) {
+        if (!NimoResourceDiagnostics.allowManagerConnect(wearable)) return
         Bridge.log("Initializing manager for wearable: $wearable")
         if (sgc != null && sgc?.type != wearable) {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -2371,6 +2372,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: connectDefault skipped — bluetooth runtime permissions not granted")
             return
         }
+        if (!NimoResourceDiagnostics.allowManagerConnect(defaultWearable, reconnectTarget)) return
         initSGC(defaultWearable)
         val live = sgc as? MentraLive
         if (live?.isPairingYieldActive() == true) {
@@ -2429,6 +2431,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
+        if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable, name)) return
         disconnect(clearPendingIdentity = false)
         Thread.sleep(100)
         searching = true
@@ -2441,6 +2444,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     fun connectDevice(deviceModel: String, deviceName: String) {
         Bridge.log("MAN: Connecting to device: $deviceModel $deviceName")
         if (DeviceTypes.ALL.contains(deviceModel)) {
+            if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel, deviceName)) return
             pendingWearable = deviceModel
             initSGC(pendingWearable)
             sgc?.connectById(deviceName)
@@ -2644,6 +2648,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun findCompatibleDevices(deviceModel: String) {
+        if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel)) return
         Bridge.log("MAN: Searching for compatible device names for: $deviceModel")
 
         // reset the search results:

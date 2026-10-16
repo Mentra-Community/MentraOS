@@ -7,4 +7,8 @@ import android.content.Context
 internal object NimoResourceDiagnostics {
     fun start(context: Context) {}
     fun track(instance: Nimo) {}
+    fun allowManagerConnect(wearable: String, name: String? = null) = true
+    fun admit(instance: Nimo, name: String?, connect: Boolean) = true
+    fun allowPeer(instance: Nimo, address: String, bonded: Boolean) = true
+    fun beginTransport(instance: Nimo, address: String, bonded: Boolean) = true
 }
