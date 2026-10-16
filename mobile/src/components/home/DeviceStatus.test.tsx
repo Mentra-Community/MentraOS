@@ -184,7 +184,7 @@ describe("Mentra Live pairing state on Home", () => {
       expect(screen.queryByLabelText("home:connectGlasses")).toBeNull()
     })
 
-    it("Cancel during pairing mode disconnects instead of connecting", async () => {
+    it("Cancel during pairing mode disconnects and drops the spinner", async () => {
       setStatus({state: "pairing_mode", windowId: 4, endsAtMs: Date.now() + 120_000})
       ;(engine.glasses.disconnect as jest.Mock).mockClear()
       ;(engine.glasses.connectDefault as jest.Mock).mockClear()
@@ -192,6 +192,8 @@ describe("Mentra Live pairing state on Home", () => {
       fireEvent.press(screen.getByText("common:cancel"))
       await waitFor(() => expect(engine.glasses.disconnect).toHaveBeenCalledTimes(1))
       expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
+      expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
+      expect(screen.queryByText("common:cancel")).toBeNull()
     })
 
     it("keeps the reconnecting card when pairing mode ends, until the reconnect has had time to start", () => {
