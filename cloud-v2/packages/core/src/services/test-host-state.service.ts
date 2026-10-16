@@ -1,5 +1,5 @@
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
-import {exclusiveResourceDependenciesSchema, resourceReservationObservationSchema} from '../types/resource-reservations.types'
+import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
 import {laneControlExchangeSchema} from './lane-controls.service'
 import {z} from "zod"
 import {TestHostStateModel} from "../models/test-host-state.model"
@@ -113,9 +113,9 @@ const routingHostSchema = z.object({
   frameworkBinding: frameworkBindingSchema.optional(),
   lanes: z.array(routingLaneSchema).max(100),
 }).strict().superRefine(validateHostLaneInventory)
-export type RoutingTestHostState = z.infer<typeof routingHostSchema> & {receivedAt: string}
+export type RoutingTestHostState = z.infer<typeof routingHostSchema> & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
-const routingStateProjection = {hostId: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
@@ -434,7 +434,10 @@ export class TestHostStateService {
     return rows.map(row => {
       const snapshot = routingHostSchema.parse(row.snapshot);
       if (snapshot.hostId !== row.hostId) throw new TestRunError(503, 'Routing snapshot differs from enrolled host');
-      return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString()};
+      // The existing authority retains selected, preparing and unknown custody until
+      // its normal reconciliation proves return. No request-history scan is needed.
+      const authorityReservations = hostResourceReservationsSchema.parse(row.resourceReservations ?? []);
+      return {...snapshot, receivedAt: z.date().parse(row.receivedAt).toISOString(), authorityReservations};
     });
   }
   async get(hostId: string): Promise<ReceivedTestHostState | null> {
