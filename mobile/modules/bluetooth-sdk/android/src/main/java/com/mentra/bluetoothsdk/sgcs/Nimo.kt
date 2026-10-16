@@ -968,6 +968,14 @@ class Nimo : SGCManager() {
     private var resourceClosingGatt: BluetoothGatt? = null
     private var resourceReleaseResult = "not-requested"
 
+    internal fun resourceCaptureEligible(): Boolean {
+        val snapshot = resourceSnapshot()
+        return resourceSessionGeneration == 0L && discoveryReceiver == null &&
+            !snapshot.getBoolean("managedSessionPresent") && !snapshot.getBoolean("initializationPending") &&
+            !snapshot.getBoolean("reconnectPending") && snapshot.getBoolean("localEffectsSettled") &&
+            !resourceReleasePending && !resourceReceiptPending
+    }
+
     /** Passive local inspection only: no discovery, queries, radio or bond operations. */
     internal fun resourceSnapshot(): JSONObject {
         check(Looper.myLooper() == mainHandler.looper)

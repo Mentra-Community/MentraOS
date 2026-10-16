@@ -39,7 +39,7 @@ internal object NimoResourceDiagnostics {
         val current = DeviceManager.getInstance().sgc
         return !owned.cancelled && (name == null || name == owned.name) &&
             (current == null || current is Nimo && (owned.instance === current ||
-                owned.instance == null && current.resourceSnapshot().getLong("sessionGeneration") == 0L))
+                owned.instance == null && current.resourceCaptureEligible()))
     }
 
     @Synchronized
@@ -49,7 +49,7 @@ internal object NimoResourceDiagnostics {
         if (!allowManagerConnect("NIMO", name) || DeviceManager.getInstance().sgc !== instance ||
             owned.instance != null && owned.instance !== instance || owned.connectStarted) return false
         if (owned.instance == null) {
-            if (instance.resourceSnapshot().getLong("sessionGeneration") != 0L) return false
+            if (!instance.resourceCaptureEligible()) return false
             owned.instance = instance
             // Immutable admission survives a setup timeout before any GATT session exists.
             val app = application ?: return false
@@ -165,7 +165,7 @@ internal object NimoResourceDiagnostics {
             if (mode == "arm-capture") {
                 val manager = DeviceManager.getInstance().sgc
                 if (capture != null || captureNonce != nonce || manager != null &&
-                    (manager !is Nimo || manager.resourceSnapshot().getLong("sessionGeneration") != 0L)) {
+                    (manager !is Nimo || !manager.resourceCaptureEligible())) {
                     save(null, "capture-arm-refused-existing-owner"); return
                 }
                 capture = Capture(captureNonce, expectedName, address)
