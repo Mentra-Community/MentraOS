@@ -43,7 +43,7 @@ public class BesButtonInjectReceiverTest {
             assertThat(sent).hasSize(1);
             JSONObject payload = new JSONObject(sent.get(0));
             assertThat(payload.getString("C")).isEqualTo("mh_dbgkey");
-            JSONObject body = payload.getJSONObject("B");
+            JSONObject body = new JSONObject(payload.getString("B"));
             assertThat(body.getString("key")).isEqualTo("pwr");
             assertThat(body.getString("gesture")).isEqualTo(gesture);
             assertThat(body.length()).isEqualTo(2);
@@ -53,7 +53,7 @@ public class BesButtonInjectReceiverTest {
     @Test
     public void gestureIsNormalisedToLowerCase() throws Exception {
         assertThat(handle("com.mentra.BES_BUTTON", "Triple")).isTrue();
-        assertThat(new JSONObject(sent.get(0)).getJSONObject("B").getString("gesture"))
+        assertThat(new JSONObject(new JSONObject(sent.get(0)).getString("B")).getString("gesture"))
                 .isEqualTo("triple");
     }
 
@@ -91,7 +91,7 @@ public class BesButtonInjectReceiverTest {
                 new JSONObject()
                         .put("C", "mh_dbgkey")
                         .put("V", 1)
-                        .put("B", new JSONObject().put("key", "pwr").put("gesture", "long"));
+                        .put("B", new JSONObject().put("key", "pwr").put("gesture", "long").toString());
         assertThat(new JSONObject(BesButtonInjectReceiver.buildPayload("long")).toString())
                 .isEqualTo(expected.toString());
         assertThat(BesButtonInjectReceiver.buildPayload("nope")).isNull();
