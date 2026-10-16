@@ -22,7 +22,7 @@ const resourceCapabilities = {
   app: ['relaunch'],
   phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
   glasses: ['glasses-ble', 'connection', 'software', 'wifi', 'button'],
-  recorder: [],
+  recorder: ['quiet-room'],
   audio: ['speech', 'witness', 'synthesis', 'recognition'],
   browser: ['external-window'],
   network: ['independent-uplink'],

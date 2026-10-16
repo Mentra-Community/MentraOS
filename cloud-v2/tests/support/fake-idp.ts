@@ -12,8 +12,9 @@
  *    with `client_secret_post`, and a Basic header whose client ID was
  *    form-encoded (`-` sent as `%2D`) is refused; GoTrue's
  *    `POST /logout?scope=local|global`; and the admin user lookup Core uses for
- *    email confirmation (`GET /admin/users/:id`), and the admin user listing
- *    Core searches by email (`GET /admin/users?filter=`).
+ *    email confirmation (`GET /admin/users/:id`), the admin update Core uses
+ *    to set a password or an email (`PUT /admin/users/:id`), and the admin
+ *    user listing Core searches by email (`GET /admin/users?filter=`).
  *  - `kind: "oidc"` behaves like Microsoft Entra: RS256 ID tokens with `nonce`,
  *    `oid` and `tid`, and RS256 access tokens for the Core API.
  *
@@ -319,9 +320,15 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
           users.delete(id)
           return json({})
         }
-        const body = (await request.json()) as {password?: string}
-        if (body.password) users.set(id, {...person, password: body.password})
-        return json({id, email: person.email ?? null, email_confirmed_at: "2026-01-01T00:00:00Z"})
+        const body = (await request.json()) as {password?: string; email?: string; email_confirm?: boolean}
+        const updated = {
+          ...person,
+          ...(body.password ? {password: body.password} : {}),
+          // An admin email change applies at once; `email_confirm` marks the new address confirmed.
+          ...(body.email ? {email: body.email, emailConfirmed: body.email_confirm === true} : {}),
+        }
+        users.set(id, updated)
+        return json({id, email: updated.email ?? null, email_confirmed_at: "2026-01-01T00:00:00Z"})
       }
       if (request.method === "GET" && adminUser) {
         const id = decodeURIComponent(adminUser[1]!)

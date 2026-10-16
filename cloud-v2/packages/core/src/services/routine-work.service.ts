@@ -1,5 +1,6 @@
 import {z} from 'zod'
 import {RoutineWorkModel} from '../models/routine-work.model'
+import {TestRequestModel} from '../models/test-request.model'
 import {testWriteConcern} from '../models/test-write-concern'
 import {
   authoringWorkSchema,
@@ -150,6 +151,7 @@ const repository: RoutineWorkRepository = {
   async updateVerification(value, original, previous) {
     const {identity,event}=value
     return await RoutineWorkModel.findOneAndUpdate({workId:event.workId,hostId:event.hostId,inputSha256:event.inputSha256,
+      ...(identity.previousFailure.code==='permission-required'?{fleetCancellation:{$exists:false}}:{}),
       status:original,verification:previous??{$exists:false}},{$set:{verification:{identity,status:event,
         receipts:[...(previous?.receipts??[]),{eventId:event.eventId,sequence:event.sequence,sha256:requestInputDigest(event)}]}}},
       {new:true,writeConcern:testWriteConcern}).lean() as unknown as RoutineWorkDelivery|null
@@ -191,6 +193,8 @@ export class RoutineWorkService {
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
     private readonly now: () => number = Date.now,
     private readonly actionsTransport: RoutineJobActions | null = rows === repository ? new GithubRoutineJobActions() : null,
+    private readonly candidateWasRegistered: (requestId:string)=>Promise<boolean> = async requestId=>Boolean(await
+      TestRequestModel.exists({requestId}).read('primary').readConcern('majority')),
   ) {}
   private sameRequest(row: RoutineWorkDelivery, input: RoutineWorkRequest) {
     if (row.requestSha256 !== requestInputDigest(input) || row.inputSha256 !== requestInputDigest(row.work) || row.fleetSelection && row.fleetInputSha256 !== requestInputDigest({selection: row.fleetSelection, deadline: row.fleetDeadline!.toISOString()}))
@@ -505,19 +509,27 @@ export class RoutineWorkService {
     const parsed=routineWorkVerificationSchema.safeParse(value)
     if(!parsed.success||parsed.data.event.hostId!==hostId)throw new TestRunError(400,'Invalid recording verification event')
     const {identity,event}=parsed.data,row=await this.inspect(event.workId),original=row.status
+    const admission=identity.previousFailure.code==='permission-required'?identity.admission:undefined
     if(!original||original.state!=='failed'||!original.details.attemptId||row.hostId!==hostId||
       row.inputSha256!==event.inputSha256||!row.acceptance||event.details.acceptedAt!==row.acceptance.acceptedAt||
       requestInputDigest(event.details.work)!==row.inputSha256||event.details.attemptId!==original.details.attemptId||
       identity.failureEventId!==original.eventId||identity.failureSha256!==requestInputDigest(original)||
       identity.previousFailure.reason!==original.details.details.reason||
-      !['verifying','passed','failed'].includes(event.state)||event.sequence<=original.sequence||
+      !(admission?['awaiting-installation','verifying','passed','failed','cancelled']:['verifying','passed','failed']).includes(event.state)||event.sequence<=original.sequence||
       Date.parse(identity.acceptedAt)<Date.parse(original.details.events.at(-1)?.at??original.details.acceptedAt))
       throw new TestRequestConflict('Recording verification differs from its original failed attempt')
     for(const key of ['sourceRevision','requestId','prUrl','review'] as const)
-      if(!original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
+      if(key==='requestId'&&admission ? event.details.details.requestId!==admission.requestId ||
+        original.details.details.requestId!==undefined&&original.details.details.requestId!==admission.requestId :
+        !original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
         throw new TestRequestConflict('Recording verification changed its original source, request or review')
     const decision=event.details.events.find(item=>item.eventId===identity.decisionId)
-    if(!row.verification&&(!decision||decision.state!=='verifying'||decision.sequence!==original.sequence+1||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
+    if(admission&&!row.verification&&(Date.parse(identity.acceptedAt)>this.now()||!decision||Date.parse(decision.at)>this.now()))
+      throw new TestRequestConflict('Pre-admission retry decision cannot begin in the future')
+    if(admission&&(row.fleetCancellation||original.details.details.completion||
+      !row.verification&&await this.candidateWasRegistered(admission.requestId)))
+      throw new TestRequestConflict('Pre-admission retry requires the original unregistered candidate and uncancelled work')
+    if(!row.verification&&(!decision||decision.state!==(admission?'awaiting-installation':'verifying')||(admission?decision.sequence<=original.sequence:decision.sequence!==original.sequence+1)||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
       throw new TestRequestConflict('Recording verification lacks its original ordered retry decision')
     const previous=row.verification
     if(previous&&requestInputDigest(previous.identity)!==requestInputDigest(identity))

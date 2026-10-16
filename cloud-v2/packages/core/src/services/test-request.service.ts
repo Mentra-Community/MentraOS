@@ -1,4 +1,4 @@
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
+import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
 import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
@@ -8,6 +8,16 @@ import {CandidateVerificationService, type CandidateAuthorization} from './candi
 import {RoutineDefinitionModel} from '../models/routine-definition.model';
 import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejectionSchema, type RoutineDispatchIntent} from '../types/routine-dispatch.types';
 import {hostRequestDeliveryFilter, hostCancellationDeliveryFilter} from './test-request-activity';
+import {fleetExclusiveDeliverySchema, type FleetExclusiveReservation, type FleetExclusiveExecutionBinding, type FleetResourceAdmission} from '../types/resource-reservations.types';
+import {fleetResourceExecutionBinding, assertFleetResourceAdmission} from './fleet-resource-binding';
+
+interface FleetClaimReceipts {
+  fleetSelection?: unknown;
+  fleetPreparation?: {requirements: {resources: {kind: string; capabilities: string[]}[]}};
+  fleetResourceAdmission?: FleetResourceAdmission;
+  fleetExclusiveReservation?: FleetExclusiveReservation;
+  fleetExclusiveExecutionBinding?: FleetExclusiveExecutionBinding;
+}
 
 export type RequestState = "queued" | "accepted" | "running" | "terminal";
 export interface HostAcceptance {
@@ -26,7 +36,7 @@ export const hostCancellationSchema = z.object({requestId: frameworkIdentitySche
 export type HostCancellation = z.infer<typeof hostCancellationSchema>;
 type QueueCursor = {createdAt: Date; requestId: string};
 type CancellationCursor = {requestedAt: string; requestId: string};
-export interface StoredTestRequest {
+export interface StoredTestRequest extends FleetClaimReceipts {
   requestId: string;
   inputSha256: string;
   input: unknown;
@@ -44,7 +54,7 @@ export interface StoredTestRequest {
   dispatchIntent?: RoutineDispatchIntent;
   dispatchIntentSha256?: string;
 }
-export interface StoredPreparingRequest {
+export interface StoredPreparingRequest extends FleetClaimReceipts {
   requestId: string; hostId: string; state: 'preparing' | 'terminal';
   dispatchIntent: RoutineDispatchIntent; dispatchIntentSha256: string;
   input?: never; inputSha256?: never; hostReceipt?: never; hostRejection?: never; hostCancellation?: never;
@@ -67,7 +77,8 @@ export interface TestRequestRepository {
   cancellations(hostId: string, after: CancellationCursor | null, limit: number): Promise<StoredTestRequest[]>;
   insertPreparation?(request: StoredPreparingRequest): Promise<void>;
   preparations?(hostId: string, limit: number): Promise<StoredPreparingRequest[]>;
-  completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string): Promise<StoredTestRequest | null>;
+  completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string,
+    exclusive?: {reservation: FleetExclusiveReservation; binding: FleetExclusiveExecutionBinding}, admission?: FleetResourceAdmission): Promise<StoredTestRequest | null>;
   updatePreparation?(requestId: string, hostId: string, intentSha256: string, value: StoredPreparingRequest['preparation']): Promise<StoredPreparingRequest | null>;
   cancelPreparation?(requestId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationCancellation']>): Promise<StoredPreparingRequest | null>;
   pendingDispatchCompletions?(hostId: string, limit: number): Promise<StoredTestRequest[]>;
@@ -103,11 +114,15 @@ const mongoRepository: TestRequestRepository = {
       {$set: {preparationCheckedAt: new Date()}}, {writeConcern: testWriteConcern});
     return rows;
   },
-  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256) {
+  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256, exclusive, admission) {
     // Mongoose immutable fields stay protected for every ordinary update. This one guarded transition fills absent input once.
-    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing',
-      input: {$exists: false}, inputSha256: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}, fleetCancellation: {$exists: false}},
-      {$set: {state: 'queued', input, inputSha256, updatedAt: new Date()}, $unset: {preparation: '', preparationCheckedAt: ''}},
+    const identity = {requestId, hostId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}, inputSha256: {$exists: false},
+      preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}, fleetCancellation: {$exists: false},
+      fleetResourceAdmission: admission ?? {$exists: false},
+      ...(exclusive ? {fleetExclusiveReservation: exclusive.reservation, fleetExclusiveExecutionBinding: {$exists: false}} : {})};
+    return await TestRequestModel.collection.findOneAndUpdate(identity,
+      {$set: {state: 'queued', input, inputSha256, ...(exclusive ? {fleetExclusiveExecutionBinding: exclusive.binding} : {}), updatedAt: new Date()},
+        $unset: {preparation: '', preparationCheckedAt: ''}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredTestRequest | null;
   },
   async updatePreparation(requestId, hostId, dispatchIntentSha256, preparation) {
@@ -214,7 +229,9 @@ export class TestRequestService {
       requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256, laneId: (row.input as {laneId: string}).laneId}));
     const preparations = (await this.repository.preparations?.(hostId, limit) ?? []).map(row => ({requestId: row.requestId,
       hostId: row.hostId, dispatchIntentSha256: row.dispatchIntentSha256, dispatchIntent: row.dispatchIntent}));
-    return {requests, preparations, dispatchCompletions, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
+    return {requests: requests.map(row => ({...row, ...(row.fleetExclusiveReservation ? {fleetExclusive: fleetExclusiveDeliverySchema.parse({
+      reservation: row.fleetExclusiveReservation, binding: row.fleetExclusiveExecutionBinding})} : {})})), preparations, dispatchCompletions,
+      nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
   }
   async prepare(hostId: string, input: unknown): Promise<StoredRequest> {
     const intent = routineDispatchIntentSchema.parse(input);
@@ -256,18 +273,26 @@ export class TestRequestService {
   async completePreparation(requestId: string, hostId: string, intentSha256: string, input: unknown): Promise<StoredRequest> {
     const row = await this.preparation(requestId, hostId, intentSha256), intent = row.dispatchIntent!;
     const frozen = frameworkRequestInputSchema.parse(input), digest = requestInputDigest(frozen);
+    if (row.fleetSelection) {
+      if (!row.fleetResourceAdmission) throw new TestRequestConflict('Fleet execution requires its original staged resource admission');
+      assertFleetResourceAdmission(row.fleetResourceAdmission, requestId, hostId, frozen, row.fleetExclusiveReservation);
+    }
+    const exclusive = row.fleetExclusiveReservation ? {reservation: row.fleetExclusiveReservation,
+      binding: fleetResourceExecutionBinding(row.fleetExclusiveReservation, requestId, hostId, intentSha256, frozen, digest)} : undefined;
     if (frozen.routineId !== intent.routineId || frozen.platform !== intent.platform || frozen.definitionRevision !== intent.routineRevision ||
       frozen.laneId !== intent.laneId || frozen.minimumFrameworkVersion !== intent.minimumFrameworkVersion ||
-      requestInputDigest(frozen.build) !== requestInputDigest(intent.build) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
+      requestInputDigest(frozen.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, frozen.glassesModel)) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
       throw new TestRequestConflict('Prepared executable input contradicts its original dispatch intent');
     if (isExecutableRequest(row)) {
       if (row.inputSha256 !== digest) throw new TestRequestConflict('Prepared executable input changed after its first commit');
+      if (exclusive && requestInputDigest(row.fleetExclusiveExecutionBinding) !== requestInputDigest(exclusive.binding))
+        throw new TestRequestConflict('Prepared executable resource binding changed after its first commit');
       return row;
     }
     if (row.state !== 'preparing') return row;
     await this.enrolled?.(frozen);
     if (!this.repository.completePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
-    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest) ??
+    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest, exclusive, row.fleetResourceAdmission) ??
       await this.preparation(requestId, hostId, intentSha256);
     if (isExecutableRequest(saved) && saved.inputSha256 !== digest)
       throw new TestRequestConflict('Prepared executable input changed after its first commit');
@@ -297,7 +322,9 @@ export class TestRequestService {
     const parsed = this.decodeCursor(hostId, cursor, "requestedAt");
     const after = parsed ? {requestedAt: parsed.timestamp, requestId: parsed.requestId} : null;
     const found = await this.repository.cancellations(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
-    return {requests, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "requestedAt", last.hostCancellation!.requestedAt) : null};
+    return {requests: requests.map(row => ({...row, ...(row.fleetExclusiveReservation ? {fleetExclusive: fleetExclusiveDeliverySchema.parse({
+      reservation: row.fleetExclusiveReservation, binding: row.fleetExclusiveExecutionBinding})} : {})})),
+      nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "requestedAt", last.hostCancellation!.requestedAt) : null};
   }
   private validatePageLimit(limit: number) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
@@ -334,7 +361,7 @@ export class TestRequestService {
     await this.enrolled?.(selected);
     if (selected.verification) {
       if (authenticatedHostId !== hostId) throw new TestRequestConflict('Candidate admission requires the authenticated assigned host');
-      await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+      await this.candidates.authorize(selected.verification, authenticatedHostId, {...selected,requestId});
     }
     try {await this.repository.insert(request); return request;}
     catch (error) {
@@ -377,7 +404,7 @@ export class TestRequestService {
     const original = await this.repository.get(receipt.requestId);
     if (!original) {
       await this.enrolled?.(selected);
-      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, {...selected,requestId:receipt.requestId});
     }
     const row: StoredTestRequest = {requestId: receipt.requestId, hostId: authenticatedHostId, input,
       inputSha256: receipt.inputSha256, state: "accepted", hostReceipt: receipt,

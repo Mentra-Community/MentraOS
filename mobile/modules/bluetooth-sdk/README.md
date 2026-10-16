@@ -776,6 +776,39 @@ For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscrip
 
 Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `pair_failure`, `pairing_info`, `entering_pairing_mode`, `pairing_mode_ended`, `pairing_state_changed`, `audio_connected`, `audio_disconnected`, and `log`. `owner_replaced` remains in the type map and is never emitted.
 
+### Claiming touchpad gestures
+
+On Mentra Live, disable a gesture's stock action before using it in your app:
+
+```ts
+await BluetoothSdk.setTouchGestureDefaultBehaviorEnabled("double_tap", false)
+// double_tap events still reach useBluetoothEvent("touch_event", ...).
+// Restore play/pause when your app releases the gesture:
+await BluetoothSdk.setTouchGestureDefaultBehaviorEnabled("double_tap", true)
+```
+
+The supported names are `single_tap`, `double_tap`, `triple_tap`, `long_press`,
+`forward_swipe`, `backward_swipe`, `up_swipe`, and `down_swipe`. Each setting
+changes only that gesture. Stock media actions (play/pause, volume, previous/next
+track) and gesture feedback are suppressed; the gesture event itself is still
+sent. This applies on both Android and iOS, without claiming a phone media player
+or relying on remote media-key interception.
+
+Overrides are RAM-only on the glasses and reset to the normal stock behavior on
+BLE disconnect or reboot. Set them again after reconnecting. They do not change
+camera-button behavior or gallery mode. Gestures without a stock action still
+produce events. On native Android use `TouchGesture.DOUBLE_TAP`; on native iOS
+use `.doubleTap` with `setTouchGestureDefaultBehaviorEnabled(_:enabled:)`.
+
+This requires BES firmware implementing `cs_tpdef` / `sr_tpdef`. The promise
+resolves only after the matching firmware `settings_ack` with
+`setting: "touch_gesture_default"`, `gesture`, and `enabled`. Unsupported devices
+and invalid gesture names reject. Older firmware cannot suppress these actions
+and will time out; do not treat that timeout as success. A release containing this
+SDK API alone does not update BES firmware.
+
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
+
 React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, `touch_event` includes `gestureName`, `wifi_scan_result` includes `networks` and `scanComplete`, `version_info` matches the `requestVersionInfo()` result shape, `photo_response` success includes `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, and `gallery_status` includes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 
 `mic_health` emits a snapshot when native code detects a glasses LC3 `sequence_gap` or `decode_failure`. Each event includes cumulative `sequenceGapEvents` and `decodeFailures` counters for the current connection plus `lastLc3ReceivedAt`, `lastPcmProducedAt`, and `timestamp` in Unix milliseconds when available. These failures occur before React Native receives PCM and cannot be reconstructed from `mic_pcm` alone. The existing `mic_pcm` and `mic_lc3` streams remain unchanged.

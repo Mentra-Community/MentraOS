@@ -31,13 +31,13 @@ const enrollment = (glasses = true): RoutineEnrollment => ({
     fixtures: [],
     ...(glasses ? {glasses: {models: ["mentra-live"]}} : {}),
     steps: [{id: "check", instruction: "Check", expected: "Observed"}],
-    execution: {resourceKinds: glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"]},
+    execution: {resourceKinds: glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"], policy: {estimatedOutputBytes: 1024**3}},
     source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: "routines/arbitrary-camera/routine.ts"},
   },
 })
 const host = (glasses = true): ReceivedTestHostState => ({hostId: "mini", incarnation: "boot", incarnationGeneration: 1, sequence: 1,
   receivedAt: new Date(now).toISOString(), observedAt: new Date(now).toISOString(), lanes: [{id: "phone-lane", platform: "android", dispatchMode: "automatic", state: "idle",
-    resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder"}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const, capabilities: ["connection"]}] : [])],
+    resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder", storage: {poolId: "mini:disk:1", observedAt: new Date(now).toISOString(), availableBytes: 64*1024**3, stagingBudgetBytes: 10*1024**3, pendingEvidenceBytes: 0, reservations: []}}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const, capabilities: ["connection"]}] : [])],
     ...(glasses ? {glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities: ["connection"]}]} : {})}]});
 const select = (definition = enrollment(), selected = build, observed = host()) => routineAdmissionInput(definition, selected,
   {hostId: "mini", laneId: "phone-lane"}, observed, now);
@@ -229,7 +229,7 @@ test("projecting known host providers preserves missing real and unknown glasses
 
 test("host preparation independently rechecks generic resource capabilities before concrete allocation", () => {
   const original = enrollment(false), definition: RoutineEnrollment = {...original, definition: {...original.definition,
-    execution: {resourceKinds: ["phone", "app", "recorder", "network"]},
+    execution: {resourceKinds: ["phone", "app", "recorder", "network"], policy: {estimatedOutputBytes: 1024**3}},
     resourceRequirements: [...original.definition.resourceRequirements, {kind: "network" as const, capabilities: ["independent-uplink"]}]}};
   const lane = host(false).lanes[0]!, network = {id: "network-uplink", kind: "network" as const, capabilities: ["independent-uplink"]};
   const offered = {...host(false), lanes: [{...lane, resources: [...lane.resources, network]}]};
@@ -248,3 +248,53 @@ test('typed phone capabilities are enforced before admission without becoming gl
   expect(input.resources.map(resource => resource.kind)).toEqual(['phone','app','recorder'])
   expect(input.glassesStart).toBeUndefined()
 })
+
+
+test('direct admission enforces the same recording budget and strips measured offers from frozen input', () => {
+  const declared=enrollment(false), measured=host(false), recorder=measured.lanes[0]!.resources.find(value=>value.kind==='recorder')!;
+  expect(select(declared,build,measured).resources.find(value=>value.kind==='recorder')).toEqual({id:'recorder',kind:'recorder'});
+  recorder.storage!.availableBytes=2*1024**3;
+  expect(()=>select(declared,build,measured)).toThrow('recorder disk and evidence staging capacity');
+  recorder.storage!.availableBytes=64*1024**3; recorder.storage!.pendingEvidenceBytes=10*1024**3;
+  expect(()=>select(declared,build,measured)).toThrow('recorder disk and evidence staging capacity');
+})
+
+function nimoSelection() {
+  const definition = enrollment(), observed = host();
+  definition.definition.glasses = {models: ['nimo']};
+  definition.definition.minimumRoutineApiVersion = 43;
+  definition.routineSource.minimumRoutineApiVersion = 43;
+  observed.lanes[0]!.glasses![0] = {resourceId: 'physical-live', deviceId: 'AA:BB:CC:DD:40:27', model: 'nimo', capabilities: ['connection']};
+  return {definition, observed};
+}
+test('only the actual Android connection-only NIMO inventory omits Live software', () => {
+  const {definition, observed} = nimoSelection();
+  const input = select(definition, {...build, manifest: undefined, manifestSha256: undefined}, observed);
+  expect(input.glassesModel).toBe('nimo');
+  expect(input.glassesStart).toBeUndefined(); expect(input.glassesReturn).toBeUndefined();
+  expect(input.build.manifest).toBeUndefined();
+  expect(frameworkRequestInputSchema.safeParse({...input, glassesModel: undefined}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, glassesStart: {model: 'mentra-live', manifest}, glassesReturn: {model: 'mentra-live', manifest}}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, platform: 'ios-on-mac'}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, routineSource: {...input.routineSource, minimumRoutineApiVersion: 42}}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, build: {...input.build, manifest, manifestSha256: sha256}}).success).toBe(false);
+});
+test('NIMO never admits a firmware, BLE, other-model or fabricated-identity provider', () => {
+  for (const mutate of [
+    (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.minimumRoutineApiVersion = 42; d.routineSource.minimumRoutineApiVersion = 42},
+    (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = []},
+    (_d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities = []},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.glasses!.startSoftware = {model: 'mentra-live', manifest}},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = ['glasses-ble']; h.lanes[0]!.glasses![0]!.capabilities = ['glasses-ble']},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities.push('software')},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.deviceId = 'not-observed'},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.glasses!.models = ['g2']; h.lanes[0]!.glasses![0]!.model = 'g2'},
+  ]) {
+    const {definition, observed} = nimoSelection(); mutate(definition, observed);
+    expect(() => select(definition, build, observed)).toThrow();
+  }
+  const old = nimoSelection(); old.definition.definition.minimumRoutineApiVersion = 42; old.definition.routineSource.minimumRoutineApiVersion = 42;
+  expect(() => select(old.definition, build, old.observed)).toThrow(expect.objectContaining({status: 409, message: expect.stringContaining('routine API 43')}));
+  // Live remains firmware-bound even when it requests connection only.
+  expect(() => select(enrollment(), {...build, manifest: undefined})).toThrow('immutable glasses manifest');
+});

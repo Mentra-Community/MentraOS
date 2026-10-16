@@ -201,3 +201,14 @@ test('repair running requires the exact active invocation and a fresh controller
   expect(stale).toContain('Repair execution unknown');
   expect(stale).not.toContain('Repair running');
 });
+
+test('admin reservation email is readable and stale attribution stays historical', () => {
+  const reserved: LaneRestorationHost = {...host, lanes: [{...host.lanes[1], reservedBy: 'alice@example.com'}]}
+  const fresh = renderToStaticMarkup(<LaneHealthHost host={reserved} fresh />)
+  expect(fresh).toContain('Reserved by: alice@example.com')
+  const stale = renderToStaticMarkup(<LaneHealthHost host={reserved} fresh={false} />)
+  expect(stale).toContain('Last reported reserved by: alice@example.com')
+  expect(renderToStaticMarkup(<LaneHealthHost host={{...reserved, lanes: [{...reserved.lanes[0], reservedBy: null}]}} fresh />))
+    .toContain('Reserved by: User not recorded')
+  expect(renderToStaticMarkup(<LaneHealthHost host={host} fresh />)).not.toContain('Reserved by:')
+})

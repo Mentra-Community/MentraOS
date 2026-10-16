@@ -6,9 +6,14 @@ import {fakeCreateMMKV, resetFakeMmkv} from "./fakeMmkv"
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 
-const {glassesBinding, glassesManufacturer, glassesPeripheral, isPlaceholderSerial, isSimulatedGlasses} = await import(
-  "../glassesIdentity"
-)
+const {
+  glassesBinding,
+  glassesManufacturer,
+  glassesPeripheral,
+  glassesProduct,
+  isPlaceholderSerial,
+  isSimulatedGlasses,
+} = await import("../glassesIdentity")
 
 const PHONE = "01PHONE000000000000000000"
 
@@ -148,6 +153,34 @@ describe("glassesBinding without a usable serial", () => {
       PHONE,
     )
     expect(JSON.stringify(binding)).not.toMatch(/aa:bb:cc/i)
+  })
+})
+
+describe("glassesProduct", () => {
+  test.each(["K900", "K900Plus", "K900PlusV2", "K900 (variant unknown)", " k900plus "])(
+    "Mentra Live's hardware variant %j is Mentra Live",
+    (model) => {
+      expect(glassesProduct(model)).toBe("Mentra Live")
+    },
+  )
+
+  test("other models are themselves, trimmed", () => {
+    expect(glassesProduct(" Mentra Live ")).toBe("Mentra Live")
+    expect(glassesProduct("Even Realities G1")).toBe("Even Realities G1")
+    expect(glassesProduct("")).toBe("")
+  })
+
+  test("a pair is the same device whether it calls itself Mentra Live or its hardware variant", () => {
+    const live = {serialNumber: "", bluetoothMacAddress: "1C:2B:3A:00:00:01"}
+    expect(glassesBinding({...live, deviceModel: "K900"}, PHONE)).toEqual(
+      glassesBinding({...live, deviceModel: "Mentra Live"}, PHONE) as never,
+    )
+    expect(glassesBinding({deviceModel: "K900PlusV2", serialNumber: "ML394037B"}, PHONE)).toEqual({
+      kind: "serial",
+      manufacturer: "Mentra",
+      product: "Mentra Live",
+      serial: "ML394037B",
+    })
   })
 })
 

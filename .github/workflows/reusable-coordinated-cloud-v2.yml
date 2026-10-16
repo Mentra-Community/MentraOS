@@ -192,22 +192,7 @@ jobs:
           )
           jq -s . cloud-v2-checks.ndjson > cloud-v2-checks.json
 
-      - name: Read back the running deployment
-        if: inputs.dry_run != true
-        env:
-          PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
-          PORTER_CLUSTER: ${{ steps.target.outputs.porter_cluster }}
-          PORTER_DEPLOYMENT_TARGET_ID: ${{ steps.target.outputs.porter_deployment_target_id }}
-          PORTER_HOST: https://dashboard.porter.run
-          PORTER_PROJECT: ${{ steps.target.outputs.porter_project }}
-          PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
-        run: >-
-          porter kubectl -- get pods
-          -l "porter.run/app-name=$PORTER_APP_NAME"
-          -o json
-          > cloud-v2-pods.json
-
-      - name: Require the deployed Runtime disruption policy
+      - name: Require settled deployment and Runtime disruption policy
         if: inputs.dry_run != true
         env:
           PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
@@ -218,9 +203,12 @@ jobs:
           PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
         run: |
           set -euo pipefail
-          # PDB status may settle shortly after the Deployment becomes ready.
-          # Every attempt uses fresh read-only observations; failure blocks publication.
+          # Read every service and the PDB together on each bounded attempt.
+          # A pre-settlement Pod snapshot must never become release evidence.
           for attempt in {1..12}; do
+            porter kubectl -- get pods \
+              -l "porter.run/app-name=$PORTER_APP_NAME" -o json \
+              > cloud-v2-pods.json
             porter kubectl -- get deployments,poddisruptionbudgets \
               -l "porter.run/app-name=$PORTER_APP_NAME" -o json \
               > cloud-v2-runtime-policy-objects.json
@@ -228,7 +216,18 @@ jobs:
               --environment "${{ inputs.deployment_environment }}" \
               --replicas "$(jq -er .runtimeReplicas cloud-v2-rendered-config.json)" \
               --observations cloud-v2-runtime-policy-objects.json \
-              --output cloud-v2-runtime-policy-proof.json; then
+              --output cloud-v2-runtime-policy-proof.json && \
+              node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs create \
+                --plan release-input/plan/release-plan.json \
+                --environment "${{ inputs.deployment_environment }}" \
+                --source-commit "${{ inputs.source_commit }}" \
+                --requested-tag "${{ steps.source.outputs.tag }}" \
+                --status deployed \
+                --pods cloud-v2-pods.json \
+                --checks cloud-v2-checks.json \
+                --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+                --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+                --output cloud-v2-deployment.json; then
               break
             fi
             [[ "$attempt" -lt 12 ]] || exit 1
@@ -244,21 +243,6 @@ jobs:
           --source-commit "${{ inputs.source_commit }}"
           --requested-tag "${{ steps.source.outputs.tag }}"
           --status validated
-          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --output cloud-v2-deployment.json
-
-      - name: Record observed deployment evidence
-        if: inputs.dry_run != true
-        run: >-
-          node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs create
-          --plan release-input/plan/release-plan.json
-          --environment "${{ inputs.deployment_environment }}"
-          --source-commit "${{ inputs.source_commit }}"
-          --requested-tag "${{ steps.source.outputs.tag }}"
-          --status deployed
-          --pods cloud-v2-pods.json
-          --checks cloud-v2-checks.json
           --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --output cloud-v2-deployment.json

@@ -26,6 +26,7 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefault
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {AccountCodeModel} from "../packages/core/src/models/account-code.model"
+import {AccountEmailModel} from "../packages/core/src/models/account-email.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
@@ -35,6 +36,8 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
+import {accountEmail, markAccountEmailChanged} from "../packages/core/src/services/account/account-email.service"
+import * as trustedEmail from "../packages/core/src/services/account/trusted-email.service"
 import {
   confirmAccountDeletion,
   finishPendingAccountDeletions,
@@ -90,6 +93,7 @@ setDefaultTimeout(30_000)
 const MODELS = [
   AccessCredentialModel,
   AccountCodeModel,
+  AccountEmailModel,
   BrowserSessionModel,
   RefreshTokenModel,
   SupportProfileModel,
@@ -318,6 +322,47 @@ describe("confirmAccountDeletion", () => {
     expect(organizational.map(event => event.action)).toEqual(["user.deleted"])
     expect(organizational[0]).toMatchObject({target: {mentraUserId: s.mentraUserId}})
     expect(JSON.stringify(organizational[0])).not.toContain(s.email)
+  })
+
+  test("Core's copy of the account's email is cleared with the account, and never stored again", async () => {
+    const s = await scenario()
+    expect(await accountEmail(s.mentraUserId)).toBe(s.email)
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    // What is left is a fence with no email, which every later write respects.
+    const rows = await AccountEmailModel.find({mentraUserId: s.mentraUserId}).lean()
+    expect(rows.map(row => ({email: row.email, deleted: row.deletedAt instanceof Date}))).toEqual([{email: null, deleted: true}])
+    expect(await accountEmail(s.mentraUserId)).toBeNull()
+    // An email change that finished as the account was deleted leaves the fence as it is.
+    await markAccountEmailChanged(s.mentraUserId)
+    const after = await AccountEmailModel.find({mentraUserId: s.mentraUserId}).lean()
+    expect(after.map(row => ({email: row.email, deleted: row.deletedAt instanceof Date}))).toEqual([{email: null, deleted: true}])
+    expect(await accountEmail(s.mentraUserId)).toBeNull()
+  })
+
+  test("a lookup still in flight when the account is deleted does not store the email it read", async () => {
+    const s = await scenario()
+    let answer: ((email: string | null) => void) | undefined
+    const lookup = spyOn(trustedEmail, "trustedAccountEmail").mockImplementation(
+      () => new Promise<string | null>(resolve => (answer = resolve)),
+    )
+    try {
+      // A Fleet report asked for the email while the account was live; the directory has not answered yet.
+      const inFlight = accountEmail(s.mentraUserId)
+      while (!answer) await Bun.sleep(1)
+
+      await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+      expect((await UserModel.findOne({mentraUserId: s.mentraUserId}).lean())!.accountDeletionCompletedAt).toBeInstanceOf(Date)
+      // The directory answers with the address it had before the deletion.
+      answer(s.email)
+      await inFlight
+    } finally {
+      lookup.mockRestore()
+    }
+
+    expect(await AccountEmailModel.countDocuments({mentraUserId: s.mentraUserId, email: {$ne: null}})).toBe(0)
+    expect(await accountEmail(s.mentraUserId)).toBeNull()
   })
 
   test("a last owner's deletion is not refused: the workspace is left without an owner for recovery", async () => {

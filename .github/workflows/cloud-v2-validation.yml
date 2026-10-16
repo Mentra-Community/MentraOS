@@ -67,6 +67,9 @@ jobs:
       - name: Keep WorkOS out of Cloud V2
         run: node --test .github/scripts/no-workos.test.mjs
 
+      - name: Classify every Cloud V2 setting in the production release contract
+        run: node --test .github/scripts/validate-production-cloud-config.test.mjs
+
       - name: Test enterprise deployment helpers
         working-directory: cloud-v2
         run: |

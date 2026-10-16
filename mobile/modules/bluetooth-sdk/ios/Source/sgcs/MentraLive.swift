@@ -3858,6 +3858,11 @@ class MentraLive: NSObject, SGCManager {
                 processAncsRelay(body)
             }
 
+        case "sr_tpdef":
+            if let body = k900ParseBody(json["B"]), body["setting"] as? String == "touch_gesture_default" {
+                emitSettingsAck(body)
+            }
+
         case "sr_hrt":
             if let bodyObj = json["B"] as? [String: Any] {
                 let readyResponse = bodyObj["ready"] as? Int ?? 0
@@ -4365,6 +4370,25 @@ class MentraLive: NSObject, SGCManager {
         ]
 
         sendJson(json, wakeUp: true)
+    }
+
+    func sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Bool) throws {
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try sendTouchGestureDefaultCommand(requestId: requestId, gesture: gesture, enabled: enabled)
+    }
+
+    /// Kept separate from readiness admission so tests can replay the real K900 wire exchange.
+    func sendTouchGestureDefaultCommand(requestId: String, gesture: TouchGesture, enabled: Bool) throws {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "request_id": requestId, "gesture": gesture.rawValue, "enabled": enabled,
+        ])
+        guard let bodyString = String(data: body, encoding: .utf8),
+              sendRawK900Command(["C": "cs_tpdef", "V": 1, "B": bodyString])
+        else {
+            throw BluetoothSdkError(code: "command_send_failed", message: "Could not encode the touch gesture setting.")
+        }
     }
 
     func sendGalleryServerEnabled(requestId: String, enabled: Bool) {

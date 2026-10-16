@@ -11,6 +11,10 @@
  * wait in the queue until their account signs in to their Core again, or expire into a coverage gap; they are never
  * sent as anyone else.
  *
+ * A miniapp launch the engine makes while no run is collecting (it restores miniapps while the account may still be
+ * being resolved) is kept by `fleetEvents` for the next run, which is that account's. A sign-in or sign-out discards
+ * it: what happened before belongs to no one the next run collects for. So do the engine's start and stop.
+ *
  * Uploads go a minute after records arrive, or at once when 100 are waiting, at most 500 records (and 1 MB of them)
  * per request. With nothing waiting the uploader sets no timer: the next record wakes it. What each answer does:
  * - accepted or duplicate: the record is removed. Rejected: removed, with a `record_rejected` gap over its
@@ -44,6 +48,7 @@ import {
   type FleetSendOutcome,
 } from "../CloudClientService"
 import {createFleetCollector, type FleetCollector} from "./fleetCollector"
+import {fleetEvents} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import {createFleetQueue, partitionKey, type FleetLosses, type FleetQueue} from "./fleetQueue"
 
@@ -309,6 +314,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
 
   function onSessionChanged(change: CoreSessionChange): void {
     if (!started) return
+    if (change.reason !== "reconnect") fleetEvents.discardUndeliveredLaunches()
     if (change.reason === "signed_out") {
       // A resolution still under way, or one waiting to ask again, must not bring the account back.
       resolution += 1
@@ -657,6 +663,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       if (started) return
       started = true
       notInstalled = null
+      fleetEvents.discardUndeliveredLaunches()
       guard("sweeping the queue", () => {
         lastSweepAt = now()
         queue.sweepExpired(lastSweepAt)
@@ -692,6 +699,7 @@ export function createFleetReporter(deps: FleetReporterDeps = {}): FleetReporter
       guard("stopping", () => endRun("engine_stopped"))
       for (const cleanup of cleanups.splice(0)) guard("removing a listener", cleanup)
       notInstalled = null
+      fleetEvents.discardUndeliveredLaunches()
     },
   }
 }

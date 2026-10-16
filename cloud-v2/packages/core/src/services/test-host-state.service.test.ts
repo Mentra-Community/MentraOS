@@ -23,7 +23,7 @@ test('run progress lookup selects only one lane snapshot and uses a bounded cons
     });
     expect(filters).toEqual([{hostId: 'host-one'}]);
     expect(selections).toEqual([{'snapshot.incarnation': 1, 'snapshot.sequence': 1, 'snapshot.lanes.id': 1,
-      'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, receivedAt: 1, _id: 0}]);
+      'snapshot.lanes.activity': 1, 'snapshot.lanes.progress': 1, 'snapshot.lanes.waiting': 1, receivedAt: 1, _id: 0}]);
     expect(settings).toEqual(['primary', 'majority', {timeoutMS: 5000}]);
   } finally {find.mockRestore()}
 })

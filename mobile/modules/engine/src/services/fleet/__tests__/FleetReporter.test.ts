@@ -53,9 +53,8 @@ mock.module("../../../utils/timers", () => ({
   },
 }))
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
-mock.module("expo-constants", () => ({
-  default: {nativeAppVersion: "3.4.5", nativeBuildVersion: "345", expoConfig: {version: "3.4.5"}},
-}))
+mock.module("expo-constants", () => ({default: {expoConfig: {version: "3.4.5"}}}))
+mock.module("expo-application", () => ({nativeApplicationVersion: "3.4.5", nativeBuildVersion: "345"}))
 mock.module("expo-device", () => ({modelName: "Pixel 9"}))
 
 const GLASSES_IDLE = {
@@ -384,6 +383,7 @@ beforeEach(() => {
   core.resolveError = null
   core.respond = (records) => acceptAll(records)
   installFakeCloud()
+  fleetEvents.discardUndeliveredLaunches()
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
   Object.assign(reactNative.Platform as object, {OS: "android", Version: 35, constants: {Release: "15"}})
@@ -1488,6 +1488,41 @@ describe("with the real collector", () => {
     expect(queued(CORE_X, A).filter((record) => record.kind === "miniapp_launch")).toHaveLength(1)
   })
 
+  test("a miniapp restored before the account was known is recorded as that account's once it is", async () => {
+    // The engine starts offline: the client cannot say yet whose token it holds.
+    Object.assign(cloudClientService, {getCoreSession: () => null})
+    core.resolveError = new Error("refresh could not be completed; try again later")
+    reporter.start()
+    await settle()
+    expect(queued(CORE_X, A)).toEqual([])
+    // The host restores what was running before the process died.
+    fleetEvents.launchUnlessClaimed({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    core.resolveError = null
+    await advance(MINUTE)
+    const launches = queued(CORE_X, A).filter((record) => record.kind === "miniapp_launch")
+    expect(launches.map((record) => record.kind === "miniapp_launch" && record.payload)).toEqual([
+      {packageName: "com.mentra.notes", start: "automatic", outcome: "started"},
+    ])
+  })
+
+  test("a launch while nobody is signed in is no one's, and not the next account's", async () => {
+    reporter.start()
+    signOut()
+    fleetEvents.launchUnlessClaimed({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    signIn(B)
+    await settle()
+    expect(queued(CORE_X, B).some((record) => record.kind === "snapshot")).toBe(true)
+    expect(queued(CORE_X, B).filter((record) => record.kind === "miniapp_launch")).toEqual([])
+  })
+
+  test("a launch the engine could not deliver before it stopped is not the next run's", async () => {
+    reporter.start()
+    await reporter.stop()
+    fleetEvents.launchUnlessClaimed({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    reporter.start()
+    expect(queued(CORE_X, A).filter((record) => record.kind === "miniapp_launch")).toEqual([])
+  })
+
   test("no_fleet_route stops collection and keeps what was queued, its final checkpoint included", async () => {
     reporter.start()
     core.respond = () => ({kind: "no_fleet_route"})
@@ -1549,6 +1584,7 @@ describe("what the reporter reads", () => {
         "../../utils/timers",
         "../CloudClientService",
         "./fleetCollector",
+        "./fleetEvents",
         "./fleetIds",
         "./fleetQueue",
       ].sort(),

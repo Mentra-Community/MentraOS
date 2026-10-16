@@ -40,6 +40,7 @@ import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.PhotoMode
+import com.mentra.bluetoothsdk.TouchGesture
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.incomingGlassesMessageAckId
@@ -5762,6 +5763,14 @@ class MentraLive : SGCManager() {
         // Bridge.log("LIVE: Processing K900 command: " + command);
 
         when (command) {
+            "sr_tpdef" -> {
+                val body = when (val value = json.opt("B")) {
+                    is JSONObject -> value
+                    is String -> runCatching { JSONObject(value) }.getOrNull()
+                    else -> null
+                }
+                if (body != null && body.optString("setting") == "touch_gesture_default") emitSettingsAck(body)
+            }
             "sr_hrt" -> {
                 try {
                     val bodyObj = json.optJSONObject("B")
@@ -6501,6 +6510,19 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "📱 Error creating request_version command", e)
         }
+    }
+
+    fun sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Boolean) {
+        val sessionGeneration = bleSessionGeneration.get()
+        if (!isConnected) throw BluetoothSdkException("not_connected", "Mentra Live glasses are not connected.")
+        val body = JSONObject().put("request_id", requestId).put("gesture", gesture.wireName).put("enabled", enabled)
+        val command = JSONObject().put("C", "cs_tpdef").put("V", 1).put("B", body.toString())
+        val packet = K900ProtocolUtils.packDataToK900(
+            command.toString().toByteArray(StandardCharsets.UTF_8),
+            K900ProtocolUtils.CMD_TYPE_STRING,
+            k900LengthEndian(),
+        ) ?: throw BluetoothSdkException("command_send_failed", "Could not encode the touch gesture setting.")
+        queueData(packet, sessionGeneration = sessionGeneration)
     }
 
     fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {

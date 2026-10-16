@@ -460,6 +460,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setGalleryServerEnabled(enabled).values
         }
 
+        AsyncFunction("setTouchGestureDefaultBehaviorEnabled") { (gesture: String, enabled: Bool) in
+            guard let gesture = TouchGesture(rawValue: gesture) else {
+                throw BluetoothSdkError(code: "invalid_touch_gesture", message: "Unknown touch gesture: \(gesture)")
+            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled: enabled).values
+        }
+
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setGalleryModeEnabled(enabled).values

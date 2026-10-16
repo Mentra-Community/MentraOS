@@ -60,7 +60,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   })
   app.post('/lanes/controls', frameworkBodyLimit(32768), async c => {
     if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
-    return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId), 202)
+    return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId, c.var.developer.email), 202)
   })
   app.get("/lanes/overview", async c => c.json(await restoration.overview()));
   app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));
@@ -91,7 +91,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
       const live = await Promise.race([progress.get(row), new Promise<never>((_, reject) => {
         timeout = setTimeout(() => reject(new Error('Live observation read timed out')), 3000);
       })]);
-      return c.json({kind: "request", request: {...request, ...(live ? {live} : {})}});
+      return c.json({kind: "request", request: {...request, ...(live ? 'progress' in live ? {live} : {waiting: live} : {})}});
     } catch {
       // Live observations are optional display data, never a reason to hide accepted custody.
       return c.json({kind: "request", request: {...request, liveUnavailable: true}});

@@ -5,6 +5,7 @@ import {routineIdentitySchema, routinePlatformSchema, routineResourceKindSchema,
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 import type {RoutineLiveProgress} from './routine-progress.types';
+import {exclusiveResourceDependenciesSchema} from './resource-reservations.types';
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
@@ -31,10 +32,12 @@ const frozenFrameworkRequestInputSchema = z.object({
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
+    exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   }).strict().refine(resource => resource.capabilities === undefined || routineResourceRequirementSchema.safeParse({
     kind: resource.kind, capabilities: resource.capabilities,
   }).success, "Resource capabilities must match their declared kind")),
   policy: z.record(z.unknown()).optional(),
+  glassesModel: z.literal('nimo').optional(),
   glassesStart: glassesSoftwareRefSchema.optional(),
   glassesReturn: glassesSoftwareRefSchema.optional(),
   verification: candidateVerificationSchema.optional(),
@@ -46,7 +49,13 @@ function validateFrameworkRequestInput(input: z.infer<typeof recordedInputSchema
   if (input.routineSource && input.routineSource.commit !== input.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Routine source differs from its definition revision'});
   const glasses = input.resources.some(resource => resource.kind === "glasses");
-  if (glasses !== (input.glassesStart !== undefined && input.glassesReturn !== undefined) ||
+  if (input.glassesModel && (!glasses || input.platform !== 'android' || input.glassesStart || input.glassesReturn))
+    ctx.addIssue({code: 'custom', message: 'NIMO requires its selected Android glasses resource without Mentra Live firmware references'});
+  if (input.glassesModel && (!input.routineSource || input.routineSource.minimumRoutineApiVersion < 43))
+    ctx.addIssue({code: 'custom', message: 'NIMO connection requires routine API 43 or later'});
+  if (input.glassesModel && (input.build.manifest !== undefined || input.build.manifestSha256 !== undefined))
+    ctx.addIssue({code: 'custom', message: 'NIMO executable build cannot contain Mentra Live firmware references'});
+  if ((glasses && !input.glassesModel && !(input.glassesStart && input.glassesReturn)) || (!glasses && (input.glassesStart || input.glassesReturn)) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
     ctx.addIssue({code: "custom", message: "Selected glasses resource requires frozen start and return software references"});
   if (input.glassesStart && input.glassesReturn) {
@@ -62,6 +71,13 @@ export const frameworkRequestInputSchema = frozenFrameworkRequestInputSchema.sup
 /** Historical display only: preserve requests recorded before bundle provenance, without a fallback source. */
 export const recordedFrameworkRequestInputSchema = recordedInputSchema.superRefine(validateFrameworkRequestInput);
 
+/** Keep the frozen app selection; NIMO has no Live glasses firmware component. */
+export function frameworkExecutableBuild(build: z.infer<typeof frameworkBuildSchema>, glassesModel?: 'nimo') {
+  if (glassesModel !== 'nimo') return build;
+  const {manifest: _manifest, manifestSha256: _manifestSha256, ...app} = build;
+  return app;
+}
+
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {
   requestId: string; hostId?: string; inputSha256?: string; dispatchIntentSha256?: string; routineId: string; platform: string;
@@ -75,4 +91,5 @@ export interface FrameworkRequestDisplay {
   preparationDisposition?: 'not-run' | 'not-applicable';
   live?: RoutineLiveProgress;
   liveUnavailable?: boolean;
+  waiting?: import('./routine-progress.types').RoutineQueuedBlock;
 }

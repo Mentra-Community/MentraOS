@@ -74,6 +74,9 @@ export function LaneHealthHost({
                     Last reported state: {states[lane.state]?.label ?? "Unknown"}. Current lane status is unknown.
                   </p>
                 )}
+                {lane.reservedBy !== undefined && <p className="mt-2 break-all text-sm text-[#5d6068]">
+                  {fresh ? 'Reserved by' : 'Last reported reserved by'}: {lane.reservedBy ?? 'User not recorded'}
+                </p>}
                 {lane.activity ? <div className="mt-2 text-sm text-[#5d6068]">
                   <p>{fresh ? 'Current owner' : 'Last reported owner'}: {lane.activity.owner.kind === 'run' ? 'Routine run'
                     : lane.activity.owner.kind === 'authoring' ? 'Authoring reservation'

@@ -9,7 +9,8 @@
  * `stop()`.
  *
  * Usage is measured as sessions: an activity (the engine running, the Mentra App in the foreground, glasses
- * connected, one miniapp executing) opens a session when it begins and closes it when it ends. A session's
+ * connected, one miniapp executing) opens a session when it begins and closes it when it ends; the foreground with
+ * hysteresis (see FOREGROUND_SETTLE_MS), so the app state's blips are not sessions of their own. A session's
  * `elapsedMs` is cumulative monotonic time, and each checkpoint packs every open session, so a session that is
  * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected or the Mentra
  * App is in the foreground, every 15 minutes otherwise (only the engine active, or miniapps executing in the
@@ -17,11 +18,13 @@
  * time, only less often; what it risks is the time since the last checkpoint if the process dies. A session also
  * ends when it reaches the longest time one record may carry (7 days), and a new one carries on from there.
  *
- * Snapshots come at start, after a change worth one (the connection, a battery move of 5 points or a charging change,
- * a new version), and with the first checkpoint 15 minutes or more after the last snapshot, so the two share a
- * wake-up and an upload. On the 15-minute cadence that snapshot is written only if it would say something new. A
- * phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
- * checkpoint every 15 minutes, whether or not miniapps execute in the background.
+ * Snapshots come at start, after a change worth one (glasses connecting or disconnecting, and while they are connected
+ * a battery move of 5 points, a charging change or a new version), and with the first checkpoint 15 minutes or more
+ * after the last snapshot, so the two share a wake-up and an upload. On the 15-minute cadence that snapshot is
+ * written only if it would say something new. A phone retrying glasses that are away moves between scanning,
+ * connecting and disconnected every few seconds, all day: none of that is a change worth a snapshot, or something
+ * new. A phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
+ * checkpoint every 15 minutes, whether or not miniapps execute in the background or its glasses are being retried.
  *
  * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
  * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
@@ -37,6 +40,7 @@
  * Nothing here may break or slow the paths it watches: every entry point catches its own failures, and nothing
  * thrown by the queue, the clock or a store reaches a caller.
  */
+import * as Application from "expo-application"
 import Constants from "expo-constants"
 import * as Device from "expo-device"
 import {AppState, Platform} from "react-native"
@@ -56,10 +60,20 @@ import {nativeMiniappExecution} from "../NativeMiniappExecution"
 import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import type {FleetQueue} from "./fleetQueue"
-import {glassesBinding, glassesPeripheral, isSimulatedGlasses} from "./glassesIdentity"
+import {
+  glassesProduct,
+  isSimulatedGlasses,
+  provisionalBinding,
+  serialBinding,
+  usableSerial,
+  type GlassesIdentitySource,
+} from "./glassesIdentity"
 
 export interface FleetCollector {
-  /** Opens the engine session, the foreground session if the app is active, the glasses and running miniapps, and takes a snapshot. */
+  /**
+   * Opens the engine session, the glasses and running miniapps, and the foreground session once the app has been
+   * active long enough to count, and takes a snapshot.
+   */
   start(ctx: {partition: string; collectorSessionId: string}): void
   /** Checkpoints every open session as ended, into the partition `start` was given, and stops listening. */
   stop(reason: "engine_stopped" | "account_changed" | "not_installed"): void
@@ -97,6 +111,28 @@ const SNAPSHOT_DEBOUNCE_MS = 2_000
  */
 const CLOCK_DRIFT_LIMIT_MS = 2 * 60_000
 const BATTERY_SNAPSHOT_STEP = 5
+/**
+ * How long connected glasses may go without showing a serial number before they are identified without one. They send
+ * it, with their Bluetooth address, within a second or two of connecting; this leaves ample room for a slow answer
+ * while still identifying a pair that has none well before its first 60-second checkpoint.
+ */
+const IDENTITY_SETTLE_MS = 15_000
+/**
+ * The Mentra App is in the foreground, to Fleet, from the moment it becomes active, once it has been active for
+ * FOREGROUND_SETTLE_MS since then; and it stays there through a departure shorter than FOREGROUND_GRACE_MS, which, if
+ * the app does not come back, ends the visit when the app left. The app state flaps: Android reports the activities
+ * around a launch, such as a permission dialog, as the app going to the background, and iOS goes inactive for
+ * Control Center, a notification pulled down, Face ID or a system alert. A third of foreground sessions in the device
+ * evidence lasted under a second, and a foreground session makes its account active.
+ *
+ * 2 s is longer than any of those flickers and shorter than a person's look at the app. 5 s spans a dialog or an
+ * overlay a person dismisses, which is still one visit; a departure that long is counted in it, at most 5 s a time.
+ */
+const FOREGROUND_SETTLE_MS = 2_000
+const FOREGROUND_GRACE_MS = 5_000
+const FOREGROUND_KEY = "app_foreground"
+/** At most this many photo stages wait for glasses being identified; a burst beyond it in those seconds is dropped. */
+const MAX_HELD_PHOTOS = 32
 const MAX_TEXT = 128
 /** A session cannot outlast several caps between two checkpoints; this only bounds a loop. */
 const MAX_CAP_TURNS = 8
@@ -146,6 +182,11 @@ function realGlassesConnected(): boolean {
   return s.connection.state === "connected" && !isSimulatedGlasses(s.deviceModel)
 }
 
+/** Glasses connected or the Mentra App in the foreground: checkpoints every 60 s. */
+function isFastActivity(activity: FleetActivity): boolean {
+  return activity === "glasses_connection" || activity === "app_foreground"
+}
+
 function mapConnection(state: string): ConnectionState {
   if (state === "connected") return "connected"
   if (state === "disconnected") return "disconnected"
@@ -174,10 +215,6 @@ function packageVersions(): {engine?: string; sdk?: string} {
 function phoneInfo(): SnapshotPayload["phone"] | null {
   const os = Platform.OS
   if (os !== "ios" && os !== "android") return null
-  const constants = Constants as typeof Constants & {
-    nativeAppVersion?: string | null
-    nativeBuildVersion?: string | null
-  }
   const osVersion =
     os === "android"
       ? String((Platform.constants as {Release?: string} | undefined)?.Release ?? Platform.Version)
@@ -188,8 +225,9 @@ function phoneInfo(): SnapshotPayload["phone"] | null {
     ...(model ? {model} : {}),
     os,
     osVersion: text(osVersion) ?? "unknown",
-    appVersion: text(constants.nativeAppVersion ?? Constants.expoConfig?.version) ?? "unknown",
-    appBuild: text(constants.nativeBuildVersion) ?? "unknown",
+    // The native application's own version and build number: expo-constants no longer has them.
+    appVersion: text(Application.nativeApplicationVersion ?? Constants.expoConfig?.version) ?? "unknown",
+    appBuild: text(Application.nativeBuildVersion) ?? "unknown",
     ...(engine ? {engineVersion: engine} : {}),
     ...(sdk ? {sdkVersion: sdk} : {}),
   }
@@ -243,13 +281,69 @@ function firmwareOf(s: GlassesState): Firmware {
  * The glasses as last seen in this run. The native layer clears a pair's identity when it disconnects, so the
  * collector keeps what it saw while the glasses were there: a disconnected pair is still described, and still the
  * same device.
+ *
+ * A pair is identified, and its binding fixed for the run, once it has shown its serial number, or once it has been
+ * connected for IDENTITY_SETTLE_MS without one; until then nothing is attributed to it, and a photo stage waits for
+ * it. Glasses are connected a moment before they send their serial and their own Bluetooth address, so a binding
+ * fixed sooner would make a provisional device of every pair that has a serial, and key one that has none by its
+ * Bluetooth name on some connections and by its address on others. A pair that leaves sooner is identified by what
+ * it showed.
  */
 interface KnownGlasses {
+  /** The product (see `glassesProduct`): one pair is one model whatever model string it reports. */
   model: string
-  /** What told this pair from another of its model (see `glassesPeripheral`), or null if it showed nothing. */
-  peripheral: string | null
-  binding: FleetDeviceBinding
+  /** What the pair has shown of who it is, each null until it has. */
+  identity: PairIdentity
+  /** When the pair was first seen connected in this run (monotonic); null while it has only been looked for. */
+  connectedSinceMono: number | null
+  /** Fixed once the pair is identified. A serial that comes later still replaces a provisional binding. */
+  binding: FleetDeviceBinding | null
   firmware: Firmware
+}
+
+/** What tells one pair from another of its model, strongest first: its serial, its own Bluetooth address, its name. */
+interface PairIdentity {
+  serial: string | null
+  address: string | null
+  name: string | null
+}
+
+const IDENTIFIERS = ["serial", "address", "name"] as const
+
+function lowered(value: string | null | undefined): string | null {
+  const trimmed = typeof value === "string" ? value.trim().toLowerCase() : ""
+  return trimmed ? trimmed : null
+}
+
+function pairIdentity(s: GlassesIdentitySource): PairIdentity {
+  return {
+    serial: usableSerial(s),
+    // The address the glasses report as their own, the same on every phone; the left arm's for glasses in two.
+    address: lowered(s.bluetoothMacAddress) ?? lowered(s.leftMacAddress),
+    name: lowered(s.bluetoothName),
+  }
+}
+
+/**
+ * Whether glasses showing `now` are the pair that showed `before`. The strongest identifier both show decides. One
+ * that went blank says nothing (the native layer clears the serial and the address when the link drops), and neither
+ * does showing nothing yet: only a difference tells another pair.
+ */
+function samePair(before: PairIdentity, now: PairIdentity): boolean {
+  for (const field of IDENTIFIERS) {
+    const a = before[field]
+    const b = now[field]
+    if (a !== null && b !== null) return a === b
+  }
+  const shows = (identity: PairIdentity) => IDENTIFIERS.some((field) => identity[field] !== null)
+  return !shows(before) || !shows(now)
+}
+
+/** A photo stage seen while the glasses were being identified, kept to be written against them once they are. */
+interface HeldPhoto {
+  observedAt: number
+  operationId: string
+  payload: Extract<FleetRecord, {kind: "photo_operation"}>["payload"]
 }
 
 /** The battery of the pair `known` describes: it goes when a new connection starts or another pair is identified. */
@@ -262,12 +356,19 @@ interface BatteryReading {
 
 /** What the last snapshot said, so a change worth a new snapshot can be told from one that is not. */
 interface SnapshotMarks {
-  known: boolean
-  connection: ConnectionState
+  /** The binding of the glasses, once they are identified, as a key; "" before. */
+  identity: string
+  /** The glasses were connected. The states short of it (scanning, connecting, disconnected) are all "not". */
+  linked: boolean
   batteryMeasured: boolean
   level: number
   charging: boolean
   versions: string
+}
+
+interface Instant {
+  wall: number
+  mono: number
 }
 
 interface Session {
@@ -281,11 +382,15 @@ interface Session {
   startedMono: number
   /** The elapsed time at the last checkpoint that carried this session; null until it has been reported. */
   reportedElapsedMs: number | null
+  /** Its activity stopped then: the session is counted up to there, and ends there unless it resumes in its grace. */
+  endAt?: Instant
 }
 
 interface SessionSpec {
   activity: FleetActivity
   packageName?: string
+  /** When the activity began, if before the session opens. */
+  since?: Instant
 }
 
 interface Env {
@@ -310,6 +415,14 @@ class CollectorRun {
   /** The Mentra App left the foreground since the anchor: a silent gap then looks like suspension. */
   private leftForeground = false
 
+  /** The visit to the Mentra App going on: when it began, and when the app left it, within the grace. */
+  private visitStart: Instant | null = null
+  private visitLeftAt: Instant | null = null
+  /** The visit has settled into a foreground session (see FOREGROUND_SETTLE_MS). */
+  private foreground = false
+  private foregroundTimer: number | null = null
+  private foregroundDueMono = 0
+
   private checkpointTimer: number | null = null
   private checkpointDueMono = 0
   private snapshotDebounce: number | null = null
@@ -318,6 +431,7 @@ class CollectorRun {
   private lastSnapshotKey: string | null = null
 
   private known: KnownGlasses | null = null
+  private heldPhotos: HeldPhoto[] = []
   private battery: BatteryReading | null = null
   private connection: {state: ConnectionState; observedAt: number} = {state: "disconnected", observedAt: 0}
   private marks: SnapshotMarks | null = null
@@ -336,6 +450,7 @@ class CollectorRun {
     this.anchorWall = wall
     this.anchorMono = this.env.monotonic()
     this.leftForeground = !isForeground()
+    this.followForeground()
     this.connection = {state: mapConnection(useGlassesStore.getState().connection.state), observedAt: wall}
     this.trackGlasses(wall)
     this.openMissing()
@@ -353,11 +468,20 @@ class CollectorRun {
       this.guard("app state", () => {
         if (state !== "active") this.leftForeground = true
         this.onStateChange()
+        // In the background the process may be suspended or killed before the visit's grace is over: the visit is
+        // checkpointed now, up to when the app left, so that time is not lost with it. A blip that stays short of
+        // the background (iOS inactive) writes nothing.
+        if (state === "background" && this.sessions.get(FOREGROUND_KEY)?.endAt) this.flush()
       }),
     )
     this.cleanups.push(() => appState.remove())
 
     this.takeSnapshot()
+    // Launches the engine made before this run could listen: it restores miniapps while the account may still be
+    // being resolved, and the reporter discards them when the account changes, so these are this run's account's.
+    for (const {event, observedAt} of fleetEvents.takeUndeliveredLaunches()) {
+      this.guard("launch", () => this.onLaunch(event, observedAt))
+    }
     this.arm(this.cadence())
   }
 
@@ -374,6 +498,7 @@ class CollectorRun {
     } catch (error) {
       warn("final checkpoint", error)
     }
+    this.guard("photos", () => this.releasePhotos(true))
     this.abort()
   }
 
@@ -382,7 +507,8 @@ class CollectorRun {
     this.stopped = true
     if (this.checkpointTimer !== null) BgTimer.clearTimeout(this.checkpointTimer)
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
-    this.checkpointTimer = this.snapshotDebounce = null
+    if (this.foregroundTimer !== null) BgTimer.clearTimeout(this.foregroundTimer)
+    this.checkpointTimer = this.snapshotDebounce = this.foregroundTimer = null
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup()
@@ -410,8 +536,10 @@ class CollectorRun {
   // --- reacting to the engine ----------------------------------------------------------------------------------
 
   private onStateChange(): void {
+    this.followForeground()
     this.trackGlasses(this.env.now())
     if (!this.checkClock()) this.reconcileSessions()
+    this.releasePhotos()
     this.evaluateSnapshotTriggers()
   }
 
@@ -446,38 +574,50 @@ class CollectorRun {
 
   /** Nothing seen of the glasses so far is about the pair that comes next: not its identity, versions or battery. */
   private forgetGlasses(): void {
+    // A photo still waiting for the pair that was here is that pair's.
+    this.releasePhotos(true)
     this.known = null
     this.battery = null
   }
 
   private rememberGlasses(s: GlassesState): void {
-    const model = text(s.deviceModel)
-    if (!model) return
-    const binding = glassesBinding(s, this.phoneId)
-    if (!binding) {
+    const reported = text(s.deviceModel)
+    if (!reported) return
+    if (isSimulatedGlasses(reported)) {
       // The store names glasses that are no device (the simulated ones): the pair remembered before is not them.
       this.forgetGlasses()
       return
     }
-    const peripheral = glassesPeripheral(s)
-    // What was learned about the pair before this carries over only if it is the same pair: the same address or
-    // name, or the same serial. A second pair of the same model starts from nothing.
+    const model = glassesProduct(reported)
+    const now = pairIdentity(s)
+    // What was learned about the pair before this carries over only if it is the same pair (see `samePair`). A second
+    // pair of the same model starts from nothing.
     const before = this.known
-    const samePair =
-      before !== null &&
-      before.model === model &&
-      ((peripheral !== null && peripheral === before.peripheral) ||
-        (binding.kind === "serial" && before.binding.kind === "serial" && before.binding.serial === binding.serial))
-    // Another pair, swapped in with no disconnect between: the last reading was the other pair's battery.
-    if (before !== null && !samePair) this.battery = null
-    // A serial seen once for this pair is not given up for a provisional stand-in.
-    const kept =
-      samePair && before.binding.kind === "serial" && binding.kind === "provisional" ? before.binding : binding
+    const same = before !== null && before.model === model && samePair(before.identity, now)
+    if (before !== null && !same) {
+      // Another pair, swapped in with no disconnect between: what waited for the first pair is the first pair's, and
+      // the last reading was its battery.
+      this.releasePhotos(true)
+      this.battery = null
+    }
+    const kept = same ? before : null
+    const identity: PairIdentity = {
+      serial: now.serial ?? kept?.identity.serial ?? null,
+      address: now.address ?? kept?.identity.address ?? null,
+      name: now.name ?? kept?.identity.name ?? null,
+    }
+    // The serial, whenever the pair shows one, is its identity, and replaces a provisional stand-in.
+    const binding =
+      identity.serial !== null && kept?.binding?.kind !== "serial"
+        ? serialBinding(model, identity.serial)
+        : (kept?.binding ?? null)
     this.known = {
       model,
-      peripheral: peripheral ?? (samePair ? before.peripheral : null),
-      binding: kept,
-      firmware: samePair ? {...before.firmware, ...firmwareOf(s)} : firmwareOf(s),
+      identity,
+      connectedSinceMono:
+        kept?.connectedSinceMono ?? (this.connection.state === "connected" ? this.env.monotonic() : null),
+      binding,
+      firmware: kept ? {...kept.firmware, ...firmwareOf(s)} : firmwareOf(s),
     }
   }
 
@@ -486,9 +626,85 @@ class CollectorRun {
     return this.known !== null && this.env.modelsWithoutBattery.has(this.known.model)
   }
 
-  private currentBinding(): FleetDeviceBinding | null {
+  /** The binding of the glasses the store describes now, once they are identified (see `identified`). */
+  private currentBinding(final = false): FleetDeviceBinding | null {
     this.rememberGlasses(useGlassesStore.getState())
-    return this.known?.binding ?? null
+    return this.identified(final)
+  }
+
+  /**
+   * The binding of the glasses known here, or null while they are being identified (see KnownGlasses) or were only
+   * ever looked for. Glasses that have left are identified by what they showed; so are they with `final`, for what
+   * cannot wait.
+   */
+  private identified(final = false): FleetDeviceBinding | null {
+    const known = this.known
+    if (!known || known.binding) return known?.binding ?? null
+    const since = known.connectedSinceMono
+    if (since === null) return null
+    const departed = this.connection.state !== "connected"
+    if (final || departed || this.env.monotonic() - since >= IDENTITY_SETTLE_MS) {
+      known.binding = provisionalBinding(known.model, known.identity.address ?? known.identity.name)
+    }
+    return known.binding
+  }
+
+  // --- the foreground ------------------------------------------------------------------------------------------
+
+  private instant(): Instant {
+    return {wall: this.env.now(), mono: this.env.monotonic()}
+  }
+
+  /**
+   * Follows the app state into the foreground as Fleet counts it (see FOREGROUND_SETTLE_MS): a visit begins when the
+   * app becomes active, becomes a foreground session once the app is active 2 s after that, and is over once the app
+   * has been away for 5 s, ending when it left. Writes nothing: the sessions follow it.
+   */
+  private followForeground(): void {
+    const now = this.instant()
+    const active = isForeground()
+    // Away for the grace, the visit is over, even if the app is back by now: back that late (the process was
+    // suspended in between, and the timer could not fire), it is a new visit.
+    if (this.visitLeftAt && now.mono - this.visitLeftAt.mono >= FOREGROUND_GRACE_MS) {
+      this.visitStart = this.visitLeftAt = null
+      this.foreground = false
+    }
+    const session = this.sessions.get(FOREGROUND_KEY)
+    if (active) {
+      if (this.visitLeftAt) {
+        // Back within the grace: the same visit, the time away included.
+        this.visitLeftAt = null
+        if (session) delete session.endAt
+      }
+      this.visitStart ??= now
+      if (!this.foreground && now.mono - this.visitStart.mono >= FOREGROUND_SETTLE_MS) this.foreground = true
+    } else if (this.visitStart && !this.visitLeftAt) {
+      this.visitLeftAt = now
+      if (session) session.endAt = now
+    }
+    this.armForegroundTimer(now, active)
+  }
+
+  /** When the foreground can next change with the app state unchanged: the visit settling, or its grace ending. */
+  private armForegroundTimer(now: Instant, active: boolean): void {
+    let due: number | null = null
+    if (this.visitLeftAt) due = this.visitLeftAt.mono + FOREGROUND_GRACE_MS
+    else if (active && this.visitStart && !this.foreground) due = this.visitStart.mono + FOREGROUND_SETTLE_MS
+    if (due !== null && this.foregroundTimer !== null && due === this.foregroundDueMono) return
+    if (this.foregroundTimer !== null) BgTimer.clearTimeout(this.foregroundTimer)
+    this.foregroundTimer = null
+    if (due === null) return
+    this.foregroundDueMono = due
+    const timer: number = BgTimer.setTimeout(
+      () =>
+        this.guard("app state", () => {
+          if (this.foregroundTimer !== timer) return
+          this.foregroundTimer = null
+          this.onStateChange()
+        }),
+      Math.max(0, due - now.mono),
+    )
+    this.foregroundTimer = timer
   }
 
   // --- sessions ------------------------------------------------------------------------------------------------
@@ -496,7 +712,10 @@ class CollectorRun {
   private desiredSessions(): Map<string, SessionSpec> {
     const wanted = new Map<string, SessionSpec>()
     wanted.set("engine_active", {activity: "engine_active"})
-    if (isForeground()) wanted.set("app_foreground", {activity: "app_foreground"})
+    // From when the visit began, which is before it settled.
+    if (this.foreground) {
+      wanted.set(FOREGROUND_KEY, {activity: "app_foreground", ...(this.visitStart ? {since: this.visitStart} : {})})
+    }
     if (realGlassesConnected()) wanted.set("glasses_connection", {activity: "glasses_connection"})
     // Local miniapps execute while their JS context runs; native built-ins as the apps store derives it.
     for (const name of [...miniappRunningRegistry.getAll(), ...nativeMiniappExecution.getAll()]) {
@@ -506,16 +725,18 @@ class CollectorRun {
     return wanted
   }
 
-  private open(key: string, spec: SessionSpec): void {
-    this.sessions.set(key, {
+  private open(key: string, spec: SessionSpec): Session {
+    const session: Session = {
       key,
       activity: spec.activity,
       id: newId(),
       ...(spec.packageName ? {packageName: spec.packageName} : {}),
-      startedWall: this.env.now(),
-      startedMono: this.env.monotonic(),
+      startedWall: spec.since?.wall ?? this.env.now(),
+      startedMono: spec.since?.mono ?? this.env.monotonic(),
       reportedElapsedMs: null,
-    })
+    }
+    this.sessions.set(key, session)
+    return session
   }
 
   private openMissing(): void {
@@ -529,15 +750,18 @@ class CollectorRun {
     for (const key of this.sessions.keys()) if (!wanted.has(key)) ending.add(key)
     // Close first: a session opened in the same breath is not reported until a checkpoint after its identity settles.
     if (ending.size > 0) this.writeCheckpoint(ending)
-    for (const [key, spec] of wanted) if (!this.sessions.has(key)) this.open(key, spec)
-    this.ensureCadence()
+    let fastSince: number | null = null
+    for (const [key, spec] of wanted) {
+      if (this.sessions.has(key)) continue
+      const session = this.open(key, spec)
+      if (isFastActivity(session.activity)) fastSince = Math.min(fastSince ?? Infinity, session.startedMono)
+    }
+    this.ensureCadence(fastSince)
   }
 
   /** 60-second checkpoints while glasses are connected or the Mentra App is in the foreground; 15 minutes otherwise. */
   private isFast(): boolean {
-    for (const session of this.sessions.values()) {
-      if (session.activity === "glasses_connection" || session.activity === "app_foreground") return true
-    }
+    for (const session of this.sessions.values()) if (isFastActivity(session.activity)) return true
     return false
   }
 
@@ -557,20 +781,31 @@ class CollectorRun {
     if (this.stopped || this.checkpointTimer !== fired) return
     try {
       this.flush()
-      this.guard("snapshot", () => this.periodicSnapshot())
+      // Glasses connected long enough are identified by now, without a change in the store to say so.
+      this.guard("photos", () => this.releasePhotos())
+      this.guard("snapshot", () => {
+        this.evaluateSnapshotTriggers()
+        this.periodicSnapshot()
+      })
     } finally {
       // A checkpoint that failed part-way must not end the cadence.
       if (!this.stopped && this.checkpointTimer === fired) this.arm(this.cadence())
     }
   }
 
-  /** Activity that needs a 60 s checkpoint brings the next one forward; a 15-minute wait does not outlast it. */
-  private ensureCadence(): void {
+  /**
+   * Activity that needs a 60 s checkpoint brings the next one forward, to 60 s after it began (`fastSince`, by default
+   * now); a 15-minute wait does not outlast it.
+   */
+  private ensureCadence(fastSince: number | null = null): void {
     if (this.checkpointTimer === null) {
       this.arm(this.cadence())
-    } else if (this.isFast() && this.checkpointDueMono - this.env.monotonic() > FAST_CHECKPOINT_MS) {
-      this.arm(FAST_CHECKPOINT_MS)
+      return
     }
+    if (!this.isFast()) return
+    const now = this.env.monotonic()
+    const due = Math.max(now, (fastSince ?? now) + FAST_CHECKPOINT_MS)
+    if (this.checkpointDueMono > due) this.arm(due - now)
   }
 
   // --- checkpoints ---------------------------------------------------------------------------------------------
@@ -625,10 +860,16 @@ class CollectorRun {
    * clock had given it by `wallLimit`, and never more than a session may report.
    */
   private entryFor(session: Session, mono: number, wallLimit: number, ended: boolean): UsageSession | null {
+    if (session.endAt) {
+      // The activity stopped then: no time after it is the session's, whether or not it ends now.
+      mono = Math.min(mono, session.endAt.mono)
+      wallLimit = Math.min(wallLimit, session.endAt.wall)
+    }
     let binding: FleetDeviceBinding | undefined
     if (session.activity === "glasses_connection") {
-      // Fixed at the first report, so a serial that arrives later never splits a connection into two devices.
-      binding = session.binding ??= this.currentBinding() ?? undefined
+      // Fixed at the first report, so a serial that arrives later never splits a connection into two devices. Not
+      // reported before the glasses are identified, unless the session ends first.
+      binding = session.binding ??= this.currentBinding(ended) ?? undefined
       if (!binding) return null
     }
     const floor = session.reportedElapsedMs ?? 0
@@ -740,6 +981,14 @@ class CollectorRun {
     this.anchorWall = wall
     this.anchorMono = mono
     this.leftForeground = !isForeground()
+    // The break closed the visit: one the app had left is over, and one still going on starts again from now.
+    if (this.visitLeftAt) {
+      this.visitStart = this.visitLeftAt = null
+      this.foreground = false
+    } else if (this.visitStart) {
+      this.visitStart = {wall, mono}
+    }
+    this.armForegroundTimer({wall, mono}, isForeground())
     this.openMissing()
     this.arm(this.cadence())
     this.scheduleSnapshot()
@@ -769,9 +1018,10 @@ class CollectorRun {
   private currentMarks(): SnapshotMarks {
     const reading = this.battery
     const measured = !!reading && Number.isFinite(reading.level) && reading.level >= 0
+    const binding = this.identified()
     return {
-      known: this.known !== null,
-      connection: this.connection.state,
+      identity: binding ? JSON.stringify(binding) : "",
+      linked: this.connection.state === "connected",
       batteryMeasured: measured,
       level: measured ? reading.level : -1,
       charging: measured ? reading.charging : false,
@@ -803,20 +1053,36 @@ class CollectorRun {
     this.takeSnapshot(!this.isFast())
   }
 
-  /** A change in the connection, a battery move of 5 points or a charging change, or a new version, is worth a snapshot. */
+  /**
+   * Glasses connecting or disconnecting is worth a snapshot; while they are connected, so are their identification (or
+   * a serial replacing a provisional binding), a battery move of 5 points or a charging change, and a new version.
+   *
+   * Moves among the states short of connected are not: a phone retrying glasses that are away goes scanning,
+   * connecting and disconnected every few seconds, all day, and forgets and finds the glasses' identity with each
+   * attempt. Their battery and versions are only read while they are connected.
+   *
+   * A disconnect is written at once, while what is known is still the pair that left: the retry that follows within
+   * moments starts a new connection, which forgets them. Only a snapshot in the last two seconds holds it back to the
+   * usual debounce, so a link that flaps is still one snapshot every two seconds at most.
+   */
   private evaluateSnapshotTriggers(): void {
     const last = this.marks
     if (!last) return
     const now = this.currentMarks()
-    let changed = now.known !== last.known
-    if (!changed && now.known) {
-      changed =
-        now.connection !== last.connection ||
-        now.batteryMeasured !== last.batteryMeasured ||
-        (now.batteryMeasured &&
-          (Math.abs(now.level - last.level) >= BATTERY_SNAPSHOT_STEP || now.charging !== last.charging)) ||
-        (now.versions !== "" && now.versions !== last.versions)
+    if (now.linked !== last.linked) {
+      const disconnected = !now.linked
+      if (disconnected && this.env.monotonic() - this.lastSnapshotMono >= SNAPSHOT_DEBOUNCE_MS) this.takeSnapshot()
+      else this.scheduleSnapshot()
+      return
     }
+    if (!now.linked) return
+    const changed =
+      now.identity !== last.identity ||
+      (now.identity !== "" &&
+        (now.batteryMeasured !== last.batteryMeasured ||
+          (now.batteryMeasured &&
+            (Math.abs(now.level - last.level) >= BATTERY_SNAPSHOT_STEP || now.charging !== last.charging)) ||
+          (now.versions !== "" && now.versions !== last.versions)))
     if (changed) this.scheduleSnapshot()
   }
 
@@ -843,11 +1109,16 @@ class CollectorRun {
           }
         : null
     // What the snapshot says, leaving out the time a battery with no reading is stamped with (it is now): an unknown
-    // one, or one the glasses cannot report.
+    // one, or one the glasses cannot report. Of glasses that are not connected only that is new: retrying them changes
+    // the state short of connected, its time, and what is known of them, with every attempt.
     const key = JSON.stringify([
-      binding && glasses ? binding : null,
       phone,
-      glasses && !this.battery ? {...glasses, battery: {state: glasses.battery?.state}} : glasses,
+      this.connection.state !== "connected"
+        ? "not connected"
+        : [
+            binding && glasses ? binding : null,
+            glasses && !this.battery ? {...glasses, battery: {state: glasses.battery?.state}} : glasses,
+          ],
     ])
     if (onlyIfNew && key === this.lastSnapshotKey) return
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
@@ -865,14 +1136,14 @@ class CollectorRun {
 
   // --- launches and photos -------------------------------------------------------------------------------------
 
-  private onLaunch(event: FleetLaunchEvent): void {
+  private onLaunch(event: FleetLaunchEvent, observedAt = this.env.now()): void {
     const packageName = text(event.packageName)
     if (!packageName) return
     if (event.start !== "user" && event.start !== "automatic") return
     if (event.outcome !== "started" && event.outcome !== "failed") return
     const miniappName = text(event.miniappName)
     const versionName = text(event.versionName)
-    this.emit(this.env.now(), (base) => ({
+    this.emit(observedAt, (base) => ({
       ...base,
       kind: "miniapp_launch",
       payload: {
@@ -890,16 +1161,30 @@ class CollectorRun {
     if (typeof operationId !== "string" || operationId.length > MAX_TEXT || !FLEET_ID.test(operationId)) return
     const stage = event.stage
     if (stage !== "requested" && stage !== "captured" && stage !== "delivered" && stage !== "failed") return
-    // A photo is always one pair of glasses' photo.
-    const binding = this.currentBinding()
-    if (!binding) return
     const payload = stage === "failed" ? {stage, failedStage: event.failedStage ?? ("requested" as const)} : {stage}
-    this.emit(this.env.now(), (base) => ({
+    const photo: HeldPhoto = {observedAt: this.env.now(), operationId, payload}
+    // A photo is always one pair of glasses' photo: of connected glasses still being identified, it waits for them.
+    const binding = this.currentBinding()
+    if (binding) this.emitPhoto(photo, binding)
+    else if (this.known?.connectedSinceMono != null && this.heldPhotos.length < MAX_HELD_PHOTOS)
+      this.heldPhotos.push(photo)
+  }
+
+  /** Writes the photo stages that waited for the glasses, once they are identified (or with `final`, as they are). */
+  private releasePhotos(final = false): void {
+    if (this.heldPhotos.length === 0) return
+    const binding = this.identified(final)
+    if (binding) for (const photo of this.heldPhotos.splice(0)) this.emitPhoto(photo, binding)
+    else if (final) this.heldPhotos = []
+  }
+
+  private emitPhoto(photo: HeldPhoto, binding: FleetDeviceBinding): void {
+    this.emit(photo.observedAt, (base) => ({
       ...base,
       kind: "photo_operation",
-      operationId,
+      operationId: photo.operationId,
       deviceBinding: binding,
-      payload,
+      payload: photo.payload,
     }))
   }
 

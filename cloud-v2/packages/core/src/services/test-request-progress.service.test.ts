@@ -65,3 +65,13 @@ test('queued work, unaccepted input, changed input, missing progress and unverif
   g.definition.definitionSha256 = 'f'.repeat(64)
   expect(await g.service.get(g.row)).toBeUndefined()
 })
+test('accepted queued disk blocker is displayed without inventing running progress or step completion',async()=>{
+ const f=fixture(),waiting={requestId:f.row.requestId,requestDigest:f.row.inputSha256!,acceptedAt:f.row.hostReceipt!.acceptedAt,
+  observedAt:'2026-10-03T00:59:00Z',code:'storage-capacity' as const,reason:'Available disk cannot cover estimated output plus 2 GB margin'}
+ const host={...f.host,lane:{id:'phone',waiting:[waiting]}}
+ const service=new TestRequestProgressService({async progressObservation(){return host}},undefined,()=>Date.parse('2026-10-03T01:00:02Z'))
+ expect(await service.get(f.row)).toEqual(waiting)
+ for(const change of [{requestId:'other'},{requestDigest:'f'.repeat(64)},{acceptedAt:'2026-10-03T00:57:00Z'},{observedAt:'2026-10-03T01:00:03Z'}]){
+  host.lane.waiting=[{...waiting,...change}];expect(await service.get(f.row)).toBeUndefined()
+ }
+})

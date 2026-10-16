@@ -162,7 +162,7 @@ app.post(
     const code = str(body.code);
     if (!code) throw new InvalidRequest("code required");
     const tenantUserId = await tenantUserIdFor(u.mentraUserId);
-    await account.confirmEmailChange(tenantUserId, code);
+    await account.confirmEmailChange(u.mentraUserId, tenantUserId, code);
     return c.body(null, 204);
   },
 );

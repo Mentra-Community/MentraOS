@@ -48,7 +48,7 @@ export const laneControlInputSchema = z.object({operationId: z.string().uuid(), 
     ctx.addIssue({code: 'custom', message: 'Lane control arguments must match their action'})
 })
 export const laneControlRecordSchema = z.object({command: laneControlCommandSchema,
-  receipt: laneControlReceiptSchema.optional()}).strict()
+  receipt: laneControlReceiptSchema.optional(), operatorLabel: z.string().min(1).max(320).optional()}).strict()
 export type LaneControlRecord = z.infer<typeof laneControlRecordSchema>
 export type LaneControlInput = z.infer<typeof laneControlInputSchema>
 export type LaneControlView = {operationId: string; hostId: string; laneId: string; action: LaneControlInput['action'];

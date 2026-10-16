@@ -292,13 +292,17 @@ export const routineWorkStatusSchema = z
 export type RoutineWorkStatus = z.infer<typeof routineWorkStatusSchema>
 export type RoutineWorkProgress = z.infer<typeof routineWorkProgressSchema>
 
-/** A recording-only verification has its own identity; the original terminal status stays immutable. */
+/** A bounded completion retry has its own identity; original terminal status stays immutable. */
 export const routineWorkVerificationIdentitySchema = z.object({
   decisionId: frameworkIdentitySchema, inputSha256: workHashSchema,
   acceptedAt: z.string().datetime({offset:true}), deadline: z.string().datetime({offset:true}),
   failureEventId: frameworkIdentitySchema, failureSha256: workHashSchema,
-  previousFailure: z.object({code:z.literal('recording-response'),reason:publicText}).strict(),
+  previousFailure: z.object({code:z.enum(['recording-response','permission-required']),reason:publicText}).strict(),
+  admission: z.object({requestId:frameworkIdentitySchema,originalAdmissionExpiresAt:z.number().int().positive()}).strict().optional(),
 }).strict().refine(value => Date.parse(value.deadline)>Date.parse(value.acceptedAt) &&
   Date.parse(value.deadline)-Date.parse(value.acceptedAt)<=30*60*1000,'Verification retry requires its bounded original window')
+  .refine(value=>value.previousFailure.code==='permission-required' ? Boolean(value.admission&&
+    /^local:([0-9]{13}):([A-Za-z0-9_-]{1,120})$/.exec(value.admission.requestId)?.[1]===String(value.admission.originalAdmissionExpiresAt)) :
+    value.admission===undefined,'Pre-admission retry requires its original finite local request identity')
 export const routineWorkVerificationSchema = z.object({identity:routineWorkVerificationIdentitySchema,event:routineWorkStatusSchema}).strict()
 export type RoutineWorkVerification = z.infer<typeof routineWorkVerificationSchema>

@@ -583,3 +583,46 @@ test('recording verification has separate durable identity and preserves origina
  await expect(f.service.verifyRecording({identity,event:{...event,eventId:'reopen',sequence:7,details:{...event.details,sequence:7}}},row.hostId)).rejects.toThrow('terminal')
  expect(f.rows.get(row.workId)?.status).toEqual(original)
 })
+
+test('pre-admission verification retains the failed status and admits only its original ordered authenticated retry',async()=>{
+ const f=fixture(),row=await f.service.submit(input)
+ const accepted={workId:row.workId,inputSha256:row.inputSha256,hostId:row.hostId,acceptedAt:'2026-10-05T10:00:00.000Z'}
+ await f.service.accept(accepted,row.hostId)
+ const details={reason:'Selected app microphone permission is missing',summary:'Original unadmitted candidate failed',sourceRevision:'c'.repeat(40),
+  prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',review:{sourceRevision:'c'.repeat(40),
+   prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',reviewUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601#pullrequestreview-21',verdict:'APPROVED'}}
+ const {acceptedAt:_,...binding}=accepted
+ const original=routineWorkStatusSchema.parse({...binding,eventId:'permission-failed',sequence:4,state:'failed',details:{...accepted,work:row.work,attemptId:2,
+  state:'failed',sequence:4,details,events:[{eventId:'permission-failed',sequence:4,state:'failed',at:'2026-10-05T11:00:00.000Z',details}]}})
+ await f.service.status(original,row.hostId)
+ const requestId='local:1792177290232:original-candidate',identity={decisionId:'admission-retry',inputSha256:'d'.repeat(64),
+  failureEventId:original.eventId,failureSha256:requestInputDigest(original),acceptedAt:'2026-10-05T11:01:00.000Z',deadline:'2026-10-05T11:31:00.000Z',
+  previousFailure:{code:'permission-required',reason:details.reason},admission:{requestId,originalAdmissionExpiresAt:1792177290232}}
+ const event=routineWorkStatusSchema.parse({...original,eventId:identity.decisionId,sequence:5,state:'awaiting-installation',details:{...original.details,
+  state:'awaiting-installation',sequence:5,details:{...details,requestId,summary:'Prepare original candidate with fresh permissions'},
+  events:[...original.details.events,{eventId:identity.decisionId,sequence:5,state:'awaiting-installation',at:'2026-10-05T11:01:00.002Z',details}]}})
+ let registered=false,reads=0
+ const service=new ActualRoutineWorkService((f.service as any).rows,undefined,undefined,{async publish(){}},undefined,undefined,null,
+  async id=>{expect(id).toBe(requestId);reads++;return registered})
+ registered=true;await expect(service.verifyRecording({identity,event},row.hostId)).rejects.toThrow('unregistered');registered=false
+ const futureIdentity={...identity,acceptedAt:new Date(Date.now()+60000).toISOString(),deadline:new Date(Date.now()+1800000).toISOString()}
+ const futureEvent=structuredClone(event);futureEvent.details.events.at(-1)!.at=futureIdentity.acceptedAt
+ await expect(service.verifyRecording({identity:futureIdentity,event:futureEvent},row.hostId)).rejects.toThrow('future')
+ for(const altered of [{...event,state:'passed'},{...event,hostId:'other'},{...event,sequence:4},
+  {...event,details:{...event.details,attemptId:3}},{...event,details:{...event.details,details:{...event.details.details,requestId:'other'}}}])
+  await expect(service.verifyRecording({identity,event:altered},row.hostId)).rejects.toThrow()
+ for(const changed of [{failureSha256:'e'.repeat(64)},{admission:{...identity.admission,originalAdmissionExpiresAt:1}},
+  {previousFailure:{code:'recording-response',reason:details.reason}}])
+  await expect(service.verifyRecording({identity:{...identity,...changed},event},row.hostId)).rejects.toThrow()
+ expect(await service.verifyRecording({identity,event},row.hostId)).toEqual(event)
+ registered=true;const readCount=reads;expect(await service.verifyRecording({identity,event},row.hostId)).toEqual(event);expect(reads).toBe(readCount)
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+ await expect(service.verifyRecording({identity:{...identity,decisionId:'replaced-retry'},event},row.hostId)).rejects.toThrow('identity')
+ const cancelled=routineWorkStatusSchema.parse({...event,eventId:'retry-cancelled',sequence:6,state:'cancelled',details:{...event.details,
+  state:'cancelled',sequence:6,events:[...event.details.events,{eventId:'retry-cancelled',sequence:6,state:'cancelled',at:'2026-10-05T11:02:00.000Z',details}]}})
+ expect(await service.verifyRecording({identity,event:cancelled},row.hostId)).toEqual(cancelled)
+ await expect(service.verifyRecording({identity,event:{...event,eventId:'reopen-cancelled',sequence:7,details:{...event.details,sequence:7}}},row.hostId)).rejects.toThrow('terminal')
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+ f.rows.get(row.workId)!.fleetCancellation={requestedAt:'2026-10-05T11:03:00.000Z',reason:'Cancel work'}
+ await expect(service.verifyRecording({identity,event},row.hostId)).rejects.toThrow('uncancelled')
+})

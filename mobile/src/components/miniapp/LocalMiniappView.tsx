@@ -337,8 +337,10 @@ function LocalMiniappView({
       // launcher to ensure the background context is running (idempotent — a
       // re-foreground of a live miniapp just rebuilds this WebView half) and
       // mounts the resolved UI entry it hands back. Errors throw and are caught
-      // by launch().catch below.
-      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort})
+      // by launch().catch below. A context this spawns is the person opening
+      // the miniapp's screen: a user launch to Fleet (a Home tap's own start
+      // reports itself).
+      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort}, {trigger: "user"})
 
       // Deliberately AFTER the spawn, not before: if we were superseded while
       // spawning, leave the JSContext alive (background miniapps keep running
