@@ -20,7 +20,9 @@ the diagnostic class, DUMP-protected registration/start method, instantiated rec
 subclass/onReceive dispatch, and DeviceManager startup call. Its package revision and
 launcher/library content digest are recorded in hash-bound `diagnosticVerification`
 (`compiled-receiver-wiring-v1`). The first actual diagnostic build must exercise this
-tool before admission; source mocks alone do not qualify an APK. CI also verifies an immutable diagnostic asset,
+tool before admission; source mocks alone do not qualify an APK. Discovery is bounded
+to executable, revisioned packages under the canonical SDK cmdline-tools directory;
+a latest alias is resolved before hashing, and PATH/outside-SDK tools are refused. CI also verifies an immutable diagnostic asset,
 nonempty bundled JavaScript, Android's debuggable manifest flag and release signature.
 Diagnostic minification is disabled so bytecode names remain inspectable. Diagnostic
 concurrency has a separate suffix and cannot cancel ordinary coverage for the same PR.

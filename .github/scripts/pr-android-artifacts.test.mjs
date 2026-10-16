@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises"
+import {mkdtemp, mkdir, readFile, rm, writeFile, symlink, chmod, rename, realpath} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import {ANDROID_PUBLICATION_STEP, androidAppIdentity, androidReceiptName, publishAndroidArtifacts, validateAndroidReceipt} from "./pr-android-artifacts.mjs"
-import {validateNimoDiagnosticBytecode, NIMO_DIAGNOSTIC, NIMO_RECEIVER, NIMO_MANAGER} from "./pr-android-artifacts-diagnostic.mjs"
+import {inspectNimoDiagnosticBytecode, resolveAndroidSdkAnalyzer, validateNimoDiagnosticBytecode, NIMO_DIAGNOSTIC, NIMO_RECEIVER, NIMO_MANAGER} from "./pr-android-artifacts-diagnostic.mjs"
 import {runInNewContext} from "node:vm"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -69,7 +69,7 @@ async function publishing(run, failApk = false, diagnostic = false) {
     await mkdir(path.join(dir,'cmdline-tools','latest','bin'),{recursive:true})
     await mkdir(path.join(dir,'cmdline-tools','latest','lib'),{recursive:true})
     await writeFile(path.join(dir,'cmdline-tools','latest','source.properties'),'Pkg.Revision=19.0')
-    await writeFile(path.join(dir,'cmdline-tools','latest','bin','apkanalyzer'),'fixed SDK launcher')
+    await writeFile(path.join(dir,'cmdline-tools','latest','bin','apkanalyzer'),'fixed SDK launcher',{mode:0o755})
     await writeFile(path.join(dir,'cmdline-tools','latest','lib','analyzer.jar'),'fixed SDK analyzer')
     const apk = path.join(dir, "app-release.apk"); await writeFile(apk, "synthetic APK bytes")
     const calls = [], env = {GITHUB_REPOSITORY: "Mentra-Community/MentraOS", PR_NUMBER: "42", PR_HEAD_SHA: head,
@@ -226,4 +226,58 @@ test('literal-only synthetic DEX cannot publish an authoritative diagnostic rece
   await assert.rejects(publishAndroidArtifacts(apk,env,{exec:literalOnly}),/registration/)
   assert.deepEqual(calls,[])
  },false,true)
+})
+
+async function sdkLayout(run) {
+ const directory=await mkdtemp(path.join(tmpdir(),'sdk-analyzer-layout-')),sdk=path.join(directory,'sdk')
+ const install=async(name,revision=name,executable=true)=>{
+  const root=path.join(sdk,'cmdline-tools',name)
+  await mkdir(path.join(root,'bin'),{recursive:true});await mkdir(path.join(root,'lib'),{recursive:true})
+  await writeFile(path.join(root,'source.properties'),`Pkg.Revision=${revision}\n`)
+  await writeFile(path.join(root,'bin','apkanalyzer'),'SDK launcher',{mode:executable?0o755:0o644})
+  await writeFile(path.join(root,'lib','analyzer.jar'),'SDK analyzer implementation')
+  return realpath(root)
+ }
+ try {await mkdir(path.join(sdk,'cmdline-tools'),{recursive:true});await run({directory,sdk,install})}
+ finally {await rm(directory,{recursive:true,force:true})}
+}
+
+test('versioned-only SDK layout publishes diagnostic proof without a latest path', async()=>{
+ await publishing(async({apk,env,exec,dir})=>{
+  await rename(path.join(dir,'cmdline-tools','latest'),path.join(dir,'cmdline-tools','19.0'))
+  const selected=await resolveAndroidSdkAnalyzer(dir)
+  assert.equal(selected.analyzer,await realpath(path.join(dir,'cmdline-tools','19.0','bin','apkanalyzer')))
+  assert.equal((await publishAndroidArtifacts(apk,env,{exec})).diagnosticVerification.analyzer.revision,'19.0')
+ },false,true)
+})
+
+test('SDK discovery canonicalizes latest alias and hashes the actual versioned package',async()=>{
+ await sdkLayout(async({sdk,install})=>{
+  const actual=await install('19.0');await install('18.0')
+  const exec=(_tool,args)=>args[3]===NIMO_DIAGNOSTIC?diagnosticCode.diagnostics:args[3]===NIMO_RECEIVER?diagnosticCode.receiver:diagnosticCode.manager
+  const before=await inspectNimoDiagnosticBytecode('/fixed/signed.apk',sdk,exec)
+  await symlink(actual,path.join(sdk,'cmdline-tools','latest'),'dir')
+  assert.equal((await resolveAndroidSdkAnalyzer(sdk)).root,actual)
+  assert.deepEqual(await inspectNimoDiagnosticBytecode('/fixed/signed.apk',sdk,exec),before)
+ })
+})
+
+test('missing, nonexecutable or unproven SDK tools never fall back to PATH or an outside alias',async()=>{
+ await sdkLayout(async({directory,sdk,install})=>{
+  const outside=path.join(directory,'outside');await mkdir(path.join(outside,'bin'),{recursive:true})
+  await writeFile(path.join(outside,'bin','apkanalyzer'),'outside executable',{mode:0o755})
+  await writeFile(path.join(outside,'source.properties'),'Pkg.Revision=99.0')
+  const previous=process.env.PATH;process.env.PATH=path.join(outside,'bin')
+  try {
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+   await symlink(outside,path.join(sdk,'cmdline-tools','latest'),'dir')
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+   const root=await install('19.0','19.0',false)
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+   await chmod(path.join(root,'bin','apkanalyzer'),0o755)
+   await writeFile(path.join(root,'source.properties'),'not SDK package provenance')
+   await assert.rejects(resolveAndroidSdkAnalyzer(sdk),/No executable/)
+  } finally {if(previous===undefined)delete process.env.PATH;else process.env.PATH=previous}
+  await assert.rejects(resolveAndroidSdkAnalyzer('caller-relative-tool'),/root must be absolute/)
+ })
 })
