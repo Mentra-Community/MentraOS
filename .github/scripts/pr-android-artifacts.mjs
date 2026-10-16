@@ -89,7 +89,7 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
     /application-debuggable/.test(badging) : !diagnosticMarker && !/application-debuggable/.test(badging), 'APK diagnostic marker/debuggability differs from publication mode')
   let diagnosticProof
   if (diagnostic) {
-    diagnosticProof = await inspectNimoDiagnosticBytecode(apk, path.join(env.ANDROID_HOME, 'cmdline-tools', 'latest', 'bin', 'apkanalyzer'), exec)
+    diagnosticProof = await inspectNimoDiagnosticBytecode(apk, env.ANDROID_HOME, exec)
     const bundle = exec("unzip", ["-p", apk, "assets/index.android.bundle"], {maxBuffer: 100 * 1024 * 1024})
     requireThat(bundle.length > 0, 'Diagnostic app must contain its JavaScript bundle')
     app.diagnostic = 'nimo-resource-v1'
