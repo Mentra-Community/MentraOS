@@ -1,5 +1,12 @@
 # NIMO commissioning APK
 
+Publishing order: first land the reviewed workflow/scripts support on `dev`.
+Then retain the reviewed native/variant candidate as an open same-repository PR targeting
+`dev` or `staging`. Dispatch the trusted workflow at `dev` with that candidate's exact
+PR/head/base and `nimo_diagnostic: true`. The existing trusted-dev guard deliberately
+rejects PR-branch dispatch; the existing selector rejects closed or stacked-base PRs.
+The workflow support alone does not add a diagnostic native/app variant to `dev`.
+
 The `nimo_diagnostic` input of the existing Android workflow is explicit, dispatch-only,
 and requires the existing pinned PR/head/base inputs. It is not a normal PR build,
 release, inventory offer, or hardware qualification. Do not dispatch until the exact
