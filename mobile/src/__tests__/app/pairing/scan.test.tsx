@@ -27,10 +27,20 @@ jest.mock("@mentra/bluetooth-sdk", () => {
 
 jest.mock("@/hooks/pairing/useNimoCompanionDiscovery", () => ({useNimoCompanionDiscovery: jest.fn()}))
 
-jest.mock("expo-router", () => ({
-  useLocalSearchParams: jest.fn(),
-  useFocusEffect: jest.fn(),
-}))
+const mockScanFocus: {rerun?: () => void} = {}
+
+jest.mock("expo-router", () => {
+  const React = require("react")
+  return {
+    useLocalSearchParams: jest.fn(),
+    useFocusEffect: (effect: () => void | (() => void)) => {
+      mockScanFocus.rerun = () => {
+        effect()
+      }
+      React.useEffect(() => effect(), [effect])
+    },
+  }
+})
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
   focusEffectPreventBack: jest.fn(),
@@ -288,6 +298,15 @@ describe("pairing scan screen", () => {
     expect(replace).not.toHaveBeenCalled()
 
     expect(requestFeaturePermissions).not.toHaveBeenCalled()
+
+    fireEvent.press(getByText("001"))
+    expect(push).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      mockScanFocus.rerun?.()
+    })
+    fireEvent.press(getByText("001"))
+    expect(push).toHaveBeenCalledTimes(2)
 
     // Two-phase identity: picking a device must NOT write the default identity —
     // the scan marks the model pending and the native layer promotes on success.
