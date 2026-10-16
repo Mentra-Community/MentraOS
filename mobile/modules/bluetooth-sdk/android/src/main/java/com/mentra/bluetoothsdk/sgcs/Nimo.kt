@@ -943,6 +943,7 @@ class Nimo : SGCManager() {
     private var resourceTimeCommandId: String? = null
     private var resourceTimeWriteStartedAt: Long? = null
     @Volatile private var resourceReleasePending = false
+    @Volatile private var resourceReceiptPending = false
     @Volatile private var resourceReleased = false
     private val resourcePostedWrites = AtomicInteger(0)
     private var resourceExitStatus: Int? = null
@@ -989,7 +990,7 @@ class Nimo : SGCManager() {
     /** Exact original instance only. Never delegates to the manager's current device. */
     internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) {
         check(Looper.myLooper() == mainHandler.looper)
-        if (!isCurrent() || expectedGeneration != resourceSessionGeneration || expectedGeneration < 1 || resourceReleasePending) {
+        if (!isCurrent() || expectedGeneration != resourceSessionGeneration || expectedGeneration < 1 || resourceReleasePending || resourceReceiptPending) {
             completed(JSONObject().put("error", "target-mismatch-or-release-pending")); return
         }
         if (resourceReleased) { completed(resourceSnapshot()); return }
@@ -1023,6 +1024,7 @@ class Nimo : SGCManager() {
             gatt = null; txChar = null; rxChar = null; micChar = null
             resetSessionState()
             resourceReleasePending = false; resourceReleased = true
+            resourceReceiptPending = true
             // Shared state belongs to this instance only while the manager still owns it.
             if (isCurrent()) {
                 DeviceStore.apply("glasses", "connected", false)
@@ -1030,7 +1032,12 @@ class Nimo : SGCManager() {
                 DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
             }
             NimoResourceDiagnostics.track(this)
-            mainHandler.postDelayed({ completed(resourceSnapshot()) }, 100)
+            mainHandler.postDelayed({
+                // Keep the original bearer/generation fenced through receipt delivery. The
+                // short callback-observation window must not capture a later connection.
+                val originalReceipt = resourceSnapshot()
+                try { completed(originalReceipt) } finally { resourceReceiptPending = false }
+            }, 100)
         }
         fun poll() {
             if (!isCurrent()) {
@@ -1169,7 +1176,7 @@ class Nimo : SGCManager() {
     }
 
     override fun connectById(id: String) {
-        if (resourceReleasePending) return
+        if (resourceReleasePending || resourceReceiptPending) return
         resourceReleased = false
         Bridge.log("NIMO: connectById($id)")
         DEVICE_SEARCH_ID = id

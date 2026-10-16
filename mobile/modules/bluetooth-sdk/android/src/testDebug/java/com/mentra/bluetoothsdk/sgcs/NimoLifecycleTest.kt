@@ -232,6 +232,37 @@ class NimoLifecycleTest {
     assertRememberedDevice()
   }
 
+  @Test fun reconnectCannotReplaceOriginalGenerationDuringDelayedReleaseReceipt() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    val originalGatt = field("gatt") as android.bluetooth.BluetoothGatt
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) {
+      result = it
+      // Even reentrant connection requests inside receipt delivery remain fenced.
+      nimo.connectById("replacement-at-completion")
+      assertEquals(ConnTypes.DISCONNECTED, DeviceStore.get("glasses", "connectionState"))
+    }
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertNull(result)
+    assertTrue(nimo.resourceSnapshot().getJSONObject("release").getBoolean("gattCloseCalled"))
+    nimo.connectById("replacement-during-observation-window")
+    assertEquals(ConnTypes.DISCONNECTED, DeviceStore.get("glasses", "connectionState"))
+    assertNull(field("gatt"))
+    // Late feedback from this exact closed bearer is still retained for its receipt.
+    (field("gattCallback") as android.bluetooth.BluetoothGattCallback).onConnectionStateChange(
+      originalGatt, android.bluetooth.BluetoothGatt.GATT_SUCCESS, android.bluetooth.BluetoothProfile.STATE_DISCONNECTED)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
+    val receipt = requireNotNull(result)
+    assertEquals(1L, receipt.getLong("sessionGeneration"))
+    assertFalse(receipt.getBoolean("managedSessionPresent"))
+    assertTrue(receipt.getJSONObject("release").getBoolean("gattDisconnectCallbackObserved"))
+    assertEquals(0, receipt.getJSONObject("release").getInt("gattDisconnectCallbackStatus"))
+    // The completed receipt is a detached value, not a live view of later session fields.
+    setField("resourceSessionGeneration", 2L)
+    assertEquals(1L, receipt.getLong("sessionGeneration"))
+  }
+
   @Test fun resourceMissingMicFeedbackLeavesStickyUnknownAfterTimeout() {
     readyForReset()
     setField("resourceSessionGeneration", 1L)

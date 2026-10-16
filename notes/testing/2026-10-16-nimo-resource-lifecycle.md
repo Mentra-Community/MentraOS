@@ -70,3 +70,8 @@ this process. This change does not implement multi-device product routing.
 Native compile/Robolectric and normal CI must pass before publishing a candidate
 app for hardware commissioning. Source seam tests do not establish firmware
 behavior, compatible cross-host reuse, physical idle or installed app provenance.
+
+Reconnect and duplicate release requests remain fenced through the short native
+callback observation window and completion callback. The original generation's
+receipt is captured as a detached value before delivery, so a later connection
+cannot be relabeled as evidence for the earlier request nonce.
