@@ -40,6 +40,7 @@ internal object NimoResourceDiagnostics {
      * starts just before arm cannot resume effects past it. Release builds are no-op.
      * Queued calls re-enter current capture guards before any connection effect. */
     fun dispatchCapturedEntry(entry: () -> Unit): Boolean {
+        if (!preArmCaptureRequired() && capture == null) return false
         if (Looper.myLooper() == main.looper) return false
         val task = java.util.concurrent.FutureTask<Unit> { entry() }
         main.post(task)

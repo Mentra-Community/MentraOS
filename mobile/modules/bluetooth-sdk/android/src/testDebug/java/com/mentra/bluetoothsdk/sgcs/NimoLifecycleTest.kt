@@ -462,17 +462,24 @@ class NimoLifecycleTest {
     assertEquals(true, DeviceStore.get("glasses", "connected"))
   }
 
-  @Test fun unarmedDebugConnectStillExecutesNormallyOnMainQueue() {
-    manager.sgc = null
-    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.SIMULATED, "unit-simulated") }
-    thread.start(); awaitMainDispatch(thread)
-    assertNull(manager.sgc)
-    Shadows.shadowOf(Looper.getMainLooper()).idle()
-    thread.join(1000); assertFalse(thread.isAlive)
-    assertTrue(manager.sgc is Simulated)
+  @Test fun unarmedOrdinaryDebugEntryKeepsItsOriginalDirectExecution() {
+    val caller = AtomicReference<Thread?>()
+    val queued = AtomicReference<Boolean?>()
+    val thread = Thread {
+      queued.set(NimoResourceDiagnostics.dispatchCapturedEntry { fail("Unarmed debug must not queue") })
+      caller.set(Thread.currentThread())
+    }
+    thread.start(); thread.join(1000)
+    assertFalse(thread.isAlive)
+    assertSame(thread, caller.get())
+    assertEquals(false, queued.get())
   }
 
   @Test fun offMainSdkFailureIsDeliveredToCallerWithoutUncaughtMainException() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
     val sdk = uninitializedSdk()
     DeviceStore.apply("bluetooth", "default_wearable", "")
     val failure = AtomicReference<Throwable?>()
