@@ -1,4 +1,5 @@
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
+import {exclusiveResourceDependenciesSchema, resourceReservationObservationSchema} from '../types/resource-reservations.types'
 import {laneControlExchangeSchema} from './lane-controls.service'
 import {z} from "zod"
 import {TestHostStateModel} from "../models/test-host-state.model"
@@ -26,8 +27,10 @@ const resource = z
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
     storage: recorderStorageObservationSchema.optional(),
+    exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   })
-  .strict()
+  .strict().refine(value => !value.exclusiveDependencies || value.exclusiveDependencies.every(dependency =>
+    value.capabilities?.includes(dependency.capability)), 'Exclusive dependencies must name an offered capability')
 export const glassesInventorySchema = z
   .object({
     resourceId: frameworkIdentitySchema,
@@ -83,6 +86,13 @@ function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneS
     ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
   const byResource = new Map<string, string>(),
     byDevice = new Map<string, string>()
+  const authorityByDependency = new Map<string, string>()
+  for (const lane of snapshot.lanes) for (const resource of lane.resources) for (const dependency of resource.exclusiveDependencies ?? []) {
+    const previous = authorityByDependency.get(dependency.resourceId)
+    if (previous && previous !== dependency.authorityHostId)
+      ctx.addIssue({code: 'custom', message: 'Shared resource must retain one authority across host lanes'})
+    authorityByDependency.set(dependency.resourceId, dependency.authorityHostId)
+  }
   for (const lane of snapshot.lanes)
     for (const glasses of lane.glasses ?? []) {
       const identity = JSON.stringify({deviceId: glasses.deviceId, model: glasses.model})
@@ -155,6 +165,7 @@ export const hostStateSchema = z
       )
       .max(100),
     laneControls: laneControlExchangeSchema.optional(),
+    resourceReservations: resourceReservationObservationSchema.optional(),
     restoration: laneRestorationProjectionSchema.optional(),
     frameworkBinding: frameworkBindingSchema.optional(),
     frameworkAcceptedAt: z.string().datetime({offset: true}).optional(),

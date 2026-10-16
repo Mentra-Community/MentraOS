@@ -113,6 +113,31 @@ test('an unaccepted queued handoff refreshes only its exact assigned build and l
   expect(await fixture([original], fresh).service.qualificationTargets('pro1')).toEqual([]);
 });
 
+test('staged resource admission qualifies only its original host and lane without choosing another compatible target', async () => {
+  const original = row(), observed = host();
+  original.fleetResourceAdmission = {intent: {operationId: `run:${original.requestId}`, hostId: 'pro1', laneId: 'pro1-mac',
+    controller: {incarnation: observed.incarnation, generation: observed.incarnationGeneration, sequence: observed.sequence},
+    owner: {id: original.requestId, kind: 'run'}, inputSha256: original.fleetInputSha256!,
+    resources: [{id: 'app', capabilities: ['relaunch']}, {id: 'recorder', capabilities: []}]}, dependencies: []};
+  observed.lanes.push({...structuredClone(observed.lanes[0]!), id: 'other-mac'});
+  const f = fixture([original], observed), before = structuredClone(original);
+  expect((await f.service.qualificationTargets('pro1')).map(target => target.target)).toEqual([{hostId: 'pro1', laneId: 'pro1-mac'}]);
+  expect(f.rows[0]).toEqual(before);
+  const changedInventory = host(); changedInventory.lanes[0]!.resources[0]!.id = 'replacement-app';
+  expect(await fixture([original], changedInventory).service.qualificationTargets('pro1')).toEqual([]);
+  for (const change of [
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.hostId = 'other';},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.laneId = 'other';},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.owner.id = 'other';},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.inputSha256 = 'c'.repeat(64);},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.resources.pop();},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.resources[0]!.capabilities = [];},
+  ]) {
+    const value = structuredClone(original); change(value);
+    expect(await fixture([value]).service.qualificationTargets('pro1')).toEqual([]);
+  }
+});
+
 test('only the compatible canonical framework source receives queued targets; older workers retain unbound discovery', async () => {
   for (const routineApiVersion of [38, 43]) {
     const old = host(); old.frameworkBinding = {...binding, version: 998, routineApiVersion};
@@ -260,7 +285,9 @@ test('candidate database stream is bounded, closed and includes only unbound or 
       hostCancellation: {$exists: false}, hostRejection: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
       fleetCancellation: {$exists: false}, fleetDeadline: {$gt: new Date(now)}, 'fleetSelection.platform': 'ios-on-mac', fleetPreparation: {$exists: true},
       $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': 'pro1'}]},
-        {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': 'pro1-mac'}]}]});
+        {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': 'pro1-mac'}]},
+        {$or: [{fleetResourceAdmission: {$exists: false}},
+          {'fleetResourceAdmission.intent.hostId': 'pro1', 'fleetResourceAdmission.intent.laneId': 'pro1-mac'}]}]});
     if (!includeQueued) expect(filter).not.toHaveProperty('$or');
   } finally {TestRequestModel.find = original;}
   }

@@ -241,11 +241,15 @@ test('cancel and deadline before bind never revive after preparation retry or ob
   await expect(expired.service.bind(selection.requestId,'mini',{...input,inputSha256:before.inputSha256})).rejects.toThrow('expired');expect(await expired.service.observation(selection.requestId)).toMatchObject({terminal:true,waitingReason:expect.stringContaining('deadline')});
 });
 test('Mongo bind predicate guards absent host/binding, uncancelled prepared identity and deadline in one write',async()=>{
-  const original=TestRequestModel.collection.findOneAndUpdate,cas=mock(async(..._args:unknown[])=>null);
+  const original=TestRequestModel.collection.findOneAndUpdate,originalRead=TestRequestModel.collection.findOne,cas=mock(async(..._args:unknown[])=>null),
+    admission={intent:{operationId:'run:job-one',hostId:'mini',laneId:'android',inputSha256:'a'.repeat(64),owner:{id:'job-one',kind:'run'},
+      controller:{incarnation:'selected',generation:1,sequence:1},resources:[{id:'app',capabilities:[]}]},dependencies:[]};
   TestRequestModel.collection.findOneAndUpdate=cas as any;
+  TestRequestModel.collection.findOne=mock(async()=>({fleetResourceAdmission:admission})) as any;
   try {await routineJobRepository.bind('job-one','a'.repeat(64),{jobId:'job-one',requestId:'job-one',hostId:'mini',laneId:'android',descriptorRevision:'b'.repeat(64),actionsRunId:'10',actionsJobId:'20',boundAt:'2026-10-08T00:00:00Z'}, {requestId:'job-one'},new Date('2026-10-08T00:00:00Z'));
     expect(cas.mock.calls[0]?.[0]).toMatchObject({requestId:'job-one',fleetInputSha256:'a'.repeat(64),state:'awaiting-runner',fleetBinding:{$exists:false},hostId:{$exists:false},fleetCancellation:{$exists:false},fleetDeadline:{$gt:new Date('2026-10-08T00:00:00Z')}});
-  } finally {TestRequestModel.collection.findOneAndUpdate=original;}
+    expect(cas.mock.calls[0]?.[0]).toMatchObject({fleetResourceAdmission:admission,fleetExclusiveReservation:{$exists:false}});
+  } finally {TestRequestModel.collection.findOneAndUpdate=original;TestRequestModel.collection.findOne=originalRead;}
 });
 
 test('Mongo cancellation settlement cannot overwrite a concurrent late Actions registration',async()=>{

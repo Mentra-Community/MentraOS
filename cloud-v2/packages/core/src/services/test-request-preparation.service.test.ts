@@ -38,6 +38,41 @@ test('Mongo completion uses one absent-input CAS and preserves immutable selecti
     expect((cas.mock.calls[0] as unknown as unknown[])[2]).toMatchObject({returnDocument:'after',writeConcern:{w:'majority',j:true}});
   }finally{find.mockRestore();cas.mockRestore()}
 });
+test('an unrelated fixture capability does not require its offered Google exclusive dependency',async()=>{
+  const dependency={resourceId:'conference-account',authorityHostId:'mini',capability:'google-authentication'},
+    selected={...intent,platform:'ios-on-mac' as const,laneId:'mac'}, prepared={...input,platform:selected.platform,laneId:selected.laneId,
+      resources:[{id:'fixtures',kind:'fixture-data',exclusiveDependencies:[dependency]}]},
+    row={requestId:selected.requestId,hostId:'mini',state:'preparing',dispatchIntent:selected,dispatchIntentSha256:requestInputDigest(selected),
+      fleetSelection:{requestId:selected.requestId},fleetPreparation:{requirements:{resources:[{kind:'fixture-data',capabilities:['clipboard']}]}},
+      fleetResourceAdmission:{intent:{operationId:`run:${selected.requestId}`,hostId:'mini',laneId:'mac',owner:{id:selected.requestId,kind:'run' as const},
+        inputSha256:'f'.repeat(64),controller:{incarnation:'selected',generation:1,sequence:7},resources:[{id:'fixtures',capabilities:['clipboard']}]},dependencies:[]}}
+  const find=spyOn(TestRequestModel,'findOne').mockReturnValue({read(){return this},readConcern(){return this},lean:async()=>row} as any)
+  const cas=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockResolvedValue({...row,state:'queued',input:prepared,inputSha256:requestInputDigest(prepared)} as any)
+  try{
+    const service=new TestRequestService(undefined,undefined,null)
+    expect((await service.completePreparation(selected.requestId,'mini',row.dispatchIntentSha256,prepared)).state).toBe('queued')
+    row.fleetPreparation.requirements.resources[0]!.capabilities=['google-authentication']
+    row.fleetResourceAdmission.intent.resources[0]!.capabilities=['google-authentication']
+    await expect(service.completePreparation(selected.requestId,'mini',row.dispatchIntentSha256,prepared)).rejects.toThrow('staged fleet admission')
+    expect(cas).toHaveBeenCalledTimes(1)
+  }finally{find.mockRestore();cas.mockRestore()}
+});
+test('fleet executable preparation cannot bypass a nonempty frozen admission by omitting dependency metadata',async()=>{
+  const dependency={resourceId:'conference-account',authorityHostId:'mini',capability:'google-authentication'},
+    selected={...intent,platform:'ios-on-mac' as const,laneId:'mac'},prepared={...input,platform:selected.platform,laneId:selected.laneId,
+      resources:[{id:'fixtures',kind:'fixture-data'}]},
+    admission={intent:{operationId:`run:${selected.requestId}`,hostId:'mini',laneId:'mac',owner:{id:selected.requestId,kind:'run' as const},
+      inputSha256:'f'.repeat(64),controller:{incarnation:'selected',generation:1,sequence:7},resources:[{id:'fixtures',capabilities:['google-authentication']}]},dependencies:[dependency]},
+    row={requestId:selected.requestId,hostId:'mini',state:'preparing',dispatchIntent:selected,dispatchIntentSha256:requestInputDigest(selected),
+      fleetSelection:{requestId:selected.requestId},fleetResourceAdmission:admission}
+  const find=spyOn(TestRequestModel,'findOne').mockReturnValue({read(){return this},readConcern(){return this},lean:async()=>row} as any),
+    cas=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockResolvedValue(null as any)
+  try{
+    await expect(new TestRequestService(undefined,undefined,null).completePreparation(selected.requestId,'mini',row.dispatchIntentSha256,prepared))
+      .rejects.toThrow('staged fleet admission')
+    expect(cas).not.toHaveBeenCalled();expect(row).not.toHaveProperty('input')
+  }finally{find.mockRestore();cas.mockRestore()}
+})
 
 
 test('ordinary preparation polls yield beyond one hundred waiting sources without changing their intent',async()=>{
