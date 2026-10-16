@@ -12,6 +12,8 @@ android {
         nimoDiagnostic {
             initWith release
             debuggable true
+            minifyEnabled false
+            shrinkResources false
             matchingFallbacks = ['release']
         }
     }
