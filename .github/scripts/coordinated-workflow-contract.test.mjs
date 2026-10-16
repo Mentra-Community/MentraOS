@@ -454,6 +454,8 @@ test("Private Deployment remains release-matched without gating the dev release"
   const deliveryStep = runtimeImage.indexOf("- name: Publish persistent installer downloads")
   assert.ok(deliveryStep > uploadStep)
   const delivery = runtimeImage.slice(deliveryStep, runtimeImage.indexOf("- name: Name coordinated result artifact"))
+  assert.match(delivery, /ensure-installer-release\.mjs/)
+  assert.doesNotMatch(delivery, /gh release create|installer-release-response/)
   assert.match(delivery, /publish-immutable-release-asset\.mjs/)
   assert.match(delivery, /mentra-private-cloud\.tar\.gz\.sha256/)
   assert.match(delivery, /ARTIFACTS_R2_SECRET_ACCESS_KEY/)
