@@ -31,17 +31,23 @@ test("staging-targeted PRs package staging and never relabel another backend", (
     assert.throws(() => androidAppIdentity({...identity, backend, baseRef, config: config(), badging}), /PR inputs/)
 })
 
-async function publishing(run, failApk = false) {
+async function publishing(run, failApk = false, diagnostic = false) {
   const dir = await mkdtemp(path.join(tmpdir(), "android-receipt-"))
   try {
     await mkdir(path.join(dir, "build-tools", "35.0.0"), {recursive: true})
     const apk = path.join(dir, "app-release.apk"); await writeFile(apk, "synthetic APK bytes")
     const calls = [], env = {GITHUB_REPOSITORY: "Mentra-Community/MentraOS", PR_NUMBER: "42", PR_HEAD_SHA: head,
       GITHUB_SHA: merge, GITHUB_RUN_ID: "100", GITHUB_RUN_ATTEMPT: "2", ANDROID_HOME: dir, EXPO_PUBLIC_BUILD_ENV: "dev", MENTRA_PR_MOBILE_FINGERPRINT: fingerprint}
+    if (diagnostic) Object.assign(env, {MENTRA_NIMO_DIAGNOSTIC: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', MENTRA_PR_BUILD_SHA: merge})
     const exec = (command, args) => {
       if (command === "git") return `tree ${head}\nparent ${base}\nparent ${head}\n\nMerge PR`
-      if (command === "unzip") return JSON.stringify(config())
-      if (command.endsWith("/aapt")) return badging
+      if (command === "unzip") {
+        if (args.at(-1) === 'assets/nimo-resource-diagnostic.json') { if (diagnostic) return '{"schemaVersion":1,"buildType":"nimoDiagnostic","capability":"nimo-resource-v1"}'; throw new Error('not present') }
+        if (args.at(-1) === 'classes*.dex') return Buffer.from(diagnostic ? 'com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE' : 'ordinary release bytecode')
+        if (args.at(-1) === 'assets/index.android.bundle') return Buffer.from('bundled production JavaScript')
+        return JSON.stringify(config())
+      }
+      if (command.endsWith("/aapt")) return badging + (diagnostic ? "\napplication-debuggable" : "")
       if (command === "gh") return "10\n"
       assert.equal(command, process.execPath)
       const name = args[args.indexOf("--name") + 1]
@@ -137,3 +143,18 @@ test("the named PR publication step commits the receipt for the exact signed pac
   for (const earlier of ["      - name: Package this PR's configuration and sign", "      - name: Verify release signature (not debug)"])
     assert.ok(workflow.indexOf(earlier) > 0 && workflow.indexOf(earlier) < start)
 })
+
+test('diagnostic APK publication has distinct immutable coordinates and requires actual compiled receiver, marker and bundled JavaScript', async () => {
+ await publishing(async ({apk,env,exec,calls}) => {
+  const receipt = await publishAndroidArtifacts(apk,env,{exec});
+  assert.equal(receipt.diagnostic,'nimo-resource-v1');
+  assert.equal(receipt.app.diagnostic,'nimo-resource-v1');
+  assert.match(calls[0],/^mentra-android-nimo-diagnostic-pr-/);
+  assert.throws(() => validateAndroidReceipt(receipt,{pr:42,sha:head,runId:100,attempt:2}),/classification/);
+  validateAndroidReceipt(receipt,{pr:42,sha:head,runId:100,attempt:2,diagnostic:true});
+  for (const missing of ['classes*.dex','assets/nimo-resource-diagnostic.json','assets/index.android.bundle']) {
+   const broken = (command,args,options) => command === 'unzip' && args.at(-1) === missing ? Buffer.alloc(0) : exec(command,args,options);
+   await assert.rejects(publishAndroidArtifacts(apk,env,{exec:broken}));
+  }
+ },false,true);
+});

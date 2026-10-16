@@ -10,6 +10,7 @@ import {candidateAssets, fingerprintMobile, MOBILE_INPUT_PATHS, MOBILE_PR_PATHS,
 const input = {tree: "mobile tree", env: {EXPO_PUBLIC_BUILD_ENV: "dev"}, tools: {node: "20", java: "17"}}
 test("configuration-only packaging inputs do not invalidate compiled APK reuse", () => {
   const a = fingerprintMobile(input)
+  assert.notEqual(a, fingerprintMobile({...input, env: {...input.env, MENTRA_NIMO_DIAGNOSTIC: "true"}}))
   assert.equal(
     a,
     fingerprintMobile({

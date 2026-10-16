@@ -73,7 +73,7 @@ export function fingerprintMobile({tree, env, tools}) {
         ([key]) =>
           !packagingKeys.has(key) &&
           (key.startsWith("EXPO_PUBLIC_") ||
-            ["MENTRAOS_BUILD_NAME", "MENTRAOS_NATIVE_MARKETING_VERSION", "NODE_ENV"].includes(key)),
+            ["MENTRAOS_BUILD_NAME", "MENTRAOS_NATIVE_MARKETING_VERSION", "NODE_ENV", "MENTRA_NIMO_DIAGNOSTIC"].includes(key)),
       )
       .sort(([a], [b]) => a.localeCompare(b)),
   )
