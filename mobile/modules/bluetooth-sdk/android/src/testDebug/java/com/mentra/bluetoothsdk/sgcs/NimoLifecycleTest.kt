@@ -292,6 +292,13 @@ class NimoLifecycleTest {
     assertEquals(0, snapshot.getJSONObject("timeAck").getInt("statusCode"))
     assertFalse(snapshot.getJSONObject("timeAck").isNull("writeStartedAtEpochMs"))
     assertEquals("READY", snapshot.getString("handshake"))
+    val causalTws = snapshot.getJSONObject("tws").getLong("handshakeAtEpochMs")
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+    Nimo::class.java.getDeclaredMethod("onTwsState", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(nimo, true)
+    val heartbeat = nimo.resourceSnapshot()
+    assertEquals(causalTws, heartbeat.getJSONObject("tws").getLong("handshakeAtEpochMs"))
+    assertTrue(heartbeat.getJSONObject("tws").getLong("atEpochMs") > heartbeat.getJSONObject("timeAck").getLong("atEpochMs"))
+    assertEquals("READY", heartbeat.getString("handshake"))
   }
 
   @Test fun callbacksFromPriorGattCannotCreateCurrentReadiness() {
