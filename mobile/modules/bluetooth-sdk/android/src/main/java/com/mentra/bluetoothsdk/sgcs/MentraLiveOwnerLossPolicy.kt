@@ -142,6 +142,19 @@ internal object MentraLiveOwnerLossPolicy {
     ): Boolean = pairingMode && savedGlasses && !explicitPairing
 
     /**
+     * A discovery scan lists other secure glasses that are not in pairing mode as non-pairable
+     * and does not connect to them. The saved glasses are the exception: the pause watch scan
+     * has to read their trailer, so a cleared pairing flag ends the pause and reconnects.
+     * Mirrors iOS, which skips this return when the advertisement is the saved device.
+     */
+    fun shouldExposeAsNonPairable(
+            savedGlasses: Boolean,
+            reconnectScan: Boolean,
+            secureTrailer: Boolean,
+            pairingDiscoverable: Boolean,
+    ): Boolean = !savedGlasses && !reconnectScan && secureTrailer && !pairingDiscoverable
+
+    /**
      * `secure_pairing_capable` only means the firmware can do secure pairing. Ownership is the
      * separate `owner_committed` bit the glasses set after the BLE bond. Mirrors iOS
      * `MentraLiveConnectionAttemptPolicy.pairingInfoConfirmsOwner`.
