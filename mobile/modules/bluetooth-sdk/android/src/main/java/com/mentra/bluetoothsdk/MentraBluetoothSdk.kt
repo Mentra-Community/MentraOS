@@ -1119,8 +1119,9 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
-        deviceManager.setWifiAdbState(enabled)
+    @JvmOverloads
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        deviceManager.setWifiAdbState(enabled, expectedBluetoothMac)
     }
 
     fun setSystemTime(timestampMs: Long) {

@@ -1321,11 +1321,13 @@ class MentraLive: NSObject, SGCManager {
         pairingAdvertisement(advertisementData) != nil
     }
 
+    private var wifiAdbPeerBluetoothMac: String?
     var connectionState: String = ConnTypes.DISCONNECTED
 
     /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
     private func updateConnectionState(_ state: String) {
         if state == ConnTypes.DISCONNECTED {
+            wifiAdbPeerBluetoothMac = nil
             // Device identity is session-bound. Clear it on disconnect so a previous pair's
             // identifiers cannot be associated with the next connection. Connect must NOT clear
             // them: DeviceManager.disconnect already wipes them before any new connection, and
@@ -3204,6 +3206,7 @@ class MentraLive: NSObject, SGCManager {
                     )
                 }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
+                    recordWifiAdbPeerIdentity(bluetoothMacAddress)
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
                 }
                 if let wifiMacAddress = nonEmptyStringValue(fields, "wifi_mac_address") {
@@ -3690,6 +3693,30 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func recordWifiAdbPeerIdentity(_ mac: String) {
+        wifiAdbPeerBluetoothMac = mac
+    }
+
+    var wifiAdbLinkReady: Bool {
+        connectionState == ConnTypes.CONNECTED && connectedPeripheral?.state == .connected && txCharacteristic != nil
+    }
+
+    func enqueueWifiAdbState(_ enabled: Bool) -> Bool {
+        sendJson(["type": "set_wifi_adb_state", "enabled": enabled], wakeUp: true, requireAck: true, bridgeLogging: true)
+    }
+
+    /// MainActor performs identity validation and queue insertion without suspension.
+    func sendWifiAdbState(_ enabled: Bool, expectedBluetoothMac: String) throws {
+        guard expectedBluetoothMac.range(of: "^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", options: .regularExpression) != nil,
+              wifiAdbPeerBluetoothMac?.caseInsensitiveCompare(expectedBluetoothMac) == .orderedSame,
+              wifiAdbLinkReady else {
+            throw BluetoothSdkError(code: "device_identity_changed", message: "The selected glasses identity or connection changed.")
+        }
+        guard enqueueWifiAdbState(enabled) else {
+            throw BluetoothSdkError(code: "command_send_failed", message: "Could not queue Wi-Fi debugging for the selected glasses.")
+        }
+    }
+
     func sendWifiAdbState(_ enabled: Bool) {
         Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state: \(enabled)")
 
@@ -4043,6 +4070,7 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "otaVersionUrl", otaVersionUrl)
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
         if let bluetoothMacAddress {
+            recordWifiAdbPeerIdentity(bluetoothMacAddress)
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
         }
         if let serialNumber {

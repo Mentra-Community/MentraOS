@@ -16,13 +16,16 @@ jest.mock("./SettingsCommandButton", () => ({
   },
 }))
 
+const mac = "AA:BB:CC:DD:EE:01"
 const enable = "debugSettings:wifiAdbEnable"
 const disable = "debugSettings:wifiAdbDisable"
 
 beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(engine.glasses.status).mockReturnValue({state: "connected"} as ReturnType<typeof engine.glasses.status>)
-  jest.mocked(engine.glasses.info).mockReturnValue({model: DeviceTypes.LIVE} as ReturnType<typeof engine.glasses.info>)
+  jest
+    .mocked(engine.glasses.info)
+    .mockReturnValue({model: DeviceTypes.LIVE, btMac: mac} as ReturnType<typeof engine.glasses.info>)
   jest.mocked(BluetoothSdk.setWifiAdbState).mockResolvedValue(undefined)
 })
 
@@ -30,8 +33,8 @@ it("sends explicit enable and disable without inferring an initial persisted sta
   const screen = render(<WifiAdbCommands />)
   await act(async () => fireEvent.press(screen.getByTestId(enable)))
   await act(async () => fireEvent.press(screen.getByTestId(disable)))
-  expect(BluetoothSdk.setWifiAdbState).toHaveBeenNthCalledWith(1, true)
-  expect(BluetoothSdk.setWifiAdbState).toHaveBeenNthCalledWith(2, false)
+  expect(BluetoothSdk.setWifiAdbState).toHaveBeenNthCalledWith(1, true, mac)
+  expect(BluetoothSdk.setWifiAdbState).toHaveBeenNthCalledWith(2, false, mac)
   expect(screen.getByText("debugSettings:wifiAdbCommandSent")).toBeTruthy()
 })
 
@@ -73,5 +76,19 @@ it("allows only one pending command and never retries a rejected SDK call", asyn
   expect(BluetoothSdk.setWifiAdbState).toHaveBeenCalledTimes(1)
   expect(screen.getByText("debugSettings:wifiAdbCommandFailed")).toBeTruthy()
   await act(async () => fireEvent.press(screen.getByTestId(disable)))
-  expect(BluetoothSdk.setWifiAdbState).toHaveBeenNthCalledWith(2, false)
+  expect(BluetoothSdk.setWifiAdbState).toHaveBeenNthCalledWith(2, false, mac)
+})
+
+it("requires a full observed MAC and rejects a changed peer before native dispatch", async () => {
+  const screen = render(<WifiAdbCommands />)
+  jest
+    .mocked(engine.glasses.info)
+    .mockReturnValue({model: DeviceTypes.LIVE, btMac: "AA:BB:CC:DD:EE:02"} as ReturnType<typeof engine.glasses.info>)
+  await act(async () => fireEvent.press(screen.getByTestId(enable)))
+  expect(BluetoothSdk.setWifiAdbState).not.toHaveBeenCalled()
+  screen.unmount()
+  jest
+    .mocked(engine.glasses.info)
+    .mockReturnValue({model: DeviceTypes.LIVE, btMac: "EE:01"} as ReturnType<typeof engine.glasses.info>)
+  expect(render(<WifiAdbCommands />).queryByTestId(enable)).toBeNull()
 })

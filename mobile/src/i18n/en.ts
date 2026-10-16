@@ -905,7 +905,7 @@ const en = {
     wifiAdbEnable: "Enable Wi-Fi debugging",
     wifiAdbDisable: "Disable Wi-Fi debugging",
     wifiAdbSubtitle: "Persists on Mentra Live. Disable after debugging.",
-    wifiAdbCommandSent: "Command sent. The glasses have not confirmed the debugging state.",
+    wifiAdbCommandSent: "Command queued. The glasses have not confirmed the debugging state.",
     wifiAdbCommandFailed:
       "Could not send the debugging command. Its effect is unknown; check the connection before trying again.",
     showNotifyIos: "Show Notify (experimental)",

@@ -16,17 +16,28 @@ export function WifiAdbCommands() {
   const inFlight = useRef(false)
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState("")
-  const available = status.state === "connected" && info.model === DeviceTypes.LIVE
+  const expectedMac = info.btMac
+  const available =
+    status.state === "connected" &&
+    info.model === DeviceTypes.LIVE &&
+    /^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(expectedMac ?? "")
 
   const send = async (enabled: boolean) => {
     if (inFlight.current) return
     // Recheck at the input boundary; a rendered button can outlive a disconnect.
-    if (engine.glasses.status().state !== "connected" || engine.glasses.info().model !== DeviceTypes.LIVE) return
+    const current = engine.glasses.info()
+    if (
+      !available ||
+      engine.glasses.status().state !== "connected" ||
+      current.model !== DeviceTypes.LIVE ||
+      current.btMac?.toUpperCase() !== expectedMac?.toUpperCase()
+    )
+      return
     inFlight.current = true
     setPending(true)
     setMessage("")
     try {
-      await BluetoothSdk.setWifiAdbState(enabled)
+      await BluetoothSdk.setWifiAdbState(enabled, expectedMac)
       setMessage(translate("debugSettings:wifiAdbCommandSent"))
     } catch {
       setMessage(translate("debugSettings:wifiAdbCommandFailed"))

@@ -429,9 +429,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("setWifiAdbState") { (enabled: Bool) in
+        AsyncFunction("setWifiAdbState") { (enabled: Bool, expectedBluetoothMac: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try await sdk.setWifiAdbState(enabled: enabled)
+            try await sdk.setWifiAdbState(enabled: enabled, expectedBluetoothMac: expectedBluetoothMac)
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
