@@ -4,9 +4,9 @@ const down = {bluetoothClassicConnected: false, bluetoothClassicProfilesConnecte
 const iosLive = {platform: "ios", deviceModel: "Mentra Live", readiness: down, autoAudio: undefined, waitElapsed: false}
 
 describe("pair audio decision", () => {
-  it("keeps the route and the 30 second auto-audio window", () => {
+  it("keeps the route and the short auto-audio window", () => {
     expect(BT_CLASSIC_ROUTE).toBe("/pairing/btclassic")
-    expect(AUTO_AUDIO_WAIT_MS).toBe(30_000)
+    expect(AUTO_AUDIO_WAIT_MS).toBe(8_000)
   })
 
   it.each(["bluetoothClassicConnected", "bluetoothClassicProfilesConnected", "bluetoothAudioRouted"] as const)(
