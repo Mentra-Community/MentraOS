@@ -192,7 +192,7 @@ test('late old-head success intent cannot publish green after head changes', asy
   const before = f.checkPayloads.length; f.context.headSha = 'c'.repeat(40)
   f.stored.get(gate.gateId)!.nextAt = new Date(f.now); await f.drain(1)
   expect(f.checkPayloads.slice(before).some(value => value.conclusion === 'success')).toBe(false)
-  await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
+  await f.drain(2); expect(f.gate().attempt.conclusion).toBe('success')
 })
 test('active rerun and stale context control do not create replacement requests', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain()
@@ -450,14 +450,41 @@ test('public progress renders observed completed test counts across named lifecy
  }
 });
 
-test('closed and superseded terminal delivery keeps its first timestamp and parks after all custody settles', async () => {
- for (const changed of ['closed','head']) {
-  const f=fixture(); f.context.labels=[]; await f.intake(); await f.drain(3);
+test('closing or advancing a PR preserves its already delivered settled verdict and timestamp', async () => {
+ for (const outcome of ['pass', 'failed']) for (const changed of ['closed','head']) {
+  const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f,outcome);
+  const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
   if(changed==='closed') f.context.open=false; else f.context.headSha='c'.repeat(40);
-  await f.service.reconcile(f.gate().gateId); const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
-  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  await f.service.reconcile(f.gate().gateId);
+  expect(f.gate().attempt.conclusion).toBe(outcome==='pass'?'success':'failure'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  expect(f.gate().attempt.cancellation).toBeUndefined(); expect(f.cancellations).toHaveLength(0);
   for(let i=0;i<3;i++) {f.advance();await f.service.reconcile(f.gate().gateId)}
   expect(f.gate().attempt.finishedAt).toBe(finished); expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload); expect(f.deliveries).toBe(delivered);
+ }
+})
+
+test('closing a PR still contains a pass with unsettled custody before reaching a cancelled verdict', async () => {
+ const f=fixture(); await f.intake(); f.build(); await f.drain();
+ const requestId=f.gate().attempt.members[0]!.requestId!, request=f.requests.get(requestId);
+ request.state='terminal';request.terminalStatus='pass';
+ f.results.set(requestId,{routineId:'login',platform:'android',definitionRevision:'a'.repeat(40),
+  build:{headSha:f.context.headSha},outcome:'pass',uploadsComplete:true,evidenceStatus:'complete'});
+ await f.drain(1);expect(f.gate().attempt.conclusion).toBeUndefined();
+ f.context.open=false;await f.drain(1);
+ expect(f.cancellations).toContain(requestId);expect(f.gate().attempt.conclusion).toBeUndefined();
+ request.dispatchCompletion={disposition:'repair'};await f.drain(2);
+ expect(f.gate().attempt.conclusion).toBe('cancelled');
+})
+
+test('an undelivered success cannot become a new green check after closure or source change', async () => {
+ for(const changed of ['closed','head']) {
+  const f=fixture();await f.intake();f.build();await f.drain();f.outage();await complete(f,'pass');
+  expect(f.gate().attempt.conclusion).toBe('success');expect(f.gate().reporting.intended).toBeDefined();
+  const delivered=f.deliveries;
+  if(changed==='closed') f.context.open=false;else f.context.headSha='c'.repeat(40);
+  f.outage(false);await f.drain(2);
+  expect(f.gate().attempt.conclusion).toBe('cancelled');
+  expect(f.checkPayloads.slice(delivered).some(value=>value.conclusion==='success')).toBe(false);
  }
 })
 

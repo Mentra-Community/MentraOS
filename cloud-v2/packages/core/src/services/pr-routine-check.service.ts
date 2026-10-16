@@ -97,6 +97,10 @@ export class PrRoutineCheckService {
     return !!gate.attempt.conclusion && [gate.attempt, ...gate.retired].every(attempt =>
       attempt.members.every(member => member.settled && !member.containmentPending))
   }
+  private completedAndDelivered(gate: PrRoutineCheck) {
+    return this.settled(gate) && ['success', 'failure'].includes(gate.attempt.conclusion!) &&
+      gate.reporting.deliveredDigest === digest(routineCheckPayload(gate, this.now()))
+  }
   private next(gate: PrRoutineCheck, pendingAt: number) {
     return this.settled(gate) && !gate.reporting.intended && !gate.reporting.error &&
       gate.reporting.deliveredDigest === digest(routineCheckPayload(gate, this.now())) ? null : new Date(pendingAt)
@@ -612,11 +616,13 @@ export class PrRoutineCheckService {
       try {
         context = await this.github.context(gate.context.number)
       } catch (error) {if (!gate.attempt.cancellation) throw error}
-      if (context.headSha !== gate.headSha || !context.open) {
+      const contextEnded = context.headSha !== gate.headSha || !context.open
+      const preserveCompleted = contextEnded && this.completedAndDelivered(gate)
+      if (contextEnded && !preserveCompleted) {
         gate.attempt.cancellation ??= {kind: context.open ? 'superseded' : 'closed', requestedAt: iso(this.now())}
         if (gate.attempt.conclusion && !['timed_out', 'cancelled'].includes(gate.attempt.conclusion)) {gate.attempt.conclusion = 'cancelled'; gate.attempt.finishedAt = iso(this.now())}
       }
-      else if (selectionKey(context) !== gate.selectionKey) {
+      else if (!contextEnded && selectionKey(context) !== gate.selectionKey) {
         gate.retired.push({...gate.attempt, cancellation: {kind: 'superseded', requestedAt: iso(this.now())}})
         gate.context = context; gate.selectionKey = selectionKey(context); gate.coverageGeneration++
         gate.attempt = this.attempt(1); delete gate.routineRevision; delete gate.selectionError; delete gate.selectionWait; delete gate.selectionComplete; delete gate.buildRequests
@@ -628,7 +634,9 @@ export class PrRoutineCheckService {
         if (saved) await this.deliver(gateId)
         return saved
       }
-      gate.context = context
+      // A fully settled verdict already acknowledged by GitHub belongs to its
+      // frozen source. Closing/merging or advancing the PR cannot rewrite it.
+      if (!preserveCompleted) gate.context = context
       for (const retired of gate.retired.filter(attempt => attempt.cancellation)) {
         if (retired.members.some(member => !member.settled)) await this.cancel(retired)
         await this.completeOriginalSuite(gate, retired)
