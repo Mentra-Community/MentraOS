@@ -437,7 +437,12 @@ export class RoutineJobService {
         this.assertExactInputs(row);
         const admission = row.fleetResourceAdmission === undefined ? undefined : fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission);
         if (admission && (!admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== lane.id ||
-          admission.data.intent.owner.id !== row.requestId || admission.data.intent.inputSha256 !== row.fleetInputSha256)) continue;
+          admission.data.intent.owner.id !== row.requestId || admission.data.intent.inputSha256 !== row.fleetInputSha256 ||
+          admission.data.intent.resources.length !== row.fleetPreparation.requirements.resources.length ||
+          !row.fleetPreparation.requirements.resources.every(required => admission.data.intent.resources.filter(selected =>
+            requestInputDigest([...selected.capabilities].sort()) === requestInputDigest([...required.capabilities].sort()) &&
+            lane.resources.some(offered => offered.id === selected.id && offered.kind === required.kind &&
+              selected.capabilities.every(capability => offered.capabilities?.includes(capability)))).length === 1))) continue;
         const requirements = row.fleetPreparation.requirements, context = permissionContext(binding, row.fleetSelection.build, now);
         if (!requirements.resources.some(resource => resource.permissions?.some(value => value.recipient === 'app')) ||
           row.fleetSelection.minimumFrameworkVersion && row.fleetSelection.minimumFrameworkVersion > binding.version ||

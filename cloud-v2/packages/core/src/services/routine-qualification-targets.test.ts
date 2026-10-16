@@ -123,11 +123,15 @@ test('staged resource admission qualifies only its original host and lane withou
   const f = fixture([original], observed), before = structuredClone(original);
   expect((await f.service.qualificationTargets('pro1')).map(target => target.target)).toEqual([{hostId: 'pro1', laneId: 'pro1-mac'}]);
   expect(f.rows[0]).toEqual(before);
+  const changedInventory = host(); changedInventory.lanes[0]!.resources[0]!.id = 'replacement-app';
+  expect(await fixture([original], changedInventory).service.qualificationTargets('pro1')).toEqual([]);
   for (const change of [
     (value: typeof original) => {value.fleetResourceAdmission!.intent.hostId = 'other';},
     (value: typeof original) => {value.fleetResourceAdmission!.intent.laneId = 'other';},
     (value: typeof original) => {value.fleetResourceAdmission!.intent.owner.id = 'other';},
     (value: typeof original) => {value.fleetResourceAdmission!.intent.inputSha256 = 'c'.repeat(64);},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.resources.pop();},
+    (value: typeof original) => {value.fleetResourceAdmission!.intent.resources[0]!.capabilities = [];},
   ]) {
     const value = structuredClone(original); change(value);
     expect(await fixture([value]).service.qualificationTargets('pro1')).toEqual([]);
