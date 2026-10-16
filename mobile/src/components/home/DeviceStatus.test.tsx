@@ -154,10 +154,11 @@ describe("Mentra Live pairing state on Home", () => {
       expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
     })
 
-    it("tapping the card does the same", () => {
+    it("opens glasses settings from the card and does not start pairing", () => {
       const screen = render(<GlassesStatus />)
       fireEvent.press(screen.getByText("Mentra Live"))
-      expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: "Mentra Live"})
+      expect(push).toHaveBeenCalledTimes(1)
+      expect(push).toHaveBeenCalledWith("/miniapps/settings/main", {transition: "simple_push"})
       expect(unpairSavedGlasses).not.toHaveBeenCalled()
     })
 
@@ -191,6 +192,34 @@ describe("Mentra Live pairing state on Home", () => {
       fireEvent.press(screen.getByText("common:cancel"))
       await waitFor(() => expect(engine.glasses.disconnect).toHaveBeenCalledTimes(1))
       expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
+    })
+
+    it("keeps the reconnecting card when pairing mode ends, until the reconnect has had time to start", () => {
+      jest.useFakeTimers()
+      try {
+        setStatus({state: "pairing_mode", windowId: 4, endsAtMs: Date.now() + 120_000})
+        let notify = () => {}
+        ;(engine.glasses.onStatus as jest.Mock).mockImplementation((listener) => {
+          notify = listener
+          return () => {}
+        })
+        const screen = render(<GlassesStatus />)
+        expect(screen.queryByLabelText("home:connectGlasses")).toBeNull()
+
+        act(() => {
+          setStatus({state: "normal"})
+          notify()
+        })
+        expect(screen.queryByLabelText("home:connectGlasses")).toBeNull()
+        expect(screen.getByText("common:cancel")).toBeTruthy()
+
+        act(() => {
+          jest.advanceTimersByTime(3000)
+        })
+        expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
+      } finally {
+        jest.useRealTimers()
+      }
     })
 
     it("shows the normal Connect card after a generic disconnect", () => {
