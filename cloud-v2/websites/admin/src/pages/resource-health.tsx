@@ -17,7 +17,7 @@ export function ResourceHealthSection() {
       return <article key={value.subject.id} className="rounded-xl border border-[#e0e4de] p-4">
         <h3 className="font-semibold">{value.subject.id}</h3><ReservableStatusBadge status={value.status} current={current} />
         <p className="text-sm">{value.resource.kind} · {value.resource.placement==='fleet'?'Fleet resource':`Installed: ${value.resource.memberships.map(v=>`${v.hostId}/${v.laneId}`).join(', ') || 'placement not reported'}`}</p>
-        <p className="mt-2 text-sm">{current?'Owner':'Last reported owner'}: {value.owner?`${value.owner.kind} ${value.owner.id} (${value.owner.hostId}/${value.owner.laneId})`:'None'}</p>
+        <p className="mt-2 text-sm">{current?'Owner':'Last reported owner'}: {value.owner?`${value.owner.kind} ${value.owner.id} (${value.owner.hostId}${value.owner.laneId?`/${value.owner.laneId}`:''})`:'None'}</p>
         <p className="text-sm">Idle check: {value.idle.outcome} · contract {value.idle.contractVersion || 'not configured'} · scope {value.idle.qualifiedScope.kind}</p>
         <p className="text-sm">Repair: {value.repair.configured?value.repair.state:'Not configured'}</p>
         {value.reason?<p className="mt-2 text-sm">{value.reason.message}</p>:null}

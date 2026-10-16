@@ -37,3 +37,8 @@ test('history cannot attribute another canonical resource or future subject gene
  expect(resourceLifecycleSchema.safeParse({...value,history:[{...value.history[0]!,resourceId:'other-resource'}]}).success).toBe(false);
  expect(resourceLifecycleSchema.safeParse({...value,history:[{...value.history[0]!,subjectGeneration:3}]}).success).toBe(false);
 });
+
+test('resource-only passive custody can omit an execution lane',()=>{
+ const value={...subject,status:'checking',owner:{id:'resource-check-1',kind:'boundary-cleanup',generation:3,hostId:'host-a'}};
+ expect(resourceLifecycleSchema.safeParse({schemaVersion:1,subjects:[value],history:[]}).success).toBe(true);
+});

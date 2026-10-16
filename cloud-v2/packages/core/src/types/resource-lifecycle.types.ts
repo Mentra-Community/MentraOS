@@ -14,7 +14,7 @@ export const resourceLifecycleSubjectSchema = z.object({
   status:z.enum(['idle','reserved','active','returning','checking','in-repair','out-of-service','offline','unknown']),
   observedAt:timestamp.nullable(),receivedAt:timestamp.nullable(),current:z.boolean(),
   reason:z.object({code:id,message:z.string().min(1).max(2000)}).strict().nullable(),
-  owner:z.object({id,kind:z.enum(['run','authoring','boundary-cleanup','fixer']),generation,hostId:id,laneId:id,requestId:id.optional()}).strict().nullable(),
+  owner:z.object({id,kind:z.enum(['run','authoring','boundary-cleanup','fixer']),generation,hostId:id,laneId:id.optional(),requestId:id.optional()}).strict().nullable(),
   idle:z.object({contractVersion:id,outcome:z.enum(['passed','failed','unknown','not-checked']),checkedAt:timestamp.nullable(),
     acceptedCheck:z.object({operationId:id,subjectGeneration:generation,resultSha256:z.string().regex(/^[a-f0-9]{64}$/),acceptedAt:timestamp}).strict().nullable(),
     qualifiedScope:qualifiedScopeSchema,evidenceRefs:z.array(id).max(100)}).strict(),
