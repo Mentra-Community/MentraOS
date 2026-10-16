@@ -4,6 +4,13 @@ import androidx.test.core.app.ApplicationProvider
 import com.mentra.bluetoothsdk.sgcs.G1PairingTest
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import java.util.concurrent.ConcurrentLinkedQueue
+import com.mentra.bluetoothsdk.utils.K900ProtocolUtils
+import com.mentra.bluetoothsdk.utils.K900LengthCodec
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.util.ReflectionHelpers.ClassParameter
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -12,8 +19,51 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33], shadows = [G1PairingTest.ShadowLc3Cpp::class], instrumentedPackages = ["com.mentra.lc3Lib"])
+@Config(sdk = [33], shadows = [G1PairingTest.ShadowLc3Cpp::class, TouchGestureCommandTest.ShadowK900Encoder::class], instrumentedPackages = ["com.mentra.lc3Lib"])
 class TouchGestureCommandTest {
+    @Implements(K900ProtocolUtils::class)
+    class ShadowK900Encoder {
+        companion object {
+            var beforeEncode: (() -> Unit)? = null
+            @JvmStatic
+            @Implementation
+            fun packDataToK900(data: ByteArray, cmdType: Byte, endian: K900LengthCodec.Endian): ByteArray? {
+                beforeEncode?.invoke()
+                return Shadow.directlyOn(K900ProtocolUtils::class.java, "packDataToK900",
+                    ClassParameter.from(ByteArray::class.java, data),
+                    ClassParameter.from(Byte::class.javaPrimitiveType!!, cmdType),
+                    ClassParameter.from(K900LengthCodec.Endian::class.java, endian))
+            }
+        }
+    }
+
+    @Test
+    fun `disconnect during encoding cannot promote touch setting into next session`() {
+        Bridge.initialize(ApplicationProvider.getApplicationContext())
+        val live = MentraLive()
+        val connection = MentraLive::class.java.getDeclaredField("isConnected").apply { isAccessible = true }
+        connection.setBoolean(live, true)
+        val queue = MentraLive::class.java.getDeclaredField("sendQueue").apply { isAccessible = true }
+            .get(live) as ConcurrentLinkedQueue<*>
+        val generation = MentraLive::class.java.getDeclaredField("bleSessionGeneration").apply { isAccessible = true }
+            .get(live) as AtomicLong
+        val admittedGeneration = generation.get()
+        val reset = MentraLive::class.java.getDeclaredMethod("resetPendingAckState").apply { isAccessible = true }
+        ShadowK900Encoder.beforeEncode = {
+            connection.setBoolean(live, false)
+            reset.invoke(live)
+            queue.clear()
+            connection.setBoolean(live, true)
+        }
+        try {
+            live.sendTouchGestureDefaultBehaviorEnabled("old-session", TouchGesture.DOUBLE_TAP, false)
+            val queued = queue.poll()!!
+            val queuedGeneration = queued.javaClass.getDeclaredField("sessionGeneration").apply { isAccessible = true }.getLong(queued)
+            assertEquals(admittedGeneration, queuedGeneration)
+            assertNotEquals(generation.get(), queuedGeneration)
+        } finally { ShadowK900Encoder.beforeEncode = null }
+    }
+
     @Test
     fun `each gesture serializes independently and acknowledgements retain typed event values`() {
         Bridge.initialize(ApplicationProvider.getApplicationContext())

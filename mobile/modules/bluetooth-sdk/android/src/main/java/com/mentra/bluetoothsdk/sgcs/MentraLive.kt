@@ -6220,6 +6220,7 @@ class MentraLive : SGCManager() {
     }
 
     fun sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Boolean) {
+        val sessionGeneration = bleSessionGeneration.get()
         if (!isConnected) throw BluetoothSdkException("not_connected", "Mentra Live glasses are not connected.")
         val body = JSONObject().put("request_id", requestId).put("gesture", gesture.wireName).put("enabled", enabled)
         val command = JSONObject().put("C", "cs_tpdef").put("V", 1).put("B", body.toString())
@@ -6228,7 +6229,7 @@ class MentraLive : SGCManager() {
             K900ProtocolUtils.CMD_TYPE_STRING,
             k900LengthEndian(),
         ) ?: throw BluetoothSdkException("command_send_failed", "Could not encode the touch gesture setting.")
-        queueData(packet)
+        queueData(packet, sessionGeneration = sessionGeneration)
     }
 
     fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
