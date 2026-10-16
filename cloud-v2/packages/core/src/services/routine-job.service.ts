@@ -346,8 +346,23 @@ export function compatibleRoutineLane(requirements: PortableRequirements, lane: 
  * Authority claims remain load until ordinary cleanup/reconciliation removes them.
  */
 export function orderedRoutineCandidates(requestId: string, hosts: RoutingTestHostState[], selected: SelectedRoutineLane[] = []) {
+  // Exclusive authority can live on a different host from its borrower. Keep
+  // that retained custody as borrower lane load even after cancellation.
+  const retained = hosts.flatMap(host => (host.authorityReservations ?? []).map(claim => isExclusiveHostReservation(claim)
+    ? {hostId: claim.borrowerHostId, laneId: claim.laneId,
+      requestId: claim.owner.kind === 'run' ? claim.owner.id : undefined, ownerKey: JSON.stringify([claim.owner.kind, claim.owner.id])}
+    : {...claim, ownerKey: JSON.stringify(['run', claim.requestId])}));
+  const pending = selected.map(claim => ({...claim, ownerKey: JSON.stringify(['run', claim.requestId])}));
+  const ownersByLane = new Map<string, Set<string>>();
+  for (const claim of [...retained, ...pending]) {
+    if (claim.requestId === requestId) continue;
+    const key = JSON.stringify([claim.hostId, claim.laneId]);
+    let owners = ownersByLane.get(key);
+    if (!owners) ownersByLane.set(key, owners = new Set());
+    owners.add(claim.ownerKey);
+  }
   return hosts.flatMap(host => host.lanes.map(lane => ({host, lane,
-    load: new Set([...(host.recorderReservations ?? []), ...selected].filter(claim => claim.hostId === host.hostId && claim.laneId === lane.id && claim.requestId !== requestId).map(claim => claim.requestId)).size,
+    load: ownersByLane.get(JSON.stringify([host.hostId, lane.id]))?.size ?? 0,
     tie: requestInputDigest({requestId, hostId: host.hostId, laneId: lane.id}),
   }))).sort((a, b) => a.load - b.load || a.tie.localeCompare(b.tie));
 }
