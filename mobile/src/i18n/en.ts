@@ -19,6 +19,14 @@ const en = {
     autoPowerOff: "Turn off automatically",
     autoPowerOffSubtitle:
       "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
+    wifiAdbEnable: "Enable wireless debugging",
+    wifiAdbDisable: "Disable wireless debugging",
+    wifiAdbWarning:
+      "Wireless debugging allows ADB access over the glasses' Wi-Fi network. Use only on a trusted network and disable it when finished. The preference is saved on the glasses.",
+    wifiAdbEnableSent: "Enable command sent. Verify the glasses' ADB connection separately.",
+    wifiAdbDisableSent: "Disable command sent. Verify the glasses' ADB connection separately.",
+    wifiAdbSendFailed:
+      "Unable to send the wireless debugging command. Check the glasses connection before trying again.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",

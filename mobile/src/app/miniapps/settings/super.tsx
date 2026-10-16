@@ -10,6 +10,7 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {micSessionManager} from "@mentra/engine-host-internal"
 import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
 import {UnwornPowerOffSetting} from "@/components/glasses/settings/UnwornPowerOffSetting"
+import {WifiAdbSetting} from "@/components/glasses/settings/WifiAdbSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useDeployment} from "@/services/deployment"
 import {isMiniappDevelopmentAllowed} from "@/services/deployment/miniappDevelopmentPolicy"
@@ -83,6 +84,7 @@ export default function SuperSettingsScreen() {
 
           <Group title="Mentra Live">
             <UnwornPowerOffSetting />
+            <WifiAdbSetting superMode={!!superMode} />
             <RouteButton label="Mic Tuning" onPress={() => push("/miniapps/settings/mic-tuning")} />
             <SettingsCommandButton
               label="Call gain sweep 15 → 14 → 15 → 13"
