@@ -59,7 +59,17 @@ class NimoLifecycleTest {
   private var listener: String? = null
 
   @Before fun setup() {
-    NimoResourceDiagnostics::class.java.getDeclaredField("capture").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    // Each Robolectric case has a new app/files directory; simulate its fresh process
+    // rather than retaining the preceding test's registered receiver and output root.
+    val collaborator = NimoResourceDiagnostics::class.java
+    collaborator.getDeclaredField("capture").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    collaborator.getDeclaredField("registered").apply { isAccessible = true }.setBoolean(NimoResourceDiagnostics, false)
+    collaborator.getDeclaredField("application").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    for (name in listOf("sessions", "requests")) {
+      val value = collaborator.getDeclaredField(name).apply { isAccessible = true }.get(NimoResourceDiagnostics)
+      if (value is MutableMap<*, *>) value.clear()
+      if (value is MutableSet<*>) value.clear()
+    }
     context = TrackingContext(ApplicationProvider.getApplicationContext())
     Bridge.initialize(context)
     manager = DeviceManager(initializeHardware = false)
@@ -353,10 +363,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun capturePinsGenerationZeroBeforeEffectsAndRejectsWrongPeerAndReplacement() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
     val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").readText()
     assertEquals(nimo.resourceInstanceId, JSONObject(admission).getString("instanceId"))
@@ -374,10 +385,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun captureAdmissionPersistenceFailurePreventsAnyConnectAndBecomesStickyFence() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     File(context.filesDir, "nimo-lifecycle/$nonce.admission.tmp").mkdir()
     assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
     assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
@@ -385,10 +397,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun capturedGenerationZeroCancellationDrainsOriginalAndFencesQueuedAdmission() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
     val cancelNonce = java.util.UUID.randomUUID().toString()
     NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
@@ -420,10 +433,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun offMainOriginalNimoConnectAdmitsOnMainBeforeAnyPeerTransport() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     val thread = Thread { nimo.connectById("Nimo-test") }
     thread.start(); awaitMainDispatch(thread)
     val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
@@ -442,8 +456,7 @@ class NimoLifecycleTest {
     captureCommand("arm-capture", nonce, nonce)
     // No SDK construction/hardware/analytics is needed: a fenced entry must return
     // before accessing collaborators. If the early guard regresses this test fails.
-    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
-    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    val sdk = uninitializedSdk()
     DeviceStore.apply("bluetooth", "default_wearable", "unchanged-default")
     DeviceStore.apply("bluetooth", "pending_wearable", "unchanged-pending")
     val thread = Thread { sdk.connect(com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test")) }
@@ -459,19 +472,25 @@ class NimoLifecycleTest {
     assertEquals(true, DeviceStore.get("glasses", "connected"))
   }
 
-  @Test fun unarmedDebugConnectStillExecutesNormallyOnMainQueue() {
-    manager.sgc = null
-    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.SIMULATED, "unit-simulated") }
-    thread.start(); awaitMainDispatch(thread)
-    assertNull(manager.sgc)
-    Shadows.shadowOf(Looper.getMainLooper()).idle()
-    thread.join(1000); assertFalse(thread.isAlive)
-    assertTrue(manager.sgc is Simulated)
+  @Test fun unarmedOrdinaryDebugEntryKeepsItsOriginalDirectExecution() {
+    val caller = AtomicReference<Thread?>()
+    val queued = AtomicReference<Boolean?>()
+    val thread = Thread {
+      queued.set(NimoResourceDiagnostics.dispatchCapturedEntry { fail("Unarmed debug must not queue") })
+      caller.set(Thread.currentThread())
+    }
+    thread.start(); thread.join(1000)
+    assertFalse(thread.isAlive)
+    assertSame(thread, caller.get())
+    assertEquals(false, queued.get())
   }
 
   @Test fun offMainSdkFailureIsDeliveredToCallerWithoutUncaughtMainException() {
-    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
-    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val sdk = uninitializedSdk()
     DeviceStore.apply("bluetooth", "default_wearable", "")
     val failure = AtomicReference<Throwable?>()
     val thread = Thread { try { sdk.connectDefault() } catch (error: Throwable) { failure.set(error) } }
@@ -480,6 +499,26 @@ class NimoLifecycleTest {
     thread.join(1000); assertFalse(thread.isAlive)
     assertTrue(failure.get() is com.mentra.bluetoothsdk.BluetoothSdkException)
     assertEquals("default_device_missing", (failure.get() as com.mentra.bluetoothsdk.BluetoothSdkException).code)
+  }
+
+  @Test fun onlyDiagnosticVariantRequiresArmForNimoAndExistingManagerCannotBeAdopted() {
+    assertFalse(NimoResourceDiagnostics.allowUnarmedWearable("nimoDiagnostic", "NIMO"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("nimoDiagnostic", "G2"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("debug", "NIMO"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("release", "NIMO"))
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    assertEquals("capture-arm-refused-existing-owner", captureCommand("arm-capture", nonce, nonce).getString("error"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  private fun uninitializedSdk(): com.mentra.bluetoothsdk.MentraBluetoothSdk {
+    // JVM fixture only. Reflection avoids Android bootclasspath references to JDK internals.
+    val type = Class.forName("sun.misc.Unsafe")
+    val allocator = type.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+    return type.getMethod("allocateInstance", Class::class.java)
+      .invoke(allocator, com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
   }
 
   private fun awaitMainDispatch(thread: Thread) {
