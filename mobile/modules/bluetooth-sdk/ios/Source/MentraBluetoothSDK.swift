@@ -704,6 +704,17 @@ public final class MentraBluetoothSDK {
         )
     }
 
+    /// Disable a stock action while retaining touch events. Reset by BES on BLE disconnect.
+    public func setTouchGestureDefaultBehaviorEnabled(_ gesture: TouchGesture, enabled: Bool) async throws -> SettingsAckEvent {
+        try await performSettingsCommand(
+            setting: "touch_gesture_default",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.sendTouchGestureDefaultBehaviorEnabled(requestId: requestId, gesture: gesture, enabled: enabled)
+            }
+        )
+    }
+
     public func setGalleryModeEnabled(_ enabled: Bool) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "gallery_mode",

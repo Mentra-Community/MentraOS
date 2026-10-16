@@ -666,6 +666,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().setGalleryServerEnabled(enabled).values
         }
 
+        SdkCoroutineFunction("setTouchGestureDefaultBehaviorEnabled") { gesture: String, enabled: Boolean ->
+            requireSdk().setTouchGestureDefaultBehaviorEnabled(TouchGesture.fromWireName(gesture), enabled).values
+        }
+
         SdkCoroutineFunction("setGalleryModeEnabled") { enabled: Boolean ->
             requireSdk().setGalleryModeEnabled(enabled).values
         }
