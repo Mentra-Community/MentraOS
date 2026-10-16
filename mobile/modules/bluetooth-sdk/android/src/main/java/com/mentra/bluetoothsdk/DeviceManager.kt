@@ -2435,8 +2435,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         }
 
         if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable, name)) return
-        disconnect(clearPendingIdentity = false)
-        Thread.sleep(100)
+        if (!NimoResourceDiagnostics.preserveCapturedScan(pendingWearable, name)) {
+            disconnect(clearPendingIdentity = false)
+            Thread.sleep(100)
+        }
         searching = true
         pendingDeviceName = name
 

@@ -9,6 +9,7 @@ internal object NimoResourceDiagnostics {
     fun track(instance: Nimo) {}
     fun dispatchCapturedEntry(entry: () -> Unit) = false
     fun allowManagerConnect(wearable: String, name: String? = null) = true
+    fun preserveCapturedScan(wearable: String, name: String) = false
     fun admit(instance: Nimo, name: String?, connect: Boolean) = true
     fun allowPeer(instance: Nimo, address: String, bonded: Boolean) = true
     fun beginTransport(instance: Nimo, address: String, bonded: Boolean) = true

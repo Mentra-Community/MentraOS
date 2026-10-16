@@ -63,9 +63,20 @@ internal object NimoResourceDiagnostics {
         if (Looper.myLooper() != main.looper) return false
         if (!wearable.contains("NIMO", ignoreCase = true)) return true
         val current = DeviceManager.getInstance().sgc
-        return !owned.cancelled && (name == null || name == owned.name) &&
+        return !owned.cancelled && (name == null || !owned.connectStarted && name == owned.name) &&
             (current == null || current is Nimo && (owned.instance === current ||
                 owned.instance == null && current.resourceCaptureEligible()))
+    }
+
+    /** Scan-to-connect is one captured attempt: never destroy or transfer its instance. */
+    @Synchronized
+    fun preserveCapturedScan(wearable: String, name: String): Boolean {
+        val owned = capture ?: return false
+        if (Looper.myLooper() != main.looper || !wearable.contains("NIMO", ignoreCase = true) ||
+            owned.cancelled || owned.connectStarted || name != owned.name) return false
+        val original = owned.instance ?: return false
+        return DeviceManager.getInstance().sgc === original &&
+            original.resourceSnapshot().getLong("sessionGeneration") == 0L
     }
 
     @Synchronized
