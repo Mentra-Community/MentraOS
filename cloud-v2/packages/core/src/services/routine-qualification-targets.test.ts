@@ -61,7 +61,8 @@ function fixture(rows = [row()], observed = host()) {
   const reads: unknown[] = [];
   const forbidden = async (): Promise<never> => {throw new Error('Qualification must not mutate or resolve source/builds');};
   const repository: RoutineJobRepository = {get: forbidden, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
-    async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS) {reads.push({hostId, laneId, limit, at, timeoutMS}); yield* structuredClone(rows);}};
+    async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS, includeQueued) {reads.push({hostId, laneId, limit, at, timeoutMS, includeQueued});
+      yield* structuredClone(rows.filter(value => includeQueued || value.state === 'awaiting-runner'));}};
   const service = new RoutineJobService(repository, {resolve: forbidden, isPrSuperseded: forbidden},
     {resolve: forbidden, inventory: forbidden, blob: forbidden}, {getExact: forbidden},
     {async get(id) {expect(id).toBe('pro1'); return structuredClone(observed);}}, {cancel: forbidden}, {detail: forbidden}, () => now);
@@ -76,7 +77,7 @@ test('an unseen selected build becomes a bounded read-only target while its orig
     selection: f.rows[0]!.fleetSelection, requirements});
   expect(inputSha256).toBe(requestInputDigest(target));
   expect(inputSha256).not.toBe(f.rows[0]!.fleetInputSha256);
-  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 5000}]);
+  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 5000, includeQueued: true}]);
   expect(f.rows).toEqual(before);
   expect(f.rows[0]).not.toHaveProperty('fleetBinding');
   expect(f.rows[0]).not.toHaveProperty('hostReceipt');
@@ -117,6 +118,9 @@ test('only the compatible canonical framework source receives queued targets; ol
     const old = host(); old.frameworkBinding = {...binding, version: 998, routineApiVersion};
     expect(await fixture([queuedRow()], old).service.qualificationTargets('pro1')).toEqual([]);
     expect((await fixture([row()], old).service.qualificationTargets('pro1'))[0]?.jobId).toBe('pending-ota');
+    const many = fixture([...Array.from({length: 101}, (_, index) => queuedRow(`queued-${index}`)), row()], old);
+    expect((await many.service.qualificationTargets('pro1'))[0]?.jobId).toBe('pending-ota');
+    expect(many.reads[0]).toMatchObject({includeQueued: false, limit: 100});
   }
   for (const version of [999, 1000]) {
     const current = host(); current.frameworkBinding = {...binding, version, routineApiVersion: 43};
@@ -214,7 +218,7 @@ test('all candidate streams share the query deadline and stop before a target is
   const times = [now, now + 1, now + 2, now + 5_000];
   service.now = () => times.shift() ?? now + 5_000;
   expect(await f.service.qualificationTargets('pro1')).toEqual([]);
-  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 4998}]);
+  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 4998, includeQueued: true}]);
 });
 
 test('the authenticated poll only includes explicitly requested targets and does not bind or acknowledge a product', async () => {
@@ -234,9 +238,10 @@ test('the authenticated poll only includes explicitly requested targets and does
 });
 
 test('candidate database stream is bounded, closed and includes only unbound or exact unaccepted queued handoffs without writes', async () => {
+  for (const includeQueued of [false, true]) {
   let filter: unknown, limit: number | undefined, closed = false;
   const cursor = {async *[Symbol.asyncIterator]() {yield row();}, async close() {closed = true;}};
-  const query = {sort(value: unknown) {expect(value).toEqual({state: -1, createdAt: 1, requestId: 1}); return this;},
+  const query = {sort(value: unknown) {expect(value).toEqual(includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}); return this;},
     limit(value: number) {limit = value; return this;}, read(value: string) {expect(value).toBe('primary'); return this;},
     readConcern(value: string) {expect(value).toBe('majority'); return this;},
     setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 123, maxTimeMS: 123}); return this;},
@@ -244,16 +249,19 @@ test('candidate database stream is bounded, closed and includes only unbound or 
   const original = TestRequestModel.find;
   try {
     TestRequestModel.find = mock((value: unknown) => {filter = value; return query;}) as unknown as typeof TestRequestModel.find;
-    for await (const candidate of routineJobRepository.qualificationCandidates!('pro1', 'pro1-mac', 100, new Date(now), 123)) {
+    for await (const candidate of routineJobRepository.qualificationCandidates!('pro1', 'pro1-mac', 100, new Date(now), 123, includeQueued)) {
       expect(candidate.requestId).toBe('pending-ota'); break;
     }
     expect(limit).toBe(100); expect(closed).toBe(true);
-    expect(filter).toMatchObject({$or: [{state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
-      {state: 'queued', hostId: 'pro1', 'fleetBinding.hostId': 'pro1', 'fleetBinding.laneId': 'pro1-mac', 'input.laneId': 'pro1-mac', inputSha256: {$exists: true}}],
+    expect(filter).toMatchObject({...includeQueued ? {$or: [{state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
+      {state: 'queued', hostId: 'pro1', 'fleetBinding.hostId': 'pro1', 'fleetBinding.laneId': 'pro1-mac', 'input.laneId': 'pro1-mac', inputSha256: {$exists: true}}]} :
+      {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
       hostReceipt: {$exists: false}, runId: {$exists: false}, dispatchCompletion: {$exists: false},
       hostCancellation: {$exists: false}, hostRejection: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
       fleetCancellation: {$exists: false}, fleetDeadline: {$gt: new Date(now)}, 'fleetSelection.platform': 'ios-on-mac', fleetPreparation: {$exists: true},
       $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': 'pro1'}]},
         {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': 'pro1-mac'}]}]});
+    if (!includeQueued) expect(filter).not.toHaveProperty('$or');
   } finally {TestRequestModel.find = original;}
+  }
 });

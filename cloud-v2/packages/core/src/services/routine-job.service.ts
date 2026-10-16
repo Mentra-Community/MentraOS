@@ -35,7 +35,7 @@ export interface RoutineJobRepository {
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
-  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number): AsyncIterable<StoredRoutineJob>;
+  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number, includeQueued: boolean): AsyncIterable<StoredRoutineJob>;
   supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   supersessionChecked?(jobId: string, now: Date): Promise<void>;
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
@@ -147,11 +147,11 @@ export const routineJobRepository: RoutineJobRepository = {
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
   },
-  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS) {
-    const cursor = TestRequestModel.find({$or: [
-      {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
+  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS, includeQueued) {
+    const unbound = {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}};
+    const cursor = TestRequestModel.find({...includeQueued ? {$or: [unbound,
       {state: 'queued', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
-        'input.laneId': laneId, inputSha256: {$exists: true}}],
+        'input.laneId': laneId, inputSha256: {$exists: true}}]} : unbound,
       hostReceipt: {$exists: false}, runId: {$exists: false}, dispatchCompletion: {$exists: false},
       hostCancellation: {$exists: false}, hostRejection: {$exists: false},
       preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
@@ -159,7 +159,7 @@ export const routineJobRepository: RoutineJobRepository = {
       fleetPreparation: {$exists: true}, 'fleetPreparation.requirements.resources': {$elemMatch: {permissions: {$elemMatch: {recipient: 'app'}}}},
       $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': hostId}]},
         {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': laneId}]}]})
-      .sort({state: -1, createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority')
+      .sort(includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority')
       .setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean().cursor({batchSize: 20});
     try {for await (const row of cursor) yield row as unknown as StoredRoutineJob;}
     finally {await cursor.close();}
@@ -397,7 +397,8 @@ export class RoutineJobService {
       if (!this.rows.qualificationCandidates || this.now() >= queryDeadline) break;
       // Finite ordered scan, shared five-second query budget; current 26-member suites fit without a mutable cursor.
       let scanned = 0;
-      for await (const row of this.rows.qualificationCandidates(hostId, lane.id, 100, new Date(now), queryDeadline - this.now())) {
+      for await (const row of this.rows.qualificationCandidates(hostId, lane.id, 100, new Date(now), queryDeadline - this.now(),
+        binding.version >= QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION)) {
         if (++scanned > 100 || this.now() >= queryDeadline) break;
         const queued = row.state === 'queued';
         if ((!queued && (row.state !== 'awaiting-runner' || row.hostId || row.fleetBinding)) ||
