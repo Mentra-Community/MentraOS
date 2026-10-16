@@ -112,6 +112,18 @@ test('an unaccepted queued handoff refreshes only its exact assigned build and l
   expect(await fixture([original], fresh).service.qualificationTargets('pro1')).toEqual([]);
 });
 
+test('only the compatible canonical framework source receives queued targets; older workers retain unbound discovery', async () => {
+  for (const routineApiVersion of [38, 43]) {
+    const old = host(); old.frameworkBinding = {...binding, version: 998, routineApiVersion};
+    expect(await fixture([queuedRow()], old).service.qualificationTargets('pro1')).toEqual([]);
+    expect((await fixture([row()], old).service.qualificationTargets('pro1'))[0]?.jobId).toBe('pending-ota');
+  }
+  for (const version of [999, 1000]) {
+    const current = host(); current.frameworkBinding = {...binding, version, routineApiVersion: 43};
+    expect((await fixture([queuedRow()], current).service.qualificationTargets('pro1'))[0]?.target).toEqual({hostId: 'pro1', laneId: 'pro1-mac'});
+  }
+});
+
 test('queued handoff proof refuses changed process selection, immutable input, source, resources or original binding', async () => {
   const changes: Array<(value: ReturnType<typeof queuedRow>) => void> = [
     value => {value.hostId = 'other';}, value => {value.fleetBinding.hostId = 'other';}, value => {value.fleetBinding.laneId = 'other';},

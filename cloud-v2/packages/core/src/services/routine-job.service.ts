@@ -326,6 +326,10 @@ export function routineJobRouting(requirements: PortableRequirements, hosts: Rou
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});
 
+// Canonical Harness main fda9fd5034e3255d9c7b6165fb86adc30963628e (#1034)
+// publishes first-parent version 999 with original target/cancellation fencing.
+const QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION = 999;
+
 /** A queued handoff may refresh evidence only for its original, unaccepted executable identity. */
 function queuedQualificationMatches(row: StoredRoutineJob, hostId: string, lane: RoutingTestHostState['lanes'][number]) {
   const input = frameworkRequestInputSchema.safeParse((row as StoredRoutineJob & {input?: unknown}).input),
@@ -397,7 +401,8 @@ export class RoutineJobService {
         if (++scanned > 100 || this.now() >= queryDeadline) break;
         const queued = row.state === 'queued';
         if ((!queued && (row.state !== 'awaiting-runner' || row.hostId || row.fleetBinding)) ||
-          queued && !queuedQualificationMatches(row, hostId, lane) || row.hostReceipt || row.runId || row.dispatchCompletion ||
+          queued && (binding.version < QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION || !queuedQualificationMatches(row, hostId, lane)) ||
+          row.hostReceipt || row.runId || row.dispatchCompletion ||
           row.hostCancellation || row.hostRejection || row.preparationCancellation || row.preparationRejection ||
           row.fleetCancellation || !row.fleetPreparation ||
           row.fleetDeadline.getTime() <= now || row.fleetSelection.platform !== 'ios-on-mac' ||
