@@ -225,9 +225,6 @@ const en = {
     poweredOn: "Continue",
     livePairingModeInfo:
       "New glasses enter pairing mode on their own once they finish starting up. Otherwise, press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
-    liveOtherPhoneTipTitle: "Paired to Another Phone",
-    liveOtherPhoneTipBody:
-      "If your Mentra Live was paired to a different phone, press the power button 3 times quickly to put it in pairing mode, then pair it with this phone.",
     liveScanTitle: "Turn on your glasses",
     liveScanSubtitle: "We're looking for your Mentra Live.",
     livePairingFoundTitle: "Glasses found",
