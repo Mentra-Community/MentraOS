@@ -5,13 +5,23 @@ import ObjectiveC
 /// Blocking public CoreWLAN calls are isolated here; the existing hotspot owner
 /// retains custody until they return, even after cancellation or a timeout.
 final class MacHotspotAssociation {
-    private let lock = NSLock()
+    private let condition = NSCondition()
     private var cancelled = false
     private var interface: MacWifiInterface?
     private var joinedSSID: String?
+    private let deadline: TimeInterval
+    private let now: () -> TimeInterval
+    private let pause: ((TimeInterval) -> Void)?
     private let makeInterface: () throws -> MacWifiInterface
 
-    init(makeInterface: @escaping () throws -> MacWifiInterface = { try PublicCoreWlanInterface() }) {
+    init(deadline: TimeInterval = ProcessInfo.processInfo.systemUptime + 60,
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         pause: ((TimeInterval) -> Void)? = nil,
+         makeInterface: @escaping () throws -> MacWifiInterface = { try PublicCoreWlanInterface() })
+    {
+        self.deadline = deadline
+        self.now = now
+        self.pause = pause
         self.makeInterface = makeInterface
     }
 
@@ -20,12 +30,15 @@ final class MacHotspotAssociation {
         let interface = try makeInterface()
         self.interface = interface
         if try interface.currentSSID() != ssid {
-            let network = try interface.network(ssid: ssid)
-            try checkCurrent()
-            // Record the intended association before this blocking call. A late
-            // successful join still belongs to us and must be cleaned up.
-            joinedSSID = ssid
-            try interface.associate(network: network, password: password)
+            let network = try discoverNetwork(ssid: ssid, interface: interface)
+            try checkDiscoveryCurrent()
+            if let network, try interface.currentSSID() != ssid {
+                try checkDiscoveryCurrent()
+                // Record the intended association before this blocking call. A late
+                // successful join still belongs to us and must be cleaned up.
+                joinedSSID = ssid
+                try interface.associate(network: network, password: password)
+            }
         }
         try checkCurrent()
         guard try interface.currentSSID() == ssid else {
@@ -35,7 +48,7 @@ final class MacHotspotAssociation {
     }
 
     func cancel() {
-        lock.lock(); cancelled = true; lock.unlock()
+        condition.lock(); cancelled = true; condition.broadcast(); condition.unlock()
     }
 
     /// Run on the same worker as association, after its blocking call returns.
@@ -57,8 +70,40 @@ final class MacHotspotAssociation {
         try interface?.currentSSID()
     }
 
+    static func observeCurrentSSID() throws -> String? {
+        try PublicCoreWlanInterface().currentSSID()
+    }
+
+    private func discoverNetwork(ssid: String, interface: MacWifiInterface) throws -> NSObject? {
+        while true {
+            try checkDiscoveryCurrent()
+            // Recheck Location authorization before and after each blocking scan.
+            if try interface.currentSSID() == ssid { return nil }
+            let network = try interface.network(ssid: ssid)
+            try checkDiscoveryCurrent()
+            if try interface.currentSSID() == ssid { return nil }
+            if let network { return network }
+            // Successful empty scans remain pending within this same join window.
+            // Native scan errors escape immediately; association is never retried.
+            let remaining = max(0, deadline - now())
+            if let pause { pause(min(1, remaining)) }
+            else {
+                condition.lock()
+                if !cancelled { _ = condition.wait(until: Date(timeIntervalSinceNow: min(1, remaining))) }
+                condition.unlock()
+            }
+        }
+    }
+
+    private func checkDiscoveryCurrent() throws {
+        try checkCurrent()
+        guard now() < deadline else {
+            throw LocalMediaError("The requested glasses hotspot was not found by Mac Wi-Fi before the hotspot join timed out")
+        }
+    }
+
     private func checkCurrent() throws {
-        lock.lock(); let stopped = cancelled; lock.unlock()
+        condition.lock(); let stopped = cancelled; condition.unlock()
         if stopped { throw CancellationError() }
     }
 }
@@ -66,7 +111,7 @@ final class MacHotspotAssociation {
 protocol MacWifiInterface: AnyObject {
     func name() throws -> String
     func currentSSID() throws -> String?
-    func network(ssid: String) throws -> NSObject
+    func network(ssid: String) throws -> NSObject?
     func associate(network: NSObject, password: String) throws
     func disassociate()
 }
@@ -122,7 +167,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
         return String(data: data, encoding: .utf8)
     }
 
-    func network(ssid: String) throws -> NSObject {
+    func network(ssid: String) throws -> NSObject? {
         let selector = NSSelectorFromString("scanForNetworksWithSSID:error:")
         let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Scan.self)
         var error: NSError?
@@ -137,7 +182,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
                   data == Data(ssid.utf8) else { continue }
             return network
         }
-        throw LocalMediaError("The requested glasses hotspot was not found by Mac Wi-Fi")
+        return nil
     }
 
     func associate(network: NSObject, password: String) throws {

@@ -229,12 +229,12 @@ export const localNetworkTransport = {
     return result.localAddress
   },
 
-  async disconnect(caller: symbol): Promise<void> {
+  async disconnect(caller: symbol, waitForInternet = false): Promise<void> {
     if (macHotspotOwner && macHotspotOwner.caller !== caller) return
     connectionGeneration += 1
     if (macHotspotOwner) {
       const owner = macHotspotOwner.nativeId
-      await glassesHotspot.leave(owner)
+      await glassesHotspot.leave(owner, waitForInternet)
       if (macHotspotOwner?.nativeId === owner) macHotspotOwner = null
     }
     if (supportsScopedConnection()) {

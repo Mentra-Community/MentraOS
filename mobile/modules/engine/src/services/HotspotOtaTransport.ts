@@ -257,7 +257,7 @@ class HotspotOtaTransport {
       }
       if (this.localNetworkRequested) {
         try {
-          await localNetworkTransport.disconnect(this.networkOwner)
+          await localNetworkTransport.disconnect(this.networkOwner, true)
           this.localNetworkRequested = false
           this.localNetworkConnected = false
         } catch (error) {
