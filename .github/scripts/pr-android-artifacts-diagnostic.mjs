@@ -36,7 +36,15 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
     throw new Error('Diagnostic APK lacks compiled NIMO receiver class and registration/startup wiring')
 
   // Verify actual call sites and consumed boolean guards, not capability strings alone.
-  const guarded = (body, name) => new RegExp(`invoke-[^\\n]+${escaped(target)}->${name}\\([^\\n]*\\)Z\\s*\\n\\s*move-result[^\\n]*\\n\\s*if-(?:eqz|nez)\\b`).test(body)
+  const guarded = (body, name) => {
+    const instructions = body.replace(/^\s*(?:#.*|\.(?:line|local|end local|restart local|prologue|epilogue)\b[^\n]*)$/gm,'')
+    const args = name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' :
+      name === 'allowManagerConnect' ? 'Ljava/lang/String;Ljava/lang/String;' :
+      name === 'admit' ? `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z` : `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z`
+    const normal = `${name}\\(${escaped(args)}\\)Z`
+    const bridge = name === 'allowManagerConnect' ? `|${name}\\$default\\(${escaped(target + args + 'ILjava/lang/Object;')}\\)Z` : ''
+    return new RegExp(`invoke-[^\\n]+${escaped(target)}->(?:${normal}${bridge})\\s*\\n\\s*move-result\\s+([vp][0-9]+)\\s*\\n\\s*if-(?:eqz|nez)\\s+\\1\\s*,`).test(instructions)
+  }
   const checks = [
     [sdk, NIMO_SDK, 'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
     [sdk, NIMO_SDK, 'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],

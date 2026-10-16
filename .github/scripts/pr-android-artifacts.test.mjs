@@ -38,7 +38,8 @@ const diagnosticCode = {
 `}
 
 
-const guardedMethod = (signature, guards) => `.method public final ${signature}\n${guards.map(name=>` invoke-virtual {v0}, ${desc(NIMO_DIAGNOSTIC)}->${name}(Lkotlin/jvm/functions/Function0;)Z\n move-result v0\n if-eqz v0, :continue\n return-void\n :continue`).join('\n')}\n.end method\n`
+const hookArgs = name => name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' : name === 'allowManagerConnect' ? 'Ljava/lang/String;Ljava/lang/String;' : `${desc(NIMO_DEVICE)}Ljava/lang/String;Z`
+const guardedMethod = (signature, guards) => `.method public final ${signature}\n${guards.map(name=>` invoke-virtual {v0}, ${desc(NIMO_DIAGNOSTIC)}->${name}(${hookArgs(name)})Z\n move-result v0\n if-eqz v0, :continue\n return-void\n :continue`).join('\n')}\n.end method\n`
 diagnosticCode.diagnostics += `.method public execute$bluetooth_sdk_nimoDiagnostic(Landroid/content/Intent;)V
  const-string v0, "arm-capture"
  const-string v0, "capture-status"
@@ -336,4 +337,10 @@ test('SDK fixture descriptors follow the declared Kotlin package, not its direct
  // Both Kotlin internal mangling and unmangled JVM spellings are bounded and accepted.
  assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('releaseCapturedResource$bluetooth_sdk_nimoDiagnostic','releaseCapturedResource')}))
  assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('releaseCapturedResource$bluetooth_sdk_nimoDiagnostic','releaseCapturedResource$bad-module')}),/capture/)
+})
+
+test('Kotlin default bridge guards consume the exact returned boolean register', () => {
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('->allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z', `->allowManagerConnect$default(${desc(NIMO_DIAGNOSTIC)}Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Z`)}))
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('move-result v0\n if-eqz v0','move-result v0\n .line 35\n if-eqz v0')}))
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('if-eqz v0','if-eqz v1')}),/capture/)
 })
