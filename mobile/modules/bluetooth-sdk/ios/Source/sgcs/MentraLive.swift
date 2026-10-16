@@ -761,7 +761,14 @@ extension MentraLive: CBCentralManagerDelegate {
         advertisementData: [String: Any] = [:],
         rssi: NSNumber? = nil
     ) {
-        guard let name = peripheral.name else { return }
+        // The first iOS advertisement often has the name only in the packet, not on
+        // CBPeripheral. Dropping that packet hides glasses that are already in pairing mode.
+        guard let name = discoveredAdvertisementName(peripheral, advertisementData: advertisementData) else {
+            if manualDiscoveryActive, loggedUnnamedDiscoveries.insert(peripheral.identifier).inserted {
+                pairFlow("discover", "unnamed id=\(peripheral.identifier.uuidString)")
+            }
+            return
+        }
 
         // Check for compatible device names
         if name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
@@ -780,45 +787,56 @@ extension MentraLive: CBCentralManagerDelegate {
                 )
                 discoveredPeripherals[name] = peripheral
                 rememberPeripheral(peripheral, name: name)
-                cacheAdvPairing(
+                if cacheAdvPairing(
                     name,
                     pairingMode: false,
                     pairingCode: nil,
                     securePairingCapable: true
-                )
-                emitDiscoveredDeviceFromCache(
-                    name,
-                    identifier: peripheral.identifier.uuidString,
-                    rssi: rssi?.intValue
-                )
+                ) {
+                    emitDiscoveredDeviceFromCache(
+                        name,
+                        identifier: peripheral.identifier.uuidString,
+                        rssi: rssi?.intValue
+                    )
+                }
                 return
             }
 
             let glassType = name == "Xy_A" ? "Standard" : "K900"
             let trailer = parseSecurePairingTrailer(advertisementData)
+            // A packet without the trailer from a unit already seen with it is a partial
+            // advertisement, not legacy firmware. Do not publish it: the scan list would show a
+            // secure unit that is not in pairing mode as pairable, with no caption.
+            let partialAdvertisement = MentraLiveDiscoveryPolicy.isPartialAdvertisement(
+                secureCapable: trailer.secureCapable,
+                knownSecureName: Self.securePairingNames.contains(name)
+            )
             Bridge.log(
                 trailer.secureCapable
                     ? "Found compatible \(glassType) glasses device: \(name) (pairingMode=\(trailer.pairingMode))"
-                    : "Found compatible \(glassType) glasses device: \(name) (legacy firmware, pairable)"
+                    : partialAdvertisement
+                        ? "Found compatible \(glassType) glasses device: \(name) (partial advertisement, known secure)"
+                        : "Found compatible \(glassType) glasses device: \(name) (legacy firmware, pairable)"
             )
 
             // Store the peripheral
             discoveredPeripherals[name] = peripheral
             rememberPeripheral(peripheral, name: name)
 
-            cacheAdvPairing(
+            if !partialAdvertisement, cacheAdvPairing(
                 name,
                 // Field firmware has no pairing flag. Treat it as pairable so the
                 // new Mentra App can still find old glasses.
                 pairingMode: trailer.secureCapable ? trailer.pairingMode : true,
                 pairingCode: trailer.pairingCode,
                 securePairingCapable: trailer.secureCapable
-            )
-            emitDiscoveredDeviceFromCache(
-                name,
-                identifier: peripheral.identifier.uuidString,
-                rssi: rssi?.intValue
-            )
+            ) {
+                emitDiscoveredDeviceFromCache(
+                    name,
+                    identifier: peripheral.identifier.uuidString,
+                    rssi: rssi?.intValue
+                )
+            }
 
             let isSavedGlasses = savedDeviceName == name
             if isSavedGlasses, trailer.secureCapable {
@@ -1657,8 +1675,14 @@ class MentraLive: NSObject, SGCManager {
     private var pairSelectSentThisSession = false
     /// `pairing_info` arrived on this BLE session, so the glasses run secure firmware.
     private var pairingInfoSeenThisSession = false
-    /// Names seen advertising the secure-pairing trailer; survives manager recreation.
-    private static var securePairingNames = Set<String>()
+    /// Names seen advertising the secure-pairing trailer; survives manager recreation and app
+    /// restarts. CoreBluetooth sometimes reports an advertisement without the manufacturer data
+    /// that carries the trailer, so absence of it must not reclassify a known secure unit as
+    /// legacy firmware.
+    private static let securePairingNamesKey = "mentra_live_secure_pairing_names"
+    private static var securePairingNames = Set(
+        UserDefaults.standard.stringArray(forKey: securePairingNamesKey) ?? []
+    )
     /// glasses_ready arrived for a secure pairing target before pairing_info confirmed the bond.
     private var awaitingSecurePairingConfirmation = false
     /// pairing_info from secure firmware arrived on this BLE session.
@@ -1828,12 +1852,15 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - React Native Interface
 
     private var discoveredPeripherals = [String: CBPeripheral]() // name -> peripheral
+    /// Advertisements that arrived with no name. Logged once so a pairing scan that
+    /// sees the glasses but cannot list them is visible in the phone log.
+    private var loggedUnnamedDiscoveries = Set<UUID>()
     /// Last advertisement pairing trailer for a discovered name. Re-emits (already-
     /// connected / scan replay) must not drop these flags: omitting them makes a
     /// secure idle unit look like pairable legacy firmware.
     private var discoveredAdvPairing = [String: CachedAdvPairing]()
 
-    private struct CachedAdvPairing {
+    private struct CachedAdvPairing: Equatable {
         let pairingMode: Bool
         let pairingCode: String?
         let securePairingCapable: Bool
@@ -2773,13 +2800,18 @@ class MentraLive: NSObject, SGCManager {
 
         pairFlow("scan", "start trigger=\(reason) target=\(UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME) ?? "-")")
         discoveredAdvPairing.removeAll()
+        loggedUnnamedDiscoveries.removeAll()
         isScanning = true
         pairingWatchScanActive = false
 
         startReadinessCheckLoop()
 
+        // The choose-glasses scan has to hear a later advertisement when the glasses
+        // enter pairing mode. iOS reports each peripheral once unless duplicates are
+        // allowed, so the row would stay "Not in pairing mode". Reconnect scans stay
+        // duplicate-free so a saved glasses advertisement cannot start another connect.
         let scanOptions: [String: Any] = [
-            CBCentralManagerScanOptionAllowDuplicatesKey: false,
+            CBCentralManagerScanOptionAllowDuplicatesKey: manualDiscoveryActive,
         ]
 
         // let knownPeripherals = centralManager?.retrieveConnectedPeripherals(withServices: [SERVICE_UUID])
@@ -6499,20 +6531,40 @@ class MentraLive: NSObject, SGCManager {
         )
     }
 
+    private func discoveredAdvertisementName(
+        _ peripheral: CBPeripheral,
+        advertisementData: [String: Any]
+    ) -> String? {
+        if let name = peripheral.name, !name.isEmpty { return name }
+        if let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String, !name.isEmpty {
+            return name
+        }
+        return nil
+    }
+
+    /// Returns true when this advertisement changed the row the scan screen is showing.
+    @discardableResult
     private func cacheAdvPairing(
         _ name: String,
         pairingMode: Bool,
         pairingCode: String?,
         securePairingCapable: Bool
-    ) {
-        if securePairingCapable {
-            Self.securePairingNames.insert(name)
+    ) -> Bool {
+        if securePairingCapable, Self.securePairingNames.insert(name).inserted {
+            UserDefaults.standard.set(
+                Array(Self.securePairingNames).sorted(), forKey: Self.securePairingNamesKey
+            )
         }
-        discoveredAdvPairing[name] = CachedAdvPairing(
+        let next = CachedAdvPairing(
             pairingMode: pairingMode,
             pairingCode: pairingCode,
             securePairingCapable: securePairingCapable
         )
+        if discoveredAdvPairing[name] == next {
+            return false
+        }
+        discoveredAdvPairing[name] = next
+        return true
     }
 
     private func emitDiscoveredDeviceFromCache(
