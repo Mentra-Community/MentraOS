@@ -448,6 +448,29 @@ await BluetoothSdk.clearDefaultDevice()
 await saveDeviceToYourAppStorage(null)
 ```
 
+## Mentra Live pairing
+
+`confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. The replacement is `GlassesStatus.pairingState`, also delivered as `pairing_state_changed`. Full steps are in [MIGRATION.md](./MIGRATION.md). The version stays `3.3.0` in `package.json` (podspec and Gradle read it). npm still publishes `3.2.1`.
+
+On supported Mentra Live firmware, three power-button presses open one 120-second window and the glasses speak a 4-character code. Three presses again cancel it. The phone that was already paired pauses automatic reconnect for that window plus a 30-second margin (`pairingState.endsAtMs`), then reconnects after `pairing_mode_ended` with `reason` `"timeout"` or `"cancelled"`. If another phone pairs, this phone's state becomes `pairing_rejected`: reconnect stops, and the UI should show Pair Again. That state clears only after a successful explicit pair or `forget()`.
+
+`useMentraBluetooth().glasses` does not include `pairingState`. Read `getGlassesStatus()`, `subscribeGlassesStatus()`, or:
+
+```ts
+BluetoothSdk.addListener("pairing_state_changed", (event) => {
+  if (event.state.state === "pairing_rejected") showPairAgain()
+})
+
+BluetoothSdk.addListener("pair_failure", (event) => {
+  if (event.code === "ios_forget_pairing") {
+    // iOS still has a Bluetooth pairing for these glasses.
+    // Settings > Bluetooth > Forget This Device, then pair again.
+  }
+})
+```
+
+`entering_pairing_mode` includes `window_id`. `pairing_info` includes `auto_audio` and no longer includes `awaiting_confirm` or `retained_owner_link`. Do not use the word "owner" in user-facing sample copy.
+
 ## Native notification controls
 
 G2 exposes firmware-owned notification history and popups. `getNativeNotificationStatus()` reports support, source (`phone` on Android or `ancs` on iOS), authorization, the desired controls, and submission/failure state. `submitted` means the controls were queued for the glasses, not that firmware acknowledged them. Unsupported drivers reject configuration instead of silently succeeding.
@@ -751,7 +774,7 @@ export function HardwareEventLogger() {
 
 For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
 
-Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `wifi_scan_result`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `version_info`, `stream_status`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `mic_health`, `local_transcription`, `rgb_led_control_response`, `pair_failure`, `pairing_info`, `entering_pairing_mode`, `pairing_mode_ended`, `pairing_state_changed`, `audio_connected`, `audio_disconnected`, and `log`. `owner_replaced` remains in the type map and is never emitted.
 
 React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, `touch_event` includes `gestureName`, `wifi_scan_result` includes `networks` and `scanComplete`, `version_info` matches the `requestVersionInfo()` result shape, `photo_response` success includes `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, and `gallery_status` includes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 

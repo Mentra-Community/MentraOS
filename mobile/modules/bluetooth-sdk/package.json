@@ -68,6 +68,7 @@
     "!ios/Pods",
     "!ios/Pods/**",
     "plugin/build",
+    "MIGRATION.md",
     "README.md",
     "scripts",
     "src",
