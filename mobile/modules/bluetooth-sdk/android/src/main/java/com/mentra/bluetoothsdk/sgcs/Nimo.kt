@@ -957,6 +957,7 @@ class Nimo : SGCManager() {
     private var resourceFactoryResetRequested = false
     private var resourceCloseCalled = false
     private var resourceCloseObserved = false
+    private var resourceDisconnectCallbackStatus: Int? = null
     private var resourceCloseError: String? = null
     private var resourceClosedWithPending = false
     private var resourceClosingGatt: BluetoothGatt? = null
@@ -981,7 +982,7 @@ class Nimo : SGCManager() {
             .put("release", JSONObject().put("result", resourceReleaseResult).put("pending", resourceReleasePending)
                 .put("micStopRequired", resourceMicStopRequired).put("displayExitRequired", resourceExitRequired).put("micStopStartedAtEpochMs", resourceMicStopStartedAt ?: JSONObject.NULL).put("micStopMarkerAtEpochMs", resourceMicStopMarkerAt ?: JSONObject.NULL).put("micStopWrittenAtEpochMs", resourceMicStopWrittenAt ?: JSONObject.NULL).put("micSilence", "unknown")
                 .put("displayExitStatus", resourceExitStatus ?: JSONObject.NULL).put("displayExitAtEpochMs", resourceExitAt ?: JSONObject.NULL)
-                .put("displayVisibleState", "unknown").put("transportFailure", resourceTransportFailure).put("gattCloseCalled", resourceCloseCalled).put("gattDisconnectCallbackObserved", resourceCloseObserved)
+                .put("displayVisibleState", "unknown").put("transportFailure", resourceTransportFailure).put("gattCloseCalled", resourceCloseCalled).put("gattDisconnectCallbackObserved", resourceCloseObserved).put("gattDisconnectCallbackStatus", resourceDisconnectCallbackStatus ?: JSONObject.NULL)
                 .put("gattCloseError", resourceCloseError ?: JSONObject.NULL).put("classicAclState", "unknown").put("bondMutationRequested", resourceBondMutationRequested).put("factoryResetRequested", resourceFactoryResetRequested).put("bondState", "unknown"))
     }
 
@@ -1830,7 +1831,7 @@ class Nimo : SGCManager() {
         resourcePairAddress = device.address
         resourcePairName = device.name ?: ""
         resourceTwsAt = null; resourceTimeAckAt = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null
-        resourceCloseCalled = false; resourceCloseObserved = false; resourceCloseError = null
+        resourceCloseCalled = false; resourceCloseObserved = false; resourceDisconnectCallbackStatus = null; resourceCloseError = null
         NimoResourceDiagnostics.track(this)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
         gatt =
@@ -1969,7 +1970,10 @@ class Nimo : SGCManager() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                     mainHandler.post {
                         if (g !== gatt) {
-                            if (g === resourceClosingGatt && newState == BluetoothProfile.STATE_DISCONNECTED) resourceCloseObserved = true
+                            if (g === resourceClosingGatt && newState == BluetoothProfile.STATE_DISCONNECTED) {
+                                resourceCloseObserved = true
+                                resourceDisconnectCallbackStatus = status
+                            }
                             return@post
                         }
                         Bridge.log("NIMO: onConnectionStateChange status=$status newState=$newState")
