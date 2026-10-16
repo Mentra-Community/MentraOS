@@ -59,9 +59,10 @@ startup_failure_codes() {
   fi
 }
 
+# The demo-dev stack's Core, which the dev-only diagnostic workflow can read.
 diagnose_current_core() {
-  local app="ca-mentra-ent-ref-core" data latest ready
-  AZURE_RESOURCE_GROUP="rg-mentra-enterprise-reference"
+  local app="ca-mentra-ent-demo-dev-core" data latest ready
+  AZURE_RESOURCE_GROUP="rg-mentra-enterprise-demo-dev"
   if data=$(timeout 8s az containerapp show --name "$app" --resource-group "$AZURE_RESOURCE_GROUP" \
     --query '{latest:properties.latestRevisionName,ready:properties.latestReadyRevisionName,image:properties.template.containers[0].image}' --output json 2>/dev/null); then
     latest=$(printf '%s' "$data" | jq -r '.latest // empty')

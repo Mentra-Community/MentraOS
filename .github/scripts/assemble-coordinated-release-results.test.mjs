@@ -7,7 +7,7 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {assembleCoordinatedReleaseResults} from "./assemble-coordinated-release-results.mjs"
-import {createPrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {createPrivateDeploymentRecord, TARGETS} from "./coordinated-private-deployment-records.mjs"
 import {completedReleaseDownloads} from "./publish-coordinated-release-page.mjs"
 import {validateCoreReleaseHandoff} from "./load-coordinated-example-release.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
@@ -173,16 +173,18 @@ for (const channel of ["beta", "dev"]) {
     assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
     assert.equal(manifest.cloud.environment, channel === "dev" ? "dev" : "staging")
     assert.equal(manifest.privateDeployment, undefined)
-    if (channel === "dev") {
-      const workspaceOrigin = "https://demo.acmeworkspace.com"
-      const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+    {
+      // Each channel's demo stack records its own deployment.
+      const target = TARGETS[channel]
+      const workspaceOrigin = target.workspaceOrigin
+      const coreHostname = `${target.coreContainerApp}.gentlehill-4ed63a4c.westus2.azurecontainerapps.io`
       const coreOrigin = `https://${coreHostname}`
       const privateDeployment = createPrivateDeploymentRecord({
         plan, sourceCommit: plan.sourceCommit, requestedTag: plan.sourceCommit, status: "deployed",
         sourceImage: runtimeImage.image, sourceImageDigest: runtimeImage.digest,
-        image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${runtimeImage.digest}`,
+        image: `${target.registry}.azurecr.io/mentra-cloud-enterprise@${runtimeImage.digest}`,
         imageDigest: runtimeImage.digest,
-        revision: "ca-mentra-enterprise-reference--0000057", coreRevision: "ca-mentra-ent-ref-core--0000057",
+        revision: `${target.containerApp}--0000057`, coreRevision: `${target.coreContainerApp}--0000057`,
         workspaceOrigin, coreHostname, coreOrigin,
         checks: [workspaceOrigin, coreOrigin].flatMap(origin =>
           ["healthz", "ready"].map(probe => ({url: `${origin}/${probe}`, ready: true, statusCode: 200}))),
@@ -190,13 +192,16 @@ for (const channel of ["beta", "dev"]) {
       })
       const archived = finalizeReleaseManifest({plan, results: {...results, privateDeployment}, completedAt: manifest.completedAt})
       assert.deepEqual(finalizeReleaseManifest({plan, results: archived, completedAt: archived.completedAt}), archived)
-      assert.equal(completedReleaseDownloads(plan, archived).apk.coordinate, plan.artifactNames.androidApp)
-      assert.equal(validateCoreReleaseHandoff({plan, manifest: archived, run: {head_sha: plan.sourceCommit},
-        selection: {identity: plan.releaseIdentity, channel: "dev", planName: `coordinated-release-plan-${plan.releaseSetId}`},
-        repository: "Mentra-Community/MentraOS"}).source_commit, plan.sourceCommit)
+      assert.equal(archived.privateDeployment.workspaceOrigin, workspaceOrigin)
+      if (channel === "dev") {
+        assert.equal(completedReleaseDownloads(plan, archived).apk.coordinate, plan.artifactNames.androidApp)
+        assert.equal(validateCoreReleaseHandoff({plan, manifest: archived, run: {head_sha: plan.sourceCommit},
+          selection: {identity: plan.releaseIdentity, channel: "dev", planName: `coordinated-release-plan-${plan.releaseSetId}`},
+          repository: "Mentra-Community/MentraOS"}).source_commit, plan.sourceCommit)
+      }
       assert.throws(() => finalizeReleaseManifest({plan, results: {...archived,
         privateDeployment: {...privateDeployment, sourceCommit: "0".repeat(40)}}, completedAt: archived.completedAt}),
-        /do not match a dev release plan/)
+        /do not match a dev or beta release plan/)
     }
     assert.equal(manifest.runtimeImage.digest, runtimeImage.digest)
     // The Mentra beta is complete without any Starter Kit or example evidence;

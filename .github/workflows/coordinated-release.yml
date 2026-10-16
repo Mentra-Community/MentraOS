@@ -354,31 +354,33 @@ jobs:
   private-deployment:
     name: Deploy release-matched private stack
     needs: [plan, runtime-image]
-    # ENTERPRISE_DEMO_FROZEN=true holds the demo on its current release (e.g. during
-    # sales demos). The Private Cloud download channel then stays put as well.
-    if: needs.plan.outputs.cloud_environment == 'dev' && vars.ENTERPRISE_DEMO_FROZEN != 'true'
+    # Dev releases deploy demo-dev.acmeworkspace.com; staging releases deploy the
+    # sales demo, demo.acmeworkspace.com. ENTERPRISE_DEMO_FROZEN=true holds the
+    # sales demo on its current release (e.g. during sales demos), and the beta
+    # Private Cloud download channel with it.
+    if: >-
+      needs.plan.outputs.cloud_environment == 'dev' ||
+      (needs.plan.outputs.cloud_environment == 'staging' && vars.ENTERPRISE_DEMO_FROZEN != 'true')
     permissions:
       actions: read
       contents: read
       id-token: write
       packages: read
-    uses: ./.github/workflows/private-deployment-dev.yml
+    uses: ./.github/workflows/private-deployment.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}
       release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
       runtime_image_artifact: ${{ needs.runtime-image.outputs.result_artifact }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
-    secrets: inherit
 
   private-cloud-channel:
     name: Point Private Cloud downloads at this release
     needs: [plan, runtime-image, private-deployment]
-    # Dev moves only after the reference Azure stack deployed and verified this
-    # exact release. Other channels have no reference stack to wait for.
+    # A channel moves only after its demo stack deployed and verified this exact
+    # release, so it stays put while that stack is frozen.
     if: >-
       always() && needs.plan.outputs.dry_run != 'true' && needs.runtime-image.result == 'success' &&
-      (needs.private-deployment.result == 'success' ||
-      (needs.plan.outputs.cloud_environment != 'dev' && needs.private-deployment.result == 'skipped'))
+      needs.private-deployment.result == 'success'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     concurrency:
