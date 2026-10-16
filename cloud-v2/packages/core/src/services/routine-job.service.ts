@@ -5,12 +5,12 @@ import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
 import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
-import {frameworkIdentitySchema} from '../types/framework-request.types';
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
-  routineQualificationTargetSchema, type RoutineQualificationTarget, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
+  routineQualificationTargetSchema, routineJobBindingSchema, type RoutineQualificationTarget, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {selectedBuildInput} from '../types/test-build.types';
@@ -35,7 +35,7 @@ export interface RoutineJobRepository {
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
-  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number): AsyncIterable<StoredRoutineJob>;
+  qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number, includeQueued: boolean): AsyncIterable<StoredRoutineJob>;
   supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   supersessionChecked?(jobId: string, now: Date): Promise<void>;
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
@@ -147,13 +147,19 @@ export const routineJobRepository: RoutineJobRepository = {
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
   },
-  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS) {
-    const cursor = TestRequestModel.find({state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false},
+  async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS, includeQueued) {
+    const unbound = {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}};
+    const cursor = TestRequestModel.find({...includeQueued ? {$or: [unbound,
+      {state: 'queued', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
+        'input.laneId': laneId, inputSha256: {$exists: true}}]} : unbound,
+      hostReceipt: {$exists: false}, runId: {$exists: false}, dispatchCompletion: {$exists: false},
+      hostCancellation: {$exists: false}, hostRejection: {$exists: false},
+      preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
       fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}, 'fleetSelection.platform': 'ios-on-mac',
       fleetPreparation: {$exists: true}, 'fleetPreparation.requirements.resources': {$elemMatch: {permissions: {$elemMatch: {recipient: 'app'}}}},
       $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': hostId}]},
         {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': laneId}]}]})
-      .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority')
+      .sort(includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority')
       .setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean().cursor({batchSize: 20});
     try {for await (const row of cursor) yield row as unknown as StoredRoutineJob;}
     finally {await cursor.close();}
@@ -320,6 +326,32 @@ export function routineJobRouting(requirements: PortableRequirements, hosts: Rou
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});
 
+// Canonical Harness main fda9fd5034e3255d9c7b6165fb86adc30963628e (#1034)
+// publishes first-parent version 999 with original target/cancellation fencing.
+const QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION = 999;
+
+/** A queued handoff may refresh evidence only for its original, unaccepted executable identity. */
+function queuedQualificationMatches(row: StoredRoutineJob, hostId: string, lane: RoutingTestHostState['lanes'][number]) {
+  const input = frameworkRequestInputSchema.safeParse((row as StoredRoutineJob & {input?: unknown}).input),
+    binding = routineJobBindingSchema.safeParse(row.fleetBinding), intent = routineDispatchIntentSchema.safeParse(row.dispatchIntent),
+    prepared = row.fleetPreparation;
+  if (!prepared || !input.success || !binding.success || !intent.success || row.hostId !== hostId ||
+    binding.data.jobId !== row.requestId || binding.data.requestId !== row.requestId || binding.data.hostId !== hostId || binding.data.laneId !== lane.id ||
+    binding.data.descriptorRevision !== routineLaneDescriptorRevision(lane) ||
+    requestInputDigest(input.data) !== row.inputSha256 || requestInputDigest(intent.data) !== row.dispatchIntentSha256 ||
+    requestInputDigest(intent.data) !== requestInputDigest({...row.fleetSelection, routineSource: prepared.routineSource, laneId: lane.id})) return false;
+  const value = input.data, definition = prepared.definition, selected = row.fleetSelection;
+  return row.requestId === selected.requestId && value.routineId === selected.routineId && value.platform === selected.platform && value.laneId === lane.id &&
+    value.definitionRevision === selected.routineRevision && definition.id === selected.routineId &&
+    definition.source.revision === selected.routineRevision && definition.minimumRoutineApiVersion === prepared.routineSource.minimumRoutineApiVersion &&
+    value.minimumFrameworkVersion === selected.minimumFrameworkVersion && requestInputDigest(value.build) === requestInputDigest(selected.build) &&
+    requestInputDigest(value.routineSource) === requestInputDigest(prepared.routineSource) &&
+    requestInputDigest(value.policy ?? null) === requestInputDigest(definition.execution?.policy ?? null) &&
+    value.resources.length === prepared.requirements.resources.length && new Set(value.resources.map(resource => resource.id)).size === value.resources.length &&
+    prepared.requirements.resources.every(required => value.resources.filter(resource => resource.kind === required.kind &&
+      (!resource.laneId || resource.laneId === lane.id) && lane.resources.some(offered => offered.id === resource.id && offered.kind === resource.kind)).length === 1);
+}
+
 /** Match Actions' automatic occurrence identity; manual requests and reruns retain their exact build. */
 export function isAutomaticPrRoutineJob(row: StoredRoutineJob): boolean {
   const {source, routineId, platform} = row.fleetSelection;
@@ -365,9 +397,15 @@ export class RoutineJobService {
       if (!this.rows.qualificationCandidates || this.now() >= queryDeadline) break;
       // Finite ordered scan, shared five-second query budget; current 26-member suites fit without a mutable cursor.
       let scanned = 0;
-      for await (const row of this.rows.qualificationCandidates(hostId, lane.id, 100, new Date(now), queryDeadline - this.now())) {
+      for await (const row of this.rows.qualificationCandidates(hostId, lane.id, 100, new Date(now), queryDeadline - this.now(),
+        binding.version >= QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION)) {
         if (++scanned > 100 || this.now() >= queryDeadline) break;
-        if (row.state !== 'awaiting-runner' || row.hostId || row.fleetBinding || row.fleetCancellation || !row.fleetPreparation ||
+        const queued = row.state === 'queued';
+        if ((!queued && (row.state !== 'awaiting-runner' || row.hostId || row.fleetBinding)) ||
+          queued && (binding.version < QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION || !queuedQualificationMatches(row, hostId, lane)) ||
+          row.hostReceipt || row.runId || row.dispatchCompletion ||
+          row.hostCancellation || row.hostRejection || row.preparationCancellation || row.preparationRejection ||
+          row.fleetCancellation || !row.fleetPreparation ||
           row.fleetDeadline.getTime() <= now || row.fleetSelection.platform !== 'ios-on-mac' ||
           row.fleetTarget?.hostId && row.fleetTarget.hostId !== hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id) continue;
         this.assertExactInputs(row);
@@ -383,7 +421,7 @@ export class RoutineJobService {
           {...context, recipient: 'app'}))));
         if (!compatibleRoutineLane(structural, lane) || appGranted) continue;
         const target = {jobId: row.requestId, hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(),
-          selection: row.fleetSelection, requirements, ...(row.fleetTarget ? {target: row.fleetTarget} : {})};
+          selection: row.fleetSelection, requirements, ...(queued ? {target: {hostId, laneId: lane.id}} : row.fleetTarget ? {target: row.fleetTarget} : {})};
         targets.push(routineQualificationTargetSchema.parse({...target, inputSha256: requestInputDigest(target)}));
         break;
       }
