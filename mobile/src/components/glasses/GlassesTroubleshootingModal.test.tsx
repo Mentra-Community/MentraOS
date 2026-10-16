@@ -56,22 +56,16 @@ describe("Even touchpad reset instructions", () => {
     expect(tips.some((tip) => tip.body.includes("5 times"))).toBe(false)
   })
 
-  describe("Mentra Live paired to another phone", () => {
+  describe("Mentra Live pairing tip", () => {
     afterEach(() => {
       delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
     })
 
-    it("tells users to press three times when secure pairing is enabled", () => {
-      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
+    it.each(["true", "false"])("tells users to press three times when secure pairing is %s", (enabled) => {
+      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = enabled
       const tips = getModelSpecificTips("Mentra Live")
-      expect(tips).toContainEqual({title: en.pairing.liveOtherPhoneTipTitle, body: en.pairing.liveOtherPhoneTipBody})
-    })
-
-    it("keeps the legacy tip when secure pairing is disabled", () => {
-      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "false"
-      const tips = getModelSpecificTips("Mentra Live")
-      expect(tips.some((tip) => tip.title === en.pairing.liveOtherPhoneTipTitle)).toBe(false)
-      expect(tips.some((tip) => tip.title === "Pairing Mode")).toBe(true)
+      expect(tips).toContainEqual({title: en.pairing.livePairingScanTitle, body: en.pairing.livePairingScanBody})
+      expect(tips.some((tip) => /another phone|Pairing Mode/i.test(`${tip.title} ${tip.body}`))).toBe(false)
     })
   })
 
