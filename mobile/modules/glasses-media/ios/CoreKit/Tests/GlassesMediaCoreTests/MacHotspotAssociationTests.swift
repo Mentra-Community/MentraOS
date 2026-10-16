@@ -136,6 +136,28 @@ final class MacHotspotAssociationTests: XCTestCase {
         XCTAssertEqual(wifi.joins, 0)
     }
 
+    func testExactAutomaticAssociationDuringScanIsReusedWithoutOwningRelease() throws {
+        let wifi = Wifi(); wifi.missingScans = .max
+        wifi.onScan = { wifi.ssid = "glasses" }
+        let join = MacHotspotAssociation(makeInterface: { wifi })
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
+        XCTAssertEqual(wifi.scans, 1)
+        XCTAssertEqual(wifi.joins, 0)
+        try join.leave()
+        XCTAssertEqual(wifi.leaves, 0)
+    }
+
+    func testExactAutomaticAssociationBetweenScansNeedsNoFurtherScanOrJoin() throws {
+        let wifi = Wifi(); wifi.missingScans = .max
+        var now: TimeInterval = 0
+        let join = MacHotspotAssociation(deadline: 5, now: { now }, pause: { now += $0; wifi.ssid = "glasses" }, makeInterface: { wifi })
+        XCTAssertEqual(try join.associate(ssid: "glasses", password: "private"), "en1")
+        XCTAssertEqual(wifi.scans, 1)
+        XCTAssertEqual(wifi.joins, 0)
+        try join.leave()
+        XCTAssertEqual(wifi.leaves, 0)
+    }
+
     func testNativeScanFailureIsTerminalWithoutRetry() {
         let wifi = Wifi(); wifi.scanError = NSError(domain: "com.apple.wifi", code: 7)
         var pauses = 0

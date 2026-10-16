@@ -32,10 +32,13 @@ final class MacHotspotAssociation {
         if try interface.currentSSID() != ssid {
             let network = try discoverNetwork(ssid: ssid, interface: interface)
             try checkDiscoveryCurrent()
-            // Record the intended association before this blocking call. A late
-            // successful join still belongs to us and must be cleaned up.
-            joinedSSID = ssid
-            try interface.associate(network: network, password: password)
+            if let network, try interface.currentSSID() != ssid {
+                try checkDiscoveryCurrent()
+                // Record the intended association before this blocking call. A late
+                // successful join still belongs to us and must be cleaned up.
+                joinedSSID = ssid
+                try interface.associate(network: network, password: password)
+            }
         }
         try checkCurrent()
         guard try interface.currentSSID() == ssid else {
@@ -67,14 +70,14 @@ final class MacHotspotAssociation {
         try interface?.currentSSID()
     }
 
-    private func discoverNetwork(ssid: String, interface: MacWifiInterface) throws -> NSObject {
+    private func discoverNetwork(ssid: String, interface: MacWifiInterface) throws -> NSObject? {
         while true {
             try checkDiscoveryCurrent()
             // Recheck Location authorization before and after each blocking scan.
-            _ = try interface.currentSSID()
+            if try interface.currentSSID() == ssid { return nil }
             let network = try interface.network(ssid: ssid)
             try checkDiscoveryCurrent()
-            _ = try interface.currentSSID()
+            if try interface.currentSSID() == ssid { return nil }
             if let network { return network }
             // Successful empty scans remain pending within this same join window.
             // Native scan errors escape immediately; association is never retried.
