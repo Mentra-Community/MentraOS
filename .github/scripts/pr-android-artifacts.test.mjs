@@ -38,7 +38,7 @@ const diagnosticCode = {
 `}
 
 
-const hookArgs = name => name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' : name === 'allowManagerConnect' ? 'Ljava/lang/String;Ljava/lang/String;' : `${desc(NIMO_DEVICE)}Ljava/lang/String;Z`
+const hookArgs = name => name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' : ['allowManagerConnect','preserveCapturedScan'].includes(name) ? 'Ljava/lang/String;Ljava/lang/String;' : `${desc(NIMO_DEVICE)}Ljava/lang/String;Z`
 const guardedMethod = (signature, guards) => `.method public final ${signature}\n${guards.map(name=>` invoke-virtual {v0}, ${desc(NIMO_DIAGNOSTIC)}->${name}(${hookArgs(name)})Z\n move-result v0\n if-eqz v0, :continue\n return-void\n :continue`).join('\n')}\n.end method\n`
 diagnosticCode.diagnostics += `.method public execute$bluetooth_sdk_nimoDiagnostic(Landroid/content/Intent;)V
  const-string v0, "arm-capture"
@@ -59,8 +59,8 @@ diagnosticCode.sdk = `.class public final ${desc(NIMO_SDK)}\n` + [
  'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V',
  'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V',
  'startScan(Lcom/mentra/bluetoothsdk/DeviceModel;)V',
-].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect'])).join('')
-diagnosticCode.manager += ['connectByName(Ljava/lang/String;)V','connectDefault()V'].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect'])).join('')
+].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect',...(sig.startsWith('startScan(')?[]:['preserveCapturedScan'])])).join('')
+diagnosticCode.manager += ['connectByName(Ljava/lang/String;)V','connectDefault()V'].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect',...(sig.startsWith('connectByName(')?['preserveCapturedScan']:[])])).join('')
 diagnosticCode.nimo = `.class public final ${desc(NIMO_DEVICE)}\n` + [
  ['connectById(Ljava/lang/String;)V',['dispatchCapturedEntry','admit']],
  ['findCompatibleDevices()V',['dispatchCapturedEntry','admit']],
@@ -247,6 +247,8 @@ test('diagnostic APK publication has distinct immutable coordinates and requires
    {...receipt.diagnosticVerification,kind:'compiled-receiver-wiring-v1'},
    {...receipt.diagnosticVerification,captureProtocol:undefined},
    {...receipt.diagnosticVerification,captureRequiredBeforeArm:false},
+   {...receipt.diagnosticVerification,scanInstancePreserved:undefined},
+   {...receipt.diagnosticVerification,scanInstancePreserved:false},
    {...receipt.diagnosticVerification,apkSha256:'e'.repeat(64)},
   ]) assert.throws(()=>validateAndroidReceipt({...receipt,diagnosticVerification:proof},{pr:42,sha:head,runId:100,attempt:2,diagnostic:true}),/verification/);
 
@@ -401,4 +403,17 @@ test('pre-arm policy inversions must reach the exact branch, return or capture f
   invertedSnapshot.replace('xor-int/lit8 v3, v0, 0x1','const-string v1, "unrelatedFlag"\n xor-int/lit8 v3, v0, 0x1'),
   diagnosticCode.diagnostics.replace(snapshotSink,'return v0'), // marker is not a JSON fact
  ]) assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}),/policy/)
+})
+
+test('every scan-to-connect destructive boundary consumes the Kotlin scan preservation guard', () => {
+ for(const [key,signature] of [
+ ['sdk','connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V'],
+ ['sdk','connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V'],
+ ['manager','connectByName(Ljava/lang/String;)V'],
+ ]) {
+  const source=diagnosticCode[key], start=source.indexOf(signature), end=source.indexOf('.end method',start)
+  assert.ok(start>0 && end>start)
+  const broken=source.slice(0,start)+source.slice(start,end).replace('->preserveCapturedScan(', '->ignoredPreservation(')+source.slice(end)
+  assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,[key]:broken}),/capture/)
+ }
 })

@@ -74,3 +74,11 @@ it false. A fixture from the pinned `expo@55.0.24` package guards this template
 and existing custom developer-support arguments fail closed. The legacy
 ReactNativeHost template remains supported. The ESM helper has explicit TypeScript
 declarations so the mobile plugin is checked by the ordinary compile gate.
+
+The unreleased capture proof also requires `scanInstancePreserved: true`. The
+actual SDK connect/default and manager named-connect methods must each invoke
+`preserveCapturedScan(String, String): Boolean` and consume its returned register
+in the connection branch. Missing any one guard rejects publication; Core and
+the harness reject earlier/missing/false scan-preservation receipts. The method
+ABI and Kotlin object static receiver initialization were checked with the
+Kotlin compiler and `javap`; actual APK analyzer execution is still required.

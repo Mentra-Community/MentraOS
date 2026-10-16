@@ -39,17 +39,17 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
   const guarded = (body, name) => {
     const instructions = body.replace(/^\s*(?:#.*|\.(?:line|local|end local|restart local|prologue|epilogue)\b[^\n]*)$/gm,'')
     const args = name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' :
-      name === 'allowManagerConnect' ? 'Ljava/lang/String;Ljava/lang/String;' :
+      ['allowManagerConnect','preserveCapturedScan'].includes(name) ? 'Ljava/lang/String;Ljava/lang/String;' :
       `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z`
     const normal = `${name}\\(${escaped(args)}\\)Z`
     const bridge = name === 'allowManagerConnect' ? `|${name}\\$default\\(${escaped(target + args + 'ILjava/lang/Object;')}\\)Z` : ''
     return new RegExp(`invoke-[^\\n]+${escaped(target)}->(?:${normal}${bridge})\\s*\\n\\s*move-result\\s+([vp][0-9]+)\\s*\\n\\s*if-(?:eqz|nez)\\s+\\1\\s*,`).test(instructions)
   }
   const checks = [
-    [sdk, NIMO_SDK, 'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
-    [sdk, NIMO_SDK, 'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [sdk, NIMO_SDK, 'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect','preserveCapturedScan']],
+    [sdk, NIMO_SDK, 'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect','preserveCapturedScan']],
     [sdk, NIMO_SDK, 'startScan(Lcom/mentra/bluetoothsdk/DeviceModel;)V', ['dispatchCapturedEntry','allowManagerConnect']],
-    [manager, NIMO_MANAGER, 'connectByName(Ljava/lang/String;)V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [manager, NIMO_MANAGER, 'connectByName(Ljava/lang/String;)V', ['dispatchCapturedEntry','allowManagerConnect','preserveCapturedScan']],
     [manager, NIMO_MANAGER, 'connectDefault()V', ['dispatchCapturedEntry','allowManagerConnect']],
     [nimo, NIMO_DEVICE, 'connectById(Ljava/lang/String;)V', ['dispatchCapturedEntry','admit']],
     [nimo, NIMO_DEVICE, 'findCompatibleDevices()V', ['dispatchCapturedEntry','admit']],
@@ -165,5 +165,5 @@ export async function inspectNimoDiagnosticBytecode(apk, sdkHome, exec) {
   const read = name => exec(analyzer, ['dex', 'code', '--class', name, apk], {encoding:'utf8', maxBuffer:16 * 1024 * 1024})
   const code = {diagnostics:read(NIMO_DIAGNOSTIC), receiver:read(NIMO_RECEIVER), manager:read(NIMO_MANAGER), sdk:read(NIMO_SDK), nimo:read(NIMO_DEVICE)}
   validateNimoDiagnosticBytecode(code)
-  return {captureProtocol:CAPTURE_PROTOCOL, captureRequiredBeforeArm:true, analyzer:{source:'android-sdk-command-line-tools',revision,sha256:digest.digest('hex')}, wiringSha256:createHash('sha256').update(JSON.stringify(code)).digest('hex')}
+  return {captureProtocol:CAPTURE_PROTOCOL, captureRequiredBeforeArm:true, scanInstancePreserved:true, analyzer:{source:'android-sdk-command-line-tools',revision,sha256:digest.digest('hex')}, wiringSha256:createHash('sha256').update(JSON.stringify(code)).digest('hex')}
 }
