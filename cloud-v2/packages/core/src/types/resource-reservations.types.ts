@@ -24,6 +24,15 @@ export const exclusiveResourceIntentSchema = z.object({operationId: identity, ho
     context.addIssue({code: 'custom', message: 'Reservation intent resources and capabilities must be unique'})
 })
 export type ExclusiveResourceIntent = z.infer<typeof exclusiveResourceIntentSchema>
+/** One immutable candidate on the existing request, including a deliberate empty dependency selection. */
+export const fleetResourceAdmissionSchema = z.object({intent: exclusiveResourceIntentSchema,
+  dependencies: z.array(exclusiveResourceDependencySchema).max(30)}).strict().superRefine((value, context) => {
+  if (value.intent.owner.kind !== 'run' || value.intent.operationId !== `run:${value.intent.owner.id}` ||
+    new Set(value.dependencies.map(dependency => dependency.resourceId)).size !== value.dependencies.length ||
+    new Set(value.dependencies.map(dependency => dependency.authorityHostId)).size > 1)
+    context.addIssue({code: 'custom', message: 'Fleet admission requires one original run and canonical resource authority'})
+})
+export type FleetResourceAdmission = z.infer<typeof fleetResourceAdmissionSchema>
 export const exclusiveResourceObservationInputSchema = z.object({intent: exclusiveResourceIntentSchema,
   controller}).strict()
 

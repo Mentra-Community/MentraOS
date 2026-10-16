@@ -8,12 +8,13 @@ import {CandidateVerificationService, type CandidateAuthorization} from './candi
 import {RoutineDefinitionModel} from '../models/routine-definition.model';
 import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejectionSchema, type RoutineDispatchIntent} from '../types/routine-dispatch.types';
 import {hostRequestDeliveryFilter, hostCancellationDeliveryFilter} from './test-request-activity';
-import {fleetExclusiveDeliverySchema, type FleetExclusiveReservation, type FleetExclusiveExecutionBinding} from '../types/resource-reservations.types';
-import {fleetResourceExecutionBinding} from './fleet-resource-binding';
+import {fleetExclusiveDeliverySchema, type FleetExclusiveReservation, type FleetExclusiveExecutionBinding, type FleetResourceAdmission} from '../types/resource-reservations.types';
+import {fleetResourceExecutionBinding, assertFleetResourceAdmission} from './fleet-resource-binding';
 
 interface FleetClaimReceipts {
   fleetSelection?: unknown;
   fleetPreparation?: {requirements: {resources: {kind: string; capabilities: string[]}[]}};
+  fleetResourceAdmission?: FleetResourceAdmission;
   fleetExclusiveReservation?: FleetExclusiveReservation;
   fleetExclusiveExecutionBinding?: FleetExclusiveExecutionBinding;
 }
@@ -77,7 +78,7 @@ export interface TestRequestRepository {
   insertPreparation?(request: StoredPreparingRequest): Promise<void>;
   preparations?(hostId: string, limit: number): Promise<StoredPreparingRequest[]>;
   completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string,
-    exclusive?: {reservation: FleetExclusiveReservation; binding: FleetExclusiveExecutionBinding}): Promise<StoredTestRequest | null>;
+    exclusive?: {reservation: FleetExclusiveReservation; binding: FleetExclusiveExecutionBinding}, admission?: FleetResourceAdmission): Promise<StoredTestRequest | null>;
   updatePreparation?(requestId: string, hostId: string, intentSha256: string, value: StoredPreparingRequest['preparation']): Promise<StoredPreparingRequest | null>;
   cancelPreparation?(requestId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationCancellation']>): Promise<StoredPreparingRequest | null>;
   pendingDispatchCompletions?(hostId: string, limit: number): Promise<StoredTestRequest[]>;
@@ -113,10 +114,11 @@ const mongoRepository: TestRequestRepository = {
       {$set: {preparationCheckedAt: new Date()}}, {writeConcern: testWriteConcern});
     return rows;
   },
-  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256, exclusive) {
+  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256, exclusive, admission) {
     // Mongoose immutable fields stay protected for every ordinary update. This one guarded transition fills absent input once.
     const identity = {requestId, hostId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}, inputSha256: {$exists: false},
       preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}, fleetCancellation: {$exists: false},
+      fleetResourceAdmission: admission ?? {$exists: false},
       ...(exclusive ? {fleetExclusiveReservation: exclusive.reservation, fleetExclusiveExecutionBinding: {$exists: false}} : {})};
     return await TestRequestModel.collection.findOneAndUpdate(identity,
       {$set: {state: 'queued', input, inputSha256, ...(exclusive ? {fleetExclusiveExecutionBinding: exclusive.binding} : {}), updatedAt: new Date()},
@@ -271,10 +273,10 @@ export class TestRequestService {
   async completePreparation(requestId: string, hostId: string, intentSha256: string, input: unknown): Promise<StoredRequest> {
     const row = await this.preparation(requestId, hostId, intentSha256), intent = row.dispatchIntent!;
     const frozen = frameworkRequestInputSchema.parse(input), digest = requestInputDigest(frozen);
-    if (row.fleetSelection && row.fleetPreparation?.requirements.resources.some(required => frozen.resources
-      .find(value => value.kind === required.kind)?.exclusiveDependencies?.some(value => required.capabilities.includes(value.capability))) &&
-      !row.fleetExclusiveReservation)
-      throw new TestRequestConflict('Fleet dependency requires its pre-dispatch portable reservation');
+    if (row.fleetSelection) {
+      if (!row.fleetResourceAdmission) throw new TestRequestConflict('Fleet execution requires its original staged resource admission');
+      assertFleetResourceAdmission(row.fleetResourceAdmission, requestId, hostId, frozen, row.fleetExclusiveReservation);
+    }
     const exclusive = row.fleetExclusiveReservation ? {reservation: row.fleetExclusiveReservation,
       binding: fleetResourceExecutionBinding(row.fleetExclusiveReservation, requestId, hostId, intentSha256, frozen, digest)} : undefined;
     if (frozen.routineId !== intent.routineId || frozen.platform !== intent.platform || frozen.definitionRevision !== intent.routineRevision ||
@@ -290,7 +292,7 @@ export class TestRequestService {
     if (row.state !== 'preparing') return row;
     await this.enrolled?.(frozen);
     if (!this.repository.completePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
-    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest, exclusive) ??
+    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest, exclusive, row.fleetResourceAdmission) ??
       await this.preparation(requestId, hostId, intentSha256);
     if (isExecutableRequest(saved) && saved.inputSha256 !== digest)
       throw new TestRequestConflict('Prepared executable input changed after its first commit');

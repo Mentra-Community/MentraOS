@@ -5,6 +5,7 @@ import {TestRequestModel} from '../models/test-request.model'
 import {TestHostStateModel} from '../models/test-host-state.model'
 import {requestInputDigest} from './test-request.service'
 import {ResourceReservationsService, type ResourceReservationRepository} from './resource-reservations.service'
+import type {FleetResourceAdmission} from '../types/resource-reservations.types'
 const now=new Date('2026-10-15T12:00:00Z'),gib=1024**3,required={minimumAvailableBytes:7*gib}
 const offer={poolId:'host:disk:1',observedAt:now.toISOString(),availableBytes:8*gib,stagingBudgetBytes:10*gib,pendingEvidenceBytes:0,reservations:[]}
 const claim=(requestId:string)=>({id: requestId==='one'?'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba20':'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba21',
@@ -60,13 +61,14 @@ test('job requirement derives from exact recording policy and preserves the exis
   .toEqual({minimumAvailableBytes:9*gib})
  expect(()=>routinePortableRequirements({...row,definition:{...row.definition,execution:{resourceKinds:['recorder']}}})).toThrow('finite estimatedOutputBytes')
 })
-function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?:boolean;selectionFailure?:boolean;exclusive?:boolean;exclusiveAnswerLost?:boolean}={}) {
+function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?:boolean;selectionFailure?:boolean;exclusive?:boolean;exclusiveAnswerLost?:boolean;
+ beforeStage?:(admission:FleetResourceAdmission)=>Promise<void>}={}) {
  const hosts=new Map<string,any>(['host','other'].map(hostId=>[hostId,{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,receivedAt:now,resourceReservationVersion:0,resourceReservations:[],
  snapshot:{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:{...offer,poolId:`${hostId}:disk:1`}}]}))}}]))
  const requests=new Map<string,any>(), writes:any[]=[];let raced=false,selectionFailed=false
  const dependency={resourceId:'conference-account',authorityHostId:'host',capability:'google-authentication'}, exclusiveCalls:string[]=[]
  let answerLost=false
- if(options.exclusive)for(const host of hosts.values())for(const lane of host.snapshot.lanes)lane.resources.push({id:`${lane.id}-fixture`,kind:'fixture-data',capabilities:['google-authentication'],exclusiveDependencies:[dependency]})
+ if(options.exclusive)for(const host of hosts.values())for(const lane of host.snapshot.lanes)lane.resources.push({id:`${lane.id}-fixture`,kind:'fixture-data',capabilities:['google-authentication'],exclusiveDependencies:[{...dependency}]})
  const first=spyOn(TestRequestModel.collection,'findOne').mockImplementation((async(query:any)=>{
   if(!requests.has(query.requestId))requests.set(query.requestId,{...row(query.requestId),fleetResourceReservation:undefined,state:'awaiting-runner',fleetPreparation:{definition:{execution:{policy:{estimatedOutputBytes:5*gib}}},requirements:{platform:'ios-on-mac',resources:[{kind:'recorder',capabilities:[],storage:required}]}},fleetSelection:{build:{headSha:'b'.repeat(40)}}})
   const request=requests.get(query.requestId)
@@ -84,16 +86,22 @@ function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?
  const save=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(query:any,update:any)=>{
   const request=requests.get(query.requestId)
   if(update.$set.fleetBinding){
-   if(request.state!=='awaiting-runner'||request.fleetBinding||request.fleetCancellation||request.fleetResourceReservation?.hostId!==query['fleetResourceReservation.hostId']||request.fleetResourceReservation?.laneId!==query['fleetResourceReservation.laneId'])return null
+   if(request.state!=='awaiting-runner'||request.fleetBinding||request.fleetCancellation||request.fleetResourceReservation?.hostId!==query['fleetResourceReservation.hostId']||request.fleetResourceReservation?.laneId!==query['fleetResourceReservation.laneId']||requestInputDigest(request.fleetResourceAdmission)!==requestInputDigest(query.fleetResourceAdmission))return null
   }else{
    if(options.selectionFailure&&!selectionFailed){selectionFailed=true;throw Error('temporary request write failure')}
-   if(request.fleetResourceReservation)return null
+   if(request.fleetResourceReservation||request.state!=='awaiting-runner'||request.fleetCancellation||requestInputDigest(request.fleetResourceAdmission)!==requestInputDigest(query.fleetResourceAdmission))return null
   }
   Object.assign(request,update.$set);return structuredClone(request)
  }) as any)
  const resourceRows:ResourceReservationRepository={
   async get(hostId){return structuredClone(hosts.get(hostId)??null)},
   async request(requestId){return structuredClone(requests.get(requestId)??null)},
+  async stage(requestId,digest,admission){
+   await options.beforeStage?.(admission)
+   const request=requests.get(requestId)
+   if(!request||request.fleetResourceAdmission||request.fleetInputSha256!==digest||request.state!=='awaiting-runner'||request.fleetBinding||request.fleetCancellation)return null
+   request.fleetResourceAdmission=structuredClone(admission);return structuredClone(request)
+  },
   async claimedHosts(requestId){return [...hosts.values()].filter(host=>host.resourceReservations.some((value:any)=>
    value.kind==='exclusive'&&value.owner.id===requestId&&value.owner.kind==='run'&&value.origin?.kind==='fleet')).map(host=>structuredClone(host))},
   async replace(previous,claims){
@@ -116,6 +124,45 @@ test('two simultaneous lane claims atomically fence the existing host record and
   expect(results.filter(Boolean)).toHaveLength(1);expect(f.host().resourceReservations).toHaveLength(1)
   expect(f.writes[0]).toMatchObject({hostId:'host',sequence:1,resourceReservationVersion:0})
  }finally{f.restore()}
+})
+test('concurrent dependency and dependency-free candidates freeze one request stage before any authority or recorder commitment',async()=>{
+ for(const competing of ['empty','other-authority'])for(const winnerHost of ['host','other']){
+  const entered=new Set<string>(),gates=new Map<string,{promise:Promise<void>;release:()=>void}>()
+  for(const hostId of ['host','other']){let release!:()=>void;const promise=new Promise<void>(resolve=>{release=resolve});gates.set(hostId,{promise,release})}
+  let arrived!:()=>void;const both=new Promise<void>(resolve=>{arrived=resolve}),f=admissionFixture({exclusive:true,selectionFailure:true,
+   async beforeStage(admission){entered.add(admission.intent.hostId);if(entered.size===2)arrived();await gates.get(admission.intent.hostId)!.promise}})
+  try{
+   for(const lane of f.host('other').snapshot.lanes){const fixture=lane.resources.find((value:any)=>value.kind==='fixture-data')
+    if(competing==='empty')delete fixture.exclusiveDependencies
+    else fixture.exclusiveDependencies[0].authorityHostId='other'
+   }
+   const attempts=new Map(['host','other'].map(hostId=>[hostId,routineJobRepository.reserveResources!('one','a'.repeat(64),hostId,'mac',now)
+    .then(value=>({value}),error=>({error}))]))
+   await both
+   expect(f.host().resourceReservations).toEqual([]);expect(f.host('other').resourceReservations).toEqual([])
+   expect(f.requests.get('one').fleetResourceAdmission).toBeUndefined()
+   gates.get(winnerHost)!.release()
+   const winner=await attempts.get(winnerHost)!
+   expect('error' in winner).toBe(true)
+   const staged=structuredClone(f.requests.get('one').fleetResourceAdmission),original=structuredClone(f.host(winnerHost).resourceReservations)
+   expect(staged.intent.hostId).toBe(winnerHost)
+   expect(staged.dependencies).toHaveLength(winnerHost==='other'&&competing==='empty'?0:1)
+   expect(original.some((value:any)=>value.kind==='exclusive')).toBe(Boolean(staged.dependencies.length))
+   expect(original.filter((value:any)=>!value.kind)).toHaveLength(1)
+   const loserHost=winnerHost==='host'?'other':'host';gates.get(loserHost)!.release()
+   expect(await attempts.get(loserHost)!).toEqual({value:null})
+   expect(f.host(loserHost).resourceReservations).toEqual([])
+   expect(f.requests.get('one').fleetResourceAdmission).toEqual(staged)
+   expect(await routineJobRepository.bind('one','a'.repeat(64),{hostId:loserHost,laneId:'mac'} as any,{requestId:'one',laneId:'mac'},now)).toBeNull()
+   const recovered=await routineJobRepository.reserveResources!('one','a'.repeat(64),winnerHost,'mac',now)
+   expect(recovered!.fleetResourceAdmission).toEqual(staged)
+   expect(f.host(winnerHost).resourceReservations).toEqual(original)
+   expect(recovered!.fleetExclusiveReservation?.claims??[]).toEqual(original.filter((value:any)=>value.kind==='exclusive'))
+   expect(recovered!.fleetResourceReservation).toEqual(original.find((value:any)=>!value.kind))
+   const bound=await routineJobRepository.bind('one','a'.repeat(64),{hostId:winnerHost,laneId:'mac'} as any,{requestId:'one',laneId:'mac'},now)
+   expect(bound).toMatchObject({hostId:winnerHost,state:'preparing',fleetResourceAdmission:staged})
+  }finally{for(const gate of gates.values())gate.release();f.restore()}
+ }
 })
 test('a host report racing admission requires a fresh snapshot CAS before retaining the receipt',async()=>{
  const f=admissionFixture({reportRace:true})
@@ -189,17 +236,18 @@ test('a retained exclusive authority winner blocks offer removal and alternate t
   }finally{f.restore()}
  }
 })
-test('a losing host claim converges after another host wins, binds and refuses input-free preparation',async()=>{
+test('a failed byte receipt stays on its frozen host until bound input-free preparation is fenced',async()=>{
  for(const disposition of ['rejected','cancelled']){
   const f=admissionFixture({selectionFailure:true})
   try{
    await expect(routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).rejects.toThrow('temporary request write failure')
    const losing=f.host().resourceReservations[0]
-   const winner=await routineJobRepository.reserveResources!('one','a'.repeat(64),'other','mac',now)
-   expect(winner!.fleetResourceReservation!.id).not.toBe(losing.id)
+   expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'other','mac',now)).toBeNull()
+   const winner=await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)
+   expect(winner!.fleetResourceReservation!.id).toBe(losing.id)
    const intent={requestId:'one',laneId:'mac'},digest=requestInputDigest(intent)
-   const bound=await routineJobRepository.bind('one','a'.repeat(64),{hostId:'other',laneId:'mac'} as any,intent,now)
-   expect(bound).toMatchObject({state:'preparing',hostId:'other',fleetBinding:{hostId:'other',laneId:'mac'},dispatchIntentSha256:digest})
+   const bound=await routineJobRepository.bind('one','a'.repeat(64),{hostId:'host',laneId:'mac'} as any,intent,now)
+   expect(bound).toMatchObject({state:'preparing',hostId:'host',fleetBinding:{hostId:'host',laneId:'mac'},dispatchIntentSha256:digest})
    Object.assign(f.requests.get('one'),{state:'terminal',
     ...(disposition==='rejected'?{preparationRejection:{dispatchIntentSha256:digest,code:'not-applicable',reason:'Unsupported source',rejectedAt:now.toISOString(),disposition:'not-applicable'}}
      :{preparationCancellation:{requestedAt:now.toISOString(),reason:'Cancelled before executable input'}})})

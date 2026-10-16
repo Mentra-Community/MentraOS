@@ -1,5 +1,5 @@
 import {TestHostStateModel} from '../models/test-host-state.model';
-import {hostResourceReservationsSchema, isExclusiveHostReservation} from '../types/resource-reservations.types';
+import {hostResourceReservationsSchema, isExclusiveHostReservation, fleetResourceAdmissionSchema} from '../types/resource-reservations.types';
 import {recorderCapacityRequirement, recorderStorageAvailable, recorderHostReservationSchema, STORAGE_MARGIN_BYTES, type RecorderHostReservation, type RecorderStorageObservation} from '../types/recorder-storage.types';
 import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -83,7 +83,7 @@ export const routineJobRepository: RoutineJobRepository = {
   },
   async reserveResources(requestId, fleetInputSha256, hostId, laneId, now) {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
+      let row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
         fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
       if (!row?.fleetPreparation) return null;
@@ -96,8 +96,9 @@ export const routineJobRepository: RoutineJobRepository = {
       const requirements = recorderCapacityRequirements(row.fleetPreparation), lane = host.lanes.find(value => value.id === laneId),
         required = requirements.resources.find(value => value.kind === 'recorder')?.storage;
       const sourceOffer = lane?.resources.find(value => value.kind === 'recorder')?.storage;
+      const executionDigest = row.inputSha256;
       const offered = sourceOffer && {...sourceOffer, reservations: sourceOffer.reservations.filter(value =>
-        value.requestId !== requestId || value.inputSha256 !== row.inputSha256)};
+        value.requestId !== requestId || value.inputSha256 !== executionDigest)};
       if (host.hostId !== hostId || !lane || !required || !offered || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' ||
         now.getTime() - hostRow.receivedAt.getTime() > 120_000 || hostRow.receivedAt > now ||
         !compatibleRoutineLane(requirements, {...lane, resources: lane.resources.map(value => value.kind === 'recorder' ? {...value, storage: offered} : value)}, permissionContext(host.frameworkBinding, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
@@ -117,6 +118,12 @@ export const routineJobRepository: RoutineJobRepository = {
       // reconcile that winner; current offers alone cannot establish the absence of an old claim.
       const exclusive = await exclusiveResources.reserveFleet(requestId, fleetInputSha256, hostId, laneId);
       if (exclusive === null || selected && exclusive && (!row.fleetExclusiveReservation || requestInputDigest(row.fleetExclusiveReservation) !== requestInputDigest(exclusive))) return null;
+      row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
+        fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+        {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
+      const admission = fleetResourceAdmissionSchema.safeParse(row?.fleetResourceAdmission);
+      if (!row?.fleetPreparation || !admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== laneId ||
+        admission.data.intent.inputSha256 !== fleetInputSha256 || Boolean(exclusive) !== Boolean(admission.data.dependencies.length)) return null;
       const chosenModel = row.fleetPreparation.requirements.glasses ? lane.glasses!.find(value =>
         row.fleetPreparation!.requirements.glasses!.models.includes(value.model))!.model : undefined;
       const claim = own ?? {id: randomUUID(), requestId, fleetInputSha256, hostId, laneId, poolId: offered.poolId,
@@ -131,7 +138,8 @@ export const routineJobRepository: RoutineJobRepository = {
       if (selected) return row;
       // The request retains only the winning target/receipt. A lost race leaves a conservative host claim for normal reconciliation.
       const selectedRow = await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
-        fleetResourceReservation: {$exists: false}, fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+        fleetResourceAdmission: admission.data, fleetResourceReservation: {$exists: false}, fleetBinding: {$exists: false},
+        fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
         {$set: {fleetResourceReservation: claim, ...(exclusive ? {fleetExclusiveReservation: exclusive} : {})}},
         {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
       if (selectedRow) return selectedRow;
@@ -141,7 +149,14 @@ export const routineJobRepository: RoutineJobRepository = {
     return null;
   },
   async bind(requestId, fleetInputSha256, fleetBinding, dispatchIntent, now) {
+    const row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256},
+      {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null,
+      admission = fleetResourceAdmissionSchema.safeParse(row?.fleetResourceAdmission);
+    if (!row || !admission.success || admission.data.intent.inputSha256 !== fleetInputSha256 ||
+      admission.data.intent.hostId !== fleetBinding.hostId || admission.data.intent.laneId !== fleetBinding.laneId ||
+      Boolean(row.fleetExclusiveReservation) !== Boolean(admission.data.dependencies.length)) return null;
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
+      fleetResourceAdmission: admission.data, ...(row.fleetExclusiveReservation ? {fleetExclusiveReservation: row.fleetExclusiveReservation} : {fleetExclusiveReservation: {$exists: false}}),
       fleetBinding: {$exists: false}, hostId: {$exists: false}, 'fleetResourceReservation.hostId': fleetBinding.hostId, 'fleetResourceReservation.laneId': fleetBinding.laneId, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
       {$set: {hostId: fleetBinding.hostId, fleetBinding, dispatchIntent, dispatchIntentSha256: requestInputDigest(dispatchIntent),
         state: 'preparing', updatedAt: now}}, {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;

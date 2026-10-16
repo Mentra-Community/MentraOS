@@ -24,6 +24,7 @@ const schema = new Schema({
   fleetDeadline: {type: Date, immutable: true},
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
   fleetResourceReservation: {type: Schema.Types.Mixed},
+  fleetResourceAdmission: {type: Schema.Types.Mixed, immutable: true},
   fleetExclusiveReservation: {type: Schema.Types.Mixed, immutable: true},
   fleetExclusiveExecutionBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},

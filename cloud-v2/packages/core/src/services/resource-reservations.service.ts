@@ -3,14 +3,14 @@ import {isDeepStrictEqual} from 'node:util'
 import {TestHostStateModel} from '../models/test-host-state.model'
 import {testWriteConcern} from '../models/test-write-concern'
 import {exclusiveResourceIntentSchema, exclusiveResourceObservationInputSchema, exclusiveResourceReturnSchema, hostResourceReservationsSchema,
-  fleetExclusiveObservationSchema, fleetExclusiveReservationSchema, fleetExclusiveExecutionBindingSchema,
+  fleetExclusiveObservationSchema, fleetExclusiveReservationSchema, fleetExclusiveExecutionBindingSchema, fleetResourceAdmissionSchema,
   isExclusiveHostReservation, type ExclusiveHostReservation, type ExclusiveResourceDependency, type ExclusiveResourceIntent,
-  type FleetExclusiveReservation, type HostResourceReservation} from '../types/resource-reservations.types'
+  type FleetExclusiveReservation, type FleetResourceAdmission, type HostResourceReservation} from '../types/resource-reservations.types'
 import {hostStateSchema, type TestHostState} from './test-host-state.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
 import {TestRequestModel} from '../models/test-request.model'
-import {fleetResourceExecutionBinding} from './fleet-resource-binding'
+import {assertFleetResourceAdmission, fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
@@ -22,6 +22,7 @@ export interface ResourceReservationRepository {
   get(hostId: string): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
   request?(requestId: string): Promise<(StoredRoutineJob & {input?: unknown}) | null>
+  stage?(requestId: string, digest: string, admission: FleetResourceAdmission, now: Date): Promise<StoredRoutineJob | null>
   claimedHosts?(requestId: string): Promise<ResourceReservationHost[]>
 }
 const repository: ResourceReservationRepository = {
@@ -43,6 +44,12 @@ const repository: ResourceReservationRepository = {
   },
   async request(requestId) {return await TestRequestModel.findOne({requestId}).read('primary').readConcern('majority')
     .setOptions({timeoutMS: 5000}).lean() as unknown as (StoredRoutineJob & {input?: unknown}) | null},
+  async stage(requestId, digest, fleetResourceAdmission, now) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256: digest, state: 'awaiting-runner',
+      fleetResourceAdmission: {$exists: false}, fleetBinding: {$exists: false}, fleetResourceReservation: {$exists: false},
+      fleetCancellation: {$exists: false}, hostId: {$exists: false}, input: {$exists: false}, inputSha256: {$exists: false}, fleetDeadline: {$gt: now}},
+      {$set: {fleetResourceAdmission}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null
+  },
   async claimedHosts(requestId) {
     return await TestHostStateModel.find({resourceReservations: {$elemMatch: {kind: 'exclusive', 'owner.id': requestId, 'owner.kind': 'run', 'origin.kind': 'fleet'}}})
       .limit(2).read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as unknown as ResourceReservationHost[]
@@ -50,11 +57,11 @@ const repository: ResourceReservationRepository = {
 }
 const fresh = (host: ResourceReservationHost, now: number) => [host.receivedAt.getTime(), Date.parse(host.snapshot.observedAt)]
   .every(at => Number.isFinite(at) && at <= now && now - at <= 120_000)
-const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent): ExclusiveResourceDependency[] => {
+const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
   const lane = host.snapshot.lanes.find(value => value.id === intent.laneId)
-  if (!lane || !['idle', 'running', 'reserved'].includes(lane.state) ||
+  if (!lane || !observation && (!['idle', 'running', 'reserved'].includes(lane.state) ||
     lane.dispatchMode === 'paused' ||
-    lane.activity && !isDeepStrictEqual({id: lane.activity.owner.id, kind: lane.activity.owner.kind}, intent.owner))
+    lane.activity && !isDeepStrictEqual({id: lane.activity.owner.id, kind: lane.activity.owner.kind}, intent.owner)))
     throw new TestRunError(409, 'Reservation requires the selected idle lane or its unchanged current owner')
   const selected = intent.resources.flatMap(required => {
     const offered = lane.resources.find(resource => resource.id === required.id)
@@ -81,22 +88,14 @@ export class ResourceReservationsService {
     host.snapshot = hostStateSchema.parse(host.snapshot)
     return host
   }
-  /** The original winner is committed on one existing authority row before any Actions device binding.
-   * Request and byte receipts only adopt this winner; their losing writes never create another exclusive owner.
+  /** One request CAS selects the original candidate before any authority claim or Actions device binding.
+   * Request and byte receipts only adopt that candidate; their losing writes never create another exclusive owner.
    */
   async reserveFleet(requestId: string, digest: string, hostId: string, laneId: string): Promise<FleetExclusiveReservation | null | undefined> {
-    const row = await this.rows.request?.(requestId)
+    let row = await this.rows.request?.(requestId)
     if (!row?.fleetPreparation || row.fleetInputSha256 !== digest || row.state !== 'awaiting-runner' || row.fleetBinding || row.fleetCancellation ||
       row.hostId || row.inputSha256 || row.input || row.fleetDeadline.getTime() <= this.now()) return null
-    // A failed request write can leave only the authority receipt. Find that winner before consulting
-    // today's offers: removing a dependency or selecting another host must never orphan its custody.
-    const retainedHosts = await this.rows.claimedHosts?.(requestId)
-    if (!retainedHosts || retainedHosts.length > 1) return null
-    const retainedHost = retainedHosts[0], retained = retainedHost ? hostResourceReservationsSchema.parse(retainedHost.resourceReservations ?? [])
-      .filter(isExclusiveHostReservation).filter(claim => claim.owner.id === requestId && claim.owner.kind === 'run' && claim.origin?.kind === 'fleet') : []
-    if (retainedHost && (!retained.length || retained.some(claim => claim.authorityHostId !== retainedHost.hostId ||
-      claim.origin?.fleetInputSha256 !== digest || claim.inputSha256 !== digest || claim.operationId !== `run:${requestId}` ||
-      claim.borrowerHostId !== hostId || claim.laneId !== laneId)) || row.fleetExclusiveReservation && !retained.length) return null
+    if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
     const borrower = await this.host(hostId), lane = borrower.snapshot.lanes.find(value => value.id === laneId)
     if (!fresh(borrower, this.now()) ||
       !lane || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic') return null
@@ -105,18 +104,34 @@ export class ResourceReservationsService {
       return resource ? {id: resource.id, capabilities: [...required.capabilities]} : null
     })
     if (resources.some(value => value === null)) return null
-    const intent: ExclusiveResourceIntent = {operationId: `run:${requestId}`, hostId, laneId, inputSha256: digest,
+    const candidateIntent: ExclusiveResourceIntent = {operationId: `run:${requestId}`, hostId, laneId, inputSha256: digest,
       owner: {id: requestId, kind: 'run'}, resources: resources as ExclusiveResourceIntent['resources'],
       controller: {incarnation: borrower.incarnation, generation: borrower.incarnationGeneration, sequence: borrower.sequence}},
-      selected = dependencies(borrower, intent), origin = {kind: 'fleet' as const, fleetInputSha256: digest}
+      selected = dependencies(borrower, candidateIntent), origin = {kind: 'fleet' as const, fleetInputSha256: digest}
+    if (new Set(selected.map(value => value.authorityHostId)).size > 1) return null
+    // Freeze even an empty dependency set before any authority side effect. A global absence read
+    // cannot serialize two different candidates for the same request; this existing request CAS can.
+    const candidate = fleetResourceAdmissionSchema.parse({intent: candidateIntent, dependencies: selected})
+    if (!row.fleetResourceAdmission) row = await this.rows.stage?.(requestId, digest, candidate, new Date(this.now())) ?? await this.rows.request?.(requestId)
+    if (!row?.fleetResourceAdmission || row.state !== 'awaiting-runner' || row.fleetInputSha256 !== digest || row.fleetBinding ||
+      row.fleetCancellation || row.hostId || row.input || row.inputSha256 || row.fleetDeadline.getTime() <= this.now()) return null
+    const admission = fleetResourceAdmissionSchema.parse(row.fleetResourceAdmission), intent = admission.intent
+    if (!isDeepStrictEqual(admission, {...candidate, intent: {...candidate.intent, controller: intent.controller}})) return null
+    const retainedHosts = await this.rows.claimedHosts?.(requestId)
+    if (!retainedHosts || retainedHosts.length > 1) return null
+    const retainedHost = retainedHosts[0], retained = retainedHost ? hostResourceReservationsSchema.parse(retainedHost.resourceReservations ?? [])
+      .filter(isExclusiveHostReservation).filter(claim => claim.owner.id === requestId && claim.owner.kind === 'run' && claim.origin?.kind === 'fleet') : []
+    if (retainedHost && (!retained.length || retained.some(claim => claim.authorityHostId !== retainedHost.hostId ||
+      claim.origin?.fleetInputSha256 !== digest || claim.inputSha256 !== digest || claim.operationId !== intent.operationId ||
+      claim.borrowerHostId !== hostId || claim.laneId !== laneId)) || row.fleetExclusiveReservation && !retained.length) return null
     if (!selected.length) return retained.length ? null : undefined
-    if (new Set(selected.map(value => value.authorityHostId)).size !== 1) return null
     if (retained.length && (retained.length !== selected.length || selected.some(dependency => !retained.some(claim =>
       claim.resourceId === dependency.resourceId && claim.authorityHostId === dependency.authorityHostId)))) return null
     for (let attempt = 0; attempt < 3; attempt++) {
       const current = await this.rows.request?.(requestId)
       if (!current || current.fleetInputSha256 !== digest || current.fleetBinding || current.fleetCancellation || current.hostId || current.input ||
-        current.inputSha256 || current.state !== 'awaiting-runner' || current.fleetDeadline.getTime() <= this.now()) return null
+        current.inputSha256 || current.state !== 'awaiting-runner' || current.fleetDeadline.getTime() <= this.now() ||
+        !isDeepStrictEqual(current.fleetResourceAdmission, admission)) return null
       const authority = await this.host(selected[0]!.authorityHostId)
       if (!fresh(authority, this.now()) || selected.some(dependency => !authority.snapshot.lanes.some(value => value.resources.some(resource =>
         resource.exclusiveDependencies?.some(enrolled => enrolled.resourceId === dependency.resourceId && enrolled.authorityHostId === authority.hostId))))) return null
@@ -128,9 +143,9 @@ export class ResourceReservationsService {
         if (existing.length !== selected.length || existing.some(claim => !claim.origin || claim.origin.fleetInputSha256 !== digest ||
           claim.owner.id !== requestId || claim.owner.kind !== 'run' || claim.borrowerHostId !== hostId || claim.laneId !== laneId ||
           claim.operationId !== intent.operationId || claim.controllerGeneration !== existing[0]!.controllerGeneration ||
-          claim.controllerIncarnation !== existing[0]!.controllerIncarnation || claim.borrowerSequence !== existing[0]!.borrowerSequence)) return null
-        const originalIntent = {...intent, controller: {incarnation: existing[0]!.controllerIncarnation,
-          generation: existing[0]!.controllerGeneration, sequence: existing[0]!.borrowerSequence}},
+          claim.controllerIncarnation !== intent.controller.incarnation || claim.controllerGeneration !== intent.controller.generation ||
+          claim.borrowerSequence !== intent.controller.sequence)) return null
+        const originalIntent = intent,
           intentSha256 = requestInputDigest({...originalIntent, controller: {incarnation: originalIntent.controller.incarnation,
             generation: originalIntent.controller.generation}, origin, dependencies: selected})
         if (existing.some(claim => claim.intentSha256 !== intentSha256)) return null
@@ -148,7 +163,7 @@ export class ResourceReservationsService {
         const after = await this.rows.request?.(requestId)
         if (after?.fleetCancellation) await this.reconcileFleetCancellation(requestId)
         if (!after || after.fleetCancellation || after.fleetBinding || after.hostId || after.input || after.inputSha256 ||
-          after.state !== 'awaiting-runner' || after.fleetInputSha256 !== digest) return null
+          after.state !== 'awaiting-runner' || after.fleetInputSha256 !== digest || !isDeepStrictEqual(after.fleetResourceAdmission, admission)) return null
         return fleetExclusiveReservationSchema.parse({origin, intent, intentSha256, claims: next})
       }
     }
@@ -160,6 +175,11 @@ export class ResourceReservationsService {
   async reconcileFleetCancellation(requestId: string) {
     const row = await this.rows.request?.(requestId)
     if (!row || row.state !== 'terminal' || !row.fleetInputSha256 || row.input || row.inputSha256 || row.fleetExclusiveExecutionBinding) return
+    const staged = fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission)
+    if (!staged.success || staged.data.intent.owner.id !== requestId || staged.data.intent.inputSha256 !== row.fleetInputSha256) return
+    const admission = staged.data, origin = {kind: 'fleet' as const, fleetInputSha256: row.fleetInputSha256},
+      digest = requestInputDigest({...admission.intent, controller: {incarnation: admission.intent.controller.incarnation,
+        generation: admission.intent.controller.generation}, origin, dependencies: admission.dependencies})
     const rejection = preparationRejectionSchema.safeParse(row.preparationRejection), cancellation =
       z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().safeParse(row.preparationCancellation),
       intent = row.dispatchIntent as {requestId?: unknown; laneId?: unknown} | undefined,
@@ -174,6 +194,10 @@ export class ResourceReservationsService {
       const authority = await this.host(initial.hostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),
         own = claims.filter(isExclusiveHostReservation).filter(claim => claim.owner.id === requestId && claim.owner.kind === 'run' &&
           claim.operationId === `run:${requestId}` && claim.origin?.fleetInputSha256 === row.fleetInputSha256 && claim.inputSha256 === row.fleetInputSha256 &&
+          claim.borrowerHostId === admission.intent.hostId && claim.laneId === admission.intent.laneId && claim.intentSha256 === digest &&
+          claim.controllerIncarnation === admission.intent.controller.incarnation && claim.controllerGeneration === admission.intent.controller.generation &&
+          claim.borrowerSequence === admission.intent.controller.sequence && admission.dependencies.some(dependency =>
+            dependency.resourceId === claim.resourceId && dependency.authorityHostId === authority.hostId) &&
           (!bound || claim.borrowerHostId === row.hostId && claim.laneId === row.fleetBinding!.laneId))
       if (!own.length) break
       if (await this.rows.replace(authority, claims.filter(value => !own.some(claim => claim.id === value.id)))) break
@@ -228,7 +252,7 @@ export class ResourceReservationsService {
       input.controller.generation < intent.controller.generation ||
       input.controller.generation === intent.controller.generation && input.controller.incarnation !== intent.controller.incarnation)
       throw new TestRunError(409, 'Original claim observation requires the current reporting controller')
-    const selected = dependencies(borrower, intent), intentSha256 = requestInputDigest({...intent,
+    const selected = dependencies(borrower, intent, true), intentSha256 = requestInputDigest({...intent,
       controller: {incarnation: intent.controller.incarnation, generation: intent.controller.generation}, dependencies: selected})
     if (!selected.length || new Set(selected.map(dependency => dependency.authorityHostId)).size !== 1)
       throw new TestRunError(409, 'Original exclusive claim observation requires its unchanged canonical authority')
@@ -239,7 +263,8 @@ export class ResourceReservationsService {
       claims.length === selected.length && claims.every(claim => claim.authorityHostId === authority.hostId && claim.intentSha256 === intentSha256 &&
       claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim.operationId === intent.operationId &&
       claim.inputSha256 === intent.inputSha256 && isDeepStrictEqual(claim.owner, intent.owner) &&
-      claim.controllerIncarnation === intent.controller.incarnation && claim.controllerGeneration === intent.controller.generation)
+      claim.controllerIncarnation === intent.controller.incarnation && claim.controllerGeneration === intent.controller.generation &&
+      claim.borrowerSequence === intent.controller.sequence)
     return matches ? {status: 'reserved' as const, intentSha256, claims} : {status: 'unknown' as const, intentSha256, claims: []}
   }
   private async observeFleet(value: unknown, hostId: string) {
@@ -251,15 +276,16 @@ export class ResourceReservationsService {
       input.controller.incarnation !== intent.controller.incarnation)
       throw new TestRunError(409, 'Portable claim observation requires the current authenticated selected controller')
     const unknown = {status: 'unknown' as const, intentSha256: reservation.intentSha256, claims: []}
-    if (!row?.fleetExclusiveReservation || !row.fleetExclusiveExecutionBinding || row.fleetInputSha256 !== reservation.origin.fleetInputSha256 ||
+    if (!row?.fleetResourceAdmission || !row.fleetExclusiveReservation || !row.fleetExclusiveExecutionBinding || row.fleetInputSha256 !== reservation.origin.fleetInputSha256 ||
       row.hostId !== hostId || row.fleetBinding?.laneId !== intent.laneId || row.dispatchIntentSha256 !== input.fleetExclusive.binding.dispatchIntentSha256 ||
       row.inputSha256 !== input.fleetExclusive.binding.executionInputSha256 || !row.input ||
       !isDeepStrictEqual(fleetExclusiveReservationSchema.parse(row.fleetExclusiveReservation), reservation) ||
       !isDeepStrictEqual(fleetExclusiveExecutionBindingSchema.parse(row.fleetExclusiveExecutionBinding), input.fleetExclusive.binding)) return unknown
     const executable = frameworkRequestInputSchema.parse(row.input)
+    assertFleetResourceAdmission(row.fleetResourceAdmission, row.requestId, hostId, executable, reservation)
     if (requestInputDigest(executable) !== row.inputSha256 || !isDeepStrictEqual(fleetResourceExecutionBinding(reservation,
       row.requestId, hostId, row.dispatchIntentSha256!, executable, row.inputSha256), input.fleetExclusive.binding)) return unknown
-    const selected = dependencies(borrower, intent)
+    const selected = dependencies(borrower, intent, true)
     if (!selected.length || new Set(selected.map(value => value.authorityHostId)).size !== 1 ||
       selected.length !== reservation.claims.length || selected.some(dependency => !reservation.claims.some(claim =>
         claim.resourceId === dependency.resourceId && claim.authorityHostId === dependency.authorityHostId))) return unknown
@@ -298,12 +324,14 @@ export class ResourceReservationsService {
         throw new TestRunError(409, 'Return proof differs from the retained original resource authority')
       if (claim.origin) {
         const row = await this.rows.request?.(claim.owner.id)
-        if (!row?.fleetExclusiveReservation || !row.fleetExclusiveExecutionBinding || !row.input || !row.inputSha256 ||
+        if (!row?.fleetResourceAdmission || !row.fleetExclusiveReservation || !row.fleetExclusiveExecutionBinding || !row.input || !row.inputSha256 ||
           row.fleetInputSha256 !== claim.origin.fleetInputSha256 || row.hostId !== hostId || row.fleetBinding?.laneId !== claim.laneId ||
           !row.fleetExclusiveReservation.claims.some(value => isDeepStrictEqual(value, claim)) ||
           !isDeepStrictEqual(fleetResourceExecutionBinding(row.fleetExclusiveReservation, row.requestId, hostId,
             row.dispatchIntentSha256!, frameworkRequestInputSchema.parse(row.input), row.inputSha256), row.fleetExclusiveExecutionBinding))
           throw new TestRunError(409, 'Portable resource return requires its original committed executable binding')
+        assertFleetResourceAdmission(row.fleetResourceAdmission, row.requestId, hostId,
+          frameworkRequestInputSchema.parse(row.input), row.fleetExclusiveReservation)
         if (returned.release.neverStarted && !(row.hostCancellation || row.fleetCancellation || row.state === 'terminal' && row.terminalStatus === 'cancelled'))
           throw new TestRunError(409, 'Never-started portable resource return requires the matching Core cancellation')
       }

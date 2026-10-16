@@ -33,6 +33,11 @@ function fixture(options: {race?: boolean; afterCommit?: (requests: Map<string, 
       writes.push(structuredClone(claims)); options.afterCommit?.(requests); return true
     },
     async request(requestId) {return structuredClone(requests.get(requestId) ?? null)},
+    async stage(requestId, digest, admission) {
+      const row = requests.get(requestId)
+      if (!row || row.fleetInputSha256 !== digest || row.state !== 'awaiting-runner' || row.fleetResourceAdmission || row.fleetBinding || row.fleetCancellation) return null
+      row.fleetResourceAdmission = structuredClone(admission); return structuredClone(row)
+    },
     async claimedHosts(requestId) {return [...rows.values()].filter(row => hostResourceReservationsSchema.parse(row.resourceReservations ?? [])
       .some(claim => 'kind' in claim && claim.owner.id === requestId && claim.origin?.kind === 'fleet')).map(row => structuredClone(row))},
   }
@@ -155,15 +160,46 @@ test('portable confirmation is read-only, tied to the actual executable mapping 
     binding = fleetResourceExecutionBinding(reservation, row.requestId, 'air1', 'd'.repeat(64), input, requestInputDigest(input))
   Object.assign(row, {hostId: 'air1', fleetBinding: {hostId: 'air1', laneId: 'mac'}, input, inputSha256: binding.executionInputSha256,
     dispatchIntentSha256: binding.dispatchIntentSha256, fleetExclusiveReservation: reservation, fleetExclusiveExecutionBinding: binding})
-  const borrower = f.observe('air1'), controller = {incarnation: borrower.incarnation, generation: borrower.incarnationGeneration, sequence: borrower.sequence},
-    observation = {fleetExclusive: {reservation, binding}, controller}
-  expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'reserved', claims: reservation.claims})
+  let observation = {fleetExclusive: {reservation, binding}, controller: reservation.intent.controller}
+  for (const state of ['idle', 'reserved', 'in-repair', 'out-of-service'] as const) {
+    const borrower = f.observe('air1'), lane = borrower.snapshot.lanes[0]!
+    lane.dispatchMode = 'paused'; lane.state = state
+    lane.activity = state === 'idle' ? undefined : {generation: 2, owner: {id: 'boundary-or-fixer', kind: 'fixer'}}
+    observation = {fleetExclusive: {reservation, binding}, controller: {incarnation: borrower.incarnation,
+      generation: borrower.incarnationGeneration, sequence: borrower.sequence}}
+    expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'reserved', claims: reservation.claims})
+    expect(f.writes).toHaveLength(1)
+  }
+  const admission = structuredClone(row.fleetResourceAdmission!)
+  row.fleetResourceAdmission!.dependencies = []
+  await expect(f.service.observe(observation, 'air1')).rejects.toThrow('staged fleet admission')
+  row.fleetResourceAdmission = admission
   row.fleetExclusiveExecutionBinding = {...binding, executionInputSha256: 'e'.repeat(64)}
   expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'unknown', claims: []})
   row.fleetExclusiveExecutionBinding = binding
   delete f.rows.get('mini')!.snapshot.lanes[0]!.resources[0]!.exclusiveDependencies
   expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'unknown', claims: []})
   expect(f.rows.get('mini')!.resourceReservations).toEqual(reservation.claims); expect(f.writes).toHaveLength(1)
+})
+test('portable return retains its authority until the original staged target and executable mapping both match', async () => {
+  const f = fixture(), row = fleetRequest('return'); f.requests.set(row.requestId, row)
+  const reservation = (await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac'))!,
+    input = frameworkRequestInputSchema.parse({routineId: 'account-google', definitionRevision: 'a'.repeat(40), routineSource: testRoutineSource(),
+      platform: 'ios-on-mac', laneId: 'mac', build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      resources: [{id: 'fixtures', kind: 'fixture-data', exclusiveDependencies: [dependency]}]}),
+    binding = fleetResourceExecutionBinding(reservation, row.requestId, 'air1', 'd'.repeat(64), input, requestInputDigest(input))
+  Object.assign(row, {hostId: 'air1', fleetBinding: {hostId: 'air1', laneId: 'mac'}, input, inputSha256: binding.executionInputSha256,
+    dispatchIntentSha256: binding.dispatchIntentSha256, fleetExclusiveReservation: reservation, fleetExclusiveExecutionBinding: binding})
+  const borrower = f.observe('air1'), proof = returned(reservation.claims[0]!, borrower), {controller: _, ...normalReturn} = proof
+  borrower.snapshot.resourceReservations = {claims: [], returns: [normalReturn]}
+  const admission = row.fleetResourceAdmission!; delete row.fleetResourceAdmission
+  await expect(f.service.giveBack(proof, 'air1')).rejects.toThrow('original committed executable binding')
+  row.fleetResourceAdmission = {...admission, intent: {...admission.intent, hostId: 'air2'}}
+  await expect(f.service.giveBack(proof, 'air1')).rejects.toThrow('staged fleet admission')
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(reservation.claims); expect(f.writes).toHaveLength(1)
+  row.fleetResourceAdmission = admission
+  expect(await f.service.giveBack(proof, 'air1')).toEqual({status: 'returned', claimId: reservation.claims[0]!.id})
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([])
 })
 test('executable input retains the portable account when Core acceptance is missing; cancellation alone cannot free device custody', async () => {
   const f = fixture(), row = fleetRequest('accepted-locally'); f.requests.set(row.requestId, row)
@@ -179,7 +215,7 @@ test('held authoring and portable execution use the same authority, and source o
   expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
   expect(f.rows.get('mini')!.resourceReservations).toEqual(held.claims)
   row.fleetPreparation!.requirements.resources[0]!.capabilities = ['clipboard']
-  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeUndefined()
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
   expect(f.writes).toHaveLength(1)
 })
 test('same intent retry adopts its original claim after report advancement; identity changes cannot borrow it', async () => {
@@ -300,4 +336,21 @@ test('a restarted reporter observes the original lost acquisition without renewi
   f.rows.get('mini')!.resourceReservations = []
   expect(await f.service.observe({intent: original, controller}, 'air1')).toMatchObject({status: 'unknown', claims: []})
   expect(f.writes).toHaveLength(1)
+})
+test('original lost acquisition observation is read-only under paused cleanup or fixer custody', async () => {
+  const f = fixture(), original = intent('air1', 'held-authoring'), claim = (await f.service.acquire(original, 'air1')).claims[0]!
+  for (const state of ['idle', 'reserved', 'in-repair', 'out-of-service'] as const) {
+    const host = f.observe('air1'), lane = host.snapshot.lanes[0]!
+    lane.dispatchMode = 'paused'; lane.state = state
+    lane.activity = state === 'idle' ? undefined : {generation: 2, owner: {id: 'boundary-or-fixer', kind: 'fixer'}}
+    const observed = await f.service.observe({intent: original, controller: {incarnation: host.incarnation,
+      generation: host.incarnationGeneration, sequence: host.sequence}}, 'air1')
+    expect(observed).toMatchObject({status: 'reserved', claims: [claim]})
+    expect(f.writes).toHaveLength(1)
+    await expect(f.service.acquire({...original, controller: {incarnation: host.incarnation,
+      generation: host.incarnationGeneration, sequence: host.sequence}}, 'air1')).rejects.toThrow('selected idle lane')
+    expect(await f.service.observe({intent: {...original, controller: {...original.controller, sequence: original.controller.sequence + 1}},
+      controller: {incarnation: host.incarnation, generation: host.incarnationGeneration, sequence: host.sequence}}, 'air1'))
+      .toMatchObject({status: 'unknown', claims: []})
+  }
 })
