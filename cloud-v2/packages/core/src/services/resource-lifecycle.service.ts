@@ -6,13 +6,17 @@ import {TestHostStateModel} from '../models/test-host-state.model';
 import {resourceLifecycleSchema,type ResourceLifecycleList} from '../types/resource-lifecycle.types';
 import {TestRunError} from './test-result-error';
 const FRESH_MS=180_000;
-export interface ResourceLifecycleRow {hostId:string;receivedAt:Date;snapshot:unknown;resourceReservationVersion?:number;resourceReservations?:unknown}
+export interface ResourceLifecycleRow {hostId:string;receivedAt:Date;snapshot:unknown;resourceReservationVersion?:number;resourceReservations?:unknown;resourceLifecycleCursor?:unknown}
 export function projectResourceLifecycle(rows:ResourceLifecycleRow[],now=Date.now()):ResourceLifecycleList {
   const subjects:ResourceLifecycleList['subjects']=[],history=new Map<string,ResourceLifecycleList['history'][number]>();
   for(const row of rows.slice(0,100)) {
     const snapshot=row.snapshot as {hostId?:string;resourceLifecycle?:unknown};
-    if(!snapshot.resourceLifecycle) continue;
-    const parsed=resourceLifecycleSchema.safeParse(snapshot.resourceLifecycle);
+    const cursor=row.resourceLifecycleCursor===undefined?undefined:resourceLifecycleSchema.parse(row.resourceLifecycleCursor);
+    if(!snapshot.resourceLifecycle && !cursor) continue;
+    const currentEnvelope=snapshot.resourceLifecycle===undefined?undefined:resourceLifecycleSchema.parse(snapshot.resourceLifecycle);
+    const reported=new Set(currentEnvelope?.subjects.map(value=>value.subject.id)??[]);
+    const retained=cursor?.subjects.filter(value=>!reported.has(value.subject.id)).map(value=>({...value,current:false,status:'unknown' as const,supportedActions:[],reason:{code:'observation-omitted',message:'Authority omitted this resource from its current observation.'}}))??[];
+    const parsed=resourceLifecycleSchema.safeParse({schemaVersion:1,subjects:[...currentEnvelope?.subjects??[],...retained],history:cursor?.history??currentEnvelope?.history??[]});
     if(!parsed.success || snapshot.hostId!==row.hostId || parsed.data.subjects.some(v=>v.subject.authorityHostId!==row.hostId))
       throw new TestRunError(503,'Invalid resource lifecycle observation');
     const receivedAt=row.receivedAt.toISOString();
@@ -45,6 +49,22 @@ export function validateResourceLifecycleAdvance(previousInput:unknown,nextInput
     if(old && JSON.stringify(old)!==JSON.stringify(event)) throw new TestRunError(409,'Resource history identity is immutable');
   }
 }
+/** Comparison-only cursor in the existing host row. Subject high-water marks
+ * are never evicted; new identities beyond 200 require explicit retirement.
+ * Journal identity immutability covers only the latest 200 retained events. */
+export function advanceResourceLifecycleCursor(previousInput:unknown,nextInput:unknown) {
+  const previous=previousInput===undefined?undefined:resourceLifecycleSchema.parse(previousInput);
+  if(nextInput===undefined) return previous;
+  const next=resourceLifecycleSchema.parse(nextInput);
+  if(previous) validateResourceLifecycleAdvance(previous,next);
+  const subjects=new Map(previous?.subjects.map(value=>[value.subject.id,value])??[]);
+  for(const value of next.subjects) subjects.set(value.subject.id,value);
+  if(subjects.size>200) throw new TestRunError(409,'Resource lifecycle cursor exceeds 200 retained subjects; explicit retirement is required');
+  const history=new Map(previous?.history.map(value=>[value.id,value])??[]);
+  for(const value of next.history) history.set(value.id,value);
+  return resourceLifecycleSchema.parse({schemaVersion:1,subjects:[...subjects.values()],
+    history:[...history.values()].sort((a,b)=>b.at.localeCompare(a.at)||a.id.localeCompare(b.id)).slice(0,200)});
+}
 export class ResourceLifecycleService {
   async detail(resourceId:string) {
     if(!frameworkIdentitySchema.safeParse(resourceId).success) throw new TestRunError(400,'Invalid resource identity');
@@ -64,7 +84,7 @@ export class ResourceLifecycleService {
       coverage:'retained authority journal window; at most 200 events per host',truncated:result.truncated};
   }
   async list() {
-    const rows=await TestHostStateModel.find({}).select({hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceReservationVersion:1,resourceReservations:1,_id:0})
+    const rows=await TestHostStateModel.find({}).select({hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceLifecycleCursor:1,resourceReservationVersion:1,resourceReservations:1,_id:0})
       .sort({hostId:1}).limit(101).maxTimeMS(5000).read('primary').readConcern('majority').lean();
     return projectResourceLifecycle(rows as ResourceLifecycleRow[]);
   }

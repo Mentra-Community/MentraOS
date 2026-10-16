@@ -222,3 +222,12 @@ Host resource offers may additionally carry an optional strict `idleContract`:
 version, maximumAgeMs (at most one day), typed qualifiedScope, unique conditions,
 repairConfigured, and at most eight dependency IDs. Immutable execution refs are
 unchanged; the installed controller overlays its canonical provider contract.
+
+Lifecycle omission preserves a comparison-only cursor in the same host row and
+the same host snapshot CAS. Missing envelopes or subjects project as unknown with
+no actions; they cannot erase a subject generation high-water mark or renew its
+observation time. At most 200 subject identities are retained per host. Identities
+are never silently evicted; a 201st identity is rejected until explicit retirement
+semantics are introduced. The most recent 200 journal identities are retained for
+immutable-event comparisons; older events are outside that declared window. This
+cursor does not grant capacity or modify canonical fleet reservations.

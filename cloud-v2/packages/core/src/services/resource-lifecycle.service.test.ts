@@ -78,3 +78,18 @@ test('fleet history preserves original borrower release lineage without inventin
  const result=projectResourceLifecycle(rows,now);
  expect(result.history[0]?.event).toBe('return-reported');expect(result.history[0]?.ownerId).toBe('run-1');expect(result.history[0]?.ownerGeneration).toBe(4);expect(result.history[0]?.subjectGeneration).toBeNull();expect(result.subjects[0]?.status).toBe('unknown');
 });
+
+test('comparison cursor keeps subject high-water marks within a fixed bound and bounds retained history', async()=>{
+ const {advanceResourceLifecycleCursor}=await import('./resource-lifecycle.service');
+ const first=row().snapshot.resourceLifecycle;
+ const cursor=advanceResourceLifecycleCursor(first,{schemaVersion:1,subjects:[],history:[]})!;
+ expect(cursor.subjects[0]?.generation).toBe(2);
+ const full={schemaVersion:1,subjects:Array.from({length:200},(_,i)=>({...subject,subject:{...subject.subject,id:`resource-${i}`}})),history:[]};
+ expect(()=>advanceResourceLifecycleCursor(full,first)).toThrow('explicit retirement');
+ const events=Array.from({length:200},(_,i)=>({...first.history[0]!,id:`old-${i}`}));
+ expect(advanceResourceLifecycleCursor({...first,history:events},first)!.history).toHaveLength(200);
+});
+test('idle contract rejects duplicate dependencies like the harness contract',async()=>{
+ const {resourceIdleContractSchema}=await import('../types/resource-lifecycle.types');
+ expect(resourceIdleContractSchema.safeParse({version:'v1',maximumAgeMs:1000,qualifiedScope:{kind:'fleet'},conditions:['closed'],repairConfigured:true,dependencies:['browser','browser']}).success).toBe(false);
+});

@@ -10,7 +10,7 @@ export const qualifiedScopeSchema = z.discriminatedUnion('kind', [
 ]);
 export const resourceIdleContractSchema=z.object({version:id,maximumAgeMs:z.number().int().positive().safe().max(86_400_000),
   qualifiedScope:qualifiedScopeSchema,conditions:z.array(id).min(1).max(50),repairConfigured:z.boolean(),dependencies:z.array(id).max(8).optional()})
-  .strict().refine(value=>new Set(value.conditions).size===value.conditions.length,'Idle conditions must be unique');
+  .strict().refine(value=>new Set(value.conditions).size===value.conditions.length && new Set(value.dependencies).size===(value.dependencies?.length??0),'Idle conditions and dependencies must be unique');
 export const resourceLifecycleSubjectSchema = z.object({
   subject:z.object({kind:z.literal('resource'),id,authorityHostId:id}).strict(),
   generation,

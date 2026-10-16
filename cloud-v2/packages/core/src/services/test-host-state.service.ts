@@ -1,4 +1,4 @@
-import {validateResourceLifecycleAdvance} from './resource-lifecycle.service'
+import {advanceResourceLifecycleCursor} from './resource-lifecycle.service'
 import {resourceIdleContractSchema,resourceLifecycleSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
@@ -261,7 +261,7 @@ const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequenc
 })
 // Host snapshots contain repair diagnostics; reporting needs only their accepted cursor and history.
 const reportingStateProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
-  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1, 'snapshot.resourceLifecycle': 1} as const
+  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1, 'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1} as const
 async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
   // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -314,9 +314,9 @@ export class TestHostStateService {
           sequence: current.sequence,
         }
     }
-    if (current?.snapshot?.resourceLifecycle && snapshot.resourceLifecycle) {
-      validateResourceLifecycleAdvance(current.snapshot.resourceLifecycle, snapshot.resourceLifecycle)
-    }
+    const resourceLifecycleCursor = advanceResourceLifecycleCursor(
+      current?.resourceLifecycleCursor ?? current?.snapshot?.resourceLifecycle, snapshot.resourceLifecycle,
+    )
     const filter = current
       ? {
           hostId,
@@ -416,6 +416,7 @@ export class TestHostStateService {
             receivedAt: new Date(this.now()),
             snapshot,
             frameworkHistory: history.slice(-100),
+            ...(resourceLifecycleCursor ? {resourceLifecycleCursor} : {}),
           },
         },
         {upsert: !current, new: true, writeConcern: testWriteConcern},
