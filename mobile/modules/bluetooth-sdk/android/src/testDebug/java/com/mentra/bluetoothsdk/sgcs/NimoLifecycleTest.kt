@@ -59,6 +59,7 @@ class NimoLifecycleTest {
   private var listener: String? = null
 
   @Before fun setup() {
+    NimoResourceDiagnostics::class.java.getDeclaredField("capture").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
     context = TrackingContext(ApplicationProvider.getApplicationContext())
     Bridge.initialize(context)
     manager = DeviceManager(initializeHardware = false)
@@ -334,6 +335,165 @@ class NimoLifecycleTest {
     val fresh = nimo.resourceSnapshot().getJSONObject("firmware")
     assertEquals(5L, fresh.getLong("sessionGeneration"))
     assertTrue(fresh.isNull("version")); assertTrue(fresh.isNull("atEpochMs"))
+  }
+
+  @Test fun cancelledUnadmittedCaptureFencesLateConnectWithoutAdoptingManager() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    val armed = captureCommand("arm-capture", nonce, nonce)
+    assertTrue(armed.getJSONObject("session").getJSONObject("capture").isNull("instanceId"))
+    val cancelled = captureCommand("cancel-capture", nonce)
+    assertTrue(cancelled.getJSONObject("session").getJSONObject("capture").getBoolean("cancelled"))
+    manager.sgc = nimo
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertTrue(NimoResourceDiagnostics.allowManagerConnect("G2", "other"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun capturePinsGenerationZeroBeforeEffectsAndRejectsWrongPeerAndReplacement() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
+    val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").readText()
+    assertEquals(nimo.resourceInstanceId, JSONObject(admission).getString("instanceId"))
+    assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:56", true))
+    assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:55", false)) // never create a new bond
+    assertTrue(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertTrue(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    manager.sgc = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertEquals("capture-cancel-refused-replacement", captureCommand("cancel-capture", nonce).getString("error"))
+    assertEquals(admission, File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").readText())
+    assertEquals(com.mentra.bluetoothsdk.utils.DeviceTypes.G2, manager.sgc?.type)
+  }
+
+  @Test fun captureAdmissionPersistenceFailurePreventsAnyConnectAndBecomesStickyFence() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    File(context.filesDir, "nimo-lifecycle/$nonce.admission.tmp").mkdir()
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun capturedGenerationZeroCancellationDrainsOriginalAndFencesQueuedAdmission() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
+    val cancelNonce = java.util.UUID.randomUUID().toString()
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", cancelNonce).putExtra("mode", "cancel-capture").putExtra("expectedName", "Nimo-test")
+      .putExtra("expectedAddress", "00:11:22:33:44:55").putExtra("captureNonce", nonce))
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+    val result = JSONObject(File(context.filesDir, "nimo-lifecycle/$cancelNonce.json").readText())
+    val original = result.getJSONObject("session").getJSONObject("originalSession")
+    assertEquals(0L, original.getLong("sessionGeneration"))
+    assertFalse(original.getBoolean("managedSessionPresent"))
+    assertEquals("local-drained-native-readback-required", original.getJSONObject("release").getString("result"))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:55", true))
+  }
+
+  @Test fun offMainManagerConnectIsQueuedWholeAndCancellationFencesItBeforeEffects() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.NIMO, "Nimo-test") }
+    thread.start(); awaitMainDispatch(thread)
+    assertTrue(thread.isAlive)
+    assertNull(manager.sgc) // no off-main manager creation or cleanup
+    captureCommand("cancel-capture", nonce)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertNull(manager.sgc) // the already-queued real entry rechecks its immutable fence
+  }
+
+  @Test fun offMainOriginalNimoConnectAdmitsOnMainBeforeAnyPeerTransport() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val thread = Thread { nimo.connectById("Nimo-test") }
+    thread.start(); awaitMainDispatch(thread)
+    val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    assertFalse(admission.exists())
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertEquals(nimo.resourceInstanceId, JSONObject(admission.readText()).getString("instanceId"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+    assertFalse(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
+  }
+
+  @Test fun sdkConnectQueuedBeforeCancelCannotMutateDefaultOrDisconnectReplacementG2() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    // No SDK construction/hardware/analytics is needed: a fenced entry must return
+    // before accessing collaborators. If the early guard regresses this test fails.
+    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
+    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    DeviceStore.apply("bluetooth", "default_wearable", "unchanged-default")
+    DeviceStore.apply("bluetooth", "pending_wearable", "unchanged-pending")
+    val thread = Thread { sdk.connect(com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test")) }
+    thread.start(); awaitMainDispatch(thread)
+    captureCommand("cancel-capture", nonce)
+    val replacement = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    manager.sgc = replacement
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertSame(replacement, manager.sgc)
+    assertEquals("unchanged-default", DeviceStore.get("bluetooth", "default_wearable"))
+    assertEquals("unchanged-pending", DeviceStore.get("bluetooth", "pending_wearable"))
+    assertEquals(true, DeviceStore.get("glasses", "connected"))
+  }
+
+  @Test fun unarmedDebugConnectStillExecutesNormallyOnMainQueue() {
+    manager.sgc = null
+    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.SIMULATED, "unit-simulated") }
+    thread.start(); awaitMainDispatch(thread)
+    assertNull(manager.sgc)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertTrue(manager.sgc is Simulated)
+  }
+
+  @Test fun offMainSdkFailureIsDeliveredToCallerWithoutUncaughtMainException() {
+    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
+    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    DeviceStore.apply("bluetooth", "default_wearable", "")
+    val failure = AtomicReference<Throwable?>()
+    val thread = Thread { try { sdk.connectDefault() } catch (error: Throwable) { failure.set(error) } }
+    thread.start(); awaitMainDispatch(thread)
+    Shadows.shadowOf(Looper.getMainLooper()).idle() // FutureTask captures the error; main must not throw.
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertTrue(failure.get() is com.mentra.bluetoothsdk.BluetoothSdkException)
+    assertEquals("default_device_missing", (failure.get() as com.mentra.bluetoothsdk.BluetoothSdkException).code)
+  }
+
+  private fun awaitMainDispatch(thread: Thread) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    while (thread.isAlive && thread.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.yield()
+    assertTrue("SDK caller must wait for its main-queue result", thread.isAlive)
+    assertEquals(Thread.State.WAITING, thread.state)
+  }
+
+  private fun captureCommand(mode: String, captureNonce: String, requestNonce: String = java.util.UUID.randomUUID().toString()): JSONObject {
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", requestNonce).putExtra("mode", mode).putExtra("expectedName", "Nimo-test")
+      .putExtra("expectedAddress", "00:11:22:33:44:55").putExtra("captureNonce", captureNonce))
+    return JSONObject(File(context.filesDir, "nimo-lifecycle/$requestNonce.json").readText())
   }
 
   private fun field(name: String): Any? = Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.get(nimo)

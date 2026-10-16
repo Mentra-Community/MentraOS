@@ -859,6 +859,7 @@ private class NimoReconnectionManager(
         val r =
                 object : Runnable {
                     override fun run() {
+                        if (runnable !== this) return
                         if (maxAttempts > 0 && attempts >= maxAttempts) {
                             Bridge.log("NIMO: Max reconnection attempts ($maxAttempts) reached")
                             stop()
@@ -871,7 +872,7 @@ private class NimoReconnectionManager(
                             stop()
                             return
                         }
-                        handler.postDelayed(this, intervalMs)
+                        if (runnable === this) handler.postDelayed(this, intervalMs)
                     }
                 }
         runnable = r
@@ -967,6 +968,14 @@ class Nimo : SGCManager() {
     private var resourceClosingGatt: BluetoothGatt? = null
     private var resourceReleaseResult = "not-requested"
 
+    internal fun resourceCaptureEligible(): Boolean {
+        val snapshot = resourceSnapshot()
+        return resourceSessionGeneration == 0L && discoveryReceiver == null &&
+            !snapshot.getBoolean("managedSessionPresent") && !snapshot.getBoolean("initializationPending") &&
+            !snapshot.getBoolean("reconnectPending") && snapshot.getBoolean("localEffectsSettled") &&
+            !resourceReleasePending && !resourceReceiptPending
+    }
+
     /** Passive local inspection only: no discovery, queries, radio or bond operations. */
     internal fun resourceSnapshot(): JSONObject {
         check(Looper.myLooper() == mainHandler.looper)
@@ -992,9 +1001,16 @@ class Nimo : SGCManager() {
     }
 
     /** Exact original instance only. Never delegates to the manager's current device. */
-    internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) {
+    internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) =
+        releaseOriginalResource(expectedGeneration, false, isCurrent, completed)
+
+    /** Only the private admitted capture may cancel an original pre-GATT generation-zero attempt. */
+    internal fun releaseCapturedResource(isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) =
+        releaseOriginalResource(resourceSessionGeneration, true, isCurrent, completed)
+
+    private fun releaseOriginalResource(expectedGeneration: Long, captured: Boolean, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) {
         check(Looper.myLooper() == mainHandler.looper)
-        if (!isCurrent() || expectedGeneration != resourceSessionGeneration || expectedGeneration < 1 || resourceReleasePending || resourceReceiptPending) {
+        if (!isCurrent() || expectedGeneration != resourceSessionGeneration || (!captured && expectedGeneration < 1) || resourceReleasePending || resourceReceiptPending) {
             completed(JSONObject().put("error", "target-mismatch-or-release-pending")); return
         }
         if (resourceReleased) { completed(resourceSnapshot()); return }
@@ -1173,6 +1189,8 @@ class Nimo : SGCManager() {
     // ---------- SGCManager: Connection Management ----------
 
     override fun findCompatibleDevices() {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { findCompatibleDevices() }) return
+        if (!NimoResourceDiagnostics.admit(this, null, false)) return
         Bridge.log("NIMO: findCompatibleDevices()")
         DEVICE_SEARCH_ID = "NOT_SET"
         DeviceStore.apply("glasses", "connectionState", ConnTypes.SCANNING)
@@ -1180,6 +1198,8 @@ class Nimo : SGCManager() {
     }
 
     override fun connectById(id: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectById(id) }) return
+        if (!NimoResourceDiagnostics.admit(this, id, true)) return
         if (resourceReleasePending || resourceReceiptPending) return
         resourceReleased = false
         Bridge.log("NIMO: connectById($id)")
@@ -1756,6 +1776,7 @@ class Nimo : SGCManager() {
      * canvas data channel. This matches the vendor transport=BREDR connection path.
      */
     private fun connectCompanionGatt(device: android.bluetooth.BluetoothDevice) {
+        if (!NimoResourceDiagnostics.allowPeer(this, device.address, device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         if (isDisconnecting || gatt != null) return
         // Classic discovery degrades/aborts connections — always cancel first.
         try {
@@ -1782,6 +1803,7 @@ class Nimo : SGCManager() {
      * called both on the initial attempt and from the BOND_NONE handler.
      */
     private fun startBond(device: android.bluetooth.BluetoothDevice) {
+        if (!NimoResourceDiagnostics.allowPeer(this, device.address, device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         val bondState =
                 try {
                     device.bondState
@@ -1828,6 +1850,7 @@ class Nimo : SGCManager() {
 
     private fun connectBredrTransport(device: android.bluetooth.BluetoothDevice) {
         if (isDisconnecting || gatt != null) return
+        if (!NimoResourceDiagnostics.beginTransport(this, device.address, device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         // GATT over BR/EDR: the glasses pair with a legacy (non-SC) link key, so no LE
         // keys exist (le_linkkey_known:F) and the controller records the device as
         // BR_EDR-only — the 7033 UART service is served over the classic link. This is
@@ -2377,6 +2400,7 @@ class Nimo : SGCManager() {
             if (fullyBooted) {
                 return@start true
             }
+            if (!NimoResourceDiagnostics.admit(this, DEVICE_SEARCH_ID, true)) return@start true
             Bridge.log("NIMO: Attempting reconnection...")
             isDisconnecting = false
             // Each reconnection cycle is a fresh bond budget — the glasses drop their
