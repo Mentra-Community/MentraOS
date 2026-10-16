@@ -14,20 +14,9 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
-import {IOS_FORGET_GLASSES_BLUETOOTH_ERROR} from "@/utils/pairing/iosStaleBond"
-import {
-  BT_CLASSIC_ROUTE,
-  IOS_CLASSIC_SETTLE_MS,
-  REPLACE_OWNER_ROUTE,
-  classicWaitState,
-  shouldRouteToReplaceOwner,
-} from "@/utils/pairing/replaceOwner"
-import {isReplaceOwnerConfirmSettling} from "@/utils/pairing/replaceOwnerConfirm"
-import {
-  advertisedSecurePairingCapable,
-  isMentraLiveOwnershipTransferSupported,
-  isMentraLiveSecurePairingEnabled,
-} from "@/utils/pairing/securePairingFeature"
+import {FORGET_IOS_PAIRING_ROUTE, isIosForgetPairingFailure} from "@/utils/pairing/iosStaleBond"
+import {AUTO_AUDIO_WAIT_MS, BT_CLASSIC_ROUTE, decidePairAudio} from "@/utils/pairing/pairAudio"
+import {advertisedSecurePairingCapable, isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 
 // Secure pairing info should arrive immediately after Mentra Live finishes booting.
 // Secure or unknown firmware fails closed instead of spinning forever.
@@ -35,20 +24,19 @@ const PAIRING_INFO_WAIT_MS = 5_000
 const PAIRING_KICKOFF_DELAY_MS = 2_000
 
 /**
- * Design A (open reclaim): three presses clear prior owner/bonds on the glasses; the first
- * successful pair wins. Mentra Live pairing does NOT run ownership-transfer finalize/wipe.
- * pairing_info is used only as a secure-firmware readiness signal; the advertised capability
- * lets existing customer firmware proceed without waiting for an event it does not emit.
+ * Pairing is one 2-minute window on the glasses, and the Mentra App only renders it. Choosing a pair
+ * never confirms anything: the SDK sends `pair_select` on its own, and a previous phone stays paired
+ * until the new bond commits on the glasses.
+ *
+ * `pairing_info` is a secure-firmware readiness signal and carries `auto_audio`. The advertised
+ * capability lets existing customer firmware proceed without waiting for an event it does not emit.
  * Route params arrive as strings, so legacy firmware is both boolean false and "false".
  *
- * Ownership transfer is the exception to open reclaim: glasses in transfer mode report
- * `pairing_info.awaiting_confirm` and refuse to bond until a different phone confirms
- * on the replace-owner screen, which is pushed on top of this one and pops back here
- * once confirmed. The phone that already owns the glasses is never blocked: it gets
- * `retained_owner_link`, keeps waiting, and the glasses reclaim it. Routing keys on awaiting_confirm, never on
- * had_previous_bond. iOS
- * waits for Classic to bond from the BLE pair and opens Settings only if that
- * bond does not appear. Android attaches Classic from the BLE bond.
+ * iPhone audio (spec S6): always read the real audio state first. Audio up goes straight to success.
+ * Audio down with `auto_audio` waits up to 30 s, re-checks, then opens Pair Audio only if it is
+ * still down. Audio down without `auto_audio` opens Pair Audio at once. Android never shows it.
+ *
+ * `pair_failure.code === "ios_forget_pairing"` on iPhone opens the "Forget the old pairing" screen.
  */
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
@@ -90,12 +78,15 @@ export default function GlassesPairingLoadingScreen() {
   const pairingKickoffStartedRef = useRef(false)
   const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pairingStoppedRef = useRef(false)
-  const replaceOwnerRoutedRef = useRef(false)
-  const classicAudioRoutedRef = useRef(false)
-  const classicSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pairAudioHandedOffRef = useRef(false)
+  // Pair Audio covers this screen. Success is only decided again once it hands the screen back.
+  const pairAudioUnfocusedRef = useRef(false)
+  const pairAudioReturnedRef = useRef(false)
+  const autoAudioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [autoAudio, setAutoAudio] = useState<boolean | undefined>(undefined)
   const readiness = useEngineSnapshot(engine.pairing.readiness, (onChange) => engine.pairing.onReadiness(onChange))
   const {bluetoothClassicConnected, bluetoothClassicProfilesConnected, bluetoothAudioRouted} = readiness
-  const [classicSettleElapsed, setClassicSettleElapsed] = useState(false)
+  const [autoAudioWaitElapsed, setAutoAudioWaitElapsed] = useState(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
   const advertisedSecurePairing = advertisedSecurePairingCapable(
     securePairingCapable,
@@ -161,49 +152,19 @@ export default function GlassesPairingLoadingScreen() {
         return
       }
       setPairingInfoReceived(true)
+      setAutoAudio(event.auto_audio === true ? true : undefined)
       logPairingTiming(
         "pairing_info",
-        `had_previous_bond=${event.had_previous_bond} secure=${event.secure_pairing_capable} awaiting_confirm=${String(
-          event.awaiting_confirm,
-        )} retained_owner_link=${String(event.retained_owner_link)} design=A_open_reclaim`,
+        `had_previous_bond=${event.had_previous_bond} secure=${event.secure_pairing_capable} auto_audio=${String(
+          event.auto_audio,
+        )}`,
       )
-
-      if (event.retained_owner_link === true) {
-        // This phone is the owner the glasses kept and the user is pairing on purpose. The
-        // glasses never block the owner: they reclaim and send a fresh pairing_info with
-        // owner_committed, so keep waiting instead of leaving or showing the replace prompt.
-        logPairingTiming("retained_owner_reclaim_wait")
-        return
-      }
-
-      if (
-        shouldRouteToReplaceOwner({
-          platformSupported: isMentraLiveOwnershipTransferSupported(),
-          awaitingConfirm: event.awaiting_confirm,
-          securePairing: securePairingRequired,
-          retainedOwnerLink: event.retained_owner_link,
-        })
-      ) {
-        // One push per awaiting_confirm episode; replayed pairing_info must not stack screens.
-        if (replaceOwnerRoutedRef.current || hasNavigatedRef.current || pairingStoppedRef.current) return
-        // A queued awaiting_confirm from before the user's tap must not reopen the screen.
-        if (isReplaceOwnerConfirmSettling()) return
-        replaceOwnerRoutedRef.current = true
-        console.log(
-          `PAIRFLOW: loading_navigate route=${REPLACE_OWNER_ROUTE} model=${deviceModel} name=${deviceName ?? ""}`,
-        )
-        logPairingTiming("navigate_replace_owner")
-        useNavigationStore.getState().push(REPLACE_OWNER_ROUTE, {deviceModel, deviceName})
-      } else if (event.awaiting_confirm !== true) {
-        // The glasses moved past the confirm state; a later one is a new episode.
-        replaceOwnerRoutedRef.current = false
-      }
     })
 
     return () => {
       sub.remove()
     }
-  }, [securePairingRequired, pairingCode, logPairingTiming, deviceModel, deviceName, replace])
+  }, [securePairingRequired, pairingCode, logPairingTiming])
 
   const handleGoBack = useCallback(() => {
     console.log(`PAIRFLOW: loading_cancel model=${deviceModel} name=${deviceName ?? ""}`)
@@ -224,8 +185,11 @@ export default function GlassesPairingLoadingScreen() {
   }, [deviceModel, deviceName, goBack])
 
   const handlePairFailure = useCallback(
-    (error: string) => {
-      if (pairingStoppedRef.current || hasNavigatedRef.current) return
+    (error: string, code?: string) => {
+      // A failure that lands during the one-second success delay wins: cancel the pending success.
+      // A failure after the success screen was pushed, or after the user left, is ignored.
+      const successPending = navigationTimerRef.current !== null
+      if (pairingStoppedRef.current || (hasNavigatedRef.current && !successPending)) return
       console.log(`PAIRFLOW: loading_fail error=${error} model=${deviceModel} name=${deviceName ?? ""}`)
       pairingStoppedRef.current = true
       hasNavigatedRef.current = true
@@ -237,6 +201,10 @@ export default function GlassesPairingLoadingScreen() {
         clearTimeout(navigationTimerRef.current)
         navigationTimerRef.current = null
       }
+      if (autoAudioTimerRef.current) {
+        clearTimeout(autoAudioTimerRef.current)
+        autoAudioTimerRef.current = null
+      }
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Pairing failure cleanup failed:", cleanupError)
       })
@@ -244,18 +212,20 @@ export default function GlassesPairingLoadingScreen() {
         replace("/pairing/unpair-even", {deviceModel, error})
         return
       }
-      // Only the forget-in-Settings screen names the glasses.
-      replace(
-        "/pairing/failure",
-        error === IOS_FORGET_GLASSES_BLUETOOTH_ERROR ? {error, deviceModel, deviceName} : {error, deviceModel},
-      )
+      // iPhone holds a stale Bluetooth pairing for these glasses: the user removes it in Settings.
+      // Only this screen names the glasses, with the code.
+      if (isIosForgetPairingFailure({code}, Platform.OS)) {
+        replace(FORGET_IOS_PAIRING_ROUTE, {deviceModel, deviceName})
+        return
+      }
+      replace("/pairing/failure", {error, deviceModel})
     },
     [deviceModel, deviceName, replace],
   )
 
   useEffect(() => {
     const unsub = engine.pairing.onPairFailure((event: PairFailureEvent) => {
-      handlePairFailure(event.error)
+      handlePairFailure(event.error, event.code)
     })
     return () => {
       unsub()
@@ -329,10 +299,10 @@ export default function GlassesPairingLoadingScreen() {
     ) {
       return
     }
+    // A missing pairing_info only leaves the spinner: it never routes to failure and never marks the
+    // flow as navigated, so a late pairing_info still lets pairing finish.
     const timer = setTimeout(() => {
-      hasNavigatedRef.current = true
       logPairingTiming("pairing_info_timeout", `securePairingCapable=${String(advertisedSecurePairing)}`)
-      handlePairFailure("errors:pairingCouldNotStart")
     }, PAIRING_INFO_WAIT_MS)
     return () => {
       clearTimeout(timer)
@@ -344,9 +314,22 @@ export default function GlassesPairingLoadingScreen() {
     advertisedSecurePairing,
     selectedTargetReady,
     pairingInfoReceived,
-    handlePairFailure,
     logPairingTiming,
   ])
+
+  const openPairAudio = useCallback(() => {
+    if (pairAudioHandedOffRef.current) return
+    pairAudioHandedOffRef.current = true
+    console.log(`PAIRFLOW: loading_navigate route=${BT_CLASSIC_ROUTE} model=${deviceModel} name=${deviceName ?? ""}`)
+    logPairingTiming("navigate_btclassic")
+    useNavigationStore.getState().push(BT_CLASSIC_ROUTE, {device: deviceJson})
+  }, [deviceJson, deviceModel, deviceName, logPairingTiming])
+
+  useEffect(() => {
+    if (!pairAudioHandedOffRef.current) return
+    if (!isFocused) pairAudioUnfocusedRef.current = true
+    else if (pairAudioUnfocusedRef.current) pairAudioReturnedRef.current = true
+  }, [isFocused])
 
   useEffect(() => {
     if (pairingStoppedRef.current || !isFocused || !pairingKickoffComplete || !selectedTargetReady) {
@@ -365,37 +348,52 @@ export default function GlassesPairingLoadingScreen() {
       return
     }
 
-    if (
-      classicWaitState({
-        platform: Platform.OS,
-        deviceModel,
-        bluetoothClassicConnected,
-        bluetoothClassicProfilesConnected,
-        bluetoothAudioRouted,
-        settleElapsed: classicSettleElapsed,
-      }) !== "done"
-    ) {
-      if (classicAudioRoutedRef.current) return
-      if (classicSettleTimerRef.current) return
-      logPairingTiming("waiting_ios_classic")
-      classicSettleTimerRef.current = setTimeout(() => {
-        classicSettleTimerRef.current = null
-        if (pairingStoppedRef.current || hasNavigatedRef.current || classicAudioRoutedRef.current) return
-        classicAudioRoutedRef.current = true
-        setClassicSettleElapsed(true)
-        console.log(
-          `PAIRFLOW: loading_navigate route=${BT_CLASSIC_ROUTE} model=${deviceModel} name=${deviceName ?? ""}`,
-        )
-        logPairingTiming("navigate_btclassic")
-        useNavigationStore.getState().push(BT_CLASSIC_ROUTE, {device: deviceJson})
-      }, IOS_CLASSIC_SETTLE_MS)
+    const audioDecision = decidePairAudio({
+      platform: Platform.OS,
+      deviceModel,
+      readiness: {bluetoothClassicConnected, bluetoothClassicProfilesConnected, bluetoothAudioRouted},
+      autoAudio,
+      waitElapsed: autoAudioWaitElapsed,
+    })
+
+    if (audioDecision !== "done") {
+      // Pair Audio already took over once; it advances on its own when audio connects.
+      if (pairAudioHandedOffRef.current) return
+      if (audioDecision === "pair_audio") {
+        openPairAudio()
+        return
+      }
+      if (autoAudioTimerRef.current) return
+      logPairingTiming("waiting_auto_audio")
+      autoAudioTimerRef.current = setTimeout(() => {
+        autoAudioTimerRef.current = null
+        if (pairingStoppedRef.current || hasNavigatedRef.current || pairAudioHandedOffRef.current) return
+        // Re-check the real audio state at expiry. A connection that lands just before this fires
+        // takes the success path below; one that lands just after finds Pair Audio already open.
+        const latest = engine.pairing.readiness()
+        const atExpiry = decidePairAudio({
+          platform: Platform.OS,
+          deviceModel,
+          readiness: latest,
+          autoAudio,
+          waitElapsed: true,
+        })
+        if (atExpiry === "pair_audio") {
+          openPairAudio()
+          return
+        }
+        setAutoAudioWaitElapsed(true)
+      }, AUTO_AUDIO_WAIT_MS)
       return
     }
 
-    if (classicSettleTimerRef.current) {
-      clearTimeout(classicSettleTimerRef.current)
-      classicSettleTimerRef.current = null
+    if (autoAudioTimerRef.current) {
+      clearTimeout(autoAudioTimerRef.current)
+      autoAudioTimerRef.current = null
     }
+    // Audio came up after Pair Audio opened: that screen advances itself and gives this one back.
+    // Navigating here too would be a second navigation.
+    if (pairAudioHandedOffRef.current && !pairAudioReturnedRef.current) return
 
     hasNavigatedRef.current = true
     console.log(
@@ -423,8 +421,9 @@ export default function GlassesPairingLoadingScreen() {
     bluetoothClassicConnected,
     bluetoothClassicProfilesConnected,
     bluetoothAudioRouted,
-    classicSettleElapsed,
-    deviceJson,
+    autoAudio,
+    autoAudioWaitElapsed,
+    openPairAudio,
   ])
 
   useEffect(() => {
@@ -433,9 +432,9 @@ export default function GlassesPairingLoadingScreen() {
       navigationTimerRef.current = null
       hasNavigatedRef.current = false
     }
-    if (!isFocused && classicSettleTimerRef.current) {
-      clearTimeout(classicSettleTimerRef.current)
-      classicSettleTimerRef.current = null
+    if (!isFocused && autoAudioTimerRef.current) {
+      clearTimeout(autoAudioTimerRef.current)
+      autoAudioTimerRef.current = null
     }
   }, [isFocused])
 
@@ -444,8 +443,8 @@ export default function GlassesPairingLoadingScreen() {
       if (navigationTimerRef.current) {
         clearTimeout(navigationTimerRef.current)
       }
-      if (classicSettleTimerRef.current) {
-        clearTimeout(classicSettleTimerRef.current)
+      if (autoAudioTimerRef.current) {
+        clearTimeout(autoAudioTimerRef.current)
       }
     }
   }, [])

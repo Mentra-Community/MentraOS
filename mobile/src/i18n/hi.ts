@@ -45,6 +45,7 @@ const hi = {
     hint: "संकेत: आप किसी भी ईमेल पते और अपने पसंदीदा पासवर्ड का उपयोग कर सकते हैं :)",
   },
   home: {
+    pairAgain: "फिर से पेयर करें",
     hardwareIncompatible: "हार्डवेयर असंगत",
     hardwareIncompatibleMessage:
       "{{app}} को ऐसे हार्डवेयर की आवश्यकता है जो आपके कनेक्टेड चश्मे में उपलब्ध नहीं है: {{missing}}",
@@ -56,17 +57,11 @@ const hi = {
   },
   pairing: {
     ...en.pairing,
-    replaceOwnerTitle: "इस चश्मे को इस फ़ोन से पेयर करें?",
-    replaceOwnerBody:
-      "यह चश्मा अभी किसी दूसरे मालिक के साथ सेट है। इसे यहाँ पेयर करने पर यह उस मालिक के अकाउंट और फ़ोन से डिस्कनेक्ट हो जाएगा। इसे वापस नहीं किया जा सकता।",
-    replaceOwnerConfirm: "मालिक बदलें",
-    replaceOwnerWaiting: "आपके चश्मे से संपर्क हो रहा है…",
-    replaceOwnerNotPairing:
-      "आपका चश्मा पेयरिंग मोड से बाहर हो गया। पावर बटन को तेज़ी से 3 बार दबाकर उसे फिर से पेयरिंग मोड में लाएँ, फिर दोबारा कोशिश करें।",
-    replaceOwnerWipeFailed: "हम आपके चश्मे से पिछले मालिक को हटा नहीं सके। फिर से कोशिश करें।",
-    replaceOwnerFailed: "आपके चश्मे को पेयर करते समय कुछ गड़बड़ हो गई। फिर से कोशिश करें।",
-    replaceOwnerTimeout:
-      "आपके चश्मे ने जवाब नहीं दिया। पक्का करें कि वह पास में और पेयरिंग मोड में है, फिर दोबारा कोशिश करें।",
+    livePairingScanTitle: "अपने चश्मे को पेयरिंग मोड में रखें",
+    livePairingScanBody: "पावर बटन को जल्दी से 3 बार दबाएँ। आपका चश्मा 4 अक्षरों का कोड बोलेगा।",
+    livePairingScanSearching: "आपका चश्मा खोजा जा रहा है",
+    pairingModeAlertTitle: "आपका चश्मा पेयरिंग मोड में है",
+    pairingModeAlertBody: "बाहर निकलने के लिए पावर बटन को 3 बार दबाएँ।",
     nearbyNotInPairingModeHint:
       "पास में Mentra Live चश्मे मिले, लेकिन वे पेयरिंग मोड में नहीं हैं। पावर बटन को तेज़ी से 3 बार दबाएँ, फिर फिर से कोशिश करें।",
     notInPairingModeLabel: "पेयरिंग मोड में नहीं",
@@ -78,6 +73,18 @@ const hi = {
     livePairingModeInfo:
       "पावर बटन को तेज़ी से 3 बार दबाएँ। LED चमकता है और चश्मा 4-अक्षर का कोड (0–9, A–F) बोलता है। एक से ज़्यादा यूनिट दिखें तो उसी कोड से मिलाएँ।",
     noGlassesFoundHint: "पक्का करें कि आपने पावर बटन को तेज़ी से 3 बार दबाया, फिर फिर से कोशिश करें।",
+  },
+  onboarding: {
+    ...en.onboarding,
+    btClassicStep1: "सेटिंग्स खोलें पर टैप करें",
+    btClassicStep2: "Bluetooth पर टैप करें",
+    btClassicStep3: 'मेरे डिवाइस या अन्य डिवाइस में "{{name}}" पर टैप करें',
+    btClassicStep4: 'जब "कनेक्टेड" दिखे, तो ऐप पर लौटें',
+    forgetIosPairingTitle: "पुरानी पेयरिंग हटाएँ",
+    forgetIosPairingSubtitle: "जारी रखने के लिए अपने iPhone पर सहेजी गई Bluetooth पेयरिंग हटाएँ।",
+    forgetIosPairingStep1: "सेटिंग्स खोलें, फिर Bluetooth पर टैप करें।",
+    forgetIosPairingStep2: "{{name}} के बगल में ⓘ पर टैप करें, फिर इस डिवाइस को भूल जाएँ पर टैप करें।",
+    forgetIosPairingStep3: "फिर से पेयर करने के लिए Mentra App पर लौटें।",
   },
   demoNavigator: {
     componentsTab: "कंपोनेंट्स",

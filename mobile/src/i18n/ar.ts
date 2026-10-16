@@ -44,6 +44,7 @@ const ar = {
     hint: "(: تلميح: يمكنك استخدام اي عنوان بريد الكتروني وكلمة السر المفضلة لديك",
   },
   home: {
+    pairAgain: "اقتران مرة أخرى",
     hardwareIncompatible: "الأجهزة غير متوافقة",
     hardwareIncompatibleMessage: "{{app}} يتطلب أجهزة غير متوفرة في النظارات المتصلة: {{missing}}",
   },
@@ -54,16 +55,11 @@ const ar = {
   },
   pairing: {
     ...en.pairing,
-    replaceOwnerTitle: "هل تريد اقتران هذه النظارات بهذا الهاتف؟",
-    replaceOwnerBody:
-      "هذه النظارات معدّة حاليًا لدى مالك آخر. سيؤدي اقترانها هنا إلى فصلها عن حساب ذلك المالك وهاتفه. لا يمكن التراجع عن ذلك.",
-    replaceOwnerConfirm: "استبدال المالك",
-    replaceOwnerWaiting: "جارٍ الاتصال بنظاراتك…",
-    replaceOwnerNotPairing:
-      "خرجت نظاراتك من وضع الاقتران. اضغط زر الطاقة 3 مرات بسرعة لإعادتها إلى وضع الاقتران ثم أعد المحاولة.",
-    replaceOwnerWipeFailed: "تعذّر إزالة المالك السابق من نظاراتك. أعد المحاولة.",
-    replaceOwnerFailed: "حدث خطأ أثناء اقتران نظاراتك. أعد المحاولة.",
-    replaceOwnerTimeout: "لم تستجب نظاراتك. تأكد من أنها قريبة وفي وضع الاقتران ثم أعد المحاولة.",
+    livePairingScanTitle: "ضع نظارتك في وضع الاقتران",
+    livePairingScanBody: "اضغط على زر التشغيل 3 مرات بسرعة. ستنطق نظارتك رمزًا مكوّنًا من 4 أحرف.",
+    livePairingScanSearching: "جارٍ البحث عن نظارتك",
+    pairingModeAlertTitle: "نظارتك في وضع الاقتران",
+    pairingModeAlertBody: "اضغط على زر التشغيل 3 مرات للخروج.",
     nearbyNotInPairingModeHint:
       "تم العثور على نظارات Mentra Live قريبة، لكنها ليست في وضع الاقتران. اضغط زر الطاقة 3 مرات بسرعة ثم أعد المحاولة.",
     notInPairingModeLabel: "ليست في وضع الاقتران",
@@ -75,6 +71,18 @@ const ar = {
     livePairingModeInfo:
       "اضغط زر الطاقة 3 مرات بسرعة. يومض المؤشر وتنطق النظارات رمزًا من 4 أحرف (0–9، A–F). طابق ذلك الرمز في القائمة إذا ظهرت أكثر من وحدة.",
     noGlassesFoundHint: "تأكد من الضغط على زر الطاقة 3 مرات بسرعة ثم أعد المحاولة.",
+  },
+  onboarding: {
+    ...en.onboarding,
+    btClassicStep1: "اضغط على فتح الإعدادات",
+    btClassicStep2: "اضغط على Bluetooth",
+    btClassicStep3: 'اضغط على "{{name}}" ضمن أجهزتي أو أجهزة أخرى',
+    btClassicStep4: 'ارجع إلى التطبيق عندما تظهر عبارة "متصل"',
+    forgetIosPairingTitle: "انسَ الاقتران القديم",
+    forgetIosPairingSubtitle: "أزل اقتران Bluetooth المحفوظ على iPhone للمتابعة.",
+    forgetIosPairingStep1: "افتح الإعدادات ثم اضغط على Bluetooth.",
+    forgetIosPairingStep2: "اضغط على ⓘ بجوار {{name}} ثم اضغط على «تجاهل هذا الجهاز».",
+    forgetIosPairingStep3: "ارجع إلى Mentra App للاقتران مرة أخرى.",
   },
   demoNavigator: {
     componentsTab: "عناصر",

@@ -11,7 +11,6 @@ describe("decideReconnect", () => {
     searching: false,
     nativeLinkBusy: false,
     hasDefaultDevice: true,
-    ownerLost: false,
   }
 
   it("skips as a no-op success when reconnect-on-foreground is off", () => {
@@ -42,8 +41,22 @@ describe("decideReconnect", () => {
     expect(decideReconnect({...base, hasDefaultDevice: false})).toEqual({kind: "skip", result: false})
   })
 
-  it("still connects after owner loss so native can watch for the next pairing mode", () => {
-    expect(decideReconnect({...base, ownerLost: true})).toEqual({kind: "connect"})
+  it("connects while the SDK reports the normal pairing state", () => {
+    expect(decideReconnect({...base, pairingState: {state: "normal"}})).toEqual({kind: "connect"})
+  })
+
+  it("skips while the SDK pairing window is open (reconnect is paused)", () => {
+    const pairingState = {state: "pairing_mode" as const, windowId: 7, endsAtMs: 2_000}
+    expect(decideReconnect({...base, pairingState, now: 1_000})).toEqual({kind: "skip", result: true})
+  })
+
+  it("connects once a stale pairing window has passed its end", () => {
+    const pairingState = {state: "pairing_mode" as const, windowId: 7, endsAtMs: 2_000}
+    expect(decideReconnect({...base, pairingState, now: 2_000})).toEqual({kind: "connect"})
+  })
+
+  it("skips after the SDK reports the glasses rejected this phone (Pair Again owns recovery)", () => {
+    expect(decideReconnect({...base, pairingState: {state: "pairing_rejected"}})).toEqual({kind: "skip", result: true})
   })
 
   it("connects when paired, idle, and disconnected", () => {

@@ -45,6 +45,7 @@ const ja = {
     hint: "ヒント: お好みのメールアドレスとパスワードを使ってください :)",
   },
   home: {
+    pairAgain: "もう一度ペアリング",
     hardwareIncompatible: "ハードウェア非対応",
     hardwareIncompatibleMessage: "{{app}}は接続されたグラスで利用できないハードウェアが必要です: {{missing}}",
   },
@@ -55,17 +56,11 @@ const ja = {
   },
   pairing: {
     ...en.pairing,
-    replaceOwnerTitle: "このグラスをこのスマートフォンとペアリングしますか？",
-    replaceOwnerBody:
-      "このグラスは現在、別のオーナーに設定されています。ここでペアリングすると、そのオーナーのアカウントとスマートフォンから切断されます。この操作は元に戻せません。",
-    replaceOwnerConfirm: "オーナーを置き換える",
-    replaceOwnerWaiting: "グラスに接続しています…",
-    replaceOwnerNotPairing:
-      "グラスがペアリングモードを終了しました。電源ボタンを素早く3回押してもう一度ペアリングモードにしてから、もう一度お試しください。",
-    replaceOwnerWipeFailed: "以前のオーナーをグラスから削除できませんでした。もう一度お試しください。",
-    replaceOwnerFailed: "グラスのペアリング中に問題が発生しました。もう一度お試しください。",
-    replaceOwnerTimeout:
-      "グラスから応答がありません。近くにあってペアリングモードになっていることを確認し、もう一度お試しください。",
+    livePairingScanTitle: "グラスをペアリングモードにしてください",
+    livePairingScanBody: "電源ボタンを素早く3回押してください。グラスが4文字のコードを読み上げます。",
+    livePairingScanSearching: "グラスを探しています",
+    pairingModeAlertTitle: "グラスはペアリングモードです",
+    pairingModeAlertBody: "終了するには電源ボタンを3回押してください。",
     nearbyNotInPairingModeHint:
       "近くにMentra Liveが見つかりましたが、ペアリングモードではありません。電源ボタンを素早く3回押してから、もう一度お試しください。",
     notInPairingModeLabel: "ペアリングモードではありません",
@@ -77,6 +72,18 @@ const ja = {
     livePairingModeInfo:
       "電源ボタンを素早く3回押してください。LEDが点滅し、グラスが4文字のコード（0–9、A–F）を読み上げます。複数台が表示された場合は、そのコードで照合してください。",
     noGlassesFoundHint: "電源ボタンを素早く3回押してから、もう一度お試しください。",
+  },
+  onboarding: {
+    ...en.onboarding,
+    btClassicStep1: "「設定を開く」をタップ",
+    btClassicStep2: "「Bluetooth」をタップ",
+    btClassicStep3: "「マイデバイス」または「その他のデバイス」の「{{name}}」をタップ",
+    btClassicStep4: "「接続済み」と表示されたらアプリに戻る",
+    forgetIosPairingTitle: "以前のペアリングを削除",
+    forgetIosPairingSubtitle: "続行するには、iPhoneに保存されているBluetoothペアリングを削除してください。",
+    forgetIosPairingStep1: "設定を開き、Bluetoothをタップします。",
+    forgetIosPairingStep2: "{{name}}の横にあるⓘをタップし、「このデバイスの登録を解除」をタップします。",
+    forgetIosPairingStep3: "Mentra Appに戻って、もう一度ペアリングします。",
   },
   demoNavigator: {
     componentsTab: "コンポーネント",

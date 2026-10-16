@@ -6,20 +6,6 @@ export const isMentraLiveSecurePairingEnabled = (): boolean =>
   process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING === "true"
 
 /**
- * Keeps the previous owner until the new phone confirms. Requires secure
- * pairing as well; anything other than exact `true` stays off.
- */
-export const isMentraLiveOwnershipTransferEnabled = (): boolean =>
-  isMentraLiveSecurePairingEnabled() && process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER === "true"
-
-/**
- * Ownership transfer on both platforms. iOS connects BLE first and confirms
- * there, then opens Settings for Classic audio. Route and render the transfer
- * flow with this, never the raw flag.
- */
-export const isMentraLiveOwnershipTransferSupported = (): boolean => isMentraLiveOwnershipTransferEnabled()
-
-/**
  * Expo Router stores route params as strings, so a legacy advertisement's
  * `false` arrives as `"false"`. Missing means the scan did not say.
  */

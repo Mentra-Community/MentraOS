@@ -358,7 +358,9 @@ function GlassesScanScreen() {
     if (scanTimedOut) {
       return translate("pairing:liveScanHelpTitle")
     }
-    return translate("pairing:liveScanTitle")
+    // Capability is per device, not per app flag: before any unit is found the app cannot know the
+    // firmware, so the 3-press instruction shows while searching. A legacy unit lists immediately.
+    return securePairingEnabled ? translate("pairing:livePairingScanTitle") : translate("pairing:liveScanTitle")
   })()
 
   const showLivePairingHelp =
@@ -440,15 +442,35 @@ function GlassesScanScreen() {
               <Button preset="primary" tx="pairing:tryAgain" onPress={handleTryAgain} className="w-full" />
             </View>
           ) : !shouldShowDeviceList ? (
-            <View className="justify-center items-center gap-3 min-h-20 py-4">
-              {isMentraLivePairingScan ? (
+            isMentraLivePairingScan && securePairingEnabled ? (
+              <View className="justify-center items-center gap-4 py-2">
                 <Text
-                  className="text-center text-sm text-muted-foreground"
-                  text={translate("pairing:liveScanSubtitle")}
+                  className="text-center text-base font-medium text-foreground"
+                  text={translate("pairing:livePairingScanBody")}
                 />
-              ) : null}
-              <ActivityIndicator size="large" color={theme.colors.foreground} />
-            </View>
+                <View className="flex-row items-center justify-center gap-2">
+                  <ActivityIndicator
+                    size="small"
+                    color={theme.colors.foreground}
+                    testID="live-scan-searching-spinner"
+                  />
+                  <Text
+                    className="text-sm text-muted-foreground"
+                    text={translate("pairing:livePairingScanSearching")}
+                  />
+                </View>
+              </View>
+            ) : (
+              <View className="justify-center items-center gap-3 min-h-20 py-4">
+                {isMentraLivePairingScan ? (
+                  <Text
+                    className="text-center text-sm text-muted-foreground"
+                    text={translate("pairing:liveScanSubtitle")}
+                  />
+                ) : null}
+                <ActivityIndicator size="large" color={theme.colors.foreground} />
+              </View>
+            )
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>

@@ -1,5 +1,15 @@
-/** iOS CoreBluetooth error 14: the glasses removed the BLE bond and this phone still has it. */
-export const IOS_FORGET_GLASSES_BLUETOOTH_ERROR = "errors:iosForgetGlassesBluetooth"
+/**
+ * `pair_failure.code` the SDK sends when iOS holds a stale Bluetooth pairing for the glasses during
+ * an explicit attempt. The user must remove it in Settings > Bluetooth before pairing again.
+ */
+export const IOS_FORGET_PAIRING_CODE = "ios_forget_pairing"
+
+/** The route of the "Forget the old pairing" screen. Only the pairing loading screen opens it. */
+export const FORGET_IOS_PAIRING_ROUTE = "/pairing/forget-ios-pairing"
+
+/** True when a `pair_failure` asks the user to forget the old pairing on iPhone. */
+export const isIosForgetPairingFailure = (event: {code?: string}, platform: string): boolean =>
+  platform === "ios" && event.code === IOS_FORGET_PAIRING_CODE
 
 /**
  * The name shown on the forget-in-Settings screen. Underscores wrap mid-token, so

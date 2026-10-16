@@ -10,6 +10,5 @@ export async function unpairSavedGlasses(): Promise<void> {
   await engine.settings.set(SETTINGS.device_name.key, "", false)
   await engine.settings.set(SETTINGS.device_address.key, "", false)
   await engine.settings.set(SETTINGS.pending_wearable.key, "", false)
-  await engine.settings.set(SETTINGS.mentra_live_owner_lost.key, false, false)
   await engine.settings.set(SETTINGS.mentra_live_secure_firmware.key, false, false)
 }

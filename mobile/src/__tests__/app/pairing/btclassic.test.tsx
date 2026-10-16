@@ -19,8 +19,14 @@ jest.mock("@/utils/SettingsNavigationUtils", () => ({
 
 jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 
+// Onboarding copy resolves to the real English string so the rendered steps are asserted exactly.
+// Every other namespace stays a key.
 jest.mock("@/i18n", () => ({
-  translate: jest.fn((key: string) => key),
+  translate: jest.fn((key: string, options?: Record<string, string>) => {
+    if (!key.startsWith("onboarding:")) return key
+    const value = require("@/i18n/en").default.onboarding[key.slice("onboarding:".length)]
+    return String(value).replace(/\{\{(\w+)\}\}/g, (_match: string, name: string) => options?.[name] ?? "")
+  }),
 }))
 
 jest.mock("@/contexts/ThemeContext", () => ({
@@ -130,16 +136,58 @@ describe("btclassic pairing screen", () => {
     ;(usePushPrevious as jest.Mock).mockReturnValue(pushPrevious)
   })
 
-  it("tells the user the glasses are already listed under My Devices and keeps the four steps", () => {
+  it("shows Pair Audio with the four exact steps", () => {
     const screen = render(<BtClassicPairingScreen />)
 
-    expect(screen.getByText("onboarding:btClassicTitle")).toBeTruthy()
-    expect(screen.getByText("onboarding:btClassicSubtitle")).toBeTruthy()
-    for (const key of ["btClassicStep1", "btClassicStep2", "btClassicStep3", "btClassicStep4"]) {
-      expect(screen.getByText(`onboarding:${key}`)).toBeTruthy()
-    }
-    expect(translate).toHaveBeenCalledWith("onboarding:btClassicSubtitle", {name: device.name})
+    expect(screen.getByText("Pair Audio")).toBeTruthy()
+    expect(
+      screen.getByText(
+        `${device.name} is already listed under My Devices in your iPhone Bluetooth settings. It only needs a tap to connect audio.`,
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText("Tap Open Settings")).toBeTruthy()
+    expect(screen.getByText("Tap Bluetooth")).toBeTruthy()
+    expect(screen.getByText(`Tap "${device.name}" under My Devices or Other Devices`)).toBeTruthy()
+    expect(screen.getByText('Return to the app once it says "Connected"')).toBeTruthy()
     expect(translate).toHaveBeenCalledWith("onboarding:btClassicStep3", {name: device.name})
+  })
+
+  it("advances at once when audio is already up on mount", async () => {
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({bluetoothAudioRouted: true})
+    })
+    render(<BtClassicPairingScreen />)
+
+    await waitFor(() => expect(pushPrevious).toHaveBeenCalledTimes(1))
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["the Classic bond", {bluetoothClassicConnected: true}],
+    ["the connected profiles", {bluetoothClassicProfilesConnected: true}],
+    ["the audio route", {bluetoothAudioRouted: true}],
+  ])("advances exactly once when %s reports audio up", async (_label, signal) => {
+    render(<BtClassicPairingScreen />)
+    expect(pushPrevious).not.toHaveBeenCalled()
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo(signal)
+    })
+    // The other signals follow in the same pairing. They must not navigate again.
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({
+        bluetoothClassicConnected: true,
+        bluetoothClassicProfilesConnected: true,
+        bluetoothAudioRouted: true,
+      })
+    })
+
+    await waitFor(() => expect(pushPrevious).toHaveBeenCalledTimes(1))
+  })
+
+  it("stays on Pair Audio while no audio signal is up", () => {
+    render(<BtClassicPairingScreen />)
+    expect(pushPrevious).not.toHaveBeenCalled()
   })
 
   it("reveals loading once Bluetooth Classic links and lets loading own the connect", async () => {

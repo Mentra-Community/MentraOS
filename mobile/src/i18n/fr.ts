@@ -46,6 +46,7 @@ const fr = {
     hint: "Astuce : vous pouvez utiliser n'importe quelle adresse e-mail et votre mot de passe préféré :)",
   },
   home: {
+    pairAgain: "Appairer à nouveau",
     hardwareIncompatible: "Matériel Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} nécessite du matériel qui n'est pas disponible sur vos lunettes connectées : {{missing}}",
@@ -57,17 +58,12 @@ const fr = {
   },
   pairing: {
     ...en.pairing,
-    replaceOwnerTitle: "Appairer ces lunettes avec ce téléphone ?",
-    replaceOwnerBody:
-      "Ces lunettes sont actuellement associées à un autre propriétaire. Les appairer ici les déconnectera du compte et du téléphone de ce propriétaire. Cette action est irréversible.",
-    replaceOwnerConfirm: "Remplacer le propriétaire",
-    replaceOwnerWaiting: "Contact avec vos lunettes…",
-    replaceOwnerNotPairing:
-      "Vos lunettes ont quitté le mode d'appairage. Appuyez 3 fois rapidement sur le bouton d'alimentation pour les remettre en mode d'appairage, puis réessayez.",
-    replaceOwnerWipeFailed: "Impossible de retirer le propriétaire précédent de vos lunettes. Réessayez.",
-    replaceOwnerFailed: "Une erreur s'est produite lors de l'appairage de vos lunettes. Réessayez.",
-    replaceOwnerTimeout:
-      "Vos lunettes n'ont pas répondu. Vérifiez qu'elles sont à proximité et en mode d'appairage, puis réessayez.",
+    livePairingScanTitle: "Mettez vos lunettes en mode d'appairage",
+    livePairingScanBody:
+      "Appuyez rapidement 3 fois sur le bouton d'alimentation. Vos lunettes annonceront un code de 4 caractères.",
+    livePairingScanSearching: "Recherche de vos lunettes",
+    pairingModeAlertTitle: "Vos lunettes sont en mode d'appairage",
+    pairingModeAlertBody: "Appuyez 3 fois sur le bouton d'alimentation pour quitter.",
     nearbyNotInPairingModeHint:
       "Des lunettes Mentra Live à proximité ont été trouvées, mais elles ne sont pas en mode d'appairage. Appuyez 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
     notInPairingModeLabel: "Pas en mode d'appairage",
@@ -79,6 +75,18 @@ const fr = {
     livePairingModeInfo:
       "Appuyez 3 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères (0–9, A–F). Comparez ce code dans la liste si plusieurs unités apparaissent.",
     noGlassesFoundHint: "Assurez-vous d'avoir appuyé 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
+  },
+  onboarding: {
+    ...en.onboarding,
+    btClassicStep1: "Appuyez sur Ouvrir les réglages",
+    btClassicStep2: "Appuyez sur Bluetooth",
+    btClassicStep3: "Appuyez sur « {{name}} » sous Mes appareils ou Autres appareils",
+    btClassicStep4: "Revenez à l'app lorsqu'il indique « Connecté »",
+    forgetIosPairingTitle: "Oubliez l'ancien appairage",
+    forgetIosPairingSubtitle: "Supprimez l'appairage Bluetooth enregistré sur votre iPhone pour continuer.",
+    forgetIosPairingStep1: "Ouvrez Réglages, puis appuyez sur Bluetooth.",
+    forgetIosPairingStep2: "Appuyez sur ⓘ à côté de {{name}}, puis sur Oublier cet appareil.",
+    forgetIosPairingStep3: "Revenez à la Mentra App pour appairer à nouveau.",
   },
   demoNavigator: {
     componentsTab: "Composants",

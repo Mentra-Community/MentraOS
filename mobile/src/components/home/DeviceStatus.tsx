@@ -1,16 +1,7 @@
 import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import type {GlassesNotReadyEvent} from "@mentra/engine"
 import {useState, useEffect, useRef, type ReactNode} from "react"
-import {useNavigation} from "@react-navigation/native"
-import {
-  ActivityIndicator,
-  Image,
-  Platform,
-  TouchableOpacity,
-  View,
-  type ImageSourcePropType,
-  type ViewStyle,
-} from "react-native"
+import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -23,7 +14,6 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {cancelPendingPairing} from "@/utils/PairingUtils"
-import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 import {
   getAr99DisplayName,
   getAr99ImageSource,
@@ -36,31 +26,6 @@ import {
 import MicIcon from "assets/icons/component/MicIcon"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import G2ConnectionProgress from "@/components/glasses/G2ConnectionProgress"
-
-/** Home stays visible while the pairing page slides over it. Clear the saved
- * glasses only after that cover finishes, so Home does not swap cards mid-slide. */
-const PAIR_AGAIN_COVER_MS = 1200
-
-type PairingCoverNavigation = {
-  addListener: (event: "transitionEnd", callback: (event: {data?: {closing?: boolean}}) => void) => () => void
-}
-
-function unpairAfterPairingCover(navigation: PairingCoverNavigation) {
-  let finished = false
-  let remove = () => {}
-  let guard: ReturnType<typeof setTimeout>
-  const finish = () => {
-    if (finished) return
-    finished = true
-    remove()
-    clearTimeout(guard)
-    unpairSavedGlasses().catch((error) => console.warn("Failed to unpair glasses after owner loss:", error))
-  }
-  remove = navigation.addListener("transitionEnd", (event) => {
-    if (event.data?.closing) finish()
-  })
-  guard = setTimeout(finish, PAIR_AGAIN_COVER_MS)
-}
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"
@@ -98,8 +63,7 @@ export const DeviceStatus = ({onPress, image, children, className = "h-28"}: Dev
 
 export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
-  const navigation = useNavigation()
-  const {push, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {push} = useNavigationStore.getState()
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
@@ -122,7 +86,6 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const batteryLevel = glassesStatus.battery
   const charging = glassesStatus.charging
   const [projectName] = useSetting<string>(SETTINGS.project_name.key)
-  const [ownerLost] = useSetting<boolean>(SETTINGS.mentra_live_owner_lost.key)
   const wifiConnected = wifiStatus.state === "connected"
   const searching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
@@ -221,7 +184,10 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const handleConnectOrDisconnect = async () => {
-    const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy: searching || nativeLinkBusy})
+    const action = decideConnectButtonAction({
+      hasDefaultWearable: !!pairedModel,
+      busy: searching || nativeLinkBusy || inPairingMode,
+    })
     if (action === "cancel") {
       await engine.glasses.disconnect()
       setIsCheckingConnectivity(false)
@@ -315,7 +281,14 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     return image
   }
 
-  let isSearching = searching || isCheckingConnectivity || wasSearching || nativeLinkBusy
+  // The SDK pauses reconnect while the glasses are in pairing mode. Home still shows the normal
+  // reconnecting card (spinner + Cancel) over the popup, never Pair Again.
+  const isLive = displayModel === DeviceTypes.LIVE
+  const pairingState = glassesStatus.pairingState
+  const inPairingMode = isLive && !glassesConnected && pairingState?.state === "pairing_mode"
+  const pairingRejected = isLive && !glassesConnected && pairingState?.state === "pairing_rejected"
+
+  let isSearching = searching || isCheckingConnectivity || wasSearching || nativeLinkBusy || inPairingMode
   let _connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
@@ -327,53 +300,28 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const features = getModelCapabilities(displayModel as DeviceTypes)
   const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
 
-  // iOS cannot remove the Classic bond from code, so its copy also points to Bluetooth settings.
-  const confirmOwnerLostAction = (action: "pairAgain" | "unpair") => {
-    const iosHint = Platform.OS === "ios" ? `\n\n${translate("home:liveOwnerLostIosBluetooth")}` : ""
-    showAlert(translate("home:liveOwnerLostTitle"), `${translate("home:liveOwnerLostMessage")}${iosHint}`, [
-      {text: translate("common:cancel"), style: "cancel"},
-      {
-        text: translate(action === "pairAgain" ? "home:pairAgain" : "settings:forgetGlasses"),
-        onPress: () => {
-          if (action === "pairAgain") {
-            unpairAfterPairingCover(navigation as PairingCoverNavigation)
-            push("/pairing/prep", {deviceModel: DeviceTypes.LIVE})
-            return
-          }
-          unpairSavedGlasses()
-            .then(() => clearHistoryAndGoHome())
-            .catch((error) => console.warn("Failed to unpair glasses after owner loss:", error))
-        },
-      },
-    ])
-  }
-
-  if (ownerLost && displayModel === DeviceTypes.LIVE && !glassesConnected) {
+  // The SDK reports `pairing_rejected` when another phone took the glasses over. One action: pair again.
+  // No status text, no forget/unpair, and no confirmation: Pair Again only opens the pairing flow.
+  if (pairingRejected) {
     return (
       <View style={style}>
         <DeviceStatus
-          className="h-36"
-          onPress={() => confirmOwnerLostAction("pairAgain")}
+          className="h-28"
+          onPress={() => push("/pairing/prep", {deviceModel: DeviceTypes.LIVE})}
           image={getCurrentGlassesImage()}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
             <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
           </View>
-          <Text className="text-secondary-foreground text-sm text-end self-end" tx="home:liveOwnerLostStatus" />
           <Button
+            flex
             compact
+            className="max-h-10"
             tx="home:pairAgain"
             preset="primary"
-            onPress={() => confirmOwnerLostAction("pairAgain")}
+            onPress={() => push("/pairing/prep", {deviceModel: DeviceTypes.LIVE})}
           />
         </DeviceStatus>
-        <Button
-          className="mt-2"
-          compact
-          preset="secondary"
-          tx="settings:forgetGlasses"
-          onPress={() => confirmOwnerLostAction("unpair")}
-        />
       </View>
     )
   }

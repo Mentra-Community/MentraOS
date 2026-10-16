@@ -5,6 +5,7 @@ import {Platform} from "react-native"
 import {engine, SETTINGS} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
+import en from "@/i18n/en"
 import {useNavigationStore} from "@/stores/navigation"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useNimoCompanionDiscovery} from "@/hooks/pairing/useNimoCompanionDiscovery"
@@ -301,8 +302,79 @@ describe("pairing scan screen", () => {
     await waitFor(() => {
       expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
     })
-    expect(getByText("pairing:liveScanTitle")).toBeTruthy()
-    expect(getByText("pairing:liveScanSubtitle")).toBeTruthy()
+    expect(getByText("pairing:livePairingScanTitle")).toBeTruthy()
+  })
+
+  it("shows the secure pairing-mode instructions with a small searching spinner (S2)", async () => {
+    const screen = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+    })
+    expect(screen.getByText("pairing:livePairingScanTitle")).toBeTruthy()
+    expect(screen.getByText("pairing:livePairingScanBody")).toBeTruthy()
+    expect(screen.getByText("pairing:livePairingScanSearching")).toBeTruthy()
+    expect(screen.getByTestId("live-scan-searching-spinner").props.size).toBe("small")
+    expect(screen.getByText("pairing:needMoreHelp")).toBeTruthy()
+    expect(screen.getByLabelText("common:back")).toBeTruthy()
+    // The tutorial step and legacy copy are gone from the secure scan.
+    expect(screen.queryByText("pairing:liveScanTitle")).toBeNull()
+    expect(screen.queryByText("pairing:liveScanSubtitle")).toBeNull()
+    expect(screen.queryByText("pairing:livePairingModeTitle")).toBeNull()
+  })
+
+  it("uses the exact English copy for the secure scan screen (S2)", () => {
+    expect(en.pairing.livePairingScanTitle).toBe("Put your glasses in pairing mode")
+    expect(en.pairing.livePairingScanBody).toBe(
+      "Press the power button 3 times quickly. Your glasses will say a 4-character code.",
+    )
+    expect(en.pairing.livePairingScanSearching).toBe("Looking for your glasses")
+    expect(en.pairing.needMoreHelp).toBe("I need more help")
+    expect(en.pairing.liveChooseGlassesTitle).toBe("Choose your glasses")
+  })
+
+  it("keeps the legacy scan copy when the secure pairing flag is off (S2)", async () => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+    const screen = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+    })
+    expect(screen.getByText("pairing:liveScanTitle")).toBeTruthy()
+    expect(screen.getByText("pairing:liveScanSubtitle")).toBeTruthy()
+    expect(screen.queryByText("pairing:livePairingScanBody")).toBeNull()
+    expect(screen.queryByTestId("live-scan-searching-spinner")).toBeNull()
+  })
+
+  it("never auto-connects a single discovered Mentra Live, even one in pairing mode (S3)", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "only",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_ONLY",
+          address: "only",
+          pairingMode: true,
+          pairingCode: "WXYZ",
+          securePairingCapable: true,
+        },
+      ],
+    })
+
+    const screen = render(<SelectGlassesBluetoothScreen />)
+    await act(async () => jest.advanceTimersByTime(60_000))
+
+    expect(screen.getByText("pairing:liveChooseGlassesTitle")).toBeTruthy()
+    expect(push).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
+    expect(engine.pairing.pair).not.toHaveBeenCalled()
+
+    fireEvent.press(screen.getByText("ONLY"))
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledTimes(1)
+    })
   })
 
   it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {

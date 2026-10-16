@@ -25,7 +25,7 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
@@ -140,39 +140,14 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
-  // The glasses disconnected this phone because they entered pairing mode, or another phone
-  // completed pairing with the saved Mentra Live. Native keeps the saved identity and stands
-  // down (no reconnect for the pairing window); this flag lets the home card say "Glasses
-  // unpaired" instead of showing an endless reconnect. Tapping Pair again is never blocked.
-  //
-  // Ownership transfer: when the glasses keep this phone as owner
-  // (`entering_pairing_mode.owner_retained`), native yields without sending `owner_replaced`,
-  // so the notice itself marks the flag. Without retention native rejects this phone for that
-  // pairing mode and announces it as `owner_replaced`. Connecting again clears the flag.
+  // Mentra Live pairing state is owned by the Bluetooth SDK (`normal`, `pairing_mode`,
+  // `pairing_rejected`). The engine only mirrors it into the glasses store so the app renders
+  // from one source: the pairing-mode popup, and the Pair Again card.
   subs.push(
-    BluetoothSdk.addListener("entering_pairing_mode", (event) => {
-      if (event.owner_retained === true) {
-        console.log(`DeviceEventRouter: glasses entered pairing mode, yielding for ${event.window_ms}ms`)
-        void useSettingsStore.getState().setSetting(SETTINGS.mentra_live_owner_lost.key, true, false)
-      }
+    BluetoothSdk.addListener("pairing_state_changed", (event) => {
+      useGlassesStore.getState().setGlassesInfo({pairingState: event.state})
     }),
   )
-  subs.push(
-    BluetoothSdk.addListener("owner_replaced", () => {
-      void useSettingsStore.getState().setSetting(SETTINGS.mentra_live_owner_lost.key, true, false)
-    }),
-  )
-  subs.push({
-    remove: useGlassesStore.subscribe(
-      (s) => isGlassesConnected(s.connection),
-      (connected) => {
-        const settings = useSettingsStore.getState()
-        if (connected && settings.getSetting(SETTINGS.mentra_live_owner_lost.key)) {
-          void settings.setSetting(SETTINGS.mentra_live_owner_lost.key, false, false)
-        }
-      },
-    ),
-  })
 
   // --- coordinators (owns()-gated) ---
 

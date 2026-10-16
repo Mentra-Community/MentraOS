@@ -6,7 +6,7 @@ import {ConsoleLogger} from "@/utils/dev/console"
 import {FirebaseAnalyticsSetup} from "@/effects/FirebaseAnalyticsSetup"
 import {OtaUpdateChecker} from "@/effects/OtaUpdateChecker"
 import {BtClassicPairing} from "@/effects/BtClassicPairing"
-import {IosStaleBondPrompt} from "@/effects/IosStaleBondPrompt"
+import {PairingModePopup} from "@/effects/PairingModePopup"
 import {ScreenshotFeedbackPrompt} from "@/effects/ScreenshotFeedbackPrompt"
 import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
@@ -31,7 +31,7 @@ export const AllEffects = () => {
         <>
           <Reconnect />
           <BtClassicPairing />
-          <IosStaleBondPrompt />
+          <PairingModePopup />
           {/* <WhisperTest /> */}
           {/* <SherpaTest /> */}
           {/* <TranscriptionsListener /> */}

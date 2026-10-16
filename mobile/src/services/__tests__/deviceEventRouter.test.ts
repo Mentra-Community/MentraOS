@@ -145,49 +145,28 @@ describe("DeviceEventRouter", () => {
     expect(setSpy).toHaveBeenCalledWith("brightness", 42)
   })
 
-  it("marks the saved Mentra Live owner-lost when another phone takes ownership", () => {
-    const setSpy = spyOnSetSetting()
-    emitBluetoothSdkEvent("owner_replaced", {reason: "gatt_auth_status_5"})
-    expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
-  })
-
-  it("marks owner-lost the moment the glasses announce pairing mode (R15 notice, no yield window)", () => {
-    const setSpy = spyOnSetSetting()
-    emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
-    expect(setSpy).toHaveBeenCalledTimes(1)
-    expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
-  })
-
-  describe("entering_pairing_mode owner_retained (ownership transfer)", () => {
-    it("marks owner-lost when the glasses kept this phone as owner but disconnected it", () => {
-      const setSpy = spyOnSetSetting()
-      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 300_000, reason: "user_gesture", owner_retained: true})
-      expect(setSpy).toHaveBeenCalledTimes(1)
-      expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+  describe("pairing_state_changed mirrors the SDK pairing state", () => {
+    it("starts in the normal state", () => {
+      expect(useGlassesStore.getState().pairingState).toEqual({state: "normal"})
     })
 
     it.each([
-      ["owner_retained false", {window_ms: 120_000, owner_retained: false}],
-      ["owner_retained absent", {window_ms: 120_000}],
-    ])("waits for owner_replaced with %s", (_label, event) => {
-      const setSpy = spyOnSetSetting()
-      emitBluetoothSdkEvent("entering_pairing_mode", event)
-      expect(setSpy).not.toHaveBeenCalled()
-      // Native stands down and announces the loss as owner_replaced.
-      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
-      expect(setSpy).toHaveBeenCalledTimes(1)
-      expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+      ["pairing_mode", {state: "pairing_mode", windowId: 7, endsAtMs: 1_900_000_000_000}],
+      ["pairing_rejected", {state: "pairing_rejected"}],
+      ["normal", {state: "normal"}],
+    ])("mirrors %s into the glasses store", (_label, state) => {
+      emitBluetoothSdkEvent("pairing_state_changed", {state})
+      expect(useGlassesStore.getState().pairingState).toEqual(state)
     })
-  })
 
-  it("clears owner-lost once the glasses connect again", () => {
-    const settings = useSettingsStore.getState()
-    jest.spyOn(settings, "getSetting").mockImplementation((key: string) => key === "mentra_live_owner_lost")
-    const setSpy = jest.spyOn(settings, "setSetting")
-
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected"} as never})
-
-    expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", false, false)
+    it("keeps no owner-lost setting: the SDK pairing state is the only source", () => {
+      const setSpy = spyOnSetSetting()
+      emitBluetoothSdkEvent("pairing_state_changed", {state: {state: "pairing_rejected"}})
+      emitBluetoothSdkEvent("entering_pairing_mode", {window_ms: 300_000, window_id: 7})
+      emitBluetoothSdkEvent("owner_replaced", {reason: "entering_pairing_mode"})
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected"} as never})
+      expect(setSpy).not.toHaveBeenCalled()
+    })
   })
 
   it("routes an owned photo_response error to the photo coordinator and drops non-owned ones", () => {

@@ -21,8 +21,8 @@ describe("MENTRA_LIVE_SETTING_KEYS", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("auto_power_off_enabled")
   })
 
-  test("syncs owner loss so native reconnects survive a manager rebuild", () => {
-    expect(MENTRA_LIVE_SETTING_KEYS).toContain("mentra_live_owner_lost")
+  test("does not sync a phone-side takeover flag; the SDK owns the pairing state", () => {
+    expect(MENTRA_LIVE_SETTING_KEYS).not.toContain("mentra_live_owner_lost")
   })
 
   test("syncs the secure-firmware flag so native can tell legacy glasses from secure ones", () => {

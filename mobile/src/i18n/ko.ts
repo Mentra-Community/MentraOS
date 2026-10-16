@@ -45,6 +45,7 @@ const ko = {
     hint: "힌트: 가장 좋아하는 암호와 아무런 아무 이메일 주소나 사용할 수 있어요 :)",
   },
   home: {
+    pairAgain: "다시 페어링",
     hardwareIncompatible: "하드웨어 비호환",
     hardwareIncompatibleMessage: "{{app}}은(는) 연결된 안경에서 사용할 수 없는 하드웨어가 필요합니다: {{missing}}",
   },
@@ -55,16 +56,11 @@ const ko = {
   },
   pairing: {
     ...en.pairing,
-    replaceOwnerTitle: "이 안경을 이 휴대폰과 페어링할까요?",
-    replaceOwnerBody:
-      "이 안경은 현재 다른 소유자에게 설정되어 있습니다. 여기서 페어링하면 해당 소유자의 계정과 휴대폰에서 연결이 끊어집니다. 이 작업은 되돌릴 수 없습니다.",
-    replaceOwnerConfirm: "소유자 교체",
-    replaceOwnerWaiting: "안경에 연결하는 중…",
-    replaceOwnerNotPairing:
-      "안경이 페어링 모드를 종료했습니다. 전원 버튼을 빠르게 3번 눌러 다시 페어링 모드로 만든 뒤 다시 시도하세요.",
-    replaceOwnerWipeFailed: "안경에서 이전 소유자를 제거하지 못했습니다. 다시 시도하세요.",
-    replaceOwnerFailed: "안경을 페어링하는 중 문제가 발생했습니다. 다시 시도하세요.",
-    replaceOwnerTimeout: "안경이 응답하지 않습니다. 가까이 있고 페어링 모드인지 확인한 뒤 다시 시도하세요.",
+    livePairingScanTitle: "안경을 페어링 모드로 전환하세요",
+    livePairingScanBody: "전원 버튼을 빠르게 3번 누르세요. 안경이 4자리 코드를 읽어 줍니다.",
+    livePairingScanSearching: "안경을 찾는 중",
+    pairingModeAlertTitle: "안경이 페어링 모드입니다",
+    pairingModeAlertBody: "종료하려면 전원 버튼을 3번 누르세요.",
     nearbyNotInPairingModeHint:
       "근처에 Mentra Live 안경이 있지만 페어링 모드가 아닙니다. 전원 버튼을 빠르게 3번 누른 뒤 다시 시도하세요.",
     notInPairingModeLabel: "페어링 모드가 아님",
@@ -76,6 +72,18 @@ const ko = {
     livePairingModeInfo:
       "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드(0–9, A–F)를 말합니다. 여러 대가 보이면 그 코드로 확인하세요.",
     noGlassesFoundHint: "전원 버튼을 빠르게 3번 눌렀는지 확인한 뒤 다시 시도하세요.",
+  },
+  onboarding: {
+    ...en.onboarding,
+    btClassicStep1: "설정 열기를 탭하세요",
+    btClassicStep2: "Bluetooth를 탭하세요",
+    btClassicStep3: '내 기기 또는 기타 기기에서 "{{name}}"을(를) 탭하세요',
+    btClassicStep4: '"연결됨"이라고 표시되면 앱으로 돌아오세요',
+    forgetIosPairingTitle: "이전 페어링 삭제",
+    forgetIosPairingSubtitle: "계속하려면 iPhone에 저장된 Bluetooth 페어링을 삭제하세요.",
+    forgetIosPairingStep1: "설정을 열고 Bluetooth를 탭하세요.",
+    forgetIosPairingStep2: "{{name}} 옆의 ⓘ를 탭한 다음 이 기기 지우기를 탭하세요.",
+    forgetIosPairingStep3: "다시 페어링하려면 Mentra App으로 돌아오세요.",
   },
   demoNavigator: {
     componentsTab: "컴포넌트",
