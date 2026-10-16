@@ -403,7 +403,7 @@ export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelectio
 const QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION = 999;
 // Paired installed qualifier uses an exact accepted-original mode. Earlier
 // workers retain their existing pre-admission targets and never parse this mode.
-const ACCEPTED_APP_QUALIFICATION_API_VERSION = 50;
+const ACCEPTED_APP_QUALIFICATION_API_VERSION = 51;
 
 /** A handoff may refresh evidence only for its original frozen executable identity. */
 function queuedQualificationMatches(row: StoredRoutineJob, hostId: string, lane: RoutingTestHostState['lanes'][number]) {

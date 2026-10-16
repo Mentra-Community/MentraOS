@@ -295,7 +295,7 @@ test('candidate database stream is bounded, closed and includes only unbound or 
 });
 
 function acceptedHost() {
- const current=host();current.frameworkBinding={...binding,version:1052,routineApiVersion:50};
+ const current=host();current.frameworkBinding={...binding,version:1053,routineApiVersion:51};
  (current.lanes[0]!.resources.find(value=>value.kind==='recorder') as any).storage={poolId:'pro1-pool',observedAt:new Date(now).toISOString(),availableBytes:20*1024**3,stagingBudgetBytes:20*1024**3,pendingEvidenceBytes:0,reservations:[]};
  return current;
 }
@@ -316,7 +316,7 @@ test('exact accepted unstarted request gets a current-binding target with a sepa
   selection:{...original.fleetSelection,routineSource:original.fleetPreparation!.routineSource},target:{hostId:'pro1',laneId:'pro1-mac'}})
  const{inputSha256,...body}=targets[0]!;expect(inputSha256).toBe(requestInputDigest(body));expect(inputSha256).not.toBe(original.inputSha256)
  expect(f.rows[0]).toEqual(before);expect(f.reads[0]).toMatchObject({includeAccepted:true})
- const old=host();old.frameworkBinding={...binding,version:1052,routineApiVersion:49};expect(await fixture([original],old).service.qualificationTargets('pro1')).toEqual([])
+ const old=host();old.frameworkBinding={...binding,version:1053,routineApiVersion:50};expect(await fixture([original],old).service.qualificationTargets('pro1')).toEqual([])
 })
 test('accepted target rejects wrong receipt, original source and canceled/running/completed identities',async()=>{
  const current=acceptedHost()
