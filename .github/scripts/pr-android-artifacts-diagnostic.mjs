@@ -40,7 +40,7 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
     const instructions = body.replace(/^\s*(?:#.*|\.(?:line|local|end local|restart local|prologue|epilogue)\b[^\n]*)$/gm,'')
     const args = name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' :
       name === 'allowManagerConnect' ? 'Ljava/lang/String;Ljava/lang/String;' :
-      name === 'admit' ? `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z` : `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z`
+      `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z`
     const normal = `${name}\\(${escaped(args)}\\)Z`
     const bridge = name === 'allowManagerConnect' ? `|${name}\\$default\\(${escaped(target + args + 'ILjava/lang/Object;')}\\)Z` : ''
     return new RegExp(`invoke-[^\\n]+${escaped(target)}->(?:${normal}${bridge})\\s*\\n\\s*move-result\\s+([vp][0-9]+)\\s*\\n\\s*if-(?:eqz|nez)\\s+\\1\\s*,`).test(instructions)
@@ -61,6 +61,27 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
     [...diagnostics.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)].find(v=>/execute(?:\$[A-Za-z0-9_]+)?\(Landroid\/content\/Intent;\)V$/.test(v[1]))?.[2] || ''
   const snapshot = [...diagnostics.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)].find(v=>/captureSnapshot\(/.test(v[1]))?.[2] || ''
   const dispatch = method(diagnostics,'dispatchCapturedEntry(Lkotlin/jvm/functions/Function0;)Z')
+  const named = expression => [...diagnostics.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)].find(v=>expression.test(v[1].trim()))?.[2] || ''
+  const policyName = 'preArmCaptureRequired(?:\\$[A-Za-z0-9_]+)?'
+  const policy = named(/ preArmCaptureRequired(?:\$[A-Za-z0-9_]+)?\(Ljava\/lang\/String;\)Z$/)
+  const defaults = named(/ preArmCaptureRequired(?:\$[A-Za-z0-9_]+)?\$default\(/)
+  const unarmed = named(/ allowUnarmedWearable(?:\$[A-Za-z0-9_]+)?\(Ljava\/lang\/String;Ljava\/lang\/String;\)Z$/)
+  const policyCall = `${escaped(target)}->${policyName}\\(Ljava/lang/String;\\)Z`
+  const defaultCall = `${escaped(target)}->${policyName}\\$default\\(${escaped(target)}Ljava/lang/String;ILjava/lang/Object;\\)Z`
+  const consumed = (body, reference) => {
+    const instructions = body.replace(/^\s*(?:#.*|\.(?:line|local|end local|restart local|prologue|epilogue)\b[^\n]*)$/gm,'')
+    return new RegExp(`invoke-[^\\n]+${reference}\\s*\\n\\s*move-result\\s+([vp][0-9]+)\\s*\\n\\s*(?:return\\s+\\1\\b|if-(?:eqz|nez)\\s+\\1\\s*,|xor-int/lit8\\s+[vp][0-9]+,\\s*\\1\\s*,|invoke-[^\\n]+\\{[^}]*\\b\\1\\b[^}]*\\}[^\\n]*Lorg/json/JSONObject;->put\\(Ljava/lang/String;Z\\))`).test(instructions)
+  }
+  const diagnosticLiteral = (body, reference) => new RegExp(`const-string(?:/jumbo)?\\s+([vp][0-9]+),\\s*"nimoDiagnostic"[\\s\\S]*?invoke-[^\\n]+\\{[^}]*\\b\\1\\b[^}]*\\}[^\\n]*${reference}`).test(body)
+  if (!diagnosticLiteral(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual') || !consumed(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual\\(Ljava/lang/Object;Ljava/lang/Object;\\)Z') ||
+      !diagnosticLiteral(defaults,policyCall) || !consumed(defaults,policyCall) ||
+      !diagnosticLiteral(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'),`${escaped(target)}->allowUnarmedWearable`) ||
+      !consumed(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'), `${escaped(target)}->allowUnarmedWearable(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;Ljava/lang/String;\\)Z`) ||
+      !consumed(unarmed,policyCall) || !/const-string(?:\/jumbo)?[^\n]*"NIMO"/.test(unarmed) ||
+      !['admit','allowPeer','beginTransport'].every(name=>consumed(method(diagnostics,`${name}(${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z)Z`),defaultCall)) ||
+      !snapshot.includes('"captureRequiredBeforeArm"') || !consumed(snapshot,defaultCall))
+    throw new Error('Diagnostic APK lacks compiled diagnostic-only deny-before-arm policy wiring')
+
   if (checks.some(([code, cls, signature, guards]) => !hasClass(code ?? '',descriptor(cls)) || guards.some(guard=>!guarded(method(code,signature),guard))) ||
       ['arm-capture','capture-status','cancel-capture'].some(value=>!execute.includes(`"${value}"`)) ||
       !snapshot.includes(`"${CAPTURE_PROTOCOL}"`) ||
@@ -118,5 +139,5 @@ export async function inspectNimoDiagnosticBytecode(apk, sdkHome, exec) {
   const read = name => exec(analyzer, ['dex', 'code', '--class', name, apk], {encoding:'utf8', maxBuffer:16 * 1024 * 1024})
   const code = {diagnostics:read(NIMO_DIAGNOSTIC), receiver:read(NIMO_RECEIVER), manager:read(NIMO_MANAGER), sdk:read(NIMO_SDK), nimo:read(NIMO_DEVICE)}
   validateNimoDiagnosticBytecode(code)
-  return {captureProtocol:CAPTURE_PROTOCOL, analyzer:{source:'android-sdk-command-line-tools',revision,sha256:digest.digest('hex')}, wiringSha256:createHash('sha256').update(JSON.stringify(code)).digest('hex')}
+  return {captureProtocol:CAPTURE_PROTOCOL, captureRequiredBeforeArm:true, analyzer:{source:'android-sdk-command-line-tools',revision,sha256:digest.digest('hex')}, wiringSha256:createHash('sha256').update(JSON.stringify(code)).digest('hex')}
 }

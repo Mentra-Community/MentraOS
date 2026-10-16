@@ -68,6 +68,24 @@ diagnosticCode.nimo = `.class public final ${desc(NIMO_DEVICE)}\n` + [
  ['startBond(Landroid/bluetooth/BluetoothDevice;)V',['allowPeer']],
  ['connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V',['beginTransport']],
 ].map(([sig,guards])=>guardedMethod(sig,guards)).join('')
+const policy = 'preArmCaptureRequired$bluetooth_sdk_nimoDiagnostic'
+const policyDefault = `${policy}$default(${desc(NIMO_DIAGNOSTIC)}Ljava/lang/String;ILjava/lang/Object;)Z`
+const resultCall = reference => ` invoke-virtual {v0}, ${reference}\n move-result v0\n return v0\n`
+diagnosticCode.diagnostics = diagnosticCode.diagnostics.replace('const-string v0, "nimo-preconnect-capture-v1"', `const-string v0, "nimo-preconnect-capture-v1"\n const-string v1, "captureRequiredBeforeArm"\n${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policyDefault}`)}`)
+diagnosticCode.diagnostics += `.method public ${policy}(Ljava/lang/String;)Z
+ const-string v0, "nimoDiagnostic"
+${resultCall('Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object;Ljava/lang/Object;)Z')}.end method
+.method public static ${policyDefault}
+ const-string v0, "nimoDiagnostic"
+${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policy}(Ljava/lang/String;)Z`)}.end method
+.method public allowUnarmedWearable$bluetooth_sdk_nimoDiagnostic(Ljava/lang/String;Ljava/lang/String;)Z
+ const-string v1, "NIMO"
+${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policy}(Ljava/lang/String;)Z`)}.end method
+.method public allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z
+ const-string v0, "nimoDiagnostic"
+${resultCall(`${desc(NIMO_DIAGNOSTIC)}->allowUnarmedWearable$bluetooth_sdk_nimoDiagnostic(Ljava/lang/String;Ljava/lang/String;)Z`)}.end method
+` + ['admit','allowPeer','beginTransport'].map(name=>`.method public ${name}(${desc(NIMO_DEVICE)}Ljava/lang/String;Z)Z\n${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policyDefault}`)}.end method\n`).join('')
+
 const codeFor = name => diagnosticCode[({[NIMO_DIAGNOSTIC]:'diagnostics',[NIMO_RECEIVER]:'receiver',[NIMO_MANAGER]:'manager',[NIMO_SDK]:'sdk',[NIMO_DEVICE]:'nimo'})[name]]
 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), fingerprint = "d".repeat(64)
@@ -225,6 +243,13 @@ test('diagnostic APK publication has distinct immutable coordinates and requires
   assert.match(calls[0],/^mentra-android-nimo-diagnostic-pr-/);
   assert.throws(() => validateAndroidReceipt(receipt,{pr:42,sha:head,runId:100,attempt:2}),/classification/);
   validateAndroidReceipt(receipt,{pr:42,sha:head,runId:100,attempt:2,diagnostic:true});
+  for (const proof of [
+   {...receipt.diagnosticVerification,kind:'compiled-receiver-wiring-v1'},
+   {...receipt.diagnosticVerification,captureProtocol:undefined},
+   {...receipt.diagnosticVerification,captureRequiredBeforeArm:false},
+   {...receipt.diagnosticVerification,apkSha256:'e'.repeat(64)},
+  ]) assert.throws(()=>validateAndroidReceipt({...receipt,diagnosticVerification:proof},{pr:42,sha:head,runId:100,attempt:2,diagnostic:true}),/verification/);
+
   for (const missing of ['classes*.dex','assets/nimo-resource-diagnostic.json','assets/index.android.bundle']) {
    const broken = (command,args,options) => command === 'unzip' && args.at(-1) === missing ? Buffer.alloc(0) : exec(command,args,options);
    await assert.rejects(publishAndroidArtifacts(apk,env,{exec:broken}));
@@ -343,4 +368,16 @@ test('Kotlin default bridge guards consume the exact returned boolean register',
  assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('->allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z', `->allowManagerConnect$default(${desc(NIMO_DIAGNOSTIC)}Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Z`)}))
  assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('move-result v0\n if-eqz v0','move-result v0\n .line 35\n if-eqz v0')}))
  assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll('if-eqz v0','if-eqz v1')}),/capture/)
+})
+
+test('pre-arm denial requires diagnostic build policy and every admission boundary', () => {
+ for (const diagnostics of [
+ diagnosticCode.diagnostics.replaceAll('"nimoDiagnostic"','"debug"'),
+ diagnosticCode.diagnostics.replaceAll('->areEqual','->ignoredEqual'),
+ diagnosticCode.diagnostics.replaceAll('invoke-virtual {v0}', 'invoke-virtual {v1}'),
+ diagnosticCode.diagnostics.replaceAll('return v0','return v1'),
+ diagnosticCode.diagnostics.replaceAll('->allowUnarmedWearable','->ignoredUnarmed'),
+ diagnosticCode.diagnostics.replaceAll('->preArmCaptureRequired','->ignoredPolicy'),
+ diagnosticCode.diagnostics.replaceAll('"captureRequiredBeforeArm"','"ignoredField"'),
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}),/policy/)
 })

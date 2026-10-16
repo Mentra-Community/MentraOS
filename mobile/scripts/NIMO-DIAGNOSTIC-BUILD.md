@@ -59,3 +59,10 @@ consumed admission guards at the SDK connect/default/scan and NIMO peer/transpor
 entry points. Old receiver-only APKs cannot qualify. Actual SDK disassembly
 compatibility remains a required first-build gate; source fixtures do not qualify
 an APK or demonstrate hardware behavior.
+
+Publication also requires `captureRequiredBeforeArm: true`. Compiled policy checks
+trace the diagnostic build literal into the policy comparison/default bridge,
+require its consumed return values, and check the SDK/peer admission policy
+wiring. Core and harness reject missing/false startup denial evidence before
+installation. This is scoped bytecode evidence plus reviewed native source;
+it is not a general control-flow proof.
