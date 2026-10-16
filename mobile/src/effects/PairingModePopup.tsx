@@ -3,7 +3,7 @@ import {useEffect, useRef} from "react"
 
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import showAlert from "@/utils/AlertUtils"
+import showAlert, {dismissAlert} from "@/utils/AlertUtils"
 import {markPairingModePopupShown, wasPairingModePopupShown} from "@/utils/pairing/pairingModePopup"
 
 /**
@@ -15,6 +15,7 @@ import {markPairingModePopupShown, wasPairingModePopupShown} from "@/utils/pairi
  *
  * Only for glasses that were connected when the window opened. A first-time pairing flow is already
  * in pairing mode and has its own screens. The reconnecting card on Home stays underneath.
+ * The popup closes itself when the glasses leave pairing mode.
  */
 export function PairingModePopup() {
   const status = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
@@ -31,6 +32,7 @@ export function PairingModePopup() {
   useEffect(() => {
     if (pairingState.state !== "pairing_mode") {
       wasConnectedRef.current = connected
+      dismissAlert(translate("pairing:pairingModeAlertTitle"))
       return
     }
     if (!wasConnectedRef.current) return
