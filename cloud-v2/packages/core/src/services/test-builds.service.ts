@@ -312,6 +312,12 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const classification = z.object({diagnostic: z.literal('nimo-resource-v1').optional(), app: z.object({diagnostic: z.literal('nimo-resource-v1').optional()})}).parse(receipt.value);
     requireThat(diagnostic ? classification.diagnostic === 'nimo-resource-v1' && classification.app.diagnostic === 'nimo-resource-v1' : classification.diagnostic === undefined && classification.app.diagnostic === undefined,
       'Diagnostic APK cannot enter ordinary build selection');
+    const rawProof = (receipt.value as {diagnosticVerification?:unknown})?.diagnosticVerification;
+    if (diagnostic) {
+      const proof=z.object({kind:z.literal('compiled-receiver-wiring-v1'),apkSha256:digest,wiringSha256:digest,
+        analyzer:z.object({source:z.literal('android-sdk-command-line-tools'),revision:z.string().regex(/^[0-9.]+$/).max(128),sha256:digest}).strict()}).strict().parse(rawProof);
+      requireThat(proof.apkSha256 === (receipt.value as {artifacts?:{android?:{sha256?:string}}}).artifacts?.android?.sha256, 'Diagnostic wiring proof belongs to another APK');
+    } else requireThat(rawProof === undefined, 'Diagnostic wiring proof cannot enter ordinary selection');
     const data = z.object({ schemaVersion: z.literal(1), pr: positive, headSha: sha, baseSha: sha, buildSha: sha,
       runId: positive, runAttempt: positive,
       app: z.object({ packageId: z.literal("com.mentra.mentra"), version: z.string().min(1), build: z.string().regex(/^[1-9]\d*$/),
