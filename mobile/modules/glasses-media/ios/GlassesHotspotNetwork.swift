@@ -52,6 +52,7 @@ public final class GlassesHotspotNetwork {
             self.ownershipToken = token
             self.generation += 1
             let gen = self.generation
+            let deadline = ProcessInfo.processInfo.systemUptime + 60
             self.ssid = ssid
             self.lastHotspotSSID = ssid
             self.gatewayAddress = gateway
@@ -62,11 +63,11 @@ public final class GlassesHotspotNetwork {
             self.joinReply = completion
             self.startInterfaceMonitors(generation: gen)
             if ProcessInfo.processInfo.isiOSAppOnMac {
-                self.authorizeMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen)
+                self.authorizeMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline)
             } else {
                 self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
             }
-            self.queue.asyncAfter(deadline: .now() + 60) {
+            self.queue.asyncAfter(deadline: .now() + max(0, deadline - ProcessInfo.processInfo.systemUptime)) {
                 // Once associated, the user may still be reading the Local Network alert.
                 // Its response time is not a hotspot association timeout.
                 guard gen == self.generation, self.joinReply != nil, self.localAccess == nil else { return }
@@ -194,7 +195,7 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    private func authorizeMacAssociation(ssid: String, passphrase: String, generation gen: Int) {
+    private func authorizeMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval) {
         let authorization = MacHotspotAuthorization()
         macAuthorization = authorization
         authorization.start { result in
@@ -202,7 +203,7 @@ public final class GlassesHotspotNetwork {
                 guard gen == self.generation, !self.cancelled else { return }
                 self.macAuthorization = nil
                 switch result {
-                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen)
+                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline)
                 case let .failure(error):
                     self.finishJoin(.failure(error)); self.finishLeave()
                 }
@@ -210,8 +211,8 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int) {
-        let association = MacHotspotAssociation()
+    private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval) {
+        let association = MacHotspotAssociation(deadline: deadline)
         macAssociation = association
         applying = true
         macWorker.async {
