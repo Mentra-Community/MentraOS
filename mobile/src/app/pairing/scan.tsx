@@ -1,6 +1,6 @@
 import BluetoothSdk, {type Device, type DeviceModel, type ScanDiagnostic} from "@mentra/bluetooth-sdk"
 import {engine, DeviceTypes} from "@mentra/engine"
-import {useLocalSearchParams} from "expo-router"
+import {useFocusEffect, useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, View} from "react-native"
 
@@ -45,6 +45,14 @@ function GlassesScanScreen() {
   const [scanTimedOut, setScanTimedOut] = useState(false)
   const [scanDiagnostic, setScanDiagnostic] = useState<ScanDiagnostic | null>(null)
   const connectingRef = useRef(false)
+  // The scan screen stays mounted under loading and the iOS "Forget the old pairing" screen.
+  // A tap latches this so a double-tap cannot start two pairings. Coming back must clear it,
+  // or the next tap on a glasses row does nothing.
+  useFocusEffect(
+    useCallback(() => {
+      connectingRef.current = false
+    }, []),
+  )
   const scanGenerationRef = useRef(0)
   const [scanGeneration, setScanGeneration] = useState(0)
   const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
