@@ -93,3 +93,42 @@ test('idle contract rejects duplicate dependencies like the harness contract',as
  const {resourceIdleContractSchema}=await import('../types/resource-lifecycle.types');
  expect(resourceIdleContractSchema.safeParse({version:'v1',maximumAgeMs:1000,qualifiedScope:{kind:'fleet'},conditions:['closed'],repairConfigured:true,dependencies:['browser','browser']}).success).toBe(false);
 });
+
+test('offset timestamps sort and retain by instant rather than lexical spelling', async()=>{
+ const {advanceResourceLifecycleCursor}=await import('./resource-lifecycle.service');
+ const value=row();
+ value.snapshot.resourceLifecycle.history=[
+  {...value.snapshot.resourceLifecycle.history[0]!,id:'earlier-offset',at:'2026-01-01T01:00:00+02:00'},
+  {...value.snapshot.resourceLifecycle.history[0]!,id:'later-utc',at:'2026-01-01T00:30:00Z'},
+ ];
+ expect(projectResourceLifecycle([value],now).history.map(event=>event.id)).toEqual(['later-utc','earlier-offset']);
+ const history=Array.from({length:199},(_,i)=>({...value.snapshot.resourceLifecycle.history[0]!,id:`old-${i}`,at:'2025-01-01T00:00:00Z'}));
+ const cursor=advanceResourceLifecycleCursor({...value.snapshot.resourceLifecycle,history},{...value.snapshot.resourceLifecycle})!;
+ expect(cursor.history).toHaveLength(200);expect(cursor.history[0]?.id).toBe('later-utc');expect(cursor.history[1]?.id).toBe('earlier-offset');
+});
+
+test('fresh omissions retain their reason while stale authority remains stale',()=>{
+ const value={...row(),resourceLifecycleCursor:row().snapshot.resourceLifecycle,snapshot:{hostId:'host-a'}};
+ expect(projectResourceLifecycle([value],now).subjects[0]?.reason?.code).toBe('observation-omitted');
+ expect(projectResourceLifecycle([value],now+180001).subjects[0]?.reason?.code).toBe('stale-observation');
+});
+
+test('resource history queries its own bounded host scope instead of the global overview window',async()=>{
+ const {spyOn}=await import('bun:test');const {TestHostStateModel}=await import('../models/test-host-state.model');
+ const target=row();target.snapshot.resourceLifecycle.history=Array.from({length:60},(_,i)=>({...target.snapshot.resourceLifecycle.history[0]!,id:`target-${String(i).padStart(3,'0')}`,at:'2025-01-01T00:00:00Z'}));
+ const rows=[target,...Array.from({length:12},(_,i)=>{const host=`other-${i}`,resourceId=`resource-${i}`;
+  return {hostId:host,receivedAt:new Date(at),snapshot:{hostId:host,resourceLifecycle:{schemaVersion:1,subjects:[{...subject,subject:{...subject.subject,id:resourceId,authorityHostId:host}}],history:Array.from({length:200},(_,j)=>({id:`${host}-${j}`,resourceId,subjectGeneration:2,at,event:'checking'}))}}};
+ })];
+ expect(projectResourceLifecycle(rows,now).history.some(event=>event.resourceId===subject.subject.id)).toBe(false);
+ const queries:unknown[]=[];let limit=0;
+ const mock=spyOn(TestHostStateModel,'find').mockImplementation(((filter:unknown)=>{queries.push(filter);const query={select(){return query},sort(){return query},limit(value:number){limit=value;return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>rows};return query}) as never);
+ try {
+  const service=new ResourceLifecycleService();const first=await service.history(subject.subject.id);
+  expect(first.events).toHaveLength(50);expect(first.events[0]?.id).toBe('target-000');
+  const second=await service.history(subject.subject.id,first.nextCursor!);expect(second.events).toHaveLength(10);expect(second.events[0]?.id).toBe('target-050');
+  expect(queries[0]).toMatchObject({$or:[{'snapshot.resourceLifecycle.subjects.subject.id':subject.subject.id},{'resourceLifecycleCursor.subjects.subject.id':subject.subject.id},{'resourceReservations.resourceId':subject.subject.id},{'snapshot.lanes.resources.exclusiveDependencies.resourceId':subject.subject.id},{'snapshot.resourceReservations.returns.resourceId':subject.subject.id}]});
+  expect(limit).toBe(101);
+  rows.push(...Array.from({length:88},()=>target));
+  await expect(service.history(subject.subject.id)).rejects.toThrow('bounded 100-host');
+ } finally {mock.mockRestore()}
+});

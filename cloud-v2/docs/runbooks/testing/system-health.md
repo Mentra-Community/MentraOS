@@ -231,3 +231,10 @@ are never silently evicted; a 201st identity is rejected until explicit retireme
 semantics are introduced. The most recent 200 journal identities are retained for
 immutable-event comparisons; older events are outside that declared window. This
 cursor does not grant capacity or modify canonical fleet reservations.
+
+Per-resource detail/history reads select only host rows reporting that canonical
+resource, dependency, claim or return. Their history pages use the retained
+resource scope, independently of the overview's 2000-event display cap. Reads
+remain bounded to 100 matching hosts; an overflowing resource scope fails
+explicitly rather than silently excluding its authority. Journal ordering and
+retention compare timestamp instants, including timestamps with UTC offsets.
