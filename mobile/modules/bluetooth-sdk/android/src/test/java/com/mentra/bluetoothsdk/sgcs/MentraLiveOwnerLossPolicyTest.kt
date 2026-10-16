@@ -191,6 +191,34 @@ class MentraLiveOwnerLossPolicyTest {
     }
 
     @Test
+    fun aClearedPairingFlagOnTheSavedGlassesIsNotHiddenFromThePauseWatchScan() {
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
+                        savedGlasses = true,
+                        reconnectScan = false,
+                        secureTrailer = true,
+                        pairingDiscoverable = false,
+                )
+        )
+        assertTrue(
+                MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
+                        savedGlasses = false,
+                        reconnectScan = false,
+                        secureTrailer = true,
+                        pairingDiscoverable = false,
+                )
+        )
+        assertFalse(
+                MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
+                        savedGlasses = false,
+                        reconnectScan = false,
+                        secureTrailer = true,
+                        pairingDiscoverable = true,
+                )
+        )
+    }
+
+    @Test
     fun automaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
         assertTrue(
                 MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(
