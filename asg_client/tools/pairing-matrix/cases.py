@@ -1516,7 +1516,8 @@ def o4_s22_owner_ios_takes_over(ctx: Ctx):
     """O4 (S22 half of the two-platform smoke): S22 owner (A) -> 3 presses -> the iOS app (B) pairs.
 
     A sees the once-per-window popup, then pairing_rejected with only Pair Again after the commit; iOS shows
-    Success only after pairing_info confirmed the commit; hm_pairexit once."""
+    Success only after pairing_info confirmed the commit. A paired close skips hm_pairexit so Connected
+    is the only success prompt."""
     ctx.check("precondition S22 owner", r_s22(ctx))
     ios.mac_forget()
     ios.reset_ios_side()
@@ -1533,7 +1534,12 @@ def o4_s22_owner_ios_takes_over(ctx: Ctx):
     ctx.check("iOS pairing_info seen", pres.get("pairing_info", 0) > 0, str(pres.get("commit_source")))
     ctx.check("iOS Success only after pairing_info", ios_success_after_pairing_info(ctx, im))
     ex = [l for _, l in ctx.g.since(gm) if "hm_pairexit received reason=" in l]
-    ctx.check("hm_pairexit once", len(ex) == 1, str([e[-60:] for e in ex]))
+    skipped = ctx.bes(r"hm_pairexit skipped, connected follows", gm)
+    ctx.check(
+        "hm_pairexit once, or skipped because Connected follows",
+        len(ex) == 1 or (len(ex) == 0 and bool(skipped)),
+        str([e[-60:] for e in ex]),
+    )
     ctx.check("Mac (iOS) bond created", ios.mac_bonded())
     pmx.app_home()
     time.sleep(3)
