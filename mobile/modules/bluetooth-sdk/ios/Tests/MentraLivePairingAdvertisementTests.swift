@@ -388,4 +388,20 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         data[2 + 11] = 0x50
         return data
     }
+
+    func testAPacketWithoutTheTrailerFromAKnownSecureUnitIsPartialNotLegacy() {
+        XCTAssertTrue(
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: false, knownSecureName: true)
+        )
+        XCTAssertFalse(
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: false, knownSecureName: false),
+            "legacy firmware never carries the trailer and is still listed as pairable"
+        )
+        XCTAssertFalse(
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: true, knownSecureName: true)
+        )
+        XCTAssertFalse(
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: true, knownSecureName: false)
+        )
+    }
 }
