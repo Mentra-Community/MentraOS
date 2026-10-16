@@ -33,7 +33,7 @@ const PAIRING_KICKOFF_DELAY_MS = 2_000
  * Route params arrive as strings, so legacy firmware is both boolean false and "false".
  *
  * iPhone audio (spec S6): always read the real audio state first. Audio up goes straight to success.
- * Audio down with `auto_audio` waits up to 30 s, re-checks, then opens Pair Audio only if it is
+ * Audio down with `auto_audio` waits up to 8 s, re-checks, then opens Pair Audio only if it is
  * still down. Audio down without `auto_audio` opens Pair Audio at once. Android never shows it.
  *
  * `pair_failure.code === "ios_forget_pairing"` on iPhone opens the "Forget the old pairing" screen.
