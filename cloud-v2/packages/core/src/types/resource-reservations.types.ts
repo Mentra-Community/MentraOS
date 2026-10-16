@@ -33,8 +33,29 @@ export const exclusiveHostReservationSchema = z.object({kind: z.literal('exclusi
   operationId: identity, intentSha256: hash, inputSha256: hash, owner: exclusiveResourceOwnerSchema,
   controllerIncarnation: identity, controllerGeneration: z.number().int().positive().safe(),
   borrowerSequence: z.number().int().nonnegative().safe(), reservedAt: z.string().datetime(),
+  origin: z.object({kind: z.literal('fleet'), fleetInputSha256: hash}).strict().optional(),
 }).strict()
 export type ExclusiveHostReservation = z.infer<typeof exclusiveHostReservationSchema>
+export const fleetExclusiveReservationSchema = z.object({origin: z.object({kind: z.literal('fleet'), fleetInputSha256: hash}).strict(),
+  intent: exclusiveResourceIntentSchema, intentSha256: hash, claims: z.array(exclusiveHostReservationSchema).min(1).max(30),
+}).strict().superRefine((value, context) => {
+  if (value.intent.inputSha256 !== value.origin.fleetInputSha256 || value.intent.owner.kind !== 'run' ||
+    value.intent.operationId !== `run:${value.intent.owner.id}` || value.claims.some(claim => !claim.origin ||
+      claim.origin.fleetInputSha256 !== value.origin.fleetInputSha256 || claim.inputSha256 !== value.origin.fleetInputSha256 ||
+      claim.intentSha256 !== value.intentSha256 || claim.operationId !== value.intent.operationId || claim.borrowerHostId !== value.intent.hostId ||
+      claim.laneId !== value.intent.laneId || claim.owner.id !== value.intent.owner.id || claim.owner.kind !== value.intent.owner.kind ||
+      claim.controllerIncarnation !== value.intent.controller.incarnation || claim.controllerGeneration !== value.intent.controller.generation ||
+      claim.borrowerSequence !== value.intent.controller.sequence) ||
+    new Set(value.claims.map(claim => claim.resourceId)).size !== value.claims.length)
+    context.addIssue({code: 'custom', message: 'Portable exclusive receipt must preserve one original run and source identity'})
+})
+export const fleetExclusiveExecutionBindingSchema = z.object({reservationSha256: hash, dispatchIntentSha256: hash,
+  executionInputSha256: hash}).strict()
+export const fleetExclusiveDeliverySchema = z.object({reservation: fleetExclusiveReservationSchema,
+  binding: fleetExclusiveExecutionBindingSchema}).strict()
+export const fleetExclusiveObservationSchema = z.object({fleetExclusive: fleetExclusiveDeliverySchema, controller}).strict()
+export type FleetExclusiveReservation = z.infer<typeof fleetExclusiveReservationSchema>
+export type FleetExclusiveExecutionBinding = z.infer<typeof fleetExclusiveExecutionBindingSchema>
 /** The same CAS authority carries byte claims and exclusive claims without discarding either. */
 export const hostResourceReservationsSchema = z.array(z.union([recorderHostReservationSchema, exclusiveHostReservationSchema]))
   .max(1000).superRefine((values, context) => {

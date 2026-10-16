@@ -48,7 +48,7 @@ Acquire every required dependency before a job becomes executable or a held auth
 
 The initial implementation admits dependencies belonging to one authority row per operation, so its existing CAS acquires all required keys atomically. Multiple keys on that authority are supported; cross-authority requirements fail before acquisition rather than leaving a partial set. CAS losers retain no executable authority. A crash between Core acquisition and local binding keeps the unchanged claim until a recorded reconciliation proves that it never became executable or completed normal cleanup. No lease expires an active account by wall clock.
 
-The final controller admission transaction rechecks the cloud claim, owner generation and its exact selected resource binding. Refreshes and retries return the same claim receipt. They must not issue a new owner for the same accepted input.
+The final controller admission transaction rechecks the cloud claim, owner generation and its exact selected resource binding. The portable claim retains its original input digest; a separate immutable receipt maps it to the later executable digest. Core commits the winning claim on the existing authority host row, then the existing staged request adopts it. This uses the existing single-record CAS mechanism rather than a cross-collection transaction, preserving the supported Cosmos Mongo RU constraint. A lost request-receipt write cannot create a second exclusive owner. Refreshes and retries return the same claim receipt. They must not issue a new owner for the same accepted input.
 
 ## Return, cancellation and repair
 

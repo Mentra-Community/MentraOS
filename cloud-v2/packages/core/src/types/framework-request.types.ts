@@ -5,6 +5,7 @@ import {routineIdentitySchema, routinePlatformSchema, routineResourceKindSchema,
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 import type {RoutineLiveProgress} from './routine-progress.types';
+import {exclusiveResourceDependenciesSchema} from './resource-reservations.types';
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
@@ -31,6 +32,7 @@ const frozenFrameworkRequestInputSchema = z.object({
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
+    exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   }).strict().refine(resource => resource.capabilities === undefined || routineResourceRequirementSchema.safeParse({
     kind: resource.kind, capabilities: resource.capabilities,
   }).success, "Resource capabilities must match their declared kind")),

@@ -78,6 +78,8 @@ export interface StoredRoutineJob {
   fleetBinding?: RoutineJobBinding;
   /** Existing request authority retains the shared recorder capacity selected before device dispatch. */
   fleetResourceReservation?: import('./recorder-storage.types').RecorderHostReservation;
+  fleetExclusiveReservation?: import('./resource-reservations.types').FleetExclusiveReservation;
+  fleetExclusiveExecutionBinding?: import('./resource-reservations.types').FleetExclusiveExecutionBinding;
   dispatchCompletion?: RoutineJobCompletion;
   publicationFailure?: RoutinePublicationFailure;
   hostReceipt?: import('../services/test-request.service').HostAcceptance;

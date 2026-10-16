@@ -5,19 +5,24 @@ import {TestHostStateService} from './test-host-state.service'
 import {LaneControlsService} from './lane-controls.service'
 import {exclusiveHostReservationSchema, hostResourceReservationsSchema, type ExclusiveResourceIntent,
   type ExclusiveResourceReturn, type HostResourceReservation} from '../types/resource-reservations.types'
+import type {StoredRoutineJob} from '../types/routine-job.types'
+import {fleetResourceExecutionBinding} from './fleet-resource-binding'
+import {requestInputDigest} from './test-request.service'
+import {frameworkRequestInputSchema} from '../types/framework-request.types'
+import {testRoutineSource} from '../testing/framework-fixtures'
 
 const at = Date.parse('2026-10-15T21:10:00Z'), dependency = {resourceId: 'conference-account', authorityHostId: 'mini', capability: 'google-authentication'}
 const intent = (hostId: string, owner = hostId): ExclusiveResourceIntent => ({operationId: `request-${owner}`, hostId, laneId: 'mac',
   controller: {incarnation: `${hostId}-process`, generation: 1, sequence: 1}, owner: {id: owner, kind: 'run'},
   inputSha256: 'a'.repeat(64), resources: [{id: 'fixtures', capabilities: ['google-authentication']}]})
-function fixture(options: {race?: boolean} = {}) {
+function fixture(options: {race?: boolean; afterCommit?: (requests: Map<string, StoredRoutineJob & {input?: unknown}>) => void} = {}) {
   let now = at, raced = false
   const rows = new Map<string, ResourceReservationHost>(['mini', 'air1', 'air2'].map(hostId => [hostId, {hostId,
     incarnation: `${hostId}-process`, incarnationGeneration: 1, sequence: 1, receivedAt: new Date(at), resourceReservationVersion: 0,
     resourceReservations: [], snapshot: {hostId, incarnation: `${hostId}-process`, incarnationGeneration: 1, sequence: 1,
       observedAt: new Date(at).toISOString(), lanes: [{id: 'mac', platform: 'ios-on-mac', state: 'idle', dispatchMode: 'automatic',
         resources: [{id: 'fixtures', kind: 'fixture-data', capabilities: ['google-authentication', 'clipboard'], exclusiveDependencies: [dependency]}]}]}}]))
-  const writes: HostResourceReservation[][] = []
+  const writes: HostResourceReservation[][] = [], requests = new Map<string, StoredRoutineJob & {input?: unknown}>()
   const repository: ResourceReservationRepository = {
     async get(hostId) {return structuredClone(rows.get(hostId) ?? null)},
     async replace(previous, claims) {
@@ -25,10 +30,13 @@ function fixture(options: {race?: boolean} = {}) {
       if (options.race && !raced) {raced = true; current.sequence++; current.snapshot.sequence++; return false}
       if (previous.sequence !== current.sequence || previous.resourceReservationVersion !== current.resourceReservationVersion) return false
       current.resourceReservations = structuredClone(claims); current.resourceReservationVersion = (current.resourceReservationVersion ?? 0) + 1
-      writes.push(structuredClone(claims)); return true
+      writes.push(structuredClone(claims)); options.afterCommit?.(requests); return true
     },
+    async request(requestId) {return structuredClone(requests.get(requestId) ?? null)},
+    async claimedHosts(requestId) {return [...rows.values()].filter(row => hostResourceReservationsSchema.parse(row.resourceReservations ?? [])
+      .some(claim => 'kind' in claim && claim.owner.id === requestId && claim.origin?.kind === 'fleet')).map(row => structuredClone(row))},
   }
-  return {service: new ResourceReservationsService(repository, () => now), rows, writes,
+  return {service: new ResourceReservationsService(repository, () => now), rows, writes, requests,
     advance(milliseconds = 1) {now += milliseconds; return now},
     observe(hostId: string, time = now) {const row = rows.get(hostId)!; row.sequence++; row.snapshot.sequence = row.sequence;
       row.snapshot.observedAt = new Date(time).toISOString(); row.receivedAt = new Date(time); return row},
@@ -46,6 +54,104 @@ test('two hosts requesting one account use one existing authority CAS and only o
   expect(outcomes.map(value => value.status).sort()).toEqual(['reserved', 'waiting'])
   expect(f.rows.get('mini')!.resourceReservations).toHaveLength(1)
   expect(outcomes.find(value => value.status === 'waiting')!.blocked).toMatchObject({resourceId: dependency.resourceId, laneId: 'mac'})
+})
+
+function fleetRequest(requestId: string): StoredRoutineJob {
+  return {requestId, state: 'awaiting-runner', fleetSelectionSha256: 'b'.repeat(64), fleetInputSha256: 'a'.repeat(64),
+    fleetDeadline: new Date(at + 60_000), fleetSelection: {requestId} as StoredRoutineJob['fleetSelection'],
+    fleetPreparation: {requirements: {resources: [{kind: 'fixture-data', capabilities: ['google-authentication']}]}} as StoredRoutineJob['fleetPreparation']}
+}
+test('portable requests contend on the same existing authority before binding and repeated delivery retains the original controller intent', async () => {
+  const f = fixture(); f.requests.set('first', fleetRequest('first')); f.requests.set('second', fleetRequest('second'))
+  const [one, two] = await Promise.all([f.service.reserveFleet('first', 'a'.repeat(64), 'air1', 'mac'),
+    f.service.reserveFleet('second', 'a'.repeat(64), 'air2', 'mac')])
+  expect(Boolean(one)).not.toBe(Boolean(two)); expect(f.rows.get('mini')!.resourceReservations).toHaveLength(1)
+  const winner = one ? {id: 'first', host: 'air1', receipt: one} : {id: 'second', host: 'air2', receipt: two!}
+  f.observe(winner.host)
+  expect(await f.service.reserveFleet(winner.id, 'a'.repeat(64), winner.host, 'mac')).toEqual(winner.receipt)
+  expect(f.writes).toHaveLength(1)
+  expect(winner.receipt!.origin).toEqual({kind: 'fleet', fleetInputSha256: 'a'.repeat(64)})
+  expect(winner.receipt!.intent.operationId).toBe(`run:${winner.id}`)
+})
+test('an unanswered portable authority claim survives until an exact terminal pre-execution cancellation, then only its original claims return', async () => {
+  const f = fixture(), row = fleetRequest('cancelled'); f.requests.set(row.requestId, row)
+  const receipt = await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')
+  expect(receipt).toBeTruthy()
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toHaveLength(1)
+  row.state = 'terminal'; row.fleetCancellation = {requestedAt: new Date(at).toISOString(), reason: 'cancelled before Actions binding'}
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+  expect(row).not.toHaveProperty('input'); expect(row).not.toHaveProperty('fleetExclusiveExecutionBinding')
+})
+test('an authority answer lost after commit retains its exact portable winner for read-only retry', async () => {
+  let lost = false
+  const f = fixture({afterCommit() {if (!lost) {lost = true; throw Error('response lost after durable authority CAS')}}})
+  f.requests.set('lost', fleetRequest('lost'))
+  await expect(f.service.reserveFleet('lost', 'a'.repeat(64), 'air1', 'mac')).rejects.toThrow('response lost')
+  const original = structuredClone(f.rows.get('mini')!.resourceReservations)
+  const recovered = await f.service.reserveFleet('lost', 'a'.repeat(64), 'air1', 'mac')
+  expect(recovered!.claims).toEqual(original); expect(f.writes).toHaveLength(1)
+  expect(await f.service.reserveFleet('lost', 'a'.repeat(64), 'air2', 'mac')).toBeNull()
+})
+test('terminal cancellation racing the exclusive commit reconciles only that never-bound portable winner', async () => {
+  const f = fixture({afterCommit(requests) {const request = requests.get('cancel-race')!; request.state = 'terminal'
+    request.fleetCancellation = {requestedAt: new Date(at).toISOString(), reason: 'cancelled during authority write'}}})
+  f.requests.set('cancel-race', fleetRequest('cancel-race'))
+  expect(await f.service.reserveFleet('cancel-race', 'a'.repeat(64), 'air1', 'mac')).toBeNull()
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([]); expect(f.writes).toHaveLength(2)
+})
+test('bound preparation cancellation requires the exact source fence and retains claims after executable commit', async () => {
+  const f = fixture(), row = fleetRequest('preparation-cancelled'); f.requests.set(row.requestId, row)
+  const receipt = await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')
+  const dispatchIntent = {requestId: row.requestId, laneId: 'mac'}, dispatchIntentSha256 = requestInputDigest(dispatchIntent)
+  Object.assign(row, {state: 'terminal', hostId: 'air1', fleetBinding: {hostId: 'air1', laneId: 'mac'},
+    dispatchIntent, dispatchIntentSha256: 'b'.repeat(64), preparationCancellation: {requestedAt: new Date(at).toISOString(), reason: 'source preparation cancelled'}})
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(receipt!.claims)
+  row.dispatchIntentSha256 = dispatchIntentSha256
+  row.inputSha256 = 'e'.repeat(64)
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(receipt!.claims)
+  delete row.inputSha256
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+})
+test('portable confirmation is read-only, tied to the actual executable mapping and refuses lost authority enrollment', async () => {
+  const f = fixture(), row = fleetRequest('confirm'); f.requests.set(row.requestId, row)
+  const reservation = (await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac'))!,
+    input = frameworkRequestInputSchema.parse({routineId: 'account-google', definitionRevision: 'a'.repeat(40), routineSource: testRoutineSource(),
+      platform: 'ios-on-mac', laneId: 'mac', build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      resources: [{id: 'fixtures', kind: 'fixture-data', exclusiveDependencies: [dependency]}]}),
+    binding = fleetResourceExecutionBinding(reservation, row.requestId, 'air1', 'd'.repeat(64), input, requestInputDigest(input))
+  Object.assign(row, {hostId: 'air1', fleetBinding: {hostId: 'air1', laneId: 'mac'}, input, inputSha256: binding.executionInputSha256,
+    dispatchIntentSha256: binding.dispatchIntentSha256, fleetExclusiveReservation: reservation, fleetExclusiveExecutionBinding: binding})
+  const borrower = f.observe('air1'), controller = {incarnation: borrower.incarnation, generation: borrower.incarnationGeneration, sequence: borrower.sequence},
+    observation = {fleetExclusive: {reservation, binding}, controller}
+  expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'reserved', claims: reservation.claims})
+  row.fleetExclusiveExecutionBinding = {...binding, executionInputSha256: 'e'.repeat(64)}
+  expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'unknown', claims: []})
+  row.fleetExclusiveExecutionBinding = binding
+  delete f.rows.get('mini')!.snapshot.lanes[0]!.resources[0]!.exclusiveDependencies
+  expect(await f.service.observe(observation, 'air1')).toMatchObject({status: 'unknown', claims: []})
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(reservation.claims); expect(f.writes).toHaveLength(1)
+})
+test('executable input retains the portable account when Core acceptance is missing; cancellation alone cannot free device custody', async () => {
+  const f = fixture(), row = fleetRequest('accepted-locally'); f.requests.set(row.requestId, row)
+  const receipt = await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')
+  row.state = 'terminal'; row.fleetCancellation = {requestedAt: new Date(at).toISOString(), reason: 'Core did not receive local acceptance'}
+  row.inputSha256 = 'e'.repeat(64); f.requests.get(row.requestId)!.input = {original: 'executable'}
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(receipt!.claims)
+})
+test('held authoring and portable execution use the same authority, and source or authority drift cannot borrow a retained winner', async () => {
+  const f = fixture(), row = fleetRequest('portable'); f.requests.set(row.requestId, row)
+  const held = await f.service.acquire(intent('air2', 'held-authoring'), 'air2')
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(held.claims)
+  row.fleetPreparation!.requirements.resources[0]!.capabilities = ['clipboard']
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeUndefined()
+  expect(f.writes).toHaveLength(1)
 })
 test('same intent retry adopts its original claim after report advancement; identity changes cannot borrow it', async () => {
   const f = fixture(), first = await f.service.acquire(intent('air1'), 'air1'), host = f.observe('air1')
