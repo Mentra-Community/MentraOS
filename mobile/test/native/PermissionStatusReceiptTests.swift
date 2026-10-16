@@ -5,7 +5,8 @@ import Foundation
 
 @main
 enum PermissionStatusReceiptTests {
-    static func main() throws {
+    @MainActor
+    static func main() async throws {
         // Exercise mappings and file publication without observing this test
         // process's OS grants or opening any consent prompt.
         precondition(PermissionStatusReceipt.location(.notDetermined) == ["rawStatus": "notDetermined", "status": "denied"])
@@ -28,6 +29,24 @@ enum PermissionStatusReceiptTests {
                 preconditionFailure("Accepted invalid permission request ID")
             } catch {}
         }
+
+        var stopped = 0
+        let granted = await InitialLocationAuthorization().observe(start: { callback in
+            // The native manager's first callback is authoritative; a pre-callback getter is never projected.
+            callback(.authorizedAlways)
+            callback(.denied)
+        }, stop: { stopped += 1 })
+        precondition(granted == .authorizedAlways && stopped == 1)
+        let notDetermined = await InitialLocationAuthorization().observe(start: { $0(.notDetermined) }, stop: {})
+        precondition(notDetermined == .notDetermined)
+        let unknown = await InitialLocationAuthorization().observe(timeoutMs: 1, start: { _ in }, stop: { stopped += 1 })
+        precondition(unknown == nil && stopped == 2)
+        let canceled = Task { @MainActor in
+            await InitialLocationAuthorization().observe(start: { _ in }, stop: { stopped += 1 })
+        }
+        canceled.cancel()
+        let canceledStatus = await canceled.value
+        precondition(canceledStatus == nil && stopped == 3)
 
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
