@@ -56,7 +56,7 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
   if (checks.some(([code, cls, signature, guards]) => !hasClass(code ?? '',descriptor(cls)) || guards.some(guard=>!guarded(method(code,signature),guard))) ||
       ['arm-capture','capture-status','cancel-capture'].some(value=>!execute.includes(`"${value}"`)) ||
       !snapshot.includes(`"${CAPTURE_PROTOCOL}"`) ||
-      !invoke(execute, `${escaped(descriptor(NIMO_DEVICE))}->releaseCapturedResource\\(`) ||
+      !invoke(execute, `${escaped(descriptor(NIMO_DEVICE))}->releaseCapturedResource(?:\\$[A-Za-z0-9_]+)?\\(`) ||
       !invoke(dispatch, 'Landroid/os/Handler;->post\\(') ||
       !invoke(dispatch, 'Ljava/util/concurrent/FutureTask;->get\\(') ||
       !invoke(dispatch, 'Ljava/util/concurrent/FutureTask;->cancel\\('))
