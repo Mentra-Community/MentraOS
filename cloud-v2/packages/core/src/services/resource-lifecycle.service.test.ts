@@ -132,3 +132,17 @@ test('resource history queries its own bounded host scope instead of the global 
   await expect(service.history(subject.subject.id)).rejects.toThrow('bounded 100-host');
  } finally {mock.mockRestore()}
 });
+
+test('resource-scoped reads fetch the existing fleet authority anchor after its claim returned',async()=>{
+ const {spyOn}=await import('bun:test');const {TestHostStateModel}=await import('../models/test-host-state.model');
+ const rows=fleetRows(false);rows[0]!.resourceReservationVersion=17;rows[0]!.snapshot.lanes=[];
+ const expected=projectResourceLifecycle(rows,now).subjects[0]!;
+ const queries:unknown[]=[];
+ const mock=spyOn(TestHostStateModel,'find').mockImplementation(((filter:unknown)=>{queries.push(filter);const query={select(){return query},sort(){return query},limit(){return query},maxTimeMS(){return query},read(){return query},readConcern(){return query},lean:async()=>queries.length===1?[rows[1]!]:[rows[0]!]};return query}) as never);
+ try {
+  const result=await new ResourceLifecycleService().detail(canonical);
+  expect(result.subject.generation).toBe(17);expect(result.subject.generation).toBe(expected.generation);
+  expect(result.subject.subject.authorityHostId).toBe('host-a');expect(result.subject.owner).toBeNull();
+  expect(queries).toHaveLength(2);expect(queries[1]).toEqual({hostId:{$in:['host-a']}});
+ } finally {mock.mockRestore()}
+});

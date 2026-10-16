@@ -7,6 +7,7 @@ import {resourceLifecycleSchema,type ResourceLifecycleList} from '../types/resou
 import {TestRunError} from './test-result-error';
 const FRESH_MS=180_000;
 const newestFirst=(a:{at:string;id:string},b:{at:string;id:string})=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.id);
+const fleetEnrollmentSchema=z.object({lanes:z.array(z.object({id:z.string(),resources:z.array(z.object({exclusiveDependencies:z.array(z.object({resourceId:z.string(),authorityHostId:z.string(),capability:z.string()})).optional()}))})).optional()});
 export interface ResourceLifecycleRow {hostId:string;receivedAt:Date;snapshot:unknown;resourceReservationVersion?:number;resourceReservations?:unknown;resourceLifecycleCursor?:unknown}
 export function projectResourceLifecycle(rows:ResourceLifecycleRow[],now=Date.now(),resourceId?:string):ResourceLifecycleList {
   const subjects:ResourceLifecycleList['subjects']=[],history=new Map<string,ResourceLifecycleList['history'][number]>();
@@ -93,19 +94,41 @@ export class ResourceLifecycleService {
       {'snapshot.lanes.resources.exclusiveDependencies.resourceId':resourceId},
       {'snapshot.resourceReservations.returns.resourceId':resourceId},
     ]}:{};
-    const rows=await TestHostStateModel.find(filter).select({hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceLifecycleCursor:1,resourceReservationVersion:1,resourceReservations:1,_id:0})
+    const projection={hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceLifecycleCursor:1,resourceReservationVersion:1,resourceReservations:1,_id:0};
+    const rows=await TestHostStateModel.find(filter).select(projection)
       .sort({hostId:1}).limit(101).maxTimeMS(5000).read('primary').readConcern('majority').lean();
     if(resourceId && rows.length>100) throw new TestRunError(503,'Resource authority/history scope exceeds the bounded 100-host observation');
-    return projectResourceLifecycle(rows as ResourceLifecycleRow[],Date.now(),resourceId);
+    const scopedRows=rows as ResourceLifecycleRow[];
+    if(resourceId) {
+      const authorities=new Set<string>();
+      for(const row of scopedRows) {
+        const enrollment=fleetEnrollmentSchema.parse(row.snapshot);
+        for(const lane of enrollment.lanes??[]) for(const resource of lane.resources) for(const dependency of resource.exclusiveDependencies??[])
+          if(dependency.resourceId===resourceId) authorities.add(frameworkIdentitySchema.parse(dependency.authorityHostId));
+        for(const claim of hostResourceReservationsSchema.parse(row.resourceReservations??[]).filter(isExclusiveHostReservation))
+          if(claim.resourceId===resourceId) authorities.add(claim.authorityHostId);
+        const observation=(row.snapshot as {resourceReservations?:unknown}).resourceReservations;
+        if(observation) for(const receipt of [...resourceReservationObservationSchema.parse(observation).claims,...resourceReservationObservationSchema.parse(observation).returns])
+          if(receipt.resourceId===resourceId) authorities.add(receipt.authorityHostId);
+      }
+      const missing=[...authorities].filter(hostId=>!scopedRows.some(row=>row.hostId===hostId));
+      if(scopedRows.length+missing.length>100) throw new TestRunError(503,'Resource authority/history scope exceeds the bounded 100-host observation');
+      if(missing.length) {
+        const anchors=await TestHostStateModel.find({hostId:{$in:missing}}).select(projection)
+          .sort({hostId:1}).limit(101).maxTimeMS(5000).read('primary').readConcern('majority').lean();
+        scopedRows.push(...anchors as ResourceLifecycleRow[]);
+        if(scopedRows.length>100) throw new TestRunError(503,'Resource authority/history scope exceeds the bounded 100-host observation');
+      }
+    }
+    return projectResourceLifecycle(scopedRows,Date.now(),resourceId);
   }
 }
 
 /** Derives fleet dependency visibility from the existing CAS authority; never grants capacity. */
 function projectFleetResourceAuthorities(rows:ResourceLifecycleRow[],subjects:ResourceLifecycleList['subjects'],history:Map<string,ResourceLifecycleList['history'][number]>,now:number) {
-  const enrollment=z.object({lanes:z.array(z.object({id:z.string(),resources:z.array(z.object({exclusiveDependencies:z.array(z.object({resourceId:z.string(),authorityHostId:z.string(),capability:z.string()})).optional()}))})).optional()});
   const enrolled=new Map<string,{authorityHostId:string;capabilities:Set<string>}>();
   for(const row of rows) {
-    const parsed=enrollment.safeParse(row.snapshot);if(!parsed.success) throw new TestRunError(503,'Invalid resource dependency observation');
+    const parsed=fleetEnrollmentSchema.safeParse(row.snapshot);if(!parsed.success) throw new TestRunError(503,'Invalid resource dependency observation');
     for(const lane of parsed.data.lanes??[]) for(const resource of lane.resources) for(const dependency of resource.exclusiveDependencies??[]) {
       if(!frameworkIdentitySchema.safeParse(dependency.resourceId).success || !frameworkIdentitySchema.safeParse(dependency.authorityHostId).success) throw new TestRunError(503,'Unsafe canonical resource identity');
       const previous=enrolled.get(dependency.resourceId);
