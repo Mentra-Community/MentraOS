@@ -429,9 +429,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("setWifiAdbState") { (enabled: Bool) in
+        AsyncFunction("setWifiAdbState") { (enabled: Bool, expectedBluetoothMac: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try await sdk.setWifiAdbState(enabled: enabled)
+            try await sdk.setWifiAdbState(enabled: enabled, expectedBluetoothMac: expectedBluetoothMac)
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
@@ -456,6 +456,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("setGalleryServerEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setGalleryServerEnabled(enabled).values
+        }
+
+        AsyncFunction("setTouchGestureDefaultBehaviorEnabled") { (gesture: String, enabled: Bool) in
+            guard let gesture = TouchGesture(rawValue: gesture) else {
+                throw BluetoothSdkError(code: "invalid_touch_gesture", message: "Unknown touch gesture: \(gesture)")
+            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled: enabled).values
         }
 
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in

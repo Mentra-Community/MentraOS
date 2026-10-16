@@ -353,17 +353,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="mentra-private-cloud-${{ steps.coordinates.outputs.release_identity }}"
-          status=$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > installer-release-response.txt 2>/dev/null && echo found || echo missing)
-          if [[ "$status" == missing ]]; then
-            if ! head -n 1 installer-release-response.txt | grep -Eq '^HTTP/[^ ]+ 404'; then
-              echo "Cannot resolve installer release; authentication/network errors must not be treated as an absent release" >&2
-              exit 1
-            fi
-            gh release create "$tag" --target "${{ inputs.source_commit }}" --prerelease \
-              --title "Mentra Private Cloud ${{ steps.coordinates.outputs.release_identity }}" \
-              --notes "Versioned Azure installer, checksum and publication evidence. Obtain the private IT guide and approved image access from Mentra before deployment."
-          fi
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+          release_id=$(node .github/scripts/ensure-installer-release.mjs \
+            --repository "$GITHUB_REPOSITORY" --tag "$tag" --source-commit "${{ inputs.source_commit }}")
           for file in mentra-private-cloud.tar.gz mentra-private-cloud.tar.gz.sha256; do
             node .github/scripts/publish-immutable-release-asset.mjs \
               --repository "$GITHUB_REPOSITORY" --release-id "$release_id" --file "$file" --name "$file"

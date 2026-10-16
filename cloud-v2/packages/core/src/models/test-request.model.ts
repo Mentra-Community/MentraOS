@@ -1,7 +1,7 @@
 import {Schema} from "mongoose";
 import {registerModel} from "./register-model";
 
-/** Cloud admission only. Resource ownership lives in the host controller. */
+/** Cloud admission and immutable selected receipts. Resource authorities remain on existing host rows and controller custody. */
 function executableInputRequired(this: {state?: string; preparationCancellation?: unknown; preparationRejection?: unknown; fleetSelection?: unknown; fleetCancellation?: unknown}) {
   return !this.fleetCancellation && !['preparing', 'awaiting-source', 'awaiting-runner'].includes(this.state ?? '') && !this.preparationCancellation && !this.preparationRejection;
 }
@@ -24,6 +24,9 @@ const schema = new Schema({
   fleetDeadline: {type: Date, immutable: true},
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
   fleetResourceReservation: {type: Schema.Types.Mixed},
+  fleetResourceAdmission: {type: Schema.Types.Mixed, immutable: true},
+  fleetExclusiveReservation: {type: Schema.Types.Mixed, immutable: true},
+  fleetExclusiveExecutionBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetCancellation: {type: Schema.Types.Mixed},
   fleetSupersessionCheckedAt: {type: Date},

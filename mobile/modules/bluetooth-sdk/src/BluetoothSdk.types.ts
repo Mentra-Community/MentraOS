@@ -584,9 +584,20 @@ export type RgbLedControlResponseEvent =
 
 export type RgbLedControlSuccessResponseEvent = Extract<RgbLedControlResponseEvent, {state: "success"}>
 
+export type TouchGesture =
+  | "single_tap"
+  | "double_tap"
+  | "triple_tap"
+  | "long_press"
+  | "forward_swipe"
+  | "backward_swipe"
+  | "up_swipe"
+  | "down_swipe"
+
 export type SettingsAckStatus = "applied" | "ready" | "error" | "failed" | "failure" | "rejected"
 
 export type SettingsAckSetting =
+  | "touch_gesture_default"
   | "gallery_server"
   | "gallery_mode"
   | "button_photo"
@@ -600,6 +611,8 @@ export type SettingsAckEvent = {
   type: "settings_ack"
   requestId: string
   setting: SettingsAckSetting
+  /** Gesture whose stock behavior was changed; present for touch_gesture_default. */
+  gesture?: TouchGesture
   status: SettingsAckStatus
   timestamp: number
   fov?: number
@@ -1417,7 +1430,9 @@ export interface BluetoothSdkPublicModule {
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
-  setWifiAdbState(enabled: boolean): Promise<void>
+  /** When supplied, binds native admission to this full MAC observed in the current BLE session.
+   * Resolves on queue admission, without confirming glasses-side state. */
+  setWifiAdbState(enabled: boolean, expectedBluetoothMac?: string): Promise<void>
 
   /**
    * Persistently enable/disable unauthenticated HTTP gallery access on the glasses' Wi-Fi.
@@ -1425,6 +1440,8 @@ export interface BluetoothSdkPublicModule {
    * Returns saved enabled state plus current listening/url. No Wi-Fi means listening=false.
    */
   setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  /** Mentra Live only. Keep gesture events; reset stock actions on BLE disconnect. Requires compatible BES firmware. */
+  setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setLoudnessGateEnabled(enabled: boolean): Promise<void>

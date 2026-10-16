@@ -1540,6 +1540,15 @@ struct ViewState {
         sgc?.sendHotspotState(enabled)
     }
 
+    func setWifiAdbState(_ enabled: Bool, expectedBluetoothMac: String?) throws {
+        guard let expectedBluetoothMac else { setWifiAdbState(enabled); return }
+        guard let live = sgc as? MentraLive else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        // Capture one driver; its own session identity guards the actual queue insertion.
+        try live.sendWifiAdbState(enabled, expectedBluetoothMac: expectedBluetoothMac)
+    }
+
     func setWifiAdbState(_ enabled: Bool) {
         Bridge.log("MAN: 🔧 Setting glasses Wi-Fi ADB state: \(enabled)")
         sgc?.sendWifiAdbState(enabled)
@@ -1595,6 +1604,10 @@ struct ViewState {
 
     func sendGalleryServerEnabled(requestId: String, enabled: Bool) throws {
         try liveSgc().sendGalleryServerEnabled(requestId: requestId, enabled: enabled)
+    }
+
+    func sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Bool) throws {
+        try liveSgc().sendTouchGestureDefaultBehaviorEnabled(requestId: requestId, gesture: gesture, enabled: enabled)
     }
 
     func sendGalleryMode(requestId: String, enabled: Bool) throws {

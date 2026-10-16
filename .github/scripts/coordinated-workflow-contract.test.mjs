@@ -365,6 +365,60 @@ test("Cloud V2 readiness gates mobile compilation and publication", () => {
   }
 })
 
+for (const readyOnAttempt of [2, 13]) {
+  test(`Cloud deployment records use each fresh Pod read (${readyOnAttempt === 2 ? "settles" : "never ready"})`, () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "cloud-deployment-settlement-"))
+    const step = workflow("reusable-coordinated-cloud-v2.yml")
+      .split("      - name: Require settled deployment and Runtime disruption policy\n")[1]
+      .split("        run: |\n")[1]
+      .split("\n      - name:")[0]
+      .replace(/^          /gm, "")
+      .replace(/\$\{\{ inputs\.deployment_environment \}\}/g, "dev")
+      .replace(/\$\{\{ inputs\.source_commit \}\}/g, "source-commit")
+      .replace(/\$\{\{ steps\.source\.outputs\.tag \}\}/g, "source-commit")
+      .replace(/\$\{\{ github\.repository \}\}/g, "Mentra-Community/MentraOS")
+      .replace(/\$\{\{ github\.run_id \}\}/g, "123")
+    // Existing record validation tests enforce readiness, exact tags and digest.
+    // Here the real workflow shell must reread its observation before each call.
+    const mocks = `
+      porter() {
+        if [[ "$*" == *"get pods"* ]]; then
+          local count=0
+          [[ ! -f pod-reads ]] || read -r count < pod-reads
+          count=$((count + 1)); echo "$count" > pod-reads
+          printf '{"attempt":%s}\n' "$count"
+        else
+          echo '{"kind":"List","items":[]}'
+        fi
+      }
+      jq() { [[ "$*" == "-er .runtimeReplicas cloud-v2-rendered-config.json" ]] && echo 1; }
+      sleep() { :; }
+      node() {
+        if [[ "$1" == *verify-runtime-deployment-policy.mjs ]]; then return 0; fi
+        [[ "$1" == *coordinated-cloud-v2-records.mjs && "$2" == create ]] || return 1
+        [[ "$*" == *"--source-commit source-commit"* && "$*" == *"--requested-tag source-commit"* &&
+          "$*" == *"--status deployed"* && "$*" == *"--pods cloud-v2-pods.json"* ]] || return 1
+        local count; read -r count < pod-reads
+        [[ "$(cat cloud-v2-pods.json)" == "$(printf '{\"attempt\":%s}' "$count")" ]] || return 1
+        echo "$count" >> record-attempts
+        [[ "$count" -ge "$READY_ON_ATTEMPT" ]] || return 1
+        echo "$count" > cloud-v2-deployment.json
+      }
+    `
+    try {
+      const result = spawnSync("bash", ["-eu", "-c", `${mocks}\n${step}`], {
+        cwd: directory, env: {...process.env, PORTER_APP_NAME: "cloud-dev", READY_ON_ATTEMPT: String(readyOnAttempt)},
+        encoding: "utf8", timeout: 5000,
+      })
+      assert.equal(result.status, readyOnAttempt === 2 ? 0 : 1, result.stderr)
+      assert.equal(Number(readFileSync(path.join(directory, "pod-reads"))), Math.min(readyOnAttempt, 12))
+      assert.equal(existsSync(path.join(directory, "cloud-v2-deployment.json")), readyOnAttempt === 2)
+      assert.equal(readFileSync(path.join(directory, "record-attempts"), "utf8").trim().split("\n").length,
+        Math.min(readyOnAttempt, 12))
+    } finally {rmSync(directory, {recursive: true, force: true})}
+  })
+}
+
 test("Private Deployment remains release-matched without gating the dev release", () => {
   const coordinator = workflow("coordinated-release.yml")
   const runtimeImage = workflow("reusable-coordinated-runtime-image.yml")
@@ -400,6 +454,8 @@ test("Private Deployment remains release-matched without gating the dev release"
   const deliveryStep = runtimeImage.indexOf("- name: Publish persistent installer downloads")
   assert.ok(deliveryStep > uploadStep)
   const delivery = runtimeImage.slice(deliveryStep, runtimeImage.indexOf("- name: Name coordinated result artifact"))
+  assert.match(delivery, /ensure-installer-release\.mjs/)
+  assert.doesNotMatch(delivery, /gh release create|installer-release-response/)
   assert.match(delivery, /publish-immutable-release-asset\.mjs/)
   assert.match(delivery, /mentra-private-cloud\.tar\.gz\.sha256/)
   assert.match(delivery, /ARTIFACTS_R2_SECRET_ACCESS_KEY/)

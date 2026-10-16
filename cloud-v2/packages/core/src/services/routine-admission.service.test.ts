@@ -258,3 +258,43 @@ test('direct admission enforces the same recording budget and strips measured of
   recorder.storage!.availableBytes=64*1024**3; recorder.storage!.pendingEvidenceBytes=10*1024**3;
   expect(()=>select(declared,build,measured)).toThrow('recorder disk and evidence staging capacity');
 })
+
+function nimoSelection() {
+  const definition = enrollment(), observed = host();
+  definition.definition.glasses = {models: ['nimo']};
+  definition.definition.minimumRoutineApiVersion = 43;
+  definition.routineSource.minimumRoutineApiVersion = 43;
+  observed.lanes[0]!.glasses![0] = {resourceId: 'physical-live', deviceId: 'AA:BB:CC:DD:40:27', model: 'nimo', capabilities: ['connection']};
+  return {definition, observed};
+}
+test('only the actual Android connection-only NIMO inventory omits Live software', () => {
+  const {definition, observed} = nimoSelection();
+  const input = select(definition, {...build, manifest: undefined, manifestSha256: undefined}, observed);
+  expect(input.glassesModel).toBe('nimo');
+  expect(input.glassesStart).toBeUndefined(); expect(input.glassesReturn).toBeUndefined();
+  expect(input.build.manifest).toBeUndefined();
+  expect(frameworkRequestInputSchema.safeParse({...input, glassesModel: undefined}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, glassesStart: {model: 'mentra-live', manifest}, glassesReturn: {model: 'mentra-live', manifest}}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, platform: 'ios-on-mac'}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, routineSource: {...input.routineSource, minimumRoutineApiVersion: 42}}).success).toBe(false);
+  expect(frameworkRequestInputSchema.safeParse({...input, build: {...input.build, manifest, manifestSha256: sha256}}).success).toBe(false);
+});
+test('NIMO never admits a firmware, BLE, other-model or fabricated-identity provider', () => {
+  for (const mutate of [
+    (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.minimumRoutineApiVersion = 42; d.routineSource.minimumRoutineApiVersion = 42},
+    (d: RoutineEnrollment, _h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = []},
+    (_d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities = []},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.glasses!.startSoftware = {model: 'mentra-live', manifest}},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.resourceRequirements.find(value => value.kind === 'glasses')!.capabilities = ['glasses-ble']; h.lanes[0]!.glasses![0]!.capabilities = ['glasses-ble']},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.capabilities.push('software')},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {h.lanes[0]!.glasses![0]!.deviceId = 'not-observed'},
+    (d: RoutineEnrollment, h: ReceivedTestHostState) => {d.definition.glasses!.models = ['g2']; h.lanes[0]!.glasses![0]!.model = 'g2'},
+  ]) {
+    const {definition, observed} = nimoSelection(); mutate(definition, observed);
+    expect(() => select(definition, build, observed)).toThrow();
+  }
+  const old = nimoSelection(); old.definition.definition.minimumRoutineApiVersion = 42; old.definition.routineSource.minimumRoutineApiVersion = 42;
+  expect(() => select(old.definition, build, old.observed)).toThrow(expect.objectContaining({status: 409, message: expect.stringContaining('routine API 43')}));
+  // Live remains firmware-bound even when it requests connection only.
+  expect(() => select(enrollment(), {...build, manifest: undefined})).toThrow('immutable glasses manifest');
+});

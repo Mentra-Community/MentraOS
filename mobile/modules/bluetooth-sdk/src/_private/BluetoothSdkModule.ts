@@ -49,6 +49,7 @@ import {
   SettingsAckSuccessEvent,
   StreamStartRequest,
   StreamStatusEvent,
+  TouchGesture,
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
@@ -135,7 +136,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
-  setWifiAdbState(enabled: boolean): Promise<void>
+  setWifiAdbState(enabled: boolean, expectedBluetoothMac?: string): Promise<void>
   /** Set the glasses system clock when phone detects clock skew (Mentra Live and G2). */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
@@ -143,6 +144,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Gallery Commands
   setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */

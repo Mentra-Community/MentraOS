@@ -9,7 +9,7 @@
     "pack": "mentra-miniapp pack"
   },
   "dependencies": {
-    "@mentra/miniapp": "^3.3.0",
+    "@mentra/miniapp": "^3.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

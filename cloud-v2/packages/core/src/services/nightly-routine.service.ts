@@ -3,7 +3,7 @@ import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {testWriteConcern} from "../models/test-write-concern";
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
+import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {routineDispatchIntentSchema, type RoutineDispatchIntent} from "../types/routine-dispatch.types";
 import {GithubRoutineSourceGateway} from "./routine-source-selection.service";
@@ -92,7 +92,7 @@ export function nightlyPreparedInput(member: NightlyMember, value: unknown, dige
     || input.data.platform !== intent.platform || input.data.definitionRevision !== intent.routineRevision
     || member.dispatchIntent && input.data.laneId !== member.dispatchIntent.laneId
     || member.binding && input.data.laneId !== member.binding.laneId || input.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion
-    || requestInputDigest(input.data.build) !== requestInputDigest(intent.build)
+    || requestInputDigest(input.data.build) !== requestInputDigest(frameworkExecutableBuild(intent.build, input.data.glassesModel))
     || intent.routineSource && requestInputDigest(input.data.routineSource) !== requestInputDigest(intent.routineSource))
     throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
   return input.data;

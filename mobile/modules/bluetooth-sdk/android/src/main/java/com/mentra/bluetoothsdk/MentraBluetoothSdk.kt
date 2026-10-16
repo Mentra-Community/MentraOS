@@ -640,6 +640,14 @@ class MentraBluetoothSdk private constructor(
             send = { requestId -> deviceManager.sendGalleryServerEnabled(requestId, enabled) },
         )
 
+    /** Disable a stock action while retaining touch events. Reset by BES on BLE disconnect. */
+    suspend fun setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "touch_gesture_default",
+            updateStore = {},
+            send = { requestId -> deviceManager.sendTouchGestureDefaultBehaviorEnabled(requestId, gesture, enabled) },
+        )
+
     suspend fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent =
         performSettingsCommand(
             setting = "gallery_mode",
@@ -1111,8 +1119,9 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
-        deviceManager.setWifiAdbState(enabled)
+    @JvmOverloads
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        deviceManager.setWifiAdbState(enabled, expectedBluetoothMac)
     }
 
     fun setSystemTime(timestampMs: Long) {
