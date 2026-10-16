@@ -1022,8 +1022,8 @@ def d1_declined_dialog_never_reports_success(ctx: Ctx):
 def o1_owner_returns_inside_window_is_refused(ctx: Ctx):
     """V4: the S22 owner has Bluetooth off while the window opens (no notice), then comes back INSIDE the window.
 
-    It never sends pair_select, so it gets the one 15 s grace and is then refused with HCI 0x14 (`owner refused ...
-    grace_over`). Required: that refusal in the BES ring, no bond change (own=1 stays, no commit/clear_owner), the
+    It never sends pair_select, so once it encrypts with its existing LTK it is refused after 3 s with HCI 0x14
+    (`owner refused ... grace_over`). Required: that refusal in the BES ring, no bond change (own=1 stays, no commit/clear_owner), the
     window still open and advertising. After the cancel (triple press) the owner reconnects with zero action and
     nothing was wiped."""
     ctx.check("precondition S22 owner", r_s22(ctx))
