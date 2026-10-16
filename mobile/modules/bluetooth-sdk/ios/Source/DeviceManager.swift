@@ -1597,6 +1597,10 @@ struct ViewState {
         try liveSgc().sendGalleryServerEnabled(requestId: requestId, enabled: enabled)
     }
 
+    func sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Bool) throws {
+        try liveSgc().sendTouchGestureDefaultBehaviorEnabled(requestId: requestId, gesture: gesture, enabled: enabled)
+    }
+
     func sendGalleryMode(requestId: String, enabled: Bool) throws {
         try liveSgc().sendGalleryMode(requestId: requestId, active: enabled)
     }

@@ -2065,6 +2065,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         live.sendGalleryServerEnabled(requestId, enabled)
     }
 
+    fun sendTouchGestureDefaultBehaviorEnabled(requestId: String, gesture: TouchGesture, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw BluetoothSdkException("unsupported_device", "This command requires Mentra Live glasses.")
+        live.sendTouchGestureDefaultBehaviorEnabled(requestId, gesture, enabled)
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)
