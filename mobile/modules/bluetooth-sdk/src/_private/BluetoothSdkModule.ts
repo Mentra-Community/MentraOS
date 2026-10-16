@@ -49,6 +49,7 @@ import {
   SettingsAckSuccessEvent,
   StreamStartRequest,
   StreamStatusEvent,
+  TouchGesture,
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
