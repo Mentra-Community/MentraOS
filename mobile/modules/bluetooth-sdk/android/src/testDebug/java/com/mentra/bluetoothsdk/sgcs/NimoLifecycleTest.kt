@@ -315,7 +315,7 @@ class NimoLifecycleTest {
     assertTrue(nimo.resourceSnapshot().getJSONObject("timeAck").isNull("atEpochMs"))
   }
 
-  @Test fun firmwareFeedbackIsObservedWithinItsOwnSessionAndOldGattCannotRefreshIt() {
+  @Test fun firmwareFeedbackIsObservedWithinItsOwnSessionAndClearedOnReconnect() {
     readyForReset()
     setField("resourceSessionGeneration", 4L)
     assertTrue(nimo.resourceSnapshot().getJSONObject("firmware").isNull("version"))
@@ -377,7 +377,7 @@ class NimoLifecycleTest {
     return frames
   }
 
-  private fun setField(name: String, value: Any) {
+  private fun setField(name: String, value: Any?) {
     Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.set(nimo, value)
   }
 
