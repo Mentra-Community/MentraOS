@@ -15,8 +15,15 @@ source revision and its native receiver have been reviewed.
 The `nimoDiagnostic` app variant inherits release signing/bundling, permits Android
 `run-as`, and disables React Native developer support. Only this variant selects the
 SDK's debug DUMP-protected receiver. Ordinary release retains the no-op receiver class.
-CI verifies the compiled fixed receiver action in DEX, an immutable diagnostic asset,
+CI invokes Android SDK `apkanalyzer dex code --class` on the signed APK and verifies
+the diagnostic class, DUMP-protected registration/start method, instantiated receiver
+subclass/onReceive dispatch, and DeviceManager startup call. Its package revision and
+launcher/library content digest are recorded in hash-bound `diagnosticVerification`
+(`compiled-receiver-wiring-v1`). The first actual diagnostic build must exercise this
+tool before admission; source mocks alone do not qualify an APK. CI also verifies an immutable diagnostic asset,
 nonempty bundled JavaScript, Android's debuggable manifest flag and release signature.
+Diagnostic minification is disabled so bytecode names remain inspectable. Diagnostic
+concurrency has a separate suffix and cannot cancel ordinary coverage for the same PR.
 Diagnostic compilation cannot reuse a release APK and does not publish a mutable
 ordinary APK alias.
 

@@ -23,8 +23,10 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager})
       !/const-string(?:\/jumbo)?[^\n]*"android\.permission\.DUMP"/.test(start) ||
       !start.includes(`${target}->receiver:`) ||
       !/const-string(?:\/jumbo)?[^\n]*"com\.mentra\.bluetoothsdk\.NIMO_RESOURCE_LIFECYCLE"/.test(receive) ||
-      !invoke(start, 'Landroid/content/Context;->registerReceiver\\(') ||
+      !invoke(start, 'Landroid/content/IntentFilter;-><init>\\(Ljava/lang/String;\\)V') ||
+      !invoke(start, 'Landroid/content/Context;->registerReceiver\\(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;(?:I)?\\)Landroid/content/Intent;') ||
       !new RegExp(`new-instance[^\\n]*${escaped(child)}`).test(method(diagnostics, '<clinit>()V')) ||
+      !invoke(method(diagnostics, '<clinit>()V'), `${escaped(child)}-><init>\\(`) ||
       !invoke(receive, `${escaped(target)}->execute(?:\\$[A-Za-z0-9_]+)?\\(Landroid/content/Intent;\\)V`) ||
       !invoke(manager, `${escaped(target)}->start\\(Landroid/content/Context;\\)V`))
     throw new Error('Diagnostic APK lacks compiled NIMO receiver class and registration/startup wiring')

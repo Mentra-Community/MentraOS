@@ -14,12 +14,14 @@ const diagnosticCode = {
  diagnostics:`.class public final ${desc(NIMO_DIAGNOSTIC)}
 .method public final start(Landroid/content/Context;)V
  const-string v0, "com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE"
+ invoke-direct {v3, v0}, Landroid/content/IntentFilter;-><init>(Ljava/lang/String;)V
  const-string v1, "android.permission.DUMP"
  sget-object v2, ${desc(NIMO_DIAGNOSTIC)}->receiver:${desc(NIMO_RECEIVER)}
  invoke-virtual {v0, v2}, Landroid/content/Context;->registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;)Landroid/content/Intent;
 .end method
 .method static constructor <clinit>()V
  new-instance v0, ${desc(NIMO_RECEIVER)}
+ invoke-direct {v0}, ${desc(NIMO_RECEIVER)}-><init>()V
 .end method
 `,
  receiver:`.class public final ${desc(NIMO_RECEIVER)}
