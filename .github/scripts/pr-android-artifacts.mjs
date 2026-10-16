@@ -4,6 +4,7 @@ import {readFile, readdir, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {prBackend} from "./pr-mobile-build.mjs"
+import {inspectNimoDiagnosticBytecode} from "./pr-android-artifacts-diagnostic.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 export const ANDROID_WORKFLOW = "mentra-app-android-build.yml"
@@ -32,6 +33,7 @@ export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagno
     typeof app.build === "string" && /^[1-9]\d*$/.test(app.build) && Number(app.build) <= 2100000000 &&
     (app.mobileFingerprint === undefined || HASH.test(app.mobileFingerprint)) &&
     (app.mobileSourceCommit === undefined || SHA.test(app.mobileSourceCommit)), "Invalid Android app identity or OTA pin")
+  requireThat(diagnostic ? receipt?.diagnosticVerification?.kind === 'compiled-receiver-wiring-v1' && receipt.diagnosticVerification.apkSha256 === receipt.artifacts?.android?.sha256 && receipt.diagnosticVerification.analyzer?.source === 'android-sdk-command-line-tools' && /^[0-9.]+$/.test(receipt.diagnosticVerification.analyzer?.revision ?? '') && HASH.test(receipt.diagnosticVerification.analyzer?.sha256 ?? '') && HASH.test(receipt.diagnosticVerification.wiringSha256 ?? '') : receipt?.diagnosticVerification === undefined, 'Diagnostic compiled-wiring verification differs')
   const asset = receipt.artifacts?.android
   requireThat(Object.keys(receipt.artifacts ?? {}).join() === "android" &&
     asset?.name === name.replace(/\.json$/, ".apk") && HASH.test(asset.sha256 ?? "") && positive(asset.size),
@@ -85,13 +87,15 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   try { diagnosticMarker = exec("unzip", ["-p", apk, "assets/nimo-resource-diagnostic.json"], {encoding: "utf8", stdio: ['ignore', 'pipe', 'ignore']}) } catch { diagnosticMarker = '' }
   requireThat(diagnostic ? diagnosticMarker === '{"schemaVersion":1,"buildType":"nimoDiagnostic","capability":"nimo-resource-v1"}' &&
     /application-debuggable/.test(badging) : !diagnosticMarker && !/application-debuggable/.test(badging), 'APK diagnostic marker/debuggability differs from publication mode')
+  let diagnosticProof
   if (diagnostic) {
+    diagnosticProof = await inspectNimoDiagnosticBytecode(apk, path.join(env.ANDROID_HOME, 'cmdline-tools', 'latest', 'bin', 'apkanalyzer'), exec)
     const bundle = exec("unzip", ["-p", apk, "assets/index.android.bundle"], {maxBuffer: 100 * 1024 * 1024})
     requireThat(bundle.length > 0, 'Diagnostic app must contain its JavaScript bundle')
     app.diagnostic = 'nimo-resource-v1'
   }
   const bytes = await readFile(apk)
-  const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1"} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
+  const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1", diagnosticVerification: {...diagnosticProof, kind:"compiled-receiver-wiring-v1", apkSha256:createHash("sha256").update(bytes).digest("hex")}} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
     artifacts: {android: {name: name.replace(/\.json$/, ".apk"), sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length}}}
   validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt, diagnostic})
   const file = path.join(path.dirname(apk), name)

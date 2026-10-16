@@ -113,7 +113,7 @@ on:
 # Scoped per-ref so branches never cancel each other; keeps the runner
 # queue from filling with superseded builds.
 concurrency:
-  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}
+  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}${{ inputs.nimo_diagnostic && '-nimo-diagnostic' || '' }}
   cancel-in-progress: true
 
 permissions:
