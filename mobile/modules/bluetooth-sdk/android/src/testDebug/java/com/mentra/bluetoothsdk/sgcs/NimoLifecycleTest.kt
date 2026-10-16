@@ -410,11 +410,12 @@ class NimoLifecycleTest {
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
     val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.NIMO, "Nimo-test") }
-    thread.start(); thread.join(1000)
-    assertFalse(thread.isAlive)
+    thread.start(); awaitMainDispatch(thread)
+    assertTrue(thread.isAlive)
     assertNull(manager.sgc) // no off-main manager creation or cleanup
     captureCommand("cancel-capture", nonce)
     Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
     assertNull(manager.sgc) // the already-queued real entry rechecks its immutable fence
   }
 
@@ -424,10 +425,11 @@ class NimoLifecycleTest {
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
     val thread = Thread { nimo.connectById("Nimo-test") }
-    thread.start(); thread.join(1000)
+    thread.start(); awaitMainDispatch(thread)
     val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
     assertFalse(admission.exists())
     Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
     assertEquals(nimo.resourceInstanceId, JSONObject(admission.readText()).getString("instanceId"))
     assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
     assertFalse(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
@@ -445,11 +447,12 @@ class NimoLifecycleTest {
     DeviceStore.apply("bluetooth", "default_wearable", "unchanged-default")
     DeviceStore.apply("bluetooth", "pending_wearable", "unchanged-pending")
     val thread = Thread { sdk.connect(com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test")) }
-    thread.start(); thread.join(1000)
+    thread.start(); awaitMainDispatch(thread)
     captureCommand("cancel-capture", nonce)
     val replacement = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
     manager.sgc = replacement
     Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
     assertSame(replacement, manager.sgc)
     assertEquals("unchanged-default", DeviceStore.get("bluetooth", "default_wearable"))
     assertEquals("unchanged-pending", DeviceStore.get("bluetooth", "pending_wearable"))
@@ -459,10 +462,31 @@ class NimoLifecycleTest {
   @Test fun unarmedDebugConnectStillExecutesNormallyOnMainQueue() {
     manager.sgc = null
     val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.SIMULATED, "unit-simulated") }
-    thread.start(); thread.join(1000)
+    thread.start(); awaitMainDispatch(thread)
     assertNull(manager.sgc)
     Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
     assertTrue(manager.sgc is Simulated)
+  }
+
+  @Test fun offMainSdkFailureIsDeliveredToCallerWithoutUncaughtMainException() {
+    val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
+    val sdk = unsafe.allocateInstance(com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+    DeviceStore.apply("bluetooth", "default_wearable", "")
+    val failure = AtomicReference<Throwable?>()
+    val thread = Thread { try { sdk.connectDefault() } catch (error: Throwable) { failure.set(error) } }
+    thread.start(); awaitMainDispatch(thread)
+    Shadows.shadowOf(Looper.getMainLooper()).idle() // FutureTask captures the error; main must not throw.
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertTrue(failure.get() is com.mentra.bluetoothsdk.BluetoothSdkException)
+    assertEquals("default_device_missing", (failure.get() as com.mentra.bluetoothsdk.BluetoothSdkException).code)
+  }
+
+  private fun awaitMainDispatch(thread: Thread) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    while (thread.isAlive && thread.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.yield()
+    assertTrue("SDK caller must wait for its main-queue result", thread.isAlive)
+    assertEquals(Thread.State.WAITING, thread.state)
   }
 
   private fun captureCommand(mode: String, captureNonce: String, requestNonce: String = java.util.UUID.randomUUID().toString()): JSONObject {

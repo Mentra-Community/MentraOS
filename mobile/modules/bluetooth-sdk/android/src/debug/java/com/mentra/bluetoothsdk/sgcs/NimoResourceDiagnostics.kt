@@ -36,7 +36,18 @@ internal object NimoResourceDiagnostics {
      * Queued calls re-enter current capture guards before any connection effect. */
     fun dispatchCapturedEntry(entry: () -> Unit): Boolean {
         if (Looper.myLooper() == main.looper) return false
-        main.post { entry() }
+        val task = java.util.concurrent.FutureTask<Unit> { entry() }
+        main.post(task)
+        try {
+            task.get()
+        } catch (error: java.util.concurrent.ExecutionException) {
+            throw (error.cause ?: error)
+        } catch (error: InterruptedException) {
+            // A queued entry must not run later after its original caller abandoned it.
+            task.cancel(false)
+            Thread.currentThread().interrupt()
+            throw error
+        }
         return true
     }
 
