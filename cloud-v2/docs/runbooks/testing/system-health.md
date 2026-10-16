@@ -154,3 +154,41 @@ reservation; neither recovers a repair.
 Deploy the Core reader before a controller reports `laneControls.reopenRepair` or
 `haltDecisionId`. The Admin control stays unavailable until that explicit support
 and a fresh, matching halted repair are reported. No lane is reopened by rollout.
+
+## Reservable resources
+
+The Resources tab reads the authenticated controller's optional
+`resourceLifecycle` observation from its existing host-state row. It does not
+create reservations or infer resource idle from an idle lane. Controllers report
+only subjects for which their host is the authority; installed lane memberships
+are placement metadata. A fleet account may have no memberships.
+
+The version 1 envelope contains up to 200 subjects and 200 recent journal events.
+A subject has an independent generation, current lifecycle status, original owner
+and owner generation, accepted idle-check identity/hash, qualified scope and repair
+state. IDs and evidence references are opaque safe identifiers, never credentials,
+raw device dumps or local evidence paths. Idle requires an unowned, qualified,
+passing check accepted for the subject generation. Existing legacy host snapshots
+without this optional envelope remain accepted and do not fabricate resource idle.
+
+Core sets receipt time. Observations older than three minutes, future observations,
+or explicit non-current observations project unknown status and disable supported
+actions while retaining the last reported check and owner context. This is not a
+claim that a controller is physically offline. Reporting uses the existing host
+cursor/CAS; accepted subject generations cannot regress and retained journal IDs
+cannot change their contents.
+
+Read-only admin endpoints:
+
+- `GET /api/admin/test-runs/resources/overview` returns canonical subjects and a
+  bounded recent history, with explicit truncation.
+- `GET /api/admin/test-runs/resources/:resourceId/detail` returns the latest subject.
+- `GET /api/admin/test-runs/resources/:resourceId/history?cursor=<last-event-id>`
+  returns up to 50 events and a next cursor. An evicted cursor returns 409 rather
+  than silently skipping or duplicating a shifted offset.
+
+History coverage is the retained authority journal window (at most 200 events per
+host), not an archival completeness claim. Resource check/repair control actions
+are not exposed by these read endpoints. Mobile walkthrough routines do not cover
+Admin resource cards; frontend render tests cover canonical identity, fleet
+placement, borrower lineage and stale observations.

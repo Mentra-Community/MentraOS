@@ -1,3 +1,5 @@
+import {validateResourceLifecycleAdvance} from './resource-lifecycle.service'
+import {resourceLifecycleSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {laneControlExchangeSchema} from './lane-controls.service'
 import {z} from "zod"
@@ -154,6 +156,7 @@ export const hostStateSchema = z
           }),
       )
       .max(100),
+    resourceLifecycle: resourceLifecycleSchema.optional(),
     laneControls: laneControlExchangeSchema.optional(),
     restoration: laneRestorationProjectionSchema.optional(),
     frameworkBinding: frameworkBindingSchema.optional(),
@@ -198,6 +201,8 @@ export const hostStateSchema = z
     for (const lane of snapshot.lanes) if (lane.waiting?.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt)) ||
       new Set(lane.waiting?.map(value => value.requestId)).size !== (lane.waiting?.length ?? 0))
       ctx.addIssue({code: 'custom', message: 'Queued blocker observations must have unique identities and actual past timestamps'})
+    if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
+      ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
     validateHostLaneInventory(snapshot, ctx)
   })
 export type TestHostState = z.infer<typeof hostStateSchema>
@@ -241,7 +246,7 @@ const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequenc
 })
 // Host snapshots contain repair diagnostics; reporting needs only their accepted cursor and history.
 const reportingStateProjection = {hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
-  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1} as const
+  deploymentGeneration: 1, deploymentSequence: 1, frameworkHistory: 1, frameworkStopReceipts: 1, 'snapshot.resourceLifecycle': 1} as const
 async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
   // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -293,6 +298,9 @@ export class TestHostStateService {
           incarnationGeneration: current.incarnationGeneration,
           sequence: current.sequence,
         }
+    }
+    if (current?.snapshot?.resourceLifecycle && snapshot.resourceLifecycle) {
+      validateResourceLifecycleAdvance(current.snapshot.resourceLifecycle, snapshot.resourceLifecycle)
     }
     const filter = current
       ? {

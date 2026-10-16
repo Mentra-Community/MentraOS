@@ -1,5 +1,6 @@
 export const SYSTEM_HEALTH_TABS = [
   {id: 'lanes', label: 'Lanes'},
+  {id: 'resources', label: 'Resources'},
   {id: 'pending', label: 'Pending queue'},
   {id: 'framework', label: 'Framework'},
   {id: 'services', label: 'Services'},
