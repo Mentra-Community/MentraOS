@@ -82,6 +82,7 @@ public class PairingAudioEventSubscriberTest {
         subscriber.onMcuEvent(new PairingModeExitEvent("paired"));
         subscriber.onMcuEvent(new PairingModeExitEvent(null));
 
+        verify(hardware).stopAudioPlayback();
         verify(hardware, org.mockito.Mockito.times(1))
                 .playAudioAsset(AudioAssets.PAIRING_EXITED);
     }
