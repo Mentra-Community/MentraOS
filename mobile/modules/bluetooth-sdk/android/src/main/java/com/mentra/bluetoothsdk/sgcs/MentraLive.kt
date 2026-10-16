@@ -1576,17 +1576,21 @@ class MentraLive : SGCManager() {
                         // Connect-by-name only when reconnecting OR connectById() asked for
                         // this name. A discovery-only pairing scan must not auto-connect just
                         // because savedDeviceName still matches (spoof risk).
+                        val isSavedGlasses =
+                                savedDeviceName.isNotEmpty() && savedDeviceName == deviceName
                         val isNamedConnectTarget =
-                                savedDeviceName.isNotEmpty() &&
-                                        savedDeviceName == deviceName &&
-                                        (isReconnecting || explicitConnectByName)
-                        if (!isReconnecting &&
-                                        advertisesPairingFlag(result) &&
-                                        !isPairingDiscoverable(result)
+                                isSavedGlasses && (isReconnecting || explicitConnectByName)
+                        if (MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
+                                        savedGlasses = isSavedGlasses,
+                                        reconnectScan = isReconnecting,
+                                        secureTrailer = advertisesPairingFlag(result),
+                                        pairingDiscoverable = isPairingDiscoverable(result),
+                                )
                         ) {
-                            // Tell RN a nearby unit is advertising but not pairable. The scan
-                            // screen keeps it visible with pairing-mode guidance but blocks the
-                            // connection until a pairable advertisement arrives.
+                            // Other secure units stay visible with pairing-mode guidance, and
+                            // the scan screen blocks the connection until they are pairable.
+                            // The saved glasses fall through so the pause watch scan can see
+                            // the pairing flag clear and reconnect.
                             Bridge.log(
                                     "LIVE: Nearby $deviceName is secure firmware not in pairing mode — exposing as non-pairable"
                             )
