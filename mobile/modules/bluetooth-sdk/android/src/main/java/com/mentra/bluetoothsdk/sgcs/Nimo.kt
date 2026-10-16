@@ -939,6 +939,8 @@ class Nimo : SGCManager() {
     private var resourcePairAddress: String? = null
     private var resourcePairName: String? = null
     private var resourceTwsAt: Long? = null
+    private var resourceFirmwareAt: Long? = null
+    private var resourceFirmwareVersion: String? = null
     private var resourceHandshakeTwsAt: Long? = null
     private var resourceTimeAckAt: Long? = null
     private var resourceTimeCommandId: String? = null
@@ -978,6 +980,7 @@ class Nimo : SGCManager() {
                 .put("canvasCommands", canvas.pendingCount()).put("canvasEncodes", canvasEncoder.pendingCount())
                 .put("audioWorkersAndPackets", audioClient.lifecyclePending()).put("acks", pendingAcks.size))
             .put("localEffectsSettled", pending == 0 && !resourceClosedWithPending)
+            .put("firmware", JSONObject().put("version", resourceFirmwareVersion ?: JSONObject.NULL).put("atEpochMs", resourceFirmwareAt ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
             .put("tws", JSONObject().put("handshakeAtEpochMs", resourceHandshakeTwsAt ?: JSONObject.NULL).put("connected", twsConnected).put("atEpochMs", resourceTwsAt ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
             .put("timeAck", JSONObject().put("statusCode", if (resourceTimeAckAt != null) 0 else JSONObject.NULL)
                 .put("writeStartedAtEpochMs", resourceTimeWriteStartedAt ?: JSONObject.NULL).put("atEpochMs", resourceTimeAckAt ?: JSONObject.NULL).put("commandId", resourceTimeCommandId ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
@@ -1838,6 +1841,7 @@ class Nimo : SGCManager() {
         resourceClosedWithPending = false; resourceReleaseResult = "not-requested"
         resourcePairAddress = device.address
         resourcePairName = device.name ?: ""
+        resourceFirmwareAt = null; resourceFirmwareVersion = null
         resourceTwsAt = null; resourceHandshakeTwsAt = null; resourceTimeAckAt = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null
         resourceCloseCalled = false; resourceCloseObserved = false; resourceDisconnectCallbackStatus = null; resourceCloseError = null
         NimoResourceDiagnostics.track(this)
@@ -2577,6 +2581,7 @@ class Nimo : SGCManager() {
                     val micro = (v ushr 12) and 0x1FF
                     val build = v and 0xFFF
                     firmwareVersionPacked = "$major.$minor.$micro.$build"
+                    resourceFirmwareVersion = firmwareVersionPacked; resourceFirmwareAt = System.currentTimeMillis()
                     emitVersionInfo()
                 }
             }
@@ -2584,6 +2589,9 @@ class Nimo : SGCManager() {
                 var end = data.size
                 while (end > 0 && data[end - 1].toInt() == 0) end--
                 firmwareVersionDetail = String(data, 0, end, Charsets.UTF_8).trim()
+                if (firmwareVersionDetail.isNotEmpty() && firmwareVersionDetail.length <= 240) {
+                    resourceFirmwareVersion = firmwareVersionDetail; resourceFirmwareAt = System.currentTimeMillis()
+                }
                 emitVersionInfo()
             }
             NimoProtocol.GET_TWS_STATUS -> {

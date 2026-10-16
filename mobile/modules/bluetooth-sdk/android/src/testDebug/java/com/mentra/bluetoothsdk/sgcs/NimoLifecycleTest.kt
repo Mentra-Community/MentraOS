@@ -315,6 +315,27 @@ class NimoLifecycleTest {
     assertTrue(nimo.resourceSnapshot().getJSONObject("timeAck").isNull("atEpochMs"))
   }
 
+  @Test fun firmwareFeedbackIsObservedWithinItsOwnSessionAndOldGattCannotRefreshIt() {
+    readyForReset()
+    setField("resourceSessionGeneration", 4L)
+    assertTrue(nimo.resourceSnapshot().getJSONObject("firmware").isNull("version"))
+    val response = Nimo::class.java.getDeclaredMethod("handleResponse", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, ByteArray::class.java).apply { isAccessible = true }
+    response.invoke(nimo, NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION, 1, byteArrayOf(1, 2, 3, 4))
+    assertTrue(nimo.resourceSnapshot().getJSONObject("firmware").isNull("atEpochMs"))
+    response.invoke(nimo, NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION_DETAIL, 0, "observed-test-version".toByteArray())
+    val observed = nimo.resourceSnapshot().getJSONObject("firmware")
+    assertEquals("observed-test-version", observed.getString("version"))
+    assertEquals(4L, observed.getLong("sessionGeneration"))
+    assertFalse(observed.isNull("atEpochMs"))
+    // New transport generation clears the evidence independently of the product's UI version cache.
+    setField("gatt", null); setField("isDisconnecting", false)
+    val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
+    Nimo::class.java.getDeclaredMethod("connectBredrTransport", android.bluetooth.BluetoothDevice::class.java).apply { isAccessible = true }.invoke(nimo, device)
+    val fresh = nimo.resourceSnapshot().getJSONObject("firmware")
+    assertEquals(5L, fresh.getLong("sessionGeneration"))
+    assertTrue(fresh.isNull("version")); assertTrue(fresh.isNull("atEpochMs"))
+  }
+
   private fun field(name: String): Any? = Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.get(nimo)
 
   private fun resourceCommand(mode: String): JSONObject {
