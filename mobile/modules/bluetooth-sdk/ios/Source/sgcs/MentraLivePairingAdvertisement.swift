@@ -285,3 +285,13 @@ struct MentraLivePendingReconnect {
         isArmed && candidate == attempt
     }
 }
+
+enum MentraLiveDiscoveryPolicy {
+    /// CoreBluetooth can deliver an advertisement without the manufacturer data that holds the
+    /// secure-pairing trailer (for example right after a scan starts or a link drops). Legacy
+    /// firmware never has the trailer; a unit already seen with it is therefore not legacy, and
+    /// the packet says nothing about its pairing mode.
+    static func isPartialAdvertisement(secureCapable: Bool, knownSecureName: Bool) -> Bool {
+        !secureCapable && knownSecureName
+    }
+}
