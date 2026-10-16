@@ -61,7 +61,7 @@ def assess_u1(before: dict, after: dict) -> list:
          "unpair, confirm ownerless on the old BES, then pair; a leftover PR NV record is not valid"),
         ("owner kept", after.get("own") == 1, str(after.get("own"))),
         ("S22 reconnects", after.get("reconnect") is True, ""),
-        ("no owner-lost card", after.get("card") is not True, ""),
+        ("no Pair Again card (no takeover happened)", after.get("card") is not True, ""),
         ("no pairing window", not after.get("window"), ""),
         ("BES version changed", bool(after.get("bes")) and after.get("bes") != OLD_BES, str(after.get("bes"))),
     ]

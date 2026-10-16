@@ -1,4 +1,5 @@
-"""Snapshot 6: live-path 4b rule, live-link precondition, open vs locked missed notice, adb-return handling."""
+"""Snapshot 6 (re-baselined for OS-2055 v4): shared owner-removal proof, live-link precondition, adb-return handling,
+the run_transition glue and the source rules."""
 
 import re
 import time
@@ -8,52 +9,14 @@ from pathlib import Path
 from unittest import mock
 
 from tests import helpers as h
-from tests.test_owner_lost import notice_script, run
 from tests.test_owner_removal import D4BFIX, st
 import cases
 import owner_lost
 import pmx
 
-REJ_LOSS = "I/Bridge  (1): LIVE: Owner loss (bond_removed_by_glasses) — stopping reconnect, keeping saved glasses"
-
-
-class LivePath4bTests(unittest.TestCase):
-    """Pre-entry own>=1 line sits BEFORE the gesture mark (the own_probe / R_S22 result); the ring after the presses
-    has only the PAIRING lines."""
-
-    def go(self, before, after):
-        ctx = h.FakeCtx(bes_lines=list(before) + list(after))
-        ctx.g.mark_at = len(before)
-        probe = h.FakeProbe(notice_script(), card_after=0.1)
-        res = run(ctx, probe, scenario="notice")
-        a = next(a for a in res.assertions if a.name.startswith("4b"))
-        return ctx, a
-
-    PRE = [st("click_window_end", "OWNER_ONLY", "1/1", 3, 1623991)]
-
-    def test_pre_entry_owner_line_from_before_the_presses_is_used(self):
-        ctx, a = self.go(self.PRE, [st("ble_connect", "PAIRING", "0/0", 4, 370)])
-        self.assertTrue(a.ok, a.detail)
-        self.assertEqual(a.source, "bes owner record (generation advanced)")
-        self.assertEqual(ctx.gaps, [])
-
-    def test_same_generation_after_the_presses_is_still_a_gap(self):
-        ctx, a = self.go(self.PRE, [st("ble_connect", "PAIRING", "0/0", 3)])
-        self.assertTrue(a.gap)
-
-    def test_no_pre_entry_owner_anywhere_is_a_gap(self):
-        ctx, a = self.go([st("pwr_press", "OWNER_ONLY", "0/0", 3)], [st("ble_connect", "PAIRING", "0/0", 4)])
-        self.assertTrue(a.gap)
-
-    def test_a_transition_from_an_earlier_window_before_the_presses_never_counts(self):
-        before = [st("session_up", "OWNER_ONLY", "1/1", 2), st("ble_connect", "PAIRING", "0/0", 3),   # setup event
-                  st("session_up", "OWNER_ONLY", "0/0", 3)]                                               # owner gone, no own>=1 after
-        ctx, a = self.go(before, [st("pwr_press", "OWNER_ONLY", "0/0", 3)])
-        self.assertTrue(a.gap)
-
-    def test_lower_generation_after_the_presses_is_a_gap(self):
-        ctx, a = self.go([st("pwr_press", "OWNER_ONLY", "1/1", 5)], [st("ble_connect", "PAIRING", "0/0", 4)])
-        self.assertTrue(a.gap)
+class LegacyOwnerRemovalProofTests(unittest.TestCase):
+    """The flag-off owner-removal proof is no longer asserted live (v4 keeps the owner at entry); readjudicate.py
+    still re-judges the old runs with it, so the shared function stays covered."""
 
     def test_shared_function_gives_live_and_readjudicate_the_same_answer(self):
         pre, proof = owner_lost.owner_removal_proof(D4BFIX, None, newest=True)
@@ -65,45 +28,6 @@ class LivePath4bTests(unittest.TestCase):
     def test_readjudicate_uses_the_shared_function(self):
         src = Path(cases.__file__).with_name("readjudicate.py").read_text()
         self.assertIn("owner_removal_proof", src)
-
-
-class MissedNoticeVariants(unittest.TestCase):
-    def go(self, bes, scenario):
-        ctx = h.FakeCtx(bes_lines=bes)
-        probe = h.FakeProbe([(0.1, h.ATTEMPT), (0.3, REJ_LOSS)], card_after=0.4)
-        res = run(ctx, probe, scenario=scenario)
-        return ctx, res
-
-    def test_open_window_variant_needs_no_0x05_only_own_0_0_staying(self):
-        ctx, res = self.go([st("ble_connect", "PAIRING", "0/0", 4)], "missed_notice")
-        self.assertEqual(ctx.failed(), [], ctx.failed())
-        self.assertEqual(ctx.gaps, [])
-        self.assertTrue(res.ok)
-
-    def test_open_window_variant_fails_when_the_glasses_admit_the_phone(self):
-        ctx, _ = self.go([st("ble_connect", "PAIRING", "0/0", 4), st("session_up", "OWNER_ONLY", "1/1", 4)],
-                         "missed_notice")
-        self.assertIn("R15 4 glasses did not admit the returning phone as owner (own=0/0 stays)", ctx.failed())
-
-    def test_open_window_variant_without_any_bes_record_is_a_gap(self):
-        ctx, _ = self.go([], "missed_notice")
-        self.assertEqual(len(ctx.gaps), 1)
-
-    def test_locked_variant_requires_the_0x05_evidence_lines(self):
-        for line in ("300 | lxy pair: ble_reject auth=2 st=OWNER_ONLY", "301 | lxy pair: ble_reject auth=0 st=OWNER_ONLY",
-                     "302 | lxy pair: encrypt_ltk drop"):
-            ctx, res = self.go([line], "missed_notice_locked")
-            self.assertEqual(ctx.gaps, [], line)
-            self.assertEqual(ctx.failed(), [], line)
-        ctx, _ = self.go([st("ble_connect", "PAIRING", "0/0", 4)], "missed_notice_locked")
-        self.assertEqual(len(ctx.gaps), 1)  # own=0/0 alone is not a reject
-
-    def test_live_link_is_not_required_before_a_missed_notice_trigger(self):
-        called = []
-        ctx = h.FakeCtx(bes_lines=[h.BES_REJECT])
-        probe = h.FakeProbe([(0.1, h.ATTEMPT), (0.3, REJ_LOSS)], card_after=0.4)
-        run(ctx, probe, scenario="missed_notice_locked", live_link=lambda: called.append(1))
-        self.assertEqual(called, [])
 
 
 class LiveLinkTests(unittest.TestCase):
@@ -133,7 +57,10 @@ class LiveLinkTests(unittest.TestCase):
         self.assertTrue(cases.link_state([L(1, "LIVE: Disconnected from GATT server"),
                                           L(2, "LIVE: 🎉 Received glasses_ready message - SOC is booted")], up, down))
         self.assertFalse(cases.link_state([L(1, "Received pong response - connection healthy"),
-                                           L(2, "LIVE: Owner loss (gatt_auth_status_5) — stopping reconnect")], up, down))
+                                           L(2, "MAN: Device disconnected")], up, down))
+        # the removed owner-loss line is no longer a link event at all
+        self.assertTrue(cases.link_state([L(1, "Received pong response - connection healthy"),
+                                          L(2, "LIVE: Owner loss (gatt_auth_status_5) — stopping reconnect")], up, down))
         self.assertIsNone(cases.link_state([L(1, "I/ReactNativeJS: Received pong response - connection healthy")], up, down))
         self.assertIsNone(cases.link_state([L(1, "LIVE: Ignoring stale glasses_ready during pairing yield")], up, down))
 
@@ -162,16 +89,19 @@ class LiveLinkTests(unittest.TestCase):
                                       timeout=10, clock=clock)
             pm.inject.assert_not_called()
 
-    def test_run_owner_lost_wires_the_precondition_before_the_gesture(self):
+    def test_run_transition_wires_the_precondition_before_the_gesture(self):
         order = []
-        ctx = h.FakeCtx(bes_lines=[h.BES_PRE_OWNER, h.BES_ENTER, h.BES_ENTER_DONE, h.BES_COMMIT])
-        probe = h.FakeProbe(notice_script(), card_after=0.1)
+        ctx = h.FakeCtx(bes_lines=[h.BES_XFER_ENTER, h.BES_MODE_ENTER, h.BES_ENTER_DONE, h.BES_CLOSE_TIMEOUT,
+                                   h.BES_CLOSE_DUMP, h.BES_PAIREXIT_TIMEOUT], log_lines=[h.LOG_PAIREXIT_TIMEOUT])
+        probe = h.FakeProbe([(0.05, h.PAIRING_MODE), (0.4, h.NORMAL), (0.5, h.LINK_UP)], popup_at=0.1)
         with mock.patch.object(cases, "await_live_link", lambda c, who, **k: order.append(f"link:{who}")):
             owner_lost.BES_POLL_S = 0.05
-            cases.run_owner_lost(ctx, "s22", scenario="notice", probe=probe, observe_s=0.3, card_s=0.2,
-                                 notice_timeout=2, bes_timeout=0.1, settle_s=0.03, ui_poll_s=0.03,
-                                 trigger=lambda: (order.append("press"), probe.fire()))
+            res = cases.run_transition(
+                ctx, "s22", scenario="timeout", probe=probe, adv=lambda: {"mentra": {"pairing": False}},
+                notice_timeout=2, close_timeout=2, resume_timeout=2, reconnect_timeout=2, bes_timeout=0.1,
+                settle_s=0.03, ui_poll_s=0.03, trigger=lambda: (order.append("press"), probe.fire()))
         self.assertEqual(order, ["link:s22", "press"])
+        self.assertEqual(res.scenario, "timeout")
 
     def test_missing_link_blocks_the_case_and_stops_the_run(self):
         ctx = h.FakeCtx()
@@ -291,40 +221,26 @@ class E3GlueTests(GlueBase):
         self.assertIn(("assert_unit3",), self.calls)
 
 
-class BtoffGlueTests(GlueBase):
-    def test_locked_variant_presses_once_clicks_once_and_runs_the_locked_scenario(self):
-        seen = {}
-
-        def fake(ctx, prev, *, scenario, trigger, **kw):
-            seen["scenario"] = scenario
-            trigger()
-            return owner_lost.OwnerLostResult(scenario=scenario, previous_owner=prev)
-
-        c = self.ctx()
-        c.g.bes_lines.extend([st("pwr_press", "OWNER_ONLY", "1/1", 3), st("mode_enter_done", "PAIRING", "0/0", 4),
-                              st("click_window_end", "PAIRING", "0/0", 4)])
-        with mock.patch.object(cases, "r_s22", lambda ctx: True), \
-                mock.patch.object(cases.owner_lost, "owner_lost_on_notice", fake):
-            cases.CASES["BTOFF_REJOIN_LOCKED"](c)
-        self.assertEqual(seen["scenario"], "missed_notice_locked")
-        injects = [call.args[0] for call in self.pmx.inject.call_args_list]
-        self.assertEqual(len(injects), 2)  # the one 3-press gesture + one single click
-        self.assertEqual(injects[1], "C")
-        self.assertEqual([call.args[0] for call in self.pmx.phone_bt.call_args_list], [False, True])
-        self.assertEqual(c.failed(), [], c.failed())
-
-
 class SourceRuleTests(unittest.TestCase):
     def test_no_wait_glasses_boot_in_cases_and_ios_has_no_key_injection(self):
         text = Path(cases.__file__).read_text()
         self.assertNotIn("wait_glasses_boot", re.sub(r"pmx\.wait_glasses_boot\([^)]*\)", "", text))
         self.assertNotIn("inject", Path(cases.ios.__file__).read_text())
 
-    def test_every_phone_previous_owner_case_goes_through_run_owner_lost(self):
+    def test_every_phone_previous_owner_case_goes_through_run_transition(self):
         text = Path(cases.__file__).read_text()
-        self.assertNotIn("owner_lost.owner_lost_on_notice(ctx", text.replace(
-            "return owner_lost.owner_lost_on_notice(ctx, previous_owner, **kw)", ""))
-        self.assertIn("BTOFF_REJOIN_LOCKED", cases.CASES)
+        self.assertNotIn("owner_lost.window_transition(ctx", text.replace(
+            "return owner_lost.window_transition(ctx, previous_owner, **kw)", ""))
+        for cid in ("O1_S22", "O1_IOS", "O2_S22", "O2_IOS", "O4_S22_MAC", "O4_S22_IOS", "O4_IOS_S22"):
+            self.assertIn(cid, cases.CASES)
+
+    def test_removed_protocol3_names_are_gone_from_the_harness_sources(self):
+        here = Path(cases.__file__).parent
+        for name in ("cases.py", "ios.py", "pmx.py"):
+            text = (here / name).read_text()
+            for dead in ("owner_lost_on_notice", "In pairing mode", "CONFIRM_REPLACE_RX", "android_pair_with_confirm",
+                         "owner_lost_card", "run_owner_lost"):
+                self.assertFalse(dead in text, f"{name}: {dead}")
 
 
 if __name__ == "__main__":

@@ -9,8 +9,6 @@ import asyncio
 import json
 import time
 
-from bleak import BleakScanner
-
 MENTRA_COMPANY_ID = 0xB822
 
 
@@ -26,11 +24,17 @@ def decode_mentra(data: bytes) -> dict:
             pairing=data[5] == 0x01,
             version=version,
             code=f"{data[9]:02X}{data[8]:02X}",
+            # v4 (OS-2055): flags byte 0x04 is OWNER_CHANGED (a window committed a different phone); the trailer's
+            # last byte is the window id. Older firmware has neither: the flag reads False, the id None.
+            owner_changed=bool(capability & 0x04),
+            window_id=data[12] if len(data) > 12 else None,
         )
     return out
 
 
 async def scan(seconds: float) -> list:
+    from bleak import BleakScanner  # imported here so decode_mentra stays importable (and unit-testable) without bleak
+
     found = {}
 
     def on_adv(device, adv):

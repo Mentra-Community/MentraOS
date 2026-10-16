@@ -262,7 +262,7 @@ class CallerCoverageTests(unittest.TestCase):
         # E1 (iOS stranger outside any window) stays legacy on purpose; every other direct call passes the hooks.
         legacy = [d for d in direct if "ios_pair_hooks" not in d]
         self.assertEqual(legacy, ["timeout=40"], legacy)
-        for name in ("r_ios", "x1_first_ios_pair", "new3_classic_first", "x7a_settings_detour", "x6_s22_to_ios",
+        for name in ("r_ios", "x1_first_ios_pair", "new3_classic_first", "x7a_settings_detour", "o4_s22_owner_ios_takes_over",
                      "x9_back_and_forth"):
             self.assertIn(name, text)
 

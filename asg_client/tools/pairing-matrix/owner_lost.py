@@ -1,40 +1,39 @@
 #!/usr/bin/env python3
-"""R15 `owner_lost_on_notice`: assertions for the previous owner's phone and the glasses.
+"""v4 `window_transition`: what the previous owner (A) and the glasses do across ONE pairing window.
 
-Plan section 7, implemented once for every case that uses it (D4BFIX, X6, X5, X7A, D4, X10,
-X11, D5D7, NEW8 mini-takeover, and the missed-notice variant for BTOFF_REJOIN).
+OS-2055, pairing-spec "Ownership transfer v4" V1-V8, transition matrix V6 rows O1, O2 and O4. The older
+`owner_lost_on_notice` (R15: owner forgotten at entry, "In pairing mode" card within 10 s, a 20 s quiet interval, a
+single-click cancel) encoded the removed behavior and is gone. This module keeps its probes, its observer thread and
+its evidence helpers (`prove_any`, the BES owner-record parsers) and observes the new contract instead.
 
-Universal assertions (scenarios takeover / ownerless / cancel), previous owner phone + glasses:
-  1. log line `Glasses entering pairing mode — owner lost, no reconnect` on the previous owner's phone
-  2. card "In pairing mode" visible within 10 s of the notice
-  3. FULL 20 s observation interval from the notice, overlapping new-owner pairing and never
-     ended early: no connect attempts, no sheet/prompt, no reconnect log lines.
-     The function returns only after the interval ends, so a later intentional "Pair again"
-     is always a separate step after it.
-  4. glasses side: notice sent, previous owner removed (R4, BES owner record own=0/0 style)
+Scenarios (A owned the glasses and was connected when the gesture was made):
 
-Case-specific:
-  takeover   new owner's commit: BES `owner committed from ble bond`, or BES own=1 plus the new
-             phone's bond (the caller supplies `new_owner_bond`); iOS Success-after-pairing_info
-             stays a case-level check.
-  ownerless  (D4/X10, nobody pairs) glasses end ownerless and locked: BES own=0/0 and the
-             advertisement pairing flag clear. The 120 s idle close is NOT waited for (F1 covers
-             it): one single-click cancel after the interval closes the window.
-  cancel     (X11) `cancel by single click`, no owner, hm_pairexit once, pairing flag cleared.
-  notice     (D5D7 and other flows that continue with Pair again afterwards) only the universal
-             assertions 1-4; no new owner, no close. The caller does the next step after the return.
-  missed_notice (BTOFF_REJOIN, the phone returns into an OPEN window) there is no notice. R1: during a window
-             non-owners may connect, so no 0x05 reject is required here. Required: the phone's rejection-based
-             owner loss (`Owner loss (bond_removed_by_glasses)` / `gatt_auth_status_5`), a BES owner record
-             showing the glasses did not admit it (own=0/0 stays, no commit), the card, and the same 20 s quiet
-             interval after the loss.
-  missed_notice_locked (BTOFF_REJOIN_LOCKED, the window is already closed and the glasses are ownerless) the 0x05
-             reject applies (R1/R8): BES `ble_reject auth=N` (connect-time reject) or `encrypt_ltk drop` (a resolvable
-             address peer dropped at encryption with disconnect reason 0x05), plus the same phone assertions.
+  timeout   O1  nobody pairs. BES `window_close reason=timeout` near 120 s (no 300 s cap), `hm_pairexit timeout`
+                ("Pairing mode ended. No new phone paired." once), advertisement pairing flag and OWNER_CHANGED
+                clear, no bond change (owner record untouched, no commit), and A: pairing_mode -> normal ->
+                reconnects with zero action, never Pair Again.
+  cancel    O2  one triple press (the toggle) closes the window: `3-press while pairing, cancel`, reason=toggle,
+                `hm_pairexit cancelled` ("Pairing cancelled." once); the same A-side outcome as O1.
+  takeover  O4  B pairs inside the window (`during`). BES commits B (V2 steps 1/3, 2/3, 3/3 in order,
+                `pairflow commit replace_owner`), `hm_pairexit paired` (or skipped when Connected follows),
+                OWNER_CHANGED set in the advertisement; A: pairing_mode -> pairing_rejected, the Pair Again card
+                (and nothing else), no connect attempt after the stand-down, never connected again.
 
-Evidence rule (fact-to-evidence table): sources are interchangeable only for the SAME fact.
-A missing BES ring line is backed up only by another source for that fact; otherwise it is
-recorded as a harness gap (`ctx.gap`) and the case stays OPEN, never PASS.
+Universal assertions on A's phone (every scenario):
+  1. the SDK moved to `pairing_mode` (`PAIRFLOW: pairing_state ... state=pairing_mode(window=N`).
+  2. the popup "Your glasses are in pairing mode" showed exactly once for that window.
+  3. while paused (from pairing_mode to the first normal/rejected state): no connect attempt, no reconnect
+     line, no Pair Again, no system sheet, no pairing_rejected.
+  4. none of the removed signals (owner_replaced, Owner loss, confirm_replace_owner, awaiting_confirm,
+     retained_owner_link, owner_reclaim) ever shows up.
+  5. glasses: the retained owner is never cleared at entry (BES `xfer enter, owner retained`, own != 0/0).
+
+Evidence rule (fact-to-evidence table): sources are interchangeable only for the SAME fact. A missing BES ring line
+is backed up only by another source for that fact; otherwise it is recorded as a harness gap (`ctx.gap`) and the case
+stays OPEN, never PASS.
+
+The BES owner-record parsers at the bottom (`owner_removal_transitions`, `owner_removal_proof`) prove the REMOVED
+forget-on-entry behavior of flag-off firmware. They stay only so readjudicate.py can still re-judge old runs.
 """
 
 from __future__ import annotations
@@ -45,9 +44,23 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-NOTICE_RX = re.compile(r"Glasses entering pairing mode \S+ owner lost, no reconnect")
-OWNER_LOSS_RX = re.compile(r"Owner loss \((?P<reason>\w+)\)")
-CARD_LABEL = "In pairing mode"
+# ------------------------------------------------------------------ phone log markers
+
+# Both SDKs log every public-state change as `PAIRFLOW: pairing_state source=... state=<describe>`.
+PAIRING_MODE_RX = re.compile(r"PAIRFLOW: pairing_state\b.*state=pairing_mode\(window=(?P<window>\d+)")
+NORMAL_RX = re.compile(r"PAIRFLOW: pairing_state\b.*state=normal\b")
+REJECTED_RX = re.compile(r"PAIRFLOW: pairing_state\b.*state=pairing_rejected\b")
+STATE_CHANGE_RX = re.compile(r"PAIRFLOW: pairing_state\b.*state=(?P<state>normal|pairing_mode|pairing_rejected)")
+PAUSED_RX = re.compile(r"connectDefault deferred .*pairing_mode")
+
+# Signals of the removed protocol-3 / R15 behavior. They must never appear in a v4 run.
+REMOVED_SIGNAL_RX = re.compile(
+    r"owner_replaced|Owner loss \(|owner lost, no reconnect|confirm_replace_owner|awaiting_confirm"
+    r"|retained_owner_link|owner_reclaim"
+)
+
+POPUP_TITLE = "Your glasses are in pairing mode"
+PAIR_AGAIN_LABEL = "Pair Again"
 PROMPT_RX_ANDROID = r"配对请求|Pairing request"
 
 # Connect attempts and reconnect logging on the previous owner's phone.
@@ -62,12 +75,28 @@ IOS_RECONNECT_RX = re.compile(
     r"|Maximum reconnection attempts"
 )
 
+# A live link to the owner: readiness / heartbeat lines, and the lines that say it is gone.
+LINK_UP_RX = {
+    "s22": re.compile(r"Received pong response - connection healthy|BLE reconnection fully ready"
+                      r"|Received glasses_ready message"),
+    "ios": re.compile(r"Received pong response - connection healthy|Received glasses_ready message"
+                      r"|pairing_info confirms owner commit"),
+}
+LINK_DOWN_RX = {
+    "s22": re.compile(r"Disconnected from GATT server|Disconnecting from Mentra Live glasses"
+                      r"|MAN: Device disconnected"),
+    "ios": re.compile(r"Disconnected from GATT server|disconnect\(\) -Disconnecting"),
+}
+
 BES_POLL_S = 1.0  # how often the BES ring evidence is re-read while waiting for a fact (tests shrink it)
 
-# BES lines that count as the HCI 0x05 reject of a former owner outside a window (m8_pairing.cpp):
-#   `lxy pair: ble_reject auth=N`   connect-time reject (peer classified, or unresolved with no owner)
-#   `lxy pair: encrypt_ltk drop`    resolvable-address peer dropped at encryption; the next disconnect reason is 0x05
+# BES lines that count as the HCI 0x05 reject of a former owner outside a window (m8_pairing.cpp).
 BES_REJECT_RX = r"ble_reject auth=\d+|encrypt_ltk drop"
+# BES lines that count as the owner's refusal inside a window: 0x14 after the one 15 s grace.
+BES_OWNER_REFUSED_RX = r"owner refused conidx=\d+|ble_reject retained owner, grace used"
+
+WINDOW_MS = 120_000
+TIMEOUT_CLOSE_RANGE_S = (110.0, 135.0)  # 120 s window, 30 s bounded deferral only for a non-owner bond
 
 
 # ------------------------------------------------------------------------ results
@@ -83,19 +112,22 @@ class Assertion:
 
 
 @dataclass
-class OwnerLostResult:
+class TransitionResult:
     scenario: str
     previous_owner: str
-    t0: float | None = None
+    t_trigger: float | None = None
+    t0: float | None = None  # stamp of the phone's pairing_mode state line
+    window_id: int | None = None
+    t_resume: float | None = None  # first normal / pairing_rejected line after t0
+    t_rejected: float | None = None
+    t_close: float | None = None  # wall time at which the BES close line was seen
     assertions: list = field(default_factory=list)
     during_value: object = None
     during_error: str | None = None
-    card_after_s: float | None = None
-    notice_line: str = ""
+    popup_count: int = 0
     probe: object = None
     phone_mark: int = 0
-    t_end: float | None = None  # t0 + observe_s
-    t_cancel: float | None = None  # wall time of the single click that closed the window (ownerless/cancel)
+    notice_line: str = ""
 
     @property
     def failed(self) -> list:
@@ -108,6 +140,13 @@ class OwnerLostResult:
     @property
     def ok(self) -> bool:
         return not self.failed and not self.gaps
+
+
+@dataclass
+class UiSample:
+    popup: bool = False
+    pair_again: bool = False
+    prompt: str | None = None  # a system pairing sheet or similar: never expected on the previous owner
 
 
 # ------------------------------------------------------------------------ probes
@@ -126,9 +165,12 @@ class Probe:
     def lines_since(self, mark: int) -> list:
         raise NotImplementedError
 
-    def poll(self, foreground: bool) -> tuple:
-        """One UI sample: (card_visible, prompt_label_or_None)."""
+    def sample(self, foreground: bool) -> UiSample:
+        """One UI sample."""
         raise NotImplementedError
+
+    def dismiss_popup(self) -> None:
+        """Answer the pairing-mode popup with its one OK button."""
 
     def dismiss(self, label: str) -> None:
         """Clear a prompt so later steps are not blocked (still counted as a failure)."""
@@ -148,15 +190,25 @@ class AndroidProbe(Probe):
     def lines_since(self, mark: int) -> list:
         return self.tap.since(mark)
 
-    def poll(self, foreground: bool) -> tuple:
+    def sample(self, foreground: bool) -> UiSample:
         import pmx
 
         if foreground:
             pmx.app_home()
         nodes = pmx.ui_nodes()
-        card = pmx.ui_find(rf"^{CARD_LABEL}$", nodes) is not None
         prompt = pmx.ui_find(PROMPT_RX_ANDROID, nodes)
-        return card, (prompt.label if prompt else None)
+        return UiSample(
+            popup=pmx.ui_find(rf"^{re.escape(POPUP_TITLE)}$", nodes) is not None,
+            pair_again=pmx.ui_find(rf"^{PAIR_AGAIN_LABEL}$", nodes) is not None,
+            prompt=prompt.label if prompt else None,
+        )
+
+    def dismiss_popup(self) -> None:
+        import pmx
+
+        ok = pmx.ui_find(r"^OK$")
+        if ok:
+            pmx.tap(*ok.center)
 
     def dismiss(self, label: str) -> None:
         import pmx
@@ -180,14 +232,24 @@ class IosProbe(Probe):
     def lines_since(self, mark: int) -> list:
         return self.tap.since(mark)
 
-    def poll(self, foreground: bool) -> tuple:
+    def sample(self, foreground: bool) -> UiSample:
         import ios
 
-        card = ios.owner_lost_card() if foreground else (ios.find(r".*In pairing mode.*") is not None)
         alert = ios.alert_text()
         sheet = ios.mac_sheet()
-        label = alert or (f"mac sheet: {sheet}" if sheet else None)
-        return card, label
+        if foreground and not alert:
+            ios.home()
+        label = None if alert and POPUP_TITLE in alert else (alert or (f"mac sheet: {sheet}" if sheet else None))
+        return UiSample(
+            popup=bool(alert) and POPUP_TITLE in alert or ios.find(rf"^{re.escape(POPUP_TITLE)}$") is not None,
+            pair_again=ios.find(rf"^{PAIR_AGAIN_LABEL}$") is not None,
+            prompt=label,
+        )
+
+    def dismiss_popup(self) -> None:
+        import ios
+
+        ios.handle_alert(("OK",))
 
     def dismiss(self, label: str) -> None:
         import ios
@@ -209,56 +271,73 @@ def make_probe(ctx, previous_owner: str) -> Probe:
 # ------------------------------------------------------------------ interval scanning
 
 
-def phone_lines_in_interval(lines: list, t0: float, observe_s: float, settle_s: float = 0.5) -> list:
-    """(stamp, line) inside [t0 + settle, t0 + observe_s], without the stand-down lines themselves."""
+def phone_lines_in_interval(lines: list, start: float, end: float, settle_s: float = 0.5) -> list:
+    """(stamp, line) inside [start + settle, end], without the state/stand-down lines themselves."""
     out = []
     for stamp, line in lines:
-        if stamp < t0 + settle_s or stamp > t0 + observe_s:
+        if stamp < start + settle_s or stamp > end:
             continue
-        if "ReactNativeJS" in line or "blocked" in line:
+        if "ReactNativeJS" in line or re.search(r"blocked|deferred|paused", line):
             continue
-        if NOTICE_RX.search(line) or OWNER_LOSS_RX.search(line):
+        if STATE_CHANGE_RX.search(line):
             continue
         out.append((stamp, line))
     return out
 
 
-def scan_interval(probe: Probe, mark: int, t0: float, observe_s: float, settle_s: float = 0.5) -> dict:
-    lines = phone_lines_in_interval(probe.lines_since(mark), t0, observe_s, settle_s)
+def scan_interval(probe: Probe, mark: int, start: float, end: float, settle_s: float = 0.5) -> dict:
+    lines = phone_lines_in_interval(probe.lines_since(mark), start, end, settle_s)
     return {
         "connects": [l for _, l in lines if probe.connect_rx.search(l)],
         "reconnects": [l for _, l in lines if probe.reconnect_rx.search(l)],
     }
 
 
+def first_stamp(lines: list, rx: re.Pattern, after: float | None = None):
+    """(stamp, line) of the first non-RN line matching rx (strictly after `after` when given), else None."""
+    for stamp, line in lines:
+        if "ReactNativeJS" in line:
+            continue
+        if after is not None and stamp <= after:
+            continue
+        if rx.search(line):
+            return stamp, line
+    return None
+
+
 # --------------------------------------------------------------------------- observer
 
 
 class Observer(threading.Thread):
-    """Background UI sampling on the previous owner's phone: card timing and prompts."""
+    """Background UI sampling on the previous owner's phone: popup count, Pair Again timing, prompts."""
 
-    def __init__(self, probe: Probe, t0: float, observe_s: float, clock=time, poll_s: float = 0.5):
+    def __init__(self, probe: Probe, clock=time, poll_s: float = 2.0, max_s: float = 400.0):
         super().__init__(daemon=True)
-        self.probe, self.t0, self.observe_s, self.clock, self.poll_s = probe, t0, observe_s, clock, poll_s
+        self.probe, self.clock, self.poll_s, self.max_s = probe, clock, poll_s, max_s
         self.stop_flag = threading.Event()
-        self.card_ts: float | None = None
+        self.popups: list = []  # rising edges of the popup (timestamps)
+        self.pair_again: list = []  # (timestamp, visible) samples
         self.prompts: list = []
         self.errors: list = []
         self.blocked_exc = None
         self.polls = 0
+        self._popup_up = False
 
     def run(self) -> None:
-        end = self.t0 + self.observe_s
+        end = self.clock.time() + self.max_s
         while self.clock.time() < end and not self.stop_flag.is_set():
             ts = self.clock.time()
             try:
-                card, prompt = self.probe.poll(foreground=self.polls >= 1 and self.card_ts is None)
+                s = self.probe.sample(foreground=self.polls == 0)
                 self.polls += 1
-                if card and self.card_ts is None:
-                    self.card_ts = ts
-                if prompt:
-                    self.prompts.append((ts, prompt))
-                    self.probe.dismiss(prompt)
+                if s.popup and not self._popup_up:
+                    self.popups.append(ts)
+                    self.probe.dismiss_popup()
+                self._popup_up = s.popup
+                self.pair_again.append((ts, s.pair_again))
+                if s.prompt:
+                    self.prompts.append((ts, s.prompt))
+                    self.probe.dismiss(s.prompt)
             except Exception as exc:  # noqa: BLE001
                 if exc.__class__.__name__ == "BenchBlocked":
                     self.blocked_exc = exc
@@ -269,6 +348,12 @@ class Observer(threading.Thread):
 
     def stop(self) -> None:
         self.stop_flag.set()
+
+    def first_pair_again(self, after: float = 0.0):
+        for ts, seen in self.pair_again:
+            if seen and ts >= after:
+                return ts
+        return None
 
 
 # --------------------------------------------------------------------- BES evidence
@@ -297,11 +382,240 @@ def own_pair(line: str) -> tuple | None:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
-def bes_after_entry(ctx, gm: int, pattern: str) -> list:
-    """BES lines matching `pattern` that come after the first mode_enter_done since `gm`.
+def pairexit_count(ctx, gm: int) -> int:
+    return len([1 for _, l in ctx.g.since(gm) if "hm_pairexit received" in l and "PairingAudio" in l])
 
-    Lines before it carry the PREVIOUS owner's record (own=1/1) and must not count as the new owner.
+
+def commit_steps(lines: list) -> list:
+    """The V2 commit step numbers (1, 2, 3) in ring order from `lxy pair: commit N/3 ...` lines."""
+    return [int(m.group(1)) for l in lines for m in [re.search(r"lxy pair: commit (\d)/3", l)] if m]
+
+
+def record_window(ctx, name: str, start: float, end: float, required: float) -> None:
+    """Record a required observation window. Shorter than `required` makes the case INVALID, never a pass."""
+    actual = end - start
+    ctx.note(f"window {name}: {actual:.2f}s required {required:.0f}s")
+    phases = getattr(ctx, "phases", None)
+    if isinstance(phases, list):
+        phases.append({"phase": f"window_{name}", "start": start, "end": end, "required_s": required})
+    if actual + 0.05 < required:
+        msg = f"{name} ran {actual:.2f}s, required {required:.0f}s"
+        mark = getattr(ctx, "mark_invalid", None)
+        if mark:
+            mark(msg)
+        else:
+            ctx.check(f"window {name} full length", False, msg)
+
+
+# ----------------------------------------------------------------------- main entry
+
+CLOSE_FACTS = {
+    # scenario: (BES window_close line, hm_pairexit reason, advertisement OWNER_CHANGED expected)
+    "timeout": (r"window_close reason=timeout", "timeout", False),
+    "cancel": (r"window_close reason=toggle", "cancelled", False),
+}
+
+
+def window_transition(
+    ctx,
+    previous_owner: str,
+    *,
+    scenario: str = "timeout",
+    trigger: Callable[[], object],
+    during: Callable[[], object] | None = None,
+    probe: Probe | None = None,
+    new_owner_bond: Callable[[], bool] | None = None,
+    notice_timeout: float = 15.0,
+    cancel_at_s: float = 6.0,
+    close_timeout: float = 150.0,
+    resume_timeout: float = 45.0,
+    reconnect_timeout: float = 120.0,
+    rejection_timeout: float = 120.0,
+    card_s: float = 10.0,
+    post_quiet_s: float = 20.0,
+    settle_s: float = 0.5,
+    ui_poll_s: float = 2.0,
+    bes_timeout: float = 15.0,
+    live_link: Callable[[], object] | None = None,
+    adv: Callable[[], dict | None] | None = None,
+    inject_cancel: Callable[[], object] | None = None,
+    clock=time,
+) -> TransitionResult:
+    """Run one v4 window observation. See the module docstring for the assertion set.
+
+    previous_owner  's22' or 'ios': the phone that held the glasses (live link) before the gesture.
+    scenario        'timeout' (O1) | 'cancel' (O2) | 'takeover' (O4).
+    live_link       optional callable run BEFORE the gesture; raises to block the case when A has no live link.
+    trigger         performs the one 3-press gesture (never retried); must not sleep long.
+    during          takeover: runs right after the notice (B pairing); overlaps A's paused interval.
+    new_owner_bond  takeover only: True when B holds its bond (own=1 + bond evidence).
+    cancel_at_s     cancel only: seconds after the phone's pairing_mode line for the triple press.
+    close_timeout   timeout only: how long to wait for the BES close line (120 s + 30 s deferral cap).
+    adv             callable returning the decoded `mentra` advertisement dict (or None).
+    inject_cancel   the toggle gesture (default: one triple press through pmx.inject).
     """
+    if scenario not in ("timeout", "cancel", "takeover"):
+        raise ValueError(f"unknown scenario {scenario!r}")
+    probe = probe or make_probe(ctx, previous_owner)
+    res = TransitionResult(scenario=scenario, previous_owner=previous_owner)
+    gm, pm = ctx.g.mark(), probe.mark()
+    res.probe, res.phone_mark = probe, pm
+
+    def add(name: str, ok: bool, source: str = "", detail: str = "", gap: bool = False) -> Assertion:
+        a = Assertion(name, bool(ok), source, detail, gap)
+        res.assertions.append(a)
+        return a
+
+    # ---- trigger and t0 --------------------------------------------------------------
+    if live_link is not None:
+        live_link()
+        gm, pm = ctx.g.mark(), probe.mark()
+        res.phone_mark = pm
+    res.t_trigger = clock.time()
+    trigger()
+    hit = _wait_phone(probe, pm, PAIRING_MODE_RX, notice_timeout, clock)
+    res.t0 = hit[0] if hit else None
+    res.notice_line = hit[1] if hit else ""
+    if hit:
+        res.window_id = int(PAIRING_MODE_RX.search(hit[1]).group("window"))
+    add("1 SDK state pairing_mode on the previous owner's phone", bool(hit), "phone",
+        hit[1][-140:] if hit else f"no `state=pairing_mode(window=` line within {notice_timeout:.0f} s: STOP and "
+        "investigate whether this phone received entering_pairing_mode (phone_hello declared protocol 4?)")
+    t0 = res.t0 if res.t0 is not None else clock.time()
+
+    obs = Observer(probe, clock, poll_s=ui_poll_s)
+    obs.start()
+
+    # ---- scenario body ------------------------------------------------------------------
+    if during is not None:
+        try:
+            res.during_value = during()
+        except Exception as exc:  # noqa: BLE001
+            res.during_error = repr(exc)[:300]
+
+    if scenario == "cancel":
+        wait = t0 + cancel_at_s - clock.time()
+        if wait > 0:
+            clock.sleep(wait)
+        _cancel_gesture(inject_cancel)
+        res.t_close = clock.time()
+        bes_pat = CLOSE_FACTS["cancel"][0]
+        hit_close = prove_any([("bes", lambda: first(ctx.bes(bes_pat, gm)))], bes_timeout, clock=clock)
+    elif scenario == "timeout":
+        hit_close = prove_any([("bes", lambda: first(ctx.bes(CLOSE_FACTS["timeout"][0], gm)))], close_timeout,
+                              clock=clock)
+        res.t_close = clock.time()
+    else:  # takeover: the commit closes the window
+        hit_close = prove_any([
+            ("bes", lambda: first(ctx.bes(r"owner committed from ble bond", gm))),
+            ("bes own=1 + new phone bond",
+             lambda: (first(_after_entry(ctx, gm, r"st=\w+ .*own=1/\d"))
+                      if new_owner_bond and new_owner_bond() else None)),
+        ], bes_timeout, clock=clock)
+        res.t_close = clock.time()
+
+    # ---- A's phone: resume (normal) or stand-down (pairing_rejected) -------------------------
+    wait_s = rejection_timeout if scenario == "takeover" else resume_timeout
+    resume = _wait_phone(probe, pm, re.compile(NORMAL_RX.pattern + "|" + REJECTED_RX.pattern), wait_s, clock,
+                         after=t0)
+    if resume is not None:
+        res.t_resume = resume[0]
+    if scenario == "takeover":
+        rej = resume if resume is not None and REJECTED_RX.search(resume[1]) else _wait_phone(
+            probe, pm, REJECTED_RX, rejection_timeout, clock, after=t0)
+        res.t_rejected = rej[0] if rej else None
+        if rej and res.t_resume is None:
+            res.t_resume = rej[0]
+    reconnect = None
+    if scenario in ("timeout", "cancel") and res.t_resume is not None:
+        reconnect = _wait_phone(probe, pm, LINK_UP_RX[previous_owner], reconnect_timeout, clock, after=res.t_resume)
+    if scenario == "takeover" and res.t_rejected is not None:
+        quiet_end = res.t_rejected + post_quiet_s
+        wait = quiet_end - clock.time()
+        if wait > 0:
+            clock.sleep(wait)
+    obs.stop()
+    obs.join(timeout=60)
+    if obs.blocked_exc is not None:
+        raise obs.blocked_exc
+    res.popup_count = len(obs.popups)
+
+    # ---- phone-side assertions ------------------------------------------------------
+    if res.during_error:
+        add("new-owner/during action completed", False, "harness", res.during_error)
+    if obs.errors:
+        ctx.note(f"observer UI errors (non-fatal): {obs.errors[:3]}")
+    add("2 popup 'Your glasses are in pairing mode' shown exactly once for the window", len(obs.popups) == 1,
+        "phone UI", f"{len(obs.popups)} sighting(s) in {obs.polls} polls")
+    paused_end = res.t_resume if res.t_resume is not None else clock.time()
+    scan = scan_interval(probe, pm, t0, paused_end, settle_s)
+    quiet = f"paused interval {paused_end - t0:.0f} s from the pairing_mode line"
+    add("3a no connect attempts while paused", not scan["connects"], "phone log",
+        str([c[-110:] for c in scan["connects"][:3]]) or quiet)
+    add("3b no reconnect log lines while paused", not scan["reconnects"], "phone log",
+        str([c[-110:] for c in scan["reconnects"][:3]]) or quiet)
+    add("3c no sheet/prompt on the previous owner", not obs.prompts, "phone UI",
+        str(obs.prompts[:2]) if obs.prompts else quiet)
+    early_card = [ts for ts, seen in obs.pair_again if seen and ts < paused_end]
+    add("3d no Pair Again while paused (reconnecting card only)", not early_card, "phone UI",
+        f"Pair Again seen at +{early_card[0] - t0:.1f}s" if early_card else quiet)
+    add("4 no removed signal (owner_replaced, Owner loss, confirm_replace_owner, awaiting_confirm, "
+        "retained_owner_link, owner_reclaim)",
+        not [l for _, l in probe.lines_since(pm) if REMOVED_SIGNAL_RX.search(l)], "phone log",
+        str([l[-100:] for _, l in probe.lines_since(pm) if REMOVED_SIGNAL_RX.search(l)][:2]))
+
+    if scenario in ("timeout", "cancel"):
+        add("5 SDK resumed to normal (flag cleared, pairing_mode_ended or endsAtMs)", res.t_resume is not None
+            and bool(NORMAL_RX.search(resume[1])), "phone",
+            resume[1][-120:] if resume else f"no `state=normal` line within {resume_timeout:.0f} s of the close")
+        add("5 A reconnected with zero action", reconnect is not None, "phone",
+            reconnect[1][-120:] if reconnect else f"no link-up line within {reconnect_timeout:.0f} s of normal")
+        add("5 never rejected (no Pair Again, no pairing_rejected)",
+            not any(REJECTED_RX.search(l) for _, l in probe.lines_since(pm)) and
+            not [ts for ts, seen in obs.pair_again if seen], "phone UI+log", "")
+    else:
+        add("5 A's SDK reached pairing_rejected", res.t_rejected is not None, "phone",
+            f"+{res.t_rejected - t0:.1f}s after pairing_mode" if res.t_rejected else
+            f"no `state=pairing_rejected` line within {rejection_timeout:.0f} s (bit path: one verification "
+            "reconnect; fallback: three-strike auth streak)")
+        card = obs.first_pair_again(res.t_rejected) if res.t_rejected is not None else None
+        add("5 Pair Again card within 10 s of the rejection", card is not None and card - res.t_rejected <= card_s,
+            "phone UI", f"first seen {card - res.t_rejected:.1f}s after pairing_rejected" if card is not None
+            else f"not seen in {obs.polls} polls")
+        if res.t_rejected is not None:
+            post = scan_interval(probe, pm, res.t_rejected, res.t_rejected + post_quiet_s, settle_s)
+            add(f"5 stood down: no connect attempt for {post_quiet_s:.0f} s after pairing_rejected",
+                not post["connects"], "phone log", str([c[-110:] for c in post["connects"][:3]]))
+            up = first_stamp(probe.lines_since(pm), LINK_UP_RX[previous_owner], after=res.t_rejected)
+            add("5 A never shows connected again", up is None, "phone log", up[1][-110:] if up else "")
+
+    # ---- glasses-side facts ---------------------------------------------------------
+    _glasses_assertions(ctx, res, add, gm, scenario, hit_close, new_owner_bond=new_owner_bond,
+                        bes_timeout=bes_timeout, clock=clock, adv=adv)
+
+    for a in res.assertions:
+        if a.gap:
+            ctx.gap(f"V6 {a.name}", a.detail)
+        else:
+            ctx.check(f"V6 {a.name}", a.ok, f"[{a.source}] {a.detail}".strip())
+    return res
+
+
+# ----------------------------------------------------------------------------- helpers
+
+
+def _cancel_gesture(inject_cancel) -> None:
+    """The toggle: one triple press (a single press only re-speaks the code)."""
+    if inject_cancel is not None:
+        inject_cancel()
+        return
+    import pmx
+
+    pmx.inject("triple", 50)
+
+
+def _after_entry(ctx, gm: int, pattern: str) -> list:
+    """BES lines matching `pattern` that come after the first mode_enter_done since `gm`."""
     seen, out = False, []
     rx = re.compile(pattern)
     for line in ctx.bes("", gm):
@@ -312,6 +626,139 @@ def bes_after_entry(ctx, gm: int, pattern: str) -> list:
             out.append(line)
     return out
 
+
+bes_after_entry = _after_entry  # name kept for the cases that import it
+
+
+def _wait_phone(probe: Probe, mark: int, rx: re.Pattern, timeout: float, clock=time, after: float | None = None):
+    deadline = clock.time() + timeout
+    while True:
+        hit = first_stamp(probe.lines_since(mark), rx, after=after)
+        if hit:
+            return hit
+        if clock.time() >= deadline:
+            return None
+        clock.sleep(0.25)
+
+
+def _glasses_assertions(ctx, res, add, gm, scenario, hit_close, *, new_owner_bond, bes_timeout, clock, adv) -> None:
+    # Fact: the glasses opened the window WITHOUT forgetting the owner (V2). BES only.
+    entry = first(ctx.bes(r"xfer enter, owner retained", gm))
+    after = ctx.bes(r"mode_enter_done .*own=\d/\d", gm)
+    post = own_pair(after[-1]) if after else None
+    if entry and (post is None or post != (0, 0)):
+        add("6 window entry kept the owner (xfer enter, owner retained, own != 0/0)", True, "bes",
+            f"{entry.strip()} / {after[-1].strip() if after else 'no mode_enter_done dump'}")
+    elif post == (0, 0):
+        add("6 window entry kept the owner (xfer enter, owner retained, own != 0/0)", False, "bes",
+            f"owner forgotten at entry: {after[-1]}")
+    else:
+        add("6 window entry kept the owner (xfer enter, owner retained, own != 0/0)", False, "-",
+            "HARNESS GAP: no `xfer enter, owner retained` line in the BES ring; the phone log and the "
+            "advertisement cannot prove BES kept the record", gap=True)
+
+    mode = first(ctx.bes(r"pairflow mode_enter \S+", gm))
+    if mode:
+        add("6 BES told the phone (mode_enter notified_phone retained_owner)",
+            "notified_phone" in mode and "retained_owner" in mode, "bes", mode.strip())
+
+    if scenario in ("timeout", "cancel"):
+        bes_pat, wire_reason, _ = CLOSE_FACTS[scenario]
+        add(f"7 BES closed the window ({bes_pat})", bool(hit_close), "bes",
+            hit_close[1] if hit_close else f"no `{bes_pat}` line")
+        if scenario == "timeout" and res.t_trigger and res.t_close:
+            elapsed = res.t_close - res.t_trigger
+            lo, hi = TIMEOUT_CLOSE_RANGE_S
+            add("7 closes near 120 s (one window, no 300 s cap)", hit_close is not None and lo <= elapsed <= hi,
+                "bes+wall clock", f"{elapsed:.0f} s after the gesture")
+        if scenario == "cancel":
+            add("7 triple press toggled the window (`3-press while pairing, cancel`)",
+                bool(ctx.bes(r"3-press while pairing, cancel", gm)), "bes", "")
+        sent = first(ctx.bes(rf"hm_pairexit sent reason={wire_reason}", gm))
+        count = pairexit_count(ctx, gm)
+        add(f"7 hm_pairexit reason={wire_reason} exactly once", count == 1 or (count == 0 and bool(sent)), "asg log",
+            f"{count} received line(s); bes: {sent.strip() if sent else 'none'}")
+        # The owner record is untouched: no commit, no clear_owner, no wipe step, own != 0/0 at the close.
+        bad = ctx.bes(r"owner committed|clear_owner|commit [123]/3|bond_deleted", gm)
+        add("8 no bond change (no commit, clear_owner or wipe step)", not bad, "bes", str(bad[:2]))
+        closing = ctx.bes(r"window_close st=\w+ .*own=\d/\d", gm)
+        last = own_pair(closing[-1]) if closing else None
+        if last is None:
+            add("8 owner record kept at the close (own != 0/0)", False, "-",
+                "HARNESS GAP: no `window_close st=... own=` dump in the BES ring", gap=True)
+        else:
+            add("8 owner record kept at the close (own != 0/0)", last != (0, 0), "bes", closing[-1].strip())
+        _adv_assertions(res, add, adv, pairing=False, owner_changed=False)
+    else:
+        add("7 new owner committed (BES)", bool(hit_close), hit_close[0] if hit_close else "-",
+            hit_close[1] if hit_close else "no `owner committed from ble bond` and no own=1 + bond for B")
+        steps = commit_steps(ctx.bes(r"lxy pair: commit \d/3", gm))
+        add("8 commit steps 1/3, 2/3, 3/3 in order (delete A's BLE first = the commit point)", steps == [1, 2, 3],
+            "bes", str(steps))
+        flow = first(ctx.bes(r"pairflow commit replace_owner", gm))
+        add("8 pairflow commit replace_owner", bool(flow), "bes", flow.strip() if flow else "")
+        exit_line = first(ctx.bes(r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", gm))
+        add("8 closed as paired (hm_pairexit paired, or skipped because Connected follows)", bool(exit_line), "bes",
+            exit_line.strip() if exit_line else "")
+        _adv_assertions(res, add, adv, pairing=False, owner_changed=True)
+
+
+def _adv_assertions(res, add, adv, *, pairing: bool, owner_changed: bool) -> None:
+    a = adv() if adv else None
+    m = (a or {}).get("mentra", {}) if a else {}
+    if not a:
+        add("9 advertisement pairing flag clear", False, "-",
+            "HARNESS GAP: glasses advertisement not seen; BES window_close cannot prove the flag", gap=True)
+        return
+    add("9 advertisement pairing flag clear", bool(m.get("pairing")) == pairing, "adv", str(m))
+    add(f"9 advertisement OWNER_CHANGED {'set' if owner_changed else 'clear'}",
+        bool(m.get("owner_changed")) == owner_changed, "adv", str(m))
+    if res.window_id is not None and m.get("window_id") is not None:
+        add("9 advertisement window_id matches the phone's window", m.get("window_id") == res.window_id, "adv",
+            f"adv {m.get('window_id')} / phone {res.window_id}")
+
+
+def observe_quiet(ctx, res: TransitionResult, seconds: float = 30.0, ui_poll_s: float = 3.0, settle_s: float = 0.5,
+                  clock=time) -> TransitionResult:
+    """After a takeover (A is in pairing_rejected): watch A for `seconds` more. The stand-down must hold: no connect
+    attempt, no reconnect line, no sheet, and the Pair Again card stays. Longer-term no-reclaim stays covered by
+    the BT-off rejoin and reboot cases."""
+    probe = res.probe
+    start = res.t_rejected or res.t_close or clock.time()
+    end = clock.time() + seconds
+    prompts, card_last, polls = [], None, 0
+    while clock.time() < end:
+        s = probe.sample(foreground=False)
+        polls += 1
+        card_last = s.pair_again
+        if s.prompt:
+            prompts.append((clock.time(), s.prompt))
+            probe.dismiss(s.prompt)
+        left = end - clock.time()
+        if left > 0:
+            clock.sleep(min(ui_poll_s, left))
+    record_window(ctx, "post_rejection", end - seconds, clock.time(), seconds)
+    scan = scan_interval(probe, res.phone_mark, start, clock.time(), settle_s)
+    out = [
+        Assertion(f"10a no connect attempts for {seconds:.0f} s after the stand-down", not scan["connects"],
+                  "phone log", str([c[-110:] for c in scan["connects"][:3]])),
+        Assertion(f"10b no reconnect log lines for {seconds:.0f} s after the stand-down", not scan["reconnects"],
+                  "phone log", str([c[-110:] for c in scan["reconnects"][:3]])),
+        Assertion(f"10c no sheet/prompt for {seconds:.0f} s after the stand-down", not prompts, "phone UI",
+                  str(prompts[:2])),
+        Assertion("10d Pair Again card still shown", bool(card_last), "phone UI", f"{polls} polls"),
+    ]
+    for a in out:
+        ctx.check(f"V6 {a.name}", a.ok, f"[{a.source}] {a.detail}".strip())
+    res.assertions.extend(out)
+    return res
+
+
+# ------------------------------------------------- legacy (flag-off) owner-record proof
+#
+# Flag-off firmware keeps forget-on-entry: pairing-mode entry deletes the previous owner (own>=1 -> own=0/0 with a
+# greater window generation). v4 never does that, so no live case asserts it any more; readjudicate.py still uses
+# these parsers to re-judge the old R15 rows in runs/x2.
 
 LXY_STATE_RX = re.compile(r"lxy pair: (?P<tag>\w+) st=(?P<st>\w+) .*?own=(?P<b>\d)/(?P<c>\d) .*?generation=(?P<gen>\d+)")
 
@@ -342,373 +789,11 @@ def owner_removal_transitions(lines: list) -> list:
 
 
 def owner_removal_proof(all_lines: list, post_lines: list | None = None, newest: bool = False):
-    """Shared by the live path and readjudicate.py. `all_lines` is the whole ring since the case started (so the
-    pre-entry owner record that R_S22/own_probe logged is there even though it predates the presses);
-    `post_lines` the ring since the presses. Only a transition whose PROOF line is after the presses counts, so a
-    transition from an earlier window (setup pairing) never proves this event. Returns (pre_line, proof_line)|None.
+    """Shared by readjudicate.py. `all_lines` is the whole ring since the case started; `post_lines` the ring since the
+    presses. Only a transition whose PROOF line is after the presses counts. Returns (pre_line, proof_line)|None.
     First matching transition live; newest=True for a post-mortem over a whole trace."""
     post = set(post_lines) if post_lines is not None else None
     found = [t for t in owner_removal_transitions(all_lines) if post is None or t[1] in post]
     if not found:
         return None
     return found[-1] if newest else found[0]
-
-
-def pairexit_count(ctx, gm: int) -> int:
-    return len([1 for _, l in ctx.g.since(gm) if "hm_pairexit received" in l and "PairingAudio" in l])
-
-
-# ----------------------------------------------------------------------- main entry
-
-
-def record_window(ctx, name: str, start: float, end: float, required: float) -> None:
-    """Record a required observation window. Shorter than `required` makes the case INVALID, never a pass."""
-    actual = end - start
-    ctx.note(f"window {name}: {actual:.2f}s required {required:.0f}s")
-    phases = getattr(ctx, "phases", None)
-    if isinstance(phases, list):
-        phases.append({"phase": f"window_{name}", "start": start, "end": end, "required_s": required})
-    if actual + 0.05 < required:
-        msg = f"{name} ran {actual:.2f}s, required {required:.0f}s"
-        mark = getattr(ctx, "mark_invalid", None)
-        if mark:
-            mark(msg)
-        else:
-            ctx.check(f"window {name} full length", False, msg)
-
-
-def owner_lost_on_notice(
-    ctx,
-    previous_owner: str,
-    *,
-    scenario: str = "takeover",
-    trigger: Callable[[], object],
-    during: Callable[[], object] | None = None,
-    probe: Probe | None = None,
-    new_owner_bond: Callable[[], bool] | None = None,
-    observe_s: float = 20.0,
-    card_s: float = 10.0,
-    notice_timeout: float = 15.0,
-    rejection_timeout: float = 90.0,
-    settle_s: float = 0.5,
-    ui_poll_s: float = 0.5,
-    bes_timeout: float = 15.0,
-    close_window: str = "cancel",
-    live_link: Callable[[], object] | None = None,
-    cancel_at_s: float | None = None,
-    adv: Callable[[], dict | None] | None = None,
-    inject_click: Callable[[], object] | None = None,
-    clock=time,
-) -> OwnerLostResult:
-    """Run one R15 owner-lost observation. See the module docstring for the assertion set.
-
-    previous_owner  's22' or 'ios': the phone that held the glasses before the gesture.
-    scenario        'takeover' | 'ownerless' | 'cancel' | 'notice' | 'missed_notice' | 'missed_notice_locked'.
-    live_link       optional callable run BEFORE the gesture (not for the missed-notice scenarios, whose phone is
-                    offline on purpose); it raises to block the case when the previous owner has no live link.
-    trigger         performs the gesture / reconnect (one 3-press gesture, never retried); must not
-                    sleep long, the interval is measured from the phone's notice line.
-    during          runs right after the notice, overlapping the interval (the new owner pairing).
-    new_owner_bond  takeover only: True when the new phone holds its bond (own=1 + bond evidence).
-    close_window    ownerless only: 'cancel' (one single click after the interval) or 'none'.
-    cancel_at_s     seconds after the notice for the single click (cancel scenario default 6.0,
-                    ownerless default observe_s + 1.0).
-    adv             callable returning the decoded `mentra` advertisement dict (or None).
-    """
-    if scenario not in ("takeover", "ownerless", "cancel", "missed_notice", "missed_notice_locked", "notice"):
-        raise ValueError(f"unknown scenario {scenario!r}")
-    probe = probe or make_probe(ctx, previous_owner)
-    res = OwnerLostResult(scenario=scenario, previous_owner=previous_owner)
-    gm, pm = ctx.g.mark(), probe.mark()
-    res.probe, res.phone_mark = probe, pm
-
-    def add(name: str, ok: bool, source: str = "", detail: str = "", gap: bool = False) -> Assertion:
-        a = Assertion(name, bool(ok), source, detail, gap)
-        res.assertions.append(a)
-        return a
-
-    missed = scenario in ("missed_notice", "missed_notice_locked")
-    # ---- trigger and t0 --------------------------------------------------------------
-    if live_link is not None and not missed:
-        live_link()
-        gm, pm = ctx.g.mark(), probe.mark()
-        res.phone_mark = pm
-    trigger()
-    if missed:
-        hit = _wait_phone(probe, pm, OWNER_LOSS_RX, rejection_timeout, clock)
-        res.t0 = hit[0] if hit else None
-        res.notice_line = hit[1] if hit else ""
-        reason = (OWNER_LOSS_RX.search(hit[1]).group("reason") if hit else "")
-        add("phone rejection-based owner loss (no notice)", bool(hit) and reason != "entering_pairing_mode",
-            "phone", hit[1][-160:] if hit else "no `Owner loss (...)` line after the reconnect")
-        notice_seen = [l for _, l in probe.lines_since(pm) if NOTICE_RX.search(l)]
-        add("scenario valid: no entering_pairing_mode notice was received", not notice_seen, "phone",
-            notice_seen[0][-120:] if notice_seen else "")
-    else:
-        hit = _wait_phone(probe, pm, NOTICE_RX, notice_timeout, clock)
-        res.t0 = hit[0] if hit else None
-        res.notice_line = hit[1] if hit else ""
-        add("1 notice log line on previous owner phone", bool(hit), "phone",
-            hit[1][-140:] if hit else f"no `owner lost, no reconnect` line within {notice_timeout:.0f} s: "
-            "STOP and investigate whether this phone received entering_pairing_mode")
-    t0 = res.t0 if res.t0 is not None else clock.time()
-    res.t_end = t0 + observe_s
-
-    # ---- overlapping observation ----------------------------------------------------
-    obs = Observer(probe, t0, observe_s, clock, poll_s=ui_poll_s)
-    obs.start()
-    cancel_done = None
-    if scenario in ("cancel", "ownerless") and (scenario == "cancel" or close_window == "cancel"):
-        at = cancel_at_s if cancel_at_s is not None else (6.0 if scenario == "cancel" else observe_s + 1.0)
-    else:
-        at = None
-
-    if during is not None:
-        try:
-            res.during_value = during()
-        except Exception as exc:  # noqa: BLE001
-            res.during_error = repr(exc)[:300]
-
-    if at is not None:
-        wait = t0 + at - clock.time()
-        if at <= observe_s and wait > 0:
-            clock.sleep(wait)
-        if at <= observe_s:
-            cancel_done = _single_click(ctx, inject_click)
-            res.t_cancel = clock.time()
-
-    remaining = t0 + observe_s - clock.time()
-    if remaining > 0:
-        clock.sleep(remaining)
-    record_window(ctx, "quiet", t0, clock.time(), observe_s)
-    obs.stop()
-    obs.join(timeout=60)
-    if obs.blocked_exc is not None:
-        raise obs.blocked_exc
-    if at is not None and at > observe_s:
-        wait = t0 + at - clock.time()
-        if wait > 0:
-            clock.sleep(wait)
-        cancel_done = _single_click(ctx, inject_click)
-        res.t_cancel = clock.time()
-
-    # ---- phone-side assertions ------------------------------------------------------
-    if res.during_error:
-        add("new-owner/during action completed", False, "harness", res.during_error)
-    if obs.errors:
-        ctx.note(f"observer UI errors (non-fatal): {obs.errors[:3]}")
-    if obs.card_ts is not None:
-        res.card_after_s = obs.card_ts - t0
-    add("2 card 'In pairing mode' within 10 s",
-        obs.card_ts is not None and res.card_after_s <= card_s, "phone UI",
-        f"first seen {res.card_after_s:.1f}s after t0 (UI poll start time; {obs.polls} polls)"
-        if obs.card_ts is not None else f"not seen in {obs.polls} polls over {observe_s:.0f} s")
-    scan = scan_interval(probe, pm, t0, observe_s, settle_s)
-    quiet = f"interval {observe_s:.0f} s from t0"
-    add("3a no connect attempts for 20 s", not scan["connects"], "phone log",
-        str([c[-110:] for c in scan["connects"][:3]]) or quiet)
-    add("3b no sheet/prompt for 20 s", not obs.prompts, "phone UI",
-        str(obs.prompts[:2]) if obs.prompts else quiet)
-    add("3c no reconnect log lines for 20 s", not scan["reconnects"], "phone log",
-        str([c[-110:] for c in scan["reconnects"][:3]]) or quiet)
-
-    # ---- glasses-side facts ---------------------------------------------------------
-    _glasses_assertions(ctx, res, add, gm, scenario, notice_seen=bool(res.notice_line) and not missed,
-                        new_owner_bond=new_owner_bond, bes_timeout=bes_timeout, clock=clock, adv=adv,
-                        close_window=close_window, cancel_done=cancel_done)
-
-    for a in res.assertions:
-        if a.gap:
-            ctx.gap(f"R15 {a.name}", a.detail)
-        else:
-            ctx.check(f"R15 {a.name}", a.ok, f"[{a.source}] {a.detail}".strip())
-    return res
-
-
-def observe_after_close(ctx, res: OwnerLostResult, seconds: float = 30.0, ui_poll_s: float = 3.0,
-                        settle_s: float = 0.5, clock=time) -> OwnerLostResult:
-    """After the window was closed (ownerless/cancel), watch the previous owner for `seconds` more.
-
-    The old D4FIX waited out a 300 s yield to see whether the phone reclaimed; R15 has no yield, so the
-    equivalent is: after the window is gone the phone still makes no connect attempt, no reconnect line, no
-    prompt, and the card stays. Longer-term no-reclaim stays covered by BTOFF_REJOIN, X3 and G3.
-    """
-    probe = res.probe
-    start = res.t_cancel or res.t_end or clock.time()
-    end = start + seconds
-    prompts, card_last, polls = [], None, 0
-    while clock.time() < end:
-        card, prompt = probe.poll(foreground=False)
-        polls += 1
-        card_last = card
-        if prompt:
-            prompts.append((clock.time(), prompt))
-            probe.dismiss(prompt)
-        left = end - clock.time()
-        if left > 0:
-            clock.sleep(min(ui_poll_s, left))
-    record_window(ctx, "post_close", start, clock.time(), seconds)
-    scan = scan_interval(probe, res.phone_mark, start, seconds, settle_s)
-    out = [
-        Assertion(f"7a no connect attempts for {seconds:.0f} s after the window closed", not scan["connects"],
-                  "phone log", str([c[-110:] for c in scan["connects"][:3]])),
-        Assertion(f"7b no reconnect log lines for {seconds:.0f} s after the window closed", not scan["reconnects"],
-                  "phone log", str([c[-110:] for c in scan["reconnects"][:3]])),
-        Assertion(f"7c no sheet/prompt for {seconds:.0f} s after the window closed", not prompts, "phone UI",
-                  str(prompts[:2])),
-        Assertion("7d card still shown after the window closed", bool(card_last), "phone UI", f"{polls} polls"),
-    ]
-    for a in out:
-        ctx.check(f"R15 {a.name}", a.ok, f"[{a.source}] {a.detail}".strip())
-    res.assertions.extend(out)
-    return res
-
-
-# ----------------------------------------------------------------------------- helpers
-
-
-def _wait_phone(probe: Probe, mark: int, rx: re.Pattern, timeout: float, clock=time):
-    deadline = clock.time() + timeout
-    seen = mark
-    while True:
-        chunk = probe.lines_since(seen)
-        seen += len(chunk)
-        for stamp, line in chunk:
-            if "ReactNativeJS" in line:
-                continue
-            if rx.search(line):
-                return stamp, line
-        if clock.time() >= deadline:
-            return None
-        clock.sleep(0.25)
-
-
-def _single_click(ctx, inject_click) -> bool:
-    if inject_click is not None:
-        inject_click()
-        return True
-    import pmx
-
-    pmx.inject("C", 50)
-    return True
-
-
-def _glasses_assertions(ctx, res, add, gm, scenario, *, notice_seen, new_owner_bond, bes_timeout, clock, adv,
-                        close_window, cancel_done) -> None:
-    # Fact: notice was sent by the glasses (BES line, or the phone's received-notice line). Not the card.
-    if scenario not in ("missed_notice", "missed_notice_locked"):
-        bes_notice = first(ctx.bes(r"entering_pairing_mode", gm))
-        if bes_notice:
-            add("4a glasses sent entering_pairing_mode", True, "bes", bes_notice)
-        elif notice_seen:
-            add("4a glasses sent entering_pairing_mode", True, "phone received-notice line",
-                "BES ring has no entering_pairing_mode trace; the phone's received-notice line proves the same fact")
-        else:
-            add("4a glasses sent entering_pairing_mode", False, "-", "neither BES nor the phone shows the notice")
-
-        # Fact: previous owner removed (R4). BES only: phone log and advertisement cannot prove it.
-        before = ctx.bes(r"(pwr_press|mode_enter|click_window_end) st=\w+ .*own=\d/\d", gm)
-        after = ctx.bes(r"mode_enter_done .*own=\d/\d", gm)
-        pre = own_pair(before[0]) if before else None
-        post = own_pair(after[-1]) if after else None
-        deleted = ctx.bes(r"clear_owner|bond_deleted|bond.*delet", gm)
-        if post is not None and post != (0, 0):
-            add("4b previous owner removed (R4)", False, "bes", f"owner still recorded after entry: {after[-1]}")
-        elif post == (0, 0) and pre is not None and pre != (0, 0):
-            add("4b previous owner removed (R4)", True, "bes", f"own={pre[0]}/{pre[1]} -> own=0/0: {after[-1]}")
-        elif deleted:
-            add("4b previous owner removed (R4)", True, "bes bond deletion", deleted[0])
-        elif owner_removal_proof(ctx.bes("", 0), ctx.bes("", gm)):
-            pre_line, proof_line = owner_removal_proof(ctx.bes("", 0), ctx.bes("", gm))
-            add("4b previous owner removed (R4)", True, "bes owner record (generation advanced)",
-                f"{pre_line}  =>  {proof_line}")
-        elif post == (0, 0):
-            add("4b previous owner removed (R4)", False, "bes",
-                f"own=0/0 after entry but no pre-entry owner record in the ring (pre={pre}); the glasses may "
-                "not have held this phone as owner", gap=False)
-        else:
-            add("4b previous owner removed (R4)", False, "-",
-                "HARNESS GAP: no BES owner record (mode_enter_done) and no bond-deletion line; phone log and "
-                "advertisement cannot prove BES erased ownership", gap=True)
-
-    if scenario == "takeover":
-        hit = prove_any([
-            ("bes", lambda: first(ctx.bes(r"owner committed from ble bond", gm))),
-            ("bes own=1 + new phone bond",
-             lambda: (first(bes_after_entry(ctx, gm, r"st=\w+ .*own=1/\d"))
-                      if new_owner_bond and new_owner_bond() else None)),
-        ], bes_timeout, clock=clock)
-        if hit:
-            add("5 new owner committed", True, hit[0], hit[1])
-        else:
-            add("5 new owner committed", False, "-",
-                "HARNESS GAP: no BES `owner committed from ble bond` and no own=1 + bond for the new phone; "
-                "UI Success or advertisement cannot prove a BES commit", gap=True)
-
-    if scenario in ("ownerless", "cancel"):
-        _close_and_ownerless(ctx, res, add, gm, scenario, bes_timeout, clock, adv, close_window, cancel_done)
-
-    if scenario == "missed_notice_locked":
-        hit = prove_any([("bes", lambda: first(ctx.bes(BES_REJECT_RX, gm)))], bes_timeout, clock=clock)
-        if hit:
-            add("4 glasses rejected the reconnect (HCI 0x05: ble_reject / encrypt_ltk drop)", True, "bes", hit[1])
-        else:
-            add("4 glasses rejected the reconnect (HCI 0x05: ble_reject / encrypt_ltk drop)", False, "-",
-                "HARNESS GAP: no BES `ble_reject auth=N` and no `encrypt_ltk drop` line; the phone's owner-loss log "
-                "alone does not prove the glasses rejected it", gap=True)
-    elif scenario == "missed_notice":
-        # Window open (R1: non-owners may connect): the glasses must simply not admit it as owner.
-        def not_admitted():
-            lines = ctx.bes("", gm)
-            if any(own_pair(l) not in (None, (0, 0)) for l in lines if LXY_STATE_RX.search(l)) or \
-                    any("owner committed" in l for l in lines):
-                return "ADMITTED"
-            zero = [l for l in lines if LXY_STATE_RX.search(l) and own_pair(l) == (0, 0)]
-            return zero[-1] if zero else None
-
-        hit = prove_any([("bes", not_admitted)], bes_timeout, clock=clock)
-        if hit and hit[1] == "ADMITTED":
-            add("4 glasses did not admit the returning phone as owner (own=0/0 stays)", False, "bes",
-                "a BES owner record shows an owner after the phone returned")
-        elif hit:
-            add("4 glasses did not admit the returning phone as owner (own=0/0 stays)", True, "bes", hit[1])
-        else:
-            add("4 glasses did not admit the returning phone as owner (own=0/0 stays)", False, "-",
-                "HARNESS GAP: no BES owner record after the phone returned (own=0/0 or otherwise); the phone's "
-                "owner-loss log cannot prove what the glasses recorded", gap=True)
-        rej = first(ctx.bes(BES_REJECT_RX, gm))
-        if rej:
-            res.assertions[-1].detail += f" (also rejected: {rej.strip()[:60]})"
-
-
-def _close_and_ownerless(ctx, res, add, gm, scenario, bes_timeout, clock, adv, close_window, cancel_done) -> None:
-    if scenario == "cancel":
-        hit = prove_any([("bes", lambda: first(ctx.bes(r"cancel by single click", gm)))], bes_timeout, clock=clock)
-        add("6 cancel by single click", bool(hit), "bes", hit[1] if hit else "no `cancel by single click` line")
-        count = pairexit_count(ctx, gm)
-        add("6 hm_pairexit exactly once", count == 1, "glasses log", str(count))
-    elif close_window == "cancel":
-        hit = prove_any([("bes", lambda: first(ctx.bes(r"window_close reason=", gm)))], bes_timeout, clock=clock)
-        add("6 window closed by one single click (idle close is F1)", bool(hit), "bes",
-            hit[1] if hit else "no window_close after the single click")
-    else:
-        add("6 ownerless locked", False, "-",
-            "HARNESS GAP: close_window='none': the window is still open, adv pairing flag cannot be clear",
-            gap=True)
-        return
-
-    owner = ctx.bes(r"window_close st=\w+ .*own=\d/\d|click_window_end st=\w+ .*own=\d/\d", gm)
-    owner_last = own_pair(owner[-1]) if owner else None
-    if owner_last == (0, 0):
-        add("6 BES ownerless (own=0/0)", True, "bes", owner[-1])
-    elif owner_last is not None:
-        add("6 BES ownerless (own=0/0)", False, "bes", f"owner recorded: {owner[-1]}")
-    else:
-        add("6 BES ownerless (own=0/0)", False, "-", "HARNESS GAP: no BES owner record after the close", gap=True)
-    a = adv() if adv else None
-    m = (a or {}).get("mentra", {}) if a else {}
-    if not a:
-        add("6 adv pairing flag clear", False, "-",
-            "HARNESS GAP: glasses advertisement not seen; BES window_close cannot prove the flag", gap=True)
-    else:
-        add("6 adv pairing flag clear", not m.get("pairing"), "adv", str(m))

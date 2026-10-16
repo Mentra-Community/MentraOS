@@ -624,19 +624,15 @@ def app_unpair() -> bool:
             break
         tap(*blocker.center)
         time.sleep(2)
-    owner_lost_card = ui_find(r"^In pairing mode$") is not None
-    if not owner_lost_card:
-        if not tap_text(r"^Mentra Live$", 8):
-            return False
-        time.sleep(2)
+    # The Pair Again card (S7, shown only after a takeover) has no Unpair or forget button, so the same
+    # Settings route as a connected phone is the only way here.
+    if not tap_text(r"^Mentra Live$", 8):
+        return False
+    time.sleep(2)
     if not tap_text(r"^Unpair glasses$", 8):
         return False
     time.sleep(1.5)
-    if owner_lost_card:
-        # The card's confirm modal is not in the uiautomator tree; its confirm button sits here.
-        tap(769, 1363)
-    else:
-        tap_text(r"^Unpair$", 8)
+    tap_text(r"^Unpair$", 8)
     time.sleep(3)
     return ui_find(r"^Pair glasses$") is not None
 
@@ -705,7 +701,7 @@ def app_pair(code: str | None = None, timeout: float = 60, accept_dialog: bool =
                 continue
         if not picked and scan_seen is None:
             # not on the scan list yet: clear whatever sits in the way
-            for pat in (r"^Pair again$", r"^Continue$", r"^Finish pairing$"):
+            for pat in (r"^Pair Again$", r"^Continue$", r"^Finish pairing$"):
                 b = ui_find(pat, nodes)
                 if b:
                     tap(*b.center)

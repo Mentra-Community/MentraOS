@@ -86,17 +86,27 @@ class FakeCtx:
 
 
 class FakeProbe(owner_lost.Probe):
-    """Previous owner phone. Lines and UI facts are scripted relative to the trigger time."""
+    """Previous owner phone. Lines and UI facts are scripted relative to the trigger time.
+
+    popup_at / popup_again_at   when the "Your glasses are in pairing mode" popup appears (it stays until dismissed)
+    pair_again_at               from this offset on the Pair Again card is visible (never when None)
+    prompt_at                   a system pairing sheet appears once
+    """
 
     platform = "s22"
 
-    def __init__(self, script: list, card_after: float | None = 0.1, prompt_at: float | None = None):
+    def __init__(self, script: list, popup_at: float | None = 0.1, pair_again_at: float | None = None,
+                 prompt_at: float | None = None, popup_again_at: float | None = None):
         self.script = sorted(script)  # [(offset_s, line)]
-        self.card_after = card_after
+        self.popup_at = popup_at
+        self.popup_again_at = popup_again_at
+        self.pair_again_at = pair_again_at
         self.prompt_at = prompt_at
         self.trigger_t: float | None = None
         self.dismissed: list = []
+        self.popups_dismissed = 0
         self._prompt_given = False
+        self._popup_hidden_until = 0.0
 
     def fire(self) -> None:
         self.trigger_t = time.time()
@@ -111,30 +121,56 @@ class FakeProbe(owner_lost.Probe):
         out = [(self.trigger_t + off, line) for off, line in self.script if self.trigger_t + off <= now]
         return out[mark:]
 
-    def poll(self, foreground: bool) -> tuple:
-        now = time.time()
-        card = self.card_after is not None and self.trigger_t is not None and now >= self.trigger_t + self.card_after
+    def _at(self, offset: float | None) -> bool:
+        return offset is not None and self.trigger_t is not None and time.time() >= self.trigger_t + offset
+
+    def sample(self, foreground: bool) -> owner_lost.UiSample:
+        popup = self._at(self.popup_at) and self.popups_dismissed == 0
+        if self._at(self.popup_again_at) and self.popups_dismissed == 1:
+            popup = True
         prompt = None
-        if self.prompt_at is not None and self.trigger_t is not None and now >= self.trigger_t + self.prompt_at \
-                and not self._prompt_given:
+        if self._at(self.prompt_at) and not self._prompt_given:
             self._prompt_given = True
             prompt = "配对请求"
-        return card, prompt
+        return owner_lost.UiSample(popup=popup, pair_again=self._at(self.pair_again_at), prompt=prompt)
+
+    def dismiss_popup(self) -> None:
+        self.popups_dismissed += 1
 
     def dismiss(self, label: str) -> None:
         self.dismissed.append(label)
 
 
-NOTICE = "I/Bridge  (1): LIVE: Glasses entering pairing mode — owner lost, no reconnect"
-OWNER_LOSS = "I/Bridge  (1): LIVE: Owner loss (entering_pairing_mode) — stopping reconnect, keeping saved glasses"
-ATTEMPT = "I/Live    (1): 🔌 🔗 ATTEMPTING CONNECTION to device: CC:E7:DE:E0:02:BE (Mentra_Live_02BE) - Reconnect attempt #0"
+def pairing_mode_line(window: int = 7) -> str:
+    return (f"I/Bridge  (1): PAIRFLOW: pairing_state source=android "
+            f"state=pairing_mode(window={window},endsAtMs=1700000120000)")
 
-BES_PRE_OWNER = "100 | lxy pair: pwr_press st=OWNER_ONLY exp=1 own=1/1 clicks=3/3 fired=1 ind=0 lock=0 generation=1 cand=0 conidx=0"
-BES_ENTER = "110 | lxy pair: mode_enter st=OWNER_ONLY exp=1 own=1/1 clicks=3/3 fired=1 ind=0 lock=0 generation=1 cand=0 conidx=0"
-BES_ENTER_DONE = "111 | lxy pair: mode_enter_done st=PAIRING exp=1 own=0/0 clicks=3/3 fired=1 ind=1 lock=0 generation=2 cand=0 conidx=255"
-BES_COMMIT = "200 | lxy pair: owner committed from ble bond"
-BES_OWN1 = "210 | lxy pair: ble_bond st=OWNER_ONLY exp=1 own=1/1 clicks=0/3 fired=0 ind=0 lock=1 generation=2 cand=0 conidx=0"
-BES_REJECT = "300 | lxy pair: ble_reject auth=2 st=PAIRING"
-BES_CANCEL = "400 | lxy pair: cancel by single click"
-BES_CLOSE = "401 | lxy pair: window_close st=PAIRING exp=1 own=0/0 clicks=0/3 fired=0 ind=1 lock=0 generation=2 cand=0 conidx=255"
-BES_CLOSE_REASON = "400 | lxy pair: window_close reason=pclk"
+
+PAIRING_MODE = pairing_mode_line()
+NORMAL = "I/Bridge  (1): PAIRFLOW: pairing_state source=android state=normal"
+REJECTED = "I/Bridge  (1): PAIRFLOW: pairing_state source=android state=pairing_rejected"
+LINK_UP = "I/Bridge  (1): Received pong response - connection healthy"
+ATTEMPT = "I/Live    (1): 🔌 🔗 ATTEMPTING CONNECTION to device: CC:E7:DE:E0:02:BE (Mentra_Live_02BE) - Reconnect attempt #0"
+REMOVED_OWNER_LOSS = "I/Bridge  (1): LIVE: Owner loss (entering_pairing_mode) — stopping reconnect, keeping saved glasses"
+
+# BES ring lines (m8_pairing.cpp log strings)
+BES_XFER_ENTER = "50 | lxy pair: xfer enter, owner retained, classic snapshot=1"
+BES_MODE_ENTER = "51 | lxy pairflow mode_enter notified_phone retained_owner"
+BES_ENTER_DONE = "111 | lxy pair: mode_enter_done st=PAIRING exp=1 own=1/1 clicks=3/3 fired=1 ind=1 lock=0 generation=2 cand=0 conidx=0"
+BES_ENTER_DONE_FORGOT = BES_ENTER_DONE.replace("own=1/1", "own=0/0")
+BES_TOGGLE = "300 | lxy pair: 3-press while pairing, cancel"
+BES_CLOSE_TOGGLE = "301 | lxy pair: window_close reason=toggle"
+BES_CLOSE_TIMEOUT = "400 | lxy pair: window_close reason=timeout"
+BES_CLOSE_DUMP = "401 | lxy pair: window_close st=OWNER_ONLY exp=1 own=1/1 clicks=0/3 fired=0 ind=0 lock=1 generation=2 cand=0 conidx=0"
+BES_PAIREXIT_TIMEOUT = "402 | lxy pair hm_pairexit sent reason=timeout uart=1"
+BES_PAIREXIT_CANCELLED = "302 | lxy pair hm_pairexit sent reason=cancelled uart=1"
+BES_PAIREXIT_PAIRED = "205 | lxy pair hm_pairexit sent reason=paired uart=1"
+BES_FLOW_REPLACE = "198 | lxy pairflow commit replace_owner classic_saved"
+BES_COMMIT_STEPS = ["200 | lxy pair: commit 1/3 delete previous owner ble",
+                    "201 | lxy pair: commit 2/3 delete entry-snapshot classic",
+                    "202 | lxy pair: commit 3/3 drop other live links"]
+BES_COMMITTED = "199 | lxy pair: owner committed from ble bond"
+BES_OWN1_B = "210 | lxy pair: ble_bond st=OWNER_ONLY exp=1 own=1/1 clicks=0/3 fired=0 ind=0 lock=1 generation=2 cand=0 conidx=0"
+LOG_PAIREXIT_TIMEOUT = "I/PairingAudio: hm_pairexit received reason=timeout"
+LOG_PAIREXIT_CANCELLED = "I/PairingAudio: hm_pairexit received reason=cancelled"
+LOG_PAIREXIT_PAIRED = "I/PairingAudio: hm_pairexit received reason=paired"

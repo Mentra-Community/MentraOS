@@ -330,10 +330,11 @@ def escape_to_home(max_steps: int = 6) -> bool:
     return False
 
 
-def dismiss_owner_lost_modal() -> bool:
-    t = visible_texts()
-    if "In pairing mode" in t and "Cancel" in t and "Pair again" in t:
-        return tap_text(r"^Cancel$", 3)
+def dismiss_pairing_popup() -> bool:
+    """Answer the once-per-window popup "Your glasses are in pairing mode" with its one OK button."""
+    a = alert_text()
+    if a and "pairing mode" in a:
+        return handle_alert(("OK",)) is not None
     return False
 
 
@@ -561,7 +562,7 @@ def clear_blockers(max_steps: int = 6) -> None:
 
 
 def open_pairing_scan() -> bool:
-    """From wherever the app is (home, onboarding, owner-lost card, modals), reach the scan list.
+    """From wherever the app is (home, onboarding, the Pair Again card, modals), reach the scan list.
     One screen snapshot per loop keeps this fast."""
     simctl("launch", SIM, APP)
     time.sleep(1)
@@ -573,8 +574,8 @@ def open_pairing_scan() -> bool:
         has = lambda s: any(re.fullmatch(s, x) for x in t)  # noqa: E731
         if has(r"Choose your glasses") or has(r"Not showing up\?"):
             return True
-        if has(r"Pair again") and has(r"Cancel") and has(r"In pairing mode"):
-            tap_text(r"^Pair again$", 3)
+        if has(r"Pair Again"):
+            tap_text(r"^Pair Again$", 3)  # S7: goes straight to the pairing prep, no confirm step
         elif has(r"Ignore"):
             tap_text(r"^Ignore$", 3)
         elif has(r"Continue Anyway"):
@@ -606,9 +607,6 @@ def clean_pending() -> bool:
     for _ in range(4):
         handle_alert()
         t = visible_texts()
-        if "In pairing mode" in t and "Cancel" in t and "Pair again" in t:
-            tap_text(r"^Cancel$", 3)
-            continue
         if "Ignore" in t:
             tap_text(r"^Ignore$", 3)
             continue
@@ -763,12 +761,11 @@ def unpair() -> bool:
     """Settings -> Unpair glasses -> Unpair. True when home shows 'Pair glasses'."""
     labels = home()
     escape_to_home()
-    dismiss_owner_lost_modal()
+    dismiss_pairing_popup()
     clear_blockers()
     if find(r"^Pair glasses$"):
         return True
-    card = find(r"^In pairing mode$") is not None
-    if not card and not tap_text(r".*Mentra Live(, .*)?", 8):
+    if not tap_text(r".*Mentra Live(, .*)?", 8):
         return False
     time.sleep(2)
     if not tap_text(r"^Unpair glasses.*", 8):
@@ -783,20 +780,16 @@ def unpair() -> bool:
     return find(r"^Pair glasses$") is not None
 
 
-def owner_lost_card() -> bool:
+def pair_again_card() -> bool:
+    """S7: the Home card shown only after a takeover (SDK state pairing_rejected). One button, "Pair Again"."""
     home()
-    return find(r".*In pairing mode.*") is not None
+    return find(r"^Pair Again$") is not None
 
 
 def pair_again_from_card() -> bool:
-    if not tap_text(r"^Pair again$", 8):
+    """Tap Pair Again. It opens the pairing prep directly: there is no confirm alert and no unpair step."""
+    if not tap_text(r"^Pair Again$", 8):
         return False
-    time.sleep(1.5)
-    if not handle_alert(("Pair again",)):
-        els = find_all(r"^Pair again$")
-        els.sort(key=lambda e: -e.rect["y"])
-        if els:
-            tap(els[0])
     time.sleep(2)
     return True
 
