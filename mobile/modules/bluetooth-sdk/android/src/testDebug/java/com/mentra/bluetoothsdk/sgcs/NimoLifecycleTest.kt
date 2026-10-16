@@ -514,11 +514,16 @@ class NimoLifecycleTest {
   }
 
   @Test fun sdkScanThenConnectPreservesOriginalCapturedManagerAndCancelStillDrainsIt() {
+    // Retire the unrelated setup fixture. The real SDK scan must create and admit
+    // its own manager instance; no direct admit or fake manager transition is used.
+    nimo.cleanup()
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    encoderThread.join(1_000)
+    val threadsBeforeScan = Thread.getAllStackTraces().keys
     manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
-    manager.sgc = nimo
     val sdk = uninitializedSdk()
     for ((name, value) in mapOf("appContext" to context, "deviceManager" to manager,
       "discoveredDeviceNames" to mutableSetOf<String>())) {
@@ -526,6 +531,10 @@ class NimoLifecycleTest {
     }
     Shadows.shadowOf(BluetoothAdapter.getDefaultAdapter()).setState(BluetoothAdapter.STATE_ON)
     sdk.startScan(com.mentra.bluetoothsdk.DeviceModel.NIMO)
+    nimo = manager.sgc as Nimo
+    encoderThread = Thread.getAllStackTraces().keys.single {
+      it.name == "NimoCanvasEncoder" && it !in threadsBeforeScan
+    }
     val admissionFile = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
     val admission = admissionFile.readText()
     assertEquals(nimo.resourceInstanceId, JSONObject(admission).getString("instanceId"))
