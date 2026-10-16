@@ -188,9 +188,9 @@ function GlassesScanScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedByDeployment, searchResults])
 
-  // Pairability controls whether tapping a Mentra Live can connect, not whether it is shown.
-  // Keep every discovered unit visible so users can put the correct glasses into pairing mode
-  // and verify its spoken code before choosing it.
+  // The choose list is only glasses the user can pair now. A secure Mentra Live that is
+  // nearby but not in pairing mode stays off it: the 3-press screen remains and the
+  // scan keeps running until that unit advertises pairing mode.
   const pairableResults = useMemo(
     () =>
       visibleResults.filter(
@@ -210,12 +210,14 @@ function GlassesScanScreen() {
     [isMentraLivePairingScan, securePairingEnabled, visibleResults],
   )
   const listResults = visibleResults
-  const shouldShowDeviceList = listResults.length > 0
+  const listedResults =
+    isMentraLivePairingScan && securePairingEnabled ? pairableResults : listResults
+  const shouldShowDeviceList = listedResults.length > 0
 
   useEffect(() => {
     // Keep scanning after an idle secure unit appears. Advertisements arrive one
-    // at a time, so another nearby unit may still be pairable or use existing pairing behavior.
-    if (scanTimedOut || pairableResults.length > 0) {
+    // at a time, and that unit may enter pairing mode while this screen is open.
+    if (scanTimedOut || pairableResults.length > 0 || hasNearbyNotInPairingMode) {
       return
     }
 
@@ -242,7 +244,7 @@ function GlassesScanScreen() {
     return () => {
       clearTimeout(timer)
     }
-  }, [deviceModel, pairableResults.length, scanGeneration, scanTimedOut])
+  }, [deviceModel, hasNearbyNotInPairingMode, pairableResults.length, scanGeneration, scanTimedOut])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
     if (!allowedByDeployment) return
@@ -360,9 +362,6 @@ function GlassesScanScreen() {
     if (shouldShowDeviceList) {
       return translate("pairing:liveChooseGlassesTitle")
     }
-    if (hasNearbyNotInPairingMode) {
-      return translate("pairing:livePairingFoundTitle")
-    }
     if (scanTimedOut) {
       return translate("pairing:liveScanHelpTitle")
     }
@@ -376,7 +375,7 @@ function GlassesScanScreen() {
     isMentraLivePairingScan &&
     securePairingEnabled &&
     !shouldShowDeviceList &&
-    (scanTimedOut || (pairableResults.length === 0 && hasNearbyNotInPairingMode))
+    scanTimedOut
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -390,18 +389,12 @@ function GlassesScanScreen() {
             <View className="gap-3 py-2">
               <Text
                 className="text-center text-base font-medium text-foreground"
-                text={
-                  hasNearbyNotInPairingMode
-                    ? translate("pairing:livePairingFoundSubtitle")
-                    : translate("pairing:liveScanHelpInfo")
-                }
+                text={translate("pairing:liveScanHelpInfo")}
               />
-              {!hasNearbyNotInPairingMode ? (
-                <Text
-                  className="text-center text-base font-semibold text-foreground"
-                  text={translate("pairing:liveUpdatedGlassesHint")}
-                />
-              ) : null}
+              <Text
+                className="text-center text-base font-semibold text-foreground"
+                text={translate("pairing:liveUpdatedGlassesHint")}
+              />
               <Text
                 className="text-center text-sm leading-5 text-muted-foreground"
                 text={translate("pairing:livePairingModeInfo")}
@@ -426,7 +419,7 @@ function GlassesScanScreen() {
               {shouldShowDeviceList ? (
                 <ScrollView className="max-h-[220px] -mr-4 pr-4" contentContainerClassName="my-2">
                   <Group>
-                    {listResults.map((res: Device) => {
+                    {listedResults.map((res: Device) => {
                       const deviceTitle =
                         deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
                       const deviceSubtitle =
@@ -482,7 +475,7 @@ function GlassesScanScreen() {
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {listResults.map((res: Device) => {
+                {listedResults.map((res: Device) => {
                   const deviceTitle =
                     deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
                   const deviceSubtitle =
