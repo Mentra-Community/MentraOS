@@ -94,6 +94,35 @@ test('an authority answer lost after commit retains its exact portable winner fo
   expect(recovered!.claims).toEqual(original); expect(f.writes).toHaveLength(1)
   expect(await f.service.reserveFleet('lost', 'a'.repeat(64), 'air2', 'mac')).toBeNull()
 })
+test('lost authority answers are found before offer drift and only an exact terminal cancellation returns that winner', async () => {
+  let lost = false
+  const f = fixture({afterCommit() {if (!lost) {lost = true; throw Error('response lost after durable authority CAS')}}}), row = fleetRequest('lost')
+  f.requests.set(row.requestId, row)
+  await expect(f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).rejects.toThrow('response lost')
+  const original = hostResourceReservationsSchema.parse(f.rows.get('mini')!.resourceReservations), claim = original[0]!
+  const other = exclusiveHostReservationSchema.parse({...claim, id: '43e32a8f-ae1e-4d4c-97f1-e0d922a7c21d', resourceId: 'another-account',
+    owner: {id: 'other-request', kind: 'run'}, operationId: 'run:other-request'})
+  f.rows.get('mini')!.resourceReservations = [...original, other]
+  for (const host of f.rows.values()) delete host.snapshot.lanes[0]!.resources[0]!.exclusiveDependencies
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air2', 'mac')).toBeNull()
+  expect(f.writes).toHaveLength(1); expect(f.rows.get('mini')!.resourceReservations).toEqual([...original, other])
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([...original, other])
+  row.state = 'terminal'; row.fleetCancellation = {requestedAt: new Date(at).toISOString(), reason: 'cancelled before executable binding'}
+  await f.service.reconcileFleetCancellation(row.requestId)
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([other]); expect(f.writes).toHaveLength(2)
+  expect(row).not.toHaveProperty('fleetExclusiveExecutionBinding'); expect(row).not.toHaveProperty('input')
+})
+test('a retained request receipt cannot recreate a missing authority claim or silently drop its dependency', async () => {
+  const f = fixture(), row = fleetRequest('receipt'); f.requests.set(row.requestId, row)
+  row.fleetExclusiveReservation = (await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac'))!
+  f.rows.get('mini')!.resourceReservations = []
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
+  for (const host of f.rows.values()) delete host.snapshot.lanes[0]!.resources[0]!.exclusiveDependencies
+  expect(await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')).toBeNull()
+  expect(f.rows.get('mini')!.resourceReservations).toEqual([]); expect(f.writes).toHaveLength(1)
+})
 test('terminal cancellation racing the exclusive commit reconciles only that never-bound portable winner', async () => {
   const f = fixture({afterCommit(requests) {const request = requests.get('cancel-race')!; request.state = 'terminal'
     request.fleetCancellation = {requestedAt: new Date(at).toISOString(), reason: 'cancelled during authority write'}}})

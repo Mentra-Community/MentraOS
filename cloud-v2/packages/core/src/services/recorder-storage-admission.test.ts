@@ -4,8 +4,7 @@ import {recorderStorageAvailable, STORAGE_MARGIN_BYTES} from '../types/recorder-
 import {TestRequestModel} from '../models/test-request.model'
 import {TestHostStateModel} from '../models/test-host-state.model'
 import {requestInputDigest} from './test-request.service'
-import {ResourceReservationsService} from './resource-reservations.service'
-import type {FleetExclusiveReservation} from '../types/resource-reservations.types'
+import {ResourceReservationsService, type ResourceReservationRepository} from './resource-reservations.service'
 const now=new Date('2026-10-15T12:00:00Z'),gib=1024**3,required={minimumAvailableBytes:7*gib}
 const offer={poolId:'host:disk:1',observedAt:now.toISOString(),availableBytes:8*gib,stagingBudgetBytes:10*gib,pendingEvidenceBytes:0,reservations:[]}
 const claim=(requestId:string)=>({id: requestId==='one'?'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba20':'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba21',
@@ -66,7 +65,7 @@ function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?
  snapshot:{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:now.toISOString(),lanes:['mac','android'].map(id=>({id,platform:'ios-on-mac',state:options.offline?'offline':'idle',dispatchMode:'automatic',resources:[{id:`${id}-rec`,kind:'recorder',storage:{...offer,poolId:`${hostId}:disk:1`}}]}))}}]))
  const requests=new Map<string,any>(), writes:any[]=[];let raced=false,selectionFailed=false
  const dependency={resourceId:'conference-account',authorityHostId:'host',capability:'google-authentication'}, exclusiveCalls:string[]=[]
- let portable: FleetExclusiveReservation|undefined, answerLost=false
+ let answerLost=false
  if(options.exclusive)for(const host of hosts.values())for(const lane of host.snapshot.lanes)lane.resources.push({id:`${lane.id}-fixture`,kind:'fixture-data',capabilities:['google-authentication'],exclusiveDependencies:[dependency]})
  const first=spyOn(TestRequestModel.collection,'findOne').mockImplementation((async(query:any)=>{
   if(!requests.has(query.requestId))requests.set(query.requestId,{...row(query.requestId),fleetResourceReservation:undefined,state:'awaiting-runner',fleetPreparation:{definition:{execution:{policy:{estimatedOutputBytes:5*gib}}},requirements:{platform:'ios-on-mac',resources:[{kind:'recorder',capabilities:[],storage:required}]}},fleetSelection:{build:{headSha:'b'.repeat(40)}}})
@@ -92,21 +91,23 @@ function admissionFixture(options:{reportRace?:boolean;missing?:boolean;offline?
   }
   Object.assign(request,update.$set);return structuredClone(request)
  }) as any)
- const exclusive=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async(requestId,digest,hostId,laneId)=>{
-  exclusiveCalls.push(requestId)
-  if(portable)return portable.intent.owner.id===requestId&&portable.intent.hostId===hostId&&portable.intent.laneId===laneId?structuredClone(portable):null
-  const host=hosts.get('host'), borrower=hosts.get(hostId), origin={kind:'fleet' as const,fleetInputSha256:digest}, intent={operationId:`run:${requestId}`,hostId,laneId,
-   inputSha256:digest,owner:{id:requestId,kind:'run' as const},controller:{incarnation:borrower.incarnation,generation:borrower.incarnationGeneration,sequence:borrower.sequence},
-   resources:borrower.snapshot.lanes.find((lane:any)=>lane.id===laneId).resources.map((value:any)=>({id:value.id,capabilities:value.kind==='fixture-data'?['google-authentication']:[]}))},
-   intentSha256=requestInputDigest({...intent,controller:{incarnation:intent.controller.incarnation,generation:intent.controller.generation},origin,dependencies:[dependency]}),
-   claim={kind:'exclusive' as const,id:'3e684af3-a53e-4da3-a4f8-4856dd1af72b',resourceId:dependency.resourceId,authorityHostId:'host',borrowerHostId:hostId,laneId,
-    owner:intent.owner,operationId:intent.operationId,origin,inputSha256:digest,intentSha256,controllerIncarnation:intent.controller.incarnation,
-    controllerGeneration:intent.controller.generation,borrowerSequence:intent.controller.sequence,reservedAt:now.toISOString()}
-  portable={origin,intent,intentSha256,claims:[claim]};host.resourceReservations.push(claim);host.resourceReservationVersion++
-  if(options.exclusiveAnswerLost&&!answerLost){answerLost=true;throw Error('exclusive answer lost after authority commit')}
-  return structuredClone(portable)
+ const resourceRows:ResourceReservationRepository={
+  async get(hostId){return structuredClone(hosts.get(hostId)??null)},
+  async request(requestId){return structuredClone(requests.get(requestId)??null)},
+  async claimedHosts(requestId){return [...hosts.values()].filter(host=>host.resourceReservations.some((value:any)=>
+   value.kind==='exclusive'&&value.owner.id===requestId&&value.owner.kind==='run'&&value.origin?.kind==='fleet')).map(host=>structuredClone(host))},
+  async replace(previous,claims){
+   const host=hosts.get(previous.hostId)
+   if(host.sequence!==previous.sequence||host.resourceReservationVersion!==previous.resourceReservationVersion)return false
+   host.resourceReservations=structuredClone(claims);host.resourceReservationVersion++
+   if(options.exclusiveAnswerLost&&!answerLost){answerLost=true;throw Error('exclusive answer lost after authority commit')}
+   return true
+  },
+ },resources=new ResourceReservationsService(resourceRows,()=>now.getTime()),reserveFleet=ResourceReservationsService.prototype.reserveFleet
+ const exclusive=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async(...args)=>{
+  exclusiveCalls.push(args[0]);return reserveFleet.call(resources,...args)
  })
- return {writes,requests,exclusiveCalls,host:(hostId='host')=>hosts.get(hostId),restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore();exclusive.mockRestore()}}
+ return {writes,requests,exclusiveCalls,resources,host:(hostId='host')=>hosts.get(hostId),restore(){first.mockRestore();read.mockRestore();hostSave.mockRestore();find.mockRestore();save.mockRestore();exclusive.mockRestore()}}
 }
 test('two simultaneous lane claims atomically fence the existing host record and cannot spend the same bytes',async()=>{
  const f=admissionFixture()
@@ -159,6 +160,32 @@ test('lost exclusive response or failed request receipt adopts its original winn
    expect(new Set(f.host().resourceReservations.map((value:any)=>value.id)).size).toBe(2)
    expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'other','mac',now)).toBeNull()
    expect(f.host('other').resourceReservations).toEqual([])
+  }finally{f.restore()}
+ }
+})
+test('a retained exclusive authority winner blocks offer removal and alternate targets after a failed request receipt',async()=>{
+ for(const failure of [{exclusiveAnswerLost:true},{selectionFailure:true}])for(const drift of ['removed','changed-authority']){
+  const f=admissionFixture({exclusive:true,...failure})
+  try{
+   await expect(routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).rejects.toThrow()
+   const original=structuredClone(f.host().resourceReservations),originalWrites=f.writes.length
+   for(const hostId of ['host','other'])for(const lane of f.host(hostId).snapshot.lanes){
+    const fixture=lane.resources.find((value:any)=>value.kind==='fixture-data')
+    if(drift==='removed')delete fixture.exclusiveDependencies
+    else fixture.exclusiveDependencies[0].authorityHostId='other'
+   }
+   expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)).toBeNull()
+   expect(await routineJobRepository.reserveResources!('one','a'.repeat(64),'other','mac',now)).toBeNull()
+   expect(f.writes).toHaveLength(originalWrites)
+   expect(f.host().resourceReservations).toEqual(original);expect(f.host('other').resourceReservations).toEqual([])
+   expect(f.requests.get('one').fleetResourceReservation).toBeUndefined()
+   expect(f.requests.get('one')).not.toHaveProperty('fleetBinding')
+   expect(f.requests.get('one')).not.toHaveProperty('input')
+   expect(f.requests.get('one')).not.toHaveProperty('fleetExclusiveExecutionBinding')
+   Object.assign(f.requests.get('one'),{state:'terminal',fleetCancellation:{requestedAt:now.toISOString(),reason:'Cancelled before executable allocation'}})
+   await f.resources.reconcileFleetCancellation('one')
+   expect(f.host().resourceReservations).toEqual(original.filter((value:any)=>value.kind!=='exclusive'))
+   expect(reconcileRecorderHostReservations(f.host().resourceReservations,[f.requests.get('one')],offer)).toEqual([])
   }finally{f.restore()}
  }
 })

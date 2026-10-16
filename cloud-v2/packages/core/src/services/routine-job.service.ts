@@ -113,9 +113,9 @@ export const routineJobRepository: RoutineJobRepository = {
         selected && own?.id !== selected.id || own && own.poolId !== offered.poolId || !own && retained.length + exclusiveClaims.length >= 1000) return null;
       const unobserved = unobservedRecorderHostReservations(retained.filter(value => value !== own), requests, offered);
       if (!recorderStorageAvailable(offered, required, now.getTime(), unobserved)) return null;
-      const needsExclusive = requirements.resources.some(required => lane.resources.find(value => value.kind === required.kind)
-        ?.exclusiveDependencies?.some(dependency => required.capabilities.includes(dependency.capability)));
-      const exclusive = needsExclusive ? await exclusiveResources.reserveFleet(requestId, fleetInputSha256, hostId, laneId) : undefined;
+      // The existing authority may have committed before its request receipt write failed. Always
+      // reconcile that winner; current offers alone cannot establish the absence of an old claim.
+      const exclusive = await exclusiveResources.reserveFleet(requestId, fleetInputSha256, hostId, laneId);
       if (exclusive === null || selected && exclusive && (!row.fleetExclusiveReservation || requestInputDigest(row.fleetExclusiveReservation) !== requestInputDigest(exclusive))) return null;
       const chosenModel = row.fleetPreparation.requirements.glasses ? lane.glasses!.find(value =>
         row.fleetPreparation!.requirements.glasses!.models.includes(value.model))!.model : undefined;
