@@ -63,8 +63,8 @@ test('routing reads only fresh current offers and preserves permission and physi
   process.env.TEST_HOST_TOKENS = JSON.stringify({mini: 't'.repeat(32), invalid: 'short'});
   try {
     const service = new TestHostStateService(), [offered] = await service.list();
-    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString()});
-    expect(selections).toEqual([{hostId: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), recorderReservations: []});
+    expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
       'snapshot.lanes.glasses': 1, _id: 0}]);

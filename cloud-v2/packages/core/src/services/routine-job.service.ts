@@ -25,6 +25,7 @@ import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type
 import {TestRunError} from './test-result-error';
 import {ResourceReservationsService} from './resource-reservations.service';
 const exclusiveResources = new ResourceReservationsService();
+export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
 type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
@@ -35,6 +36,7 @@ export interface RoutineJobRepository {
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
   exhaustPreparation?(jobId: string, completedRunIds: string[], now: Date): Promise<StoredRoutineJob | null>;
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
+  selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
@@ -80,6 +82,21 @@ export const routineJobRepository: RoutineJobRepository = {
       {$set:{state:'terminal',terminalStatus:'not-run',updatedAt:now,fleetCancellation:{requestedAt:now.toISOString(),
         reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}}},
       {returnDocument:'after',writeConcern:testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async selectedLanes(hostIds) {
+    // Staged candidates can exist before the byte claim is acknowledged. Read only
+    // those existing selections; completed history is not scheduling evidence.
+    const rows = await TestRequestModel.find({'fleetResourceAdmission.intent.hostId': {$in: hostIds},
+      fleetResourceReservation: {$exists: false}, dispatchCompletion: {$exists: false}})
+      .select({requestId: 1, fleetResourceAdmission: 1, _id: 0}).limit(1001)
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    if (rows.length > 1000) throw new TestRunError(503, 'Selected lane inventory exceeds its bounded routing read');
+    return rows.map(row => {
+      const requestId = frameworkIdentitySchema.parse(row.requestId), admission = fleetResourceAdmissionSchema.parse(row.fleetResourceAdmission);
+      if (admission.intent.owner.kind !== 'run' || admission.intent.owner.id !== requestId)
+        throw new TestRunError(503, 'Selected lane inventory has inconsistent request identity');
+      return {requestId, hostId: admission.intent.hostId, laneId: admission.intent.laneId};
+    });
   },
   async reserveResources(requestId, fleetInputSha256, hostId, laneId, now) {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -323,6 +340,17 @@ export function compatibleRoutineLane(requirements: PortableRequirements, lane: 
     requirements.glasses!.capabilities.every(capability => offered.capabilities.includes(capability)))) return false;
   return true;
 }
+/** Selection preference only; the existing resource admission CAS remains the authority.
+ * Per-request ties spread simultaneous zero-load snapshots without relying on Mongo row order.
+ * Authority claims remain load until ordinary cleanup/reconciliation removes them.
+ */
+export function orderedRoutineCandidates(requestId: string, hosts: RoutingTestHostState[], selected: SelectedRoutineLane[] = []) {
+  return hosts.flatMap(host => host.lanes.map(lane => ({host, lane,
+    load: new Set([...(host.recorderReservations ?? []), ...selected].filter(claim => claim.hostId === host.hostId && claim.laneId === lane.id && claim.requestId !== requestId).map(claim => claim.requestId)).size,
+    tie: requestInputDigest({requestId, hostId: host.hostId, laneId: lane.id}),
+  }))).sort((a, b) => a.load - b.load || a.tie.localeCompare(b.tie));
+}
+
 /** Kept identical to Harness contracts/dispatch.ts: opaque identities use canonical JSON hashes. */
 export function routineRequirementLabels(requirements: PortableRequirements, model?: string, target?: StoredRoutineJob['fleetTarget']): string[] {
   const token = (value: string) => requestInputDigest(value).slice(0, 24);
@@ -612,6 +640,7 @@ export class RoutineJobService {
     const inventoryRequirements = {...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)};
     const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build);
     const retained = row.fleetResourceReservation;
+    const admitted = row.fleetResourceAdmission;
     if (retained) {
       const checked = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, retained.hostId, retained.laneId, new Date(this.now()));
       if (!checked) {
@@ -625,7 +654,11 @@ export class RoutineJobService {
     }
     if (inventory.waitingReason) return inventory;
     if (routed.waitingReason) return {...routed, waitingReason: 'Awaiting fresh recorder disk and evidence staging capacity on an idle compatible runner'};
-    for (const host of hosts) for (const lane of host.lanes) {
+    const selected = admitted ? [] : await this.rows.selectedLanes?.(hosts.map(host => host.hostId)) ?? [];
+    for (const {host, lane} of orderedRoutineCandidates(row.requestId, hosts, selected)) {
+      // A staged admission may survive an interrupted authority/receipt write.
+      // Continue that exact candidate; a preference change cannot move its custody.
+      if (admitted && (admitted.intent.hostId !== host.hostId || admitted.intent.laneId !== lane.id)) continue;
       if (row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
         lane.state !== 'idle' || lane.dispatchMode !== 'automatic' || !compatibleRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now()), this.now())) continue;
       const saved = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, host.hostId, lane.id, new Date(this.now()));
