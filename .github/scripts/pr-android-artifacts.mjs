@@ -13,14 +13,15 @@ const HASH = /^[a-f0-9]{64}$/
 const positive = value => Number.isSafeInteger(value) && value > 0
 const requireThat = (value, message) => { if (!value) throw new Error(message) }
 
-export function androidReceiptName(pr, sha, runId, attempt) {
+export function androidReceiptName(pr, sha, runId, attempt, diagnostic = false) {
   requireThat(positive(pr) && SHA.test(sha ?? "") && positive(runId) && positive(attempt),
     "Invalid Android publication coordinates")
-  return `mentra-android-pr-${pr}-${sha}-${runId}-${attempt}.json`
+  return `mentra-android-${diagnostic ? "nimo-diagnostic-" : ""}pr-${pr}-${sha}-${runId}-${attempt}.json`
 }
 
-export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt}) {
-  const name = androidReceiptName(pr, sha, runId, attempt)
+export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagnostic = false}) {
+  const name = androidReceiptName(pr, sha, runId, attempt, diagnostic)
+  requireThat(diagnostic ? receipt?.diagnostic === "nimo-resource-v1" && receipt?.app?.diagnostic === "nimo-resource-v1" : receipt?.diagnostic === undefined && receipt?.app?.diagnostic === undefined, "Android diagnostic classification differs")
   requireThat(receipt?.schemaVersion === 1 && receipt.pr === pr && receipt.headSha === sha &&
     receipt.runId === runId && receipt.runAttempt === attempt && SHA.test(receipt.baseSha ?? "") &&
     SHA.test(receipt.buildSha ?? ""), "Android receipt belongs to a different revision or workflow attempt")
@@ -57,7 +58,10 @@ export function androidAppIdentity({config, badging, pr, headSha, buildSha, back
 export async function publishAndroidArtifacts(apk, env = process.env, {exec = execFileSync} = {}) {
   const pr = Number(env.PR_NUMBER), headSha = env.PR_HEAD_SHA, runId = Number(env.GITHUB_RUN_ID),
     runAttempt = Number(env.GITHUB_RUN_ATTEMPT), buildSha = env.MENTRA_PR_BUILD_SHA || env.GITHUB_SHA
-  const name = androidReceiptName(pr, headSha, runId, runAttempt)
+  const diagnostic = env.MENTRA_NIMO_DIAGNOSTIC === 'true'
+  requireThat(!diagnostic || env.GITHUB_EVENT_NAME === 'workflow_dispatch' && env.MENTRA_PR_BUILD_SHA && env.PR_NUMBER,
+    'Diagnostics require a pinned PR dispatch')
+  const name = androidReceiptName(pr, headSha, runId, runAttempt, diagnostic)
   requireThat(env.GITHUB_REPOSITORY === "Mentra-Community/MentraOS" && SHA.test(buildSha ?? ""),
     "Invalid Android publication source")
   const commit = exec("git", ["cat-file", "-p", buildSha], {encoding: "utf8"})
@@ -72,10 +76,24 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   const app = androidAppIdentity({config, badging, pr, headSha, buildSha, backend: env.EXPO_PUBLIC_BUILD_ENV,
     baseRef: env.MENTRA_PR_BASE_REF || env.GITHUB_BASE_REF})
   requireThat(app.mobileFingerprint === env.MENTRA_PR_MOBILE_FINGERPRINT, "APK compilation fingerprint differs from the selected build")
+  // The receiver is registered at runtime; its fixed action must be in compiled DEX,
+  // not merely claimed by an asset or AndroidManifest entry.
+  const dex = exec("unzip", ["-p", apk, "classes*.dex"], {maxBuffer: 256 * 1024 * 1024})
+  const receiverCompiled = Buffer.from(dex).includes(Buffer.from('com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE'))
+  requireThat(receiverCompiled === diagnostic, 'Compiled NIMO receiver differs from publication mode')
+  let diagnosticMarker
+  try { diagnosticMarker = exec("unzip", ["-p", apk, "assets/nimo-resource-diagnostic.json"], {encoding: "utf8", stdio: ['ignore', 'pipe', 'ignore']}) } catch { diagnosticMarker = '' }
+  requireThat(diagnostic ? diagnosticMarker === '{"schemaVersion":1,"buildType":"nimoDiagnostic","capability":"nimo-resource-v1"}' &&
+    /application-debuggable/.test(badging) : !diagnosticMarker && !/application-debuggable/.test(badging), 'APK diagnostic marker/debuggability differs from publication mode')
+  if (diagnostic) {
+    const bundle = exec("unzip", ["-p", apk, "assets/index.android.bundle"], {maxBuffer: 100 * 1024 * 1024})
+    requireThat(bundle.length > 0, 'Diagnostic app must contain its JavaScript bundle')
+    app.diagnostic = 'nimo-resource-v1'
+  }
   const bytes = await readFile(apk)
-  const receipt = {schemaVersion: 1, pr, headSha, baseSha, buildSha, runId, runAttempt, app,
+  const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1"} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
     artifacts: {android: {name: name.replace(/\.json$/, ".apk"), sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length}}}
-  validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt})
+  validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt, diagnostic})
   const file = path.join(path.dirname(apk), name)
   await writeFile(file, JSON.stringify(receipt, null, 2) + "\n")
   const releaseId = exec("gh", ["api", `repos/${env.GITHUB_REPOSITORY}/releases/tags/pr-builds`, "--jq", ".id"], {encoding: "utf8"}).trim()

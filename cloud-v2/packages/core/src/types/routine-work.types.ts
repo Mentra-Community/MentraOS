@@ -67,6 +67,7 @@ const pin = z.object({url: z.string().url(), sha256: workHashSchema, size: z.num
 export const routineWorkBuildSchema = z
   .object({
     kind: z.enum(['mac-ci-package', 'android-apk']),
+    diagnostic: z.literal('nimo-resource-v1').optional(),
     repository: z.literal('Mentra-Community/MentraOS'),
     headSha: sha,
     channel: z.enum(['dev', 'staging', 'pr']),
@@ -97,17 +98,20 @@ export const routineWorkBuildSchema = z
       (value.manifest && value.manifest.sha256 !== value.manifestSha256)
     )
       ctx.addIssue({code: 'custom', message: 'Build manifest digest differs'})
+    if (value.diagnostic && (value.kind !== 'android-apk' || value.channel !== 'pr')) ctx.addIssue({code: 'custom', message: 'Diagnostic build requires Android PR authoring'})
     if (!value.archive.name.endsWith(value.kind === 'android-apk' ? '.apk' : '.zip'))
       ctx.addIssue({code: 'custom', message: 'Build archive and platform differ'})
   })
 export const routineWorkRequestSchema = z.object({...fields,
   source: fields.source.partial({revision: true}), target: routineJobTargetSchema.optional(),
   requirements: routineWorkPortableRequirementsSchema,
+  diagnostic: z.literal('nimo-resource-v1').optional(),
   buildSource: testBuildSourceSchema, deadline: z.string().datetime({offset: true}).optional(),
-}).strict()
+}).strict().refine(value => !value.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo' && value.requirements.resources.some(resource => resource.kind === 'glasses'), 'NIMO diagnostic requires exact Android NIMO authoring')
 export const authoringWorkSchema = z
   .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema})
   .strict()
+  .refine(value => !value.build.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo', 'Diagnostic build requires exact NIMO authoring')
   .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= 256 * 1024, 'Work envelope exceeds its byte limit')
   .refine(
     (value) => value.build.kind === (value.requirements.platform === 'mac' ? 'mac-ci-package' : 'android-apk'),
@@ -116,7 +120,7 @@ export const authoringWorkSchema = z
 export const portableAuthoringWorkSchema = z.object({...fields, target: routineJobTargetSchema.optional(),
   requirements: routineWorkPortableRequirementsSchema,
   build: routineWorkBuildSchema,
-}).strict()
+}).strict().refine(value => !value.build.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo', 'Diagnostic build requires exact NIMO authoring')
 export type PortableAuthoringWork = z.infer<typeof portableAuthoringWorkSchema>
 export type RoutineWorkRequest = z.infer<typeof routineWorkRequestSchema>
 export type AuthoringWork = z.infer<typeof authoringWorkSchema>

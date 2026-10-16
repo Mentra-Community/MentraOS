@@ -187,7 +187,7 @@ function terminalOutcome(event: RoutineWorkStatus) {
 export class RoutineWorkService {
   constructor(
     private readonly rows: RoutineWorkRepository = repository,
-    private readonly builds: Pick<TestBuildGateway, 'resolve'> = new GithubTestBuildGateway(),
+    private readonly builds: Pick<TestBuildGateway, 'resolve' | 'resolveNimoDiagnostic'> = new GithubTestBuildGateway(),
     private readonly hosts: Pick<TestHostStateService, 'get'> & Partial<Pick<TestHostStateService, 'list'>> = new TestHostStateService(),
     private readonly notifications: Pick<RoutineWorkNotification, 'publish'> = new RoutineWorkNotification(),
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
@@ -233,7 +233,7 @@ export class RoutineWorkService {
     try {
       const platform = input.requirements.platform === 'mac' ? 'ios-on-mac' : 'android'
       const [build, revision] = await Promise.all([
-        this.builds.resolve(input.buildSource, platform),
+        input.diagnostic ? (this.builds.resolveNimoDiagnostic ? this.builds.resolveNimoDiagnostic(input.buildSource) : Promise.reject(new TestRunError(409, 'NIMO diagnostic build admission is unavailable'))) : this.builds.resolve(input.buildSource, platform),
         this.sources.resolve(input.source.revision),
       ])
       if (
@@ -241,14 +241,14 @@ export class RoutineWorkService {
         build.availability !== 'available' ||
         !build.archive ||
         !build.receipt ||
-        build.headSha !== input.origin.headSha
+        build.headSha !== input.origin.headSha || build.diagnostic !== input.diagnostic
       )
         throw new TestRunError(409, 'The exact originating PR build is not published')
-      const {buildSource: _, deadline: _deadline, ...fields} = input
+      const {buildSource: _, deadline: _deadline, diagnostic: _diagnostic, ...fields} = input
       const work = portableAuthoringWorkSchema.parse({
         ...fields, source: {...fields.source, revision},
         build: {
-          ...selectedBuildInput(build, platform),
+          ...selectedBuildInput(build, platform, Boolean(input.diagnostic)),
           ...(build.manifest ? {manifest: build.manifest, manifestSha256: build.manifestSha256} : {}),
         },
       })
