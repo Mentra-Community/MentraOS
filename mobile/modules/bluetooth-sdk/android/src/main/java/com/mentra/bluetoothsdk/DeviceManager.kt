@@ -2351,6 +2351,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDefault() {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDefault() }) return
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -2403,6 +2404,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectByName(dName: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectByName(dName) }) return
         Bridge.log("MAN: Connecting to wearable: $dName")
 
         var name = dName
@@ -2442,6 +2444,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDevice(deviceModel, deviceName) }) return
         Bridge.log("MAN: Connecting to device: $deviceModel $deviceName")
         if (DeviceTypes.ALL.contains(deviceModel)) {
             if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel, deviceName)) return
@@ -2648,6 +2651,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun findCompatibleDevices(deviceModel: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { findCompatibleDevices(deviceModel) }) return
         if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel)) return
         Bridge.log("MAN: Searching for compatible device names for: $deviceModel")
 

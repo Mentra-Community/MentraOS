@@ -1189,6 +1189,7 @@ class Nimo : SGCManager() {
     // ---------- SGCManager: Connection Management ----------
 
     override fun findCompatibleDevices() {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { findCompatibleDevices() }) return
         if (!NimoResourceDiagnostics.admit(this, null, false)) return
         Bridge.log("NIMO: findCompatibleDevices()")
         DEVICE_SEARCH_ID = "NOT_SET"
@@ -1197,6 +1198,7 @@ class Nimo : SGCManager() {
     }
 
     override fun connectById(id: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectById(id) }) return
         if (!NimoResourceDiagnostics.admit(this, id, true)) return
         if (resourceReleasePending || resourceReceiptPending) return
         resourceReleased = false

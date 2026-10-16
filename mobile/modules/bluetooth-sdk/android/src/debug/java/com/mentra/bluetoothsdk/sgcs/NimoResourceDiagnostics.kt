@@ -29,7 +29,15 @@ internal object NimoResourceDiagnostics {
         var instance: Nimo? = null, var cancelled: Boolean = false, var connectStarted: Boolean = false,
         var transportStarted: Boolean = false)
     // One diagnostic attempt per app process. Cancellation is a process-lifetime fence.
-    private var capture: Capture? = null
+    @Volatile private var capture: Capture? = null
+
+    /** Marshal the entire entry point, not only its admission check. A cancelled queued
+     * call re-enters the normal guards before any manager cleanup or connection effect. */
+    fun dispatchCapturedEntry(entry: () -> Unit): Boolean {
+        if (capture == null || Looper.myLooper() == main.looper) return false
+        main.post { entry() }
+        return true
+    }
 
     @Synchronized
     fun allowManagerConnect(wearable: String, name: String? = null): Boolean {
@@ -158,6 +166,8 @@ internal object NimoResourceDiagnostics {
         if (mode in listOf("arm-capture", "capture-status", "cancel-capture")) {
             val expectedName = intent.getStringExtra("expectedName")
             val captureNonce = intent.getStringExtra("captureNonce")
+            request.remove("instanceId"); request.remove("sessionGeneration")
+            request.put("expectedName", expectedName ?: JSONObject.NULL).put("captureNonce", captureNonce ?: JSONObject.NULL)
             if (!Regex("^[0-9A-F]{2}(:[0-9A-F]{2}){5}$").matches(address) ||
                 intent.extras?.keySet()?.any { it !in setOf("nonce", "mode", "expectedAddress", "expectedName", "captureNonce") } == true ||
                 expectedName == null || !Regex("^Nimo-[A-Za-z0-9]{1,32}$").matches(expectedName) ||

@@ -404,6 +404,35 @@ class NimoLifecycleTest {
     assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:55", true))
   }
 
+  @Test fun offMainManagerConnectIsQueuedWholeAndCancellationFencesItBeforeEffects() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.NIMO, "Nimo-test") }
+    thread.start(); thread.join(1000)
+    assertFalse(thread.isAlive)
+    assertNull(manager.sgc) // no off-main manager creation or cleanup
+    captureCommand("cancel-capture", nonce)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertNull(manager.sgc) // the already-queued real entry rechecks its immutable fence
+  }
+
+  @Test fun offMainOriginalNimoConnectAdmitsOnMainBeforeAnyPeerTransport() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val thread = Thread { nimo.connectById("Nimo-test") }
+    thread.start(); thread.join(1000)
+    val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    assertFalse(admission.exists())
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertEquals(nimo.resourceInstanceId, JSONObject(admission.readText()).getString("instanceId"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+    assertFalse(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
+  }
+
   private fun captureCommand(mode: String, captureNonce: String, requestNonce: String = java.util.UUID.randomUUID().toString()): JSONObject {
     NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
       .putExtra("nonce", requestNonce).putExtra("mode", mode).putExtra("expectedName", "Nimo-test")
