@@ -139,6 +139,7 @@ internal class NimoCanvasCoordinator(
 
     fun pendingCount(): Int = if (flight != null) 1 else 0
     fun active(): Boolean = session.active()
+    fun launchPending(): Boolean = flight?.action?.key == 1
 
     fun offer(bytes: ByteArray, scope: String, force: Boolean = false) {
         if (holding && scope != heldScope) {

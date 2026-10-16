@@ -479,7 +479,7 @@ class MentraBluetoothSdk private constructor(
             requireBluetoothReady("connect to glasses")
         }
         val isController = ControllerTypes.ALL.contains(device.model.deviceType)
-        if (options.cancelExistingConnectionAttempt) {
+        if (options.cancelExistingConnectionAttempt && !NimoResourceDiagnostics.preserveCapturedScan(device.model.deviceType, device.name)) {
             if (isController) {
                 deviceManager.disconnectController()
             } else {
@@ -527,7 +527,7 @@ class MentraBluetoothSdk private constructor(
         if (defaultDevice.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
-        if (options.cancelExistingConnectionAttempt) {
+        if (options.cancelExistingConnectionAttempt && !NimoResourceDiagnostics.preserveCapturedScan(defaultDevice.model.deviceType, defaultDevice.name)) {
             cancelConnectionAttempt()
         }
         deviceManager.connectDefault()

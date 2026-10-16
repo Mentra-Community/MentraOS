@@ -110,3 +110,16 @@ quiescent NIMO is deliberately not adopted. Fresh capture receipts expose
 candidate. The compiled capture admission proof must attest this diagnostic policy,
 not infer it from a generic receiver marker. JVM tests cover policy inputs and existing
 manager refusal; actual diagnostic DEX proof remains a separate required build gate.
+
+Formal review corrections retain the original captured scan instance through both
+SDK cancel-existing and manager scan-to-connect transitions. Repeated connect
+requests cannot discard the admitted instance. A permission-safe peer observation
+precedes capture guards; ordinary permission revocation also settles a failed
+GATT open without an uncaught exception. An explicitly rejected initial Canvas
+Launch removes only its never-entered Exit obligation; status 2 remains unknown
+and no Exit ACK or visible-panel claim is fabricated. New transport generations
+clear old mic/display release obligations, while mutation evidence survives the
+current connection attempt and resets only before a subsequent explicit attempt.
+Regression source covers the actual SDK scan-to-manager connect path and original
+cancellation, permission revocation, launch rejection/ambiguity and generation
+reset. Exact Android CI is required before qualifying this source.

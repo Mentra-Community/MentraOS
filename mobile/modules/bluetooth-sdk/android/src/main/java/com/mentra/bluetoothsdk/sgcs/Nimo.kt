@@ -958,6 +958,7 @@ class Nimo : SGCManager() {
     private var resourceTransportFailure = false
     private var resourceMicStopRequired = false
     private var resourceExitRequired = false
+    private var resourceInitialLaunchPendingAtRelease = false
     private var resourceBondMutationRequested = false
     private var resourceFactoryResetRequested = false
     private var resourceCloseCalled = false
@@ -1018,6 +1019,7 @@ class Nimo : SGCManager() {
         resourceReleaseResult = "draining"
         resourceExitStatus = null; resourceExitAt = null; resourceMicStopStartedAt = null; resourceMicStopMarkerAt = null; resourceMicStopWrittenAt = null
         resourceExitRequired = canvas.active() || canvas.pendingCount() > 0
+        resourceInitialLaunchPendingAtRelease = !canvas.active() && canvas.launchPending()
         isDisconnecting = true
         handshakeState = HandshakeState.IDLE
         cancelPairingTimeout(); cancelTwsTimeout(); cancelSetTimeRetry(); stopTimers(); reconnectionManager.stop()
@@ -1096,7 +1098,15 @@ class Nimo : SGCManager() {
         { (negotiatedMtu - 3).coerceIn(20, 512) }, ::enqueueFrames, ::abortTransport,
         { Bridge.log("NIMO: canvas rejected status=$it; not a render ACK") },
         { diagnostics?.cancelHeldCapture("Canvas scope takeover preempted held capture", resumeCanvas = false) },
-        { key, status -> if (key == 3) { resourceExitStatus = status; resourceExitAt = System.currentTimeMillis() } })
+        { key, status ->
+            if (key == 3) { resourceExitStatus = status; resourceExitAt = System.currentTimeMillis() }
+            if (resourceReleasePending && resourceInitialLaunchPendingAtRelease && key == 1) {
+                // An explicit rejected initial Launch never acquired canvas ownership.
+                // Status 2 is transport-ambiguous and must retain the unknown fence.
+                if (status != 0 && status != 2) resourceExitRequired = false
+                resourceInitialLaunchPendingAtRelease = false
+            }
+        })
 
     private fun handlerScheduler(handler: Handler) = NimoScheduler { delay, task ->
         val runnable = Runnable(task)
@@ -1202,6 +1212,7 @@ class Nimo : SGCManager() {
         if (!NimoResourceDiagnostics.admit(this, id, true)) return
         if (resourceReleasePending || resourceReceiptPending) return
         resourceReleased = false
+        resourceBondMutationRequested = false; resourceFactoryResetRequested = false
         Bridge.log("NIMO: connectById($id)")
         DEVICE_SEARCH_ID = id
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
@@ -1775,20 +1786,22 @@ class Nimo : SGCManager() {
      * for Companion service 7033. The separate <name>_BLE ANCS peripheral is not the
      * canvas data channel. This matches the vendor transport=BREDR connection path.
      */
+    private data class ResourcePeer(val address: String, val bondState: Int)
+    private fun resourcePeer(device: android.bluetooth.BluetoothDevice): ResourcePeer = ResourcePeer(
+        try { device.address } catch (_: SecurityException) { "" },
+        try { device.bondState } catch (_: SecurityException) { android.bluetooth.BluetoothDevice.BOND_NONE },
+    )
+
     private fun connectCompanionGatt(device: android.bluetooth.BluetoothDevice) {
-        if (!NimoResourceDiagnostics.allowPeer(this, device.address, device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
+        val peer = resourcePeer(device)
+        if (!NimoResourceDiagnostics.allowPeer(this, peer.address, peer.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         if (isDisconnecting || gatt != null) return
         // Classic discovery degrades/aborts connections — always cancel first.
         try {
             bluetoothAdapter?.cancelDiscovery()
         } catch (_: Exception) {}
 
-        val bondState =
-                try {
-                    device.bondState
-                } catch (e: SecurityException) {
-                    android.bluetooth.BluetoothDevice.BOND_NONE
-                }
+        val bondState = peer.bondState
         if (bondState != android.bluetooth.BluetoothDevice.BOND_BONDED) {
             // Bond over classic first, then open the Companion bearer on completion.
             startBond(device)
@@ -1803,13 +1816,9 @@ class Nimo : SGCManager() {
      * called both on the initial attempt and from the BOND_NONE handler.
      */
     private fun startBond(device: android.bluetooth.BluetoothDevice) {
-        if (!NimoResourceDiagnostics.allowPeer(this, device.address, device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
-        val bondState =
-                try {
-                    device.bondState
-                } catch (e: SecurityException) {
-                    android.bluetooth.BluetoothDevice.BOND_NONE
-                }
+        val peer = resourcePeer(device)
+        if (!NimoResourceDiagnostics.allowPeer(this, peer.address, peer.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
+        val bondState = peer.bondState
         // A previous (apparently failed) attempt may have bonded in the background.
         if (bondState == android.bluetooth.BluetoothDevice.BOND_BONDED) {
             Bridge.log("NIMO: already bonded with ${device.address} — connecting")
@@ -1850,7 +1859,8 @@ class Nimo : SGCManager() {
 
     private fun connectBredrTransport(device: android.bluetooth.BluetoothDevice) {
         if (isDisconnecting || gatt != null) return
-        if (!NimoResourceDiagnostics.beginTransport(this, device.address, device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
+        val peer = resourcePeer(device)
+        if (!NimoResourceDiagnostics.beginTransport(this, peer.address, peer.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED)) return
         // GATT over BR/EDR: the glasses pair with a legacy (non-SC) link key, so no LE
         // keys exist (le_linkkey_known:F) and the controller records the device as
         // BR_EDR-only — the 7033 UART service is served over the classic link. This is
@@ -1862,20 +1872,22 @@ class Nimo : SGCManager() {
         resourceExitStatus = null; resourceExitAt = null; resourceMicStopWrittenAt = null
         resourceMicStopStartedAt = null; resourceMicStopMarkerAt = null; resourceTransportFailure = false; resourceClosingGatt = null
         resourceClosedWithPending = false; resourceReleaseResult = "not-requested"
-        resourcePairAddress = device.address
-        resourcePairName = device.name ?: ""
+        resourceMicStopRequired = false; resourceExitRequired = false; resourceInitialLaunchPendingAtRelease = false
+        resourceReleased = false
+        resourcePairAddress = peer.address
+        resourcePairName = try { device.name ?: "" } catch (_: SecurityException) { "" }
         resourceFirmwareAt = null; resourceFirmwareVersion = null
         resourceTwsAt = null; resourceHandshakeTwsAt = null; resourceTimeAckAt = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null
         resourceCloseCalled = false; resourceCloseObserved = false; resourceDisconnectCallbackStatus = null; resourceCloseError = null
         NimoResourceDiagnostics.track(this)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
-        gatt =
-                device.connectGatt(
-                        context,
-                        false,
-                        gattCallback,
-                        android.bluetooth.BluetoothDevice.TRANSPORT_BREDR
-                )
+        gatt = try {
+            device.connectGatt(context, false, gattCallback, android.bluetooth.BluetoothDevice.TRANSPORT_BREDR)
+        } catch (error: SecurityException) {
+            resourceTransportFailure = true
+            Bridge.log("NIMO: connectGatt SecurityException: ${error.message}")
+            null
+        }
         gatt?.let { writes.connected(it) }
     }
 
