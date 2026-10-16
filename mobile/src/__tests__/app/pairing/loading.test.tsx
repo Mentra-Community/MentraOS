@@ -12,6 +12,7 @@ import GlassesPairingLoadingScreen from "@/app/pairing/loading"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@mentra/engine-host-internal"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+import {AUTO_AUDIO_WAIT_MS} from "@/utils/pairing/pairAudio"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -758,7 +759,7 @@ describe("pairing loading screen", () => {
       expect(push).toHaveBeenCalledWith("/pairing/btclassic", btclassicParams)
     })
 
-    it("waits 30 s for auto_audio, re-checks, then opens Pair Audio once", async () => {
+    it("waits briefly for auto_audio, re-checks, then opens Pair Audio once", async () => {
       setIosPlatform()
       render(<GlassesPairingLoadingScreen />)
       await startPairingKickoff()
@@ -766,7 +767,7 @@ describe("pairing loading screen", () => {
       reachReady()
 
       act(() => {
-        jest.advanceTimersByTime(29_999)
+        jest.advanceTimersByTime(AUTO_AUDIO_WAIT_MS - 1)
       })
       expect(push).not.toHaveBeenCalled()
       expect(successCalls()).toHaveLength(0)
@@ -783,7 +784,7 @@ describe("pairing loading screen", () => {
       expect(successCalls()).toHaveLength(0)
     })
 
-    it("gives exactly one navigation when audio connects at 29.9 s", async () => {
+    it("gives exactly one navigation when audio connects just before the wait ends", async () => {
       setIosPlatform()
       render(<GlassesPairingLoadingScreen />)
       await startPairingKickoff()
@@ -791,7 +792,7 @@ describe("pairing loading screen", () => {
       reachReady()
 
       act(() => {
-        jest.advanceTimersByTime(29_900)
+        jest.advanceTimersByTime(AUTO_AUDIO_WAIT_MS - 100)
       })
       act(() => {
         useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
@@ -805,7 +806,7 @@ describe("pairing loading screen", () => {
       expect(replace).toHaveBeenCalledTimes(1)
     })
 
-    it("gives exactly one navigation when audio connects at 30.1 s", async () => {
+    it("gives exactly one navigation when audio connects just after Pair Audio opens", async () => {
       setIosPlatform()
       const screen = render(<GlassesPairingLoadingScreen />)
       await startPairingKickoff()
@@ -813,7 +814,7 @@ describe("pairing loading screen", () => {
       reachReady()
 
       act(() => {
-        jest.advanceTimersByTime(30_000)
+        jest.advanceTimersByTime(AUTO_AUDIO_WAIT_MS)
       })
       expect(push).toHaveBeenCalledTimes(1)
       // Pair Audio is on top now, so this screen loses focus.
@@ -842,7 +843,7 @@ describe("pairing loading screen", () => {
       expect(successCalls()).toHaveLength(1)
     })
 
-    it("does not navigate twice at 30.1 s even if focus never changes", async () => {
+    it("does not navigate twice just after the wait even if focus never changes", async () => {
       setIosPlatform()
       render(<GlassesPairingLoadingScreen />)
       await startPairingKickoff()
@@ -850,7 +851,7 @@ describe("pairing loading screen", () => {
       reachReady()
 
       act(() => {
-        jest.advanceTimersByTime(30_100)
+        jest.advanceTimersByTime(AUTO_AUDIO_WAIT_MS + 100)
       })
       act(() => {
         useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
