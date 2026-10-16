@@ -34,7 +34,7 @@ public final class GlassesHotspotNetwork {
     private var ownershipToken: UUID?
     private var finishingLeave = false
     private var waitForInternetAfterLeave = false
-    private var cancelInternetWait: (() -> Void)?
+    private let internetObservationOwner = HotspotInternetObservationOwner()
     public var onLost: ((String) -> Void)?
     public var onPermissionRequired: (() -> Void)?
     public init() {}
@@ -87,7 +87,7 @@ public final class GlassesHotspotNetwork {
 
     public func leave(waitForInternet: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
         queue.async {
-            if !waitForInternet { self.cancelInternetWait?() }
+            if !waitForInternet { self.internetObservationOwner.cancel() }
             self.waitForInternetAfterLeave = self.waitForInternetAfterLeave || waitForInternet
             self.cancelled = true
             self.macAssociation?.cancel()
@@ -175,7 +175,6 @@ public final class GlassesHotspotNetwork {
     /// cancellation therefore cannot overtake observation initialization.
     private func startInternetObservation(allowWifiAfterRelease: Bool, completion: @escaping (Bool, String) -> Void) {
         let gen = generation
-        cancelInternetWait?()
         let observation = HotspotInternetObservation(generation: gen, glassesSSID: lastHotspotSSID)
         let monitor = NWPathMonitor()
         let sampleTimer = DispatchSource.makeTimerSource(queue: queue)
@@ -188,14 +187,14 @@ public final class GlassesHotspotNetwork {
             sampleTimer.cancel()
             currentPath = nil
             let reply = {
-                self.cancelInternetWait = nil
+                self.internetObservationOwner.clear(observation)
                 completion(usable, detail)
             }
             // Even a timed-out/cancelled observation joins its dispatched
             // CoreWLAN read before releasing this session's owner.
             observation.afterSSIDRead(reply)
         }
-        cancelInternetWait = { finish(false, "Hotspot internet observation cancelled") }
+        internetObservationOwner.install(observation) { finish(false, "Hotspot internet observation cancelled") }
         var currentPathRevision = 0
         let sample = {
             guard let path = currentPath else { return }
@@ -482,7 +481,7 @@ public final class GlassesHotspotNetwork {
     }
 
     private func completeLeave() {
-        cancelInternetWait?()
+        internetObservationOwner.cancel()
         generation += 1
         macAuthorization?.cancel(); macAuthorization = nil
         localAccess?.cancel(); localAccess = nil

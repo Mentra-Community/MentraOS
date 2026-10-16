@@ -118,4 +118,28 @@ final class HotspotInternetPolicyTests: XCTestCase {
         XCTAssertTrue(released)
         XCTAssertFalse(wait.settle())
     }
+
+    func testOldNativeReadReplyCannotClearReplacementCancellation() {
+        let owner = HotspotInternetObservationOwner()
+        let old = HotspotInternetObservation(generation: 10, glassesSSID: "MentraLive-03BE")
+        let replacement = HotspotInternetObservation(generation: 10, glassesSSID: "MentraLive-03BE")
+        var oldReplies = 0
+        var replacementReplies = 0
+        XCTAssertTrue(old.beginSSIDRead())
+        owner.install(old) {
+            guard old.settle() else { return }
+            old.afterSSIDRead { owner.clear(old); oldReplies += 1 }
+        }
+        owner.install(replacement) {
+            guard replacement.settle() else { return }
+            replacement.afterSSIDRead { owner.clear(replacement); replacementReplies += 1 }
+        }
+        XCTAssertEqual(oldReplies, 0)
+        old.completeSSIDRead()
+        XCTAssertEqual(oldReplies, 1)
+        XCTAssertEqual(replacementReplies, 0)
+        owner.cancel()
+        owner.cancel()
+        XCTAssertEqual(replacementReplies, 1)
+    }
 }

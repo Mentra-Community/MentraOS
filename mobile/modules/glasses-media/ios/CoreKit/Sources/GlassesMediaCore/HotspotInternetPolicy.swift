@@ -66,6 +66,27 @@ public final class HotspotInternetObservation {
     }
 }
 
+/// Queue-confined cancellation owner. An old observation may finish joining its
+/// native read after its replacement starts, but cannot clear that replacement.
+public final class HotspotInternetObservationOwner {
+    private var current: (observation: HotspotInternetObservation, cancel: () -> Void)?
+
+    public init() {}
+
+    public func install(_ observation: HotspotInternetObservation, cancel: @escaping () -> Void) {
+        current?.cancel()
+        current = (observation, cancel)
+    }
+
+    public func clear(_ observation: HotspotInternetObservation) {
+        if current?.observation === observation { current = nil }
+    }
+
+    public func cancel() {
+        current?.cancel()
+    }
+}
+
 /// Queue-confined completion of one leave. Concurrent callers share cleanup;
 /// the original ownership token is released before any caller can start again.
 public final class HotspotLeaveCompletion {
