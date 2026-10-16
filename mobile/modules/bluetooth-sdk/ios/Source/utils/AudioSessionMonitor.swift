@@ -24,6 +24,8 @@ class AudioSessionMonitor {
     static var callback: ((Bool, String?) -> Void)?
     /// Last pair-audio decision line. The check runs on a timer; log only changes.
     private static var lastPairFlow = ""
+    /// SoloAmbient hides paired HFP inputs. One short category probe per second is enough.
+    private static var lastBluetoothProbe: (at: Date, outputs: [AVAudioSessionPortDescription], inputs: [AVAudioSessionPortDescription]?)?
 
     private init() {
         Bridge.log("AudioMonitor: Initialized")
@@ -95,17 +97,75 @@ class AudioSessionMonitor {
         return false
     }
 
-    /// Glasses' Classic audio facts without selecting an input, activating the session, or
-    /// changing audio routing. `profilesConnected` matches `isDevicePaired`; `audioRouted` is
-    /// the stricter "audio is flowing to the glasses" signal.
-    static func observeProfiles(devicePattern: String) -> BluetoothAudioRoute.ProfileObservation {
+    private struct BluetoothSessionSnapshot {
+        let categoryLabel: String
+        let outputs: [AVAudioSessionPortDescription]
+        let availableInputs: [AVAudioSessionPortDescription]?
+    }
+
+    /// The default SoloAmbient session lists only the built-in mic, so glasses that are
+    /// already connected in Settings look absent and pairing waits out the auto-audio timer.
+    /// Read HFP inputs with a category that can see them, then put the previous category back.
+    /// Does not activate the session or select an input.
+    private static func bluetoothSessionSnapshot() -> BluetoothSessionSnapshot {
+        if !Thread.isMainThread {
+            return DispatchQueue.main.sync { bluetoothSessionSnapshot() }
+        }
         let session = AVAudioSession.sharedInstance()
+        if categoryShowsBluetoothInputs(session.category) {
+            return BluetoothSessionSnapshot(
+                categoryLabel: session.category.rawValue,
+                outputs: session.currentRoute.outputs,
+                availableInputs: session.availableInputs
+            )
+        }
+        if let lastBluetoothProbe, Date().timeIntervalSince(lastBluetoothProbe.at) < 1 {
+            return BluetoothSessionSnapshot(
+                categoryLabel: "probed:\(AVAudioSession.Category.playAndRecord.rawValue)",
+                outputs: lastBluetoothProbe.outputs,
+                availableInputs: lastBluetoothProbe.inputs
+            )
+        }
+        let savedCategory = session.category
+        let savedMode = session.mode
+        let savedOptions = session.categoryOptions
+        do {
+            try session.setCategory(
+                .playAndRecord, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP]
+            )
+        } catch {
+            return BluetoothSessionSnapshot(
+                categoryLabel: session.category.rawValue,
+                outputs: session.currentRoute.outputs,
+                availableInputs: session.availableInputs
+            )
+        }
         let outputs = session.currentRoute.outputs
-        let availableInputs = session.availableInputs
-        let profiles = profileObservation(devicePattern: devicePattern, outputs: outputs, availableInputs: availableInputs)
+        let inputs = session.availableInputs
+        lastBluetoothProbe = (Date(), outputs, inputs)
+        try? session.setCategory(savedCategory, mode: savedMode, options: savedOptions)
+        return BluetoothSessionSnapshot(
+            categoryLabel: "probed:\(AVAudioSession.Category.playAndRecord.rawValue)",
+            outputs: outputs,
+            availableInputs: inputs
+        )
+    }
+
+    private static func categoryShowsBluetoothInputs(_ category: AVAudioSession.Category) -> Bool {
+        category == .playAndRecord || category == .record || category == .multiRoute
+    }
+
+    /// Glasses' Classic audio facts without selecting an input or activating the session.
+    /// `profilesConnected` matches `isDevicePaired`; `audioRouted` is the stricter
+    /// "audio is flowing to the glasses" signal.
+    static func observeProfiles(devicePattern: String) -> BluetoothAudioRoute.ProfileObservation {
+        let snapshot = bluetoothSessionSnapshot()
+        let profiles = profileObservation(
+            devicePattern: devicePattern, outputs: snapshot.outputs, availableInputs: snapshot.availableInputs
+        )
         logPairFlow(
-            session: session, devicePattern: devicePattern, outputs: outputs,
-            availableInputs: availableInputs, profiles: profiles
+            category: snapshot.categoryLabel, devicePattern: devicePattern, outputs: snapshot.outputs,
+            availableInputs: snapshot.availableInputs, profiles: profiles
         )
         return profiles
     }
@@ -125,7 +185,7 @@ class AudioSessionMonitor {
     /// One PAIRFLOW line per transition of category, inputs availability, ports, and both facts.
     /// Port names are the glasses' advertised name or other audio devices; no credentials are logged.
     private static func logPairFlow(
-        session: AVAudioSession,
+        category: String,
         devicePattern: String,
         outputs: [AVAudioSessionPortDescription],
         availableInputs: [AVAudioSessionPortDescription]?,
@@ -137,7 +197,7 @@ class AudioSessionMonitor {
         let outputNames = outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
         let inputNames = (availableInputs ?? []).map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
         let pairFlow =
-            "PAIRFLOW: pair_audio decision=\(decision) pattern=\(devicePattern) category=\(session.category.rawValue) inputsNil=\(availableInputs == nil) outputs=[\(outputNames)] inputs=[\(inputNames)] profilesConnected=\(profiles.profilesConnected) audioRouted=\(profiles.audioRouted)"
+            "PAIRFLOW: pair_audio decision=\(decision) pattern=\(devicePattern) category=\(category) inputsNil=\(availableInputs == nil) outputs=[\(outputNames)] inputs=[\(inputNames)] profilesConnected=\(profiles.profilesConnected) audioRouted=\(profiles.audioRouted)"
         if pairFlow != lastPairFlow {
             lastPairFlow = pairFlow
             Bridge.log(pairFlow)
@@ -148,14 +208,14 @@ class AudioSessionMonitor {
     /// Returns true if device is found (paired), WITHOUT activating it
     /// This avoids switching A2DP music playback to HFP microphone mode
     static func isDevicePaired(devicePattern: String) -> Bool {
-        let session = AVAudioSession.sharedInstance()
-        let outputs = session.currentRoute.outputs
+        let snapshot = bluetoothSessionSnapshot()
+        let outputs = snapshot.outputs
         let route = BluetoothAudioRoute.observe(
             outputs: outputs.map { (name: $0.portName, portType: $0.portType.rawValue) },
             target: devicePattern, isIOSAppOnMac: ProcessInfo.processInfo.isiOSAppOnMac
         )
         let activeTarget = route.matchingOutputCount > 0
-        let availableInputs = session.availableInputs
+        let availableInputs = snapshot.availableInputs
         let profiles = profileObservation(devicePattern: devicePattern, outputs: outputs, availableInputs: availableInputs)
         let bluetoothInput = availableInputs?.first { input in
             input.portType == .bluetoothHFP
@@ -164,10 +224,10 @@ class AudioSessionMonitor {
 
         // NSLog messages redact the native route checks in retained Mac logs.
         // Keep categorical evidence at notice level without exposing names or
-        // selecting an input, activating the session, or changing audio routing.
-        readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(session.category.rawValue, privacy: .public) outputs=\(outputs.count, privacy: .public) bluetoothOutputs=\(route.bluetoothOutputCount, privacy: .public) targetNameOutputs=\(route.targetNameOutputCount, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
+        // selecting an input or activating the session.
+        readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(snapshot.categoryLabel, privacy: .public) outputs=\(outputs.count, privacy: .public) bluetoothOutputs=\(route.bluetoothOutputCount, privacy: .public) targetNameOutputs=\(route.targetNameOutputCount, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
         logPairFlow(
-            session: session, devicePattern: devicePattern, outputs: outputs,
+            category: snapshot.categoryLabel, devicePattern: devicePattern, outputs: outputs,
             availableInputs: availableInputs, profiles: profiles
         )
 
