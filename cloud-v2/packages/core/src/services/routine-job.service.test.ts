@@ -769,7 +769,8 @@ test('staged selection read is bounded primary majority and excludes completed h
   }) as never);
   try {
     expect(await routineJobRepository.selectedLanes!(['mini'])).toEqual([{requestId: 'selected-original', hostId: 'mini', laneId: 'android'}]);
-    expect(filters).toEqual([{'fleetResourceAdmission.intent.hostId': {$in: ['mini']}, fleetResourceReservation: {$exists: false}, dispatchCompletion: {$exists: false}}]);
+    expect(filters).toEqual([{'fleetResourceAdmission.intent.hostId': {$in: ['mini']}, fleetResourceReservation: {$exists: false}, dispatchCompletion: {$exists: false}, fleetCancellation: {$exists: false},
+      state: {$in: ['awaiting-runner', 'preparing', 'queued', 'accepted']}}]);
     expect(selections).toEqual([{requestId: 1, fleetResourceAdmission: 1, _id: 0}]);
     expect(settings).toEqual([1001, 'primary', 'majority', {timeoutMS: 5000}]);
     records = Array(1001).fill(selected);

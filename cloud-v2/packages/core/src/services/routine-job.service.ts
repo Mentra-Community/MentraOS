@@ -87,7 +87,8 @@ export const routineJobRepository: RoutineJobRepository = {
     // Staged candidates can exist before the byte claim is acknowledged. Read only
     // those existing selections; completed history is not scheduling evidence.
     const rows = await TestRequestModel.find({'fleetResourceAdmission.intent.hostId': {$in: hostIds},
-      fleetResourceReservation: {$exists: false}, dispatchCompletion: {$exists: false}})
+      fleetResourceReservation: {$exists: false}, dispatchCompletion: {$exists: false}, fleetCancellation: {$exists: false},
+      state: {$in: ['awaiting-runner', 'preparing', 'queued', 'accepted']}})
       .select({requestId: 1, fleetResourceAdmission: 1, _id: 0}).limit(1001)
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
     if (rows.length > 1000) throw new TestRunError(503, 'Selected lane inventory exceeds its bounded routing read');
