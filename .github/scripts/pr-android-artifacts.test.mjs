@@ -55,9 +55,9 @@ diagnosticCode.diagnostics += `.method public execute$bluetooth_sdk_nimoDiagnost
 .end method
 `
 diagnosticCode.sdk = `.class public final ${desc(NIMO_SDK)}\n` + [
- 'connect(Lcom/mentra/bluetoothsdk/types/Device;Lcom/mentra/bluetoothsdk/types/ConnectOptions;)V',
- 'connectDefault(Lcom/mentra/bluetoothsdk/types/ConnectOptions;)V',
- 'startScan(Lcom/mentra/bluetoothsdk/types/DeviceModel;)V',
+ 'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V',
+ 'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V',
+ 'startScan(Lcom/mentra/bluetoothsdk/DeviceModel;)V',
 ].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect'])).join('')
 diagnosticCode.manager += ['connectByName(Ljava/lang/String;)V','connectDefault()V'].map(sig=>guardedMethod(sig,['dispatchCapturedEntry','allowManagerConnect'])).join('')
 diagnosticCode.nimo = `.class public final ${desc(NIMO_DEVICE)}\n` + [

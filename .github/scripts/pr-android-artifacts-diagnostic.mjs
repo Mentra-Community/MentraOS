@@ -38,9 +38,9 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
   // Verify actual call sites and consumed boolean guards, not capability strings alone.
   const guarded = (body, name) => new RegExp(`invoke-[^\\n]+${escaped(target)}->${name}\\([^\\n]*\\)Z\\s*\\n\\s*move-result[^\\n]*\\n\\s*if-(?:eqz|nez)\\b`).test(body)
   const checks = [
-    [sdk, NIMO_SDK, 'connect(Lcom/mentra/bluetoothsdk/types/Device;Lcom/mentra/bluetoothsdk/types/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
-    [sdk, NIMO_SDK, 'connectDefault(Lcom/mentra/bluetoothsdk/types/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
-    [sdk, NIMO_SDK, 'startScan(Lcom/mentra/bluetoothsdk/types/DeviceModel;)V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [sdk, NIMO_SDK, 'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [sdk, NIMO_SDK, 'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [sdk, NIMO_SDK, 'startScan(Lcom/mentra/bluetoothsdk/DeviceModel;)V', ['dispatchCapturedEntry','allowManagerConnect']],
     [manager, NIMO_MANAGER, 'connectByName(Ljava/lang/String;)V', ['dispatchCapturedEntry','allowManagerConnect']],
     [manager, NIMO_MANAGER, 'connectDefault()V', ['dispatchCapturedEntry','allowManagerConnect']],
     [nimo, NIMO_DEVICE, 'connectById(Ljava/lang/String;)V', ['dispatchCapturedEntry','admit']],
