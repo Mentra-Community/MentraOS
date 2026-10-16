@@ -456,6 +456,15 @@ class NimoLifecycleTest {
     assertEquals(true, DeviceStore.get("glasses", "connected"))
   }
 
+  @Test fun unarmedDebugConnectStillExecutesNormallyOnMainQueue() {
+    manager.sgc = null
+    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.SIMULATED, "unit-simulated") }
+    thread.start(); thread.join(1000)
+    assertNull(manager.sgc)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(manager.sgc is Simulated)
+  }
+
   private fun captureCommand(mode: String, captureNonce: String, requestNonce: String = java.util.UUID.randomUUID().toString()): JSONObject {
     NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
       .putExtra("nonce", requestNonce).putExtra("mode", mode).putExtra("expectedName", "Nimo-test")
