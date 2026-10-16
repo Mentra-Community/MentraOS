@@ -51,12 +51,13 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
   const attempt = gate.attempt, done = !!attempt.conclusion
   const rows = attempt.members.map(member => {
     const progress = member.progress, stale = !progress || now - Date.parse(progress.observedAt) > 60_000
+    const progressEnd = progress && (done ? Date.parse(attempt.finishedAt ?? progress.observedAt) : stale ? Date.parse(progress.observedAt) : now)
     const step = progress?.currentStep, name = step && member.stepIds[step.index] === step.id
       ? member.stepNames[step.index] : undefined
     const stage = member.settled ? member.status : stale ? 'Progress unavailable' : progress!.phase.replace(/-/g, ' ')
     const original = member.linkedTarget ? `${adminBase()}/?${'suiteId' in member.linkedTarget.parent ? 'testSuite=' + encodeURIComponent(member.linkedTarget.parent.suiteId) : 'testRun=' + encodeURIComponent(member.linkedTarget.parent.requestId)}` : undefined
     const result = member.requestId ? `${adminBase()}/?testRun=${encodeURIComponent(member.requestId)}` : undefined
-    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor(((stale ? Date.parse(progress.observedAt) : now) - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
+    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor((progressEnd! - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
   })
   const coverage = attempt.members.length ? `Selected ${attempt.members.length} routine/platform member(s) at ${gate.routineRevision ?? 'pending source'}.`
     : gate.selectionError ?? gate.selectionWait ?? (gate.context.labels.length ? 'Preparing selected routine coverage.' : 'No routine tests requested.')

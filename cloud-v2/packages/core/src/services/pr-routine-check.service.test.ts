@@ -463,6 +463,22 @@ test('closing or advancing a PR preserves its already delivered settled verdict 
  }
 })
 
+test('terminal progress duration stays frozen across freshness expiry and later PR closure', async () => {
+ for(const outcome of ['pass','failed']) for(const changed of ['closed','head']) {
+ const f=fixture();await f.intake();f.build();await f.drain();await complete(f,outcome);
+ const member=f.gate().attempt.members[0]!;
+ member.progress={requestId:member.requestId!,requestDigest:'d'.repeat(64),ownerGeneration:1,controllerIncarnation:'controller',sequence:1,
+  phase:'publication',completedSteps:2,totalSteps:2,startedAt:new Date(f.now-30000).toISOString(),lastProgressAt:new Date(f.now).toISOString(),observedAt:new Date(f.now).toISOString()};
+ await f.service.reconcile(f.gate().gateId);
+ const payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)),finished=f.gate().attempt.finishedAt,delivered=f.deliveries;
+ f.advance(10000);expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload);
+ f.advance(120000);expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload);
+ f.restart();if(changed==='closed') f.context.open=false;else f.context.headSha='c'.repeat(40);
+ await f.service.reconcile(f.gate().gateId);
+ expect(f.gate().attempt.conclusion).toBe(outcome==='pass'?'success':'failure');expect(f.gate().attempt.finishedAt).toBe(finished);expect(f.deliveries).toBe(delivered);
+ }
+})
+
 test('closing a PR still contains a pass with unsettled custody before reaching a cancelled verdict', async () => {
  const f=fixture(); await f.intake(); f.build(); await f.drain();
  const requestId=f.gate().attempt.members[0]!.requestId!, request=f.requests.get(requestId);
