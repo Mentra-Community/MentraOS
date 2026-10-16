@@ -89,7 +89,7 @@ test('an authority answer lost after commit retains its exact portable winner fo
   const f = fixture({afterCommit() {if (!lost) {lost = true; throw Error('response lost after durable authority CAS')}}})
   f.requests.set('lost', fleetRequest('lost'))
   await expect(f.service.reserveFleet('lost', 'a'.repeat(64), 'air1', 'mac')).rejects.toThrow('response lost')
-  const original = structuredClone(f.rows.get('mini')!.resourceReservations)
+  const original = hostResourceReservationsSchema.parse(f.rows.get('mini')!.resourceReservations).filter(value => 'kind' in value)
   const recovered = await f.service.reserveFleet('lost', 'a'.repeat(64), 'air1', 'mac')
   expect(recovered!.claims).toEqual(original); expect(f.writes).toHaveLength(1)
   expect(await f.service.reserveFleet('lost', 'a'.repeat(64), 'air2', 'mac')).toBeNull()
