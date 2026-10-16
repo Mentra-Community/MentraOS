@@ -3,8 +3,13 @@
 
 Run with the bleak venv: ~/.venvs/mentra-ble/bin/python pmx.py <command> [...]
 
-Glasses must run the MENTRA_DEBUG_KEY_INJECT BES image and the debug ASG APK
-(com.mentra.DEBUG_BES_KEY receiver). See README.md.
+Button injection uses the release BesButtonInjectReceiver (DUMP), not the deleted
+debug receiver DebugBesKeyReceiver (com.mentra.DEBUG_BES_KEY, seq/gap_ms/code/delay_ms):
+
+  adb shell am broadcast -a com.mentra.BES_BUTTON -p com.mentra.asg_client --es gesture <single|double|triple|long>
+
+inject() still accepts a legacy seq and maps it onto one of those gestures. gap_ms and code
+are not forwarded (only the power key exists). delay_ms is slept on the host first. See README.md.
 
 Device routing (see the GLASSES/PHONE block below): glasses = unit3 wrapper adb only
 (opt-in: PMX_LANE=unit2 / run_case.py --lane unit2 swaps it for the unit2 wrapper and the unit2 guard),
@@ -367,18 +372,63 @@ def bes_trace(enabled: bool = True, interval_ms: int = 3000) -> None:
     )
 
 
+# Release receiver. DebugBesKeyReceiver (action com.mentra.DEBUG_BES_KEY) is gone.
+BES_BUTTON_ACTION = "com.mentra.BES_BUTTON"
+_GESTURES = ("single", "double", "triple", "long")
+
+
+def gesture_for_seq(seq: str) -> str:
+    """Map a legacy DEBUG_BES_KEY sequence onto single|double|triple|long.
+
+    Back-compat for call sites that still pass ``presses()`` / ``C`` / ``DU`` strings.
+    A ``DU`` pair or a ``C`` click is one press (``DUC`` is one click). 1 -> single,
+    2 -> double, 3 or more -> triple. ``L`` or ``X`` -> long. Dots and gap timing are
+    ignored: the release receiver has no sequence clock, only a gesture name.
+    """
+    raw = (seq or "").strip()
+    low = raw.lower()
+    if low in _GESTURES:
+        return low
+    if "L" in raw or "X" in raw:
+        return "long"
+    collapsed = raw.replace("DUC", "C")
+    n = collapsed.count("C") + collapsed.count("DU")
+    if n <= 1:
+        return "single"
+    if n == 2:
+        return "double"
+    return "triple"
+
+
 def inject(seq: str, gap_ms: int = 150, code: str = "pwr", delay_ms: int = 0) -> None:
+    """Broadcast one power-button gesture to the release receiver.
+
+    ``adb shell am broadcast -a com.mentra.BES_BUTTON -p <asg> --es gesture <name>``.
+    ``seq`` may already be single|double|triple|long, or a legacy debug sequence
+    (see ``gesture_for_seq``). ``gap_ms`` is recorded and not sent. ``code`` other than
+    ``pwr`` is refused: the release path cannot inject fn2/camera. ``delay_ms`` is slept
+    here because the receiver has no delay extra.
+    """
     import traceback
 
+    gesture = gesture_for_seq(seq)
     audit = RUNS / RUN_NAME / "inject-audit.log"
     audit.parent.mkdir(parents=True, exist_ok=True)
     with open(audit, "a") as fh:
         caller = " <- ".join(f"{f.name}:{f.lineno}" for f in traceback.extract_stack()[-4:-1])
-        fh.write(f"{time.strftime('%H:%M:%S')} pid={os.getpid()} seq={seq} code={code} {caller}\n")
-    gsh(
-        f"am broadcast -a com.mentra.DEBUG_BES_KEY -p {ASG_PKG} --es seq '{seq}' "
-        f"--ei gap_ms {gap_ms} --es code {code} --ei delay_ms {delay_ms}"
-    )
+        fh.write(
+            f"{time.strftime('%H:%M:%S')} pid={os.getpid()} seq={seq} gesture={gesture} "
+            f"code={code} gap_ms={gap_ms} delay_ms={delay_ms} {caller}\n"
+        )
+    if code != "pwr":
+        print(
+            f"inject skipped: BES_BUTTON only injects the power key, not code={code!r} (seq={seq!r})",
+            flush=True,
+        )
+        return
+    if delay_ms:
+        time.sleep(delay_ms / 1000)
+    gsh(f"am broadcast -a {BES_BUTTON_ACTION} -p {ASG_PKG} --es gesture {gesture}")
 
 
 def presses(n: int, gap_ms: int = 300) -> str:

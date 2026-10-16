@@ -647,6 +647,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
     }
 
+    /**
+     * Sends one UART JSON command to BES through the existing companion transport.
+     *
+     * @return true if the transport accepted the bytes
+     */
+    public boolean sendBesUartCommand(String payload) {
+        return sendK900Command(payload);
+    }
+
     private boolean sendK900Command(String payload) {
         if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
             Log.w(TAG, "ServiceInitializer not initialized; cannot send I2S command");

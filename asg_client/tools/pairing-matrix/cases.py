@@ -372,9 +372,37 @@ def enter_pairing(ctx: Ctx, n: int = 3, gap_ms: int = 300) -> int:
     return m
 
 
+# Window-end speech. timeout and cancel each have a clip. A successful pair speaks
+# "Mentra connected." and does not use these. pairing_exited.wav remains the fallback
+# when the reason is missing or the new clip is not in the APK.
+PHRASE_TIMEOUT = "Pairing mode ended. No new phone paired."
+PHRASE_CANCELLED = "Pairing cancelled."
+ASSET_TIMEOUT = "pairing/pairing_ended_no_phone.wav"
+ASSET_CANCELLED = "pairing/pairing_cancelled.wav"
+
+
+def exit_speech(ctx: Ctx, phrase: str, asset: str, gmark: int = 0) -> list:
+    """Glasses log lines for one reason's exit clip.
+
+    PairingCodeSpeaker logs ``pairing-ended asset dispatched ... asset=<path>``. A line that
+    contains the spoken sentence counts too.
+    """
+    return [line for _, line in ctx.g.since(gmark) if phrase in line or asset in line]
+
+
+def wrong_exit_speech(ctx: Ctx, gmark: int = 0) -> list:
+    """Timeout or cancel clips. A successful pair must not speak either."""
+    return exit_speech(ctx, PHRASE_TIMEOUT, ASSET_TIMEOUT, gmark) + exit_speech(
+        ctx, PHRASE_CANCELLED, ASSET_CANCELLED, gmark
+    )
+
+
 @case("F1")
 def f1_idle_expiry(ctx: Ctx):
-    """Window with no phone expires after 120 s idle: locked, no owner, exit phrase once, code once."""
+    """Window with no phone expires after 120 s idle: locked, no owner, timeout phrase once, code once.
+
+    The glasses say "Pairing mode ended. No new phone paired."
+    """
     pmx.bes_trace(True, 1000)
     time.sleep(3)
     m = enter_pairing(ctx)
@@ -384,8 +412,12 @@ def f1_idle_expiry(ctx: Ctx):
     ctx.check("window closes", hit is not None, hit[1] if hit else "")
     ctx.check("closes near 120 s", hit is not None and 110 <= elapsed <= 135, f"{elapsed:.0f}s")
     time.sleep(6)
-    exits = [l for _, l in ctx.g.since(0) if "hm_pairexit received" in l]
-    ctx.check("exit phrase exactly once", len(exits) == 1, str(len(exits)))
+    exits = exit_speech(ctx, PHRASE_TIMEOUT, ASSET_TIMEOUT)
+    ctx.check(
+        'timeout phrase exactly once: "Pairing mode ended. No new phone paired."',
+        len(exits) == 1,
+        str(exits),
+    )
     codes = [l for _, l in ctx.g.since(0) if "hm_spkcode received" in l]
     ctx.check("code spoken once", len(codes) == 1, str(len(codes)))
     dump = ctx.bes(r"window_close st=", m)
@@ -404,12 +436,14 @@ def d1_first_pair(ctx: Ctx):
     ctx.check("owner committed", hit is not None, hit[1] if hit else "")
     close = ctx.bes_wait(r"state PAIRING -> OWNER_ONLY", 20)
     ctx.check("window closed on commit", close is not None, close[1] if close else "")
-    # 3.3 spec: BES omits hm_pairexit on a successful pair when "Connected" is the next prompt
-    # (ASG_CLIENT_API.md, Spoken pairing code). Accept the skip, like MAC_OWNER/D5D7/D4BFIX.
+    # A successful pair speaks "Mentra connected.", not the timeout or cancel clips.
+    # BES omits hm_pairexit when Connected is the next prompt.
     exit_line = ctx.bes_wait(
         r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 20)
-    ctx.check("R13 pairing-exit phrase on commit, or skipped because Connected follows",
+    ctx.check("paired speaks Mentra connected, or hm_pairexit skipped because Connected follows",
               exit_line is not None)
+    wrong = wrong_exit_speech(ctx)
+    ctx.check("successful pair does not speak the timeout or cancel phrase", not wrong, str(wrong))
     time.sleep(20)
     conn = ctx.bes(r"logical session connected")
     ctx.check("Connected plays exactly once", len(conn) == 1, str(conn))
@@ -503,7 +537,10 @@ def mac_becomes_owner(ctx: Ctx):
     ctx.check("Mac committed as owner", commit is not None, commit[1] if commit else "")
     exit_line = ctx.bes_wait(
         r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 30, m)
-    ctx.check("pairing exit phrase, or skipped because Connected follows", exit_line is not None)
+    ctx.check("paired speaks Mentra connected, or hm_pairexit skipped because Connected follows",
+              exit_line is not None)
+    wrong = wrong_exit_speech(ctx, m)
+    ctx.check("successful pair does not speak the timeout or cancel phrase", not wrong, str(wrong))
 
 
 def wait_owner_link(ctx: Ctx, mark: int, timeout: float = 60):
@@ -676,12 +713,28 @@ def b2_b4_no_fire(ctx: Ctx):
 
 
 def pairexits(ctx: Ctx, gmark: int = 0) -> list:
-    return [l for _, l in ctx.g.since(gmark) if "hm_pairexit received" in l and "PairingAudio" in l]
+    """Any pairing-exit speech, including the generic pairing_exited fallback."""
+    return [
+        line
+        for _, line in ctx.g.since(gmark)
+        if (
+            "pairing-ended asset dispatched" in line
+            or ASSET_TIMEOUT in line
+            or ASSET_CANCELLED in line
+            or "pairing/pairing_exited.wav" in line
+            or PHRASE_TIMEOUT in line
+            or PHRASE_CANCELLED in line
+            or ("hm_pairexit received" in line and "PairingAudio" in line)
+        )
+    ]
 
 
 @case("B11")
 def b11_single_click_cancel(ctx: Ctx):
-    """Single click inside 2 s grace and before the 4 s count reset is ignored; after it, cancels once."""
+    """Single click inside 2 s grace and before the 4 s count reset is ignored; after it, cancels once.
+
+    The cancel speech is "Pairing cancelled."
+    """
     m = ctx.g.mark()
     # One sequence so the click lands ~1 s after the third press: inside grace, count >= 2.
     pmx.inject(pmx.presses(3, 300) + "." * 20 + "C", 50)
@@ -697,8 +750,8 @@ def b11_single_click_cancel(ctx: Ctx):
     ctx.check("click after count reset cancels", hit is not None and "by single click" in hit[1],
               hit[1] if hit else "")
     time.sleep(6)
-    ex = pairexits(ctx)
-    ctx.check("pairing-exit phrase exactly once", len(ex) == 1, str(ex))
+    ex = exit_speech(ctx, PHRASE_CANCELLED, ASSET_CANCELLED)
+    ctx.check('cancel phrase exactly once: "Pairing cancelled."', len(ex) == 1, str(ex))
     ctx.check("early click did not cancel", not any("by single click" in l for l in early), str(early))
     a = ctx.adv(5)
     ctx.check("adv pairing flag cleared", bool(a) and not a["mentra"].get("pairing"), "")
@@ -1002,8 +1055,10 @@ def d5_d7_pair_again_from_card(ctx: Ctx):
     ctx.check("S22 Success screen", bool(res.get("success_screen")), str(res.get("steps")))
     ex = ctx.bes_wait(
         r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 30, gm)
-    ctx.check("glasses committed S22 again (exit phrase, or skipped because Connected follows)",
+    ctx.check("glasses committed S22 again (Mentra connected, or hm_pairexit skipped)",
               ex is not None)
+    wrong = wrong_exit_speech(ctx, gm)
+    ctx.check("successful pair does not speak the timeout or cancel phrase", not wrong, str(wrong))
     ctx.check("BES owner committed", ctx.bes_wait(r"owner committed from ble bond", 15, gm) is not None
               or (own_probe(ctx).get("own") == 1 and s22_holds_bond()))
     s22_finish_setup()
@@ -1106,6 +1161,8 @@ def d4b_fix_new_owner_takes_over(ctx: Ctx):
     ctx.check("hm_pairexit reason=paired, or skipped because Connected follows",
               ctx.bes_wait(r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 10, gm)
               is not None)
+    wrong = wrong_exit_speech(ctx, gm)
+    ctx.check("takeover does not speak the timeout or cancel phrase", not wrong, str(wrong))
     ctx.check("Mac bond created", ios.mac_bonded())
     pmx.app_home()
     time.sleep(2)
@@ -1625,7 +1682,8 @@ def x1_first_ios_pair(ctx: Ctx):
 @case("X11")
 def x11_cancel_with_ios_former_owner(ctx: Ctx):
     """R15: iOS owner; 3 presses, then one single click after the grace: no owner; iOS shows the card at the notice.
-    Cancel by single click once, hm_pairexit once, pairing flag cleared, 20 s with no connect attempt/prompt."""
+    Cancel by single click once, the glasses say "Pairing cancelled." once, pairing flag cleared, 20 s with no
+    connect attempt/prompt."""
     ctx.check("precondition iOS owner", r_ios(ctx))
     gm = ctx.g.mark()
     res = run_owner_lost(

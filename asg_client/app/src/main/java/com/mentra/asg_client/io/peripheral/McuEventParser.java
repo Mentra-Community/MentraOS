@@ -79,7 +79,8 @@ public final class McuEventParser {
                 return new MtkPingEvent();
 
             case "hm_pairexit":
-                return new PairingModeExitEvent(b == null ? "unknown" : b.optString("reason", "unknown"));
+                return new PairingModeExitEvent(
+                        b == null || b.isNull("reason") ? null : b.optString("reason", null));
 
             case "sr_swst":
                 if (b == null) {

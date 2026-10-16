@@ -82,3 +82,23 @@ One row per case × phone. Fill actual result only with evidence that meets the 
 OS-2116's written baseline removes the old owner when pairing opens, and it does not delete media. OS-2055 and this branch retain the old owner until the new phone confirms, and OS-2055 wipes media on transfer. Write down which behavior the build actually did. Do not mark the contradictory one as PASS.
 
 OS-1905's "SMP is never started" premise is stale. The bond already completes; these rows judge the Classic stage after that bond.
+
+## OS-2055 v4 pre-freeze spike and merge gate
+
+Run with a `MENTRA_KEY_LOG=1` BES build. Record the BES trace path for each row. Status
+stays `PENDING DEVICE` until a real iPhone and a real Samsung have been run. Do not mark
+a row PASS from simulator or host tests.
+
+| ID | Question or gate | iPhone | Samsung | Evidence |
+|---|---|---|---|---|
+| S1 | Under which address is the CTKD-derived Classic key stored? Equal to the BLE identity? | PENDING DEVICE | PENDING DEVICE | |
+| S2 | When does the Classic NV record appear relative to the BLE bond event? | PENDING DEVICE | PENDING DEVICE | |
+| S3 | With A and B both bonded, is `nv_record_blerec_enum_paired_dev_addr` slot 0 the oldest bond? | PENDING DEVICE | PENDING DEVICE | |
+| G1 | After takeover, B's Classic key survives, also across a glasses reboot | PENDING DEVICE | PENDING DEVICE | |
+| G2 | A's Classic key is invalidated and A's audio reconnect is refused | PENDING DEVICE | PENDING DEVICE | |
+| G3 | An A Classic link that was already open is terminated at commit | PENDING DEVICE | PENDING DEVICE | |
+| G4 | B's audio connects and reconnects after an app restart and a glasses reboot, no extra pairing | PENDING DEVICE | PENDING DEVICE | |
+| G5 | A reboot at each commit step (`MENTRA_PAIRING_FAULT_INJECT`) leaves exactly one owner | PENDING DEVICE | PENDING DEVICE | |
+
+Until S1 to S3 are answered, the firmware uses the window-entry snapshot rule for the
+Classic wipe and a deterministic tie-break at commit.

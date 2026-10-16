@@ -27,7 +27,12 @@ public final class PairingAudioEventSubscriber implements IPeripheralBus.McuEven
         if (event instanceof PairingModeExitEvent) {
             PairingModeExitEvent exitEvent = (PairingModeExitEvent) event;
             Log.i(TAG, "hm_pairexit received reason=" + exitEvent.getReason());
-            PairingCodeSpeaker.speakPairingEnded(context, hardwareManager);
+            if (PairingModeExitEvent.REASON_PAIRED.equals(exitEvent.getNormalizedReason())) {
+                // A new phone paired: "Mentra connected." follows from the connection path, so
+                // "Pairing mode ended." would be wrong here.
+                return;
+            }
+            PairingCodeSpeaker.speakPairingEnded(context, hardwareManager, exitEvent.getReason());
             return;
         }
         if (!(event instanceof SpeakPairingCodeEvent)) {
