@@ -1,3 +1,4 @@
+import {ResourceHealthSection} from './resource-health';
 import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TestingButton} from "../components/testing-ui";
 import {elapsedDuration} from "../lib/run-duration";
@@ -162,7 +163,7 @@ export function SystemHealthPage({tab = 'lanes', lane = null, onTabChange = () =
 }) {
   const selected = lane ? 'lanes' : tab;
   return <SystemHealthTabs selected={selected} onSelect={onTabChange}>
-    {selected === 'lanes' ? lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} /> : <LaneHealthSection />
+    {selected === 'resources' ? <ResourceHealthSection /> : selected === 'lanes' ? lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} /> : <LaneHealthSection />
       : selected === 'pending' ? <PendingQueueSection />
       : selected === 'framework' ? <FrameworkHealthSection />
       : selected === 'repair' ? <LaneRestorationPage />
