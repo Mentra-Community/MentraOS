@@ -4939,7 +4939,8 @@ class MentraLive: NSObject, SGCManager {
             }
         }
 
-        BleTraceLogger.logMap(direction: "phone_to_glasses", layer: layer, type: trace.commandType, payload: payload)
+        BleTraceLogger.logMap(direction: "phone_to_glasses", layer: layer, type: trace.commandType, payload: payload,
+                              forwardToBridge: wifiAdbAdmission == nil)
     }
 
     private func bleTraceWarningReason(stage: String, extra: [String: Any?]) -> String? {
@@ -5269,7 +5270,8 @@ class MentraLive: NSObject, SGCManager {
                     direction: "phone_to_glasses",
                     layer: "sdk_ble_command",
                     payload: json,
-                    bytes: jsonData.count
+                    bytes: jsonData.count,
+                    forwardToBridge: bridgeLogging
                 )
 
                 if useBinaryWireProtocol, isNewVersion {
