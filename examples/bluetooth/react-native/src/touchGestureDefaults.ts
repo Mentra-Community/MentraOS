@@ -22,7 +22,7 @@ type TouchGestureSdk = {
   setTouchGestureDefaultBehaviorEnabled?: (
     gesture: TouchGesture,
     enabled: boolean,
-  ) => Promise<{status: 'applied'; request_id: string}>;
+  ) => Promise<unknown>;
 };
 
 export async function applyTouchGestureDefault(
