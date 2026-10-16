@@ -483,6 +483,8 @@ test('diagnostic signed publication is explicit authoring selection and cannot b
  expect(await f.gateway.resolveNimoDiagnostic(source)).toMatchObject({availability:'available',diagnostic:'nimo-resource-v1'});
  f.rows.set(`${CDN}pr-builds/${name}.json`,{...receipt,diagnosticVerification:undefined});
  await expect(f.gateway.resolveNimoDiagnostic(source)).rejects.toThrow();
+ f.rows.set(`${CDN}pr-builds/${name}.json`,{...receipt,diagnosticVerification:{...receipt.diagnosticVerification,apkSha256:'e'.repeat(64)}});
+ expect(await f.gateway.resolveNimoDiagnostic(source)).toMatchObject({availability:'unavailable',reason:'Diagnostic wiring proof belongs to another APK'});
  f.rows.set(`${CDN}pr-builds/${name}.json`,receipt);
  // A diagnostic marker is rejected even if maliciously published under ordinary coordinates.
  f.rows.set(`${CDN}pr-builds/mentra-android-pr-12-${HEAD}-50-1.json`,receipt);
