@@ -3,14 +3,18 @@ import Foundation
 struct MentraLivePairingAdvertisement: Equatable {
     let pairingMode: Bool
     let pairingCode: String
-    /// Increments each time the glasses enter pairing mode. Nil on firmware that does not send it.
-    /// A stable extra byte (the legacy MAC that follows the trailer) is not a new entry.
+    /// The glasses' `window_id`: moves on each pairing-mode entry. Nil on firmware that does not
+    /// send it. A stable extra byte (the legacy MAC that follows the trailer) is not a new entry.
     let pairingGeneration: Int?
+    /// Trailer flag `OWNER_CHANGED`: the window `pairingGeneration` committed a different phone.
+    /// Unauthenticated, so it only triggers one verification reconnect.
+    let ownerChanged: Bool
 
-    init(pairingMode: Bool, pairingCode: String, pairingGeneration: Int? = nil) {
+    init(pairingMode: Bool, pairingCode: String, pairingGeneration: Int? = nil, ownerChanged: Bool = false) {
         self.pairingMode = pairingMode
         self.pairingCode = pairingCode
         self.pairingGeneration = pairingGeneration
+        self.ownerChanged = ownerChanged
     }
 
     private static let manufacturerId: UInt16 = 0xB822
@@ -25,6 +29,7 @@ struct MentraLivePairingAdvertisement: Equatable {
     private static let magicSecondOffset = magicFirstOffset + 1
     private static let protocolVersionRange = 2 ... 15
     private static let securePairingCapability = 0x01
+    private static let ownerChangedFlag = 0x04
     private static let magicFirst: UInt8 = 0x4D // M
     private static let magicSecond: UInt8 = 0x50 // P
 
@@ -61,7 +66,8 @@ struct MentraLivePairingAdvertisement: Equatable {
         return MentraLivePairingAdvertisement(
             pairingMode: data[payloadBase + pairingFlagOffset] == pairingDiscoverable,
             pairingCode: String(format: "%02X%02X", codeHigh, codeLow),
-            pairingGeneration: pairingGeneration
+            pairingGeneration: pairingGeneration,
+            ownerChanged: capability & ownerChangedFlag != 0
         )
     }
 }
@@ -137,36 +143,21 @@ enum MentraLiveConnectionAttemptPolicy {
         ownerCommitted
     }
 
-    /// Matches the glasses' absolute pairing window cap; the idle timer can be held that long.
-    static let pairingWindowAbsoluteMs = 300_000
-    private static let pairingWindowMinMs = 5_000
+    /// `entering_pairing_mode.window_ms` when the glasses omit it.
+    static let defaultPairingWindowMs = 120_000
 
-    /// Stay out for the whole window, not just its idle timeout. Mirrors Android
-    /// `MentraLiveOwnerLossPolicy.yieldMs`.
+    /// Covers the glasses' bounded close deferral (30 s) after the window timer.
+    static let pairingResumeMarginMs = 30_000
+
+    /// How long automatic reconnect pauses for a window: the window plus the close-deferral
+    /// margin. No floor beyond a missing value and no upper clamp; the glasses own the window.
+    /// Mirrors Android `MentraLiveOwnerLossPolicy.yieldMs`.
     static func yieldMs(windowMs: Int) -> Int {
-        min(pairingWindowAbsoluteMs, max(pairingWindowMinMs, max(windowMs, pairingWindowAbsoluteMs)))
+        (windowMs > 0 ? windowMs : defaultPairingWindowMs) + pairingResumeMarginMs
     }
 
-    /// Ownership transfer (pairing spec T1): when the glasses kept the previous owner while they
-    /// opened the window (`owner_retained`), that owner's phone yields for the window instead of
-    /// standing down. Absent/false stands the previous owner down for that pairing mode only.
-    /// The next pairing mode lifts the rejection. Mirrors Android
-    /// `MentraLiveOwnerLossPolicy.shouldYieldOnEnteringPairingMode`.
-    static func shouldYieldOnEnteringPairingMode(ownerRetained: Bool) -> Bool {
-        ownerRetained
-    }
-
-    /// `pairing_info.retained_owner_link`: this phone is the owner the glasses kept.
-    /// An automatic reconnect that lands here means the glasses are in pairing mode and
-    /// this phone missed the notice, so it stands down for the window. An explicit pair
-    /// is never blocked: the glasses let the owner back in and close the window, so
-    /// whichever phone gets there first wins.
-    static func shouldYieldForRetainedOwnerLink(retainedOwnerLink: Bool, explicitPairing: Bool) -> Bool {
-        retainedOwnerLink && !explicitPairing
-    }
-
-    /// Automatic reconnect must not take the single BLE slot while the glasses are still in
-    /// pairing mode. An explicit pairing attempt (the new phone, or Pair again) still connects.
+    /// Automatic reconnect must not take the single BLE slot while the saved glasses advertise
+    /// pairing mode. An explicit pairing attempt (the new phone, or Pair Again) still connects.
     /// Mirrors Android `MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect`.
     static func shouldStandDownInsteadOfReconnect(
         pairingMode: Bool,
@@ -176,45 +167,32 @@ enum MentraLiveConnectionAttemptPolicy {
         pairingMode && savedGlasses && !explicitPairing
     }
 
-    /// Remaining yield after a process restart. A missing, expired, or implausible deadline
-    /// returns 0 so the phone reconnects. Mirrors Android
-    /// `MentraLiveOwnerLossPolicy.persistedYieldRemainingMs`.
-    static func persistedYieldRemainingMs(untilWallMs: Int, nowWallMs: Int) -> Int {
-        guard untilWallMs > 0 else { return 0 }
+    /// Remaining pause after a process restart. A missing, expired, or implausible deadline (more
+    /// than the pause that was persisted with it) returns 0 so the phone reconnects. Mirrors
+    /// Android `MentraLiveOwnerLossPolicy.persistedYieldRemainingMs`.
+    static func persistedYieldRemainingMs(untilWallMs: Int, nowWallMs: Int, pauseMs: Int) -> Int {
+        guard untilWallMs > 0, pauseMs > 0 else { return 0 }
         let remaining = untilWallMs - nowWallMs
-        guard remaining > 0, remaining <= pairingWindowAbsoluteMs else { return 0 }
+        guard remaining > 0, remaining <= pauseMs else { return 0 }
         return remaining
     }
 
-    /// A connect rejection while this phone is yielding is the glasses refusing the retained
-    /// owner on purpose (T2), not owner loss, so it never enters `MentraLiveOwnerRejectionStreak`.
-    static func shouldRecordOwnerRejection(yieldActive: Bool) -> Bool {
-        !yieldActive
+    /// Readiness parked for the owner commit always has a deadline: an explicit secure attempt
+    /// arms the pairing wait, so a missing bond or owner commit fails the pair instead of leaving
+    /// it loading. Mirrors Android `MentraLiveOwnerLossPolicy.shouldRunSecureBondWait`.
+    static func shouldRunSecurePairingWait(explicitPairing: Bool, securePairingTarget: Bool) -> Bool {
+        explicitPairing && securePairingTarget
     }
 
-    /// While the glasses report `awaiting_confirm` the user is on the replace-owner confirm
-    /// screen and no bond can follow until `confirm_replace_owner` succeeds. The secure pairing
-    /// wait must not start (or must not fail the pair) in that state. A confirm result with
-    /// `ok == true` re-arms it, because the bond follows. Mirrors Android
-    /// `MentraLiveOwnerLossPolicy.shouldRunSecureBondWait`.
-    static func shouldRunSecurePairingWait(awaitingConfirm: Bool) -> Bool {
-        !awaitingConfirm
+    /// `pair_select` tells the glasses this link is the user's explicit choice (pairing spec V4).
+    /// Once per BLE session, only on an explicit attempt to secure glasses, never on an
+    /// automatic reconnect. Mirrors Android `MentraLiveOwnerLossPolicy.shouldSendPairSelect`.
+    static func shouldSendPairSelect(explicitPairing: Bool, securePairingTarget: Bool) -> Bool {
+        explicitPairing && securePairingTarget
     }
 
-    /// `glasses_ready` must not become a connected session while replace-owner is unanswered.
-    /// Mirrors Android `MentraLiveOwnerLossPolicy.shouldAcceptReadyWhileAwaitingConfirm`.
-    static func shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm: Bool) -> Bool {
-        !awaitingConfirm
-    }
-
-    /// Seconds a link may stay up after `awaiting_confirm` with no confirm. Matches the glasses
-    /// `LXY_PAIRING_CONFIRM_IGNORE_MS` and Android `CONFIRM_IGNORE_MS`.
-    static let confirmIgnoreSeconds: TimeInterval = 20
-
-    /// The `confirm_replace_owner_result` outcome that lets the pairing wait run again.
-    static func shouldRearmSecurePairingWaitAfterConfirm(ok: Bool) -> Bool {
-        ok
-    }
+    /// `pair_failure.code` when an explicit iOS attempt hits a Bluetooth key the glasses deleted.
+    static let iosForgetPairingCode = "ios_forget_pairing"
 
     /// iOS CoreBluetooth error 14: the glasses deleted their BLE bond and this phone still
     /// has the old keys. GATT never opens, so the glasses cannot ask for a wipe. Stop
@@ -234,8 +212,8 @@ enum MentraLiveConnectionAttemptPolicy {
 
     /// A connect-time authentication failure on saved secure glasses. Legacy firmware never
     /// rejects a non-owner on purpose, and during an explicit pairing attempt the user is
-    /// pairing anew. This is one observation; `MentraLiveOwnerRejectionStreak` decides when it
-    /// adds up to owner loss.
+    /// pairing anew. This is one observation; `MentraLivePairingStateMachine.onAuthRejection`
+    /// decides what it adds up to.
     static func isOwnerRejection(
         isAuthFailure: Bool,
         explicitPairing: Bool,
@@ -247,8 +225,7 @@ enum MentraLiveConnectionAttemptPolicy {
 
 /// Tracks owner rejections across automatic reconnects. One rejection can be a glasses reboot
 /// or a stale bond, so owner loss needs `rejectionsToStandDown` attempts in a row that span at
-/// least `minSpanMs`. A session that reaches ready calls `reset()`. The firmware's own
-/// `entering_pairing_mode` event is explicit and does not go through this streak.
+/// least `minSpanMs`. A session that reaches ready calls `reset()`.
 struct MentraLiveOwnerRejectionStreak {
     static let rejectionsToStandDown = 3
     /// The rejections must keep arriving for about this long, so a glasses reboot is not owner loss.
@@ -284,90 +261,6 @@ struct MentraLiveOwnerRejectionStreak {
 
     private func reached(nowMs: Int) -> Bool {
         count >= Self.rejectionsToStandDown && nowMs - firstAtMs >= Self.minSpanMs
-    }
-}
-
-/// The first pairing mode stands the previous owner's phone down so it does not fight a new
-/// phone for the BLE slot. That rejection ends when pairing mode is entered again.
-///
-/// The stand-down happens while the first window is already advertising, so those advertisements
-/// are not a second entry. The watch starts inside that window. A later rising edge (the pairing
-/// flag dropped, or advertisements went quiet, then pairing mode is on again) is the next entry.
-/// A changed pairing generation is also a new entry, even when the flag never dropped.
-struct PreviousOwnerRejectionWatch {
-    enum Phase {
-        case idle
-        case insideFirst
-        case waitingForNext
-    }
-
-    /// Advertisements this quiet mean the first window stopped. Not itself a reconnect.
-    static let quietMs = 8_000
-
-    private(set) var phase = Phase.idle
-    private var stoodDownGeneration: Int?
-
-    var isActive: Bool { phase != .idle }
-    var isInsideFirst: Bool { phase == .insideFirst }
-    /// Generation seen in the first window, if the advertisement carried one.
-    var rememberedGeneration: Int? { stoodDownGeneration }
-
-    /// First pairing-mode entry. Starts inside that window.
-    mutating func beginFirstWindow() {
-        phase = .insideFirst
-        stoodDownGeneration = nil
-    }
-
-    /// A previous process already rejected this phone. The next pairing-mode advertisement lifts it.
-    mutating func resumeWaitingForNext(generation: Int? = nil) {
-        guard phase == .idle else { return }
-        phase = .waitingForNext
-        stoodDownGeneration = generation
-    }
-
-    /// Restore a watch that survived the process.
-    mutating func restore(phase: Phase, generation: Int?) {
-        self.phase = phase
-        stoodDownGeneration = generation
-    }
-
-    /// Pairing-mode advertisements stopped, so the next one is a new entry.
-    mutating func noteQuiet() {
-        if phase == .insideFirst { phase = .waitingForNext }
-    }
-
-    /// Returns true when this observation is a later pairing mode and the rejection ends.
-    mutating func onAdvertisement(pairingMode: Bool, pairingGeneration: Int?) -> Bool {
-        guard phase != .idle else { return false }
-        if pairingMode, let pairingGeneration {
-            if stoodDownGeneration == nil, phase == .insideFirst {
-                stoodDownGeneration = pairingGeneration
-            } else if let previous = stoodDownGeneration, pairingGeneration != previous {
-                clear()
-                return true
-            }
-        }
-        if !pairingMode {
-            if phase == .insideFirst { phase = .waitingForNext }
-            return false
-        }
-        if phase == .waitingForNext {
-            clear()
-            return true
-        }
-        return false
-    }
-
-    /// A later `entering_pairing_mode` while already rejected is the next entry.
-    mutating func onEnteringPairingModeAgain() -> Bool {
-        guard phase != .idle else { return false }
-        clear()
-        return true
-    }
-
-    mutating func clear() {
-        phase = .idle
-        stoodDownGeneration = nil
     }
 }
 

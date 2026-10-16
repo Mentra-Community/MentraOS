@@ -23,6 +23,7 @@ import com.mentra.bluetoothsdk.sgcs.SceneElement
 import com.mentra.bluetoothsdk.sgcs.SceneFrame
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.MentraLivePairingStateStore
 import com.mentra.bluetoothsdk.sgcs.MentraNex
 import com.mentra.bluetoothsdk.sgcs.Nimo
 import com.mentra.bluetoothsdk.sgcs.SGCManager
@@ -102,11 +103,6 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     private var pendingWearable: String
         get() = DeviceStore.store.get("bluetooth", "pending_wearable") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "pending_wearable", value)
-
-    // Another phone owns the saved Mentra Live. Survives SGC replacement, unlike the
-    // stood-down manager, so automatic reconnects stay down until unpair or re-pair.
-    private val ownerLost: Boolean
-        get() = DeviceStore.store.get("bluetooth", "mentra_live_owner_lost") as? Boolean ?: false
 
     private var pendingDeviceName: String
         get() = DeviceStore.store.get("bluetooth", "pending_device_name") as? String ?: ""
@@ -1511,7 +1507,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: SGC is null, returning")
             return
         }
-        clearOwnerLost()
+        // Before clearPendingConnection(): the pending target is what marks an explicit pair.
+        notePairingSessionReady()
 
         // A new identity must never inherit the previous glasses' address when
         // pairing supplied only a name. Same-device reconnects retain their cache.
@@ -2345,9 +2342,20 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     internal fun shouldReconnectAfterBluetoothOn(): Boolean =
         defaultWearable.isNotEmpty() && deviceName.isNotEmpty()
 
-    /** A forget or a ready (re-paired) glasses session ends owner loss for SDK-only hosts too. */
-    internal fun clearOwnerLost() {
-        if (!ownerLost) return
+    /**
+     * A ready Mentra Live session. Only an explicit pair (a pending target) clears
+     * `pairing_rejected`; an automatic session only ends a pause and resets the streak.
+     */
+    internal fun notePairingSessionReady() {
+        if (sgc !is MentraLive) return
+        val explicitAttempt = pendingDeviceName.isNotEmpty() || pendingDeviceAddress.isNotEmpty()
+        MentraLivePairingStateStore.update("device_ready") { it.onSessionReady(explicitAttempt) }
+    }
+
+    /** Forget ends the pairing record. Also drops the pre-v4 owner-lost setting. */
+    internal fun clearPairingStateOnForget() {
+        MentraLivePairingStateStore.update("forget") { it.onForget() }
+        if (DeviceStore.store.get("bluetooth", "mentra_live_owner_lost") as? Boolean != true) return
         DeviceStore.apply("bluetooth", "mentra_live_owner_lost", false)
         Bridge.saveSetting("mentra_live_owner_lost", false)
     }
@@ -2386,8 +2394,14 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         }
         initSGC(defaultWearable)
         val live = sgc as? MentraLive
-        if (live?.isPairingYieldActive() == true) {
-            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+        if (live != null && MentraLivePairingStateStore.isRejected) {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing_rejected (Pair Again or forget)")
+            return
+        }
+        if (live != null && MentraLivePairingStateStore.isPaused) {
+            // connectById only records the target and watches for the window to end.
+            Bridge.log("MAN: connectDefault deferred — Mentra Live pairing_mode")
+            live.connectById(reconnectTarget)
             return
         }
         searching = true
@@ -2573,7 +2587,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             connectionRecovery.clear()
         }
         Bridge.log("MAN: Forgetting smart glasses")
-        clearOwnerLost()
+        clearPairingStateOnForget()
         clearSecureFirmware()
 
         val live = sgc as? MentraLive

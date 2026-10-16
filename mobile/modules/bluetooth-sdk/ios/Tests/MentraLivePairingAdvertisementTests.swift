@@ -1,3 +1,4 @@
+import CoreBluetooth
 import Foundation
 @testable import MentraBluetoothSDK
 import XCTest
@@ -267,43 +268,6 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         XCTAssertTrue(streak.record(nowMs: span + 10_000))
     }
 
-    func testTheFirstPairingModeDoesNotReleaseAndTheNextOneDoes() {
-        var watch = PreviousOwnerRejectionWatch()
-        XCTAssertFalse(watch.onAdvertisement(pairingMode: true, pairingGeneration: 1))
-        watch.beginFirstWindow()
-        XCTAssertFalse(watch.onAdvertisement(pairingMode: true, pairingGeneration: 1))
-        XCTAssertTrue(watch.onAdvertisement(pairingMode: true, pairingGeneration: 2))
-        XCTAssertFalse(watch.isActive)
-    }
-
-    func testAQuietFirstWindowThenAnotherPairingModeReleases() {
-        var watch = PreviousOwnerRejectionWatch()
-        watch.beginFirstWindow()
-        XCTAssertFalse(watch.onAdvertisement(pairingMode: true, pairingGeneration: 4))
-        watch.noteQuiet()
-        XCTAssertTrue(watch.isActive)
-        XCTAssertTrue(watch.onAdvertisement(pairingMode: true, pairingGeneration: 4))
-        XCTAssertFalse(watch.isActive)
-    }
-
-    func testASecondEnteringPairingModeReleasesWithoutAnAdvertisement() {
-        var watch = PreviousOwnerRejectionWatch()
-        watch.beginFirstWindow()
-        XCTAssertTrue(watch.onEnteringPairingModeAgain())
-        XCTAssertFalse(watch.isActive)
-        XCTAssertFalse(watch.onEnteringPairingModeAgain())
-    }
-
-    func testRetainedOwnerLinkYieldsOnlyForAutomaticReconnect() {
-        typealias Policy = MentraLiveConnectionAttemptPolicy
-        // The glasses are in pairing mode and this phone missed the notice: stand down.
-        XCTAssertTrue(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: true, explicitPairing: false))
-        // The owner pairs on purpose: never blocked, whoever gets there first wins.
-        XCTAssertFalse(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: true, explicitPairing: true))
-        XCTAssertFalse(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: false, explicitPairing: false))
-        XCTAssertFalse(Policy.shouldYieldForRetainedOwnerLink(retainedOwnerLink: false, explicitPairing: true))
-    }
-
     func testAutomaticReconnectStandsDownWhileTheSavedGlassesAdvertisePairingMode() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         XCTAssertTrue(Policy.shouldStandDownInsteadOfReconnect(
@@ -320,71 +284,90 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         ))
     }
 
-    func testARestartedAppKeepsOnlyALiveYieldDeadline() {
+    func testPauseIsTheWindowPlusTheCloseMarginWithNo300sClamp() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertEqual(Policy.yieldMs(windowMs: 120_000), 150_000)
+        XCTAssertEqual(Policy.yieldMs(windowMs: 900_000), 930_000)
+        XCTAssertEqual(Policy.yieldMs(windowMs: 5_000), 35_000)
+        // A missing window falls back to the spec default, not to a floor.
+        XCTAssertEqual(Policy.yieldMs(windowMs: 0), 150_000)
+        XCTAssertEqual(Policy.yieldMs(windowMs: -1), 150_000)
+    }
+
+    func testARestartedAppKeepsOnlyALiveDeadlineWithinThePersistedPause() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
         let now = 1_000_000
-        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: 0, nowWallMs: now), 0)
-        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now + 50_000, nowWallMs: now), 50_000)
-        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now - 1, nowWallMs: now), 0)
+        let pause = 150_000
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: 0, nowWallMs: now, pauseMs: pause), 0)
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now + 50_000, nowWallMs: now, pauseMs: pause), 50_000)
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now - 1, nowWallMs: now, pauseMs: pause), 0)
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now + pause, nowWallMs: now, pauseMs: pause), pause)
+        // Longer than the pause persisted with it: a clock jump, not a deadline.
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now + pause + 1, nowWallMs: now, pauseMs: pause), 0)
+        // A long window is not clamped to the old 300 s bound.
         XCTAssertEqual(
-            Policy.persistedYieldRemainingMs(untilWallMs: now + 300_000 + 1, nowWallMs: now),
-            0
+            Policy.persistedYieldRemainingMs(untilWallMs: now + 600_000, nowWallMs: now, pauseMs: 930_000),
+            600_000
         )
+        XCTAssertEqual(Policy.persistedYieldRemainingMs(untilWallMs: now + 10, nowWallMs: now, pauseMs: 0), 0)
     }
 
-    func testEnteringPairingModeYieldsOnlyWhenTheOwnerWasRetained() {
+    func testPairSelectGoesOnlyWithAnExplicitAttemptToSecureGlasses() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
-        XCTAssertTrue(Policy.shouldYieldOnEnteringPairingMode(ownerRetained: true))
-        // Absent or false keeps the 3.3 stand-down.
-        XCTAssertFalse(Policy.shouldYieldOnEnteringPairingMode(ownerRetained: false))
+        XCTAssertTrue(Policy.shouldSendPairSelect(explicitPairing: true, securePairingTarget: true))
+        XCTAssertFalse(Policy.shouldSendPairSelect(explicitPairing: false, securePairingTarget: true))
+        XCTAssertFalse(Policy.shouldSendPairSelect(explicitPairing: true, securePairingTarget: false))
+        XCTAssertFalse(Policy.shouldSendPairSelect(explicitPairing: false, securePairingTarget: false))
     }
 
-    func testYieldCoversTheAbsoluteWindow() {
+    func testParkedSecureReadinessAlwaysHasABondWaitDeadline() {
         typealias Policy = MentraLiveConnectionAttemptPolicy
-        XCTAssertEqual(Policy.yieldMs(windowMs: 120_000), 300_000)
-        XCTAssertEqual(Policy.yieldMs(windowMs: 900_000), 300_000)
-        XCTAssertEqual(Policy.yieldMs(windowMs: 5_000), 300_000)
+        // glasses_ready parks exactly when the attempt is explicit and the target secure; the
+        // wait must then always run so the pair cannot hang.
+        XCTAssertTrue(Policy.shouldRunSecurePairingWait(explicitPairing: true, securePairingTarget: true))
+        XCTAssertFalse(Policy.shouldRunSecurePairingWait(explicitPairing: false, securePairingTarget: true))
+        XCTAssertFalse(Policy.shouldRunSecurePairingWait(explicitPairing: true, securePairingTarget: false))
     }
 
-    func testRejectionsDuringAYieldAreNotRecorded() {
-        typealias Policy = MentraLiveConnectionAttemptPolicy
-        XCTAssertFalse(Policy.shouldRecordOwnerRejection(yieldActive: true))
-        XCTAssertTrue(Policy.shouldRecordOwnerRejection(yieldActive: false))
+    func testTheStaleBondCodeMatchesTheAppContract() {
+        XCTAssertEqual(MentraLiveConnectionAttemptPolicy.iosForgetPairingCode, "ios_forget_pairing")
     }
 
-    func testYieldRejectionsNeverBuildAStreakThatStandsDown() {
-        var streak = MentraLiveOwnerRejectionStreak()
-        var standDown = false
-        var now = 0
-        // Rejections spanning well past the stand-down thresholds, all inside the yield.
-        for _ in 0 ..< 6 {
-            if MentraLiveConnectionAttemptPolicy.shouldRecordOwnerRejection(yieldActive: true) {
-                standDown = standDown || streak.record(nowMs: now)
-            }
-            now += 60_000
-        }
-        XCTAssertFalse(standDown)
-        // The first rejection after the yield starts a fresh streak.
-        XCTAssertFalse(streak.record(nowMs: now))
+    func testAuthFailureClassifierCoversError14AndInsufficientSecurityOnly() {
+        XCTAssertTrue(MentraLive.isPairingAuthFailure(
+            NSError(domain: CBErrorDomain, code: CBError.peerRemovedPairingInformation.rawValue)
+        ))
+        XCTAssertTrue(MentraLive.isPairingAuthFailure(
+            NSError(domain: CBATTErrorDomain, code: CBATTError.insufficientAuthentication.rawValue)
+        ))
+        XCTAssertTrue(MentraLive.isPairingAuthFailure(
+            NSError(domain: CBATTErrorDomain, code: CBATTError.insufficientEncryption.rawValue)
+        ))
+        // A plain remote disconnect (the glasses' 0x14 refusal) and timeouts are not.
+        XCTAssertFalse(MentraLive.isPairingAuthFailure(
+            NSError(domain: CBErrorDomain, code: CBError.peripheralDisconnected.rawValue)
+        ))
+        XCTAssertFalse(MentraLive.isPairingAuthFailure(
+            NSError(domain: CBErrorDomain, code: CBError.connectionTimeout.rawValue)
+        ))
+        XCTAssertFalse(MentraLive.isPairingAuthFailure(nil))
     }
 
-    func testAwaitingConfirmSuspendsTheSecurePairingWait() {
-        typealias Policy = MentraLiveConnectionAttemptPolicy
-        XCTAssertFalse(Policy.shouldRunSecurePairingWait(awaitingConfirm: true))
-        XCTAssertTrue(Policy.shouldRunSecurePairingWait(awaitingConfirm: false))
+    func testReadsTheOwnerChangedFlagAndWindowIdFromTheV4Trailer() {
+        var payload = securePayload(pairingFlag: 0)
+        payload[2 + 7] = 0x01 | 0x04
+        payload[2 + 12] = 9
+        let result = MentraLivePairingAdvertisement.parse(coreBluetoothManufacturerData: payload)
+        XCTAssertEqual(result?.ownerChanged, true)
+        XCTAssertEqual(result?.pairingGeneration, 9)
+        XCTAssertEqual(result?.pairingMode, false)
     }
 
-    func testAwaitingConfirmDoesNotAcceptAReadySession() {
-        typealias Policy = MentraLiveConnectionAttemptPolicy
-        XCTAssertFalse(Policy.shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm: true))
-        XCTAssertTrue(Policy.shouldAcceptReadyWhileAwaitingConfirm(awaitingConfirm: false))
-        XCTAssertEqual(Policy.confirmIgnoreSeconds, 20)
-    }
-
-    func testSuccessfulConfirmRearmsThePairingWaitButRefusalDoesNot() {
-        typealias Policy = MentraLiveConnectionAttemptPolicy
-        XCTAssertTrue(Policy.shouldRearmSecurePairingWaitAfterConfirm(ok: true))
-        XCTAssertFalse(Policy.shouldRearmSecurePairingWaitAfterConfirm(ok: false))
+    func testOwnerChangedIsFalseWithoutTheFlag() {
+        let result = MentraLivePairingAdvertisement.parse(
+            coreBluetoothManufacturerData: securePayload(pairingFlag: 1)
+        )
+        XCTAssertEqual(result?.ownerChanged, false)
     }
 
     private func legacyPayload() -> Data {

@@ -125,9 +125,10 @@ public class Bridge private constructor() {
 
         /** Send pair failure event */
         @JvmStatic
-        fun sendPairFailureEvent(error: String) {
+        fun sendPairFailureEvent(error: String, code: String? = null) {
             val data = HashMap<String, Any>()
             data["error"] = error
+            if (code != null) data["code"] = code
             sendTypedMessage("pair_failure", data as Map<String, Any>)
         }
 
@@ -139,9 +140,8 @@ public class Bridge private constructor() {
             securePairingCapable: Boolean = true,
             protocolVersion: Int = 1,
             ownershipTransfer: Boolean = false,
-            awaitingConfirm: Boolean = false,
             ownerCommitted: Boolean = false,
-            retainedOwnerLink: Boolean = false,
+            autoAudio: Boolean = false,
         ) {
             val data = HashMap<String, Any>()
             data["had_previous_bond"] = hadPreviousBond
@@ -150,9 +150,8 @@ public class Bridge private constructor() {
             data["secure_pairing_capable"] = securePairingCapable
             data["protocol_version"] = protocolVersion
             data["ownership_transfer"] = ownershipTransfer
-            data["awaiting_confirm"] = awaitingConfirm
             data["owner_committed"] = ownerCommitted
-            data["retained_owner_link"] = retainedOwnerLink
+            data["auto_audio"] = autoAudio
             sendTypedMessage("pairing_info", data as Map<String, Any>)
         }
 

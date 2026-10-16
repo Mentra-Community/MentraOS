@@ -1770,19 +1770,6 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sendReboot()
     }
 
-    /// Ownership transfer: ask the connected Mentra Live to replace its retained owner with this
-    /// phone. The outcome arrives as the `confirm_replace_owner_result` event (`ok`, `reason`).
-    /// A no-op when the glasses are not a connected Mentra Live.
-    /// - Returns: true when the command was sent.
-    @discardableResult
-    func confirmReplaceOwner() -> Bool {
-        guard let live = DeviceManager.shared.sgc as? MentraLive else {
-            Bridge.log("NATIVE: confirmReplaceOwner ignored — no Mentra Live connected")
-            return false
-        }
-        return live.confirmReplaceOwner()
-    }
-
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) throws {
         try DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
@@ -2712,9 +2699,9 @@ public final class MentraBluetoothSDK {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
-        case "pairing_info", "confirm_replace_owner_result":
+        case "pairing_info", "pairing_state_changed":
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
-        case "entering_pairing_mode", "owner_replaced":
+        case "entering_pairing_mode", "pairing_mode_ended", "owner_replaced":
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
@@ -2810,7 +2797,8 @@ public final class MentraBluetoothSDK {
                 self,
                 didFail: BluetoothSdkError(
                     code: "pair_failure",
-                    message: data["error"] as? String ?? data.description
+                    message: data["error"] as? String ?? data.description,
+                    failureCode: data["code"] as? String
                 )
             )
         default:

@@ -863,9 +863,43 @@ export type StreamKeepAliveRequest = {
   ackId: string
 }
 
+/**
+ * Stable machine-readable `pair_failure` causes. Unknown native codes still typecheck.
+ * `ios_forget_pairing`: iOS holds a stale Bluetooth pairing for these glasses during an
+ * explicit attempt; the user must remove it in Settings > Bluetooth before pairing again.
+ */
+export type PairFailureCode = "ios_forget_pairing" | string
+
 export type PairFailureEvent = {
   type: "pair_failure"
   error: string
+  /** Stable cause, when the SDK can classify the failure. */
+  code?: PairFailureCode
+}
+
+/**
+ * Mentra Live pairing state, owned by the SDK.
+ * - `normal`: no pairing mode in effect; automatic reconnect is allowed.
+ * - `pairing_mode`: the glasses opened a pairing window. Automatic reconnect is paused until
+ *   `endsAtMs` or until the glasses report the window ended. `windowId` identifies the
+ *   window and survives a cold restart.
+ * - `pairing_rejected`: the glasses no longer accept this phone (another phone took over).
+ *   Reconnect has stopped. Render Pair Again.
+ */
+export type MentraLivePairingState =
+  | {state: "normal"}
+  | {state: "pairing_mode"; windowId: number; endsAtMs: number}
+  | {state: "pairing_rejected"}
+
+export type PairingStateChangedEvent = {
+  state: MentraLivePairingState
+}
+
+export type PairingModeEndedReason = "paired" | "cancelled" | "timeout" | string
+
+export type PairingModeEndedEvent = {
+  reason: PairingModeEndedReason
+  window_id?: number
 }
 
 export type PairingInfoEvent = {
@@ -876,29 +910,25 @@ export type PairingInfoEvent = {
   protocol_version?: number
   /** Present when the glasses build includes ownership transfer. */
   ownership_transfer?: boolean
-  /** PAIRING with a retained owner that has not been confirmed yet. False on the owner's own link. */
-  awaiting_confirm?: boolean
-  /** This phone is the owner the glasses kept. It must leave so another phone can confirm. */
-  retained_owner_link?: boolean
+  /** True when the glasses derive Classic audio from the LE pair (CTKD), so audio should connect on its own. */
+  auto_audio?: boolean
   /** True only after a BLE bond committed the owner and the window closed. */
   owner_committed?: boolean
 }
 
 export type EnteringPairingModeEvent = {
   window_ms: number
+  /** Identifies this pairing window. Also carried in `pairing_mode_ended` and the advertisement. */
+  window_id?: number
   reason?: string
-  /** The previous owner was kept until confirm (ownership transfer). */
+  /** The glasses kept their bonds when the window opened; they change only if another phone pairs. */
   owner_retained?: boolean
 }
 
-/** Refusal reasons for `confirm_replace_owner_result`. Unknown native strings still typecheck. */
-export type ConfirmReplaceOwnerResultReason = "not_pairing" | "no_owner" | "wipe_failed" | string
-
-export type ConfirmReplaceOwnerResultEvent = {
-  ok: boolean
-  reason?: ConfirmReplaceOwnerResultReason
-}
-
+/**
+ * @deprecated No longer emitted. Observe `pairing_state_changed` (or `GlassesStatus.pairingState`)
+ * and render Pair Again for `pairing_rejected`.
+ */
 export type OwnerReplacedEvent = {
   reason: string
 }
@@ -1187,8 +1217,10 @@ export type BluetoothSdkModuleEvents = {
   pair_failure: (event: PairFailureEvent) => void
   pairing_info: (event: PairingInfoEvent) => void
   entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  pairing_mode_ended: (event: PairingModeEndedEvent) => void
+  pairing_state_changed: (event: PairingStateChangedEvent) => void
+  /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: (event: OwnerReplacedEvent) => void
-  confirm_replace_owner_result: (event: ConfirmReplaceOwnerResultEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -1352,8 +1384,10 @@ export type BluetoothSdkEventMap = {
   pair_failure: PairFailureEvent
   pairing_info: PairingInfoEvent
   entering_pairing_mode: EnteringPairingModeEvent
+  pairing_mode_ended: PairingModeEndedEvent
+  pairing_state_changed: PairingStateChangedEvent
+  /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: OwnerReplacedEvent
-  confirm_replace_owner_result: ConfirmReplaceOwnerResultEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
@@ -1414,8 +1448,6 @@ export interface BluetoothSdkPublicModule {
   cancelConnectionAttempt(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
-  /** Ownership transfer: wipe the retained owner so the connected phone can bond. */
-  confirmReplaceOwner(): Promise<void>
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
@@ -1662,6 +1694,8 @@ export interface GlassesStatus {
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
+  /** Mentra Live pairing state owned by the SDK. Absent on other models. */
+  pairingState?: MentraLivePairingState
   /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
   systemTimeMs?: number
   otaVersionUrl: string

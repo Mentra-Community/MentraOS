@@ -69,7 +69,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
-            "confirm_replace_owner_result",
+            "pairing_mode_ended",
+            "pairing_state_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
@@ -674,13 +675,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        // Ownership transfer: the result arrives as the confirm_replace_owner_result event.
-        AsyncFunction("confirmReplaceOwner") {
-            await MainActor.run {
-                _ = self.bluetoothSdk().confirmReplaceOwner()
-            }
-        }
-
         // MARK: - Video Recording Commands
 
         AsyncFunction("startVideoRecording") {
@@ -1038,7 +1032,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
     @MainActor
     public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
-        sendEvent("pair_failure", ["error": error.message])
+        var body: [String: Any] = ["error": error.message]
+        if let failureCode = error.failureCode { body["code"] = failureCode }
+        sendEvent("pair_failure", body)
     }
 }
 

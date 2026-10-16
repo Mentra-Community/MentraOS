@@ -310,6 +310,11 @@ struct GlassesStatus: CustomStringConvertible {
         intValue(values["ringSignalStrength"]) ?? -1
     }
 
+    /// Mentra Live `MentraLivePairingState` (`{state, windowId?, endsAtMs?}`); nil for other glasses.
+    var pairingState: [String: Any]? {
+        values["pairingState"] as? [String: Any]
+    }
+
     var description: String {
         values.description
     }
@@ -862,6 +867,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var ringSignalStrength: Int? {
         optionalIntValue(values, "ringSignalStrength")
+    }
+
+    var pairingState: [String: Any]? {
+        values["pairingState"] as? [String: Any]
     }
 
     var description: String {

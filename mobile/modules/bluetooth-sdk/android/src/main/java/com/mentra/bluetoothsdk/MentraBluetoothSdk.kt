@@ -1664,22 +1664,6 @@ class MentraBluetoothSdk private constructor(
         deviceManager.sendReboot()
     }
 
-    /**
-     * Ownership transfer: ask the connected Mentra Live to replace its retained owner with this
-     * phone. The outcome arrives as the `confirm_replace_owner_result` event
-     * (`{ok, reason?}`). A no-op when the glasses are not a connected Mentra Live.
-     *
-     * @return true when the command was sent
-     */
-    fun confirmReplaceOwner(): Boolean {
-        val live = deviceManager.sgc as? MentraLive
-        if (live == null) {
-            Bridge.log("NATIVE: confirmReplaceOwner ignored — no Mentra Live connected")
-            return false
-        }
-        return live.confirmReplaceOwner()
-    }
-
     internal fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
         deviceManager.sendIncidentId(incidentId, apiBaseUrl)
     }
@@ -1979,7 +1963,7 @@ class MentraBluetoothSdk private constructor(
                 }
                 dispatchToListeners { it.onGalleryStatus(event) }
             }
-            "pairing_info", "confirm_replace_owner_result" -> {
+            "pairing_info" -> {
                 dispatchToListeners { it.onRawEvent(eventName, data) }
             }
             "photo_response" -> {
@@ -2111,6 +2095,7 @@ class MentraBluetoothSdk private constructor(
                         BluetoothError(
                             code = "pair_failure",
                             message = data["error"] as? String ?: data.toString(),
+                            failureCode = data["code"] as? String,
                         )
                     )
                 }

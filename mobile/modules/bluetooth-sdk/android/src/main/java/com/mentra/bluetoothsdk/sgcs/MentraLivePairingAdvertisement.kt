@@ -3,8 +3,15 @@ package com.mentra.bluetoothsdk.sgcs
 internal data class MentraLivePairingAdvertisement(
     val pairingMode: Boolean,
     val pairingCode: String,
-    /** Increments each time the glasses enter pairing mode. Null when the byte is absent. */
+    /**
+     * The glasses' `window_id`: moves on each pairing-mode entry. Null when the byte is absent.
+     */
     val pairingGeneration: Int? = null,
+    /**
+     * Trailer flag `OWNER_CHANGED`: the window [pairingGeneration] committed a different phone.
+     * Unauthenticated, so it only triggers one verification reconnect.
+     */
+    val ownerChanged: Boolean = false,
 )
 
 internal object MentraLivePairingAdvertisementParser {
@@ -20,6 +27,7 @@ internal object MentraLivePairingAdvertisementParser {
     private const val PROTOCOL_VERSION_MIN = 2
     private const val PROTOCOL_VERSION_MAX = 15
     private const val SECURE_PAIRING_CAPABILITY = 0x01
+    private const val OWNER_CHANGED_FLAG = 0x04
     private const val MAGIC_FIRST = 0x4D // M
     private const val MAGIC_SECOND = 0x50 // P
 
@@ -59,6 +67,7 @@ internal object MentraLivePairingAdvertisementParser {
             pairingMode = manufacturerData[PAIRING_FLAG_OFFSET] == PAIRING_DISCOVERABLE,
             pairingCode = String.format("%02X%02X", codeHigh, codeLow),
             pairingGeneration = pairingGeneration,
+            ownerChanged = (capability and OWNER_CHANGED_FLAG) != 0,
         )
     }
 }

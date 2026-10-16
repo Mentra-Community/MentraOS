@@ -79,6 +79,8 @@ internal data class GlassesStatus(
     val controllerBatteryLevel: Int,
     val controllerSignalStrength: Int,
     val ringSignalStrength: Int,
+    /** Mentra Live `MentraLivePairingState` map (`{state, windowId?, endsAtMs?}`); absent for other glasses. */
+    val pairingState: Map<String, Any>? = null,
 ) {
     internal fun toMap(): Map<String, Any> {
         val values =
@@ -127,6 +129,7 @@ internal data class GlassesStatus(
             "ringSignalStrength" to ringSignalStrength,
         )
         systemTimeMs?.let { values["systemTimeMs"] = it }
+        pairingState?.let { values["pairingState"] = it }
         return values
     }
 
@@ -181,8 +184,19 @@ internal data class GlassesStatus(
                 controllerBatteryLevel = numberValue(values, "controllerBatteryLevel") ?: -1,
                 controllerSignalStrength = numberValue(values, "controllerSignalStrength") ?: -1,
                 ringSignalStrength = numberValue(values, "ringSignalStrength") ?: -1,
+                pairingState = pairingStateValue(values),
             )
     }
+}
+
+/** `pairingState` from a store or event map, keeping only string keys. */
+internal fun pairingStateValue(values: Map<String, Any>): Map<String, Any>? {
+    val raw = values["pairingState"] as? Map<*, *> ?: return null
+    val state = raw["state"] as? String ?: return null
+    val result = mutableMapOf<String, Any>("state" to state)
+    (raw["windowId"] as? Number)?.let { result["windowId"] = it.toInt() }
+    (raw["endsAtMs"] as? Number)?.let { result["endsAtMs"] = it.toLong() }
+    return result
 }
 
 data class VersionInfoResult(
@@ -451,6 +465,7 @@ internal data class GlassesStatusUpdate(
     val controllerBatteryLevel: Int? = null,
     val controllerSignalStrength: Int? = null,
     val ringSignalStrength: Int? = null,
+    val pairingState: Map<String, Any>? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -509,6 +524,7 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("controllerBatteryLevel", controllerBatteryLevel)
             putIfNotNull("controllerSignalStrength", controllerSignalStrength)
             putIfNotNull("ringSignalStrength", ringSignalStrength)
+            pairingState?.let { put("pairingState", it) }
         }
 
     companion object {
@@ -572,6 +588,7 @@ internal data class GlassesStatusUpdate(
                 controllerBatteryLevel = optionalNumberValue(values, "controllerBatteryLevel"),
                 controllerSignalStrength = optionalNumberValue(values, "controllerSignalStrength"),
                 ringSignalStrength = optionalNumberValue(values, "ringSignalStrength"),
+                pairingState = pairingStateValue(values),
             )
     }
 }

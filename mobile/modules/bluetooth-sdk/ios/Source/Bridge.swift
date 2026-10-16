@@ -85,8 +85,10 @@ class Bridge {
         Bridge.sendTypedMessage("head_up", body: data)
     }
 
-    static func sendPairFailureEvent(_ error: String) {
-        let data = ["error": error]
+    /// `code` is the machine-readable reason (`pair_failure.code`), e.g. `ios_forget_pairing`.
+    static func sendPairFailureEvent(_ error: String, code: String? = nil) {
+        var data: [String: Any] = ["error": error]
+        if let code { data["code"] = code }
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
@@ -97,9 +99,8 @@ class Bridge {
         securePairingCapable: Bool = true,
         protocolVersion: Int = 1,
         ownershipTransfer: Bool = false,
-        awaitingConfirm: Bool = false,
         ownerCommitted: Bool = false,
-        retainedOwnerLink: Bool = false
+        autoAudio: Bool? = nil
     ) {
         var body: [String: Any] = [
             "had_previous_bond": hadPreviousBond,
@@ -107,11 +108,10 @@ class Bridge {
             "secure_pairing_capable": securePairingCapable,
             "protocol_version": protocolVersion,
             "ownership_transfer": ownershipTransfer,
-            "awaiting_confirm": awaitingConfirm,
             "owner_committed": ownerCommitted,
-            "retained_owner_link": retainedOwnerLink,
         ]
         if let pairingCode { body["pairing_code"] = pairingCode }
+        if let autoAudio { body["auto_audio"] = autoAudio }
         Bridge.sendTypedMessage("pairing_info", body: body)
     }
 

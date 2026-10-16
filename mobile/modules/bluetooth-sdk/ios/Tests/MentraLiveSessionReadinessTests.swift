@@ -1,3 +1,4 @@
+import CoreBluetooth
 @testable import MentraBluetoothSDK
 import XCTest
 
@@ -93,80 +94,27 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
                        BluetoothSdkDefaults.voiceActivityDetectionEnabled)
     }
 
-    func testPairingYieldDuringPendingReadinessCleansUpAndKeepsTheOwnerForTheWholeWindow() async throws {
-        let store = DeviceStore.shared.store
-        let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
-        let previous = DeviceManager.shared.sgc
-        let transport = SessionReadinessTransport()
-        let sdk = MentraBluetoothSDK()
-        DeviceManager.shared.sgc = transport
-        defer {
-            sdk.invalidate()
-            transport.cleanup()
-            DeviceManager.shared.sgc = previous
-            for (category, values) in saved {
-                for key in store.getCategory(category).keys where values[key] == nil {
-                    store.remove(category, key)
-                }
-                for (key, value) in values { store.set(category, key, value) }
-            }
-        }
-
-        func receive(_ value: [String: Any]) throws {
-            try transport.processReceivedData(JSONSerialization.data(withJSONObject: value))
-        }
-        try receive(["type": "glasses_ready", "sid": "original"])
-        try receive(["type": "version_info_1", "sid": "replacement", "build_number": "302010070"])
-        XCTAssertTrue(sdk.glassesStatus.connected)
-        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
-        store.set("glasses", "headUp", true)
-        store.set("glasses", "voiceActivityDetectionEnabled", !BluetoothSdkDefaults.voiceActivityDetectionEnabled)
-
-        var enteringBodies: [[String: Any]] = []
-        let enteringSink = Bridge.addEventSink { event, body in
-            if event == "entering_pairing_mode" { enteringBodies.append(body) }
-        }
-        defer { Bridge.removeEventSink(enteringSink) }
-
-        // Ownership transfer: the glasses kept this phone as owner, so it yields.
-        try receive(["type": "entering_pairing_mode", "window_ms": 5000, "owner_retained": true])
-        XCTAssertTrue(transport.isPairingYieldActive())
-        XCTAssertFalse(transport.isManagerKilled)
-        XCTAssertNotEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
-        XCTAssertEqual(enteringBodies.count, 1)
-        XCTAssertEqual(enteringBodies.first?["owner_retained"] as? Bool, true)
-        XCTAssertFalse(sdk.glassesStatus.connected)
-        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
-        XCTAssertEqual(store.get("glasses", "headUp") as? Bool, false)
-        XCTAssertEqual(store.get("glasses", "voiceActivityDetectionEnabled") as? Bool,
-                       BluetoothSdkDefaults.voiceActivityDetectionEnabled)
-
-        // Readiness queued on the relinquished GATT must not close the yield.
-        try receive(["type": "glasses_ready", "sid": "replacement"])
-        XCTAssertTrue(transport.isPairingYieldActive())
-        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
-
-        // The yield covers the whole 300 s window, not the 5 s idle value in the message.
-        try await Task.sleep(nanoseconds: 5_500_000_000)
-        XCTAssertTrue(transport.isPairingYieldActive())
+    /// The pairing state is process-wide and persisted; every test starts and ends clean.
+    private func resetPairingState() {
+        UserDefaults.standard.removeObject(forKey: MentraLivePairingStateStore.defaultsKey)
+        MentraLivePairingStateStore.shared.resetForTest()
     }
 
-    func testEnteringPairingModeWithoutOwnerRetainedStillStandsDown() async throws {
+    private func withPairingTransport(
+        _ body: (SessionReadinessTransport, MentraBluetoothSDK, ObservableStore) throws -> Void
+    ) rethrows {
         let store = DeviceStore.shared.store
         let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
         let previous = DeviceManager.shared.sgc
+        resetPairingState()
         let transport = SessionReadinessTransport()
         let sdk = MentraBluetoothSDK()
         DeviceManager.shared.sgc = transport
-        var enteringEvents = 0
-        let sink = Bridge.addEventSink { event, _ in
-            if event == "entering_pairing_mode" { enteringEvents += 1 }
-        }
         defer {
-            Bridge.removeEventSink(sink)
             sdk.invalidate()
             transport.cleanup()
             DeviceManager.shared.sgc = previous
+            resetPairingState()
             for (category, values) in saved {
                 for key in store.getCategory(category).keys where values[key] == nil {
                     store.remove(category, key)
@@ -174,26 +122,198 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
                 for (key, value) in values { store.set(category, key, value) }
             }
         }
+        try body(transport, sdk, store)
+    }
 
-        try transport.processReceivedData(JSONSerialization.data(withJSONObject: [
-            "type": "entering_pairing_mode", "window_ms": 5000,
-        ]))
-        // The owner-lost flag is applied on a main-actor task.
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertFalse(transport.isPairingYieldActive())
-        // The first pairing mode rejects this phone without killing the manager, so a
-        // later pairing mode can lift the rejection.
-        XCTAssertFalse(transport.isManagerKilled)
-        XCTAssertTrue(transport.isPreviousOwnerRejectionActive())
-        XCTAssertEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
-        XCTAssertEqual(enteringEvents, 0)
+    private func receive(_ transport: MentraLive, _ value: [String: Any]) throws {
+        try transport.processReceivedData(JSONSerialization.data(withJSONObject: value))
+    }
 
-        try transport.processReceivedData(JSONSerialization.data(withJSONObject: [
-            "type": "entering_pairing_mode", "window_ms": 5000,
-        ]))
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertFalse(transport.isPreviousOwnerRejectionActive())
-        XCTAssertNotEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
+    func testPairingPauseDuringPendingReadinessCleansUpAndLastsTheWindowPlusMargin() throws {
+        try withPairingTransport { transport, sdk, store in
+            try receive(transport, ["type": "glasses_ready", "sid": "original"])
+            try receive(transport, ["type": "version_info_1", "sid": "replacement", "build_number": "302010070"])
+            XCTAssertTrue(sdk.glassesStatus.connected)
+            XCTAssertFalse(sdk.glassesStatus.fullyBooted)
+            store.set("glasses", "headUp", true)
+
+            var enteringBodies: [[String: Any]] = []
+            var stateEvents: [[String: Any]] = []
+            let sink = Bridge.addEventSink { event, body in
+                if event == "entering_pairing_mode" { enteringBodies.append(body) }
+                if event == "pairing_state_changed", let state = body["state"] as? [String: Any] {
+                    stateEvents.append(state)
+                }
+            }
+            defer { Bridge.removeEventSink(sink) }
+
+            let before = MentraLivePairingStateStore.nowMs()
+            try receive(transport, [
+                "type": "entering_pairing_mode", "window_ms": 5000, "window_id": 7,
+                "owner_retained": true, "protocol_version": 4,
+            ])
+            let after = MentraLivePairingStateStore.nowMs()
+            let pairingStore = MentraLivePairingStateStore.shared
+            XCTAssertTrue(pairingStore.isPaused)
+            XCTAssertFalse(transport.isManagerKilled)
+            guard case let .pairingMode(windowId, endsAtMs) = pairingStore.state else {
+                return XCTFail("expected pairing_mode, got \(pairingStore.describe())")
+            }
+            XCTAssertEqual(windowId, 7)
+            // window_ms + 30 s, with no 300 s floor.
+            XCTAssertGreaterThanOrEqual(endsAtMs, before + 35_000)
+            XCTAssertLessThanOrEqual(endsAtMs, after + 35_000)
+
+            XCTAssertEqual(enteringBodies.count, 1)
+            XCTAssertEqual(enteringBodies.first?["window_id"] as? Int, 7)
+            XCTAssertEqual(enteringBodies.first?["owner_retained"] as? Bool, true)
+            XCTAssertEqual(stateEvents.last?["state"] as? String, "pairing_mode")
+            XCTAssertEqual(stateEvents.last?["windowId"] as? Int, 7)
+            let published = store.get("glasses", "pairingState") as? [String: Any]
+            XCTAssertEqual(published?["state"] as? String, "pairing_mode")
+            XCTAssertEqual(sdk.glassesStatus.pairingState?["windowId"] as? Int, 7)
+            XCTAssertFalse(sdk.glassesStatus.connected)
+            XCTAssertEqual(store.get("glasses", "headUp") as? Bool, false)
+
+            // Readiness queued on the relinquished GATT must not end the pause.
+            try receive(transport, ["type": "glasses_ready", "sid": "replacement"])
+            XCTAssertTrue(pairingStore.isPaused)
+            XCTAssertFalse(sdk.glassesStatus.fullyBooted)
+
+            // The pause is persisted with its window id.
+            let record = UserDefaults.standard.dictionary(forKey: MentraLivePairingStateStore.defaultsKey)
+            XCTAssertEqual(record?[MentraLivePairingStateMachine.keyWindowId] as? Int, 7)
+            XCTAssertEqual(record?[MentraLivePairingStateMachine.keyState] as? String, "pairing_mode")
+
+            // pairing_mode_ended for another window is ignored; the matching one resumes early.
+            var endedBodies: [[String: Any]] = []
+            let endedSink = Bridge.addEventSink { event, body in
+                if event == "pairing_mode_ended" { endedBodies.append(body) }
+            }
+            defer { Bridge.removeEventSink(endedSink) }
+            try receive(transport, ["type": "pairing_mode_ended", "reason": "timeout", "window_id": 8])
+            XCTAssertTrue(pairingStore.isPaused)
+            try receive(transport, ["type": "pairing_mode_ended", "reason": "timeout", "window_id": 7])
+            XCTAssertEqual(pairingStore.state, .normal)
+            XCTAssertEqual(endedBodies.count, 2)
+            XCTAssertEqual(endedBodies.last?["reason"] as? String, "timeout")
+            XCTAssertEqual(endedBodies.last?["window_id"] as? Int, 7)
+            XCTAssertEqual(stateEvents.last?["state"] as? String, "normal")
+        }
+    }
+
+    func testFlagOffFirmwareEnteringPairingModeIsAPersistentRejection() throws {
+        try withPairingTransport { transport, _, store in
+            var enteringEvents = 0
+            let sink = Bridge.addEventSink { event, _ in
+                if event == "entering_pairing_mode" { enteringEvents += 1 }
+            }
+            defer { Bridge.removeEventSink(sink) }
+
+            try receive(transport, ["type": "entering_pairing_mode", "window_ms": 5000])
+            let pairingStore = MentraLivePairingStateStore.shared
+            XCTAssertTrue(pairingStore.isRejected)
+            // The manager stays alive; the pairing state gates every automatic connect.
+            XCTAssertFalse(transport.isManagerKilled)
+            XCTAssertEqual(enteringEvents, 1)
+            XCTAssertEqual((store.get("glasses", "pairingState") as? [String: Any])?["state"] as? String, "pairing_rejected")
+            // Native code never writes the retired settings flag.
+            XCTAssertNotEqual(store.get("bluetooth", "mentra_live_owner_lost") as? Bool, true)
+
+            // A later pairing mode does not lift it, and the settings replay cannot either.
+            try receive(transport, ["type": "entering_pairing_mode", "window_ms": 5000])
+            store.set("bluetooth", "mentra_live_owner_lost", false)
+            XCTAssertTrue(pairingStore.isRejected)
+
+            // A restart keeps it.
+            pairingStore.resetForTest()
+            pairingStore.ensureRestored(savedDeviceId: "")
+            XCTAssertTrue(pairingStore.isRejected)
+
+            // A successful automatic session does not clear it; an explicit pair does.
+            try receive(transport, ["type": "glasses_ready", "sid": "automatic"])
+            XCTAssertTrue(pairingStore.isRejected)
+            store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
+            try receive(transport, ["type": "glasses_ready", "sid": "explicit"])
+            XCTAssertEqual(pairingStore.state, .normal)
+        }
+    }
+
+    func testPhoneHelloOnEverySecureSessionAndPairSelectOnlyOnAnExplicitAttempt() throws {
+        try withPairingTransport { transport, _, store in
+            let securePairingInfo: [String: Any] = [
+                "type": "pairing_info", "secure_pairing_capable": true, "protocol_version": 4,
+                "had_previous_bond": true, "owner_committed": true, "auto_audio": true,
+            ]
+            var pairingInfoBodies: [[String: Any]] = []
+            let sink = Bridge.addEventSink { event, body in
+                if event == "pairing_info" { pairingInfoBodies.append(body) }
+            }
+            defer { Bridge.removeEventSink(sink) }
+
+            // Automatic reconnect: hello only.
+            try receive(transport, securePairingInfo)
+            try receive(transport, securePairingInfo)
+            let types = transport.commands.compactMap { $0["type"] as? String }
+            XCTAssertEqual(types.filter { $0 == "phone_hello" }.count, 1)
+            XCTAssertFalse(types.contains("pair_select"))
+            let hello = transport.commands.first { $0["type"] as? String == "phone_hello" }
+            XCTAssertEqual(hello?["pairing_protocol"] as? Int, 4)
+            XCTAssertEqual(pairingInfoBodies.last?["auto_audio"] as? Bool, true)
+            XCTAssertNil(pairingInfoBodies.last?["awaiting_confirm"])
+            XCTAssertNil(pairingInfoBodies.last?["retained_owner_link"])
+
+            // An explicit attempt on a new session also selects this phone.
+            transport.cleanup()
+            let explicitTransport = SessionReadinessTransport()
+            defer { explicitTransport.cleanup() }
+            store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
+            store.set("bluetooth", "pending_device_secure_pairing_capable", true)
+            try receive(explicitTransport, securePairingInfo)
+            try receive(explicitTransport, securePairingInfo)
+            let explicitTypes = explicitTransport.commands.compactMap { $0["type"] as? String }
+            XCTAssertEqual(explicitTypes.filter { $0 == "phone_hello" }.count, 1)
+            XCTAssertEqual(explicitTypes.filter { $0 == "pair_select" }.count, 1)
+        }
+    }
+
+    func testLegacyFirmwareGetsNoPairingProtocolMessages() throws {
+        try withPairingTransport { transport, _, store in
+            store.set("bluetooth", "mentra_live_secure_firmware", false)
+            store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
+            try receive(transport, ["type": "pairing_info", "had_previous_bond": false])
+            let types = transport.commands.compactMap { $0["type"] as? String }
+            XCTAssertFalse(types.contains("phone_hello"))
+            XCTAssertFalse(types.contains("pair_select"))
+        }
+    }
+
+    func testError14OnAnExplicitAttemptAsksToForgetThePairingWithItsCode() throws {
+        try withPairingTransport { transport, _, store in
+            var failures: [[String: Any]] = []
+            let sink = Bridge.addEventSink { event, body in
+                if event == "pair_failure" { failures.append(body) }
+            }
+            defer { Bridge.removeEventSink(sink) }
+            MentraLive.clearStaleIosBondPrompt()
+            defer { MentraLive.clearStaleIosBondPrompt() }
+
+            let error14 = NSError(domain: CBErrorDomain, code: CBError.peerRemovedPairingInformation.rawValue)
+            store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
+            XCTAssertTrue(transport.stopAfterConnectFailure(error14))
+            XCTAssertEqual(failures.count, 1)
+            XCTAssertEqual(failures.first?["code"] as? String, "ios_forget_pairing")
+            XCTAssertEqual(failures.first?["error"] as? String, "errors:pairingCouldNotStart")
+            // An explicit attempt never counts toward a rejection.
+            XCTAssertEqual(MentraLivePairingStateStore.shared.state, .normal)
+
+            // On an automatic reconnect error 14 is one strike, not a prompt.
+            store.set("bluetooth", "pending_device_name", "")
+            store.set("bluetooth", "mentra_live_secure_firmware", true)
+            _ = transport.stopAfterConnectFailure(error14)
+            XCTAssertEqual(failures.count, 1)
+            XCTAssertEqual(MentraLivePairingStateStore.shared.state, .normal)
+        }
     }
 
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {

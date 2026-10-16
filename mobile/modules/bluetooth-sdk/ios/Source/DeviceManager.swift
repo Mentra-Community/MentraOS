@@ -136,7 +136,8 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "default_wearable", newValue) }
     }
 
-    /// A forget or a ready (re-paired) glasses session ends owner loss for SDK-only hosts too.
+    /// Clears the retired pre-v4 owner-lost setting. The Mentra Live pairing state is native
+    /// (`MentraLivePairingStateStore`) and never rides the settings replay.
     private func clearOwnerLost() {
         guard DeviceStore.shared.get("bluetooth", "mentra_live_owner_lost") as? Bool == true else { return }
         DeviceStore.shared.apply("bluetooth", "mentra_live_owner_lost", false)
@@ -1024,7 +1025,6 @@ struct ViewState {
             return
         }
         Bridge.log("MAN: handleDeviceReady(): \(sgc.type)")
-        clearOwnerLost()
         resetMicHealth()
 
         // A new identity must never inherit the previous glasses' address when
@@ -1906,9 +1906,18 @@ struct ViewState {
         }
         initSGC(defaultWearable)
         (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
-        if let live = sgc as? MentraLive, live.isPairingYieldActive() {
-            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
-            return
+        if let live = sgc as? MentraLive {
+            let pairingState = MentraLivePairingStateStore.shared
+            if pairingState.isRejected {
+                Bridge.log("MAN: connectDefault skipped — Mentra Live pairing_rejected (Pair Again or forget)")
+                return
+            }
+            if pairingState.isPaused {
+                // The manager watches the advertisement and resumes on its own.
+                Bridge.log("MAN: connectDefault deferred — Mentra Live pairing_mode")
+                live.connectById(reconnectTarget)
+                return
+            }
         }
         searching = true
         sgc?.connectById(reconnectTarget)
@@ -2087,6 +2096,7 @@ struct ViewState {
 
     func forget() {
         Bridge.log("MAN: Forgetting smart glasses")
+        MentraLivePairingStateStore.shared.update("forget") { $0.onForget() }
         clearOwnerLost()
         clearSecureFirmware()
         // Call forget first to stop timers/handlers/reconnect logic
