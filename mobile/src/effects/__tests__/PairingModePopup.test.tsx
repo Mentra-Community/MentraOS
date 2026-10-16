@@ -2,7 +2,7 @@ import {render} from "@testing-library/react-native"
 
 import {PairingModePopup} from "@/effects/PairingModePopup"
 import en from "@/i18n/en"
-import showAlert from "@/utils/AlertUtils"
+import showAlert, {dismissAlert} from "@/utils/AlertUtils"
 
 type MockStatus = {state: string; pairingState: {state: string; windowId?: number; endsAtMs?: number}}
 
@@ -10,7 +10,11 @@ let mockStatus: MockStatus
 const mockBacking = new Map<string, unknown>()
 
 jest.mock("@/hooks/useEngineSnapshot", () => ({useEngineSnapshot: () => mockStatus}))
-jest.mock("@/utils/AlertUtils", () => ({__esModule: true, default: jest.fn()}))
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: jest.fn(),
+  dismissAlert: jest.fn(),
+}))
 jest.mock("@/i18n", () => ({
   translate: jest.fn((key: string) => {
     const [namespace, name] = key.split(":")
@@ -122,6 +126,24 @@ describe("pairing-mode popup (S1)", () => {
     screen.rerender(<PairingModePopup />)
 
     expect(showAlert).not.toHaveBeenCalled()
+  })
+
+  it("dismisses the popup when the glasses leave pairing mode", () => {
+    const screen = render(<PairingModePopup />)
+    mockStatus = inWindow(1)
+    screen.rerender(<PairingModePopup />)
+    ;(dismissAlert as jest.Mock).mockClear()
+
+    mockStatus = connectedNormal()
+    screen.rerender(<PairingModePopup />)
+    expect(dismissAlert).toHaveBeenCalledWith("Your glasses are in pairing mode")
+
+    mockStatus = inWindow(2)
+    screen.rerender(<PairingModePopup />)
+    ;(dismissAlert as jest.Mock).mockClear()
+    mockStatus = {state: "disconnected", pairingState: {state: "pairing_rejected"}}
+    screen.rerender(<PairingModePopup />)
+    expect(dismissAlert).toHaveBeenCalledWith("Your glasses are in pairing mode")
   })
 
   it("stays quiet for pairing_rejected and normal", () => {
