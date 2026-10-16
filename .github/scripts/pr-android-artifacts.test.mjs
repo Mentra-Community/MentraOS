@@ -43,7 +43,7 @@ diagnosticCode.diagnostics += `.method public execute$bluetooth_sdk_nimoDiagnost
  const-string v0, "arm-capture"
  const-string v0, "capture-status"
  const-string v0, "cancel-capture"
- invoke-virtual {v0}, ${desc(NIMO_DEVICE)}->releaseCapturedResource()V
+ invoke-virtual {v0}, ${desc(NIMO_DEVICE)}->releaseCapturedResource$bluetooth_sdk_nimoDiagnostic(Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;)V
 .end method
 .method private captureSnapshot(Lcom/mentra/bluetoothsdk/sgcs/NimoResourceDiagnostics$Capture;)Lorg/json/JSONObject;
  const-string v0, "nimo-preconnect-capture-v1"
@@ -327,3 +327,13 @@ test('missing, nonexecutable or unproven SDK tools never fall back to PATH or an
  {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('->cancel','->unusedCancel')},
  ]) assert.throws(()=>validateNimoDiagnosticBytecode(code),/capture/)
  })
+
+test('SDK fixture descriptors follow the declared Kotlin package, not its directory', async () => {
+ const source=await readFile(new URL('../../mobile/modules/bluetooth-sdk/android/src/main/java/com/mentra/bluetoothsdk/types/DeviceModels.kt',import.meta.url),'utf8')
+ const pkg=/^package ([A-Za-z0-9_.]+)$/m.exec(source)[1].replaceAll('.','/')
+ for(const name of ['Device','ConnectOptions','DeviceModel']) assert.ok(diagnosticCode.sdk.includes(`L${pkg}/${name};`))
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,sdk:diagnosticCode.sdk.replaceAll(`${pkg}/`,`${pkg}/types/`)}),/capture/)
+ // Both Kotlin internal mangling and unmangled JVM spellings are bounded and accepted.
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('releaseCapturedResource$bluetooth_sdk_nimoDiagnostic','releaseCapturedResource')}))
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('releaseCapturedResource$bluetooth_sdk_nimoDiagnostic','releaseCapturedResource$bad-module')}),/capture/)
+})
