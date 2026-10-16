@@ -353,10 +353,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun capturePinsGenerationZeroBeforeEffectsAndRejectsWrongPeerAndReplacement() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
     val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").readText()
     assertEquals(nimo.resourceInstanceId, JSONObject(admission).getString("instanceId"))
@@ -374,10 +375,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun captureAdmissionPersistenceFailurePreventsAnyConnectAndBecomesStickyFence() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     File(context.filesDir, "nimo-lifecycle/$nonce.admission.tmp").mkdir()
     assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
     assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
@@ -385,10 +387,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun capturedGenerationZeroCancellationDrainsOriginalAndFencesQueuedAdmission() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
     val cancelNonce = java.util.UUID.randomUUID().toString()
     NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
@@ -420,10 +423,11 @@ class NimoLifecycleTest {
   }
 
   @Test fun offMainOriginalNimoConnectAdmitsOnMainBeforeAnyPeerTransport() {
-    manager.sgc = nimo
+    manager.sgc = null
     NimoResourceDiagnostics.start(context)
     val nonce = java.util.UUID.randomUUID().toString()
     captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
     val thread = Thread { nimo.connectById("Nimo-test") }
     thread.start(); awaitMainDispatch(thread)
     val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
@@ -478,6 +482,18 @@ class NimoLifecycleTest {
     thread.join(1000); assertFalse(thread.isAlive)
     assertTrue(failure.get() is com.mentra.bluetoothsdk.BluetoothSdkException)
     assertEquals("default_device_missing", (failure.get() as com.mentra.bluetoothsdk.BluetoothSdkException).code)
+  }
+
+  @Test fun onlyDiagnosticVariantRequiresArmForNimoAndExistingManagerCannotBeAdopted() {
+    assertFalse(NimoResourceDiagnostics.allowUnarmedWearable("nimoDiagnostic", "NIMO"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("nimoDiagnostic", "G2"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("debug", "NIMO"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("release", "NIMO"))
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    assertEquals("capture-arm-refused-existing-owner", captureCommand("arm-capture", nonce, nonce).getString("error"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
   }
 
   private fun uninitializedSdk(): com.mentra.bluetoothsdk.MentraBluetoothSdk {

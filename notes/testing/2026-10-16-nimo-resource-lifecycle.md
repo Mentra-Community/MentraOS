@@ -101,3 +101,12 @@ This guards SDK-level cancel/default/pending writes before lower manager mutatio
 cancelled or replaced target returns before those writes. Release hooks remain no-op.
 The queued SDK-connect/cancel/G2 regression verifies that the replacement and saved
 identity stay untouched. This supersedes the earlier off-main diagnostic refusal note.
+
+Only the `nimoDiagnostic` SDK variant now requires a fixed arm before any NIMO SDK,
+manager, discovery/connection admission, or peer/transport action. G2 and ordinary
+debug/release policy are unchanged. Arm requires a null current manager; an existing
+quiescent NIMO is deliberately not adopted. Fresh capture receipts expose
+`captureRequiredBeforeArm` so the owned parser refuses an ordinary debug SDK or old
+candidate. The compiled capture admission proof must attest this diagnostic policy,
+not infer it from a generic receiver marker. JVM tests cover policy inputs and existing
+manager refusal; actual diagnostic DEX proof remains a separate required build gate.

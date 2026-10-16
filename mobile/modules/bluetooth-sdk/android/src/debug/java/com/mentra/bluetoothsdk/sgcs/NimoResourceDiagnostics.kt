@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import com.mentra.bluetoothsdk.BuildConfig
 import com.mentra.bluetoothsdk.DeviceManager
 import org.json.JSONObject
 import java.io.File
@@ -30,6 +31,10 @@ internal object NimoResourceDiagnostics {
         var transportStarted: Boolean = false)
     // One diagnostic attempt per app process. Cancellation is a process-lifetime fence.
     @Volatile private var capture: Capture? = null
+    internal fun preArmCaptureRequired(buildType: String = BuildConfig.BUILD_TYPE): Boolean = buildType == "nimoDiagnostic"
+    internal fun allowUnarmedWearable(buildType: String, wearable: String): Boolean =
+        !preArmCaptureRequired(buildType) || !wearable.contains("NIMO", ignoreCase = true)
+
 
     /** Debug entries share the main admission queue even before arm, so a call that
      * starts just before arm cannot resume effects past it. Release builds are no-op.
@@ -53,7 +58,7 @@ internal object NimoResourceDiagnostics {
 
     @Synchronized
     fun allowManagerConnect(wearable: String, name: String? = null): Boolean {
-        val owned = capture ?: return true
+        val owned = capture ?: return allowUnarmedWearable(BuildConfig.BUILD_TYPE, wearable)
         if (Looper.myLooper() != main.looper) return false
         if (!wearable.contains("NIMO", ignoreCase = true)) return true
         val current = DeviceManager.getInstance().sgc
@@ -64,7 +69,7 @@ internal object NimoResourceDiagnostics {
 
     @Synchronized
     fun admit(instance: Nimo, name: String?, connect: Boolean): Boolean {
-        val owned = capture ?: return true
+        val owned = capture ?: return !preArmCaptureRequired()
         if (Looper.myLooper() != main.looper) return false
         if (!allowManagerConnect("NIMO", name) || DeviceManager.getInstance().sgc !== instance ||
             owned.instance != null && owned.instance !== instance || owned.connectStarted) return false
@@ -91,7 +96,7 @@ internal object NimoResourceDiagnostics {
 
     @Synchronized
     fun allowPeer(instance: Nimo, address: String, bonded: Boolean): Boolean {
-        val owned = capture ?: return true
+        val owned = capture ?: return !preArmCaptureRequired()
         if (Looper.myLooper() != main.looper) return false
         return !owned.cancelled && owned.instance === instance && address == owned.address && bonded &&
             DeviceManager.getInstance().sgc === instance
@@ -99,7 +104,7 @@ internal object NimoResourceDiagnostics {
 
     @Synchronized
     fun beginTransport(instance: Nimo, address: String, bonded: Boolean): Boolean {
-        val owned = capture ?: return true
+        val owned = capture ?: return !preArmCaptureRequired()
         if (Looper.myLooper() != main.looper) return false
         if (!allowPeer(instance, address, bonded) || owned.transportStarted) return false
         owned.transportStarted = true
@@ -109,6 +114,7 @@ internal object NimoResourceDiagnostics {
     @Synchronized
     private fun captureSnapshot(owned: Capture): JSONObject = JSONObject()
         .put("version", "nimo-preconnect-capture-v1").put("nonce", owned.nonce)
+        .put("captureRequiredBeforeArm", preArmCaptureRequired())
         .put("expectedPair", JSONObject().put("name", owned.name).put("bluetoothAddress", owned.address))
         .put("instanceId", owned.instance?.resourceInstanceId ?: JSONObject.NULL)
         .put("sessionGeneration", owned.instance?.resourceSnapshot()?.getLong("sessionGeneration") ?: JSONObject.NULL)
@@ -186,8 +192,7 @@ internal object NimoResourceDiagnostics {
                 captureNonce == null || !uuid(captureNonce)) { save(null, "invalid-fixed-capture-request"); return }
             if (mode == "arm-capture") {
                 val manager = DeviceManager.getInstance().sgc
-                if (capture != null || captureNonce != nonce || manager != null &&
-                    (manager !is Nimo || !manager.resourceCaptureEligible())) {
+                if (capture != null || captureNonce != nonce || manager != null) {
                     save(null, "capture-arm-refused-existing-owner"); return
                 }
                 capture = Capture(captureNonce, expectedName, address)
