@@ -277,7 +277,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test mobile/scripts/nimo-diagnostic-build.test.mjs .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
+          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs mobile/scripts/nimo-diagnostic-build.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
