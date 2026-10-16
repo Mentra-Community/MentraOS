@@ -4,8 +4,10 @@ import {createTestRequestsApi} from '../api/internal/test-requests.api';
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import {portableRequirementsSchema, portableRoutineSelectionSchema, routineQualificationTargetSchema, type StoredRoutineJob} from '../types/routine-job.types';
 import type {PermissionObservation} from '../types/resource-permissions.types';
-import {RoutineJobService, routineJobInputDigest, routineJobRepository, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, routineJobInputDigest, routineJobRepository, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
 import {requestInputDigest, TestRequestService} from './test-request.service';
+import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {frameworkRequestInputSchema} from '../types/framework-request.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
 
 const now = Date.parse('2026-10-14T02:00:00Z'), revision = 'a'.repeat(40), hash = 'b'.repeat(64);
@@ -43,6 +45,17 @@ function granted(): PermissionObservation {
       bundleId: 'com.mentra.mentra', bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
       version: '3.3.0', build: '100', teamId: 'TEAM', codeRequirement: 'verified requirement',
       selectedBuild: {headSha: revision, archiveSha256: hash, receiptSha256: hash}}, evidence: {sha256: hash}};
+}
+function queuedRow(jobId = 'queued-ota') {
+  const value = row(jobId), observed = host();
+  const input = frameworkRequestInputSchema.parse({routineId: value.fleetSelection.routineId, platform: value.fleetSelection.platform,
+    definitionRevision: revision, routineSource: value.fleetPreparation!.routineSource, laneId: 'pro1-mac', build: value.fleetSelection.build,
+    resources: observed.lanes[0]!.resources.map(({id, kind}) => ({id, kind, laneId: 'pro1-mac'}))});
+  const intent = routineDispatchIntentSchema.parse({...value.fleetSelection, routineSource: value.fleetPreparation!.routineSource, laneId: 'pro1-mac'});
+  return {...value, state: 'queued' as const, hostId: 'pro1', input, inputSha256: requestInputDigest(input),
+    dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent),
+    fleetBinding: {jobId, requestId: jobId, hostId: 'pro1', laneId: 'pro1-mac', descriptorRevision: routineLaneDescriptorRevision(observed.lanes[0]!),
+      actionsRunId: '1', actionsJobId: '2', boundAt: new Date(now - 1000).toISOString()}};
 }
 function fixture(rows = [row()], observed = host()) {
   const reads: unknown[] = [];
@@ -86,6 +99,51 @@ test('target constraints, cancellation, expiry, bound state and structural misma
   expect((await fixture([selected]).service.qualificationTargets('pro1'))[0]?.target).toEqual(selected.fleetTarget);
   const wrongResources = host(); wrongResources.lanes[0]!.resources[0]!.capabilities = [];
   expect(await fixture([row()], wrongResources).service.qualificationTargets('pro1')).toEqual([]);
+});
+
+test('an unaccepted queued handoff refreshes only its exact assigned build and lane without replacing input or ownership', async () => {
+  const original = queuedRow(), observed = host(); observed.lanes.push({...structuredClone(observed.lanes[0]!), id: 'other-mac'});
+  const f = fixture([original], observed), before = structuredClone(original), targets = await f.service.qualificationTargets('pro1');
+  expect(targets).toHaveLength(1);
+  expect(targets[0]).toMatchObject({jobId: original.requestId, hostId: 'pro1', laneId: 'pro1-mac', deadline: original.fleetDeadline.toISOString(),
+    selection: original.fleetSelection, target: {hostId: 'pro1', laneId: 'pro1-mac'}});
+  expect(f.rows[0]).toEqual(before); expect(f.rows[0]!.inputSha256).toBe(original.inputSha256);
+  const fresh = host(); fresh.lanes[0]!.resources[0]!.permissionObservations = [granted()];
+  expect(await fixture([original], fresh).service.qualificationTargets('pro1')).toEqual([]);
+});
+
+test('queued handoff proof refuses changed process selection, immutable input, source, resources or original binding', async () => {
+  const changes: Array<(value: ReturnType<typeof queuedRow>) => void> = [
+    value => {value.hostId = 'other';}, value => {value.fleetBinding.hostId = 'other';}, value => {value.fleetBinding.laneId = 'other';},
+    value => {value.fleetBinding.jobId = 'other';}, value => {value.fleetBinding.requestId = 'other';},
+    value => {value.fleetBinding.descriptorRevision = 'c'.repeat(64);},
+    value => {value.inputSha256 = 'c'.repeat(64);}, value => {value.dispatchIntentSha256 = 'c'.repeat(64);},
+    value => {value.input.laneId = 'other'; value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.input.routineId = 'other'; value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.input.build.headSha = 'c'.repeat(40); value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.input.routineSource.bundle.sha256 = 'c'.repeat(64); value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.input.resources[0]!.id = 'other-app'; value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.input.resources.push(structuredClone(value.input.resources[0]!)); value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.input.policy = {estimatedOutputBytes: 1}; value.inputSha256 = requestInputDigest(value.input);},
+    value => {value.dispatchIntent = {...value.dispatchIntent, laneId: 'other'}; value.dispatchIntentSha256 = requestInputDigest(value.dispatchIntent);},
+  ];
+  for (const change of changes) {const value = queuedRow(); change(value); expect(await fixture([value]).service.qualificationTargets('pro1')).toEqual([]);}
+  const changed = host(); changed.lanes[0]!.resources[0]!.capabilities!.push('launch');
+  expect(await fixture([queuedRow()], changed).service.qualificationTargets('pro1')).toEqual([]);
+});
+
+test('a queued state cannot obscure accepted, canceled, rejected, completed or active custody', async () => {
+  const original = queuedRow();
+  for (const evidence of [{hostReceipt: {requestId: original.requestId, hostId: 'pro1', inputSha256: original.inputSha256, acceptedAt: new Date(now).toISOString()}},
+    {runId: original.requestId}, {dispatchCompletion: {inputSha256: original.inputSha256, disposition: 'clean' as const, completedAt: new Date(now).toISOString()}},
+    {hostCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Canceled'}}, {hostRejection: {code: 'invalid-source', reason: 'Rejected'}},
+    {fleetCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Canceled'}},
+    {preparationCancellation: {requestedAt: new Date(now).toISOString(), reason: 'Canceled'}}, {preparationRejection: {code: 'invalid-source', reason: 'Rejected'}}])
+    expect(await fixture([{...original, ...evidence}]).service.qualificationTargets('pro1')).toEqual([]);
+  for (const state of ['accepted', 'running', 'terminal'] as const)
+    expect(await fixture([{...original, state}]).service.qualificationTargets('pro1')).toEqual([]);
+  const busy = host(); busy.lanes[0]!.state = 'reserved';
+  expect(await fixture([original], busy).service.qualificationTargets('pro1')).toEqual([]);
 });
 
 test('active custody, paused/offline lanes, stale reports and older worker API never start target discovery', async () => {
@@ -163,10 +221,10 @@ test('the authenticated poll only includes explicitly requested targets and does
   expect(f.rows[0]!.state).toBe('awaiting-runner');
 });
 
-test('candidate database stream is bounded, closed and excludes cancelled, expired or assigned jobs without writes', async () => {
+test('candidate database stream is bounded, closed and includes only unbound or exact unaccepted queued handoffs without writes', async () => {
   let filter: unknown, limit: number | undefined, closed = false;
   const cursor = {async *[Symbol.asyncIterator]() {yield row();}, async close() {closed = true;}};
-  const query = {sort(value: unknown) {expect(value).toEqual({createdAt: 1, requestId: 1}); return this;},
+  const query = {sort(value: unknown) {expect(value).toEqual({state: -1, createdAt: 1, requestId: 1}); return this;},
     limit(value: number) {limit = value; return this;}, read(value: string) {expect(value).toBe('primary'); return this;},
     readConcern(value: string) {expect(value).toBe('majority'); return this;},
     setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 123, maxTimeMS: 123}); return this;},
@@ -178,7 +236,10 @@ test('candidate database stream is bounded, closed and excludes cancelled, expir
       expect(candidate.requestId).toBe('pending-ota'); break;
     }
     expect(limit).toBe(100); expect(closed).toBe(true);
-    expect(filter).toMatchObject({state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false},
+    expect(filter).toMatchObject({$or: [{state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
+      {state: 'queued', hostId: 'pro1', 'fleetBinding.hostId': 'pro1', 'fleetBinding.laneId': 'pro1-mac', 'input.laneId': 'pro1-mac', inputSha256: {$exists: true}}],
+      hostReceipt: {$exists: false}, runId: {$exists: false}, dispatchCompletion: {$exists: false},
+      hostCancellation: {$exists: false}, hostRejection: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
       fleetCancellation: {$exists: false}, fleetDeadline: {$gt: new Date(now)}, 'fleetSelection.platform': 'ios-on-mac', fleetPreparation: {$exists: true},
       $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': 'pro1'}]},
         {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': 'pro1-mac'}]}]});
