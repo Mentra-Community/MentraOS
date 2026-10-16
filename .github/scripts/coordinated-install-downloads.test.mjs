@@ -175,29 +175,33 @@ test("coordinated routine links select the exact source and archive without clai
     const env = {BRANCH: channel, RELEASE_SCOPE: "core", FINALIZE_RESULT: "success", RELEASE_PAGE_RESULT: "success",
       EXAMPLES_DISPATCH_RESULT: "success", RELEASE_IDENTITY: state.plan.releaseIdentity,
       REPOSITORY: "Mentra-Community/MentraOS", SHA: state.plan.sourceCommit, RUN_ID: "100", RUN_ATTEMPT: "2",
+      TEST_RUN_INGEST_TOKEN: "synthetic-ingest-token",
       MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name)}
-    const blocks = await coordinatedRoutineLinks(env, options.fetchImpl)
+    const fetchImpl = (url, init) => String(url).endsWith("/api/internal/routine-catalog")
+      ? new Response(JSON.stringify({routineRevision: "a".repeat(40), routines: [{routineId: "current-source-id"}]}))
+      : options.fetchImpl(url, init)
+    const blocks = await coordinatedRoutineLinks(env, fetchImpl)
     const text = blocks[0].text.text
-    assert.match(text, /execution and results are pending/)
+    assert.match(text, /Publishing this build does not request tests/); assert.match(text, /Routine results for published app builds/)
     assert.doesNotMatch(text, /test passed|test succeeded|queued/i)
     const results = new URL(text.match(/<(https:\/\/admin\.dev\.[^|]+)\|/)[1])
     assert.equal(results.searchParams.get("headSha"), state.plan.sourceCommit)
     assert.equal(results.searchParams.get("archiveSha256"), state.receipt.artifacts.mac.sha256)
-    assert.equal(results.searchParams.get("routineId"), "no-glasses")
+    assert.equal(results.searchParams.get("routineId"), "current-source-id")
     assert.equal(results.searchParams.get("channel"), channel)
     assert.equal(results.searchParams.has("pr"), false)
     const pipeline = new URL(text.match(/<(https:\/\/github\.com\/[^|]+)\|/)[1])
     assert.equal(pipeline.searchParams.get("query"), '"Device request callback 100 / attempt 2"')
     for (const override of [{FINALIZE_RESULT: "failure"}, {MAC_URL: "https://other.example/app.zip"}, {SHA: "f".repeat(40)}]) {
-      const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, options.fetchImpl))
-      assert.match(unavailable, /Unavailable/)
+      const unavailable = JSON.stringify(await coordinatedRoutineLinks({...env, ...override}, fetchImpl))
+      assert.match(unavailable, /Not requested|could not be verified/)
       assert.doesNotMatch(unavailable, /Results for this exact build/)
     }
     for (const key of ["RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {
-      const notRequested = JSON.stringify(await coordinatedRoutineLinks({...env, [key]: result}, options.fetchImpl))
-      assert.match(notRequested, /Not requested/)
+      const notRequested = JSON.stringify(await coordinatedRoutineLinks({...env, [key]: result}, fetchImpl))
+      assert.match(notRequested, /Publishing this build does not request tests/)
       assert.doesNotMatch(notRequested, /pending/)
-      assert.match(notRequested, /Results for this exact build/, "A published artifact remains reviewable even when the callback cannot run")
+      assert.match(notRequested, /Results for this exact build/, "A published artifact remains reviewable independently of other release jobs")
     }
     assert.deepEqual(await coordinatedRoutineLinks({...env, RELEASE_SCOPE: "examples"}, options.fetchImpl), [])
   }

@@ -88,6 +88,22 @@ export interface Channels {
     {streamId: string; durationMs?: number; chunks: number; lastBufferedMs: number}
   >
 
+  /**
+   * OS-2022 onset check. Waits so the glasses speaker can power down, then
+   * plays a pattern whose first sample is already loud. Clicks: four beeps at
+   * 0/300/600/900 ms, then the same pattern again with no gap. Speech: the
+   * phrase twice, back to back, as recorded PCM on session.speaker.
+   */
+  "tester:speaker-onset-test": Rpc<
+    {kind?: "clicks" | "speech"; idleMs?: number},
+    {
+      kind: "clicks" | "speech"
+      idleMs: number
+      first: {durationMs?: number; chunks?: number}
+      second: {durationMs?: number; chunks?: number}
+    }
+  >
+
   /** Start ElevenLabs ConvAI session (signed URL → WS → mic PCM). */
   "elevenlabs:start": Rpc<Record<string, never>, {ok: true}>
 

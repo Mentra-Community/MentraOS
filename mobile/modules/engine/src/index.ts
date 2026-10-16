@@ -12,6 +12,12 @@
 
 // The namespaced OEM-facing engine API (the "(A) host API"). See ./engine.
 export {engine} from "./engine"
+export {
+  IncidentReportError,
+  submitIncidentReport,
+  type IncidentReportResult,
+} from "./services/SubmitIncidentReportService"
+export {ReportCollectionError} from "./facades/reports"
 export type {
   ReportAttachmentInput,
   ReportContext,
@@ -19,11 +25,15 @@ export type {
   ReportStatus,
   ReportTrigger,
   ReportSubmitResult,
+  ReportCollectionResult,
+  ReportLogCollection,
+  ReportLogSource,
   EngineSubmitReportInput,
 } from "./facades/reports"
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {IdentitySnapshot} from "./services/PairingIdentity"
+export type {PendingRunningUpdatePrompt, RunningUpdateFailure} from "./services/runningUpdatePrompt"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
   IslandConfigureOptions,
@@ -135,6 +145,7 @@ export {
 // glasses-camera DTO types (re-exported through the host @/types/asg shim).
 export type {GalleryNotice, GalleryNoticeCode} from "./services/asg/galleryNotices"
 export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
+export type {AppPermissionReceipt, AppPermissionSnapshot, AppPermissionStatus} from "@mentra/crust"
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
 export type {
   PhotoInfo,

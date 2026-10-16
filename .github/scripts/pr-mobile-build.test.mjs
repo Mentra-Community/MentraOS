@@ -43,11 +43,31 @@ test("staging-targeted PR binaries are compiled separately and never reuse a dev
   // Every workflow step after environment setup, including the fingerprint, sees the pinned backend.
   for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml"]) {
     const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
-    const selection = workflow.indexOf('case "$GITHUB_BASE_REF" in\n              staging) CLOUD_ENV="staging" ;;\n              *) CLOUD_ENV="dev" ;;')
-    assert.ok(selection > 0 && workflow.lastIndexOf('if [ "${{ github.event_name }}" = "pull_request" ]; then', selection) > workflow.indexOf("- name: Setup environment"))
+    const selection = workflow.indexOf('case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in\n              staging) CLOUD_ENV="staging" ;;\n              *) CLOUD_ENV="dev" ;;')
+    assert.ok(selection > 0 && workflow.lastIndexOf('if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then', selection) > workflow.indexOf("- name: Setup environment"))
     assert.match(workflow, /case "\$\{\{ github\.ref_name \}\}" in\n\s+main\) CLOUD_ENV="prod" ;;\n\s+\*\) CLOUD_ENV="dev" ;;/)
     assert.ok(workflow.indexOf('echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"') < workflow.indexOf("node .github/scripts/pr-mobile-build.mjs"))
     assert.doesNotMatch(workflow, /\$\{\{ github\.(base_ref|event\.pull_request\.base\.ref) \}\}/)
+  }
+})
+
+test("workflow backend selection uses authenticated PR-base overrides for explicit dispatch", () => {
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml"]) {
+    const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+    const start = workflow.indexOf('if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then', workflow.indexOf("- name: Setup environment"))
+    const end = workflow.indexOf('case "$CLOUD_ENV" in', start)
+    assert.ok(start > 0 && end > start)
+    const selectedBackend = ({event, routinePr = "", baseRef = "", override = "", ref = "dev"}) => {
+      const selection = workflow.slice(start, end).replaceAll("${{ github.event_name }}", event)
+        .replaceAll("${{ inputs.routine_pr }}", routinePr).replaceAll("${{ github.ref_name }}", ref)
+      return execFileSync("bash", ["-eu", "-c", selection + '\nprintf "%s" "$CLOUD_ENV"'],
+        {encoding: "utf8", env: {...process.env, GITHUB_BASE_REF: baseRef, MENTRA_PR_BASE_REF: override}})
+    }
+    assert.equal(selectedBackend({event: "workflow_dispatch", routinePr: "42", override: "staging", baseRef: "dev", ref: "dev"}), "staging", name)
+    assert.equal(selectedBackend({event: "workflow_dispatch", routinePr: "42", override: "dev", baseRef: "staging", ref: "main"}), "dev", name)
+    assert.equal(selectedBackend({event: "pull_request", baseRef: "staging", ref: "feature"}), "staging", name)
+    assert.equal(selectedBackend({event: "workflow_dispatch", ref: "main"}), "prod", name)
+    assert.equal(selectedBackend({event: "push", ref: "dev"}), "dev", name)
   }
 })
 
@@ -69,11 +89,28 @@ test("real git fingerprint inputs exclude glasses sources but include shared mob
   write("asg_client/ota_manifests/firmware_live.json", "new firmware")
   git("add", ".")
   assert.equal(original, tree())
+  for (const file of ["cloud-v2/websites/admin/src/page.tsx", "cloud-v2/packages/core/src/service.ts", "cloud-v2/packages/runtime/src/server.ts",
+    "cloud-v2/packages/cloud-client/node/index.ts"]) {
+    const before = tree()
+    write(file, "server-only change")
+    git("add", ".")
+    assert.equal(before, tree(), file)
+  }
   for (const file of [
     "mobile/bun.lock",
+    "cloud-v2/bun.lock",
     "cloud-v2/packages/protocol/src/index.ts",
+    "cloud-v2/packages/protocol/package.json",
+    "cloud-v2/packages/cloud-client/src/client.ts",
+    "cloud-v2/packages/cloud-client/react-native/transports.ts",
+    "cloud-v2/packages/cloud-client/package.json",
+    "cloud-v2/packages/runtime/src/protocol/index.ts",
     "android_core/lib.java",
     "package.json",
+    ".github/scripts/ios-xcodebuild-attempt.sh",
+    ".github/scripts/ios-build-summary.sh",
+    ".github/scripts/ios-build-timeline.py",
+    ".github/actions/disk-guard/action.yml",
   ]) {
     const before = tree()
     write(file, "new input")
@@ -105,7 +142,7 @@ test("Android triggers are covered by ASG, and PR binaries are not duplicated as
   const asg = readFileSync(new URL("../workflows/mentra-asg-client-build.yml", import.meta.url), "utf8")
   const paths = (s) => s.split("    paths:\n")[1].split("\n  push:")[0]
   assert.equal(paths(android), paths(asg))
-  assert.match(android, /Upload Release APK \(artifact\)\n        if: github.event_name != 'pull_request'/)
+  assert.match(android, /Upload Release APK \(artifact\)\n        if: \(github.event_name != 'pull_request' && inputs.routine_pr == ''\)/)
   assert.match(android, /Package this PR's configuration and sign/)
   assert.match(android, /notify-pr-builds:[\s\S]*needs: build/)
 })
@@ -169,7 +206,22 @@ test("every producer trigger path is a shared mobile PR path, and every shared p
     assert.deepEqual(MOBILE_PR_PATHS.filter(path => !triggers.includes(path)), [], `${name} misses shared paths`)
     assert.deepEqual(triggers, MOBILE_PR_PATHS)
   }
-  assert.ok(MOBILE_PR_PATHS.includes(".github/scripts/pr-android-artifacts*"))
+  for (const path of [".github/scripts/mobile-build-inputs*", ".github/scripts/pr-android-artifacts*", ".github/scripts/ensure-android-ndk*", ".github/scripts/ios-*", ".github/actions/disk-guard/**"])
+    assert.ok(MOBILE_PR_PATHS.includes(path))
+})
+
+test("standalone push compile checks use the app input boundary while coordinated releases still deploy every dev/staging push", () => {
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
+    const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+    const push = workflow.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
+    const triggers = push.split("    paths:\n")[1].split("\n").map(line => /^      - "([^"]+)"$/.exec(line)?.[1])
+    assert.deepEqual(triggers, MOBILE_PR_PATHS)
+  }
+  const release = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
+  const push = release.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
+  assert.match(push, /branches: \[dev, staging\]/)
+  assert.doesNotMatch(push, /paths:/)
+  assert.match(release, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2\.yml/)
 })
 
 test("iOS selection skips corrupt candidates, verifies signature/provenance and falls back to compilation", async () => {

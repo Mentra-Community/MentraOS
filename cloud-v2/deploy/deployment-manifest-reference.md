@@ -115,12 +115,16 @@ its parameters. Editing the checked-in demo JSON alone does not change an
 Azure deployment.
 
 After the user confirms the workspace, the Mentra App persists the validated
-manifest locally. Relaunches use that snapshot; **there is no automatic
-background manifest refresh in v1**. To apply changes, log out and select the
-organization again. Logout clears the workspace selection, and activation
-clears prior local account data. Keep `deploymentId` and the workspace origin
-stable across normal upgrades: together they identify deployment-scoped
-credentials and managed miniapp ownership.
+manifest locally and re-reads it each time it opens or returns to the
+foreground, and every 15 minutes while it runs. Added, updated and removed
+managed miniapps apply then; an open miniapp asks before it updates, and one
+that was removed goes when it closes. Other changes, such as `features`, apply
+the next time the app starts from closed. A change to `deploymentId`,
+`services.coreUrl`, `services.runtimeUrl` or `auth` is not adopted; employees
+log out and select the organization again. Logout clears the workspace
+selection, and activation clears prior local account data. Keep `deploymentId`
+and the workspace origin stable across normal upgrades: together they identify
+deployment-scoped credentials and managed miniapp ownership.
 
 V1 enrollment uses manual organization-address entry and Microsoft Entra
 sign-in. QR enrollment, MDM configuration injection, directory lookup, and
@@ -300,6 +304,13 @@ are case-sensitive. The current system package identifiers are:
 | `cloud.augmentos.notify` | Notify |
 | `com.mentra.feedback` | Feedback |
 | `com.mentra.miniappdev` | Miniapp developer tools |
+
+Approving `com.mentra.miniappdev` (or leaving the override `null`) allows
+miniapp development on the workspace. Users get **Settings → Miniapp Developer
+Settings** and can scan or load miniapps from a developer's computer under any
+package name, including one the workspace manages. Leave it out and the Mentra
+App shows no developer options and refuses developer builds. Super Mode does
+not change this.
 
 This list controls approval; it does not download packages or bypass a
 feature, build-region, or hardware restriction. A package must also exist in
@@ -499,7 +510,7 @@ on both supported phone platforms.
 | Only Settings appears | Check the system allowlist and managed list; the reference intentionally approves only Settings. |
 | Phone Mode is missing | Include `simulated-glasses` in a non-null glasses allowlist. |
 | A managed miniapp does not install | Check ZIP reachability, size, SHA-256, inner package/version, system-package conflicts, and existing install ownership. |
-| Published edits do not appear on the phone | Redeploy/restart Runtime as needed, then log out and select the workspace again to replace the cached snapshot. |
+| Published edits do not appear on the phone | Redeploy/restart Runtime as needed, then reopen the app. Changes to `deploymentId`, Core, Runtime or `auth` need a new workspace selection. |
 | Required update has no store button | Null platform store URL selects managed-update guidance. Supply a support URL or distribute the new app through the organization's channel. |
 
 Maintainers should keep this reference aligned with the schema, resolver,

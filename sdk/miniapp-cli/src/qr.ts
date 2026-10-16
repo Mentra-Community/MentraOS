@@ -28,8 +28,8 @@ export async function printQR(url: string): Promise<void> {
 /**
  * Write a PNG QR to disk with mode 0o600.
  *
- * Dev/release URLs can carry a signed attestation query param; writing with
- * restrictive permissions avoids a world-readable window on multi-user machines.
+ * Dev/release URLs name this machine's LAN dev server; writing with restrictive
+ * permissions avoids a world-readable window on multi-user machines.
  * Failures only warn — a broken PNG write must not take down the server.
  *
  * @returns true if the file was written successfully

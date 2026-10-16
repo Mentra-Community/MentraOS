@@ -5,6 +5,14 @@ import XCTest
 import zlib
 
 final class NimoCanvasCodecTests: XCTestCase {
+    func testLatinFallbackPreservesOtherScriptsAndTheirMarks() throws {
+        let otherScripts = "ありがとう が パ カ\u{3099} 한국어 한\u{302E} Α\u{0301} مُرَحَّبًا शि ❤️"
+        let label = try NimoCanvasCodec.label("\(otherScripts) café—Æ\u{0301}", 0, 0, 500, 220)
+        let expected = Data("\(otherScripts) cafe-AE".utf8)
+        XCTAssertEqual(Data(label.payload.dropFirst(14)), expected)
+        XCTAssertEqual(label.textBytes, expected.count)
+    }
+
     private func hex(_ data: Data) -> String {
         data.map { String(format: "%02X", $0) }.joined()
     }
@@ -107,9 +115,14 @@ final class NimoCanvasCodecTests: XCTestCase {
     }
 
     func testUtf8RowsAndGeometryValidation() throws {
-        XCTAssertEqual(try NimoCanvasCodec.label("😀é", 0, 0, 100, 20).textBytes, 6)
+        let dashes = try NimoCanvasCodec.label("—éÆß— - –", 0, 0, 100, 20)
+        let expectedText = Data("-eAEss- - –".utf8)
+        XCTAssertEqual(Data(dashes.payload.dropFirst(14)), expectedText)
+        XCTAssertEqual(dashes.textBytes, expectedText.count)
+        XCTAssertEqual(Int(dashes.payload[12]), expectedText.count)
+        XCTAssertEqual(try NimoCanvasCodec.label("😀界", 0, 0, 100, 20).textBytes, 7)
         XCTAssertThrowsError(try NimoCanvasCodec.label("a\0b", 0, 0, 100, 20))
-        XCTAssertThrowsError(try NimoCanvasCodec.label(String(repeating: "é", count: 1025), 0, 0, 100, 20))
+        XCTAssertThrowsError(try NimoCanvasCodec.label(String(repeating: "界", count: 683), 0, 0, 100, 20))
         let rows = try NimoCanvasCodec.textRows("first\n\nthird", 12, 15, 400, 100)
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows.map { $0.payload[2] }, [15, 55])
@@ -156,11 +169,11 @@ final class NimoCanvasCodecTests: XCTestCase {
     }
 
     func testWholeScenePreservesOrderAndIgnoresDiffAnnotations() throws {
-        let text = SceneElement(id: "caption", type: "text", x: 10, y: 20, w: 100, h: 40, text: "hello",
+        let text = SceneElement(id: "caption", type: "text", x: 10, y: 20, w: 100, h: 40, text: "héllo—Æsir",
                                 data: nil, border: 2, radius: 3, change: "unchanged", contentHash: "")
         let expected = try NimoCanvasCodec.replace([
             NimoCanvasCodec.rectangle(10, 20, 100, 40, stroke: 2, radius: 3),
-            NimoCanvasCodec.label("hello", 10, 20, 100, 20),
+            NimoCanvasCodec.label("hello-AEsir", 10, 20, 100, 20),
         ])
         XCTAssertEqual(try NimoCanvasCodec.scene([text]) { _, _, _ in XCTFail("Not an image"); return Data() }, expected)
     }

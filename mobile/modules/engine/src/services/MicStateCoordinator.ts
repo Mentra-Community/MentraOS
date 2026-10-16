@@ -399,8 +399,8 @@ class MicStateCoordinator {
       patch.loudness_gate_enabled = this.configuredLoudnessGate
     } else if (this.sessionLoudnessGateWritten) {
       // A session moved it and the device carries no preference, so restate the product default
-      // rather than leaving the call's gate running after it ended.
-      patch.loudness_gate_enabled = false
+      // (on, matching SETTINGS.loudness_gate_enabled) rather than leaving the call's value behind.
+      patch.loudness_gate_enabled = true
     }
 
     const sessionTuning = this.winningSessionMicTuning()

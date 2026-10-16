@@ -22,3 +22,22 @@ export function installNativeLogConsole(source: SubscribedLogSource, platform: s
     console.log(`[native:${platform}]`, nativeLogMessage(message))
   })
 }
+
+type UpdateNoticeSource = {
+  addListener(event: "sdk_update_notice", listener: (event: {message: string}) => void): {remove(): void}
+}
+
+const updateNoticeKey = Symbol.for("mentra.bluetooth-sdk.update-notice")
+type SubscribedUpdateNoticeSource = UpdateNoticeSource & {[updateNoticeKey]?: {remove(): void}}
+
+/**
+ * The native SDK checks for a newer Mentra Bluetooth SDK at startup and emits
+ * its banner when this app is behind. A console warning reaches the developer
+ * in Metro and, in debug builds, as a LogBox warning; release builds show no UI.
+ */
+export function installSdkUpdateNotice(source: SubscribedUpdateNoticeSource): void {
+  source[updateNoticeKey]?.remove()
+  source[updateNoticeKey] = source.addListener("sdk_update_notice", ({message}) => {
+    console.warn(message)
+  })
+}

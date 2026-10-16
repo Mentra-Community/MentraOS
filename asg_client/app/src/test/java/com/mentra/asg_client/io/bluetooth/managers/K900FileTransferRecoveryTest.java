@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.FileUartPacer;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import java.lang.reflect.Constructor;
@@ -30,6 +31,8 @@ public class K900FileTransferRecoveryTest {
     private BesUartTransportCoordinator uart;
     private Object session;
     private final List<Runnable> timers = new ArrayList<>();
+    private final List<Long> timerDelaysMs = new ArrayList<>();
+    private final long[] clockNanos = {0L};
 
     @Before public void setUp() throws Exception {
         manager = mock(K900BluetoothManager.class, CALLS_REAL_METHODS);
@@ -45,6 +48,8 @@ public class K900FileTransferRecoveryTest {
         when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
                 .thenAnswer(invocation -> {
                     timers.add(invocation.getArgument(0));
+                    timerDelaysMs.add(((TimeUnit) invocation.getArgument(2))
+                            .toMillis(invocation.getArgument(1)));
                     return mock(ScheduledFuture.class);
                 });
         set(manager, "fileTransferExecutor", executor);
@@ -143,6 +148,64 @@ public class K900FileTransferRecoveryTest {
         verify(uart, times(8)).runFileWrite(any(), any());
         oldRecovery.run();
         verify(uart, times(8)).runFileWrite(any(), any());
+    }
+
+    /** The pacing continuation, distinguished from 3 s per-packet ACK timers by its delay. */
+    private Runnable pacedPump(int fromIndex) {
+        for (int i = timers.size() - 1; i >= fromIndex; i--) {
+            if (timerDelaysMs.get(i) < 1000) return timers.get(i);
+        }
+        return null;
+    }
+
+    private int pacedPumpCount() {
+        int count = 0;
+        for (long delay : timerDelaysMs) if (delay < 1000) count++;
+        return count;
+    }
+
+    private void pace(int bytesPerSecond) throws Exception {
+        doAnswer(invocation -> clockNanos[0]).when(manager).fileClockNanos();
+        set(session, "uartPacer", new FileUartPacer(bytesPerSecond));
+    }
+
+    @Test public void pacedTransferSchedulesTheNextFrameInsteadOfBlocking() throws Exception {
+        pace(35_000);
+        invoke("sendNextFilePacket", new Class<?>[]{});
+        // One frame goes out; the rest of the window waits for its wire time on the executor.
+        verify(uart, times(1)).runFileWrite(any(), any());
+        assertEquals(1, get(session, "currentPacketIndex"));
+        assertEquals(true, get(session, "pacedPumpScheduled"));
+        assertEquals(1, pacedPumpCount());
+        long frameMs = (800 + 32) * 1000L / 35_000;
+        assertTrue(timerDelaysMs.get(timerDelaysMs.size() - 1) >= frameMs);
+
+        clockNanos[0] = 24_000_000L;
+        pacedPump(0).run();
+        verify(uart, times(2)).runFileWrite(any(), any());
+        assertEquals(2, get(session, "currentPacketIndex"));
+        assertEquals(2, pacedPumpCount());
+    }
+
+    @Test public void ackDuringPacingWaitNeitherWritesNorQueuesASecondPump() throws Exception {
+        pace(35_000);
+        invoke("sendNextFilePacket", new Class<?>[]{});
+        manager.handleFileTransferAck(1, 1);
+        verify(uart, times(1)).runFileWrite(any(), any());
+        assertEquals(1, pacedPumpCount());
+        assertEquals(0, get(session, "highestAckedIndex"));
+    }
+
+    @Test public void pacedPumpForAReplacedPhotoDoesNothing() throws Exception {
+        pace(35_000);
+        invoke("sendNextFilePacket", new Class<?>[]{});
+        Runnable stale = pacedPump(0);
+        Object replacement = newSession();
+        set(manager, "currentFileTransfer", replacement);
+        clockNanos[0] = 1_000_000_000L;
+        stale.run();
+        verify(uart, times(1)).runFileWrite(any(), any());
+        assertEquals(0, get(replacement, "currentPacketIndex"));
     }
 
     private Object invoke(String name, Class<?>[] types, Object... args) throws Exception {

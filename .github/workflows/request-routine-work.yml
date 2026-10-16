@@ -1,0 +1,60 @@
+name: Request routine authoring
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+  issue_comment:
+    types: [created, edited]
+  workflow_run:
+    workflows: [Mobile App Android Build, Mobile App iOS Build]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Same-repository PR containing one versioned authoring brief
+        type: number
+        required: true
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  issues: read
+jobs:
+  request:
+    environment: routine-nightly-dev
+    if: >-
+      github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev' &&
+      (github.event_name == 'workflow_dispatch' || vars.ROUTINE_WORK_PR_DISPATCH_ENABLED == 'true') &&
+      (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'issue_comment' || (github.event.issue.pull_request &&
+       github.event.comment.user.type == 'User' && startsWith(github.event.comment.body, '<!-- mentra-routine-work:v1 -->')))
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Freeze the brief and published app build through Core
+        uses: actions/github-script@v7
+        env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
+          REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+        with:
+          retries: 0
+          script: |
+            const {routineWorkPrNumbers, planRoutineWork, submitRoutineWork} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/routine-work.mjs`);
+            const numbers = await routineWorkPrNumbers({github, context, number: Number(process.env.REQUEST_PR)});
+            const receipts = [], errors = [];
+            for (const number of numbers) {
+              try {
+                const plan = await planRoutineWork({github, context, number});
+                if (plan.status !== 'ready') {core.notice(`PR ${number}: ${plan.status}`); continue;}
+                const row = await submitRoutineWork({token: process.env.TEST_RUN_INGEST_TOKEN, request: plan.request});
+                receipts.push({workId: row.workId, inputSha256: row.inputSha256, hostId: row.hostId});
+              } catch (error) {errors.push(new Error(`PR ${number}: ${error.message}`));}
+            }
+            await core.summary.addRaw(JSON.stringify({receipts})).write();
+            if (errors.length) throw new AggregateError(errors, 'Authoring requests need inspection');

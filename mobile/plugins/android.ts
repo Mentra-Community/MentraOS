@@ -9,7 +9,9 @@ import {
   withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
+  withMainActivity,
 } from "@expo/config-plugins"
+import {mergeContents} from "@expo/config-plugins/build/utils/generateCode"
 
 import {withDebugAbiFilters} from "../scripts/android-abi-filters.mjs"
 
@@ -31,6 +33,7 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withXmlResourceFiles(config)
   config = withGradlePropertiesModifications(config)
   config = withSettingsGradleModifications(config)
+  config = withLargeScreenRotation(config)
 
   return config
 }
@@ -447,26 +450,6 @@ function withAndroidManifestModifications(config: any) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
       }
 
-      // API 36 ignores portrait and resizability restrictions on large screens.
-      // Preserve the Mentra App's existing phone layout until its tablet and
-      // foldable layouts have been validated. Android documents this as a
-      // temporary API 36 compatibility escape hatch; it stops applying at 37.
-      if (!app.property) {
-        app.property = []
-      }
-      const restrictedResizabilityProperty = "android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
-      const hasRestrictedResizabilityProperty = app.property.some(
-        (property: any) => property.$["android:name"] === restrictedResizabilityProperty,
-      )
-      if (!hasRestrictedResizabilityProperty) {
-        app.property.push({
-          $: {
-            "android:name": restrictedResizabilityProperty,
-            "android:value": "true",
-          },
-        })
-      }
-
       // Android navigation runs on the Mapbox Navigation SDK (migrated off
       // the Google Navigation SDK), so the Google geo API_KEY meta-data is
       // no longer injected here. iOS still uses the Google Nav SDK
@@ -721,6 +704,65 @@ project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/andr
     }
 
     config.modResults.contents = settingsGradle
+    return config
+  })
+}
+
+/**
+ * Phones keep the manifest's portrait lock. Tablets and unfolded foldables
+ * (smallest width of at least 600dp) follow the user's rotation setting.
+ * MainActivity applies this before React Native's first frame and re-applies
+ * it when a foldable folds or unfolds; configChanges keeps the activity alive.
+ */
+function withLargeScreenRotation(config: any) {
+  return withMainActivity(config, (config) => {
+    if (config.modResults.language !== "kt") {
+      throw new Error("withLargeScreenRotation expects a Kotlin MainActivity")
+    }
+    let contents = config.modResults.contents
+    contents = mergeContents({
+      src: contents,
+      newSrc: ["import android.content.pm.ActivityInfo", "import android.content.res.Configuration"].join("\n"),
+      tag: "mentra-large-screen-rotation-imports",
+      anchor: /^import android\.os\.Bundle$/,
+      offset: 1,
+      comment: "//",
+    }).contents
+    contents = mergeContents({
+      src: contents,
+      newSrc: [
+        "  private fun applyScreenOrientationPolicy(configuration: Configuration) {",
+        "    // A split-screen or picture-in-picture window does not describe the device.",
+        "    if (isInMultiWindowMode) return",
+        "    val orientation =",
+        "      if (configuration.smallestScreenWidthDp >= 600) {",
+        "        ActivityInfo.SCREEN_ORIENTATION_FULL_USER",
+        "      } else {",
+        "        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT",
+        "      }",
+        "    if (requestedOrientation != orientation) requestedOrientation = orientation",
+        "  }",
+        "",
+        "  override fun onConfigurationChanged(newConfig: Configuration) {",
+        "    super.onConfigurationChanged(newConfig)",
+        "    applyScreenOrientationPolicy(newConfig)",
+        "  }",
+        "",
+      ].join("\n"),
+      tag: "mentra-large-screen-rotation",
+      anchor: /^class MainActivity\b.*\{$/,
+      offset: 1,
+      comment: "//",
+    }).contents
+    contents = mergeContents({
+      src: contents,
+      newSrc: "    applyScreenOrientationPolicy(resources.configuration)",
+      tag: "mentra-large-screen-rotation-oncreate",
+      anchor: /super\.onCreate\(/,
+      offset: 0,
+      comment: "//",
+    }).contents
+    config.modResults.contents = contents
     return config
   })
 }

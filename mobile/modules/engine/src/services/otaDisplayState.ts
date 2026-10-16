@@ -91,6 +91,13 @@ export function deriveDisplayState(args: {
     return connected ? "updating" : "disconnected"
   }
 
+  // Download completion is never proof that the BES flash ran or rebooted.
+  const besDownloadComplete =
+    otaStatus?.stepType === "bes" &&
+    otaStatus.phase === "download" &&
+    (otaStatus.status === "complete" || otaStatus.status === "step_complete")
+  if (besDownloadComplete) return connected ? "updating" : "disconnected"
+
   const besTerminal = isBesTerminal(otaStatus, otaProgress)
   if (besTerminal) return "restarting"
 
@@ -123,10 +130,8 @@ export function deriveDisplayState(args: {
       otaStatus?.stepType === "apk" && (otaStatus?.totalSteps ?? 0) > 1 && otaStatus.status === "step_complete"
     if (apkRebootExpected) return "starting"
 
-    // Legacy-shaped BES download events do not mean a reboot is coming (the flash
-    // has not started); the legacy screen treated that drop as a plain disconnect.
-    const besStatusInFlight =
-      otaStatus?.stepType === "bes" && !(isLegacyShapedOtaStatus(otaStatus) && otaStatus.phase === "download")
+    // A BES download has not started the flash and cannot establish an expected reboot.
+    const besStatusInFlight = otaStatus?.stepType === "bes" && otaStatus.phase === "install"
     const besInFlight = besStatusInFlight || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
     if (besInFlight) return "restarting"
 
@@ -141,12 +146,11 @@ export function deriveDisplayState(args: {
 }
 
 function isBesTerminal(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): boolean {
-  if (otaStatus?.stepType === "bes" && (otaStatus.status === "step_complete" || otaStatus.status === "complete")) {
-    // Legacy-shaped statuses map download FINISHED to "complete" too; only an
-    // install-phase terminal means the BES flash actually ran (WP 8C).
-    if (isLegacyShapedOtaStatus(otaStatus) && otaStatus.phase !== "install") {
-      return false
-    }
+  if (
+    otaStatus?.stepType === "bes" &&
+    otaStatus.phase === "install" &&
+    (otaStatus.status === "step_complete" || otaStatus.status === "complete")
+  ) {
     return true
   }
   if (otaProgress?.currentUpdate === "bes" && otaProgress.stage === "install" && otaProgress.status === "FINISHED") {

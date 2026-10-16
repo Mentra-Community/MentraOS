@@ -43,10 +43,32 @@ object WhipIngestProtocol {
    */
   data class State(val activeSessionId: String? = null, val stopped: Boolean = false)
 
+  /**
+   * Base of the still endpoint on the same listener. During a call the glasses POST a full-size
+   * JPEG to `/photo/<requestId>` instead of the cloud, since their own hotspot has no internet.
+   */
+  const val STILL_PATH = "/photo"
+
   /** Where to point the `Location` header. WHIP clients DELETE against exactly this URL. */
   data class Endpoint(val host: String, val port: Int) {
     fun sessionUrl(sessionId: String) = "http://$host:$port$BASE_PATH/$sessionId"
+
+    /** Where the glasses upload the still for [requestId]. */
+    fun stillUrl(requestId: String) = "http://$host:$port$STILL_PATH/$requestId"
   }
+
+  private val STILL_ID = Regex("[A-Za-z0-9_-]{1,64}")
+
+  /** `/photo/<id>` -> `<id>` for a well-formed id; null for every other target. */
+  fun stillRequestIdOf(target: String): String? {
+    val path = target.substringBefore('?')
+    if (!path.startsWith("$STILL_PATH/")) return null
+    val id = path.removePrefix("$STILL_PATH/")
+    return id.takeIf { STILL_ID.matches(it) }
+  }
+
+  /** True for an id the still endpoint could ever accept, so the host can mint compatible ones. */
+  fun isValidStillRequestId(requestId: String): Boolean = STILL_ID.matches(requestId)
 
   data class Response(
     val status: Int,

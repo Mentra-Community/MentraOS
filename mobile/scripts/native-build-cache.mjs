@@ -4,9 +4,14 @@ import {appendFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {MOBILE_SOURCE_PATHS} from "../../.github/scripts/mobile-build-inputs.mjs"
+
 const hash = (value) => createHash("sha256").update(value).digest("hex")
-const sourcePaths = ["mobile", "android_core", "cloud-v2", "changelogs", "package.json", "bun.lock"]
 const git = (args) => execFileSync("git", args, {encoding: "utf8"})
+
+export function cacheSource({cwd = process.cwd(), ref = "HEAD"} = {}) {
+  return hash(execFileSync("git", ["ls-tree", "-r", ref, "--", ...MOBILE_SOURCE_PATHS], {cwd, encoding: "utf8"}))
+}
 
 // Isolate Xcode's content-addressed compiler cache by workspace, tools and
 // runtime environment. The compiler validates the source inputs; no checkout
@@ -24,7 +29,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     ).sort(([a], [b]) => a.localeCompare(b)))
     const scope = cacheScope({workspace: root, xcode: JSON.stringify([process.arch, execFileSync("xcodebuild", ["-version"], {encoding: "utf8"}), execFileSync("xcrun", ["--sdk", "iphoneos", "--show-sdk-build-version"], {encoding: "utf8"})]),
       node: process.version, bun: execFileSync("bun", ["--version"], {encoding: "utf8"}), environment})
-    const source = hash(git(["ls-tree", "-r", "HEAD", "--", ...sourcePaths]))
+    const source = cacheSource({cwd: root})
     appendFileSync(process.env.GITHUB_OUTPUT, `scope=${scope}\nsource=${source}\n`)
   } else throw new Error("Expected key")
 }

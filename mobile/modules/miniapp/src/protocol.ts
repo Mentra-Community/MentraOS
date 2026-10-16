@@ -225,6 +225,12 @@ export enum MiniappRequestType {
   MINIAPPS_START = "miniapp_apps_start",
   /** Stop another miniapp. */
   MINIAPPS_STOP = "miniapp_apps_stop",
+  /** Install/update an approved bundle. Bundled host-trusted Stores only. */
+  MINIAPPS_INSTALL = "miniapp_apps_install",
+  /** Preflight a release's host/SDK/hardware requirements without downloading it. */
+  MINIAPPS_INSTALL_CHECK = "miniapp_apps_install_check",
+  /** Uninstall a package owned by the calling Store. Bundled host-trusted Stores only. */
+  MINIAPPS_UNINSTALL = "miniapp_apps_uninstall",
   /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */
   ACTION_INVOKE = "miniapp_action_invoke",
   /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
@@ -249,6 +255,20 @@ export enum MiniappRequestType {
   MEETING_SET_VIDEO_ENABLED = "miniapp_meeting_set_video_enabled",
   MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
   MEETING_GET_STATE = "miniapp_meeting_get_state",
+  /** Stop the glasses publisher for a photo. The meeting, hotspot, and audio stay up. */
+  MEETING_PAUSE_VIDEO_PUBLISHER = "miniapp_meeting_pause_video_publisher",
+  MEETING_RESUME_VIDEO_PUBLISHER = "miniapp_meeting_resume_video_publisher",
+  /** Full-frame "Taking a photo..." card on the outgoing video. Resolves after the first card frame. */
+  MEETING_SHOW_CARD = "miniapp_meeting_show_card",
+  /** Replace the card with a still. `durationMs` is counted by the caller from `shownAt`. */
+  MEETING_SHOW_IMAGE = "miniapp_meeting_show_image",
+  /** Stop holding a card or still so glasses frames reach Teams again. */
+  MEETING_SHOW_LIVE = "miniapp_meeting_show_live",
+  /**
+   * Direct link only: card, full-size glasses photo, still, and live again, all run by the host
+   * without stopping the glasses publisher. Resolves after the still has been held `durationMs`.
+   */
+  MEETING_CAPTURE_STILL = "miniapp_meeting_capture_still",
 }
 
 // ============================================================================
@@ -273,6 +293,9 @@ export enum MiniappResponseType {
 
   /** Push: host color scheme (light/dark) changed. */
   COLOR_SCHEME_CHANGE = "miniapp_color_scheme_change",
+
+  /** Push: a Store installation moved to another host-side phase. */
+  MINIAPPS_INSTALL_PROGRESS = "miniapp_apps_install_progress",
 
   /**
    * Push: speaker playback state transitioned. Per-miniapp; the runtime sends
@@ -310,6 +333,19 @@ export enum MiniappResponseType {
    * See MeetingModule.onState().
    */
   MEETING_STATE = "miniapp_meeting_state",
+
+  /**
+   * Push: a photo pause hit its ceiling and the publisher was started again.
+   * Carries {pauseId, status: "expired"}. A resume the miniapp sends itself is not this event.
+   */
+  MEETING_VIDEO_PUBLISHER = "miniapp_meeting_video_publisher",
+
+  /**
+   * Push: progress of one `meeting.captureStill`. Carries {stillId, phase} with phase `card`
+   * (card on the tile), `uploading` (the glasses captured and are uploading), or `shown` (the
+   * still is on the tile). The request result still settles the call.
+   */
+  MEETING_STILL = "miniapp_meeting_still",
 
   /**
    * Push: a preview lease changed state. Carries {handleId, state: "held" | "ended", reason?}.
@@ -430,6 +466,14 @@ export enum MiniappErrorCode {
   APP_NOT_FOUND = "APP_NOT_FOUND",
   /** Target miniapp is incompatible with the connected glasses. */
   APP_NOT_COMPATIBLE = "APP_NOT_COMPATIBLE",
+  /** Bundle download, validation, or activation failed. */
+  INSTALL_FAILED = "INSTALL_FAILED",
+  /** Another Store installation is already in progress for the same package. */
+  INSTALL_IN_PROGRESS = "INSTALL_IN_PROGRESS",
+  /** An automatic update was deferred because the target is running or starting. */
+  APP_RUNNING = "APP_RUNNING",
+  /** Another Store owns the installed package's update provenance. */
+  STORE_OWNERSHIP_CONFLICT = "STORE_OWNERSHIP_CONFLICT",
   /** Target miniapp does not declare the requested action. */
   ACTION_NOT_FOUND = "ACTION_NOT_FOUND",
   /** Target connected but never registered a handler for the action (within the buffer window). */

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-bad-0006",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 3,
+      "observedAt": "2026-10-13T11:04:00Z",
+      "capabilities": [
+        "glasses_connection",
+        "glasses_battery",
+        "glasses_versions",
+        "miniapp_execution",
+        "engine_active"
+      ],
+      "kind": "photo_operation",
+      "deviceBinding": {
+        "kind": "serial",
+        "manufacturer": "Mentra",
+        "product": "mentra_live",
+        "serial": "ML2A-0042-7731"
+      },
+      "payload": {
+        "stage": "captured"
+      }
+    }
+  ]
+}

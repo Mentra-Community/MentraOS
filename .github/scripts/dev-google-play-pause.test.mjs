@@ -6,7 +6,6 @@ import path from "node:path"
 import test from "node:test"
 
 import {createAndroidRecord, createIosRecord, mergeMobileRecords} from "./coordinated-mobile-records.mjs"
-import {createPrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
 import {createReleasePlan, familyBuildNumber, finalizeReleaseManifest, loadReleaseFamily} from "./release-family.mjs"
@@ -84,29 +83,6 @@ test("dev can finalize GitHub Android artifacts without a Google Play publicatio
       ]),
   )
   const runtimeImage = runtimeImageRecordForPlan(plan)
-  const workspaceOrigin = "https://mentra.acmeworkspace.com"
-  const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
-  const coreOrigin = `https://${coreHostname}`
-  const privateDeployment = createPrivateDeploymentRecord({
-    plan,
-    sourceCommit: plan.sourceCommit,
-    requestedTag: plan.sourceCommit,
-    status: "deployed",
-    sourceImage: runtimeImage.image,
-    sourceImageDigest: runtimeImage.digest,
-    image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${runtimeImage.digest}`,
-    imageDigest: runtimeImage.digest,
-    revision: "ca-mentra-enterprise-reference--0000226",
-    coreRevision: "ca-mentra-ent-ref-core--0000226",
-    workspaceOrigin,
-    coreHostname,
-    coreOrigin,
-    checks: [workspaceOrigin, coreOrigin].flatMap((origin) =>
-      ["healthz", "ready"].map((probe) => ({url: `${origin}/${probe}`, ready: true, statusCode: 200})),
-    ),
-    completedAt: "2026-09-12T20:00:00.000Z",
-    provenanceUrl,
-  })
   const results = {
     releaseSetId: plan.releaseSetId,
     publications: {...publications, ...mobile.publications},
@@ -117,7 +93,6 @@ test("dev can finalize GitHub Android artifacts without a Google Play publicatio
     otaManifest: publication(plan.artifactNames.otaManifest),
     cloud: cloudRecordForPlan(plan),
     runtimeImage,
-    privateDeployment,
   }
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-09-12T20:01:00.000Z"})
   assert.equal(manifest.publications.mentraos["google-play"], undefined)

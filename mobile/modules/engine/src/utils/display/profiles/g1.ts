@@ -1,11 +1,15 @@
+import {normalizeG1DisplayText} from "../normalization"
+import {G1_LATIN_GLYPH_WIDTHS} from "./g1LatinGlyphs"
 import {DisplayProfile} from "./types"
 
 /**
- * Complete G1 glyph widths from G1FontLoaderKt
+ * ASCII widths from G1FontLoaderKt and embedded G1 1.5.6 Latin glyphs.
  * These are GLYPH widths - multiply using renderFormula to get rendered pixels.
  * Rendered width = (glyphWidth + 1) * 2
  */
 const G1_GLYPH_WIDTHS: Record<string, number> = {
+  ...G1_LATIN_GLYPH_WIDTHS,
+
   // Punctuation & Symbols
   " ": 2,
   "!": 1,
@@ -126,6 +130,8 @@ export const G1_PROFILE: DisplayProfile = {
   id: "even-realities-g1",
   name: "Even Realities G1",
 
+  normalizeText: normalizeG1DisplayText,
+
   // Display dimensions
   displayWidthPx: 576,
   maxLines: 5,
@@ -188,6 +194,8 @@ export const G1_PROFILE: DisplayProfile = {
 export const G1_PROFILE_LEGACY: DisplayProfile = {
   id: "even-realities-g1-legacy",
   name: "Even Realities G1 (Legacy Client Compatibility)",
+
+  normalizeText: normalizeG1DisplayText,
 
   // Reduced display width to prevent double-wrapping overflow
   // Old mobile client wraps at ~90% of true width

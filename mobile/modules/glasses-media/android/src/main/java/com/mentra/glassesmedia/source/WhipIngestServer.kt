@@ -2,6 +2,7 @@ package com.mentra.glassesmedia.source
 
 import android.util.Log
 import com.mentra.glassesmedia.trace.SoftApTrace
+import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -231,12 +232,18 @@ class WhipIngestServer(
         socket.soTimeout = READ_TIMEOUT_MS
         val output = BufferedOutputStream(socket.getOutputStream())
         try {
-          val request = readRequest(socket.getInputStream())
-          if (request == null) {
+          val input = BufferedInputStream(socket.getInputStream())
+          val head = readHead(input)
+          if (head == null) {
             write(output, WhipIngestProtocol.Response(400, "Bad Request", body = "malformed request"))
             return
           }
-          write(output, handle(request))
+          val stillId = WhipIngestProtocol.stillRequestIdOf(head.target)
+          if (stillId != null) {
+            write(output, receiveStill(head, stillId, input))
+            return
+          }
+          write(output, handle(readBody(head, input)))
         } catch (error: Exception) {
           Log.w(TAG, "connection failed", error)
           runCatching {
@@ -336,6 +343,54 @@ class WhipIngestServer(
     }
   }
 
+  /**
+   * `POST /photo/<id>`: a full-size still from the glasses. Read only for an id the host is
+   * waiting on, so an unsolicited upload never costs the phone a multi-megabyte buffer.
+   */
+  private fun receiveStill(head: Head, requestId: String, input: InputStream): WhipIngestProtocol.Response {
+    if (!head.method.equals("POST", ignoreCase = true)) {
+      return WhipIngestProtocol.Response(405, "Method Not Allowed", mapOf("Allow" to "POST"), "POST a JPEG")
+    }
+    if (!StillPhotoInbox.isExpected(requestId)) {
+      SoftApTrace.stage("still_upload_unexpected", "requestId" to requestId)
+      return WhipIngestProtocol.Response(404, "Not Found", body = "no still pending for $requestId")
+    }
+    val length = head.contentLength
+    if (length == null || length <= 0) {
+      return WhipIngestProtocol.Response(411, "Length Required", body = "Content-Length required")
+    }
+    if (length > StillPhotoInbox.MAX_BYTES) {
+      return WhipIngestProtocol.Response(413, "Content Too Large", body = "still exceeds ${StillPhotoInbox.MAX_BYTES} bytes")
+    }
+    val startedAt = System.nanoTime() / 1_000_000
+    val bytes = ByteArray(length.toInt())
+    var read = 0
+    while (read < bytes.size) {
+      val count = input.read(bytes, read, bytes.size - read)
+      if (count < 0) break
+      read += count
+    }
+    if (read < bytes.size) {
+      SoftApTrace.failure("still_upload_truncated", "requestId" to requestId, "read" to read, "expected" to bytes.size)
+      return WhipIngestProtocol.Response(400, "Bad Request", body = "body ended after $read of ${bytes.size} bytes")
+    }
+    val delivered = StillPhotoInbox.deliver(requestId, bytes)
+    SoftApTrace.stage(
+      "still_upload_received",
+      "requestId" to requestId,
+      "bytes" to bytes.size,
+      "readMs" to (System.nanoTime() / 1_000_000 - startedAt),
+      "delivered" to delivered,
+    )
+    if (!delivered) return WhipIngestProtocol.Response(410, "Gone", body = "still for $requestId is no longer wanted")
+    return WhipIngestProtocol.Response(
+      200,
+      "OK",
+      mapOf("Content-Type" to "application/json"),
+      "{\"ok\":true,\"bytes\":${bytes.size}}",
+    )
+  }
+
   /** Frees the slot only if this session still holds it, so a newer publisher is not evicted. */
   private fun releaseSlot(sessionId: String) {
     synchronized(lock) {
@@ -362,21 +417,41 @@ class WhipIngestServer(
      */
     const val TOMBSTONE_MS = 3_000L
 
+    /** Request line and headers, read without consuming any of the body. */
+    internal class Head(
+      val method: String,
+      val target: String,
+      val contentType: String?,
+      val contentLength: Long?,
+    )
+
+    /** Longest request line or header line accepted; real ones are well under 200 bytes. */
+    private const val MAX_HEADER_LINE = 8 * 1024
+
     /**
      * Reads a request into [WhipIngestProtocol.Request]. Only `Content-Length` bodies are
      * supported: the glasses' WHIP client sends one, and `chunked` would be a silent 400 otherwise,
      * so it is rejected explicitly by the missing-length path below.
      */
     fun readRequest(stream: InputStream): WhipIngestProtocol.Request? {
-      val reader = stream.bufferedReader(Charsets.UTF_8)
+      val input = if (stream is BufferedInputStream) stream else BufferedInputStream(stream)
+      val head = readHead(input) ?: return null
+      return readBody(head, input)
+    }
+
+    /**
+     * Header parsing is byte-exact so the body that follows can be binary: the still endpoint
+     * reads a JPEG off the same stream, which a character reader would have buffered and decoded.
+     */
+    internal fun readHead(input: InputStream): Head? {
       val (method, target) = WhipIngestProtocol.parseRequestLine(
-        reader.readLine() ?: return null,
+        readLine(input) ?: return null,
       ) ?: return null
       SoftApTrace.stage("whip_request_line_read", "method" to method)
 
       val headers = mutableMapOf<String, String>()
       while (true) {
-        val line = reader.readLine() ?: break
+        val line = readLine(input) ?: break
         if (line.isEmpty()) break
         val separator = line.indexOf(':')
         if (separator <= 0) continue
@@ -386,24 +461,49 @@ class WhipIngestServer(
       val contentType = WhipIngestProtocol.headerValue(headers, "Content-Type")
       val contentLength = WhipIngestProtocol.headerValue(headers, "Content-Length")?.toLongOrNull()
       SoftApTrace.stage("whip_request_headers_read", "contentLength" to contentLength)
+      return Head(method, target, contentType, contentLength)
+    }
 
+    internal fun readBody(head: Head, input: InputStream): WhipIngestProtocol.Request {
+      val contentLength = head.contentLength
       // Do not read a body we have already decided to refuse. decide() checks the length first for
       // exactly this reason.
       if (contentLength == null || contentLength <= 0 ||
         contentLength > WhipIngestProtocol.MAX_BODY_BYTES
       ) {
-        return WhipIngestProtocol.Request(method, target, contentType, contentLength)
+        return WhipIngestProtocol.Request(head.method, head.target, head.contentType, contentLength)
       }
 
-      val body = CharArray(contentLength.toInt())
+      val body = ByteArray(contentLength.toInt())
       var read = 0
       while (read < body.size) {
-        val count = reader.read(body, read, body.size - read)
+        val count = input.read(body, read, body.size - read)
         if (count < 0) break
         read += count
         SoftApTrace.stage("whip_request_body_read", "read" to read, "expected" to body.size)
       }
-      return WhipIngestProtocol.Request(method, target, contentType, contentLength, String(body, 0, read))
+      return WhipIngestProtocol.Request(
+        head.method,
+        head.target,
+        head.contentType,
+        contentLength,
+        String(body, 0, read, Charsets.UTF_8),
+      )
+    }
+
+    /** One CRLF- or LF-terminated line, or null at end of stream before any byte. */
+    private fun readLine(input: InputStream): String? {
+      val line = java.io.ByteArrayOutputStream()
+      while (true) {
+        val next = input.read()
+        if (next < 0) return if (line.size() == 0) null else line.toString(Charsets.ISO_8859_1.name())
+        if (next == '\n'.code) break
+        line.write(next)
+        if (line.size() > MAX_HEADER_LINE) throw IOException("header line too long")
+      }
+      val bytes = line.toByteArray()
+      val end = if (bytes.isNotEmpty() && bytes.last() == '\r'.code.toByte()) bytes.size - 1 else bytes.size
+      return String(bytes, 0, end, Charsets.ISO_8859_1)
     }
 
     /** Convenience for tests and teardown paths that must not outlive the tombstone. */

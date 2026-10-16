@@ -113,6 +113,13 @@ public final class LinkStateMachine {
         /** BES handles cs_weartun / cs_wearst / cs_wrst (wire_caps.wear_tuning). */
         public final boolean wearTuning;
 
+        /**
+         * BES derives UART RX DMA progress from the hardware write position (wire_caps.uart_rx_pos),
+         * so a delayed completion interrupt cannot corrupt later file frames. Without it ASG paces
+         * file frames on the UART.
+         */
+        public final boolean uartRxPos;
+
         /** Highest wire protocol version the BES advertised. */
         public final int proto;
 
@@ -131,7 +138,7 @@ public final class LinkStateMachine {
                 boolean bigPacks,
                 int proto,
                 int notifyCap) {
-            this(k900Le, binary, filePayloadV2, bigPacks, proto, notifyCap, false, false);
+            this(k900Le, binary, filePayloadV2, bigPacks, proto, notifyCap, false, false, false);
         }
 
         public BesCaps(
@@ -143,6 +150,20 @@ public final class LinkStateMachine {
                 int notifyCap,
                 boolean micTuning,
                 boolean wearTuning) {
+            this(k900Le, binary, filePayloadV2, bigPacks, proto, notifyCap, micTuning, wearTuning,
+                    false);
+        }
+
+        public BesCaps(
+                boolean k900Le,
+                boolean binary,
+                boolean filePayloadV2,
+                boolean bigPacks,
+                int proto,
+                int notifyCap,
+                boolean micTuning,
+                boolean wearTuning,
+                boolean uartRxPos) {
             this.k900Le = k900Le;
             this.binary = binary;
             this.filePayloadV2 = filePayloadV2;
@@ -151,6 +172,7 @@ public final class LinkStateMachine {
             this.notifyCap = notifyCap;
             this.micTuning = micTuning;
             this.wearTuning = wearTuning;
+            this.uartRxPos = uartRxPos;
         }
 
         /**
@@ -170,7 +192,8 @@ public final class LinkStateMachine {
                     advertised.binary ? advertised.proto : proto,
                     advertised.notifyCap > 0 ? advertised.notifyCap : notifyCap,
                     micTuning || advertised.micTuning,
-                    wearTuning || advertised.wearTuning);
+                    wearTuning || advertised.wearTuning,
+                    uartRxPos || advertised.uartRxPos);
         }
 
         /**
@@ -189,7 +212,8 @@ public final class LinkStateMachine {
                             proto,
                             0,
                             micTuning,
-                            wearTuning);
+                            wearTuning,
+                            uartRxPos);
         }
 
         /**
@@ -205,7 +229,8 @@ public final class LinkStateMachine {
                     Math.max(proto, BesWireFormat.PROTOCOL_VERSION_V2),
                     notifyCap,
                     micTuning,
-                    wearTuning);
+                    wearTuning,
+                    uartRxPos);
         }
 
         @Override
@@ -224,7 +249,8 @@ public final class LinkStateMachine {
                     && proto == other.proto
                     && notifyCap == other.notifyCap
                     && micTuning == other.micTuning
-                    && wearTuning == other.wearTuning;
+                    && wearTuning == other.wearTuning
+                    && uartRxPos == other.uartRxPos;
         }
 
         @Override
@@ -237,7 +263,8 @@ public final class LinkStateMachine {
                     proto,
                     notifyCap,
                     micTuning,
-                    wearTuning);
+                    wearTuning,
+                    uartRxPos);
         }
 
         @Override
@@ -258,6 +285,8 @@ public final class LinkStateMachine {
                     + micTuning
                     + ", wearTuning="
                     + wearTuning
+                    + ", uartRxPos="
+                    + uartRxPos
                     + "}";
         }
     }
@@ -505,6 +534,27 @@ public final class LinkStateMachine {
                 state = LinkState.LINK_PROVEN;
             }
             if (previousState != state || !Objects.equals(previousProven, provenCapsLocked())) {
+                notifyListenersLocked();
+            }
+        }
+    }
+
+    /**
+     * The BES now runs different firmware (an applied OTA, or an sr_syvr reporting another
+     * version). Every advertised capability describes one firmware build, so drop them until the
+     * new build re-advertises its own. Unlike a reopen window this is not a transient gap: keeping
+     * the old flags would let ASG skip compatibility behavior, such as UART file pacing, that the
+     * replacement still needs.
+     */
+    public void besFirmwareChanged() {
+        synchronized (this) {
+            if (negotiatedCaps.equals(BesCaps.NONE)) {
+                return;
+            }
+            BesCaps previousProven = provenCapsLocked();
+            negotiatedCaps = BesCaps.NONE;
+            if (state == LinkState.LINK_PROVEN
+                    && !Objects.equals(previousProven, provenCapsLocked())) {
                 notifyListenersLocked();
             }
         }

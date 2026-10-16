@@ -317,6 +317,60 @@ describe("MentraLiveOtaFlow", () => {
     expect(onFirmwareRestartingChange).toHaveBeenLastCalledWith(false, false)
   })
 
+  it.each([null, "wifi", "hotspot"] as const)(
+    "renders the engine's known transport %s when adopting device progress",
+    async (transport) => {
+      await ota.installSession.finish()
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        buildNumber: "39",
+        hotspotOtaVersion: 1,
+        wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
+      })
+      if (transport) {
+        ota.installSession.prepare({
+          hasCheckCompleted: true,
+          updateAvailable: true,
+          latestVersionInfo: null,
+          updates: ["apk"],
+          mtkPatch: null,
+          besVersion: null,
+          isApkDowngrade: false,
+          manifestBody: "{}",
+          releaseVersion: null,
+          updateInfo: null,
+          isRequired: true,
+        })
+      }
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "adopted-session",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "download",
+        stepPercent: 20,
+        overallPercent: 20,
+        status: "in_progress",
+      })
+      // The live connection can change after selection; it is not transport proof.
+      useGlassesStore.getState().setGlassesInfo({
+        wifi: transport === "wifi" ? {state: "disconnected"} : {state: "connected", ssid: "test"},
+      })
+      const screen = render(
+        <MentraLiveOtaFlow
+          initialPage="progress"
+          initializeRuntime={false}
+          onFinished={jest.fn()}
+          onOpenWifiSetup={jest.fn()}
+        />,
+      )
+      expect(screen.getByText(transport === "hotspot" ? "Transferring update to glasses…" : "Downloading…")).toBeDefined()
+      expect(Boolean(screen.queryByTestId("ota.transport.wifi"))).toBe(transport === "wifi")
+      expect(Boolean(screen.queryByTestId("ota.transport.hotspot"))).toBe(transport === "hotspot")
+      screen.unmount()
+    },
+  )
+
   it("presents a firmware reboot as active work with no completion action", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

@@ -41,20 +41,19 @@ export {
   CloudClientError,
   HttpError,
   AuthExpiredError,
+  AuthUnavailableError,
   SessionRevocationError,
 } from "./errors";
+
+// Reads a Core token's claims (`sub` is the Mentra user ID) without verifying it; the cloud verifies every call.
+export { decodeClaims } from "./modules/auth/jwt";
+export type { JwtClaims } from "./modules/auth/jwt";
 
 // The logging hook a host can implement to route library logs.
 export { noopLogger } from "./logger";
 export type { Logger } from "./logger";
 
 // Runtime lifecycle state exposed to hosts for UI/debugging and fallback policy.
-export type {
-  PreinstalledInstallPolicy,
-  PreinstalledMiniappRegistry,
-  PreinstalledMiniappRegistryEntry,
-} from "./modules/core/core";
-
 export type {
   RuntimeAudioTransport,
   RuntimeSnapshot,
@@ -65,11 +64,19 @@ export type {
 
 export type {
   AddReportArtifactsResult,
+  AddReportLogsOptions,
+  FleetAck,
+  FleetAckResult,
+  FleetReportOutcome,
   ReportAttachmentInput,
   ReportContext,
   ReportDetails,
   ReportKind,
   ReportLogEntry,
+  ReportLogCollectionUpdate,
+  ReportLogCollection,
+  ReportLogCollectionSnapshot,
+  ReportLogSource,
   ReportStatus,
   ReportSystemPriority,
   ReportTrigger,

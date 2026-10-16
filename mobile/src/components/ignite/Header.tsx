@@ -1,12 +1,12 @@
 import {ReactElement} from "react"
-import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewStyle} from "react-native"
+import {Pressable, StyleProp, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {isRTL, translate} from "@/i18n"
 import type {ThemedStyle} from "@/theme"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 
-import {IconTypes, PressableIcon} from "./Icon"
+import {Icon, IconTypes} from "./Icon"
 import {Text, TextProps} from "./Text"
 
 interface HeaderProps {
@@ -92,7 +92,7 @@ interface HeaderProps {
   /**
    * What happens when you press the left icon or text action.
    */
-  onLeftPress?: TouchableOpacityProps["onPress"]
+  onLeftPress?: () => void
   /**
    * Icon that should appear on the right.
    * Can be used with `onRightPress`.
@@ -125,7 +125,7 @@ interface HeaderProps {
   /**
    * What happens when you press the right icon or text action.
    */
-  onRightPress?: TouchableOpacityProps["onPress"]
+  onRightPress?: () => void
   /**
    * Override the default edges for the safe area.
    */
@@ -141,7 +141,7 @@ interface HeaderActionProps {
   text?: TextProps["text"]
   tx?: TextProps["tx"]
   txOptions?: TextProps["txOptions"]
-  onPress?: TouchableOpacityProps["onPress"]
+  onPress?: () => void
   accessibilityLabel?: string
   testID?: string
   ActionComponent?: ReactElement
@@ -255,7 +255,8 @@ export function Header(props: HeaderProps) {
  * @returns {JSX.Element} The rendered `HeaderAction` component.
  */
 function HeaderAction(props: HeaderActionProps) {
-  const {backgroundColor, icon, text, tx, txOptions, onPress, accessibilityLabel, testID, ActionComponent, iconColor} = props
+  const {backgroundColor, icon, text, tx, txOptions, onPress, accessibilityLabel, testID, ActionComponent, iconColor} =
+    props
   const {theme, themed} = useAppTheme()
 
   const content = tx ? translate(tx, txOptions) : text
@@ -279,20 +280,25 @@ function HeaderAction(props: HeaderActionProps) {
 
   if (icon) {
     return (
-      <PressableIcon
-        size={24}
-        name={icon}
-        color={iconColor}
+      <Pressable
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        disabled={!onPress}
         testID={testID}
+        onAccessibilityTap={onPress}
         onPress={onPress}
-        containerStyle={themed([
-          $actionIconContainer,
+        style={({pressed}) => [
+          themed($actionIconContainer),
           {backgroundColor: theme.colors.primary_foreground, borderRadius: theme.spacing.s10, width: 40, height: 40},
-        ])}
-        style={isRTL ? {transform: [{rotate: "180deg"}]} : {}}
-      />
+          {opacity: pressed ? 0.2 : 1},
+        ]}>
+        <Icon
+          size={24}
+          name={icon}
+          color={iconColor ?? theme.colors.secondary_foreground}
+          style={isRTL ? {transform: [{rotate: "180deg"}]} : {}}
+        />
+      </Pressable>
     )
   }
 
@@ -300,12 +306,11 @@ function HeaderAction(props: HeaderActionProps) {
   return <View style={[$actionFillerContainer, {backgroundColor}]} />
 }
 
-const $wrapper: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $wrapper: ThemedStyle<ViewStyle> = () => ({
   flexDirection: "row",
   alignItems: "center",
   justifyContent: "space-between",
   minHeight: 48,
-  // paddingBottom: spacing.s3,
 })
 
 const $title: TextStyle = {

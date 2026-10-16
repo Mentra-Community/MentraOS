@@ -7,11 +7,31 @@
  */
 
 import type { HttpClient } from "../../http";
+import type {ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const REPORTS_PATH = "/api/client/reports";
 
 export type ReportKind = "bug" | "feedback" | "automatic";
 export type ReportStatus = "collecting" | "ready" | "closed";
+export type ReportLogSource = "phone" | "glasses" | "glasses_firmware" | "cloud" | "miniapp_server";
+/** Core storage receipts, independent of the report's UI readiness status. */
+export interface ReportLogCollection {
+  state: "requested" | "received" | "unavailable" | "failed" | "timed-out";
+  requestedAt: string;
+  deadlineAt: string;
+  reason?: string;
+  receivedAt?: string;
+  artifactId?: string;
+  entryCount?: number;
+}
+export interface ReportLogCollectionSnapshot {
+  reportId: string;
+  logCollection: Partial<Record<ReportLogSource, ReportLogCollection>>;
+}
+export interface ReportLogCollectionUpdate {
+  state: "requested" | "unavailable" | "failed";
+  reason?: string;
+}
 export type ReportSystemPriority = "low" | "medium" | "high" | "critical";
 
 interface BaseReportTrigger {
@@ -42,28 +62,43 @@ export interface ReportContext extends Record<string, unknown> {
   settings?: Record<string, unknown>;
 }
 
-export type SubmitReportInput =
-  | {
+interface IncidentKeyInput {
+  /**
+   * Identity of one bug or automatic event (`^[A-Za-z0-9._:-]{1,128}$`).
+   * Resubmitting the same key returns the caller's existing report. A Cloud
+   * that predates the field ignores it and creates a new report.
+   */
+  incidentKey?: string;
+}
+
+export type SubmitReportInput = (
+  | ({
       kind: "bug";
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-    }
-  | {
+    } & IncidentKeyInput)
+  | ({
       kind: "automatic";
+      automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-    }
+    } & IncidentKeyInput)
   | {
       kind: "feedback";
+      /** Feedback notifies at creation and cannot be safely deduplicated by key. */
+      incidentKey?: never;
       feedback: string | Record<string, unknown>;
       context: ReportContext;
-    };
+    }
+);
 
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
+  /** True only when Cloud returned an existing report for `incidentKey`. */
+  deduplicated?: true;
 }
 
 export interface ReportLogEntry {
@@ -82,6 +117,18 @@ export interface ReportAttachmentInput {
 
 export interface AddReportArtifactsResult {
   stored: number;
+  /** Returned for a log upload sent with a `retryKey`. */
+  receipt?: { artifactId: string; sha256: string; sizeBytes: number };
+}
+
+export interface AddReportLogsOptions {
+  /**
+   * Artifact identity (`^[A-Za-z0-9._:-]{1,128}$`). Repeating it with identical
+   * entries is idempotent; different entries under the same key fail with
+   * HTTP 409. A Cloud that predates the field ignores it and stores a new artifact.
+   */
+  retryKey?: string;
+  signal?: AbortSignal;
 }
 
 export interface ReportsDeps {
@@ -95,14 +142,60 @@ export class Reports {
     this.http = deps.http;
   }
 
-  submit(input: SubmitReportInput): Promise<SubmitReportResult> {
-    return this.http.post<SubmitReportResult>(REPORTS_PATH, input);
+  submit(input: SubmitReportInput, signal?: AbortSignal): Promise<SubmitReportResult> {
+    return this.http.post<SubmitReportResult>(REPORTS_PATH, input, {signal});
+  }
+
+  /** Read the current source receipts with the same user session used to submit. */
+  async getLogCollection(reportId: string, signal?: AbortSignal): Promise<ReportLogCollectionSnapshot> {
+    const snapshot = await this.http.get<ReportLogCollectionSnapshot>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/log-collection`,
+      {signal},
+    );
+    if (!snapshot || snapshot.reportId !== reportId || !snapshot.logCollection ||
+      typeof snapshot.logCollection !== "object" || Array.isArray(snapshot.logCollection)) {
+      throw new Error("Invalid report collection response");
+    }
+    const logCollection: ReportLogCollectionSnapshot["logCollection"] = {};
+    for (const source of ["phone", "glasses", "glasses_firmware", "cloud", "miniapp_server"] as const) {
+      const receipt = snapshot.logCollection[source];
+      if (receipt === undefined) continue;
+      if (!receipt || !["requested", "received", "unavailable", "failed", "timed-out"].includes(receipt.state) ||
+        typeof receipt.requestedAt !== "string" || typeof receipt.deadlineAt !== "string") {
+        throw new Error("Invalid report collection receipt");
+      }
+      logCollection[source] = {
+        state: receipt.state,
+        requestedAt: receipt.requestedAt,
+        deadlineAt: receipt.deadlineAt,
+        ...(typeof receipt.reason === "string" ? {reason: receipt.reason.slice(0, 500)} : {}),
+        ...(typeof receipt.receivedAt === "string" ? {receivedAt: receipt.receivedAt} : {}),
+        ...(typeof receipt.artifactId === "string" ? {artifactId: receipt.artifactId} : {}),
+        ...(typeof receipt.entryCount === "number" ? {entryCount: receipt.entryCount} : {}),
+      };
+    }
+    return {reportId: snapshot.reportId, logCollection};
+  }
+
+  /** Record a local collection attempt; only Core artifact storage confirms receipt. */
+  updateLogCollection(
+    reportId: string,
+    source: ReportLogSource,
+    update: ReportLogCollectionUpdate,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.http.post<void>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/log-collection/${source}`,
+      update,
+      {signal},
+    );
   }
 
   async addLogs(
     reportId: string,
     source: string,
     entries: ReportLogEntry[],
+    options: AddReportLogsOptions = {},
   ): Promise<AddReportArtifactsResult> {
     return await this.http.post<AddReportArtifactsResult>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/artifacts`,
@@ -110,13 +203,16 @@ export class Reports {
         type: "logs",
         source,
         entries,
+        ...(options.retryKey !== undefined ? { retryKey: options.retryKey } : {}),
       },
+      {signal: options.signal},
     );
   }
 
   addScreenshots(
     reportId: string,
     images: ReportAttachmentInput[],
+    signal?: AbortSignal,
   ): Promise<AddReportArtifactsResult> {
     const form = new FormData();
     form.append("type", "screenshot");
@@ -141,13 +237,53 @@ export class Reports {
     return this.http.postForm<AddReportArtifactsResult>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/artifacts`,
       form,
+      {signal},
     );
   }
 
-  complete(reportId: string): Promise<{ status: ReportStatus }> {
+  /**
+   * Attach MP4 recordings to an existing report through the same artifact
+   * route. `source` is the capture source the caller declares (for example
+   * `phone` or `host`); the server stores it as given.
+   */
+  addVideos(
+    reportId: string,
+    source: string,
+    videos: ReportAttachmentInput[],
+  ): Promise<AddReportArtifactsResult> {
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", source);
+    for (const video of videos) {
+      const filename = video.fileName || `video-${Date.now()}.mp4`;
+      const mimeType = video.mimeType || "video/mp4";
+      if (video.blob) {
+        // The part's declared type comes from the Blob, so make it the MP4 type.
+        const blob = video.blob.type === mimeType ? video.blob : new Blob([video.blob], { type: mimeType });
+        form.append("files", blob, filename);
+        continue;
+      }
+      if (!video.uri) {
+        throw new Error("report video requires either blob or uri");
+      }
+      form.append("files", {
+        uri: video.uri,
+        name: filename,
+        type: mimeType,
+      } as unknown as Blob);
+    }
+
+    return this.http.postForm<AddReportArtifactsResult>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/artifacts`,
+      form,
+    );
+  }
+
+  complete(reportId: string, signal?: AbortSignal): Promise<{ status: ReportStatus }> {
     return this.http.post<{ status: ReportStatus }>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/complete`,
       {},
+      {signal},
     );
   }
 }

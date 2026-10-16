@@ -324,6 +324,12 @@ jobs:
             echo "ipa_asset_id=$ipa_id"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check Mapbox SDK download authentication
+        if: inputs.dry_run == true || steps.container.outputs.android_assets_exist != 'true' || steps.container.outputs.ios_asset_exists != 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: node release-tooling/.github/scripts/check-mapbox-downloads.mjs
+
   android:
     name: Build and distribute coordinated Android app
     needs: prepare
@@ -369,12 +375,11 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          # The action's default list includes the retired `tools` package,
-          # which no longer downloads; Gradle fetches the rest it needs.
-          packages: platform-tools
+          # Bootstrap sdkmanager and licenses; the bounded installer owns downloads.
+          packages: ""
 
       - name: Install Android build tools used for artifact verification
-        run: sdkmanager "build-tools;36.0.0"
+        run: node release-tooling/.github/scripts/install-android-sdk.mjs platform-tools "build-tools;36.0.0"
 
       - uses: ruby/setup-ruby@v1
         if: inputs.dry_run != true
@@ -390,6 +395,14 @@ jobs:
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         working-directory: mobile
         run: bun install --frozen-lockfile
+
+      - name: Install the selected Android SDK before Gradle
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: node release-tooling/.github/scripts/install-android-sdk.mjs --mobile mobile
+
+      - name: Verify the selected Android NDK installation
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: node release-tooling/.github/scripts/ensure-android-ndk.mjs
 
       - name: Generate exact mobile environment and package metadata
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
@@ -470,6 +483,8 @@ jobs:
       - name: Download the existing immutable Android pair
         if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist == 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -951,6 +966,8 @@ jobs:
       - name: Download the existing immutable iOS app
         if: inputs.dry_run != true && needs.prepare.outputs.ios_asset_exists == 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -978,6 +995,7 @@ jobs:
         run: node .github/scripts/coordinated-install-downloads.mjs restore release-intent/release-plan.json mobile-release/downloads
 
       - name: Export iPhone and Mac from the compiled store app
+        id: apple-downloads-export
         if: inputs.installable_downloads == true && steps.downloads-restore.outputs.restored != 'true'
         env:
           IOS_PR_PROFILE_BASE64: ${{ secrets.IOS_PR_PROFILE_BASE64 }}
@@ -986,6 +1004,15 @@ jobs:
           python3 mobile/ci/coordinated-downloads.py release-intent/release-plan.json \
             "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}" mobile-release/downloads
           node .github/scripts/coordinated-install-downloads.mjs prepare release-intent/release-plan.json mobile-release/downloads
+
+      - name: Preserve failed Apple export comparison
+        if: failure() && steps.apple-downloads-export.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-ios-export-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mobile-release/downloads/export-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
 
       # Keep retries in the workflow: the frozen source checkout may predate this policy.
       - name: Upload IPA handoff (attempt 1 of 3)

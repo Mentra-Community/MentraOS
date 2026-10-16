@@ -15,7 +15,7 @@ import {SETTINGS, engine, useSetting, BgTimer} from "@mentra/engine"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {resolvedEndpoints} from "@/services/cloudClient"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
-import {useDeployment} from "@/services/deployment"
+import {refreshWorkspaceManifest, useDeployment} from "@/services/deployment"
 import {deploymentDebugOverrides, saveDeploymentCloudOverrides} from "@/services/deployment/debugOverrides"
 
 // Types
@@ -60,6 +60,7 @@ export default function InitScreen() {
 
   // State
   const initStartedRef = useRef(false)
+  const manifestRefreshRef = useRef<Promise<void> | null>(null)
   const [state, setState] = useState<ScreenState>("loading")
   const [localVersion, setLocalVersion] = useState<string | null>(null)
   const [cloudVersion, setCloudVersion] = useState<string | null>(null)
@@ -134,7 +135,7 @@ export default function InitScreen() {
       setPendingRoute(null)
       // Navigate to home first so the deep link screen has a proper back destination
       clearHistoryAndGoHome({transition: "none"})
-      setTimeout(() => processUrl(pendingRoute), DEEPLINK_DELAY)
+      setTimeout(() => processUrl(pendingRoute, false, true), DEEPLINK_DELAY)
       return
     }
 
@@ -164,6 +165,8 @@ export default function InitScreen() {
       return
     }
 
+    // Engine reads the workspace's miniapps and features once, when it starts.
+    await manifestRefreshRef.current
     setBootPhase("Initializing core…")
     await mantle.init()
 
@@ -335,6 +338,11 @@ export default function InitScreen() {
 
     const init = async () => {
       console.log("INDEX: init()")
+      // Runs beside the version check, which calls the same workspace Runtime.
+      manifestRefreshRef.current = refreshWorkspaceManifest({
+        isRunning: () => mantle.isInitialized(),
+        reconcile: () => mantle.applyDeploymentUpdate(),
+      }).then((outcome) => console.log(`INDEX: workspace manifest refresh: ${outcome}`))
       await checkCustomUrl()
       await checkCloudVersion()
     }

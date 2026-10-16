@@ -1,25 +1,25 @@
 /**
  * @fileoverview Admin report triage API integration tests.
  *
- * Covers the adminAuth-gated read surface behind the internal admin console:
- * list (filters, context excluded), detail (context + asset rows), artifact
- * payload bytes, and the auth gate itself (401 without credentials, 403 for a
- * non-allowlisted principal).
+ * Covers the read surface behind the admin portal's `organization.incidents.read`
+ * gate: list (filters, context excluded), detail (context + asset rows),
+ * artifact payload bytes, and the gate itself (401 without credentials, 401 for
+ * an organization API key that is not allowlisted, 403 for a workspace key).
  *
- * Admin auth uses the org API-key bearer path: an `msk_…` token is not a JWT,
- * so authenticateBearerToken falls through to the local DB validation without
- * touching WorkOS, and the resulting synthetic `api-key@{keyId}.local` email
- * is allowlisted via CLOUD_CORE_ADMIN_EMAILS. Fully local — no WorkOS needed.
+ * The admin principal is an organization API key made before operator keys
+ * (`msk_…`), allowlisted as `api-key@{keyId}.local` on CLOUD_CORE_ADMIN_EMAILS
+ * and converted to an operator key the way Core's startup does
+ * (`convertLegacyAdminKeys`), so it keeps its token. Fully local.
  *
- * Prereq: a running Mongo. Defaults to
- * `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`; override via `MONGO_URL`.
- * The test wipes its own collections between cases — do NOT point at a real DB.
+ * Safety: `localTestMongoUrl` (loopback only, random database, ignores
+ * `MONGO_URL`); the database is dropped afterwards. Converting a key runs a
+ * transaction, so the Mongo must be a replica set.
  *
- * Run: `bun test tests/admin-reports.integration.test.ts`
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/admin-reports.integration.test.ts`
  */
 
 import crypto from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -62,7 +62,6 @@ const directory = Bun.serve({
     nodePub.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.SUPABASE_URL = directory.url.origin;
   process.env.SUPABASE_SERVICE_ROLE_KEY = "local-directory-test-key";
@@ -84,20 +83,35 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { DeveloperOrgApiKeyModel } from "../packages/core/src/models/developer-org-api-key.model";
-import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
+import { AccessCredentialModel } from "../packages/core/src/models/access-credential.model";
+import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-audit-event.model";
+import { WorkspaceModel } from "../packages/core/src/models/workspace.model";
+import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-membership.model";
+import { convertLegacyAdminKeys } from "../packages/core/src/services/workspaces/legacy-admin-keys";
+import { createWorkspace } from "../packages/core/src/services/workspaces/workspace.service";
+import { createWorkspaceCredential } from "../packages/core/src/services/workspaces/credential.service";
+import { legacyAdminKey, legacyKeyAddress } from "./support/legacy-admin-key";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { resetCoreKeyCaches } from "./support/key-caches";
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
 const ADMIN_REPORTS_PATH = "http://localhost/api/admin/reports";
 
+const databaseUrl = localTestMongoUrl("admin-reports");
+let verified = false;
 let coreApp: ReturnType<typeof createApp>;
 let userAccessToken: string;
 let adminBearer: string;
 let nonAdminBearer: string;
+let workspaceBearer: string;
 let adminEmail: string;
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  // This suite's keys were set when the file loaded; a suite before it may have cached its own.
+  resetCoreKeyCaches();
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, ReportModel.db.name);
+  verified = true;
   await Promise.all([
     ReportModel.syncIndexes(),
     ReportAssetModel.syncIndexes(),
@@ -105,7 +119,10 @@ beforeAll(async () => {
     RefreshTokenModel.syncIndexes(),
     SeenJtiModel.syncIndexes(),
     RevokedJtiModel.syncIndexes(),
-    DeveloperOrgApiKeyModel.syncIndexes(),
+    ...[AccessCredentialModel, WorkspaceAuditEventModel, WorkspaceModel, WorkspaceMembershipModel].map(async model => {
+      await model.createCollection();
+      await model.syncIndexes();
+    }),
   ]);
   coreApp = createApp({ readinessChecks: [mongoReadinessCheck] });
 
@@ -113,12 +130,19 @@ beforeAll(async () => {
   expect(exchanged.status).toBe(200);
   userAccessToken = ((await exchanged.json()) as { access_token: string }).access_token;
 
-  const apiKeys = new DeveloperApiKeyService();
-  const adminKey = await apiKeys.create("org_admin_reports_test", "admin", "user_admin", "local");
-  const nonAdminKey = await apiKeys.create("org_admin_reports_test", "plain", "user_plain", "local");
-  adminBearer = adminKey.value!;
-  nonAdminBearer = nonAdminKey.value!;
-  adminEmail = `api-key@${adminKey.id}.local`;
+  const adminKey = await legacyAdminKey({ orgId: "org_admin_reports_test", name: "admin" });
+  const nonAdminKey = await legacyAdminKey({ orgId: "org_admin_reports_test", name: "plain" });
+  adminBearer = adminKey.token;
+  nonAdminBearer = nonAdminKey.token;
+  adminEmail = legacyKeyAddress(adminKey);
+  // What Core's startup does for an allowlisted admin key: it becomes an operator key with the same token.
+  process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
+  expect((await convertLegacyAdminKeys()).converted).toEqual([adminKey.keyId]);
+
+  // A workspace key (`msk_`), which holds no organization capability.
+  const owner = { kind: "user" as const, mentraUserId: "mu_reports_owner", email: "owner@example.test", emailVerified: true, isOrganizationAdmin: false };
+  const workspace = await createWorkspace(owner, { name: "Reports test" });
+  workspaceBearer = (await createWorkspaceCredential(owner, workspace.workspaceId, { name: "CI" })).token;
 });
 
 afterAll(async () => {
@@ -129,10 +153,13 @@ afterAll(async () => {
   if (savedServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   else process.env.SUPABASE_SERVICE_ROLE_KEY = savedServiceKey;
   directory.stop(true);
-  await UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ });
-  await DeveloperOrgApiKeyModel.deleteMany({ orgId: "org_admin_reports_test" });
+  if (verified) {
+    assertConnectedTo(databaseUrl, ReportModel.db.name);
+    await ReportModel.db.dropDatabase();
+  }
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
+  resetCoreKeyCaches();
 });
 
 beforeEach(async () => {
@@ -143,6 +170,7 @@ beforeEach(async () => {
   directoryNeverEnds = false;
   directoryHonorsFilters = false;
   directoryRequests = 0;
+  assertConnectedTo(databaseUrl, ReportModel.db.name);
   await Promise.all([
     ReportModel.deleteMany({}),
     ReportAssetModel.deleteMany({}),
@@ -155,10 +183,23 @@ describe("admin reports auth gate", () => {
     const anonymous = await coreApp.fetch(new Request(ADMIN_REPORTS_PATH));
     expect(anonymous.status).toBe(401);
 
-    const forbidden = await coreApp.fetch(
+    // An organization API key that is not allowlisted was never converted: it is no principal here.
+    const unconverted = await coreApp.fetch(
       new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
     );
+    expect(unconverted.status).toBe(401);
+
+    // A workspace key is a principal but holds no organization capability.
+    const forbidden = await coreApp.fetch(
+      new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${workspaceBearer}` } }),
+    );
     expect(forbidden.status).toBe(403);
+  });
+
+  test("the converted admin key stops working once its address leaves the allowlist", async () => {
+    expect((await adminGet(ADMIN_REPORTS_PATH)).status).toBe(200);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@example.test";
+    expect((await adminGet(ADMIN_REPORTS_PATH)).status).toBe(401);
   });
 });
 
@@ -304,7 +345,7 @@ describe("admin reports read surface", () => {
     expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=internal`)).status).toBe(502);
   });
 
-  test("lists reports newest-first with artifact metadata and no context", async () => {
+  test("lists reports newest-first with artifact counts and no inventory or context", async () => {
     const first = await seedReport("first crash");
     const second = await seedReport("second crash");
 
@@ -318,9 +359,8 @@ describe("admin reports read surface", () => {
     expect(row.kind).toBe("bug");
     expect(row.mentraUserId).toMatch(/^mu_/);
     expect("context" in row).toBe(false);
-    const artifacts = row.artifacts as Array<Record<string, unknown>>;
-    expect(artifacts).toHaveLength(2);
-    expect(artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot"]);
+    expect(row.artifactCount).toBe(2);
+    expect("artifacts" in row).toBe(false);
 
     const filtered = await adminGet(`${ADMIN_REPORTS_PATH}?kind=feedback`);
     expect(((await filtered.json()) as { reports: unknown[] }).reports).toHaveLength(0);
@@ -342,6 +382,9 @@ describe("admin reports read surface", () => {
     };
     expect(body.report.reportId).toBe(reportId);
     expect(body.report.context).toEqual({ app: { appVersion: "test" } });
+    const artifacts = body.report.artifacts as Array<Record<string, unknown>>;
+    expect(artifacts).toHaveLength(2);
+    expect(artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot"]);
     expect(body.assets).toHaveLength(2);
     for (const asset of body.assets) {
       expect(typeof asset.storageKey).toBe("string");
@@ -350,6 +393,43 @@ describe("admin reports read surface", () => {
 
     const missing = await adminGet(`${ADMIN_REPORTS_PATH}/rep_nope`);
     expect(missing.status).toBe(404);
+  });
+
+  test("projects large artifact inventories to counts without changing detail or stored reports", async () => {
+    const createdAt = new Date("2026-10-09T17:00:00Z");
+    const artifacts = Array.from({length: 355}, (_, index) => ({artifactId: `art_inventory_${index}`,
+      type: "logs", source: "phone", filename: `logs-${index}-${"x".repeat(1024)}.json`,
+      contentType: "application/json", sizeBytes: 1024, createdAt}));
+    await ReportModel.create({reportId: "rep_inventory", kind: "automatic", status: "ready", mentraUserId: "mu_fixture",
+      trigger: {type: "automatic", source: "mentra_automated_testing", reason: "inventory test"},
+      report: {actualBehavior: "inventory test"}, context: {large: "x".repeat(1024 * 1024)}, artifacts,
+      createdAt, updatedAt: createdAt});
+    // Historical records need not have an artifact array.
+    await ReportModel.collection.insertOne({reportId: "rep_legacy_inventory", kind: "automatic", status: "ready",
+      mentraUserId: "mu_fixture", trigger: {type: "automatic", source: "mentra_automated_testing", reason: "old report"},
+      context: {}, createdAt: new Date(createdAt.getTime() - 1000), updatedAt: createdAt} as never);
+    const before = await ReportModel.findOne({reportId: "rep_inventory"}).lean();
+    const response = await adminGet(`${ADMIN_REPORTS_PATH}?category=testing&status=ready&limit=2`);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(Buffer.byteLength(text)).toBeLessThan(2048);
+    const rows = JSON.parse(text).reports as Array<Record<string, unknown>>;
+    expect(rows.map(row => row.reportId)).toEqual(["rep_inventory", "rep_legacy_inventory"]);
+    expect(rows.map(row => row.artifactCount)).toEqual([355, 0]);
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("artifacts");
+      expect(row).not.toHaveProperty("context");
+      expect(row).not.toHaveProperty("logCollection");
+      expect(row).not.toHaveProperty("slackDelivery");
+    }
+    expect(rows[0]!.report).toEqual({actualBehavior: "inventory test"});
+    const detail = await (await adminGet(`${ADMIN_REPORTS_PATH}/rep_inventory`)).json() as {
+      report: {artifacts: Array<{filename: string}>; context: Record<string, unknown>};
+    };
+    expect(detail.report.artifacts).toHaveLength(355);
+    expect(detail.report.artifacts[354]!.filename).toBe(artifacts[354]!.filename);
+    expect(detail.report.context).toEqual(before!.context);
+    expect(await ReportModel.findOne({reportId: "rep_inventory"}).lean()).toEqual(before);
   });
 
   test("serves artifact payload bytes with the stored content type", async () => {
@@ -391,6 +471,190 @@ describe("admin reports read surface", () => {
     expect(res.headers.get("content-disposition")).toStartWith("inline;");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+  });
+
+  test("lists a host video and plays it inline for admins only, with its exact type and length", async () => {
+    const reportId = await seedReport("video attached");
+    // Genuine synthetic silent H264 MP4 (see tests/fixtures); playback itself is
+    // qualified in a browser, not here.
+    const video = await readFile(new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", "host");
+    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+
+    const list = await adminGet(ADMIN_REPORTS_PATH);
+    const listed = ((await list.json()) as { reports: Array<{ reportId: string; artifactCount: number }> })
+      .reports.find(r => r.reportId === reportId)!;
+    expect(listed.artifactCount).toBe(3);
+
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report, assets } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; type: string; source: string; filename: string; contentType: string; sizeBytes: number }> };
+      assets: Array<{ artifactId: string; contentType: string; sizeBytes: number; sha256: string }>;
+    };
+    const clip = report.artifacts.find(a => a.type === "video")!;
+    expect(clip).toMatchObject({ source: "host", filename: "recording.mp4", contentType: "video/mp4", sizeBytes: video.byteLength });
+    const asset = assets.find(a => a.artifactId === clip.artifactId)!;
+    expect(asset).toMatchObject({ contentType: "video/mp4", sizeBytes: video.byteLength });
+    expect(asset.sha256).toBe(crypto.createHash("sha256").update(video).digest("hex"));
+    const url = `${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${clip.artifactId}`;
+
+    const res = await adminGet(url);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("video/mp4");
+    expect(res.headers.get("content-length")).toBe(String(video.byteLength));
+    expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=300");
+    expect(Buffer.from(await res.arrayBuffer()).equals(video)).toBe(true);
+
+    expect((await coreApp.fetch(new Request(url))).status).toBe(401);
+    const forbidden = await coreApp.fetch(
+      new Request(url, { headers: { authorization: `Bearer ${workspaceBearer}` } }),
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
+  test("serves incident video byte ranges over a real socket to admins only, with exact lengths and security headers", async () => {
+    const reportId = await seedReport("ranged video");
+    const video = await readFile(new URL("./fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
+    const size = video.byteLength;
+    const form = new FormData();
+    form.append("type", "video");
+    form.append("source", "host");
+    form.append("files", new File([video], "recording.mp4", { type: "video/mp4" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+    const detailBefore = await (await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`)).json() as {
+      report: { artifacts: Array<{ artifactId: string; type: string }> };
+      assets: Array<{ artifactId: string; sha256: string }>;
+    };
+    const clip = detailBefore.report.artifacts.find(a => a.type === "video")!;
+    const sha256 = detailBefore.assets.find(a => a.artifactId === clip.artifactId)!.sha256;
+
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => coreApp.fetch(request) });
+    try {
+      const url = new URL(`/api/admin/reports/${reportId}/artifacts/${clip.artifactId}`, server.url);
+      const admin = { authorization: `Bearer ${adminBearer}` };
+      const expectMediaHeaders = (res: Response) => {
+        expect(res.headers.get("content-type")).toBe("video/mp4");
+        expect(res.headers.get("content-disposition")).toBe('inline; filename="recording.mp4"');
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+        expect(res.headers.get("cache-control")).toBe("private, max-age=300");
+        expect(res.headers.get("accept-ranges")).toBe("bytes");
+        expect(res.headers.get("etag")).toBe(`"${sha256}"`);
+      };
+
+      // Media players probe the start, then read the tail and seek.
+      for (const [range, start, end] of [
+        ["bytes=0-1", 0, 1],
+        ["bytes=-1024", size - 1024, size - 1],
+        ["bytes=100-", 100, size - 1],
+        ["bytes=4-7", 4, 7],
+      ] as const) {
+        const res = await fetch(url, { headers: { ...admin, range } });
+        expect(res.status).toBe(206);
+        expect(res.headers.get("content-length")).toBe(String(end - start + 1));
+        expect(res.headers.get("content-range")).toBe(`bytes ${start}-${end}/${size}`);
+        expect(res.headers.get("transfer-encoding")).toBeNull();
+        expectMediaHeaders(res);
+        expect(Buffer.from(await res.arrayBuffer()).equals(video.subarray(start, end + 1))).toBe(true);
+      }
+
+      const full = await fetch(url, { headers: admin });
+      expect(full.status).toBe(200);
+      expect(full.headers.get("content-length")).toBe(String(size));
+      expectMediaHeaders(full);
+      expect(Buffer.from(await full.arrayBuffer()).equals(video)).toBe(true);
+
+      const headRange = await fetch(url, { method: "HEAD", headers: { ...admin, range: "bytes=0-1" } });
+      expect(headRange.status).toBe(206);
+      expect(headRange.headers.get("content-length")).toBe("2");
+      expect((await headRange.arrayBuffer()).byteLength).toBe(0);
+      const head = await fetch(url, { method: "HEAD", headers: admin });
+      expect(head.status).toBe(200);
+      expect(head.headers.get("content-length")).toBe(String(size));
+      expect((await head.arrayBuffer()).byteLength).toBe(0);
+
+      const current = await fetch(url, { headers: { ...admin, range: "bytes=0-1", "if-range": `"${sha256}"` } });
+      expect(current.status).toBe(206);
+      await current.arrayBuffer();
+      const changed = await fetch(url, { headers: { ...admin, range: "bytes=0-1", "if-range": '"old"' } });
+      expect(changed.status).toBe(200);
+      expect(Buffer.from(await changed.arrayBuffer()).equals(video)).toBe(true);
+
+      for (const range of ["bytes=0-1,4-5", `bytes=${size}-`, "bytes=9-3"]) {
+        const res = await fetch(url, { headers: { ...admin, range } });
+        expect(res.status).toBe(416);
+        expect(res.headers.get("content-range")).toBe(`bytes */${size}`);
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        await res.arrayBuffer();
+      }
+
+      // Ranges and HEAD do not bypass the admin gate.
+      for (const method of ["GET", "HEAD"]) {
+        const anonymous = await fetch(url, { method, headers: { range: "bytes=0-1" } });
+        expect(anonymous.status).toBe(401);
+        expect(anonymous.headers.get("content-range")).toBeNull();
+        await anonymous.arrayBuffer();
+        const forbidden = await fetch(url, { method, headers: { authorization: `Bearer ${workspaceBearer}`, range: "bytes=0-1" } });
+        expect(forbidden.status).toBe(403);
+        expect(forbidden.headers.get("content-range")).toBeNull();
+        await forbidden.arrayBuffer();
+      }
+    } finally {
+      await server.stop(true);
+    }
+
+    // Range reads leave the report metadata untouched.
+    const detailAfter = await (await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`)).json();
+    expect(detailAfter).toEqual(detailBefore);
+  });
+
+  test("a ranged read of an opaque artifact stays a nosniff attachment", async () => {
+    const reportId = await seedReport("ranged opaque");
+    const form = new FormData();
+    form.append("files", new File(["<script>document.title='pwned'</script>"], "evil.html", { type: "text/html" }));
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; filename: string | null }> };
+    };
+    const hostile = report.artifacts.find(a => a.filename === "evil.html")!;
+
+    const res = await coreApp.fetch(new Request(`${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${hostile.artifactId}`, {
+      headers: { authorization: `Bearer ${adminBearer}`, range: "bytes=0-7" },
+    }));
+    expect(res.status).toBe(206);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toStartWith("attachment;");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(await res.text()).toBe("<script>");
   });
 
   test("never renders a spoofed screenshot content type inline", async () => {

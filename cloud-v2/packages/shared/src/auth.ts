@@ -16,6 +16,32 @@ import * as jose from "jose"
 
 const ALG = "EdDSA"
 const CORE_AUDIENCE = "cloud-core"
+/** The key ID Core signs its phone access tokens under. */
+export const ACCESS_TOKEN_KID = "mentra-access-1"
+/**
+ * Key IDs under which Core signs tokens that are never runtime tokens: phone
+ * access tokens, the sign-in server's ID and access tokens, miniapp tokens and
+ * account subject tokens. Some of them share Core's signing key with runtime
+ * tokens, so the key ID is pinned as well as the claims.
+ */
+const CORE_NON_RUNTIME_KIDS: ReadonlySet<string> = new Set([ACCESS_TOKEN_KID, "mentra-oidc-1", "mentra-miniapp-1", "mentra-account-1"])
+
+/**
+ * A plain signed JWT: no `typ`, or `typ` "JWT". Typed tokens, such as the
+ * sign-in server's `at+jwt` access tokens, are never accepted as phone or
+ * runtime tokens.
+ */
+function isPlainJwtType(typ: unknown): boolean {
+  return typ === undefined || (typeof typ === "string" && typ.toUpperCase() === "JWT")
+}
+
+function protectedHeader(token: string, label: string): jose.ProtectedHeaderParameters {
+  try {
+    return jose.decodeProtectedHeader(token)
+  } catch {
+    throw new AccessTokenError(`${label} is not a parseable JWT`)
+  }
+}
 
 export interface FederatedIdentity {
   providerId: string
@@ -63,6 +89,8 @@ interface RuntimeIssuerConfig {
   algorithms?: string[]
   requiredScopes?: string[]
   allowedClientIds?: string[]
+  /** When set, the token's `kid` must be one of these. */
+  keyIds?: string[]
 }
 
 const runtimeRemoteJwks = new Map<string, ReturnType<typeof jose.createRemoteJWKSet>>()
@@ -92,6 +120,12 @@ async function getPublicKey(): Promise<jose.KeyLike> {
  * blacklist — see file header.
  */
 export async function verifyAccessTokenSignature(token: string): Promise<VerifiedAccessToken> {
+  // Core's signing key also signs runtime tokens and the sign-in server's tokens:
+  // pin the key ID and the token type as well as the issuer and audience.
+  const header = protectedHeader(token, "access_token")
+  if (header.kid !== ACCESS_TOKEN_KID || !isPlainJwtType(header.typ)) {
+    throw new AccessTokenError("access_token rejected: not a Mentra access token")
+  }
   const publicKey = await getPublicKey()
 
   let payload: jose.JWTPayload
@@ -140,6 +174,11 @@ export async function verifyRuntimeToken(token: string): Promise<VerifiedAccessT
     throw new AccessTokenError("runtime auth issuer config is required")
   }
 
+  const header = protectedHeader(token, "runtime_token")
+  if (!isPlainJwtType(header.typ) || (header.kid !== undefined && CORE_NON_RUNTIME_KIDS.has(header.kid))) {
+    throw new AccessTokenError("runtime_token rejected: not a runtime token")
+  }
+
   let payload: jose.JWTPayload
   let iss: string | undefined
   try {
@@ -152,6 +191,10 @@ export async function verifyRuntimeToken(token: string): Promise<VerifiedAccessT
   const issuer = issuers.find((entry) => entry.issuer === iss)
   if (!issuer) {
     throw new AccessTokenError(`runtime_token issuer not trusted: ${iss ?? "missing"}`)
+  }
+
+  if (issuer.keyIds !== undefined && (header.kid === undefined || !issuer.keyIds.includes(header.kid))) {
+    throw new AccessTokenError("runtime_token rejected: unexpected key ID")
   }
 
   const key = await runtimeKeyForIssuer(issuer)
@@ -327,6 +370,7 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
   }
   const requiredScopes = stringArrayClaim(obj.requiredScopes, "requiredScopes")
   const allowedClientIds = stringArrayClaim(obj.allowedClientIds, "allowedClientIds")
+  const keyIds = stringArrayClaim(obj.keyIds, "keyIds")
 
   return {
     issuer,
@@ -340,6 +384,7 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
     algorithms,
     requiredScopes,
     allowedClientIds,
+    keyIds,
   }
 }
 

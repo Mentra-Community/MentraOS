@@ -5,6 +5,7 @@
   <uses-permission android:name="${applicationId}.permission.CRUST_NOTIFICATION_BRIDGE" />
 
   <application>
+
     <meta-data
       android:name="com.mentra.bluetoothsdk.RUNTIME_RECOVERY_SERVICE"
       android:value="com.mentra.crust.services.RuntimeRecoveryService" />

@@ -45,11 +45,168 @@ Primary mobile/engine API:
 POST /api/client/reports
 POST /api/client/reports/:reportId/artifacts
 POST /api/client/reports/:reportId/complete
+POST /api/client/reports/:reportId/log-collection/:source
 ```
 
 There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
+
+## Automated device report correlation
+
+An automated incident uses the existing `submitIncidentReport` engine Promise
+and `POST /api/client/reports` path. With `source: mentra_automated_testing`, the
+engine requires the original validated `alert_id` and `test_run_id`, and submits
+`automationCorrelation: {alertId, testRunId}`. Core accepts this field only for
+automatic `incident_report_requested` reports and stores it with the authenticated
+report owner at creation. Correlated creation waits for a majority-journaled
+write before acknowledgement, matching the recovery reader's majority visibility
+requirement. The typed contract lives in `@mentra/cloud-protocol/report-automation`;
+it preserves exact IDs without normalizing or truncating them.
+
+After manifest upload acknowledgements, the existing authenticated
+`POST /api/internal/framework-results/:requestId/complete` path can return
+`deviceIncident: {reportId, correlation}`. Core reads only the run's unique
+declared `incident-report/request.json` asset, checks its byte length and SHA-256,
+validates its version/source and exact run identity, then uses the indexed
+structured binding. The file read and database lookup each have a three-second
+bound. Exactly one matching device report is required; duplicate bindings,
+including another account's collision, return no link. The existing Admin detail
+path uses the same reconciliation when its native result receipt has no report ID.
+Unavailable lookup returns no link and does not fail already acknowledged native
+publication; absence of a link does not prove no report was filed.
+
+`deviceIncident` confirms report creation only. It does not claim successful
+phone, glasses, firmware or server log collection, rewrite the frozen run or its
+transport failure, or replace the separately retained server diagnostic report.
+Strict collection failure still rejects the engine Promise with
+`IncidentReportError.result`, retaining the partial `report_id` and collection
+receipts. Target loss still forbids further native UI reads and dismissal.
+
+Recovery neither issues a second incident intent nor grants report-reader
+credentials to workers. It adds no queue or retry system. Reports made before
+this structured binding cannot be recovered by inspecting description JSON or
+by matching recent reports; no historic fallback or report migration is provided.
+
+## Log collection and missing sources
+
+Bug and automatic reports declare `phone`, `glasses`, `glasses_firmware`,
+`cloud` and `miniapp_server` collection rows. A row starts `requested`; only a
+successfully stored log artifact marks it `received` and records the artifact
+ID, receipt time and entry count. A late dispatch failure cannot erase an
+existing receipt. A late artifact can replace an earlier failure or timeout.
+The Admin report panel and detail API expose these rows.
+
+The Mentra App uploads its original phone log snapshot, awaits at most 10 seconds
+for token synchronization and the local glasses notification call, and uploads a
+separate `phone_delivery` delta (at most 500 entries, with an omission notice).
+This delta captures the notification outcome that used to occur after the phone
+snapshot. Local SDK completion means `requested`, not device receipt. A disconnected
+pair is `unavailable`; a failed or timed-out local dispatch is `failed`. Native
+dispatch cannot be cancelled after it starts; late uploads remain valid.
+The device endpoint accepts only phone/glasses/firmware outcomes and cannot
+assert `received` or change server collection outcomes.
+
+ASG owns its Java and BES log transports. BLE sends firmware and Java bundles
+independently: a settled refusal to start the firmware transfer does not suppress
+Java logs. An in-flight writer still retains exclusive transfer ownership.
+
+The existing Core reconciliation tick independently collects Cloud V2 and miniapp
+backend logs from their existing Better Stack sources. It claims each source on
+the report row for 60 seconds, so a crashed collector can be resumed without a new
+queue. Reports remain eligible for collection for 24 hours. Queries use the report's
+authenticated user and its frozen ten-minute window ending ten seconds after
+creation, deduplicate hot/archive rows, and retain the latest 1,000 entries. Each
+query is capped at 15 seconds and 2 MiB; credentials are redacted before attachment.
+One source failure does not suppress another source or block report submission.
+An empty first lookup remains `requested` so delayed Vector ingestion can be
+collected by a later tick within the original four-minute window. An empty lookup
+after that deadline means `unavailable`, never an empty success claim.
+
+Miniapp server logs must reach the existing environment's miniapp Better Stack
+source and carry `mentraUserId` or `userId` (or a complete user token in text logs).
+Untagged server-wide logs are not attached to a user's report. Local miniapp console
+logs are already part of phone logs. Backends outside this collection path remain
+explicitly unavailable; there is no external-backend discovery or Cloud V1 socket
+telemetry compatibility layer.
+
+Requested rows with no artifact after four minutes display `timed-out`; the stored
+request is retained for late receipt. `/complete` still completes phone-side report
+submission and Slack delivery, and does not claim all sources arrived.
+
+Runtime configuration: `BETTERSTACK_V2_HOST`, `BETTERSTACK_V2_USERNAME`, and
+`BETTERSTACK_V2_PASSWORD` come from the existing shared Doppler configuration.
+`CLOUD_CORE_ENVIRONMENT` selects the version-controlled source mapping. The query
+client uses the V2 eu-central-1a credentials, not retired Cloud V1 credentials.
+
+The report owner can also attach MP4 recordings to an existing report, whatever
+its status, with multipart `type=video`, a declared capture `source` label (for
+example `phone` or `host`) and `video/mp4` files. Cloud Client exposes this as
+`core.reports.addVideos(reportId, source, videos)`. The source is stored as
+declared; the server cannot verify where a recording was captured. Each video
+may be up to 20 MiB and must start with an ISO `ftyp` box. That header check is
+structural only and does not prove the stream is H264 or decodable. Uploads
+without `type`, or with `type=screenshot`, keep the screenshot contract (phone
+source, 10 MiB); a `video/*` file there is rejected rather than stored as a
+screenshot. Unknown types, non-MP4 videos and a missing source are rejected.
+The 5-file and 51 MiB request limits are unchanged. One invalid file rejects the
+whole upload before anything is stored.
+
+The admin artifact route (GET and HEAD) serves the MP4 inline with its exact
+`Content-Length`. It honors a single byte `Range` with `206` and
+`Content-Range`, returns `416` for multiple or unsatisfiable ranges, and applies
+`If-Range` against the artifact's SHA-256 `ETag`, like the test-run media route.
+The bounded payload is read into memory as before. The admin console plays it in
+a native `<video>` at the same authenticated URL, next to the usual download
+link, and the admin proxy keeps exact lengths on these ranged responses.
+Browser playback and seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
+artifacts with an `.mp4` extension.
+
+## Idempotency keys
+
+A device that can retry a report after a reboot or a lost response names the
+event with an optional `incidentKey` on `POST /api/client/reports`. Bug and
+automatic reports accept it; feedback rejects it with HTTP 400 because feedback
+is complete and notifies at creation. The key must match
+`^[A-Za-z0-9._:-]{1,128}$`. With a key, Core returns
+the existing report for the authenticated `(mentraUserId, incidentKey)` pair
+instead of creating one. The response keeps the `{reportId, status}` shape, with
+the existing report's current status, and adds `deduplicated: true` on that path
+only. A deduplicated submission writes nothing and sends no Slack notification.
+Concurrent submissions converge on one report: a keyed report's `reportId` is
+derived from `(mentraUserId, incidentKey)` (still `rep_` plus 26 ULID-alphabet
+characters), so the unique `reportId` index decides the race, and the loser
+reads the winner. No other unique index is needed, which matters because Azure
+Cosmos DB, used by Private Cloud, cannot add a unique index to a collection that
+already holds reports.
+A keyed creation is acknowledged only after a majority-journaled write, like a
+correlated one, and the dedupe lookup reads from the primary at majority read
+concern, so a retry never confirms a report that could still roll back. If the
+winner is not majority-visible within the 10-second write timeout, the loser
+returns `503` (`error: "temporarily_unavailable"`) and the device retries.
+The same key from another account creates that account's own report. Without a
+key, submission is unchanged: a new `rep_<ulid>` every time, the same response,
+and the same Slack timing.
+
+A JSON log upload to `POST /api/client/reports/:reportId/artifacts` accepts an
+optional `retryKey` with the same pattern. With it, Core uses the SHA-256-bound
+retry path that server diagnostic uploads already use: the artifact ID derives
+from the report and key, and the first stored bytes and artifact `source` bind
+it. Repeating the key with identical entries and source returns the same
+`{stored: 1, receipt: {artifactId, sha256, sizeBytes}}` without storing anything
+new; different entries or a different source under the same key return `409`
+(`error: "conflict"`) before any metadata or receipt changes. The reservation is
+read at majority from the primary; one not yet committed within the write
+timeout returns `503`. The first accepted keyed upload for
+a collection source marks that source `received`. Uploads without `retryKey`
+keep the existing behavior and store a new artifact on every call.
+
+Cloud Client exposes `incidentKey` on the bug and automatic variants of
+`SubmitReportInput`, `deduplicated` on `SubmitReportResult`, and
+`core.reports.addLogs(reportId, source, entries, {retryKey})`. A Cloud that
+predates these fields strips them during validation:
+it creates a new report and stores a new artifact, and never returns
+`deduplicated`. Callers must treat a missing `deduplicated` as "possibly new".
 
 ## Slack routing
 
@@ -127,6 +284,22 @@ MentraJS crashloop:
 - Host remains responsible for Sentry and user-facing alert copy in
   `mobile/src/services/mentraJsBootstrap.ts`.
 
+Mentra Live BES firmware crash:
+
+- Trigger: `glasses_firmware_crash` / `bes_crash` when the glasses recovered a
+  saved crash dump, or `bes_unexpected_reset` for an unexpected reset without one.
+  `report.systemPriority` is `critical`.
+- The report carries `incidentKey` `<serial>-dump-<dump_id>` or
+  `<serial>-reset-<boot_id>`, so a crash re-announced after reconnects or reboots
+  files one report.
+- Evidence is uploaded with artifact `source: glasses_firmware` and `retryKey`
+  `glasses_firmware:full` (glasses Wi-Fi upload) or `glasses_firmware:relay`
+  (phone BLE relay). Dump lines use entry `source: "BES_CRASH"`; the frozen
+  firmware TRACE uses entry `source: "BES"`.
+- An older Cloud ignores `incidentKey` and `retryKey` without error and creates a
+  new report each time, so `deduplicated` is absent from its response. Deploy this
+  Cloud change before any app or glasses build that sends the keys.
+
 Miniapp start failure:
 
 - The old Cloud V1/RestComms online-miniapp start diagnostic was removed.
@@ -151,12 +324,13 @@ Gallery media integrity:
   (`MediaMetadataRetriever`/`AVAsset` style) is a separate follow-up if we want
   to prove device-playability before the user opens a video.
 
-Captions tester laptop report:
+External incident requests, including the captions tester:
 
-- Trigger: Android internal Crust event `captions_tester_incident`.
-- Submission:
-  `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`.
-- The service emits the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat marker.
+- Trigger: `com.mentra://test/submit-incident-report` on Android and iOS,
+  requiring the existing Super Mode setting and a signed-in app.
+- Submission uses the engine's normal automatic report uploader. The modal
+  exposes correlated request/result JSON and Android logs `INCIDENT_REPORT_RESULT`.
+  See the [shared contract](../../../../mobile/INCIDENT_REPORT_AUTOMATION.md).
 - Cloud V2 transcript test logging is emitted from island via
   `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in
@@ -175,6 +349,8 @@ Captions tester laptop report:
 - `context`
 - `artifacts`
 - `status`: `collecting`, `ready`, or `closed`
+- `incidentKey`: optional; at most one report per `mentraUserId` and key, through
+  the derived `reportId`
 
 ## Why This Shape
 
@@ -186,7 +362,8 @@ Captions tester laptop report:
 - `userSeverity` and `systemPriority` avoid mixing subjective user pain with
   runtime priority.
 - Automatic trigger throttling stays local to island services. Cloud V2 creates
-  one report record for each submit request.
+  one report record for each submit request, except that a repeated
+  `incidentKey` returns the existing report.
 - `kind` keeps bugs, feedback, and automatic diagnostics in one reporting
   product while preserving different payload shapes.
 
@@ -206,7 +383,7 @@ Island/engine:
 - `mobile/modules/engine/src/services/MentraJSCrashloopReportService.ts`
 - `mobile/modules/engine/src/facades/pairing.ts`
 - `mobile/modules/engine/src/services/asg/GalleryMediaIntegrityReportService.ts`
-- `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`
+- `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`
 - `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`
 
 Host UI:

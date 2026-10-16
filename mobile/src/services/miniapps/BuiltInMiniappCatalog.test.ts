@@ -3,7 +3,15 @@ import {Platform} from "react-native"
 
 import {appRegistry} from "@mentra/engine-host-internal"
 
-import {mentraCallPackageName, miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
+import {
+  cameraPackageName,
+  feedbackPackageName,
+  mentraCallPackageName,
+  miniappDeveloperPackageName,
+  mirrorPackageName,
+  notifyPackageName,
+  settingsPackageName,
+} from "@/constants/miniapps"
 import {SETTINGS, engine} from "@mentra/engine"
 
 import builtInMiniappCatalog from "./BuiltInMiniappCatalog"
@@ -70,6 +78,21 @@ describe("BuiltInMiniappCatalog", () => {
     }
   })
 
+  it("declares how each built-in miniapp executes, and leaves the Mentra App's own screens out of Fleet", () => {
+    const registered = new Map(
+      (appRegistry.installOfflineApp as jest.Mock).mock.calls.map(([app]) => [app.packageName, app.nativeExecution]),
+    )
+
+    expect(Object.fromEntries(registered)).toEqual({
+      [cameraPackageName]: "open",
+      [mirrorPackageName]: "open",
+      [notifyPackageName]: "running",
+      [settingsPackageName]: undefined,
+      [feedbackPackageName]: undefined,
+      [miniappDeveloperPackageName]: undefined,
+    })
+  })
+
   it("registers the Miniapp Developer launcher hidden by default and follows its home-screen setting", () => {
     const developerCall = (appRegistry.installOfflineApp as jest.Mock).mock.calls.find(
       ([app]) => app.packageName === miniappDeveloperPackageName,
@@ -97,21 +120,21 @@ describe("BuiltInMiniappCatalog", () => {
     expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
   })
 
-  it.each([
-    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key],
-    [notifyPackageName, SETTINGS.show_notify_ios.key],
-  ])("removes saved %s menu entries when its iOS opt-in is turned off", async (packageName, key) => {
-    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
-    const notes = {name: "Notes", packageName: "com.mentra.notes", running: false}
-    try {
-      await engine.settings.set(key, true)
-      await engine.settings.set(SETTINGS.menu_apps.key, [{name: "Experimental", packageName, running: true}, notes])
-      await engine.settings.set(key, false)
-      await waitFor(() => expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([notes]))
-    } finally {
-      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
-    }
-  })
+  it.each([[notifyPackageName, SETTINGS.show_notify_ios.key]])(
+    "removes saved %s menu entries when its iOS opt-in is turned off",
+    async (packageName, key) => {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+      const notes = {name: "Notes", packageName: "com.mentra.notes", running: false}
+      try {
+        await engine.settings.set(key, true)
+        await engine.settings.set(SETTINGS.menu_apps.key, [{name: "Experimental", packageName, running: true}, notes])
+        await engine.settings.set(key, false)
+        await waitFor(() => expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([notes]))
+      } finally {
+        Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+      }
+    },
+  )
 
   it.each(["android", "ios"])("keeps permitted saved menu entries on %s", async (os) => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: os})
@@ -120,7 +143,6 @@ describe("BuiltInMiniappCatalog", () => {
       {name: "Notify", packageName: notifyPackageName, running: false},
     ]
     try {
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, os === "ios")
       await engine.settings.set(SETTINGS.show_notify_ios.key, os === "ios")
       await engine.settings.set(SETTINGS.menu_apps.key, menu)
       await (builtInMiniappCatalog as unknown as {syncGlassesMenuApps: () => Promise<void>}).syncGlassesMenuApps()

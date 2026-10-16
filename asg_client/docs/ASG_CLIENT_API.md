@@ -223,6 +223,41 @@ Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_
 
 Photo captures embed IMU payload directly into JPEG EXIF metadata when available.
 
+##### Stream photo (during a WHIP call on the glasses hotspot)
+
+While a WHIP stream is live, `take_photo` is normally rejected with `CAMERA_BUSY`. One shape is
+accepted instead: a `webhookUrl` of the form `http://<private IPv4>[:port]/photo/<id>`, which is the
+phone's local still endpoint on the same listener the glasses publish WHIP to. The phone sends it
+with `transferMethod: "direct"`, `size: "max"`, `compress: "none"`.
+
+The stream is not stopped. The WHIP capturer releases Camera2, black texture frames keep the video
+track flowing, the still is taken through the normal photo pipeline (in memory, never written to
+storage), and the capturer reopens as soon as the JPEG exists, before the upload. The JPEG is POSTed
+unmodified (EXIF orientation preserved) as `Content-Type: image/jpeg` to the `webhookUrl`. The camera
+is returned on every path; a 25 s watchdog (`STREAM_PHOTO_MAX_HOLD_MS`) reopens it even if the
+capture never reports back, and substitute frames stop once the reopened camera delivers a frame (or
+after three failed reopen attempts, so the phone sees the stall and republishes).
+
+Progress uses the usual `photo_status` values (`accepted`, `capturing`, `uploading`). The terminal
+success adds `streamPhoto`, `bytes`, and per-phase `timings`:
+
+```json
+{
+  "type": "photo_response",
+  "requestId": "st19a3f...",
+  "state": "success",
+  "success": true,
+  "uploadUrl": "http://192.168.43.117:40203/photo/st19a3f...",
+  "streamPhoto": true,
+  "bytes": 1186932,
+  "timings": {"cameraLendMs": 180, "captureMs": 2100, "uploadMs": 420, "totalMs": 2700}
+}
+```
+
+Failures are `photo_response` errors: `NOT_STREAMING`, `CAMERA_BUSY` (another photo or stream photo in
+flight, or HAL restart), `STREAM_CHANGED`, `CAMERA_CAPTURE_FAILED`, `PHOTO_SAVE_FAILED`, `UPLOAD_FAILED`.
+Any other upload target during WHIP keeps the `CAMERA_BUSY` rejection.
+
 ---
 
 ### Video recording
@@ -381,6 +416,24 @@ While a stream is active, supported firmware also emits this status periodically
 Stops the current or pending stream. The operation is idempotent: an already stopped stream
 returns a stopped snapshot. Cleanup releases capture and cancels phone-loss/resource work.
 
+Automated cleanup sends `request_id`, `streamId`, `controllerId`, `expectedSid`, and
+`expectedRevision` together. The first three are bounded identity strings; SID is eight
+hexadecimal characters and revision is a nonnegative integer. The lifecycle dispatcher
+refuses all mutation while an admission is pending. Otherwise the current snapshot SID
+and revision must still match before it stops the matching active controller. A changed
+snapshot or foreign owner is refused without mutation. Any supplied guard field selects
+conditional handling; incomplete, null or malformed guards never become global Stop.
+Even a replacement reusing both public IDs changes the native revision. A terminal
+matching stream and retained controller acknowledges without
+stopping services. The caller may freshly observe a refused snapshot and decide its next
+action; refusal never causes an automatic retry or global stop.
+
+The correlated `stream_status` has `kind: "stop_ack"`, `stopAccepted`, `stopReason`, the
+requested stream/controller IDs and expected SID/revision. These fields do not become
+retained state. Acceptance acknowledges the operation; a fresh terminal query is still
+required before releasing resources. A queued admission must settle normally or remain
+explicitly unresolved; cleanup does not cancel it based only on reused public IDs.
+
 #### `get_stream_status`
 
 ```json
@@ -397,7 +450,13 @@ An optional `request_id` matching `[A-Za-z0-9][A-Za-z0-9_-]{0,119}` is echoed on
 that snapshot, before it enters the outbound BLE queue. For example,
 `{"type":"get_stream_status","request_id":"status-123"}` returns the existing
 snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
-uncorrelated response. The ID is not retained on later snapshots or stream events;
+uncorrelated response. Fresh queries include `pendingStart`; a pending admission also
+includes `pendingStreamId`/`pendingControllerId`, and the last admitted owner includes
+`controllerId` plus its existing `startRevision` captured at admission. Lifecycle events
+advance `revision` while `startRevision` stays fixed through terminal state until replacement.
+Retained identity grants no active ownership and lets callers distinguish a stopped
+replacement that reused public IDs. This prevents a stopped snapshot from concealing a queued admission.
+The ID is not retained on later snapshots or stream events;
 `timestamp` remains display time and can change when the phone synchronizes the clock.
 
 #### `keep_stream_alive`
@@ -612,6 +671,15 @@ The glasses also emit `battery_status` outbound:
 ```json
 {"type": "request_version", "request_id": "version-request-123"}
 ```
+
+Optional `fresh_bes: true` requests one `cs_syvr` snapshot through the existing
+Mentra Live UART coordinator before sending the version chunks. Busy file/OTA
+ownership, restricted safety state or an unready transport can refuse the probe;
+the command does not reset phone readiness or wait/retry the probe. The immediate
+version response still contains cached BES data and is not freshness proof.
+Diagnostics consumers must observe a later current-session BES reply within their
+own bounded deadline; a handled version request does not prove that reply arrived.
+Requests without the flag and the `cs_syvr` alias retain their existing behavior.
 
 Returns version information in chunks to fit the BLE MTU:
 
@@ -925,6 +993,33 @@ Adjusts the file packet size to fit the MTU just negotiated by the phone. Effect
 ---
 
 ### Power
+
+#### `disable_unworn_auto_power_off`
+
+Fixed device-setup command; disables BES's persisted type 11 switch over the existing
+UART path. Accepts a `request_id` of 8–64 letters, digits, `_` or `-`.
+
+```json
+{"type":"disable_unworn_auto_power_off","request_id":"setup-power-1234"}
+```
+
+The terminal result is logged once by `PowerCommandHandler` as
+`UNWORN_AUTO_POWER_OFF_RESULT <json>` and broadcast to registered local intent listeners:
+
+```json
+{"type":"unworn_auto_power_off_result","schema":1,"request_id":"setup-power-1234","process_sid":"1234abcd","elapsed_realtime_ms":123456,"success":true,"status":"disabled","result_code":0,"switch_type":11,"switch_value":0}
+```
+
+`disabled` requires the current UART session's actual `sr_swit` reply with `S:0`,
+`type:11`, `switch:0`, plus a completed successful write. Queue acceptance is insufficient.
+Other terminal statuses are `transport_unavailable`, `busy`, `session_changed`,
+`send_failed`, `rejected` (including BES `S:5` NV-update failure), or `timeout`.
+The total request window is five seconds. A timeout after writing began can still have
+changed the switch; it never becomes success. Because BES replies have no request ID,
+an ambiguous write blocks another attempt on that same UART session. There is no
+automatic retry, reset, or arbitrary BES-command passthrough. The acknowledged setting
+uses the firmware's normal NV update path; the response does not prove a completed
+flash flush or persistence across power loss.
 
 #### `shutdown`
 

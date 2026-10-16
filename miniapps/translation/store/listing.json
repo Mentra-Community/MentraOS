@@ -1,0 +1,11 @@
+{
+  "subtitle": "Understand conversations in another language.",
+  "longDescription": "Translate spoken conversations into your chosen language and read the results on compatible smart glasses. Translation detects the spoken source language and shows translated text as the conversation unfolds.\n\nSelect your target language and adjust display settings in the Mentra App. Translation requires microphone access, an internet connection, and glasses with a display for hands-free reading.",
+  "categories": [
+    "communication",
+    "travel"
+  ],
+  "privacyPolicyUrl": "https://mentraglass.com/privacy-policy",
+  "supportUrl": "https://mentraglass.com/contact",
+  "websiteUrl": "https://mentraglass.com/"
+}

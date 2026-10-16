@@ -44,7 +44,8 @@ Check whether a variable is set without printing its value. Do not print
 credentials, enable shell tracing, put tokens in committed files, or extract
 browser sessions. If no suitable credential is available, request that the user
 configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-admin-allowlisted org API key (`msk_...`) or an admin WorkOS access token.
+operator key with the incident read scope (`mak_...`), or an older allowlisted
+admin key (`msk_...`), which works as one.
 
 Use the environment from the report notification. Without `--env`, the script
 tries prod, dev, then staging. `MENTRA_CORE_URL` overrides even `--env`; check
@@ -57,6 +58,11 @@ Downloads go to gitignored `incident-logs/<reportId>/`. Use `--out` for an
 alternative local directory, such as `.context/incidents/<reportId>/`.
 `--json` returns detail only; it does **not** download logs. `--list` lists
 recent reports and supports `--kind`, `--status`, and `--limit`.
+
+Downloads retain the original artifact bytes. Framework diagnostic bundles are
+verified and extracted automatically under `diagnostic-bundle-<sha256>/`;
+`manifest.json` maps each original command file to its extracted filename and
+digest. Search the extracted JSON files alongside the device log bundles.
 
 If the report is still `collecting` or an artifact download failed, distinguish
 partial evidence from a complete bundle. Re-fetch when uploads have finished;

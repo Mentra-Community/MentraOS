@@ -47,19 +47,17 @@ export interface Setting {
    * Absent means the value is never invalidated automatically.
    */
   resetOnBuildEnvChange?: true
+  /**
+   * The value is a credential (for example a bearer token). Surfaces that show
+   * or hand settings to the user, such as Data Export, must redact it.
+   */
+  credential?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true}, // deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
-  show_mentra_call_ios: {
-    key: "show_mentra_call_ios",
-    defaultValue: () => false,
-    writable: true,
-    saveOnServer: false,
-    persist: true,
-  },
   show_notify_ios: {
     key: "show_notify_ios",
     defaultValue: () => false,
@@ -76,7 +74,7 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  super_mode: {key: "super_mode", defaultValue: () => process.env.EXPO_PUBLIC_SUPER_MODE === "true", writable: true, saveOnServer: true, persist: true},
   appearance_menu_enabled: {
     key: "appearance_menu_enabled",
     defaultValue: () => false,
@@ -286,7 +284,14 @@ export const SETTINGS: Record<string, Setting> = {
   // Volatile bearer synced to Bluetooth for glasses-side Cloud V2 calls. The
   // key name is kept for BLE compatibility, but the value must never be loaded
   // from or saved to the legacy Cloud V1 settings store.
-  core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: false},
+  core_token: {
+    key: "core_token",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+    credential: true,
+  },
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   // Pairing identity is per-phone, not per-account: two phones on one account
   // can be paired to different glasses, so none of these keys may sync to the
@@ -453,19 +458,22 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // Keep speech continuous by default: Mentra Live's VAD can clip the first
-  // words after a pause, including the Mentra AI wake word. Users can opt in.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
   },
-  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Opt-in.
+  /*
+   * Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). The
+   * firmware only applies it while the glasses speaker is playing (plus a short
+   * decay tail), so it keeps the wearer's mic from hearing the glasses' own
+   * speech without touching quiet audio the rest of the time.
+   */
   loudness_gate_enabled: {
     key: "loudness_gate_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1157,28 +1165,22 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
-        // Apply the VAD-off default to upgrades too. A saved value from the
-        // previous default must not keep clipping speech after the update.
-        // Later explicit opt-ins survive subsequent launches.
-        const VAD_MIGRATION_KEY = "migration:vad_default_off_v1"
-        const vadMigrationDone = storage.load<boolean>(VAD_MIGRATION_KEY)
-        if (vadMigrationDone.is_error() || !vadMigrationDone.value) {
-          const result = await get().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, true)
-          if (result.is_error()) {
-            console.log("SETTINGS: VAD migration failed:", result.error)
-          } else {
-            storage.save(VAD_MIGRATION_KEY, true)
-          }
-        }
-
-        // Reset existing installs once; later user/app opt-ins remain available.
-        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
+        // migration:loudness_gate_default_off_v1 reset every install it ran on to off. Turn those
+        // installs back on once. Installs that never ran it keep whatever they saved, so an opt-out
+        // from before that reset survives, and a later opt-out remains in force.
+        const LOUDNESS_GATE_RESET_KEY = "migration:loudness_gate_default_off_v1"
+        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_on_v1"
+        const loudnessGateWasReset = storage.load<boolean>(LOUDNESS_GATE_RESET_KEY)
         const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
-        if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
+        if (
+          !loudnessGateWasReset.is_error() &&
+          loudnessGateWasReset.value &&
+          (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value)
+        ) {
           // updateServer: true, matching the android_blur / camera_fov migrations. The flag is
           // inert until the Cloud V2 settings sync lands, but this setting is saveOnServer, so
           // the intent recorded here is the one that should carry over.
-          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false, true)
+          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, true, true)
           if (result.is_error()) {
             console.log("SETTINGS: loudness gate migration failed:", result.error)
           } else {

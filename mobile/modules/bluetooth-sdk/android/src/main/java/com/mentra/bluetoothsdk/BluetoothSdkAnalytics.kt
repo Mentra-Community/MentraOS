@@ -46,7 +46,12 @@ internal class BluetoothSdkAnalytics(
     // The tracker is touched from store listeners and SDK entry points, hence
     // @Synchronized on the methods that read or write it.
     private val tracker = BluetoothSdkAnalyticsTracker(DeviceTypes.SIMULATED)
+    private val usage = BluetoothSdkUsageTracker()
     private var startedCaptured = false
+    private var lastGlasses: AnalyticsGlassesSnapshot? = null
+    // Set by an SDK disconnect/forget/cancel call and consumed by the next
+    // connected -> disconnected transition, so that transition can say why.
+    private var pendingDisconnectReason: String? = null
     // Resolved once, lazily, on the transport executor: PackageManager lookups
     // must not run on the caller (often main or the Bluetooth status) thread.
     private val hostProperties: Map<String, Any> by lazy { BluetoothSdkAnalyticsHost.resolve(appContext).toMap() }
@@ -56,9 +61,15 @@ internal class BluetoothSdkAnalytics(
         timeZone = TimeZone.getTimeZone("UTC")
     }
 
+    /** False when the host disabled analytics; callers skip building usage facts entirely. */
+    val isEnabled: Boolean
+        get() = config.isReady
+
     @Synchronized
     fun initializeGlassesStatus(status: GlassesStatus) {
-        tracker.initialize(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.reportingDay(System.currentTimeMillis()))
+        val snapshot = status.toAnalyticsSnapshot()
+        lastGlasses = snapshot
+        tracker.initialize(snapshot, BluetoothSdkAnalyticsTracker.reportingDay(System.currentTimeMillis()))
     }
 
     @Synchronized
@@ -71,10 +82,52 @@ internal class BluetoothSdkAnalytics(
     }
 
     @Synchronized
-    fun observeGlassesStatus(status: GlassesStatus) {
-        val events = tracker.observe(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.reportingDay(System.currentTimeMillis()))
+    fun observeGlassesStatus(status: GlassesStatus, phoneBluetoothOff: () -> Boolean) {
+        val snapshot = status.toAnalyticsSnapshot()
+        lastGlasses = snapshot
+        val now = System.currentTimeMillis()
+        val events =
+            tracker.observe(snapshot, BluetoothSdkAnalyticsTracker.reportingDay(now), now) {
+                pendingDisconnectReason
+                    ?: if (phoneBluetoothOff()) {
+                        BluetoothSdkAnalyticsTracker.DISCONNECT_BLUETOOTH_OFF
+                    } else {
+                        BluetoothSdkAnalyticsTracker.DISCONNECT_LINK_LOST
+                    }
+            }
+        if (!snapshot.connected || events.any { it.name == "bluetooth_sdk_glasses_connected" }) {
+            pendingDisconnectReason = null
+        }
         if (!config.isReady) return
         for (event in events) capture(event.name, event.properties)
+    }
+
+    @Synchronized
+    fun noteDisconnectRequested(reason: String) {
+        if (lastGlasses?.connected == true) pendingDisconnectReason = reason
+    }
+
+    @Synchronized
+    fun recordUsage(build: BluetoothSdkUsageTracker.() -> AnalyticsEvent?) {
+        if (!config.isReady) return
+        val event = usage.build() ?: return
+        capture(event.name, glassesContext() + event.properties)
+    }
+
+    /** Usage-tracker state changes that emit nothing themselves (e.g. a stop request). */
+    @Synchronized
+    fun updateUsage(update: BluetoothSdkUsageTracker.() -> Unit) {
+        if (!config.isReady) return
+        usage.update()
+    }
+
+    private fun glassesContext(): Map<String, Any> {
+        val glasses = lastGlasses?.takeIf { it.connected } ?: return emptyMap()
+        return buildMap {
+            glasses.model.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
+            glasses.serialNumber.validManufacturingSerial()?.let { put("glasses_device_id", it) }
+            glasses.buildNumber.takeIf { it.isNotBlank() }?.let { put("glasses_build_number", it) }
+        }
     }
 
     /**
@@ -101,7 +154,7 @@ internal class BluetoothSdkAnalytics(
                         "api_key" to DEFAULT_POSTHOG_API_KEY,
                         "uuid" to uuid,
                         "event" to eventName,
-                        "distinct_id" to distinctId(),
+                        "distinct_id" to BluetoothSdkInstallId.get(appContext),
                         "timestamp" to isoFormat.format(Date(capturedAt)),
                         "properties" to baseProperties(activeConfig) + hostProperties + eventProperties,
                     )
@@ -156,15 +209,11 @@ internal class BluetoothSdkAnalytics(
             put("app_package", appContext.packageName)
             put("os_platform", "android")
             put("os_version", Build.VERSION.SDK_INT)
+            Build.MANUFACTURER?.takeIf { it.isNotBlank() }?.let { put("phone_manufacturer", it) }
+            Build.MODEL?.takeIf { it.isNotBlank() }?.let { put("phone_model", it) }
+            put("locale", Locale.getDefault().toLanguageTag())
+            put("timezone", TimeZone.getDefault().id)
         }
-
-    private fun distinctId(): String {
-        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.getString(PREFS_DISTINCT_ID, null)?.let { return it }
-        val generated = "mentra-bt-sdk-${UUID.randomUUID()}"
-        prefs.edit().putString(PREFS_DISTINCT_ID, generated).apply()
-        return generated
-    }
 
     private fun captureUrl(): String {
         val normalized = DEFAULT_POSTHOG_HOST.trim().trimEnd('/')
@@ -173,8 +222,6 @@ internal class BluetoothSdkAnalytics(
 
     companion object {
         internal const val META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
-        private const val PREFS_NAME = "mentra_bluetooth_sdk_analytics"
-        private const val PREFS_DISTINCT_ID = "distinct_id"
         private const val DEFAULT_POSTHOG_API_KEY = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
         private const val DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com"
     }
@@ -212,4 +259,6 @@ private fun GlassesStatus.toAnalyticsSnapshot(): AnalyticsGlassesSnapshot =
         androidVersion = androidVersion,
         appVersion = appVersion,
         buildNumber = buildNumber,
+        batteryLevel = batteryLevel,
+        charging = charging,
     )

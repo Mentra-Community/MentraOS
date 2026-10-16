@@ -22,3 +22,13 @@ export function isAdminEmail(email: string, allowlist = getAdminEmailAllowlist()
 function parseList(value: string | undefined): string[] {
   return (value ?? "").split(",").map(part => part.trim().toLowerCase()).filter(Boolean);
 }
+
+/**
+ * Whether a person is an Organization Admin: an email the sign-in source
+ * verified, on the allowlist. Evaluated on every request, so an allowlist
+ * change applies on the next one. An unverified allowlisted email is not an
+ * Organization Admin: claiming an address is not enough.
+ */
+export function isOrganizationAdminEmail(trusted: {email: string | null; verified: boolean}): boolean {
+  return trusted.verified && trusted.email !== null && isAdminEmail(trusted.email);
+}

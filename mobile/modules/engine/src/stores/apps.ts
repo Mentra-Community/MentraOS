@@ -11,6 +11,7 @@
  */
 
 import {useMemo} from "react"
+import {AppState} from "react-native"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import {create} from "zustand"
 
@@ -21,10 +22,14 @@ import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
 import localDisplayManager from "../services/LocalDisplayManager"
+import {fleetEvents} from "../services/fleet/fleetEvents"
 import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
+import {isMiniappAvailable} from "../runtime/bootstrap"
+import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -37,9 +42,17 @@ export interface StartOptions {
   skipNavigation?: boolean
   /** Present the app after launch checks, before bundle loading and runtime startup. */
   onAccepted?: () => void | Promise<void>
+  /**
+   * Who started the miniapp, for Fleet's launch record: `"user"` for a person's own choice (a tap on Home, a pick
+   * from the glasses menu), `"automatic"` for everything else. It is the default, and it changes nothing about the
+   * launch.
+   */
+  trigger?: "user" | "automatic"
 }
 
 export interface AppStoreHooks {
+  /** An open was refused because the miniapp is updating; the host explains why. */
+  onUpdateBlocked?: (app: ClientApp) => void
   /**
    * A start was blocked because the app is hardware-incompatible. Engine made
    * the decision (and raised the `version_incompatible` notification); the host
@@ -62,6 +75,7 @@ export interface AppStoreHooks {
 }
 
 let hostHooks: AppStoreHooks = {}
+const uninstallingPackages = new Set<string>()
 
 export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
@@ -73,6 +87,15 @@ export function installAppStoreHooks(hooks: AppStoreHooks): void {
 
 interface AppStatusState {
   apps: ClientApp[]
+  /** Packages with an update downloading or activating. Opens and uninstall are refused meanwhile. */
+  updatingPackages: ReadonlySet<string>
+  /**
+   * Mark a package as updating until the returned function is called. Throws
+   * while it is already updating or being uninstalled.
+   */
+  beginUpdate: (packageName: string) => () => void
+  /** Run `update` with the package marked as updating. */
+  runUpdate: <T>(packageName: string, update: () => Promise<T>) => Promise<T>
   /**
    * Source of truth for which app is foregrounded in the Compositor overlay.
    * The per-app `foregrounded` boolean is derived from this in `projectApps`
@@ -184,9 +207,11 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
  * source. Pure — same inputs -> same outputs.
  */
 function projectApps(previousState: AppStatusState, localApps: ClientApp[]): ClientApp[] {
-  // Dedupe by packageName, keep first occurrence.
+  // Dedupe by packageName, keep first occurrence. A miniapp the host keeps
+  // background-only (a Store) never enters the user-facing list.
   const byPackage = new Map<string, ClientApp>()
   for (const app of localApps) {
+    if (!isMiniappAvailable(app.packageName)) continue
     if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
   }
 
@@ -238,6 +263,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
       // through to the root router (restart). Deriving here keeps the flag stable
       // across both passes.
       foregrounded: app.packageName === previousState.foregroundedPackage,
+      updating: previousState.updatingPackages.has(app.packageName),
     }
     const prev = previousByPackage.get(app.packageName)
     return prev && shallowEqualApp(prev, next) ? prev : next
@@ -277,22 +303,112 @@ function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): b
   )
 }
 
+/** Called by a start once it is past every gate and actually starts the miniapp. */
+interface LaunchAttempt {
+  begin(): void
+}
+
+/**
+ * Tells Fleet how each start went, around the launch and without touching it: the result, or the failure it throws,
+ * is returned as the launch gave it. Only a start that got past every gate is a launch: `started` when it succeeded,
+ * `failed` when the spawn or start itself failed. A refusal (another miniapp is loading, incompatible glasses, a
+ * missing speech model, an update in progress, a package that is not available) and re-opening a miniapp that is
+ * already running start nothing and are not reported. Nor is opening one of the Mentra App's own screens (a native
+ * built-in that declares no `nativeExecution`), which is not a miniapp to Fleet. Fleet's `launch` never throws.
+ *
+ * From the moment it begins, the start claims the miniapp (`fleetEvents.claimLaunch`): the spawn it causes, which the
+ * launcher reports for every other path, and the Compositor's own call to the launcher are this launch, not more.
+ */
+function reportingLaunches(
+  launch: (app: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => Promise<boolean>,
+): (app: ClientApp, opts?: StartOptions) => Promise<boolean> {
+  return async (clientApp, opts) => {
+    let attempted = false
+    let started = false
+    const claim: {release?: () => void} = {}
+    try {
+      started = await launch(clientApp, opts, {
+        begin: () => {
+          attempted = true
+          claim.release ??= fleetEvents.claimLaunch(clientApp.packageName)
+        },
+      })
+      return started
+    } finally {
+      if (attempted) {
+        fleetEvents.launch({
+          packageName: clientApp.packageName,
+          miniappName: clientApp.name,
+          versionName: clientApp.version,
+          start: opts?.trigger ?? "automatic",
+          outcome: started ? "started" : "failed",
+        })
+      }
+      claim.release?.()
+    }
+  }
+}
+
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
+  updatingPackages: new Set(),
   foregroundedPackage: null,
 
   refresh: async () => {
-    const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    set({apps: projectApps(previousState, localApps)})
+    // Update and foreground state may have changed while the registry was read.
+    set((state) => {
+      // An app the host made unavailable loses foreground ownership. A temporary
+      // registry omission keeps it, so ordinary refreshes never reopen the UI.
+      const foregroundedPackage =
+        state.foregroundedPackage && isMiniappAvailable(state.foregroundedPackage) ? state.foregroundedPackage : null
+      return {foregroundedPackage, apps: projectApps({...state, foregroundedPackage}, localApps)}
+    })
   },
 
-  start: async (clientApp: ClientApp, opts?: StartOptions) => {
+  beginUpdate: (packageName) => {
+    if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is already updating`)
+    if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is being uninstalled`)
+    const setUpdating = (updating: boolean) => {
+      set((state) => {
+        const updatingPackages = new Set(state.updatingPackages)
+        if (updating) updatingPackages.add(packageName)
+        else updatingPackages.delete(packageName)
+        return {
+          updatingPackages,
+          apps: state.apps.map((app) => (app.packageName === packageName ? {...app, updating} : app)),
+        }
+      })
+    }
+    setUpdating(true)
+    let ended = false
+    return () => {
+      if (ended) return
+      ended = true
+      setUpdating(false)
+    }
+  },
+
+  runUpdate: async (packageName, update) => {
+    const end = get().beginUpdate(packageName)
+    try {
+      return await update()
+    } finally {
+      end()
+    }
+  },
+
+  start: reportingLaunches(async (clientApp: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => {
     const state = get()
     const packageName = clientApp.packageName
+    if (!isMiniappAvailable(packageName)) return false
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
+      return false
+    }
+    if (state.updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
       return false
     }
 
@@ -344,6 +460,12 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
+    // A model check above may have yielded while an update started.
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
+      return false
+    }
+
     // Host navigation / open-animation seam. Runs on EVERY accepted open —
     // including re-opening an already-running app — so the animation always
     // plays (BuiltInMiniappCatalog.navigateForApp: overlay apps setForeground
@@ -364,10 +486,15 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return true
     }
 
+    // Past every gate: from here on this is a launch, reported to Fleet as started or failed. A native built-in that
+    // declares no execution is the Mentra App's own interface (Settings, Feedback), not a miniapp, and is not reported.
+    if (app.local || app.nativeExecution) attempt.begin()
+
     // Foreground-only-one rule: stop other running standard apps.
     if (app.type === "standard") {
       const runningForeground = state.apps.filter(
-        (a) => a.running && a.type === "standard" && a.packageName !== packageName,
+        (a) =>
+          a.running && a.type === "standard" && a.packageName !== packageName && !isStoreMiniappPackage(a.packageName),
       )
       for (const r of runningForeground) {
         await get().stop(r.packageName)
@@ -407,7 +534,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
 
     return true
-  },
+  }),
 
   stop: async (packageName: string) => {
     const state = get()
@@ -443,9 +570,14 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   setForeground: async (packageName: string) => {
+    if (!isMiniappAvailable(packageName)) return
     const app = get().apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: setForeground — app not found: ${packageName}`)
+      return
+    }
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
       return
     }
 
@@ -492,9 +624,16 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   uninstall: (packageName, version) => {
     return Res.try_async(async () => {
-      const res = await appRegistry.uninstall(packageName, version)
-      if (res.is_error()) throw res.error
-      set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
+      if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is updating; try again shortly`)
+      if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is already being uninstalled`)
+      uninstallingPackages.add(packageName)
+      try {
+        const res = await appRegistry.uninstall(packageName, version)
+        if (res.is_error()) throw res.error
+        set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
+      } finally {
+        uninstallingPackages.delete(packageName)
+      }
     })
   },
 
@@ -529,7 +668,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     return value
   },
 
-  setApps: (apps) => set({apps}),
+  setApps: (apps) =>
+    set((state) => ({apps: apps.map((app) => ({...app, updating: state.updatingPackages.has(app.packageName)}))})),
 }))
 
 // Project miniappRunningRegistry membership into the store's `running` field
@@ -550,6 +690,64 @@ miniappRunningRegistry.subscribe(() => {
     useAppStatusStore.setState({apps: updated})
   }
 })
+
+/**
+ * The miniapp the user can see: the foregrounded one, while the Mentra App itself is in the foreground. The store
+ * keeps a miniapp foregrounded when the app goes to the background or the phone locks; it is not visible then.
+ */
+export function visibleMiniappPackage(
+  state: Pick<AppStatusState, "foregroundedPackage"> = useAppStatusStore.getState(),
+): string | null {
+  return AppState.currentState === "active" ? state.foregroundedPackage : null
+}
+
+// Native built-ins have no JS context, so they never enter miniappRunningRegistry. Which of them is executing is
+// derived here, from the store every open, minimize and stop goes through, and from the app state: one that executes
+// while open (Gallery) only while it is running and visible, one that executes while running (Notify) whenever it
+// runs. A running flag alone is not execution for the first kind: it outlives a minimize, and even a restart.
+function executingNativeMiniapps(state: AppStatusState): string[] {
+  const visible = visibleMiniappPackage(state)
+  const executing: string[] = []
+  for (const app of state.apps) {
+    if (app.local || !app.running) continue
+    if (app.nativeExecution === "running" || (app.nativeExecution === "open" && app.packageName === visible)) {
+      executing.push(app.packageName)
+    }
+  }
+  return executing
+}
+/** The built-ins that execute while they run (Notify) that were executing at the last publish. */
+let executingWhileRunning: ReadonlySet<string> = new Set()
+
+/**
+ * A built-in that executes while it runs, and starts running without the store's `start`, was restored: its running
+ * flag was read back after a process death. That is an automatic launch. A `start` claims, and reports, its own.
+ */
+function reportRestoredBuiltIns(state: AppStatusState, executing: readonly string[]): void {
+  const now = new Set<string>()
+  for (const app of state.apps) {
+    if (app.local || app.nativeExecution !== "running" || !executing.includes(app.packageName)) continue
+    now.add(app.packageName)
+    if (executingWhileRunning.has(app.packageName)) continue
+    fleetEvents.launchUnlessClaimed({
+      packageName: app.packageName,
+      miniappName: app.name,
+      versionName: app.version,
+      start: "automatic",
+      outcome: "started",
+    })
+  }
+  executingWhileRunning = now
+}
+
+const publishNativeExecution = () => {
+  const state = useAppStatusStore.getState()
+  const executing = executingNativeMiniapps(state)
+  reportRestoredBuiltIns(state, executing)
+  nativeMiniappExecution.set(executing)
+}
+useAppStatusStore.subscribe(publishNativeExecution)
+AppState.addEventListener("change", publishNativeExecution)
 
 // The display-manager's core (foreground) slot is DERIVED state: always the
 // currently-running standard app, no matter HOW it came to run — user tap
@@ -580,7 +778,13 @@ useSettingsStore.subscribe(
 // ---------------------------------------------------------------------------
 
 export const useApps = () => useAppStatusStore((state) => state.apps)
-export const useStart = () => useAppStatusStore((state) => state.start)
+
+/** `start` for a person's own action (a tap on Home): the launch is reported as a user start unless the caller says otherwise. */
+const startForUser: AppStatusState["start"] = (app, opts) =>
+  useAppStatusStore.getState().start(app, {...opts, trigger: opts?.trigger ?? "user"})
+
+/** The start function for UI the user acts in. Automatic and system callers use the store's `start` directly. */
+export const useStart = () => startForUser
 export const useStop = () => useAppStatusStore((state) => state.stop)
 export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
 export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)

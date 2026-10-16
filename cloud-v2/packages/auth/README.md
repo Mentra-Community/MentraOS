@@ -20,11 +20,17 @@ app.post("/api/endpoint", async (c) => {
 });
 ```
 
+`session.email` is the user's verified Mentra account email when Core could
+resolve one (from the token's `email` + `email_verified` claims). It is absent
+for OEM accounts and unverified addresses, and it can change, so key stored data
+on `mentraUserId`.
+
 Defaults:
 
 - `packageName`: required, or set `MENTRA_PACKAGE_NAME`, `MINIAPP_PACKAGE_NAME`, or `PACKAGE_NAME`.
 - `jwksUrl`: `MENTRA_AUTH_JWKS_URL`, falling back to `https://core.mentraglass.com/.well-known/jwks.json`.
 - `issuer`: `MENTRA_AUTH_ISSUERS` as a comma-separated list, or `MENTRA_AUTH_ISSUER` as one value, falling back to `cloud-core`.
+- `keyIds`: the accepted key IDs, `["mentra-miniapp-1"]`. Core's key set also publishes the keys of its other tokens, and a token under any other key ID is refused, as is a token with a `typ` other than `JWT`.
 
 Use `jwksUrl` for local, staging, test, or self-hosted Core deployments:
 

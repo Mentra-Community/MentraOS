@@ -88,6 +88,36 @@ test("a staging receipt records its staging backend, and a mismatched build publ
   })
 })
 
+test("trusted dispatch publishes the pinned PR merge and backend rather than the dispatch branch", async () => {
+  await publishing(async ({apk, env, exec, calls}) => {
+    const source = "f".repeat(40), readCommits = []
+    const dispatched = {...env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_SHA: source,
+      GITHUB_BASE_REF: "dev", MENTRA_PR_BUILD_SHA: merge, MENTRA_PR_BASE_REF: "staging", EXPO_PUBLIC_BUILD_ENV: "staging"}
+    const checkedExec = (command, args) => {
+      if (command === "git") readCommits.push(args)
+      return exec(command, args)
+    }
+    const receipt = await publishAndroidArtifacts(apk, dispatched, {exec: checkedExec})
+    assert.deepEqual(readCommits, [["cat-file", "-p", merge]])
+    assert.equal(receipt.buildSha, merge)
+    assert.equal(receipt.app.buildSha, merge)
+    assert.equal(receipt.headSha, head)
+    assert.equal(receipt.baseSha, base)
+    assert.equal(receipt.app.backend, "staging")
+    assert.equal(receipt.app.otaManifestUrl, ota)
+    assert.equal(validateAndroidReceipt(receipt, {pr: 42, sha: head, runId: 100, attempt: 2}), receipt.artifacts)
+    assert.equal(calls.length, 2)
+
+    calls.length = 0
+    for (const wrongHead of [base, source]) {
+      await assert.rejects(publishAndroidArtifacts(apk, {...dispatched, PR_HEAD_SHA: wrongHead}, {exec: checkedExec}), /declared PR merge/)
+    }
+    await assert.rejects(publishAndroidArtifacts(apk, {...dispatched, MENTRA_PR_BUILD_SHA: "invalid"}, {exec: checkedExec}), /publication source/)
+    await assert.rejects(publishAndroidArtifacts(apk, {...dispatched, MENTRA_PR_BASE_REF: "dev"}, {exec: checkedExec}), /PR inputs/)
+    assert.deepEqual(calls, [])
+  })
+})
+
 test("a failed APK publication never publishes a receipt", async () => {
   await publishing(async ({apk, env, exec, calls}) => {
     await assert.rejects(publishAndroidArtifacts(apk, env, {exec}), /APK upload failed/)
@@ -98,7 +128,7 @@ test("a failed APK publication never publishes a receipt", async () => {
 test("the named PR publication step commits the receipt for the exact signed package before its alias", async () => {
   const workflow = await readFile(new URL("../workflows/mentra-app-android-build.yml", import.meta.url), "utf8")
   const producer = "node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk"
-  const start = workflow.indexOf(`      - name: ${ANDROID_PUBLICATION_STEP}\n        if: github.event_name == 'pull_request'\n`)
+  const start = workflow.indexOf(`      - name: ${ANDROID_PUBLICATION_STEP}\n        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')\n`)
   const end = workflow.indexOf("\n      - name: ", start + 1)
   const step = workflow.slice(start, end)
   assert.ok(start > 0 && workflow.indexOf(producer) === workflow.lastIndexOf(producer))

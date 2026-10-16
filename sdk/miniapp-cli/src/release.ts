@@ -26,10 +26,13 @@ import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
+import {warnIfPlaceholderIcon} from './icon.js'
+import {verifySignedBundleArchive, verifyUnsignedBundleArchive} from './bundle-signing.js'
 import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
 import {getLanIp} from './lan.js'
 import {validateManifest} from './manifest.js'
+import {missingSigningKeyError, publisherKeyFingerprint, resolvePackageSigningKey} from './package-signing-key.js'
 
 const DEFAULT_PORT_START = 6789
 const PORT_SCAN_LIMIT = 10
@@ -41,6 +44,10 @@ const BUNDLE_PATH = '/bundle.zip'
 interface ReleaseOptions {
   noCache?: boolean
   qrOutput?: string
+  /** Sign the bundle. Off by default; see pack()'s `sign` for why. */
+  sign?: boolean
+  /** Implies `sign`. */
+  signingKeyPath?: string
 }
 
 export async function release(opts: ReleaseOptions = {}): Promise<void> {
@@ -70,12 +77,30 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const version = manifest.version as string
   const name = (manifest.name as string) ?? packageName
 
+  warnIfPlaceholderIcon(cwd)
+
   // ---- 2. Build (or skip via cache) -----------------------------------
   const cacheDir = resolve(cwd, 'build')
   const cachedZipName = `${packageName}-${version}.zip`
   const cachedZipPath = join(cacheDir, cachedZipName)
+  // Only look for a key when signing was actually requested. A key sitting in
+  // the store is not consent to pin this package's publisher forever.
+  const wantsSignature = opts.sign === true || Boolean(opts.signingKeyPath)
+  const signingKey = wantsSignature
+    ? await resolvePackageSigningKey(packageName, {inputPath: opts.signingKeyPath})
+    : null
+  if (wantsSignature && !signingKey) throw missingSigningKeyError(packageName)
+  const expectedPublisherFingerprint = signingKey ? publisherKeyFingerprint(signingKey.publicKeyJwk) : null
 
-  const cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)
+  let cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)
+  if (cacheValid) {
+    cacheValid = await isCachedReleaseBundleValid(
+      readFileSync(cachedZipPath),
+      packageName,
+      version,
+      expectedPublisherFingerprint,
+    )
+  }
   if (cacheValid) {
     console.log(`✓ Using cached build (${cachedZipName})`)
   } else {
@@ -83,7 +108,12 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
 
     // Pack into build/<pkg>-<v>.zip
     const packStart = Date.now()
-    const zipPath = await pack({outDir: 'build', silent: true})
+    const zipPath = await pack({
+      outDir: 'build',
+      silent: true,
+      sign: wantsSignature,
+      signingKey: signingKey ?? undefined,
+    })
     const sizeKb = Math.round(statSync(zipPath).size / 1024)
     console.log(`✓ Packed ${packageName}@${version} (${sizeKb} KB) in ${((Date.now() - packStart) / 1000).toFixed(1)}s`)
   }
@@ -146,16 +176,20 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const qrUrl = `miniapp://release?url=${encodeURIComponent(baseUrl)}&package=${encodeURIComponent(packageName)}&version=${encodeURIComponent(version)}&name=${encodeURIComponent(name)}`
 
   console.log('\n╔══════════════════════════════════════════════════════════════╗')
-  console.log('║  Install your mini app on a phone:                           ║')
+  console.log('║  Install your miniapp on a phone:                            ║')
   console.log('║                                                              ║')
-  console.log('║    1. Open the Mentra app                                    ║')
-  console.log('║    2. Settings → Developer settings                          ║')
-  console.log('║    3. Under "Mini App Development", tap                      ║')
-  console.log('║       "Scan Mini App QR Code" and scan the QR below          ║')
+  console.log('║    1. Open the Mentra App                                    ║')
+  console.log('║    2. Settings → Miniapp Developer Settings                  ║')
+  console.log('║    3. Tap "Scan Miniapp QR Code" and scan the QR below       ║')
   console.log('║                                                              ║')
   console.log('║  Phone must be on the same Wi-Fi as this computer.           ║')
   console.log('║  This server stays up — install on multiple phones, then     ║')
   console.log('║  Ctrl+C to stop.                                             ║')
+  console.log('║                                                              ║')
+  console.log('║  This installs a fixed snapshot. After each change, run      ║')
+  console.log('║  release again and rescan. While developing, use             ║')
+  console.log('║    bun run dev                                               ║')
+  console.log('║  which reloads every saved change without a rescan.          ║')
   console.log('╚══════════════════════════════════════════════════════════════╝\n')
 
   const defaultQrPath = join(os.tmpdir(), `mentra-release-qr-${packageName}.png`)
@@ -191,6 +225,28 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
     process.on('SIGINT', shutdown)
     process.on('SIGTERM', shutdown)
   })
+}
+
+export async function isCachedReleaseBundleValid(
+  archive: Uint8Array,
+  packageName: string,
+  version: string,
+  expectedPublisherFingerprint: string | null,
+): Promise<boolean> {
+  try {
+    if (expectedPublisherFingerprint) {
+      const verified = await verifySignedBundleArchive(archive)
+      return (
+        verified.packageName === packageName &&
+        verified.version === version &&
+        verified.publisherKeyFingerprint === expectedPublisherFingerprint
+      )
+    }
+    const verified = await verifyUnsignedBundleArchive(archive)
+    return verified.packageName === packageName && verified.version === version
+  } catch {
+    return false
+  }
 }
 
 // ---------------------------------------------------------------------------

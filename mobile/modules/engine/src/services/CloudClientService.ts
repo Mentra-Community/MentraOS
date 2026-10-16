@@ -14,14 +14,20 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
-import type {SubjectTokenType} from "@mentra/cloud-client"
+import {AuthExpiredError, DEFAULT_REFRESH_TOKEN_KEY, HttpError, decodeClaims} from "@mentra/cloud-client"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {FleetReportOutcome, SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
-import type {AudioPosition, AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
+import type {
+  AudioPosition,
+  AudioSubscription,
+  FleetReport,
+  TranscriptionData,
+  TranslationData,
+} from "@mentra/cloud-protocol"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import CrustModule from "@mentra/crust"
+import CrustModule, {nativeHttpRequest} from "@mentra/crust"
 import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
@@ -35,9 +41,39 @@ import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
+import {sameCoreUrl} from "./fleet/coreUrl"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
+
+/** Which account on which Core the client speaks for. */
+export interface CoreSession {
+  /** The Core URL the current client was built with: its requests go there, whatever the resolver says now. */
+  coreUrl: string
+  /**
+   * The Core account the client's token belongs to; while it holds no token (offline), the verified identity kept
+   * for the signed-in account; null when neither is known.
+   */
+  mentraUserId: string | null
+}
+
+/** A sign-in, a sign-out, or a rebuilt client. */
+export interface CoreSessionChange {
+  reason: "signed_in" | "signed_out" | "reconnect"
+  /** The Core URL the current client was built with, or null when there is no client with a Core. */
+  coreUrl: string | null
+  /** Null when signed out, or when the account is not known yet (a sign-in forgets the previous one). */
+  mentraUserId: string | null
+}
+
+/**
+ * What `core.fleet.reportAs` came to: a Fleet answer, `session_changed` (the client no longer speaks for that account
+ * on that Core, and nothing was sent), or `unauthorized` (Core refused the credentials, or there were none; the token
+ * was force-refreshed once).
+ */
+export type FleetSendOutcome = FleetReportOutcome | {kind: "session_changed"} | {kind: "unauthorized"}
+
+const SESSION_CHANGED: FleetSendOutcome = {kind: "session_changed"}
 
 // Persistent cloud-disconnect detector: the cloud-client reconnect loop is infinite
 // and never surfaces a "giving up" signal, so "persistent failure" = the session has
@@ -60,6 +96,12 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 const LOCAL_AUTH_PORT = 3002
 
 let client: CloudClient | null = null
+/** The Core URL `client` was built with (null without a client or without a Core). */
+let clientCoreUrl: string | null = null
+/** Bumped by `stop()`: work begun for a client before then must not build another after it. */
+let clientLifecycle = 0
+/** The client whose Core credentials a sign-in is clearing, until the client for the new session is built. */
+let replacingCoreSessionOf: CloudClient | null = null
 let connected = false
 let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 let persistentFailureNotified = false
@@ -94,6 +136,71 @@ const transcriptListeners = new Set<(d: TranscriptionData) => void>()
 const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
+const coreSessionListeners = new Set<(change: CoreSessionChange) => void>()
+
+/** The Core account of the token `c` holds now, or null if it holds none. Reads no network. */
+function tokenAccount(c: CloudClient): string | null {
+  try {
+    return c.auth.identity.mentraUserId || null
+  } catch {
+    return null
+  }
+}
+
+/** The Core account a Core access token belongs to (its `sub`), or null if it is not a readable token. */
+function accountOfToken(token: string): string | null {
+  try {
+    const sub = decodeClaims(token).sub
+    return typeof sub === "string" && sub ? sub : null
+  } catch {
+    return null
+  }
+}
+
+function currentCoreSession(): CoreSession | null {
+  const c = client
+  if (!c?.core || !clientCoreUrl) return null
+  return {coreUrl: clientCoreUrl, mentraUserId: tokenAccount(c) ?? localMiniappUserIdentity.get()}
+}
+
+function emitCoreSessionChanged(reason: CoreSessionChange["reason"]): void {
+  const session = currentCoreSession()
+  const account = session?.mentraUserId ?? null
+  const change: CoreSessionChange = {
+    reason,
+    coreUrl: session?.coreUrl ?? null,
+    mentraUserId: reason === "signed_out" ? null : account,
+  }
+  for (const l of coreSessionListeners) {
+    try {
+      l(change)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: core session listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function isAuthFailure(error: unknown): boolean {
+  return error instanceof AuthExpiredError || (error instanceof HttpError && error.status === 401)
+}
+
+function abortError(signal: AbortSignal): unknown {
+  if (signal.reason !== undefined) return signal.reason
+  const error = new Error("The Fleet report was aborted")
+  error.name = "AbortError"
+  return error
+}
+
+/** Core refused `c`'s credentials: refresh its token once (a dead session stays dead) and say so. */
+async function refreshAfterAuthFailure(c: CloudClient): Promise<FleetSendOutcome> {
+  if (c !== client) return SESSION_CHANGED
+  try {
+    await c.auth.getCoreToken({forceRefresh: true})
+  } catch (err) {
+    console.warn(`${LOG_TAG}: Fleet token refresh failed: ${(err as Error)?.message ?? err}`)
+  }
+  return {kind: "unauthorized"}
+}
 
 function resolveEndpoints(): {core?: string; runtime: string} {
   return resolveCloudEndpoints(getConfigValues(), endpointsOverride)
@@ -130,11 +237,9 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
     throw result.error
   }
 
-  try {
-    await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
-  } catch (err) {
-    console.warn(`${LOG_TAG}: direct Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`)
-  }
+  // A saved JS token is not a successful native sync. Let callers record a
+  // failed synchronization rather than ask glasses to upload with an old token.
+  await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
 
   return token
 }
@@ -265,6 +370,33 @@ function extractUnsubscribe(sub: unknown): (() => void) | null {
   return null
 }
 
+/**
+ * A sign-in replaced the host's session while `previous` holds Core credentials exchanged from the session before it,
+ * which may be another account's. The client keeps them, and its refresh token is persisted, so a client rebuilt over
+ * the same storage would resume them too. Clear them (revoking that Core session, as logout does), and only then
+ * build the client that exchanges the new session's subject token. Listeners hear of the sign-in once that client
+ * exists. A stop (logout) while the credentials are being cleared leaves everything to the next start.
+ */
+async function replaceCoreSession(previous: CloudClient): Promise<void> {
+  const lifecycle = clientLifecycle
+  replacingCoreSessionOf = previous
+  try {
+    await previous.auth.clearSession()
+  } catch (err) {
+    // Local credentials are gone either way; Core may keep the old session until it expires.
+    console.warn(`${LOG_TAG}: revoking the previous Core session failed: ${(err as Error)?.message ?? err}`)
+  } finally {
+    if (replacingCoreSessionOf === previous) replacingCoreSessionOf = null
+  }
+  if (lifecycle !== clientLifecycle || !client) return
+  console.log(`${LOG_TAG}: signed in; rebuilding the client for the new session`)
+  try {
+    cloudClientService.reconnect()
+  } finally {
+    emitCoreSessionChanged("signed_in")
+  }
+}
+
 function ensureAuthWatch(): void {
   if (authStateUnsubscribe) return
   authStateUnsubscribe = () => {}
@@ -277,22 +409,35 @@ function ensureAuthWatch(): void {
     const sub = auth.onStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         localMiniappUserIdentity.forget()
+        emitCoreSessionChanged("signed_out")
         return
       }
       // A new sign-in may belong to a different account. Force the next
       // storage request to resolve and persist that account's Core identity.
       if (event === "SIGNED_IN") localMiniappUserIdentity.forget()
-      if (!session?.token) return
-      if (connected || reconnectPending) return
-
-      reconnectPending = true
-      console.log(`${LOG_TAG}: auth session available (${event}) while disconnected — reconnecting`)
+      // The client's Core credentials were exchanged from the session this sign-in replaced: rebuild from the new one,
+      // whether or not the Runtime is connected. A replacement already under way covers this sign-in too.
+      const current = client
+      if (event === "SIGNED_IN" && session?.token && current?.core) {
+        if (replacingCoreSessionOf !== current) void replaceCoreSession(current)
+        return
+      }
       try {
-        cloudClientService.reconnect()
+        if (!session?.token) return
+        if (connected || reconnectPending) return
+
+        reconnectPending = true
+        console.log(`${LOG_TAG}: auth session available (${event}) while disconnected — reconnecting`)
+        try {
+          cloudClientService.reconnect()
+        } finally {
+          setTimeout(() => {
+            reconnectPending = false
+          }, 0)
+        }
       } finally {
-        setTimeout(() => {
-          reconnectPending = false
-        }, 0)
+        // After any rebuild, so listeners see the client the sign-in left behind.
+        if (event === "SIGNED_IN") emitCoreSessionChanged("signed_in")
       }
     })
 
@@ -349,11 +494,13 @@ function ensureTransports(): void {
       return globalThis.fetch(input, init)
     }
     const headers = Object.fromEntries(new Headers(init?.headers).entries())
-    const result = await CrustModule.nativeHttpRequest(
+    const result = await nativeHttpRequest(
+      CrustModule,
       init?.method ?? "GET",
       input,
       headers,
       (init?.body as string | undefined) ?? null,
+      init?.signal ?? undefined,
     )
     return new Response(nativeHttpResponseBody(result.status, result.body), {
       status: result.status,
@@ -433,6 +580,8 @@ function construct(): void {
     },
     logger: cloudLogger,
   })
+  // Captured with the client: getCoreUrl() re-resolves, and may already name another Core than this client talks to.
+  clientCoreUrl = client.core && endpoints.core ? endpoints.core : null
 
   const c = client
   clearRuntimeEventSubscriptions()
@@ -580,19 +729,17 @@ export const cloudClientService = {
 
     const wasConnected = connected
     client = null
+    clientCoreUrl = null
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
     if (wasConnected) notifyConnectionListeners(false)
 
-    construct()
-  },
-
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
-    if (!client) this.init()
-    const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
+    try {
+      construct()
+    } finally {
+      emitCoreSessionChanged("reconnect")
+    }
   },
 
   /**
@@ -625,10 +772,7 @@ export const cloudClientService = {
     return userId
   },
 
-  async getMiniappAuthToken(
-    packageName: string,
-    opts?: {minTtlMs?: number; devAttestation?: string},
-  ): Promise<MiniappAuthToken> {
+  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
     if (!client) this.init()
     const c = client
     if (!c) throw new Error("cloud client not initialized")
@@ -656,6 +800,9 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
+    clientCoreUrl = null
+    clientLifecycle += 1
+    replacingCoreSessionOf = null
     // stop() is part of the logout lifecycle and runs before the host emits
     // SIGNED_OUT. Remove the persisted namespace owner here so a later account
     // can never inherit it. A force-stop/process kill does not call stop(), so
@@ -754,6 +901,39 @@ export const cloudClientService = {
     return Boolean(client?.core)
   },
 
+  /** Which account on which Core the current client speaks for, without touching the network; null without a Core. */
+  getCoreSession(): CoreSession | null {
+    return currentCoreSession()
+  },
+
+  /**
+   * The same, once the client's Core token is current (exchanged or refreshed as needed). When Core refused the
+   * credentials, or there are none, it answers with what is known, like `getCoreSession`. When the token cannot be
+   * had for any other reason (offline, Core unavailable), it answers with the identity kept for the signed-in account
+   * if there is one, and otherwise rejects with that failure: the account is not known yet, which is not the same as
+   * there being none.
+   */
+  async resolveCoreSession(): Promise<CoreSession | null> {
+    const c = client
+    if (!c?.core) return null
+    try {
+      await c.auth.getCoreToken()
+    } catch (error) {
+      const known = currentCoreSession()
+      if (!isAuthFailure(error) && !known?.mentraUserId) throw error
+      return known
+    }
+    return currentCoreSession()
+  },
+
+  /** Subscribe to sign-ins, sign-outs and rebuilt clients. Returns an unsubscribe fn. */
+  onCoreSessionChanged(listener: (change: CoreSessionChange) => void): () => void {
+    coreSessionListeners.add(listener)
+    return () => {
+      coreSessionListeners.delete(listener)
+    }
+  },
+
   syncCoreTokenToBluetooth(): Promise<string> {
     return syncCoreAccessTokenToBluetooth()
   },
@@ -798,8 +978,14 @@ export const cloudClientService = {
 
   core: {
     reports: {
+      getLogCollection(...args: Parameters<CloudCore["reports"]["getLogCollection"]>) {
+        return getCoreClient().reports.getLogCollection(...args)
+      },
       submit(...args: Parameters<CloudCore["reports"]["submit"]>) {
         return getCoreClient().reports.submit(...args)
+      },
+      updateLogCollection(...args: Parameters<CloudCore["reports"]["updateLogCollection"]>) {
+        return getCoreClient().reports.updateLogCollection(...args)
       },
       addLogs(...args: Parameters<CloudCore["reports"]["addLogs"]>) {
         return getCoreClient().reports.addLogs(...args)
@@ -814,6 +1000,48 @@ export const cloudClientService = {
     supportProfile: {
       update(...args: Parameters<CloudCore["supportProfile"]["update"]>) {
         return getCoreClient().supportProfile.update(...args)
+      },
+    },
+    fleet: {
+      report(...args: Parameters<CloudCore["fleet"]["report"]>) {
+        return getCoreClient().fleet.report(...args)
+      },
+
+      /**
+       * Sends a Fleet batch as `expected` and only as it. The current client must have been built for the same Core
+       * as `expected.coreUrl` (compared the way Fleet partitions compare Core URLs, so another spelling of one Core
+       * is that Core), and the Core token it hands out now must belong to `expected.mentraUserId`. That token is
+       * then the request's bearer: the account checked is the account of the token sent, with nothing awaited in
+       * between. Otherwise nothing is sent and the answer is `session_changed`. Never builds a client.
+       *
+       * An authentication failure force-refreshes the token once and answers `unauthorized`. Rejects only when
+       * `opts.signal` is aborted.
+       */
+      async reportAs(
+        expected: {coreUrl: string; mentraUserId: string},
+        batch: FleetReport,
+        opts?: {signal?: AbortSignal},
+      ): Promise<FleetSendOutcome> {
+        const signal = opts?.signal
+        const c = client
+        if (!c?.core || !clientCoreUrl || !sameCoreUrl(clientCoreUrl, expected.coreUrl)) return SESSION_CHANGED
+        let token: string
+        try {
+          token = await c.auth.getCoreToken()
+        } catch (err) {
+          if (signal?.aborted) throw abortError(signal)
+          if (c !== client) return SESSION_CHANGED
+          return isAuthFailure(err) ? refreshAfterAuthFailure(c) : {kind: "unavailable", retryAfterSeconds: null}
+        }
+        if (signal?.aborted) throw abortError(signal)
+        const core = c.core
+        if (c !== client || !core || accountOfToken(token) !== expected.mentraUserId) return SESSION_CHANGED
+        try {
+          return await core.fleet.report(batch, {bearer: token, ...(signal ? {signal} : {})})
+        } catch (err) {
+          if (!signal?.aborted && isAuthFailure(err)) return refreshAfterAuthFailure(c)
+          throw err
+        }
       },
     },
   },

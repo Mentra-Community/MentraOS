@@ -35,6 +35,16 @@ def digest(file):
     return value.hexdigest()
 
 
+def unsigned_executable_bytes(source, scratch):
+    """Compare compiled bytes without signature allocation left by different signers."""
+    shutil.copy2(source, scratch)
+    # Removal alone can leave a different __LINKEDIT vmsize. Normalize only
+    # disposable copies; shipped Apple signatures and compiled code stay intact.
+    run('codesign', '--force', '--sign', '-', scratch)
+    run('codesign', '--remove-signature', scratch)
+    return scratch.read_bytes()
+
+
 def read_profile(file):
     return plistlib.loads(run("security", "cms", "-D", "-i", file))
 
@@ -87,7 +97,7 @@ def packaged_backend(compilation, env):
     backend = env.get("EXPO_PUBLIC_BUILD_ENV")
     if compilation["mobileFingerprint"] != env.get("MENTRA_PR_MOBILE_FINGERPRINT"):
         raise ValueError("Packaged compilation differs from this job's backend fingerprint")
-    if backend != pr_backend(env.get("GITHUB_BASE_REF", "")):
+    if backend != pr_backend(env.get("MENTRA_PR_BASE_REF") or env.get("GITHUB_BASE_REF", "")):
         raise ValueError("Packaged backend differs from the PR base")
     return backend
 
@@ -181,7 +191,9 @@ def configure(output, keychain):
                       "signingCertificate": certificate, "teamID": team,
                       "provisioningProfiles": {BUNDLE_ID: profile["UUID"]},
                       "thinning": "<none>", "manageAppVersionAndBuildNumber": False,
-                      "uploadSymbols": False}, stream)
+                      # Re-export preserves compiled code, including its symbols.
+                      # Xcode otherwise defaults to another Swift symbol strip.
+                      "stripSwiftSymbols": False, "uploadSymbols": False}, stream)
     print(f"Validated ad hoc profile {profile['Name']}, expires {profile['ExpirationDate']}, {len(profile['ProvisionedDevices'])} devices")
 
 

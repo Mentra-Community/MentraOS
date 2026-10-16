@@ -2,6 +2,7 @@ import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
 import {createDeploymentAuthProvider} from "@/services/deployment/auth"
+import {refreshWorkspaceManifest} from "@/services/deployment/refresh"
 import {deploymentStore} from "@/services/deployment/store"
 import mentraAuth from "@/utils/auth/authClient"
 
@@ -36,6 +37,14 @@ async function recover(): Promise<void> {
     }
   }
 
+  // A process started without the Activity configures Engine here, so it reads
+  // the workspace's current manifest first, as the Activity's launch does.
+  console.log(
+    `RECOVERY: workspace manifest refresh: ${await refreshWorkspaceManifest({
+      isRunning: () => mantle.isInitialized(),
+      reconcile: () => mantle.applyDeploymentUpdate(),
+    })}`,
+  )
   await mantle.init({background: true})
   await mantle.waitForMiniapps()
   const readiness = engine.pairing.readiness()

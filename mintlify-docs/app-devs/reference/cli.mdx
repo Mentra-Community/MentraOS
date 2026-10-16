@@ -28,6 +28,7 @@ The CLI is **Bun-only**: it ships as TypeScript and runs under Bun. Use `bun`
 | [`dev`](#dev) | Dev server with hot reload; prints a QR to load the miniapp on a phone. |
 | [`release`](#release) | Builds, packs, and serves a QR to install a release on phones over LAN. |
 | [`pack`](#pack) | Validates the manifest and zips `dist/` into `<pkg>-<version>.zip`. |
+| [`keys`](#keys) | Creates, shows, imports and exports publisher signing keys. |
 | [`manifest`](#manifest) | Interactive wizard for editing `miniapp.json`. |
 | [`permission`](#permission-and-hardware) | Add / remove / list manifest permissions. |
 | [`hardware`](#permission-and-hardware) | Add / remove / list manifest hardware requirements. |
@@ -65,7 +66,9 @@ computer.
 
 ```bash
 mentra-miniapp release
-mentra-miniapp release --no-cache   # force rebuild even if the cached zip is fresh
+mentra-miniapp release --no-cache            # force rebuild even if the cached zip is fresh
+mentra-miniapp release --sign                # sign with the package's stored publisher key
+mentra-miniapp release --signing-key key.json  # sign with a key file (not stored)
 ```
 
 The all-in-one path for putting a build on real devices: validate → build → pack
@@ -78,24 +81,66 @@ prints a `miniapp://release?...` QR, then stays up so multiple devices can
 install. Each install logs a line. Installed miniapps run offline and persist
 across restarts; no laptop needed after install.
 
+The bundle is unsigned unless you pass `--sign` or `--signing-key`; see
+[Signing](#signing). A cached ZIP is reused only when it matches the signing you
+asked for.
+
 ## `pack`
 
 ```bash
 mentra-miniapp pack
-mentra-miniapp pack --no-build   # zip the existing dist/ as-is
+mentra-miniapp pack --no-build                # zip the existing dist/ as-is
+mentra-miniapp pack --sign                    # sign with the package's stored publisher key
+mentra-miniapp pack --signing-key key.json    # sign with a key file (not stored)
 ```
 
 Produces the release artifact only (`release` calls this internally). It
 builds with `NODE_ENV=production`, verifies `dist/`, validates the manifest,
 copies `miniapp.json` + `icon.png` into `dist/`, and zips to
-`build/<pkg>-<version>.zip`. In a future release, this ZIP will be uploaded
-through the Mentra Developer Console for distribution in the Mentra Miniapp
-Store. That distribution workflow is not available in MentraOS 3.0.
+`build/<pkg>-<version>.zip`, replacing an older ZIP only after the new one is
+complete. It prints the bundle's SHA-256 and its publisher key, or `unsigned`. In
+a future release, this ZIP will be uploaded through the Mentra Developer Console
+for distribution in the Mentra Miniapp Store. That distribution workflow is not
+available in MentraOS 3.0.
 
 <Note>
 `pack` requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux;
 on Windows use WSL). `build/` self-ignores from git.
 </Note>
+
+### Signing
+
+Bundles are unsigned by default. `--sign` signs with the package's stored
+publisher key (see [`keys`](#keys)); `--signing-key <path>` signs with a key
+file without storing it, for CI. CI can also set `MENTRA_MINIAPP_SIGNING_KEY_FILE`
+or `MENTRA_MINIAPP_SIGNING_KEY_JSON` together with `--sign`. A signed ZIP carries
+`META-INF/MENTRA.SIG`: the package's Ed25519 public key and a signature over its
+package name, version, manifest and every file.
+
+<Warning>
+Signing is permanent for a package. The first signed bundle a phone installs
+records the publisher key, and from then on that phone accepts only bundles
+signed with the same key. An unsigned bundle or a different key is refused until
+the user uninstalls the miniapp. There is no key rotation, so back up the key
+(`keys export`) before you ship a signed bundle. Signing needs a lowercase
+reverse-DNS package name (letters, digits and underscores).
+</Warning>
+
+## `keys`
+
+```bash
+mentra-miniapp keys create com.example.myapp
+mentra-miniapp keys show   com.example.myapp
+mentra-miniapp keys export com.example.myapp ./publisher-key.json
+mentra-miniapp keys import com.example.myapp ./publisher-key.json
+```
+
+Manages one publisher signing key per package. Keys are stored in the OS
+keychain, or in a mode-`0600` file under `~/.mentra/cli-v2/signing-keys/` when the
+keychain refuses the write. If the keychain can't be read, key commands stop
+without creating or changing a key; on machines without a keychain, such as CI,
+sign with `--signing-key`. `show` prints the key's `sha256:` fingerprint. `export`
+writes the private key to a new file; keep it secret and in a secure backup.
 
 ## `manifest`
 

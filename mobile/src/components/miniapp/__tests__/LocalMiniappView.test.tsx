@@ -5,6 +5,7 @@ import LocalMiniappView from "../LocalMiniappView"
 import {useNavigationStore} from "@/stores/navigation"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {miniappLauncher} from "@mentra/engine-host-internal"
+import {useStressTestStore} from "@/stores/stressTest"
 
 jest.mock("expo-router", () => ({router: {push: jest.fn(), replace: jest.fn(), back: jest.fn()}}))
 jest.mock("react-native-webview", () => ({WebView: "WebView"}))
@@ -30,6 +31,8 @@ jest.mock("@mentra/engine-host-internal", () => ({
   miniappLauncher: {ensureRunning: jest.fn()},
   buildMiniappGlobalsScript: () => "",
   buildMentraUiShim: () => "",
+  localMiniappRuntime: {hasManifestPermission: () => false},
+  redactSecrets: jest.requireActual("../../../../modules/engine/src/services/MentraJSLogPipeline").redactSecrets,
 }))
 
 jest.mock("@mentra/engine", () => ({
@@ -90,6 +93,37 @@ it("exposes exit controls above the splash when startup resolves without a UI", 
   }
   act(() => jest.mocked(useRegisterCapsule).mock.calls.at(-1)![0].onClosePress!())
   expect(props.onClose).toHaveBeenCalledTimes(1)
+})
+
+it("logs the native load error while preserving the existing stress event and loading behavior", async () => {
+  jest.mocked(miniappLauncher.ensureRunning).mockResolvedValue({
+    uiUri: "file:///miniapps/test/ui/index.html",
+    uiBaseDir: "file:///miniapps/test/ui",
+  } as never)
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined)
+  const recordEvent = jest.spyOn(useStressTestStore.getState(), "recordEvent")
+  const view = render(<LocalMiniappView {...props} />)
+  await finishLaunch()
+  const initialError = view.getByTestId("splash-error").props.children
+  act(() => {
+    view.UNSAFE_getByType("WebView" as never).props.onError({
+      nativeEvent: {
+        domain: "NSURLErrorDomain",
+        code: -1009,
+        description: "Could not load https://example.com/private'copy/private-account?access_token=private",
+        url: "https://example.com/?access_token=private",
+      },
+    })
+  })
+  expect(warn).toHaveBeenCalledWith("[LocalMiniappView:com.mentra.test] WebView load error", {
+    domain: "NSURLErrorDomain",
+    code: -1009,
+    description: "Could not load [REDACTED]",
+  })
+  expect(recordEvent).toHaveBeenCalledWith({packageName: props.packageName, at: expect.any(Number), kind: "error"})
+  expect(view.getByTestId("splash-error").props.children).toBe(initialError)
+  expect(props.onExit).not.toHaveBeenCalled()
+  expect(props.onClose).not.toHaveBeenCalled()
 })
 
 it("does not reclaim Back after external navigation changes presentation callbacks", () => {

@@ -37,36 +37,12 @@ import android.util.Base64
 object JSCPolyfillBridge {
     private const val TAG = "MentraJS.PolyfillBridge"
 
-    private val httpClient: OkHttpClient by lazy {
+    internal val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .callTimeout(120, TimeUnit.SECONDS)
             .build()
-    }
-
-    data class HttpResult(
-        val status: Int,
-        val statusText: String,
-        val headers: Map<String, String>,
-        val body: String,
-    )
-
-    /** Shared OkHttp execution path for host cloud-client requests. */
-    fun executeHttp(method: String, url: String, headers: Map<String, String>, bodyString: String?): HttpResult {
-        val request = buildHttpRequest(method, url, headers, bodyString)
-        httpClient.newCall(request).execute().use { response ->
-            val responseHeaders = mutableMapOf<String, String>()
-            for (name in response.headers.names()) {
-                responseHeaders[name.lowercase()] = response.headers.values(name).joinToString(", ")
-            }
-            return HttpResult(
-                status = response.code,
-                statusText = response.message,
-                headers = responseHeaders,
-                body = response.body?.string() ?: "",
-            )
-        }
     }
 
     /** Keep host HTTP and miniapp fetch body semantics identical, including empty POSTs. */

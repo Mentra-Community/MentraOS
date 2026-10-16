@@ -62,7 +62,7 @@ describe("thumbnail end-to-end deadline", () => {
 
   it("selects the opt-in budget in both public SDK request lifecycles", () => {
     expect(android).toMatch(
-      /return pending.await\(\s*if \(routedRequest.presendThumbnail\) PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS else PHOTO_REQUEST_TIMEOUT_MS/,
+      /pending.await\(\s*if \(routedRequest.presendThumbnail\) PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS else PHOTO_REQUEST_TIMEOUT_MS/,
     )
     expect(ios).toMatch(
       /pending.wait\(timeoutMs: routedRequest.presendThumbnail\s*\? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs\s*: MentraBluetoothSDK.photoRequestTimeoutMs/,

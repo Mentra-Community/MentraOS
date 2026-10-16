@@ -48,6 +48,35 @@ an abandoned `.reclaim` guard is not automatically removed either. Explicit reco
 must reconcile the app, installed manifest and retained transaction files before
 clearing these records. Releasing ownership removes only the matching PID/token.
 
+The harness also gives each physical pair of glasses its own lease under
+`~/.cache/mentra-e2e/glasses/`. Opening Mentra may connect it to whichever glasses
+it is paired with, and the installer proves none. So **Install & Open**, **Open
+Mentra**, link installs and `--package` without `--no-launch` refuse while any
+glasses lease is held. The check follows `heldGlassesLeases` in
+`mobile/scripts/app-ownership.mjs`: a malformed, live or retained lease is never
+free. It runs after the installer's own lease is written, and a glasses owner
+reads that lease and refuses in turn. A `--no-launch` install opens nothing and is
+not checked.
+
+Opened Mentra keeps running after the installer finishes. So instead of releasing
+the lease, the installer hands it to the opened process:
+`{pid, token, launchedApp: true}`, where the PID is the one `openApplication`
+returns. The lease has neither retention nor a reservation, so every owner treats
+it as held while that process runs, and as free once it exits. Only a later
+installer adopts a running app's lease. It holds its own broad lease (no
+reservation) while it quits that app normally, then hands off to the next app
+or releases. It replaces the running app's lease with a single rename, so a
+concurrent reader never sees the lease missing, and a failed replacement leaves
+the app's lease untouched. If it ends without quitting the app, for example after a failed
+installation, it hands the lease back to that app. A test or harness run is refused while the app runs ("quit Mentra
+normally, or run the installer with --no-launch"). So it can never narrow the
+lease to one pair of glasses while the old app may still be connected to another.
+If the opened process cannot be identified, the installer keeps its own retained
+lease for explicit recovery. The repository installer does the same with the PID
+its launcher prints. It also keeps the lease when its launcher fails after the
+launch was attempted, for example on the launcher's timeout while a permission
+prompt is pending, because Mentra may still open.
+
 Downloads use an owned private cache instead of Downloads. Successful runs and
 ordinary failed installs remove their request directories; an unfinished tool's
 recovery files are retained. The downloader prunes old owned request directories

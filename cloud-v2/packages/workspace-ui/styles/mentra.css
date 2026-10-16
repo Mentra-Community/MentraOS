@@ -1,0 +1,135 @@
+/*
+ * Mentra's brand tokens for the workspace portal, the admin portal and these shared workspace screens.
+ *
+ * The values are the sign-in page's (websites/account/src/styles.css), which takes them from the Mentra
+ * Miniapp Store website and the Mentra App (primary #00B869, Red Hat Display). Import this file once,
+ * after Tailwind, in the site's global stylesheet:
+ *
+ *   @import "tailwindcss";
+ *   @import "@mentra/workspace-ui/mentra.css";
+ *
+ * The site serves Red Hat Display itself, from /fonts (copy the sign-in page's public/fonts, with its
+ * OFL.txt), keeps those URLs out of the bundle (`external: ["/fonts/*"]`) and preloads them. Nothing
+ * here loads from another origin.
+ */
+
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("/fonts/RedHatDisplay-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("/fonts/RedHatDisplay-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+
+  /* The sign-in page's palette (the Store's light theme). */
+  --mentra-bg: #ffffff;
+  --mentra-surface: #f5f5f5;
+  --mentra-hover: #f1f1f1;
+  --mentra-text: #0a0a0a;
+  --mentra-muted: #737373;
+  --mentra-border: #e5e5e5;
+  --mentra-button: #0a0a0a;
+  --mentra-button-text: #ffffff;
+  /* Notices: errors and warnings in amber, confirmations in green. */
+  --mentra-error-bg: #fff3e6;
+  --mentra-error: #8a4200;
+  --mentra-info-bg: #eaf9ef;
+  --mentra-info: #006a3f;
+  /* Mentra green (the Mentra App's primary), and the Store's focus green. */
+  --mentra-brand: #00b869;
+  --mentra-focus: #00a814;
+  /* The Store's danger red, for actions that remove or end something. */
+  --mentra-danger: #b63a29;
+
+  /* The theme names the shared screens use (shadcn's), on the palette above. */
+  --background: var(--mentra-bg);
+  --foreground: var(--mentra-text);
+  --card: var(--mentra-bg);
+  --card-foreground: var(--mentra-text);
+  --popover: var(--mentra-bg);
+  --popover-foreground: var(--mentra-text);
+  --primary: var(--mentra-button);
+  --primary-foreground: var(--mentra-button-text);
+  --secondary: var(--mentra-surface);
+  --secondary-foreground: var(--mentra-text);
+  --muted: var(--mentra-surface);
+  --muted-foreground: var(--mentra-muted);
+  --accent: var(--mentra-hover);
+  --accent-foreground: var(--mentra-text);
+  --destructive: var(--mentra-danger);
+  --border: var(--mentra-border);
+  --input: var(--mentra-border);
+  --ring: var(--mentra-focus);
+}
+
+@theme inline {
+  --font-sans: "Red Hat Display", system-ui, sans-serif;
+  --font-display: "Red Hat Display", system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Brand names with no shadcn equivalent: `bg-surface`, `bg-hover`, `text-brand`, `bg-info text-info-foreground`, … */
+  --color-surface: var(--mentra-surface);
+  --color-hover: var(--mentra-hover);
+  --color-brand: var(--mentra-brand);
+  --color-focus: var(--mentra-focus);
+  --color-info: var(--mentra-info-bg);
+  --color-info-foreground: var(--mentra-info);
+  --color-error: var(--mentra-error-bg);
+  --color-error-foreground: var(--mentra-error);
+
+  /* The sign-in page's shapes: 24px cards and dialogs, 16px menus, 12px notices; controls are pills. */
+  --radius-card: 24px;
+  --radius-menu: 16px;
+  --radius-notice: 12px;
+
+  /* The Store's dialog shadow, and a lighter one for menus. */
+  --shadow-dialog: 0 20px 60px rgb(0 0 0 / 0.27);
+  --shadow-menu: 0 16px 40px -12px rgb(0 0 0 / 0.18);
+}
+
+@layer base {
+  html {
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* The sign-in page's focus ring, on everything that takes keyboard focus. */
+  :focus-visible {
+    outline: 3px solid var(--mentra-focus);
+    outline-offset: 3px;
+  }
+
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline-offset: 2px;
+  }
+}

@@ -1,10 +1,12 @@
 import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import {otaLocalNetwork} from "@mentra/bluetooth-sdk/ota-transport"
 import {otaDeviceSessionRevision} from "./OtaDeviceSession"
 import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {hasConfiguredModernOtaManifestPin, isLegacyOtaManifestSelected, resolveOtaManifestUrl} from "./otaManifestUrl"
 import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
+import {observeManifestNativeErrors} from "./otaNativeNetworkDiagnostics"
 
 /**
  * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
@@ -157,10 +159,46 @@ function glassesConnectedNow(): boolean {
 
 type ManifestFetchResult = {json: VersionJson | null; failureReason?: "network" | "pin_unavailable"}
 
+let manifestFetchSequence = 0
+
+function logManifestNetwork(
+  requestId: number,
+  stage: "start" | "fetch-failed" | "http-failed" | "body-failed",
+  startedAtMs: number,
+  status?: number,
+): void {
+  // Read immediately at the named stage. Native sampledAtMs identifies the actual
+  // collection time; Android's separate getters are an observation, not an atomic route lock.
+  try {
+    const network = otaLocalNetwork.getNetworkDiagnostics()
+    // One JSON line survives both React Native logcat and the incident phone log buffer.
+    console.log(
+      `OTA: manifest network observation ${JSON.stringify({
+        requestId,
+        stage,
+        elapsedMs: Math.max(0, Date.now() - startedAtMs),
+        status,
+        observation: network ? "collected" : "native-module-unavailable",
+        network,
+      })}`,
+    )
+  } catch {
+    // Diagnostic failure must not turn a successful update check into a failure.
+    console.log(
+      `OTA: manifest network observation ${JSON.stringify({requestId, stage, observation: "native-read-failed"})}`,
+    )
+  }
+}
+
 async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResult> {
+  const requestId = ++manifestFetchSequence
+  const startedAtMs = Date.now()
+  logManifestNetwork(requestId, "start", startedAtMs)
+  const stopNativeObservation = observeManifestNativeErrors(requestId, startedAtMs)
   try {
     const response = await fetch(url)
     if (!response.ok) {
+      logManifestNetwork(requestId, "http-failed", startedAtMs, response.status)
       console.warn("Failed to fetch version info:", response.status)
       // 4xx: the manifest does not exist (or is gone) — permanent for this app
       // build, retrying cannot help. Everything else is transient server/network
@@ -173,12 +211,16 @@ async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResul
     try {
       return {json: await response.json()}
     } catch (parseError) {
+      logManifestNetwork(requestId, "body-failed", startedAtMs, response.status)
       console.warn("OTA: manifest is not valid JSON:", parseError)
       return {json: null, failureReason: "pin_unavailable"}
     }
   } catch (error) {
+    logManifestNetwork(requestId, "fetch-failed", startedAtMs)
     console.warn("OTA: Error fetching version info:", error)
     return {json: null, failureReason: "network"}
+  } finally {
+    stopNativeObservation()
   }
 }
 
@@ -699,8 +741,8 @@ export async function checkCurrentGlassesForUpdate(
       result.latestVersionInfo?.isRequired === true
         ? true
         : result.latestVersionInfo?.isRequired === false
-          ? false
-          : !isApkDowngrade,
+        ? false
+        : !isApkDowngrade,
     manifestUrl,
     buildNumber,
     mtkFirmwareVersion,

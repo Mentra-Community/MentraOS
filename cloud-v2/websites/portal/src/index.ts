@@ -27,7 +27,7 @@ const server = serve({
   },
 });
 
-console.log(`Enterprise portal running at ${server.url}`);
+console.log(`Workspace portal running at ${server.url}`);
 console.log(`Proxying /api/* to ${coreUrl}`);
 
 async function serveBuiltApp(req: Request): Promise<Response> {
@@ -48,7 +48,7 @@ async function serveBuiltApp(req: Request): Promise<Response> {
   }
 
   if (!(await indexFile.exists())) {
-    return new Response("Enterprise portal build missing. Run bun run build in websites/portal.", {
+    return new Response("Workspace portal build missing. Run bun run build in websites/portal.", {
       status: 503,
       headers: { "content-type": "text/plain" },
     });

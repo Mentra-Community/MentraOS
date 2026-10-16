@@ -1989,8 +1989,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.requestSavedWifiNetworks(requestId, sid) ?: false
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
+        val driver = sgc ?: throw BluetoothSdkException(
+            "glasses_not_connected", "Cannot request incident logs because glasses are not connected.",
+        )
         Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
-        sgc?.sendIncidentId(incidentId, apiBaseUrl)
+        driver.sendIncidentId(incidentId, apiBaseUrl)
     }
 
     /** Push a notification into the glasses' own notification centre; rejects unsupported or disconnected devices. */

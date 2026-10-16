@@ -145,7 +145,9 @@ public class StreamCommandHandler implements ICommandHandler {
                     cancelPendingStart("Stream start superseded by a newer request");
                     return handleStartCommand(data);
                 case "stop_stream":
-                    return handleStopCommand();
+                    return data != null && (data.has("streamId") || data.has("controllerId") || data.has("request_id")
+                            || data.has("expectedSid") || data.has("expectedRevision"))
+                            ? handleConditionalStopCommand(data) : handleStopCommand();
                 case "get_stream_status":
                     Object requestId = data == null ? null : data.opt("request_id");
                     return handleStatusCommand(requestId instanceof String ? (String) requestId : null);
@@ -526,6 +528,69 @@ public class StreamCommandHandler implements ICommandHandler {
         return true;
     }
 
+    /** Check and settle one caller-owned stream on the same dispatcher that admits replacements. */
+    private boolean handleConditionalStopCommand(JSONObject data) throws JSONException {
+        String requestId = commandIdentity(data.opt("request_id"));
+        String streamId = commandIdentity(data.opt("streamId"));
+        String controllerId = commandIdentity(data.opt("controllerId"));
+        Object expectedRevision = data.opt("expectedRevision");
+        String expectedSid = data.opt("expectedSid") instanceof String ? data.optString("expectedSid") : null;
+        boolean accepted = false;
+        String reason = "invalid_identity";
+        if (requestId != null && streamId != null && controllerId != null
+                && expectedSid != null && expectedSid.matches("[a-fA-F0-9]{8}")
+                && (expectedRevision instanceof Integer || expectedRevision instanceof Long)
+                && ((Number) expectedRevision).longValue() >= 0) {
+            JSONObject snapshot = streamingManager.getStreamSnapshot();
+            if (mPendingStart != null) {
+                reason = "pending_admission";
+            } else if (!expectedSid.equals(snapshot.opt("sid"))
+                    || ((Number) expectedRevision).longValue() != snapshot.optLong("revision", -1)) {
+                reason = "snapshot_changed";
+            } else if (streamId.equals(mOwnedStreamId) && controllerId.equals(mOwnedControllerId)) {
+                accepted = handleStopCommand();
+                reason = "stop_requested";
+            } else if (mOwnedStreamId == null && controllerId.equals(mOwnedControllerId)
+                    && streamId.equals(snapshot.opt("streamId"))
+                    && snapshot.optBoolean("terminal", false)) {
+                accepted = true;
+                reason = "already_terminal";
+            } else {
+                reason = "owner_mismatch";
+            }
+        }
+        JSONObject response = currentStreamSnapshot();
+        response.put("kind", "stop_ack");
+        response.put("stopAccepted", accepted);
+        response.put("stopReason", reason);
+        if (requestId != null) response.put("request_id", requestId);
+        if (streamId != null) response.put("requestedStreamId", streamId);
+        if (controllerId != null) response.put("requestedControllerId", controllerId);
+        if (expectedSid != null) response.put("expectedSid", expectedSid);
+        if (expectedRevision instanceof Integer || expectedRevision instanceof Long) response.put("expectedRevision", expectedRevision);
+        streamingManager.sendStreamStatusResponse(accepted, response);
+        return accepted;
+    }
+
+    private static String commandIdentity(Object value) {
+        return value instanceof String && ((String) value).matches("[A-Za-z0-9][A-Za-z0-9_-]{0,119}")
+                ? (String) value : null;
+    }
+
+    private JSONObject currentStreamSnapshot() throws JSONException {
+        JSONObject snapshot = streamingManager.getStreamSnapshot();
+        snapshot.put("pendingStart", mPendingStart != null);
+        if (mPendingStart != null) {
+            snapshot.put("pendingStreamId", mPendingStart.optString("streamId", ""));
+            snapshot.put("pendingControllerId", mPendingStart.optString("controllerId", ""));
+        }
+        if (mOwnedControllerId != null) {
+            snapshot.put("controllerId", mOwnedControllerId);
+            snapshot.put("startRevision", mOwnedStartRevision);
+        }
+        return snapshot;
+    }
+
     /** Send an error stream status echoing the rejected command's streamId when it carried one. */
     private void sendStreamErrorStatus(String streamId, String details) {
         if (streamId == null || streamId.isEmpty()) {
@@ -572,7 +637,13 @@ public class StreamCommandHandler implements ICommandHandler {
             mLifecycleHandler.post(() -> handleStatusCommand(requestId));
             return true;
         }
-        JSONObject snapshot = streamingManager.getStreamSnapshot();
+        JSONObject snapshot;
+        try {
+            snapshot = currentStreamSnapshot();
+        } catch (JSONException e) {
+            Log.e(TAG, "Error reading current stream ownership", e);
+            return false;
+        }
         if (requestId != null && requestId.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,119}")) {
             try {
                 // Correlate this snapshot before the BLE transport queues its payload.
@@ -772,8 +843,8 @@ public class StreamCommandHandler implements ICommandHandler {
         if (mResourceRefresh != null) mLifecycleHandler.removeCallbacks(mResourceRefresh);
         mResourceRefresh = null;
         mOwnedStreamId = null;
-        mOwnedControllerId = null;
-        mOwnedStartRevision = -1;
+        // Keep the last admitted identity in terminal snapshots. It grants no active ownership;
+        // a new start overwrites it before publishing and mOwnedStreamId remains the active guard.
         WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
         mHotspotActivityTracker.onStreamStopped();
     }

@@ -29,6 +29,24 @@ function jobBlock(source, name) {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+test("every internal release-asset fetch has authenticated R2 credentials in its step scope", () => {
+  const directory = new URL("../workflows/", import.meta.url)
+  let fetchSteps = 0
+  for (const name of readdirSync(directory).filter((name) => name.endsWith(".yml"))) {
+    const source = workflow(name)
+    for (const step of source.split(/^      - /m).slice(1)) {
+      if (!/release-assets\.mjs(?:"|')?\s+fetch/.test(step)) continue
+      fetchSteps++
+      const configuration = step.split(/\n        run:/)[0]
+      for (const key of ["ARTIFACTS_R2_ACCESS_KEY_ID", "ARTIFACTS_R2_SECRET_ACCESS_KEY"]) {
+        assert.ok(configuration.includes(`${key}: \${{ secrets.${key} }}`), `${name}: ${step.split("\n")[0]} needs ${key}`)
+      }
+      assert.match(source, /ARTIFACTS_R2_ACCOUNT_ID: \$\{\{ vars\.ARTIFACTS_R2_ACCOUNT_ID \}\}/, name)
+    }
+  }
+  assert.ok(fetchSteps >= 15, "Expected the mobile reuse, marker and production-record fetch callers")
+})
+
 test("example finalization authenticates historical asset URL lookup", () => {
   const finalize = jobBlock(workflow("coordinated-example-release.yml"), "finalize-example")
   const step = finalize
@@ -86,6 +104,25 @@ test("release finalization reads the preserved OTA artifact layout", () => {
     finalize,
     /asg_selection="release-input\/ota\/release-assets\/\$\(jq -er \.artifactNames\.asgSelection "\$plan"\)"/,
   )
+})
+
+test("coordinated release retries restore the finalized immutable result", () => {
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
+  const restore = finalize.indexOf("name: Restore finalized release result from an earlier attempt")
+  const resultDownload = finalize.indexOf("name: ${{ needs.cloud-v2.outputs.result_artifact }}")
+  const assemble = finalize.indexOf("name: Assemble complete publication evidence")
+  const persist = finalize.indexOf("name: coordinated-release-result-")
+  const publish = finalize.indexOf("name: Publish immutable plan, package, and manifest assets")
+
+  assert.ok(restore >= 0 && restore < resultDownload)
+  assert.ok(resultDownload < assemble)
+  assert.ok(assemble < persist && persist < publish)
+  assert.match(finalize, /cmp "\$plan" "restored-release\/\$plan_name"/)
+  assert.match(finalize, /\.releaseSetId/)
+  assert.match(finalize, /\.sourceCommit/)
+  assert.match(finalize, /Finalize release manifest\n        if: .*steps\.restore-result\.outputs\.restored != 'true'/)
+  assert.match(finalize, /name: Restore finalized release result from an earlier attempt\n        id: restore-result\n        if: needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(finalize, /actions\/upload-artifact@v4\n        if: needs\.plan\.outputs\.dry_run != 'true' && steps\.restore-result\.outputs\.restored != 'true'/)
 })
 
 test("completed releases publish a version page and example notices carry the main app links", () => {
@@ -328,7 +365,61 @@ test("Cloud V2 readiness gates mobile compilation and publication", () => {
   }
 })
 
-test("Private Deployment is release-matched and recorded by the dev coordinator", () => {
+for (const readyOnAttempt of [2, 13]) {
+  test(`Cloud deployment records use each fresh Pod read (${readyOnAttempt === 2 ? "settles" : "never ready"})`, () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "cloud-deployment-settlement-"))
+    const step = workflow("reusable-coordinated-cloud-v2.yml")
+      .split("      - name: Require settled deployment and Runtime disruption policy\n")[1]
+      .split("        run: |\n")[1]
+      .split("\n      - name:")[0]
+      .replace(/^          /gm, "")
+      .replace(/\$\{\{ inputs\.deployment_environment \}\}/g, "dev")
+      .replace(/\$\{\{ inputs\.source_commit \}\}/g, "source-commit")
+      .replace(/\$\{\{ steps\.source\.outputs\.tag \}\}/g, "source-commit")
+      .replace(/\$\{\{ github\.repository \}\}/g, "Mentra-Community/MentraOS")
+      .replace(/\$\{\{ github\.run_id \}\}/g, "123")
+    // Existing record validation tests enforce readiness, exact tags and digest.
+    // Here the real workflow shell must reread its observation before each call.
+    const mocks = `
+      porter() {
+        if [[ "$*" == *"get pods"* ]]; then
+          local count=0
+          [[ ! -f pod-reads ]] || read -r count < pod-reads
+          count=$((count + 1)); echo "$count" > pod-reads
+          printf '{"attempt":%s}\n' "$count"
+        else
+          echo '{"kind":"List","items":[]}'
+        fi
+      }
+      jq() { [[ "$*" == "-er .runtimeReplicas cloud-v2-rendered-config.json" ]] && echo 1; }
+      sleep() { :; }
+      node() {
+        if [[ "$1" == *verify-runtime-deployment-policy.mjs ]]; then return 0; fi
+        [[ "$1" == *coordinated-cloud-v2-records.mjs && "$2" == create ]] || return 1
+        [[ "$*" == *"--source-commit source-commit"* && "$*" == *"--requested-tag source-commit"* &&
+          "$*" == *"--status deployed"* && "$*" == *"--pods cloud-v2-pods.json"* ]] || return 1
+        local count; read -r count < pod-reads
+        [[ "$(cat cloud-v2-pods.json)" == "$(printf '{\"attempt\":%s}' "$count")" ]] || return 1
+        echo "$count" >> record-attempts
+        [[ "$count" -ge "$READY_ON_ATTEMPT" ]] || return 1
+        echo "$count" > cloud-v2-deployment.json
+      }
+    `
+    try {
+      const result = spawnSync("bash", ["-eu", "-c", `${mocks}\n${step}`], {
+        cwd: directory, env: {...process.env, PORTER_APP_NAME: "cloud-dev", READY_ON_ATTEMPT: String(readyOnAttempt)},
+        encoding: "utf8", timeout: 5000,
+      })
+      assert.equal(result.status, readyOnAttempt === 2 ? 0 : 1, result.stderr)
+      assert.equal(Number(readFileSync(path.join(directory, "pod-reads"))), Math.min(readyOnAttempt, 12))
+      assert.equal(existsSync(path.join(directory, "cloud-v2-deployment.json")), readyOnAttempt === 2)
+      assert.equal(readFileSync(path.join(directory, "record-attempts"), "utf8").trim().split("\n").length,
+        Math.min(readyOnAttempt, 12))
+    } finally {rmSync(directory, {recursive: true, force: true})}
+  })
+}
+
+test("Private Deployment remains release-matched without gating the dev release", () => {
   const coordinator = workflow("coordinated-release.yml")
   const runtimeImage = workflow("reusable-coordinated-runtime-image.yml")
   const privateDeployment = workflow("private-deployment-dev.yml")
@@ -342,7 +433,7 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(runtimeImage, /ghcr\.io\/mentra-community\/mentra-cloud/)
   assert.match(runtimeImage, /docker\/build-push-action@/)
   assert.match(runtimeImage, /anchore\/sbom-action@/)
-  assert.equal((runtimeImage.match(/uses: actions\/attest@/g) || []).length, 2)
+  assert.equal((runtimeImage.match(/uses: actions\/attest@/g) || []).length, 3)
   assert.match(runtimeImage, /tags: \$\{\{ steps\.coordinates\.outputs\.temporary_tag \}\}/)
   assert.match(runtimeImage, /provenance: false/)
   assert.ok(
@@ -352,8 +443,33 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(runtimeImage, /- name: Verify reused image provenance/)
   assert.match(runtimeImage, /--predicate-type https:\/\/spdx\.dev\/Document\/v2\.3/)
   assert.match(runtimeImage, /coordinated-runtime-image-records\.mjs create/)
+  const packageStep = runtimeImage.indexOf("- name: Package Azure installer for the published image")
+  const attestStep = runtimeImage.indexOf("- name: Attest Azure installer")
+  const uploadStep = runtimeImage.indexOf("- name: Upload Azure installer")
+  const packageRetry = runtimeImage.slice(runtimeImage.indexOf("- name: Package Azure installer"), runtimeImage.indexOf("- name: Attest Azure installer"))
+  assert.match(packageRetry, /gh attestation verify installer-existing\.tar\.gz/)
+  assert.match(packageRetry, /release\['installerSourceCommit'\]/)
+  assert.match(packageRetry, /refusing to replace immutable bytes/)
+  assert.match(packageRetry, /mv installer-existing\.tar\.gz mentra-private-cloud\.tar\.gz/)
+  const deliveryStep = runtimeImage.indexOf("- name: Publish persistent installer downloads")
+  assert.ok(deliveryStep > uploadStep)
+  const delivery = runtimeImage.slice(deliveryStep, runtimeImage.indexOf("- name: Name coordinated result artifact"))
+  assert.match(delivery, /publish-immutable-release-asset\.mjs/)
+  assert.match(delivery, /mentra-private-cloud\.tar\.gz\.sha256/)
+  assert.match(delivery, /ARTIFACTS_R2_SECRET_ACCESS_KEY/)
+  assert.match(runtimeImageJob, /contents: write/)
+  const verificationStep = runtimeImage.indexOf("- name: Verify signed Mentra Cloud attestations")
+  assert.ok(verificationStep >= 0 && packageStep > verificationStep)
+  assert.ok(attestStep > packageStep && uploadStep > attestStep)
+  const installerSteps = runtimeImage.slice(packageStep, uploadStep)
+  assert.match(installerSteps, /--publication runtime-image-publication\.json/)
+  assert.match(installerSteps, /--sbom "\$\{\{ steps\.coordinates\.outputs\.sbom_name \}\}"/)
+  assert.match(installerSteps, /subject-path: mentra-private-cloud\.tar\.gz/)
+  assert.equal((installerSteps.match(/if: inputs\.dry_run != true/g) || []).length, 2)
+
   assert.match(privateDeploymentJob, /^    needs: \[plan, runtime-image\]$/m)
   assert.match(privateDeploymentJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
+  assert.match(privateDeploymentJob, /vars\.ENTERPRISE_DEMO_FROZEN != 'true'/)
   assert.match(privateDeploymentJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
   assert.match(privateDeploymentJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
   assert.match(
@@ -370,24 +486,49 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.doesNotMatch(privateDeployment, /az acr build/)
   assert.match(privateDeployment, /ghcr\.io\/mentra-community\/mentra-cloud/)
   assert.match(privateDeployment, /coreApiClientId:\{value:\$coreApiClientId\}/)
-  assert.match(privateDeployment, /MENTRA_JWT_PRIVATE_KEY/)
+  // Signing keys stay in the stack's Key Vault; the workflow passes only its name.
+  assert.match(privateDeployment, /keyVaultName:\{value:\$keyVaultName\}/)
+  assert.doesNotMatch(privateDeployment, /MENTRA_JWT_PRIVATE_KEY|REFRESH_TOKEN_PEPPER|TEAMS_GRAPH_CLIENT_SECRET|manageAcrPullRoleAssignment/)
   assert.match(privateDeployment, /source_digest.*image_digest|image_digest.*source_digest/s)
-  assert.match(privateDeployment, /--arg workspaceHostname "mentra\.acmeworkspace\.com"/)
-  assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-workspace"\}/)
-  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
+  assert.match(privateDeployment, /WORKSPACE_HOSTNAME: demo\.acmeworkspace\.com/)
+  assert.match(privateDeployment, /--arg workspaceHostname "\$WORKSPACE_HOSTNAME"/)
+  assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-demo"\}/)
+  // Earlier addresses stay bound for phones that enrolled with them.
+  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"mentra\.acmeworkspace\.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"\},\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
+  // Azure issues a managed certificate only for a hostname already on an app.
+  const attachHostname = privateDeployment.indexOf("az containerapp hostname add")
+  assert.ok(attachHostname >= 0)
+  assert.ok(attachHostname < privateDeployment.indexOf("az deployment group create"))
   assert.match(privateDeployment, /displayName:\{value:\$reference\[0\]\.displayName\}/)
   assert.match(privateDeployment, /az acr manifest show-metadata/)
   assert.match(privateDeployment, /latestReadyRevisionName/)
-  assert.match(finalize, /needs\.private-deployment\.result == 'success'/)
+  assert.doesNotMatch(finalize, /private-deployment|privateDeployment/)
   assert.match(finalize, /needs\.runtime-image\.result == 'success'/)
   assert.match(finalize, /--runtime-image release-input\/runtime-image\/runtime-image-publication\.json/)
-  assert.match(finalize, /--private-deployment release-input\/private-deployment\/private-deployment\.json/)
   assert.match(notify, /PRIVATE_DEPLOYMENT_RESULT: \$\{\{ needs\.private-deployment\.result \}\}/)
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
+
+  // Customers' stable install URL follows only verified, deployed releases.
+  const channel = jobBlock(coordinator, "private-cloud-channel")
+  assert.match(channel, /^    needs: \[plan, runtime-image, private-deployment\]$/m)
+  assert.match(channel, /needs\.runtime-image\.result == 'success'/)
+  assert.match(channel, /needs\.private-deployment\.result == 'success' \|\|/)
+  assert.match(
+    channel,
+    /needs\.plan\.outputs\.cloud_environment != 'dev' && needs\.private-deployment\.result == 'skipped'/,
+  )
+  assert.match(channel, /needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(channel, /cancel-in-progress: false/)
+  assert.ok(channel.indexOf("gh attestation verify") < channel.indexOf("publish-private-cloud-channel.mjs"))
+  assert.match(channel, /--bootstrap cloud-v2\/deploy\/azure\/enterprise-reference\/installer\/bootstrap\.sh/)
+  assert.doesNotMatch(finalize, /private-cloud-channel/)
 })
 
-for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", false], ["", true]]) {
-  test(`private deployment waits for both release images before HTTP probes (${stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")})`, () => {
+for (const [stuckApp, sameImage, diagnosticsUnavailable, startupLog = "private-token-must-not-print"] of [["", false], ["runtime", false], ["core", false], ["", true], ["core", false, true],
+  ["core", false, false, "private-token-must-not-print MongoServerError unsupported index option partialFilterExpression"],
+  ["core", false, false, "private-token-must-not-print aggregation pipeline is not supported"],
+  ["core", false, false, "private-token-must-not-print authorization failed OOMKilled"]]) {
+  test(`private deployment waits for both release images before HTTP probes (${diagnosticsUnavailable ? "diagnostics unavailable" : stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")}; ${startupLog})`, () => {
     const directory = mkdtempSync(path.join(tmpdir(), "private-rollout-"))
     const digest = `sha256:${"a".repeat(64)}`
     const image = `registry.example/cloud@${digest}`
@@ -399,12 +540,40 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
       .split("        run: |\n")[1]
       .split("          jq -e '.status")[0]
       .replace(/^          /gm, "")
+      .replace("source .github/scripts/azure-readiness-diagnostics.sh", readFileSync(new URL("./azure-readiness-diagnostics.sh", import.meta.url), "utf8").split('if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then')[0])
       .replace(/\$\{\{ steps\.source\.outputs\.(\w+) \}\}/g, (_, key) => ({
         acr_tag: "release-tag", source_digest: digest, image,
       })[key])
     const mocks = `
       az() {
         case "$*" in
+          "containerapp logs show"*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            [[ "$*" == *"--revision $STUCK_APP-new "* ]] || return 1
+            echo "$STARTUP_LOG"
+            ;;
+          *latestRevision:properties.latestRevisionName*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            printf '{"latestRevision":"%s-new","latestReadyRevision":"%s-old","provisioningState":"Succeeded","secrets":[{"value":"private-token-must-not-print"}]}' "$STUCK_APP" "$STUCK_APP"
+            ;;
+          *provisioningState:properties.provisioningState*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            local revision="$STUCK_APP-new" image="$TARGET_IMAGE"
+            [[ "$*" != *"--revision $STUCK_APP-old "* ]] || { revision="$STUCK_APP-old"; image=registry.example/cloud:previous; }
+            printf '{"name":"%s","active":true,"provisioningState":"Succeeded","healthState":"Unhealthy","runningState":"Failed","images":["%s"],"provisioningError":"private-token-must-not-print","template":{"env":[{"value":"private-token-must-not-print"}]}}' "$revision" "$image"
+            ;;
+          "containerapp replica list"*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            echo '[{"name":"replica-one","containers":[{"name":"core","ready":false,"restartCount":3,"runningState":{"state":"Terminated","detail":"private-token-must-not-print"},"console":"private-token-must-not-print"}],"logs":"private-token-must-not-print"}]'
+            ;;
           *properties.outputs.workspaceOrigin.value*) echo https://workspace.example ;;
           *properties.outputs.coreOrigin.value*) echo https://core.example.azurecontainerapps.io ;;
           *properties.outputs.generatedCoreHostname.value*) echo core.example.azurecontainerapps.io ;;
@@ -439,6 +608,7 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
           *) echo "Unexpected Azure command: $*" >&2; return 1 ;;
         esac
       }
+      timeout() { [[ "$1" == 8s ]] || return 1; shift; "$@"; }
       sleep() { :; }
       curl() {
         echo probe >> probes
@@ -454,7 +624,8 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
         cwd: directory,
         env: {...process.env, AZURE_RESOURCE_GROUP: "group", AZURE_REGISTRY: "registry",
           AZURE_CONTAINER_APP: "runtime", AZURE_CORE_CONTAINER_APP: "core", RUNNER_TEMP: directory,
-          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage)},
+          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage),
+          DIAGNOSTICS_UNAVAILABLE: String(!!diagnosticsUnavailable), STARTUP_LOG: startupLog},
         encoding: "utf8", timeout: 10_000,
       })
       assert.ifError(result.error)
@@ -462,6 +633,24 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
         assert.equal(result.status, 1, result.stderr)
         assert.match(result.stderr, /has no ready revision running/)
         assert.equal(existsSync(path.join(directory, "probes")), false)
+        assert.equal(readFileSync(path.join(directory, `${stuckApp}-count`), "utf8").trim(), "30")
+        assert.doesNotMatch(result.stderr + result.stdout, /private-token-must-not-print/)
+        if (diagnosticsUnavailable) {
+          assert.match(result.stderr, /metadata unavailable/)
+          assert.match(result.stderr, /Azure startup hint: sample-unavailable/)
+        } else {
+          assert.ok(result.stderr.includes(`"latestRevision":"${stuckApp}-new"`))
+          assert.ok(result.stderr.includes(`"latestReadyRevision":"${stuckApp}-old"`))
+          assert.ok(result.stderr.includes(`"images":["${image}"]`))
+          assert.match(result.stderr, /"images":\["registry\.example\/cloud:previous"\]/)
+          assert.match(result.stderr, /"ready":false,"restartCount":3,"runningState":"Terminated"/)
+          const codes = [
+            [/partialFilterExpression/, "mongo-index-option-unsupported"], [/pipeline/, "mongo-pipeline-unsupported"],
+            [/MongoServerError/, "mongo-server-error"], [/authorization failed/, "authorization-failed"], [/OOMKilled/, "out-of-memory"],
+          ].filter(([pattern]) => pattern.test(startupLog)).map(([, code]) => code)
+          for (const code of codes.length ? codes : ["unknown"]) assert.ok(result.stderr.includes(`Azure startup hint: ${code}`))
+        }
+        assert.equal(readdirSync(directory).some(name => name.startsWith("azure-startup-log.")), false)
       } else {
         assert.equal(result.status, 0, result.stderr)
         assert.equal(readFileSync(path.join(directory, "probes"), "utf8").trim().split("\n").length, 4)
@@ -590,6 +779,9 @@ test("coordinated docs publish only after finalization to the matching channel",
   // the sequence, for the app plan and the ASG client alike.
   assert.match(plan, /allocate-family-build-sequence\.mjs allocate/)
   assert.match(plan, /--owner "coordinated-run:\$\{GITHUB_RUN_ID\}"/)
+  assert.match(plan, /mkdir -p family-build-number-markers/)
+  assert.match(plan, /release-assets\.mjs fetch \\\n[\s\S]{0,180}--asset-id "\$asset_id"/)
+  assert.match(plan, /--markers-dir family-build-number-markers/)
   assert.match(plan, /--native-build-number "\$\{\{ steps\.family-number\.outputs\.build_number \}\}"/)
   assert.match(plan, /Record the family build number in the release container/)
   assert.doesNotMatch(coordinator, /310000000|--native-build-sequence/)
@@ -617,7 +809,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   // finalized as a separate record, so it can never make the beta incomplete.
   assert.match(
     finalize,
-    /^    needs: \[plan, cloud-v2, runtime-image, private-deployment, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
+    /^    needs: \[plan, cloud-v2, runtime-image, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
   )
   assert.doesNotMatch(finalize, /starter-kit|example-testflight|example-google-play/)
   assert.match(starterKitJob, /^    needs: plan$/m)
@@ -1114,4 +1306,47 @@ test("cache scope receives the generated public runtime environment, including i
   assert.match(result.stdout, /EXPO_PUBLIC_BUILD_ENV=staging/)
   assert.match(result.stdout, /EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/staging.example/)
   assert.doesNotMatch(result.stdout, /PRIVATE_TOKEN/)
+})
+
+test("app cache inputs do not gate coordinated dev and staging cloud deployments", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const push = coordinator.split("  push:\n")[1].split("  workflow_dispatch:\n")[0]
+  assert.match(push, /branches: \[dev, staging\]/)
+  assert.doesNotMatch(push, /paths(?:-ignore)?:/)
+  const cloud = jobBlock(coordinator, "cloud-v2")
+  assert.match(cloud, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2.yml/)
+  assert.match(cloud, /source_commit: \$\{\{ needs.plan.outputs.source_commit \}\}/)
+  assert.match(cloud, /deployment_environment: \$\{\{ needs.plan.outputs.cloud_environment \}\}/)
+  assert.doesNotMatch(cloud, /\n    if:/)
+  const mobile = jobBlock(coordinator, "mobile")
+  assert.match(mobile, /needs: \[plan, ota, cloud-v2\]/)
+  assert.doesNotMatch(mobile, /\n    if:/)
+})
+
+test("coordinated compiler reuse still generates the current app identity and signs a fresh build", () => {
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+  for (const platform of ["android", "ios"]) {
+    const job = jobBlock(mobile, platform)
+    const metadata = job.split("      - name: Generate exact mobile environment and package metadata\n")[1]
+      .split("\n      - name:")[0]
+    assert.match(metadata, /prepare-mobile-release-env.mjs/)
+    assert.match(metadata, /--plan release-intent\/release-plan.json/)
+    for (const key of ["release-identity", "release-set-id", "source-commit", "ota-manifest-url", "ota-manifest-sha256"]) {
+      assert.ok(metadata.includes(`--${key} "\${{ `), `${platform}: ${key}`)
+    }
+    assert.match(metadata, /write-release-metadata.mjs/)
+    assert.match(metadata, /MENTRAOS_PINNED_BUILD_NUMBER/)
+    assert.ok(job.includes(`bun run release:${platform}`))
+    assert.doesNotMatch(job, /cache-hit/)
+  }
+  const android = jobBlock(mobile, "android")
+  assert.match(android, /gradle\/actions\/setup-gradle@v4/)
+  assert.match(android, /cache-read-only: false/)
+  assert.doesNotMatch(android, /hashFiles|cloud-v2\/\*\*/)
+  assert.match(android, /Verify Android native version and production signature/)
+  assert.match(mobileScript("release-android.mjs"), /assembleRelease[^\n]*--build-cache/)
+  assert.match(mobileScript("release-android.mjs"), /bundleRelease[^\n]*--build-cache/)
+  const ios = jobBlock(mobile, "ios")
+  assert.match(ios, /mobile\/build\/CompilationCache\n\s+mobile\/build\/DerivedData\/SourcePackages/)
+  assert.match(ios, /Install iOS signing assets/)
 })

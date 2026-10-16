@@ -235,14 +235,16 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const renderGridButton = () => {
     return (
       <GlassView className={`h-16 rounded-2xl`} tintColor={buttonTint} style={{marginBottom: bottomPadding}}>
-        <TouchableOpacity
+        <Pressable
           accessibilityRole="button"
           accessibilityLabel={translate("home:openAllApps")}
           testID="home.allApps.open"
+          onAccessibilityTap={onGridButtonPress}
           onPress={onGridButtonPress}
+          style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}
           className="items-center justify-center w-16 h-16">
           <Icon name="grid" color={theme.colors.foreground} size={26} />
-        </TouchableOpacity>
+        </Pressable>
       </GlassView>
     )
   }

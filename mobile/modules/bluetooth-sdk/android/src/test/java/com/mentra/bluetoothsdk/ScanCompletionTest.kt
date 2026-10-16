@@ -37,7 +37,11 @@ class ScanCompletionTest {
             error("Legacy callbacks must not query diagnostics")
         }
         assertThat(completed).isTrue()
-        assertThat(ScanCallback::class.java.declaredMethods.map { it.name })
+        // Instance methods only: Kotlin 2.2+ compiles bodies to Java default
+        // methods plus static `access$...$jd` bridges, which nothing implements.
+        assertThat(ScanCallback::class.java.declaredMethods
+            .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name })
             .containsExactlyInAnyOrder("onResults", "onComplete", "onError")
     }
 

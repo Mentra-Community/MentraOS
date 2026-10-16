@@ -34,6 +34,7 @@ import android.os.SystemClock
 import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import androidx.core.app.ActivityCompat
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
+import com.mentra.bluetoothsdk.BluetoothSdkException
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
@@ -645,6 +646,10 @@ class MentraLive : SGCManager() {
     private var a2dpProfile: BluetoothA2dp? = null
     private var isA2dpProxyRegistered = false
     private var a2dpConnectAttempts = 0
+    private val classicAudioServiceDiscovery =
+            ClassicAudioServiceDiscovery(handler, CONNECTION_TIMEOUT_MS.toLong()) {
+                Bridge.log("LIVE: Classic: $it")
+            }
 
     private data class OutgoingBleCommandTraceInfo(
             val commandType: String,
@@ -1708,6 +1713,7 @@ class MentraLive : SGCManager() {
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
+        classicAudioServiceDiscovery.cancel()
         audioConnected = false
         notificationsEnabled = false
         currentMtu = 23
@@ -1983,6 +1989,7 @@ class MentraLive : SGCManager() {
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
+        classicAudioServiceDiscovery.cancel()
         audioConnected = false
         notificationsEnabled = false
         processSendQueueRunnable?.let { handler.removeCallbacks(it) }
@@ -2350,6 +2357,7 @@ class MentraLive : SGCManager() {
                             registerBondingReceiver()
                             bondingRetryCount = 0
                             ctkdInitiatedThisGattSession = false
+                            classicAudioServiceDiscovery.cancel()
                             Bridge.log(
                                     "LIVE: CTKD: BLE GATT up - deferring Classic/A2DP until notifications ready"
                             )
@@ -2398,6 +2406,7 @@ class MentraLive : SGCManager() {
                             // Reset audio pairing flags
                             glassesReadyReceived = false
                             ctkdInitiatedThisGattSession = false
+                            classicAudioServiceDiscovery.cancel()
                             audioConnected = false
 
                             notificationsEnabled = false
@@ -2460,6 +2469,7 @@ class MentraLive : SGCManager() {
                         glassesReadyReceived = false
                         audioConnected = false
                         ctkdInitiatedThisGattSession = false
+                        classicAudioServiceDiscovery.cancel()
 
                         notificationsEnabled = false
 
@@ -3371,10 +3381,12 @@ class MentraLive : SGCManager() {
         sendJson(json, wakeup, true)
     }
 
-    private fun sendJson(json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean): Boolean {
+    private fun sendJson(
+            json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean,
+            sessionGeneration: Long = bleSessionGeneration.get(),
+    ): Boolean {
         if (json != null) {
             try {
-                val sessionGeneration = bleSessionGeneration.get()
                 if (buildNumberInt < 5) {
                     val jsonStr = json.toString()
                     // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID: " + jsonStr);
@@ -6075,6 +6087,17 @@ class MentraLive : SGCManager() {
     }
 
     override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null) {
+            throw BluetoothSdkException(
+                "glasses_not_connected", "Cannot request incident logs because the glasses BLE link is not ready.",
+            )
+        }
+        // The JS token sync may happen after glasses_ready. Use only its current native store value.
+        val coreToken = DeviceStore.get("bluetooth", "core_token") as? String
+        if (coreToken.isNullOrBlank()) {
+            throw BluetoothSdkException("core_token_unavailable", "Cannot request incident logs without the current Core access token.")
+        }
+        val sessionGeneration = bleSessionGeneration.get()
         try {
             var base = if (apiBaseUrl != null) apiBaseUrl.trim() else ""
             if (base.isEmpty()) {
@@ -6087,13 +6110,25 @@ class MentraLive : SGCManager() {
             bleIncidentLogRelays[lKey] =
                     BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT)
 
+            val auth = JSONObject()
+            auth.put("type", "auth_token")
+            auth.put("coreToken", coreToken)
+            auth.put("timestamp", System.currentTimeMillis())
             val json = JSONObject()
             json.put("type", "upload_incident_logs")
             json.put("incidentId", incidentId)
             json.put("apiBaseUrl", base)
-            sendJson(json, true)
+            // Wake ASG with its current token before the upload command enters the same FIFO.
+            if (!sendJson(auth, true, true, sessionGeneration) ||
+                    sessionGeneration != bleSessionGeneration.get() ||
+                    !isConnected || bluetoothGatt == null || txCharacteristic == null ||
+                    !sendJson(json, true, true, sessionGeneration) || sessionGeneration != bleSessionGeneration.get()) {
+                bleIncidentLogRelays.remove(bKey)
+                bleIncidentLogRelays.remove(lKey)
+                throw BluetoothSdkException("incident_dispatch_failed", "Could not queue the glasses incident-log request.")
+            }
             Bridge.log(
-                    "LIVE: Sent incidentId to glasses for log upload: " +
+                    "LIVE: Queued incidentId to glasses for log upload: " +
                             incidentId +
                             " (BLE relay keys " +
                             bKey +
@@ -6102,7 +6137,7 @@ class MentraLive : SGCManager() {
                             ")"
             )
         } catch (e: JSONException) {
-            Log.e(TAG, "Error creating upload_incident_logs command", e)
+            throw BluetoothSdkException("incident_dispatch_failed", "Could not create the glasses incident-log request.", e)
         }
     }
 
@@ -7208,7 +7243,7 @@ class MentraLive : SGCManager() {
                                     BluetoothDevice.BOND_BONDED ->
                                             run {
                                                 Bridge.log(
-                                                        "LIVE: CTKD: ✅ Successfully bonded with device - BT Classic connection established"
+                                                        "LIVE: CTKD: Successfully bonded - checking Classic audio services"
                                                 )
                                                 markPairingTiming(
                                                         "ctkd_bonded",
@@ -7227,7 +7262,7 @@ class MentraLive : SGCManager() {
                                                 // path does this at GATT connect).
                                                 // markAudioConnected / sendAudioConnected fire
                                                 // when the A2DP path completes.
-                                                connectA2dpProfile(device)
+                                                prepareClassicAudio(device)
 
                                                 // Safety net: if glasses_ready somehow missed
                                                 // setting fullyBooted, catch up here.
@@ -7264,6 +7299,7 @@ class MentraLive : SGCManager() {
                                                 }
                                             }
                                     BluetoothDevice.BOND_NONE -> {
+                                        classicAudioServiceDiscovery.cancel()
                                         Bridge.log(
                                                 "LIVE: CTKD: ❌ Bonding failed or removed for device"
                                         )
@@ -7385,6 +7421,10 @@ class MentraLive : SGCManager() {
         classicAudioReceiver =
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
+                        if (intent?.action == BluetoothDevice.ACTION_UUID) {
+                            intent.bluetoothDeviceExtra()?.let { classicAudioServiceDiscovery.onUuids(it) }
+                            return
+                        }
                         if (intent?.action != BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED &&
                                 intent?.action != BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) return
                         val device = intent.bluetoothDeviceExtra() ?: return
@@ -7401,6 +7441,7 @@ class MentraLive : SGCManager() {
         try {
             val filter =
                     IntentFilter().apply {
+                        addAction(BluetoothDevice.ACTION_UUID)
                         addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
                         addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
                     }
@@ -7525,10 +7566,10 @@ class MentraLive : SGCManager() {
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> {
                 Bridge.log(
-                        "LIVE: CTKD: Device is already bonded - connecting A2DP audio profile"
+                        "LIVE: CTKD: Device is already bonded - checking Classic audio services"
                 )
                 markPairingTiming("ctkd_already_bonded")
-                connectA2dpProfile(device)
+                prepareClassicAudio(device)
             }
             BluetoothDevice.BOND_BONDING -> {
                 // Secure pairing firmware may request SMP as soon as GATT connects.
@@ -7587,6 +7628,19 @@ class MentraLive : SGCManager() {
         return classicAudioConnectionTracker.connected
     }
 
+    private fun prepareClassicAudio(device: BluetoothDevice) {
+        if (!canConnectClassicAudio(device)) return
+        val gatt = bluetoothGatt
+        classicAudioServiceDiscovery.connectWhenDiscovered(device) {
+            if (bluetoothGatt === gatt && canConnectClassicAudio(device)) connectA2dpProfile(device)
+        }
+    }
+
+    private fun canConnectClassicAudio(device: BluetoothDevice): Boolean =
+            !isKilled && !pairingYieldActive && isConnected && notificationsEnabled &&
+                    ctkdInitiatedThisGattSession && connectedDevice?.address == device.address &&
+                    device.bondState == BluetoothDevice.BOND_BONDED
+
     /** A2DP profile service listener for connecting to already-bonded devices */
     private val a2dpServiceListener: BluetoothProfile.ServiceListener =
             object : BluetoothProfile.ServiceListener {
@@ -7635,7 +7689,9 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: A2DP: Skipping connectA2dpWithProxy — SGC destroyed")
             return
         }
-        if (a2dpProfile == null || device == null) {
+        if (device == null || !canConnectClassicAudio(device) ||
+                !ClassicAudioServiceDiscovery.hasAudioSink(device)) return
+        if (a2dpProfile == null) {
             Bridge.log("LIVE: A2DP: Cannot connect - proxy or device is null")
             return
         }
@@ -7685,14 +7741,11 @@ class MentraLive : SGCManager() {
                 "LIVE: A2DP: Retry $a2dpConnectAttempts/$A2DP_CONNECT_MAX_ATTEMPTS in " +
                         "${A2DP_CONNECT_RETRY_MS}ms ($reason)"
         )
+        val gatt = bluetoothGatt
         handler.postDelayed(
                 Runnable {
-                    if (isKilled || pairingYieldActive || connectedDevice == null) {
-                        return@Runnable
-                    }
-                    val target = connectedDevice ?: return@Runnable
-                    if (a2dpProfile != null) {
-                        connectA2dpWithProxy(target)
+                    if (bluetoothGatt === gatt && canConnectClassicAudio(device)) {
+                        connectA2dpWithProxy(device)
                     }
                 },
                 A2DP_CONNECT_RETRY_MS
@@ -7912,6 +7965,7 @@ class MentraLive : SGCManager() {
 
         // Mark as killed to prevent reconnection attempts
         isKilled = true
+        classicAudioServiceDiscovery.cancel()
         explicitConnectByName = false
         pairingYieldActive = false
         pairingYieldAwaitingReclaim = false
@@ -7933,7 +7987,11 @@ class MentraLive : SGCManager() {
 
         // Tear down Classic (A2DP/HFP) before GATT close. Closing only the proxy left the
         // phone's system Bluetooth UI showing Mentra Live still connected.
-        val classicDevice = connectedDevice
+        // BLE loss clears connectedDevice while the OS audio profiles can remain connected.
+        // Use this session's existing Classic target before resetting the tracker below.
+        val classicDevice = connectedDevice ?: classicAudioConnectionTracker.targetForDisconnect()?.let {
+            bluetoothAdapter?.getRemoteDevice(it)
+        }
         disconnectClassicProfiles(classicDevice)
         closeA2dpProxy()
         classicAudioConnectionTracker.reset()
@@ -8010,6 +8068,7 @@ class MentraLive : SGCManager() {
         glassesReadyReceived = false
         audioConnected = false
         ctkdInitiatedThisGattSession = false
+        classicAudioServiceDiscovery.cancel()
         DeviceStore.apply("glasses", "fullyBooted", false)
         updateConnectionState(ConnTypes.DISCONNECTED)
 
@@ -9497,7 +9556,11 @@ class MentraLive : SGCManager() {
                 }
             } else {
                 // Normal single message transmission
-                transportLog("LIVE: Sending data to glasses: " + wireData, bridgeLogging)
+                transportLog(
+                        "LIVE: Sending data to glasses: " +
+                                loggableOutgoingPayload(wireData, commandTraceInfo.commandType),
+                        bridgeLogging
+                )
 
                 // Pack the data using the centralized utility with the negotiated endianness
                 val packedData =
@@ -9798,6 +9861,18 @@ class MentraLive : SGCManager() {
             else -> null
         }
     }
+
+    /**
+     * Credentials are sent unchanged but never logged; the BLE trace redacts their fields.
+     */
+    private fun loggableOutgoingPayload(payload: String, commandType: String): String =
+            try {
+                val json = JSONObject(payload)
+                if (json.has("password") || json.has("coreToken")) "<$commandType with credentials omitted>"
+                else payload
+            } catch (_: JSONException) {
+                payload
+            }
 
     private fun summarizeOutgoingMessage(payload: String?): String {
         if (payload == null || payload.isEmpty()) {

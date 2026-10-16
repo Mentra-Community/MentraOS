@@ -23,7 +23,12 @@ concurrency:
 
 jobs:
   test:
-    runs-on: self-hosted
+    # Blacksmith Linux, not the shared self-hosted Macs. Everything here is
+    # TypeScript, Jest and bun tests (no Maestro, simulators or Xcode). On
+    # the Mac this job competed with the iOS compile check for CPU and uplink
+    # and spent 75–300 s per run uploading a 1.8 GB Bun cache into the repo's
+    # 10 GB Actions cache quota.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Checkout code

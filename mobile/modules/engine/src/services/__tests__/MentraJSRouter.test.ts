@@ -306,6 +306,41 @@ describe("MentraJSRouter", () => {
     ])
   })
 
+  test("PING delivery gets correlated metadata without recording the raw payload", () => {
+    router.registerApp("com.foo")
+    const raw = JSON.stringify({payload: {type: "miniapp_ping", token: "private-value"}})
+    runtimeMock.registerCalls[0]!.sendFn(raw)
+    expect(crust.dispatchCalls[0]!.envelope).toEqual({kind: "bridge", raw, deliveryId: 1})
+    expect(logger.log.mock.calls).toContainEqual(["PING submitted for com.foo", {deliveryId: 1}])
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain("private-value")
+  })
+
+  test("native delivery rejection is caught and preserves safe error identity", async () => {
+    router.registerApp("com.foo")
+    crust.binding.mentraJsDispatchToJs = () => Promise.reject(new TypeError("token=private-value"))
+    runtimeMock.registerCalls[0]!.sendFn(JSON.stringify({payload: {type: "miniapp_ping"}}))
+    await Promise.resolve()
+    expect(logger.warn.mock.calls).toContainEqual([
+      "Native delivery rejected for com.foo",
+      {deliveryId: 1, errorClass: "TypeError"},
+    ])
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private-value")
+  })
+
+  test("native delivery diagnostics use the existing host and crash-report log path", () => {
+    router.start()
+    const metadata = {event: "native-ping-delivery", deliveryId: 5, phase: "evaluate-failed", errorClass: "IOException"}
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__log",
+      method: "warn",
+      argsJson: JSON.stringify([metadata]),
+    })
+    expect(logger.warn.mock.calls).toContainEqual(["[com.foo] console.warn", [metadata]])
+    expect(router.logRing.snapshot("com.foo")[0]).toContain("evaluate-failed")
+    expect(router.logRing.snapshot("com.foo")[0]).toContain("IOException")
+  })
+
   test("spawnAndRegister spawns + sets manifest + registers + dispatches init", async () => {
     const installedManifest = {
       permissions: [{type: "MICROPHONE", description: "transcription"}],

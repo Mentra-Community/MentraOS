@@ -19,10 +19,10 @@
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
 # Environment variables:
-#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an org API
-#                       key (msk_...) whose synthetic email is allowlisted in
-#                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
-#                       an admin user.
+#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an operator
+#                       key with the incident read scope (mak_...), or an older
+#                       admin key (msk_...) whose api-key@<keyId>.local address
+#                       is on CLOUD_CORE_ADMIN_EMAILS.
 #   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
 #                       and overrides --env.
 
@@ -38,6 +38,7 @@ note() { echo "$*" >&2; }
 
 command -v curl >/dev/null || { err "curl is required"; exit 1; }
 command -v jq >/dev/null || { err "jq is required (brew install jq)"; exit 1; }
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 REPORT_ID=""
 OUT_DIR=""
@@ -114,11 +115,10 @@ fi
 if [ -z "${MENTRA_ADMIN_TOKEN:-}" ]; then
   err "MENTRA_ADMIN_TOKEN environment variable not set"
   note ""
-  note "The admin reports API needs a bearer token with admin access:"
-  note "  - an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS, or"
-  note "  - a WorkOS access token of an admin user"
+  note "The admin reports API needs an operator key with the incident read scope"
+  note "  (created in the admin portal under Operator keys):"
   note ""
-  note "  export MENTRA_ADMIN_TOKEN=msk_..."
+  note "  export MENTRA_ADMIN_TOKEN=mak_..."
   exit 1
 fi
 
@@ -148,7 +148,7 @@ fail_for_status() {
 #
 # Uses a single backend when --env or MENTRA_CORE_URL is explicit. Otherwise,
 # tries each Cloud V2 environment until the request succeeds. This matters for
-# environment-pinned msk_<env>_* API keys and report ids whose origin is not
+# environment-pinned mak_<env>_* and msk_<env>_* keys and report ids whose origin is not
 # known when copied from a notification.
 discover_get() {
   local path="$1" body="$2" what="$3"
@@ -221,6 +221,7 @@ ext_for_content_type() {
     image/jpeg) echo "jpg" ;;
     image/webp) echo "webp" ;;
     image/gif) echo "gif" ;;
+    video/mp4) echo "mp4" ;;
     text/*) echo "txt" ;;
     *) echo "bin" ;;
   esac
@@ -251,10 +252,14 @@ while IFS=$'\t' read -r ARTIFACT_ID TYPE SOURCE CONTENT_TYPE FILENAME; do
     FAILED=$((FAILED + 1))
     continue
   fi
-  if [ "$EXT" = "json" ] && jq . "$BODY" > "$TMP_DIR/pretty" 2>/dev/null; then
-    mv "$TMP_DIR/pretty" "$OUT_DIR/$FILE"
-  else
-    mv "$BODY" "$OUT_DIR/$FILE"
+  mv "$BODY" "$OUT_DIR/$FILE"
+  if [ "$TYPE" = "state_snapshot" ] && [ "$SOURCE" = "framework-diagnostic" ]; then
+    SIZE=$(jq -r --arg id "$ARTIFACT_ID" '.assets[] | select(.artifactId == $id) | .sizeBytes' "$DETAIL")
+    SHA=$(jq -r --arg id "$ARTIFACT_ID" '.assets[] | select(.artifactId == $id) | .sha256' "$DETAIL")
+    if ! node "$SCRIPT_DIR/unpack-diagnostic-bundle.mjs" "$OUT_DIR/$FILE" "$OUT_DIR" "$SIZE" "$SHA"; then
+      err "framework diagnostic $ARTIFACT_ID failed verification or extraction"
+      FAILED=$((FAILED + 1))
+    fi
   fi
   note "  saved $FILE"
 done < <(jq -r '.report.artifacts[] | [.artifactId, .type, .source, (.contentType // ""), (.filename // "")] | @tsv' "$DETAIL")

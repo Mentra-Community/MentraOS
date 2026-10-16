@@ -11,10 +11,13 @@ import {micSessionManager} from "@mentra/engine-host-internal"
 import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
 import {UnwornPowerOffSetting} from "@/components/glasses/settings/UnwornPowerOffSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
+import {useDeployment} from "@/services/deployment"
+import {isMiniappDevelopmentAllowed} from "@/services/deployment/miniappDevelopmentPolicy"
 
 export default function SuperSettingsScreen() {
   const {goBack, push} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
+  const {activeDeployment} = useDeployment()
   const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
@@ -93,7 +96,9 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Miniapps">
-            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
+            {isMiniappDevelopmentAllowed(activeDeployment) && (
+              <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
+            )}
           </Group>
         </View>
         <View className="flex h-16" />

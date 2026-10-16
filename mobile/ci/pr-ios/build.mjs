@@ -28,9 +28,9 @@ const args = [
   "-derivedDataPath",
   "build-device",
 ]
-// Signed archives need the full CodeSign command in CI logs when macOS rejects
-// a framework. -quiet hid the identity and keychain behind errSecInternalComponent.
-if (!signed) args.unshift("-quiet")
+// The workflow wrapper preserves the complete log and filters console output.
+// Keep timing rows for both signed archives and unsigned compile checks.
+args.push("-showBuildTimingSummary")
 if (process.argv.includes("--serial")) args.push("-jobs", "1")
 if (signed) {
   args.push(

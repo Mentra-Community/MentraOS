@@ -29,11 +29,28 @@ const UserSchema = new Schema(
     /** The OEM's own user identifier (their `sub` claim). */
     tenantUserId: {type: String, required: true},
 
-    /** Tombstone set at the start of account deletion. Prevents new support
-     * telemetry storage or delivery; a capture already in flight when it is
-     * set may still reach PostHog, whose retention policy governs delivered
-     * data (see confirmAccountDeletion). */
+    /** Tombstone set when account deletion is confirmed, once, and never
+     * lifted. From then on the account is no principal (`isDeletedAccount`):
+     * no sign-in, token exchange or refresh, portal session, identity-provider
+     * token or key of it is accepted, and it cannot join a workspace. It also
+     * prevents new support telemetry storage or delivery; a capture already in
+     * flight when it is set may still reach PostHog, whose retention policy
+     * governs delivered data (see confirmAccountDeletion). */
     supportTelemetryDeletedAt: {type: Date, default: null},
+
+    /** When every step of the account's deletion had run (account.service
+     * `finishAccountDeletion`). A tombstone without it is a deletion Core
+     * still has to finish, which it does on its own. */
+    accountDeletionCompletedAt: {type: Date, default: null},
+
+    /**
+     * Set by an account-wide revocation (logout everywhere, password change or
+     * reset, account deletion). Core refuses identity-provider tokens from a
+     * sign-in before it: for Supabase, a session whose start (the earliest
+     * `amr[].timestamp`) precedes it, even after a refresh; for other
+     * providers, a token issued (`iat`) before it.
+     */
+    webSignInsRevokedAt: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
 )
@@ -41,6 +58,8 @@ const UserSchema = new Schema(
 // Compound uniqueness: one user record per (tenantId, tenantUserId) pair. Lookup
 // during token exchange to find existing or create on first sight.
 UserSchema.index({tenantId: 1, tenantUserId: 1}, {unique: true})
+// The deletions Core still has to finish: a tombstone without a completion.
+UserSchema.index({supportTelemetryDeletedAt: 1, accountDeletionCompletedAt: 1})
 
 export type User = InferSchemaType<typeof UserSchema>
 export const UserModel = registerModel("User", UserSchema)

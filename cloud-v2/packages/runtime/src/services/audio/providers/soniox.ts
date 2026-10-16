@@ -8,7 +8,7 @@
  *
  * Configuration:
  *   - Requires `SONIOX_API_KEY` env var.
- *   - Model defaults to `"stt-rt-v4"`; override via `SONIOX_MODEL`.
+ *   - Model defaults to `"stt-rt-v5"`; override via `SONIOX_MODEL`.
  *   - Audio format hardcoded to s16le, 16kHz, mono (matches our LC3 output).
  *
  * What this does NOT include (deferred from v1's SonioxSdkStream port):
@@ -41,7 +41,7 @@ import { AudioTimeline } from "./audioTimeline";
 
 const logger = createLogger("runtime").child({ module: "soniox" });
 
-const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
+const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v5";
 
 /** Preserve timing through the adapter's existing overlap merge; never guess alignment. */
 function mergeTimedTokens(

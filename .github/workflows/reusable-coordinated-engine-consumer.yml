@@ -48,6 +48,11 @@ jobs:
           node-version: "24"
           registry-url: https://registry.npmjs.org
 
+      - name: Check Mapbox SDK download authentication
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: node .github/scripts/check-mapbox-downloads.mjs
+
       - uses: actions/setup-java@v4
         with:
           java-version: "17"
@@ -58,11 +63,6 @@ jobs:
           # The action's default list includes the retired `tools` package,
           # which no longer downloads; Gradle fetches the rest it needs.
           packages: platform-tools
-
-      - name: Require native dependency credentials
-        env:
-          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
-        run: test -n "$MAPBOX_DOWNLOADS_TOKEN"
 
       - name: Prepare a clean external Engine host
         run: |
@@ -123,6 +123,11 @@ jobs:
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
+
+      - name: Check Mapbox SDK download authentication
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: node .github/scripts/check-mapbox-downloads.mjs
 
       - name: Configure Mapbox package access
         env:

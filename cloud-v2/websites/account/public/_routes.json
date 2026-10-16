@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "include": [
+    "/.well-known/openid-configuration",
+    "/.well-known/jwks.json",
+    "/oidc/*",
+    "/interaction/*",
+    "/api/account/password/forgot",
+    "/api/account/password/reset"
+  ],
+  "exclude": []
+}

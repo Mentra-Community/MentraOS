@@ -2,6 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.mentra.asg_client.io.bes.log.BesLivenessLog;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
@@ -14,14 +15,7 @@ import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.utils.IncidentLogBleRelayNaming;
 import com.mentra.asg_client.utils.IncidentUploadOkHttp;
 import com.mentra.asg_client.utils.ServerConfigUtil;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.MediaType;
@@ -29,8 +23,16 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Handles the "upload_incident_logs" BLE command from the phone.
@@ -196,13 +198,11 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                                                         + " ("
                                                         + logs.length()
                                                         + " entries)");
-                                        if (mK900CommandHandler != null) {
-                                            mK900CommandHandler.requestBesLogs(
-                                                    incidentId,
-                                                    mContext,
-                                                    mConfigurationManager,
-                                                    apiBaseUrl);
-                                        }
+                                        new Thread(
+                                                        () ->
+                                                                captureBesLogsOverHttp(
+                                                                        incidentId, apiBaseUrl))
+                                                .start();
                                     } else {
                                         Log.e(
                                                 TAG,
@@ -228,7 +228,29 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
         new Thread(() -> relayLogsViaBle(incidentId)).start();
     }
 
-    private void relayLogsViaBle(String incidentId) {
+    synchronized void captureBesLogsOverHttp(String incidentId, String apiBaseUrl) {
+        if (mK900CommandHandler == null) return;
+        try {
+            BesLogManager session =
+                    mK900CommandHandler.requestBesLogs(
+                            incidentId, mContext, mConfigurationManager, apiBaseUrl, null);
+            awaitBesCapture(session, incidentId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "HTTP incident BES capture interrupted for " + incidentId, e);
+        }
+    }
+
+    private void awaitBesCapture(BesLogManager session, String incidentId)
+            throws InterruptedException {
+        if (session != null && !session.awaitCollection(BES_WAIT_SEC, TimeUnit.SECONDS)) {
+            Log.w(TAG, "Incident BES capture wait expired after partial settlement: " + incidentId);
+        }
+    }
+
+    // Both reports share one BES capture session and one BLE file-transfer slot.
+    // Hold this handler's monitor for the complete B/L transaction, not just its idle check.
+    synchronized void relayLogsViaBle(String incidentId) {
         IBluetoothManager bt =
                 mServiceManager != null ? mServiceManager.getBluetoothManager() : null;
         if (bt == null) {
@@ -247,78 +269,94 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                 return;
             }
 
-            CountDownLatch besDone = new CountDownLatch(1);
-            AtomicReference<String> firmwareJson = new AtomicReference<>(null);
-
+            BesLogManager session = null;
             if (mK900CommandHandler != null) {
-                mK900CommandHandler.requestBesLogs(
-                        incidentId,
-                        mContext,
-                        mConfigurationManager,
-                        json -> {
-                            firmwareJson.set(json);
-                            besDone.countDown();
-                        });
-            } else {
-                besDone.countDown();
+                // Select BLE delivery; the exact session supplies its frozen JSON after settlement,
+                // independently from callback scheduling or the handler's ownership monitor.
+                session = mK900CommandHandler.requestBesLogs(
+                        incidentId, mContext, mConfigurationManager, "", json -> {});
             }
+            awaitBesCapture(session, incidentId);
+            String fwJson = session != null
+                    ? session.getCollectedFirmwareJson()
+                    : BesLogManager.buildFirmwareUploadJson("");
 
-            boolean besFinished = besDone.await(BES_WAIT_SEC, TimeUnit.SECONDS);
-            if (!besFinished) {
+            relayFileViaBle(bt, incidentId, "glasses_firmware", 'B', fwJson);
+
+            // A refused or failed firmware transfer must not discard independent Java logs.
+            // Only a freshly connected, idle transport can start the next file; never clear it.
+            boolean connected = bt.isConnected();
+            boolean transferActive = bt.isFileTransferInProgress();
+            if (!connected || transferActive) {
                 Log.w(
                         TAG,
-                        "Timed out waiting for BES log collection — sending empty firmware payload");
-            }
-            String fwJson = firmwareJson.get();
-            if (fwJson == null) {
-                fwJson = BesLogManager.buildFirmwareUploadJson("");
-            }
-
-            String bName = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B');
-            File bFile = new File(mContext.getCacheDir(), bName);
-            writeUtf8File(bFile, fwJson);
-
-            if (!bt.sendFile(bFile.getAbsolutePath())) {
-                Log.e(TAG, "Failed to start BLE transfer for firmware log file " + bName);
-                deleteQuietly(bFile);
-                return;
-            }
-            boolean firmwareIdle = waitUntilFileTransferIdle(bt, FILE_TRANSFER_MAX_WAIT_MS);
-            deleteQuietly(bFile);
-            if (!firmwareIdle) {
-                Log.e(
-                        TAG,
-                        "Timed out waiting for firmware BLE transfer — aborting relay for incident "
-                                + incidentId);
+                        "Incident BLE relay incidentId="
+                                + incidentId
+                                + " source=glasses stage=not_started connected="
+                                + connected
+                                + " transferActive="
+                                + transferActive);
                 return;
             }
 
-            String logcatJson = buildGlassesLogcatJson();
-            String lName = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'L');
-            File lFile = new File(mContext.getCacheDir(), lName);
-            writeUtf8File(lFile, logcatJson);
-
-            if (!bt.sendFile(lFile.getAbsolutePath())) {
-                Log.e(TAG, "Failed to start BLE transfer for logcat file " + lName);
-                deleteQuietly(lFile);
-                return;
-            }
-            boolean logcatIdle = waitUntilFileTransferIdle(bt, FILE_TRANSFER_MAX_WAIT_MS);
-            deleteQuietly(lFile);
-            if (!logcatIdle) {
-                Log.e(
-                        TAG,
-                        "Timed out waiting for logcat BLE transfer — relay incomplete for incident "
-                                + incidentId);
-                return;
-            }
-
-            Log.i(TAG, "✅ BLE relay sequence completed for incident " + incidentId);
+            relayFileViaBle(bt, incidentId, "glasses", 'L', buildGlassesLogcatJson());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             Log.e(TAG, "BLE relay interrupted for incident " + incidentId, e);
         } catch (Exception e) {
             Log.e(TAG, "BLE relay failed for incident " + incidentId, e);
+        }
+    }
+
+    private void relayFileViaBle(
+            IBluetoothManager bt, String incidentId, String source, char prefix, String json)
+            throws InterruptedException {
+        File file =
+                new File(
+                        mContext.getCacheDir(),
+                        IncidentLogBleRelayNaming.bleFileBaseName(incidentId, prefix));
+        String diagnostic = "Incident BLE relay incidentId=" + incidentId + " source=" + source;
+        try {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException(
+                        "Incident BLE relay was interrupted before transfer");
+            }
+            writeUtf8File(file, json);
+            boolean connected = bt.isConnected();
+            boolean transferActive = bt.isFileTransferInProgress();
+            if (!connected || transferActive) {
+                Log.w(
+                        TAG,
+                        diagnostic
+                                + " stage=not_started connected="
+                                + connected
+                                + " transferActive="
+                                + transferActive);
+                return;
+            }
+            boolean started = bt.sendFile(file.getAbsolutePath());
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Incident BLE transfer startup was interrupted");
+            }
+            if (!started) {
+                Log.w(TAG, diagnostic + " stage=start_refused");
+                return;
+            }
+            Log.i(TAG, diagnostic + " stage=started");
+            boolean idle = waitUntilFileTransferIdle(bt, FILE_TRANSFER_MAX_WAIT_MS);
+            // Idle also follows transfer failure. This is transport settlement, not an upload ACK.
+            if (idle) {
+                Log.i(TAG, diagnostic + " stage=settled");
+            } else {
+                Log.w(TAG, diagnostic + " stage=wait_expired");
+            }
+        } catch (InterruptedException e) {
+            Log.w(TAG, diagnostic + " stage=interrupted");
+            throw e;
+        } catch (Exception e) {
+            Log.e(TAG, diagnostic + " stage=failed", e);
+        } finally {
+            deleteQuietly(file);
         }
     }
 
@@ -343,8 +381,8 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private JSONArray buildGlassesLogEntries() {
         JSONArray logcat = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
         JSONArray liveness = BesLivenessLog.recentEntries();
-        return mergeByTimestamp(mergeByTimestamp(logcat, liveness),
-                OtaHttpRequest.recentEntries(mContext));
+        return mergeByTimestamp(
+                mergeByTimestamp(logcat, liveness), OtaHttpRequest.recentEntries(mContext));
     }
 
     /** Both inputs are already ascending by timestamp, so a single pass interleaves them. */
@@ -400,7 +438,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
      * @return {@code true} if the transfer became idle within the deadline, {@code false} if the
      *     deadline was reached while still in progress
      */
-    private boolean waitUntilFileTransferIdle(IBluetoothManager bt, long maxWaitMs)
+    boolean waitUntilFileTransferIdle(IBluetoothManager bt, long maxWaitMs)
             throws InterruptedException {
         long deadline = System.currentTimeMillis() + maxWaitMs;
         while (bt.isFileTransferInProgress() && System.currentTimeMillis() < deadline) {

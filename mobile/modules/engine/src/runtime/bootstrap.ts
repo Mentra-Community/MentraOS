@@ -6,6 +6,8 @@
  * directly instead of exposing host-facing adapter bags.
  */
 
+import {isTrustedSystemMiniappRelease} from "../services/systemMiniappTrust"
+
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
@@ -42,8 +44,26 @@ export interface IslandConfigValues {
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
   localMiniappAllowlist?: readonly string[] | null
+  /** Live host access gate, composed with deployment policy at listing and launch. */
+  isLocalMiniappAllowed?: (packageName: string) => boolean
   /** Provenance-aware policy for workspace SYSTEM and managed miniapps. */
   localMiniappPolicy?: LocalMiniappPolicy
+  /**
+   * Host availability per mode: `interactive` for user-facing discovery and
+   * launches, `background` for invisible, invocation-scoped action wakes.
+   * Omitted allows both.
+   */
+  isMiniappAvailable?: (packageName: string, mode: MiniappAvailabilityMode) => boolean
+  /** User-facing Mentra App version, compared with a release's `minHostVersion`. */
+  hostVersion?: string
+  /** Semver range of Mentra Miniapp SDK versions (`sdkVersion`) this host runs. */
+  supportedMiniappSdkRange?: string
+  /** Package identities backed by miniapp ZIPs shipped in this host build. */
+  bundledSystemMiniappPackages?: readonly string[]
+  /** Store packages selected by the build; each must also be a bundled package. */
+  bundledStoreMiniappPackages?: readonly string[]
+  /** Bundled package -> the bundled Store allowed to update it automatically. */
+  bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -80,6 +100,8 @@ export interface LocalMiniappPolicy {
   systemPackageNames: readonly string[] | null
   managed: readonly ManagedMiniappPolicyEntry[]
 }
+
+export type MiniappAvailabilityMode = "interactive" | "background"
 
 export type IslandFeatureName = "managedStreams" | "nativeMeetings" | "cloudSpeech" | "onDeviceSpeech" | "navigation"
 
@@ -123,7 +145,13 @@ export interface IslandConfigureOptions {
   ui?: IslandUiSeams
 }
 
+/** Whether the host currently offers this miniapp for user launches or invisible maintenance. */
+export function isMiniappAvailable(packageName: string, mode: MiniappAvailabilityMode = "interactive"): boolean {
+  return options?.config?.isMiniappAvailable?.(packageName, mode) ?? true
+}
+
 export function isLocalMiniappPackageAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (policy) {
     return (
@@ -137,9 +165,28 @@ export function isLocalMiniappPackageAllowed(packageName: string): boolean {
 }
 
 export function isOfflineSystemMiniappAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
   return policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
+}
+
+/** The built-in system miniapp that holds the Miniapp Developer tools. */
+const MINIAPP_DEVELOPER_PACKAGE_NAME = "com.mentra.miniappdev"
+
+/**
+ * Whether this deployment allows miniapp development: developer servers,
+ * scanned release QRs and authoring snapshots, of any package. It follows the
+ * deployment's approval of the Miniapp Developer tools; Super Mode never
+ * overrides it.
+ */
+export function isMiniappDevelopmentAllowed(): boolean {
+  return isOfflineSystemMiniappAllowed(MINIAPP_DEVELOPER_PACKAGE_NAME)
+}
+
+/** Refuse to register or install a developer build where development is off. */
+export function assertMiniappDevelopmentAllowed(): void {
+  if (!isMiniappDevelopmentAllowed()) throw new Error("This deployment does not allow miniapp development")
 }
 
 export function isInstalledMiniappAllowed(
@@ -147,16 +194,23 @@ export function isInstalledMiniappAllowed(
   version: string | undefined,
   releaseIdentity: {
     source: string
+    storePackageName?: string
     bundleSha256?: string
     deploymentId?: string
     deploymentOrigin?: string
   } | null,
 ): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
 
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
   if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
+  // A compatible update of an approved bundled package, applied by the Store the
+  // build assigns to it, keeps the visibility of the bundled release it replaced.
+  if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
+  // A release a developer installed from the scanner's release QR.
+  if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(
@@ -167,6 +221,16 @@ export function isInstalledMiniappAllowed(
       entry.deploymentId === releaseIdentity.deploymentId &&
       entry.deploymentOrigin === releaseIdentity.deploymentOrigin,
   )
+}
+
+/**
+ * A developer build (live server or `dev-*` snapshot) under `packageName`.
+ * Where development is allowed it may add a package or stand in for an
+ * installed one, managed or not.
+ */
+export function isDevMiniappAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
+  return isMiniappDevelopmentAllowed()
 }
 
 /** Read a defensive package-scoped configuration snapshot. */
@@ -196,30 +260,53 @@ export function configure(opts: IslandConfigureOptions): void {
     console.warn("engine.configure() called after engine.start(); ignored — stop() the runtime before reconfiguring")
     return
   }
-  const localMiniappAllowlist = opts.config?.localMiniappAllowlist
-  const localMiniappPolicy = opts.config?.localMiniappPolicy
   options = {
     ...opts,
-    config: opts.config
-      ? {
-          ...opts.config,
-          localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
-            ? Object.freeze([...localMiniappAllowlist])
-            : localMiniappAllowlist,
-          localMiniappPolicy: localMiniappPolicy
-            ? Object.freeze({
-                systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
-                  ? Object.freeze([...localMiniappPolicy.systemPackageNames])
-                  : null,
-                managed: Object.freeze(
-                  localMiniappPolicy.managed.map((entry) =>
-                    Object.freeze({...entry, sha256: entry.sha256.toLowerCase()}),
-                  ),
-                ),
-              })
-            : undefined,
-        }
+    config: opts.config ? {...opts.config, ...frozenMiniappPolicy(opts.config)} : undefined,
+  }
+}
+
+function frozenMiniappPolicy(
+  config: Pick<IslandConfigValues, "localMiniappAllowlist" | "localMiniappPolicy">,
+): Pick<IslandConfigValues, "localMiniappAllowlist" | "localMiniappPolicy"> {
+  const {localMiniappAllowlist, localMiniappPolicy} = config
+  return {
+    localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
+      ? Object.freeze([...localMiniappAllowlist])
+      : localMiniappAllowlist,
+    localMiniappPolicy: localMiniappPolicy
+      ? Object.freeze({
+          systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
+            ? Object.freeze([...localMiniappPolicy.systemPackageNames])
+            : null,
+          managed: Object.freeze(
+            localMiniappPolicy.managed.map((entry) => Object.freeze({...entry, sha256: entry.sha256.toLowerCase()})),
+          ),
+        })
       : undefined,
+  }
+}
+
+/** A workspace's miniapp catalog: the releases it manages, its allowlist and miniapp configuration. */
+export type MiniappPolicy = Pick<
+  IslandConfigValues,
+  "localMiniappAllowlist" | "localMiniappPolicy" | "miniappConfiguration"
+>
+
+/**
+ * Replace the workspace's miniapp catalog on a running runtime, as
+ * `updateUiSeams` does for UI seams. Installs, launches and miniapp
+ * configuration read it when they run. Everything else stays as configured:
+ * endpoints, auth and feature switches belong to the started session.
+ */
+export function updateMiniappPolicy(policy: MiniappPolicy): void {
+  if (!options?.config) {
+    console.warn("engine.updateMiniappPolicy() called before engine.configure(); ignored")
+    return
+  }
+  options = {
+    ...options,
+    config: {...options.config, ...frozenMiniappPolicy(policy), miniappConfiguration: policy.miniappConfiguration},
   }
 }
 

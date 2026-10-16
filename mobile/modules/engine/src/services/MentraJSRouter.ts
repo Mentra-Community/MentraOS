@@ -107,12 +107,17 @@ interface SpawnCache {
   miniappJs: string
   permissions: string[]
   installedManifest?: InstalledMiniappManifest
+  /** Host-derived SYSTEM trust from install provenance; never from the manifest. */
+  hostTrustedSystem: boolean
+  /** Whether this context is normal user-visible activity (false for a transient action wake). */
+  projectRunning: boolean
 }
 
 export class MentraJSRouter {
   private subscription: EventSubscription | null = null
   private readonly registered: Set<string> = new Set()
   private readonly replacementConnects = new Set<string>()
+  private nextDeliveryId = 0
   /** The host's id for each package's current context, sent to it in `init`. */
   private readonly sessions = new Map<string, string>()
   private sessionSeq = 0
@@ -219,22 +224,29 @@ export class MentraJSRouter {
    * (e.g. {@link spawnAndRegister} below, or the host's miniapp launch
    * pipeline) should call this once per spawn.
    */
-  registerApp(packageName: string, installedManifest?: InstalledMiniappManifest): void {
+  registerApp(
+    packageName: string,
+    installedManifest?: InstalledMiniappManifest,
+    hostTrustedSystem = false,
+    projectRunning = true,
+  ): void {
     this.runtime.registerApp(
       packageName,
       (raw: string) => {
         this.dispatchBridgeRaw(packageName, raw)
       },
       installedManifest,
+      hostTrustedSystem,
+      projectRunning,
     )
     this.registered.add(packageName)
     this.replacementConnects.add(packageName)
     this.uiRouter?.backgroundStarting(packageName)
     this.armReadyDeadline(packageName)
-    // JSContext is the source-of-truth for "miniapp running". The
-    // home tile / tray reads this registry to project the `running`
-    // flag — UI WebView open/close is separate.
-    miniappRunningRegistry.add(packageName)
+    // A context normally represents user activity and projects into the
+    // running tray. A transient action wake deliberately does not: context
+    // liveness and user-visible activity are separate.
+    if (projectRunning) miniappRunningRegistry.add(packageName)
   }
 
   /**
@@ -248,7 +260,13 @@ export class MentraJSRouter {
   async spawnAndRegister(
     packageName: string,
     miniappJs: string,
-    options?: {permissions?: string[]; installedManifest?: InstalledMiniappManifest},
+    options?: {
+      permissions?: string[]
+      installedManifest?: InstalledMiniappManifest
+      hostTrustedSystem?: boolean
+      /** False for an invocation-scoped transient action wake. */
+      projectRunning?: boolean
+    },
   ): Promise<boolean> {
     if (!this.crust.mentraJsSpawn) {
       this.logger.warn("mentraJsSpawn not available — host binding missing native function")
@@ -273,7 +291,9 @@ export class MentraJSRouter {
     if (options?.permissions && options.permissions.length > 0) {
       await this.crust.mentraJsSetManifest(packageName, options.permissions)
     }
-    this.registerApp(packageName, options?.installedManifest)
+    const hostTrustedSystem = options?.hostTrustedSystem ?? false
+    const projectRunning = options?.projectRunning ?? true
+    this.registerApp(packageName, options?.installedManifest, hostTrustedSystem, projectRunning)
     // Cache spawn arguments so the crash controller can respawn the
     // same code after a backoff. permissions + manifest are cached too
     // because the native side resets setManifest on every spawn and
@@ -283,6 +303,8 @@ export class MentraJSRouter {
       miniappJs,
       permissions: options?.permissions ?? [],
       installedManifest: options?.installedManifest,
+      hostTrustedSystem,
+      projectRunning,
     })
     this.crashController?.onSpawn(packageName)
 
@@ -305,6 +327,14 @@ export class MentraJSRouter {
    * to respawn (with delay) or leave the context dead.
    */
   private handleCrash(packageName: string, reason: string): void {
+    const cached = this.spawnCache.get(packageName)
+    // A transient action cannot resume after a crash. Remove the worker (which
+    // fails its pending invocations); only a new invocation may spawn another.
+    if (cached?.projectRunning === false) {
+      this.logger.warn(`transient background context crashed for ${packageName}`, {reason})
+      void this.unregister(packageName)
+      return
+    }
     // The native context is dead the instant a crash is observed — invalidate
     // its CONNECT handshake NOW so waitForConnect() blocks through the respawn
     // backoff window instead of resolving immediately against the dead context
@@ -323,7 +353,6 @@ export class MentraJSRouter {
       this.uiRouter?.backgroundStopped(packageName)
       return
     }
-    const cached = this.spawnCache.get(packageName)
     if (!cached) {
       this.logger.warn(`crash for ${packageName} but no cached spawn args — cannot respawn`)
       controller.onCrash(packageName, reason)
@@ -368,7 +397,7 @@ export class MentraJSRouter {
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
-        this.registerApp(packageName, cached.installedManifest)
+        this.registerApp(packageName, cached.installedManifest, cached.hostTrustedSystem, cached.projectRunning)
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.
@@ -378,6 +407,20 @@ export class MentraJSRouter {
       })()
     }, outcome.scheduleRespawnAfterMs)
     this.respawnTimers.set(packageName, timer)
+  }
+
+  /** Promote an already-spawned transient context into normal user activity. */
+  projectRunning(packageName: string): void {
+    if (!this.registered.has(packageName) || miniappRunningRegistry.has(packageName)) return
+    miniappRunningRegistry.add(packageName)
+    this.runtime.onUserActivated(packageName)
+    const cached = this.spawnCache.get(packageName)
+    if (cached) cached.projectRunning = true
+  }
+
+  /** True iff the context is projected as user-visible running activity. */
+  isProjectedRunning(packageName: string): boolean {
+    return miniappRunningRegistry.has(packageName)
   }
 
   private summarizeReason(payload: unknown, method: string): string {
@@ -673,6 +716,22 @@ export class MentraJSRouter {
    * {@link registerApp} to deliver runtime responses and events locally.
    */
   private dispatchBridgeRaw(packageName: string, raw: string): void {
-    void this.crust.mentraJsDispatchToJs(packageName, {kind: "bridge", raw})
+    const deliveryId = this.peekBridgePayloadType(raw)?.type === "miniapp_ping" ? ++this.nextDeliveryId : undefined
+    const envelope = deliveryId === undefined ? {kind: "bridge", raw} : {kind: "bridge", raw, deliveryId}
+    if (deliveryId !== undefined) this.logger.log(`PING submitted for ${packageName}`, {deliveryId})
+    const failed = (error: unknown) => {
+      // Keep content-bearing exception text and raw bridge payloads out of report diagnostics.
+      this.logger.warn(`Native delivery rejected for ${packageName}`, {
+        deliveryId,
+        errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      })
+    }
+    try {
+      const result = this.crust.mentraJsDispatchToJs(packageName, envelope)
+      if (result) void result.catch(failed)
+    } catch (error) {
+      failed(error)
+      throw error
+    }
   }
 }

@@ -2,10 +2,13 @@ import { ulid } from "ulid";
 import { EnterpriseOrgModel, type EnterpriseOrg } from "../../models/enterprise-org.model";
 import { OemModel } from "../../models/oem.model";
 import { TrustedIssuerModel, type TrustedIssuer } from "../../models/trusted-issuer.model";
+import { isConfiguredOidcTenant } from "../oem.service";
+import { revokePortalSessionsForSource } from "../signin/browser-session.service";
 
+/** The Core user acting in the enterprise portal. Enterprise orgs are owned by Core users. */
 export interface EnterpriseUserIdentity {
-  id: string;
-  email: string;
+  mentraUserId: string;
+  email: string | null;
 }
 
 export interface UpsertEnterpriseOrgInput {
@@ -23,7 +26,7 @@ export interface UpsertTrustedIssuerInput {
 
 export class EnterpriseService {
   async getPrimaryOrgForUser(user: EnterpriseUserIdentity) {
-    const org = await EnterpriseOrgModel.findOne({ ownerUserId: user.id })
+    const org = await EnterpriseOrgModel.findOne({ ownerUserId: user.mentraUserId })
       .sort({ createdAt: 1 })
       .lean();
     return org ? serializeEnterpriseOrg(org) : null;
@@ -33,13 +36,13 @@ export class EnterpriseService {
     const displayName = normalizeDisplayName(input.displayName);
     const tenantId = normalizeTenantId(input.tenantId);
     const slug = slugify(displayName);
-    const existing = await EnterpriseOrgModel.findOne({ ownerUserId: user.id }).sort({ createdAt: 1 });
+    const existing = await EnterpriseOrgModel.findOne({ ownerUserId: user.mentraUserId }).sort({ createdAt: 1 });
 
     if (!existing) {
       await assertTenantIdAvailable(tenantId);
       const created = await EnterpriseOrgModel.create({
         enterpriseOrgId: `ent_${ulid()}`,
-        ownerUserId: user.id,
+        ownerUserId: user.mentraUserId,
         tenantId,
         displayName,
         slug: await uniqueSlug(slug),
@@ -88,7 +91,7 @@ export class EnterpriseService {
     const target = existingEnvironment ?? new TrustedIssuerModel({
       trustedIssuerId: `ti_${ulid()}`,
       enterpriseOrgId: org.id,
-      createdBy: user.id,
+      createdBy: user.mentraUserId,
     });
 
     target.environmentName = environmentName;
@@ -96,7 +99,7 @@ export class EnterpriseService {
     target.jwksUrl = jwksUrl;
     target.subjectClaim = subjectClaim;
     target.enabled = input.enabled ?? true;
-    target.updatedBy = user.id;
+    target.updatedBy = user.mentraUserId;
     await target.save();
     return serializeTrustedIssuer(target.toObject());
   }
@@ -106,8 +109,10 @@ export class EnterpriseService {
     const issuer = await TrustedIssuerModel.findOne({ trustedIssuerId, enterpriseOrgId: org.id });
     if (!issuer) throw new EnterpriseServiceError("not_found", "trusted issuer not found", 404);
     issuer.enabled = enabled;
-    issuer.updatedBy = user.id;
+    issuer.updatedBy = user.mentraUserId;
     await issuer.save();
+    // A disabled sign-in source ends its portal sessions.
+    if (!enabled) await revokePortalSessionsForSource(org.tenantId, "trusted_issuer_disabled");
     return serializeTrustedIssuer(issuer.toObject());
   }
 
@@ -173,6 +178,10 @@ const RESERVED_TENANT_IDS = new Set(["mentra"]);
 async function assertTenantIdAvailable(tenantId: string): Promise<void> {
   if (RESERVED_TENANT_IDS.has(tenantId)) {
     throw new EnterpriseServiceError("tenant_id_reserved", "Tenant ID is reserved", 409);
+  }
+  // A deployment OIDC provider's tenant is a sign-in source of its own.
+  if (isConfiguredOidcTenant(tenantId)) {
+    throw new EnterpriseServiceError("tenant_id_taken", "Tenant ID is already registered", 409);
   }
   const [enterprise, oem] = await Promise.all([
     EnterpriseOrgModel.findOne({ tenantId }).lean(),
@@ -246,7 +255,6 @@ function serializeEnterpriseOrg(org: EnterpriseOrg & { createdAt?: Date; updated
   return {
     id: org.enterpriseOrgId,
     ownerUserId: org.ownerUserId,
-    workosOrgId: org.workosOrgId ?? null,
     tenantId: org.tenantId,
     name: org.displayName,
     slug: org.slug,

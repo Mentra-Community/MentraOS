@@ -217,7 +217,7 @@ protocol SGCManager {
 
     // MARK: - Incident Reporting
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?)
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) throws
 
     // MARK: - Gallery
 

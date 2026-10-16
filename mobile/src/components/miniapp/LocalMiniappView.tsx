@@ -1,7 +1,7 @@
 import {miniappHistoryBridge} from "./historyBridge"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
-import {WebView, type WebViewMessageEvent} from "react-native-webview"
+import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
@@ -23,6 +23,7 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
+import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -336,8 +337,10 @@ function LocalMiniappView({
       // launcher to ensure the background context is running (idempotent — a
       // re-foreground of a live miniapp just rebuilds this WebView half) and
       // mounts the resolved UI entry it hands back. Errors throw and are caught
-      // by launch().catch below.
-      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort})
+      // by launch().catch below. A context this spawns is the person opening
+      // the miniapp's screen: a user launch to Fleet (a Home tap's own start
+      // reports itself).
+      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort}, {trigger: "user"})
 
       // Deliberately AFTER the spawn, not before: if we were superseded while
       // spawning, leave the JSContext alive (background miniapps keep running
@@ -587,14 +590,21 @@ function LocalMiniappView({
     onExitRef.current()
   }, [packageName])
 
-  const handleError = useCallback(() => {
-    if (!packageName) return
-    useStressTestStore.getState().recordEvent({
-      packageName,
-      at: Date.now(),
-      kind: "error",
-    })
-  }, [packageName])
+  const handleError = useCallback<NonNullable<WebViewProps["onError"]>>(
+    (event) => {
+      if (!packageName) return
+      console.warn(
+        `[LocalMiniappView:${packageName}] WebView load error`,
+        getWebViewLoadErrorDiagnostics(event.nativeEvent),
+      )
+      useStressTestStore.getState().recordEvent({
+        packageName,
+        at: Date.now(),
+        kind: "error",
+      })
+    },
+    [packageName],
+  )
 
   // Dev hot-reload: when the dev server signals a reload for THIS miniapp
   // (e.g. a file under src/ui/ changed), refresh the WebView. Because the dev

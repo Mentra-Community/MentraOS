@@ -5,12 +5,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerReportTools } from "../src/tools/reports";
 
 const requests: URL[] = [];
+const report = {reportId: "rep_fixture", kind: "bug", status: "ready", mentraUserId: "mu_fixture",
+  report: {actualBehavior: "fixture report"}, trigger: null, feedback: null, artifactCount: 355,
+  createdAt: "2026-10-09T17:06:44.349Z", updatedAt: "2026-10-09T17:06:57.479Z"};
 const api = Bun.serve({
   hostname: "127.0.0.1", port: 0,
   fetch(request) {
     expect(request.headers.get("authorization")).toBe("Bearer test-admin-token");
     requests.push(new URL(request.url));
-    return Response.json({ reports: [{ reportId: "rep_fixture", kind: "bug" }] });
+    return Response.json({ reports: [report] });
   },
 });
 const server = new McpServer({ name: "report-list-test", version: "1.0.0" });
@@ -42,10 +45,18 @@ test("MCP forwards legacy kind, new category and combined queries without rewrit
     { category: "internal" }, { category: "testing" }, { kind: "bug", category: "internal" }]) {
     const result = await client.callTool({ name: "report_list", arguments: { ...filter, full: true } });
     expect(result.isError).not.toBe(true);
-    expect(result.content).toEqual([{ type: "text", text: JSON.stringify([{ reportId: "rep_fixture", kind: "bug" }], null, 2) }]);
+    expect(result.content).toEqual([{ type: "text", text: JSON.stringify([report], null, 2) }]);
     expect(requests.at(-1)?.pathname).toBe("/api/admin/reports");
     expect(Object.fromEntries(requests.at(-1)!.searchParams)).toEqual({ ...filter, limit: "25" });
   }
+});
+
+test("MCP compact lists retain artifact counts without requiring an inventory", async () => {
+  const result = await client.callTool({name: "report_list", arguments: {category: "testing"}});
+  expect(result.isError).not.toBe(true);
+  expect(result.content).toEqual([{type: "text", text: JSON.stringify([{reportId: report.reportId,
+    kind: report.kind, status: report.status, mentraUserId: report.mentraUserId,
+    createdAt: report.createdAt, summary: "fixture report", trigger: null, artifactCount: 355}], null, 2)}]);
 });
 
 test("MCP rejects invalid filter values before contacting the report API", async () => {

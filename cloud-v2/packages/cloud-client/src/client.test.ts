@@ -8,11 +8,14 @@ import type {CloudClientTransports, WebSocketLike} from "./transports"
 
 /** Runs delayed callbacks immediately so retry backoff does not slow tests. */
 const immediateTimers: CloudClientTimers = {
-  setTimeout: (callback) => {
-    callback()
-    return 0
+  setTimeout: (callback, delayMs) => {
+    if (delayMs < 10_000) {
+      callback()
+      return 0
+    }
+    return setTimeout(callback, delayMs)
   },
-  clearTimeout: () => undefined,
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   setInterval: () => 0,
   clearInterval: () => undefined,
 }
@@ -75,8 +78,9 @@ describe("CloudClient construction", () => {
     const originalFetch = globalThis.fetch
     const nowSeconds = Math.floor(Date.now() / 1000)
     let miniappMints = 0
+    const miniappBodies: unknown[] = []
 
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith("/api/client/auth/refresh")) {
         return jsonResponse({
@@ -88,6 +92,7 @@ describe("CloudClient construction", () => {
       }
       if (url.endsWith("/api/client/auth/miniapp-token")) {
         miniappMints += 1
+        miniappBodies.push(JSON.parse(String(init?.body)))
         return jsonResponse({
           token: `miniapp-${miniappMints}`,
           expiresAt: miniappMints === 1 ? nowSeconds + 180 : nowSeconds + 3600,
@@ -120,6 +125,8 @@ describe("CloudClient construction", () => {
         token: "miniapp-2",
       })
       expect(miniappMints).toBe(2)
+      // The request names the package and nothing else, dev builds included.
+      expect(miniappBodies).toEqual([{packageName: "com.example.app"}, {packageName: "com.example.app"}])
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -537,3 +544,29 @@ function testJwt(claims: Record<string, unknown>): string {
 function base64UrlJson(value: unknown): string {
   return btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 }
+
+describe("package root", () => {
+  test("the node entry exports every error class a host branches on, the same ones as the package root", async () => {
+    const names = [
+      "CloudClientError",
+      "HttpError",
+      "AuthExpiredError",
+      "AuthUnavailableError",
+      "SessionRevocationError",
+    ] as const
+    // Both through the package specifier, so each is the one module instance a host would get.
+    const root = await import("@mentra/cloud-client")
+    const node = await import("../node")
+    for (const name of names) {
+      expect(typeof root[name]).toBe("function")
+      expect(node[name]).toBe(root[name])
+    }
+  })
+
+  test("exports decodeClaims, which reads a token's claims without verifying it", async () => {
+    const {decodeClaims} = await import("./index")
+    const payload = Buffer.from(JSON.stringify({sub: "user-a", tenant_id: "mentra", exp: 1})).toString("base64url")
+    expect(decodeClaims(`header.${payload}.signature`)).toMatchObject({sub: "user-a", tenant_id: "mentra"})
+    expect(() => decodeClaims("not-a-jwt")).toThrow()
+  })
+})
