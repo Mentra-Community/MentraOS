@@ -25,6 +25,7 @@ import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
 import com.mentra.bluetoothsdk.sgcs.Nimo
+import com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -305,7 +306,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             }
         }
         initializeViewStates()
-        if (initializeHardware) initializeHardwareServices()
+        if (initializeHardware) {
+            initializeHardwareServices()
+            NimoResourceDiagnostics.start(Bridge.getContext())
+        }
     }
 
     // Keep host routing usable without starting audio codecs, receivers or services.

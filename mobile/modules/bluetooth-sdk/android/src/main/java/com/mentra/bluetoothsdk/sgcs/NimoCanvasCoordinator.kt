@@ -25,6 +25,8 @@ internal class NimoGattQueue<C : Any>(
     private var descriptorCompletion: (() -> Unit)? = null
     private var cancelDeadline: (() -> Unit)? = null
 
+    fun pendingCount(): Int = queue.size + (if (current != null) 1 else 0) + (if (descriptor != null) 1 else 0)
+
     fun connected(connection: Any) { reset(); this.connection = connection }
 
     fun reset() {
@@ -120,6 +122,7 @@ internal class NimoCanvasCoordinator(
     private val reconnect: (String) -> Unit,
     private val rejected: (Int) -> Unit = {},
     private val holdPreempted: () -> Unit = {},
+    private val businessResponse: (Int, Int) -> Unit = { _, _ -> },
 ) {
     private class Flight(val action: NimoCanvasSession.Action.Send) {
         var finalStarted = false
@@ -133,6 +136,9 @@ internal class NimoCanvasCoordinator(
     private var heldScope: String? = null
     private var cancelDeadline: (() -> Unit)? = null
     private var cancelRetry: (() -> Unit)? = null
+
+    fun pendingCount(): Int = if (flight != null) 1 else 0
+    fun active(): Boolean = session.active()
 
     fun offer(bytes: ByteArray, scope: String, force: Boolean = false) {
         if (holding && scope != heldScope) {
@@ -188,6 +194,7 @@ internal class NimoCanvasCoordinator(
         }
         cancelDeadline?.invoke(); cancelDeadline = null
         flight = null
+        businessResponse(key, payload[0].toInt() and 255)
         run(session.response(key, payload))
         notifyHoldReadyIfIdle()
     }

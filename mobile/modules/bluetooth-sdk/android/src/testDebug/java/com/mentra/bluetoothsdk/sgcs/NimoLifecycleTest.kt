@@ -188,6 +188,106 @@ class NimoLifecycleTest {
     assertTrue(other.createBond())
   }
 
+  @Test fun resourceStatusIsPassiveAndReleaseRefusesCurrentG2Replacement() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    setField("resourcePairAddress", "00:11:22:33:44:55")
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    NimoResourceDiagnostics.track(nimo)
+    val status = resourceCommand("status")
+    assertEquals(nimo.resourceInstanceId, status.getJSONObject("session").getString("instanceId"))
+    assertTrue(status.getJSONObject("session").getBoolean("managedSessionPresent"))
+    assertEquals(1, writes) // No diagnostic queries or scanner operations.
+    manager.sgc = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    val released = resourceCommand("release")
+    assertEquals("release-refused-replaced-or-unowned-target", released.getString("error"))
+    assertTrue(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
+    assertEquals(com.mentra.bluetoothsdk.utils.DeviceTypes.G2, manager.sgc?.type)
+    assertEquals(true, DeviceStore.get("glasses", "connected"))
+  }
+
+  @Test fun resourceReleaseWaitsForOriginalMicStopMarkerAndPreservesBond() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    setField("resourcePairAddress", "00:11:22:33:44:55")
+    val mic = BluetoothGattCharacteristic(NimoBLE.CHAR_MIC, 8, 16)
+    setField("micChar", mic)
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) { result = it }
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(50, TimeUnit.MILLISECONDS)
+    assertNull("Write completion alone must not stand in for mic stop feedback", result)
+    val gatt = field("gatt") as android.bluetooth.BluetoothGatt
+    mic.value = byteArrayOf(0x52, 0, 0, 0)
+    @Suppress("DEPRECATION")
+    (field("gattCallback") as android.bluetooth.BluetoothGattCallback).onCharacteristicChanged(gatt, mic)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+    val release = requireNotNull(result).getJSONObject("release")
+    assertFalse(release.isNull("micStopWrittenAtEpochMs"))
+    assertFalse(release.isNull("micStopMarkerAtEpochMs"))
+    assertEquals("unknown", release.getString("micSilence"))
+    assertEquals("unknown", release.getString("classicAclState"))
+    assertTrue(release.getBoolean("gattCloseCalled"))
+    assertTrue(requireNotNull(result).getBoolean("localEffectsSettled"))
+    assertRememberedDevice()
+  }
+
+  @Test fun resourceMissingMicFeedbackLeavesStickyUnknownAfterTimeout() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    setField("micChar", BluetoothGattCharacteristic(NimoBLE.CHAR_MIC, 8, 16))
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) { result = it }
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.SECONDS)
+    assertEquals("drain-timeout-native-effects-unknown", requireNotNull(result).getJSONObject("release").getString("result"))
+    assertFalse(nimo.resourceSnapshot().getBoolean("localEffectsSettled"))
+    assertTrue(nimo.resourceSnapshot().getJSONObject("release").isNull("micStopMarkerAtEpochMs"))
+  }
+
+  @Test fun readinessExportsOnlyFreshSameSessionStatusZeroAckAfterWriteStarted() {
+    readyForReset()
+    setField("resourceSessionGeneration", 3L)
+    val state = Nimo::class.java.getDeclaredField("handshakeState")
+    setField("handshakeState", state.type.enumConstants.single { it.toString() == "AWAITING_TWS" })
+    Nimo::class.java.getDeclaredMethod("onTwsState", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(nimo, true)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(10, TimeUnit.MILLISECONDS)
+    respond(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_TIME, 1)
+    assertTrue(nimo.resourceSnapshot().getJSONObject("timeAck").isNull("atEpochMs"))
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(600, TimeUnit.MILLISECONDS)
+    respond(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_TIME, 0)
+    val snapshot = nimo.resourceSnapshot()
+    assertEquals(3L, snapshot.getJSONObject("tws").getLong("sessionGeneration"))
+    assertFalse(snapshot.getJSONObject("tws").isNull("atEpochMs"))
+    assertEquals(0, snapshot.getJSONObject("timeAck").getInt("statusCode"))
+    assertFalse(snapshot.getJSONObject("timeAck").isNull("writeStartedAtEpochMs"))
+    assertEquals("READY", snapshot.getString("handshake"))
+  }
+
+  @Test fun callbacksFromPriorGattCannotCreateCurrentReadiness() {
+    readyForReset()
+    val old = field("gatt") as android.bluetooth.BluetoothGatt
+    val other = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:66")
+    setField("gatt", ShadowBluetoothGatt.newInstance(other))
+    val rx = BluetoothGattCharacteristic(NimoBLE.CHAR_RX, 16, 16)
+    rx.value = byteArrayOf(0x52, 0, 0, 0)
+    @Suppress("DEPRECATION")
+    (field("gattCallback") as android.bluetooth.BluetoothGattCallback).onCharacteristicChanged(old, rx)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(nimo.resourceSnapshot().getJSONObject("tws").isNull("atEpochMs"))
+    assertTrue(nimo.resourceSnapshot().getJSONObject("timeAck").isNull("atEpochMs"))
+  }
+
+  private fun field(name: String): Any? = Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.get(nimo)
+
+  private fun resourceCommand(mode: String): JSONObject {
+    val nonce = java.util.UUID.randomUUID().toString()
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", nonce).putExtra("mode", mode).putExtra("expectedAddress", "00:11:22:33:44:55")
+      .putExtra("instanceId", nimo.resourceInstanceId).putExtra("sessionGeneration", 1L))
+    val file = File(context.filesDir, "nimo-lifecycle/$nonce.json")
+    return JSONObject(file.readText())
+  }
+
   private fun readyForReset(): MutableList<ByteArray> {
     val frames = mutableListOf<ByteArray>()
     val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
