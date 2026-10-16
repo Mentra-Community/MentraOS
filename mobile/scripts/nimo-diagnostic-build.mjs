@@ -23,6 +23,15 @@ android {
 
 export function withNimoDiagnosticApplication(source) {
   if (source.includes('BuildConfig.BUILD_TYPE != "nimoDiagnostic"')) return source
+  // Expo 55 uses ReactHost, whose developer-support default belongs to RN rather
+  // than app BuildConfig. Preserve that default for ordinary variants explicitly.
+  const host = /ExpoReactHostFactory\.getDefaultReactHost\(\s*\n/
+  if (host.test(source)) {
+    if ((source.match(/ExpoReactHostFactory\.getDefaultReactHost\(/g) ?? []).length !== 1 || /\buseDevSupport\s*=/.test(source))
+      throw new Error('Cannot safely configure diagnostic developer support in generated ReactHost')
+    return source.replace(host, '$&      useDevSupport = (com.facebook.react.common.build.ReactBuildConfig.DEBUG && BuildConfig.BUILD_TYPE != "nimoDiagnostic"),\n')
+  }
+  // Retain support for the older ReactNativeHost template.
   if (!source.includes('BuildConfig.DEBUG')) throw new Error('Cannot disable diagnostic developer support in generated MainApplication')
   return source.replace(/\bBuildConfig\.DEBUG\b/g, '(BuildConfig.DEBUG && BuildConfig.BUILD_TYPE != "nimoDiagnostic")')
 }
