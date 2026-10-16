@@ -9,6 +9,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {decideConnectButtonAction, engine} from "@mentra/engine"
+import {usePairingReconnectHold} from "@/hooks/usePairingReconnectHold"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
@@ -108,6 +109,18 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }, [glassesFullyBooted, glassesConnected])
 
   const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, pairingReadiness.nativeLinkBusy)
+  const pairingState = glassesStatus.pairingState
+  const inPairingMode =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_mode"
+  const pairingRejected =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_rejected"
+  // The SDK publishes "normal" before CONNECTING when the pairing window ends.
+  const holdReconnectAfterPairing = usePairingReconnectHold({
+    inPairingMode,
+    connected: glassesConnected,
+    rejected: pairingRejected,
+    linkBusy: searching || nativeLinkBusy,
+  })
 
   const handleCancelPairing = async () => {
     if (cancellingPairing.current) return
@@ -186,7 +199,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const handleConnectOrDisconnect = async () => {
     const action = decideConnectButtonAction({
       hasDefaultWearable: !!pairedModel,
-      busy: searching || nativeLinkBusy || inPairingMode,
+      busy: searching || nativeLinkBusy || inPairingMode || holdReconnectAfterPairing,
     })
     if (action === "cancel") {
       await engine.glasses.disconnect()
@@ -282,13 +295,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   // The SDK pauses reconnect while the glasses are in pairing mode. Home still shows the normal
-  // reconnecting card (spinner + Cancel) over the popup, never Pair Again.
-  const isLive = displayModel === DeviceTypes.LIVE
-  const pairingState = glassesStatus.pairingState
-  const inPairingMode = isLive && !glassesConnected && pairingState?.state === "pairing_mode"
-  const pairingRejected = isLive && !glassesConnected && pairingState?.state === "pairing_rejected"
-
-  let isSearching = searching || isCheckingConnectivity || wasSearching || nativeLinkBusy || inPairingMode
+  // reconnecting card (spinner + Cancel) over the popup, never Pair Again. Keep that card for a
+  // moment after the window ends so "Connect glasses" does not flash before the reconnect starts.
+  let isSearching =
+    searching ||
+    isCheckingConnectivity ||
+    wasSearching ||
+    nativeLinkBusy ||
+    inPairingMode ||
+    holdReconnectAfterPairing
   let _connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
@@ -300,15 +315,12 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const features = getModelCapabilities(displayModel as DeviceTypes)
   const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
 
-  // The SDK reports `pairing_rejected` when another phone took the glasses over. One action: pair again.
-  // No status text, no forget/unpair, and no confirmation: Pair Again only opens the pairing flow.
+  // The SDK reports `pairing_rejected` when another phone took the glasses over.
+  // The card still opens glasses settings (Unpair lives there). Only Pair Again starts pairing.
   if (pairingRejected) {
     return (
       <View style={style}>
-        <DeviceStatus
-          className="h-28"
-          onPress={() => push("/pairing/prep", {deviceModel: DeviceTypes.LIVE})}
-          image={getCurrentGlassesImage()}>
+        <DeviceStatus className="h-28" onPress={onPress} image={getCurrentGlassesImage()}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
             <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
