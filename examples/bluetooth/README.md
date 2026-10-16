@@ -125,11 +125,9 @@ glasses’ built-in action; disabling it retains touch events for your app. Valu
 change only after a settings acknowledgement and reset when BLE disconnects.
 The controls are available for Mentra Live and require firmware with `cs_tpdef`.
 
-This code is prepared ahead of the SDK release containing
-`setTouchGestureDefaultBehaviorEnabled`. React Native remains compatible with
-the current npm package and reports an unavailable API clearly. Native examples
-require that SDK release, or the documented local SDK overrides in their READMEs,
-to compile. Dependency versions have not been advanced to an unpublished version.
+The examples pin SDK `3.4.0-dev.947`, which publishes
+`setTouchGestureDefaultBehaviorEnabled` on npm, Maven Central and Swift Package
+Manager. Build with the published packages; local SDK overrides are optional.
 
 Source dependencies: [SDK PR #4802](https://github.com/Mentra-Community/MentraOS/pull/4802)
 and [BES firmware PR #95](https://github.com/Mentra-Community/mentra-live-bes/pull/95).
