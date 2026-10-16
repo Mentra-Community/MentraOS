@@ -105,7 +105,7 @@ internal object NimoResourceDiagnostics {
         }
         instance.releaseResource(generation, { DeviceManager.getInstance().sgc === instance }) { result ->
             track(instance)
-            save(result)
+            if (result.has("error")) save(instance.resourceSnapshot(), result.getString("error")) else save(result)
         }
     }
 
