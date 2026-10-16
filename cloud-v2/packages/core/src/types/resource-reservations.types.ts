@@ -13,10 +13,13 @@ export const exclusiveResourceDependenciesSchema = z.array(exclusiveResourceDepe
     'Exclusive dependencies must have unique canonical resource identities')
 export type ExclusiveResourceDependency = z.infer<typeof exclusiveResourceDependencySchema>
 
+/** Existing durable operator dispatch receipt, projected only by its current controller. */
+export const localResourceDispatchSchema = z.object({requestId: identity, inputSha256: hash, definitionSha256: hash}).strict()
 export const exclusiveResourceOwnerSchema = z.object({id: identity, kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer'])}).strict()
 export const exclusiveResourceIntentSchema = z.object({operationId: identity, hostId: identity, laneId: identity,
   controller,
   owner: exclusiveResourceOwnerSchema, inputSha256: hash,
+  localDispatch: localResourceDispatchSchema.optional(),
   resources: z.array(z.object({id: identity, capabilities: z.array(identity).max(30)}).strict()).min(1).max(9),
 }).strict().superRefine((value, context) => {
   if (new Set(value.resources.map(resource => resource.id)).size !== value.resources.length ||
@@ -94,8 +97,10 @@ export type ExclusiveResourceReturn = z.infer<typeof exclusiveResourceReturnSche
 export const resourceReservationObservationSchema = z.object({
   claims: z.array(exclusiveHostReservationSchema).max(100),
   returns: z.array(exclusiveResourceReturnSchema.omit({controller: true})).max(100),
+  dispatches: z.array(localResourceDispatchSchema).max(100).optional(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.claims.map(claim => claim.id)).size !== value.claims.length ||
-    new Set(value.returns.map(receipt => receipt.claimId)).size !== value.returns.length)
-    context.addIssue({code: 'custom', message: 'Claim and return observations require unique claim identities'})
+    new Set(value.returns.map(receipt => receipt.claimId)).size !== value.returns.length ||
+    new Set(value.dispatches?.map(dispatch => dispatch.requestId)).size !== (value.dispatches?.length ?? 0))
+    context.addIssue({code: 'custom', message: 'Claim, return and dispatch observations require unique identities'})
 })

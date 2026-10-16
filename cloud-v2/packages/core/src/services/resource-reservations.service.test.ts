@@ -4,7 +4,7 @@ import {createTestHostStateApi} from '../api/internal/test-host-state.api'
 import {TestHostStateService} from './test-host-state.service'
 import {LaneControlsService} from './lane-controls.service'
 import {exclusiveHostReservationSchema, hostResourceReservationsSchema, type ExclusiveResourceIntent,
-  type ExclusiveResourceReturn, type HostResourceReservation} from '../types/resource-reservations.types'
+  resourceReservationObservationSchema, type ExclusiveResourceReturn, type HostResourceReservation} from '../types/resource-reservations.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
 import {fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {requestInputDigest} from './test-request.service'
@@ -250,6 +250,53 @@ test('forged host, stale observation and wrong current owner are rejected before
   lane.state = 'idle'; delete lane.activity; f.advance(120_001)
   await expect(f.service.acquire(intent('air1'), 'air1')).rejects.toThrow('current reporting controller')
   expect(f.writes).toEqual([])
+})
+test('one paused operator dispatch acquires only with its exact current durable request and definition receipt', async () => {
+  const f = fixture(), host = f.rows.get('air1')!, localDispatch = {requestId: 'local-dispatch', inputSha256: 'a'.repeat(64), definitionSha256: 'd'.repeat(64)},
+    original = {...intent('air1', localDispatch.requestId), operationId: `run:${localDispatch.requestId}`, localDispatch}
+  host.snapshot.lanes[0]!.dispatchMode = 'paused'
+  host.snapshot.resourceReservations = {claims: [], returns: [], dispatches: [localDispatch]}
+  const acquired = await f.service.acquire(original, 'air1')
+  expect(acquired.status).toBe('reserved'); expect(acquired.claims).toHaveLength(1)
+  expect(acquired.claims[0]).toMatchObject({owner: original.owner, operationId: original.operationId, inputSha256: localDispatch.inputSha256})
+  const current = f.observe('air1'); current.snapshot.resourceReservations = {claims: [], returns: []}
+  current.snapshot.lanes[0]!.state = 'in-repair'; current.snapshot.lanes[0]!.activity = {generation: 2, owner: {id: 'fixer', kind: 'fixer'}}
+  expect(await f.service.observe({intent: original, controller: {incarnation: current.incarnation,
+    generation: current.incarnationGeneration, sequence: current.sequence}}, 'air1')).toMatchObject({status: 'reserved', claims: acquired.claims})
+  expect(f.writes).toHaveLength(1)
+})
+test('a paused lane rejects missing, mismatched, stale or non-run local dispatch proof before authority writes', async () => {
+  const dispatch = {requestId: 'local-dispatch', inputSha256: 'a'.repeat(64), definitionSha256: 'd'.repeat(64)}
+  for (const kind of ['missing-intent', 'missing-receipt', 'request', 'owner', 'operation', 'input', 'definition', 'authoring', 'stale', 'foreign-owner', 'in-repair', 'out-of-service']) {
+    const f = fixture(), host = f.rows.get('air1')!, value: ExclusiveResourceIntent =
+      {...intent('air1', dispatch.requestId), operationId: `run:${dispatch.requestId}`, localDispatch: {...dispatch}}
+    host.snapshot.lanes[0]!.dispatchMode = 'paused'
+    host.snapshot.resourceReservations = {claims: [], returns: [], dispatches: [{...dispatch}]}
+    if (kind === 'missing-intent') delete value.localDispatch
+    if (kind === 'missing-receipt') host.snapshot.resourceReservations.dispatches = []
+    if (kind === 'request') value.localDispatch!.requestId = 'different'
+    if (kind === 'owner') value.owner.id = 'different'
+    if (kind === 'operation') value.operationId = 'different'
+    if (kind === 'input') value.inputSha256 = 'b'.repeat(64)
+    if (kind === 'definition') value.localDispatch!.definitionSha256 = 'b'.repeat(64)
+    if (kind === 'authoring') value.owner.kind = 'authoring'
+    if (kind === 'stale') f.advance(120_001)
+    if (kind === 'foreign-owner') {
+      host.snapshot.lanes[0]!.state = 'reserved'; host.snapshot.lanes[0]!.activity = {generation: 2, owner: {id: 'another', kind: 'authoring'}}
+    }
+    if (kind === 'in-repair' || kind === 'out-of-service') {
+      host.snapshot.lanes[0]!.state = kind; host.snapshot.lanes[0]!.activity = {generation: 2, owner: value.owner}
+    }
+    await expect(f.service.acquire(value, 'air1')).rejects.toThrow()
+    expect(f.writes).toEqual([]); expect(f.rows.get('mini')!.resourceReservations).toEqual([])
+  }
+})
+test('the existing resource observation bounds local dispatch receipts and forbids duplicate request identities', () => {
+  const dispatch = {requestId: 'local-dispatch', inputSha256: 'a'.repeat(64), definitionSha256: 'd'.repeat(64)}
+  expect(resourceReservationObservationSchema.safeParse({claims: [], returns: []}).success).toBe(true)
+  expect(resourceReservationObservationSchema.safeParse({claims: [], returns: [], dispatches: [dispatch]}).success).toBe(true)
+  expect(resourceReservationObservationSchema.safeParse({claims: [], returns: [], dispatches: [dispatch, {...dispatch, definitionSha256: 'b'.repeat(64)}]}).success).toBe(false)
+  expect(resourceReservationObservationSchema.safeParse({claims: [], returns: [], dispatches: Array.from({length: 101}, (_, index) => ({...dispatch, requestId: `dispatch-${index}`}))}).success).toBe(false)
 })
 test('claims persist beyond reporting expiry and halted repair; only later clean local return frees them', async () => {
   const f = fixture(), claim = (await f.service.acquire(intent('air1'), 'air1')).claims[0]!

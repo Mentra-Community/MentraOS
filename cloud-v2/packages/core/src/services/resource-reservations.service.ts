@@ -58,9 +58,12 @@ const repository: ResourceReservationRepository = {
 const fresh = (host: ResourceReservationHost, now: number) => [host.receivedAt.getTime(), Date.parse(host.snapshot.observedAt)]
   .every(at => Number.isFinite(at) && at <= now && now - at <= 120_000)
 const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
-  const lane = host.snapshot.lanes.find(value => value.id === intent.laneId)
+  const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), dispatch = intent.localDispatch,
+    localDispatch = dispatch && intent.owner.kind === 'run' && intent.owner.id === dispatch.requestId &&
+      intent.operationId === `run:${dispatch.requestId}` && intent.inputSha256 === dispatch.inputSha256 &&
+      host.snapshot.resourceReservations?.dispatches?.some(value => isDeepStrictEqual(value, dispatch))
   if (!lane || !observation && (!['idle', 'running', 'reserved'].includes(lane.state) ||
-    lane.dispatchMode === 'paused' ||
+    lane.dispatchMode === 'paused' && !localDispatch ||
     lane.activity && !isDeepStrictEqual({id: lane.activity.owner.id, kind: lane.activity.owner.kind}, intent.owner)))
     throw new TestRunError(409, 'Reservation requires the selected idle lane or its unchanged current owner')
   const selected = intent.resources.flatMap(required => {
