@@ -1,5 +1,6 @@
 package com.mentra.examples.android
 
+import com.mentra.bluetoothsdk.TouchGesture
 import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -240,6 +241,8 @@ data class MentraExampleState(
     val selectedDiscoveredDevice: Device? = null,
     val selectedScanModel: DeviceModel = DeviceModel.MENTRA_LIVE,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
+    val touchGestureDefaults: Map<TouchGesture, Boolean> = emptyMap(),
+    val touchGesturePending: TouchGesture? = null,
     val galleryModeEnabled: Boolean = false,
     val galleryServerReachable: Boolean? = null,
     val galleryServerStatus: String = "Gallery server: enable hotspot to check",
@@ -588,6 +591,26 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val ack = withContext(Dispatchers.IO) { mentraBluetoothSdk.setGalleryModeEnabled(enabled) }
         addEvent("LIVE", "settings_ack ${describeSettingsAck(ack)}")
         state = state.copy(galleryModeEnabled = enabled)
+    }
+
+    fun setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: Boolean) {
+        if (state.touchGesturePending != null) return
+        val generation = glassesConnectionGeneration
+        state = state.copy(touchGesturePending = gesture)
+        runAction("${if (enabled) "Enable" else "Disable"} ${gesture.wireName} default action") {
+            try {
+                requireConnected("change touchpad default actions")
+                val ack = withContext(Dispatchers.IO) {
+                    mentraBluetoothSdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled)
+                }
+                if (generation == glassesConnectionGeneration) {
+                    addEvent("LIVE", "settings_ack ${describeSettingsAck(ack)}")
+                    state = state.copy(touchGestureDefaults = state.touchGestureDefaults + (gesture to enabled))
+                }
+            } finally {
+                if (generation == glassesConnectionGeneration) state = state.copy(touchGesturePending = null)
+            }
+        }
     }
 
     fun setWebhookUrl(url: String) {
@@ -3155,6 +3178,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
 
     private fun applyDisconnectedState(status: String) {
+        state = state.copy(touchGestureDefaults = emptyMap(), touchGesturePending = null)
         stopPreviewHealthPoll()
         stopDirectStreamFrameWatchdog()
         stopDirectPhoneStreamReceiver(status)

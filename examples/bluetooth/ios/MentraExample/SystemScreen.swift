@@ -596,6 +596,20 @@ struct SystemScreen: View {
                 }
                 .padding(.top, 2)
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Touchpad default actions").font(.system(size: 14, weight: .bold)).foregroundColor(AppColor.ink)
+                Text("Enable the glasses’ built-in action for each gesture. Touch events still reach the app. Settings reset after disconnect or reboot. Requires Mentra Live with supported firmware.")
+                    .font(.system(size: 11)).foregroundColor(AppColor.muted)
+                ForEach(TouchGesture.allCases, id: \.self) { gesture in
+                    Toggle(gesture.rawValue.replacingOccurrences(of: "_", with: " ").capitalized, isOn: Binding(
+                        get: { model.touchGestureDefaults[gesture] ?? true },
+                        set: { model.setTouchGestureDefaultBehaviorEnabled(gesture, enabled: $0) }
+                    ))
+                    .tint(AppColor.greenAccent)
+                    .disabled(!model.glassesConnected || !isMentraLiveRuntime(model.glassesValues) || model.touchGesturePending != nil)
+                }
+            }
+            .padding(.top, 12)
         }
     }
 

@@ -116,3 +116,25 @@ Published package installs are the normal SDK path. Local overrides are only for
   the same package.
 
 The example READMEs document each override explicitly. Do not bake machine-specific paths into committed app config.
+
+## Touchpad default actions (OS-2123)
+
+The React Native, Android and iOS examples put eight **Touchpad default actions**
+switches in the **System** tab beside gallery mode. An enabled switch allows the
+glasses’ built-in action; disabling it retains touch events for your app. Values
+change only after a settings acknowledgement and reset when BLE disconnects.
+The controls are available for Mentra Live and require firmware with `cs_tpdef`.
+
+The examples pin SDK `3.4.0-dev.947`, which publishes
+`setTouchGestureDefaultBehaviorEnabled` on npm, Maven Central and Swift Package
+Manager. Build with the published packages; local SDK overrides are optional.
+
+Source dependencies: [SDK PR #4802](https://github.com/Mentra-Community/MentraOS/pull/4802)
+and [BES firmware PR #95](https://github.com/Mentra-Community/mentra-live-bes/pull/95).
+
+To verify on glasses, connect Mentra Live, open System, disable **Double tap**, and
+double tap while media is paused and while it is playing. The touch event should
+still appear, and media should retain its state. Enable the switch and verify the
+stock action returns. Repeat for other gestures, then reconnect and confirm all
+switches return to enabled. A failed or timed-out setting must retain its previous
+value. This physical verification has not been run yet.

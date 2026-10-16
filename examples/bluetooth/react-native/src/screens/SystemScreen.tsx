@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Switch,
   View,
   Text,
   ScrollView,
@@ -26,6 +27,9 @@ import {
   wifiSubLabel,
 } from '../sdkFormat';
 import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type BluetoothSdkExampleModel, type SdkConsoleEvent } from '../useBluetoothSdkExample';
+
+import {TOUCH_GESTURES} from '../touchGestureDefaults';
+import {isMentraLiveRuntime} from '../useBluetoothSdkExample';
 
 const WIFI_COLLAPSED_NETWORK_LIMIT = 3;
 
@@ -350,6 +354,25 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <GalleryModeChip active={sdk.galleryModeEnabled} disabled={!connected} label="Save media" onPress={() => sdk.setGalleryModeEnabled(true)} />
             <GalleryModeChip active={!sdk.galleryModeEnabled} disabled={!connected} label="Report events" onPress={() => sdk.setGalleryModeEnabled(false)} />
           </View>
+        </View>
+        <View style={styles.galleryModeBlock}>
+          <Text style={styles.galleryModeTitle}>Touchpad default actions</Text>
+          <Text style={styles.galleryModeBody}>
+            Enable the glasses’ built-in action for each gesture. Touch events still reach the app.
+            Settings reset after disconnect or reboot. Requires Mentra Live with supported firmware.
+          </Text>
+          {TOUCH_GESTURES.map(({gesture, label}) => (
+            <View key={gesture} style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
+              <Text style={styles.galleryModeTitle}>{label}</Text>
+              <Switch
+                accessibilityLabel={`${label} default action`}
+                value={sdk.touchGestureDefaults[gesture]}
+                disabled={!connected || !isMentraLiveRuntime(sdk.glasses) || sdk.touchGesturePending !== null}
+                onValueChange={(enabled) => void sdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled)}
+                trackColor={{true: colors.greenAccent}}
+              />
+            </View>
+          ))}
         </View>
       </LinearGradient>
 

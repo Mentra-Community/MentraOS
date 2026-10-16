@@ -60,6 +60,13 @@ import {
   supportsDisplay,
 } from './sdkFormat';
 
+import {
+  applyTouchGestureDefault,
+  initialTouchGestureDefaults,
+  type TouchGesture,
+  type TouchGestureDefaults,
+} from './touchGestureDefaults';
+
 export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
 export type BluetoothSdkExampleOptions = {
   activeTab?: ExampleTabKey;
@@ -335,6 +342,9 @@ export type BluetoothSdkExampleState = {
   discoveredDevices: Device[];
   events: SdkConsoleEvent[];
   galleryModeEnabled: boolean;
+  touchGestureDefaults: TouchGestureDefaults;
+  touchGesturePending: TouchGesture | null;
+  setTouchGestureDefaultBehaviorEnabled: (gesture: TouchGesture, enabled: boolean) => Promise<void>;
   galleryServerReachable: boolean | null;
   galleryServerStatus: string;
   glasses: GlassesRuntimeState;
@@ -607,6 +617,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [galleryServerStatus, setGalleryServerStatus] = useState(
     'Gallery server: enable hotspot to check',
   );
+  const [touchGestureDefaults, setTouchGestureDefaults] = useState(initialTouchGestureDefaults);
+  const [touchGesturePending, setTouchGesturePending] = useState<TouchGesture | null>(null);
+  const touchGesturePendingRef = useRef<TouchGesture | null>(null);
   const [ledColor, setLedColor] = useState<LedColor>('green');
   const [ledMode, setLedMode] = useState<LedMode>('Off');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
@@ -1180,6 +1193,27 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       requireConnected('change gallery mode');
       await bluetooth.setGalleryModeEnabled(enabled);
     });
+  }
+
+  async function setTouchGestureDefaultBehaviorEnabledAction(gesture: TouchGesture, enabled: boolean) {
+    if (touchGesturePendingRef.current !== null) return;
+    const generation = glassesConnectionGenerationRef.current;
+    touchGesturePendingRef.current = gesture;
+    setTouchGesturePending(gesture);
+    try {
+      await runAction(`${enabled ? 'Enable' : 'Disable'} ${gesture} default action`, async () => {
+        requireConnected('change touchpad default actions');
+        if (!isMentraLiveRuntime(glasses)) throw new Error('Touchpad default actions require Mentra Live.');
+        await applyTouchGestureDefault(BluetoothSdk as Parameters<typeof applyTouchGestureDefault>[0], gesture, enabled);
+        if (generation !== glassesConnectionGenerationRef.current) return;
+        setTouchGestureDefaults((current) => ({...current, [gesture]: enabled}));
+      });
+    } finally {
+      if (generation === glassesConnectionGenerationRef.current) {
+        touchGesturePendingRef.current = null;
+        setTouchGesturePending(null);
+      }
+    }
   }
 
   function setTextModeAction(enabled: boolean) {
@@ -3511,6 +3545,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function applyDisconnectedState(status: string) {
+    setTouchGestureDefaults(initialTouchGestureDefaults());
+    touchGesturePendingRef.current = null;
+    setTouchGesturePending(null);
     stopPreviewHealthPoll();
     stopDirectStreamFrameWatchdog();
     clearPhotoUploadTimeout();
@@ -3665,6 +3702,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     events,
     forgetCurrentWifiNetwork,
     galleryModeEnabled,
+    touchGestureDefaults,
+    touchGesturePending,
+    setTouchGestureDefaultBehaviorEnabled: setTouchGestureDefaultBehaviorEnabledAction,
     galleryServerReachable,
     galleryServerStatus,
     glasses,

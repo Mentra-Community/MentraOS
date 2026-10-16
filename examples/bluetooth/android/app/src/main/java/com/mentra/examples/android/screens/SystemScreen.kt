@@ -12,6 +12,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.Switch
+import com.mentra.bluetoothsdk.TouchGesture
+import com.mentra.examples.android.isMentraLiveRuntime
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -504,6 +507,19 @@ fun SystemScreen(controller: MentraExampleController) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GalleryModeChip("Save media", state.galleryModeEnabled, connected) { controller.setGalleryModeEnabled(true) }
                 GalleryModeChip("Report events", !state.galleryModeEnabled, connected) { controller.setGalleryModeEnabled(false) }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("Touchpad default actions", color = AppColor.ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Enable the glasses’ built-in action for each gesture. Touch events still reach the app. Settings reset after disconnect or reboot. Requires Mentra Live with supported firmware.", color = AppColor.muted, fontSize = 12.sp)
+            TouchGesture.entries.forEach { gesture ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(gesture.wireName.replace('_', ' '), modifier = Modifier.weight(1f), color = AppColor.ink)
+                    Switch(
+                        checked = state.touchGestureDefaults[gesture] ?: true,
+                        enabled = connected && isMentraLiveRuntime(state.glassesStatus) && state.touchGesturePending == null,
+                        onCheckedChange = { controller.setTouchGestureDefaultBehaviorEnabled(gesture, it) },
+                    )
+                }
             }
         }
 
