@@ -12,6 +12,13 @@ export const BT_CLASSIC_ROUTE = "/pairing/btclassic"
  */
 export const AUTO_AUDIO_WAIT_MS = 30_000
 
+/**
+ * After the app link to the glasses comes up, iOS reconnects the Classic audio route on its own a
+ * few seconds later (about 3.5 s in a 2026-10-16 iPhone log). The home screen waits this long, with
+ * audio still down, before it tells the user the audio device is disconnected.
+ */
+export const AUDIO_RECONNECT_GRACE_MS = 10_000
+
 export type AudioReadiness = {
   bluetoothClassicConnected: boolean
   bluetoothClassicProfilesConnected: boolean
