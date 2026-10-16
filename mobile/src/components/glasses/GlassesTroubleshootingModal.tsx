@@ -8,7 +8,6 @@ import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {getG2ResetInstructions} from "@/utils/pairing/g2Recovery"
-import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 
 interface TroubleshootingModalProps {
   isVisible: boolean
@@ -84,12 +83,10 @@ export const getModelSpecificTips = (model: string, {includeResetInstructions = 
           title: "Charge Your Glasses",
           body: "Make sure your Mentra Live is fully charged.",
         },
-        isMentraLiveSecurePairingEnabled()
-          ? {title: translate("pairing:liveOtherPhoneTipTitle"), body: translate("pairing:liveOtherPhoneTipBody")}
-          : {
-              title: "Pairing Mode",
-              body: "Check that your Mentra Live isn't already connected to another phone.",
-            },
+        {
+          title: translate("pairing:livePairingScanTitle"),
+          body: translate("pairing:livePairingScanBody"),
+        },
         {
           title: "Restart Glasses",
           body: "Try restarting your glasses.",
