@@ -71,7 +71,7 @@ diagnosticCode.nimo = `.class public final ${desc(NIMO_DEVICE)}\n` + [
 const policy = 'preArmCaptureRequired$bluetooth_sdk_nimoDiagnostic'
 const policyDefault = `${policy}$default(${desc(NIMO_DIAGNOSTIC)}Ljava/lang/String;ILjava/lang/Object;)Z`
 const resultCall = reference => ` invoke-virtual {v0}, ${reference}\n move-result v0\n return v0\n`
-diagnosticCode.diagnostics = diagnosticCode.diagnostics.replace('const-string v0, "nimo-preconnect-capture-v1"', `const-string v0, "nimo-preconnect-capture-v1"\n const-string v1, "captureRequiredBeforeArm"\n${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policyDefault}`)}`)
+diagnosticCode.diagnostics = diagnosticCode.diagnostics.replace('const-string v0, "nimo-preconnect-capture-v1"', `const-string v0, "nimo-preconnect-capture-v1"\n const-string v1, "captureRequiredBeforeArm"\n${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policyDefault}`).replace('return v0', 'invoke-virtual {v2, v1, v0}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)Lorg/json/JSONObject;')}`)
 diagnosticCode.diagnostics += `.method public ${policy}(Ljava/lang/String;)Z
  const-string v0, "nimoDiagnostic"
 ${resultCall('Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object;Ljava/lang/Object;)Z')}.end method
@@ -379,5 +379,26 @@ test('pre-arm denial requires diagnostic build policy and every admission bounda
  diagnosticCode.diagnostics.replaceAll('->allowUnarmedWearable','->ignoredUnarmed'),
  diagnosticCode.diagnostics.replaceAll('->preArmCaptureRequired','->ignoredPolicy'),
  diagnosticCode.diagnostics.replaceAll('"captureRequiredBeforeArm"','"ignoredField"'),
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}),/policy/)
+})
+
+test('pre-arm policy inversions must reach the exact branch, return or capture field sink', () => {
+ const inverted = diagnosticCode.diagnostics.replaceAll('move-result v0\n return v0', 'move-result v0\n xor-int/lit8 v3, v0, 0x1\n return v3')
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:inverted}))
+ const snapshotSink='invoke-virtual {v2, v1, v0}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)Lorg/json/JSONObject;'
+ const invertedSnapshot=diagnosticCode.diagnostics.replace(snapshotSink, 'xor-int/lit8 v3, v0, 0x1\n invoke-virtual {v2, v1, v3}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)Lorg/json/JSONObject;')
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:invertedSnapshot}))
+ const branch=inverted.replaceAll('return v3', 'if-eqz v3, :policy_denied\n return v4')
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:branch}))
+ for (const diagnostics of [
+  inverted.replaceAll('return v3','return v0'), // inverted result discarded
+  inverted.replaceAll('return v3','const/4 v3, 0x1\n return v3'), // destination overwritten
+  inverted.replaceAll('xor-int/lit8 v3, v0','xor-int/lit8 v3, v1'), // unrelated input
+  inverted.replaceAll('0x1','0x2'), // not boolean inversion
+  branch.replaceAll('if-eqz v3','if-eqz v4'),
+  invertedSnapshot.replace('"captureRequiredBeforeArm"','"unrelatedFlag"'),
+  invertedSnapshot.replace('invoke-virtual {v2, v1, v3}', 'invoke-virtual {v2, v1, v0}'),
+  invertedSnapshot.replace('xor-int/lit8 v3, v0, 0x1','const-string v1, "unrelatedFlag"\n xor-int/lit8 v3, v0, 0x1'),
+  diagnosticCode.diagnostics.replace(snapshotSink,'return v0'), // marker is not a JSON fact
  ]) assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}),/policy/)
 })

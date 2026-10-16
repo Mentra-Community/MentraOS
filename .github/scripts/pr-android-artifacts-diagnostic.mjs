@@ -68,9 +68,35 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
   const unarmed = named(/ allowUnarmedWearable(?:\$[A-Za-z0-9_]+)?\(Ljava\/lang\/String;Ljava\/lang\/String;\)Z$/)
   const policyCall = `${escaped(target)}->${policyName}\\(Ljava/lang/String;\\)Z`
   const defaultCall = `${escaped(target)}->${policyName}\\$default\\(${escaped(target)}Ljava/lang/String;ILjava/lang/Object;\\)Z`
-  const consumed = (body, reference) => {
-    const instructions = body.replace(/^\s*(?:#.*|\.(?:line|local|end local|restart local|prologue|epilogue)\b[^\n]*)$/gm,'')
-    return new RegExp(`invoke-[^\\n]+${reference}\\s*\\n\\s*move-result\\s+([vp][0-9]+)\\s*\\n\\s*(?:return\\s+\\1\\b|if-(?:eqz|nez)\\s+\\1\\s*,|xor-int/lit8\\s+[vp][0-9]+,\\s*\\1\\s*,|invoke-[^\\n]+\\{[^}]*\\b\\1\\b[^}]*\\}[^\\n]*Lorg/json/JSONObject;->put\\(Ljava/lang/String;Z\\))`).test(instructions)
+  const consumed = (body, reference, jsonField) => {
+    // This is a bounded straight-line compiler pattern, not a control-flow proof.
+    // A boolean inversion is useful only when its destination reaches the sink.
+    const instructions = body.split('\n').map(line=>line.trim()).filter(line=>line &&
+      !/^(?:#|\.(?:line|local|end local|restart local|prologue|epilogue)\b)/.test(line))
+    const call = new RegExp(`^invoke-[^\\n]+${reference}$`)
+    return instructions.some((line,index)=>{
+      if (!call.test(line)) return false
+      let register = /^move-result\s+([vp][0-9]+)$/.exec(instructions[index+1] ?? '')?.[1]
+      if (!register) return false
+      let next = index+2
+      const inversion = /^xor-int\/lit8\s+([vp][0-9]+),\s*([vp][0-9]+),\s*(?:0x1|1)$/.exec(instructions[next] ?? '')
+      if (inversion) {
+        if (inversion[2] !== register) return false
+        register = inversion[1]; next++
+      }
+      const sink = instructions[next] ?? ''
+      if (!jsonField) return new RegExp(`^(?:return\\s+${register}$|if-(?:eqz|nez)\\s+${register}\\s*,)`).test(sink)
+      const put = /^invoke-virtual\s+\{([vp][0-9]+),\s*([vp][0-9]+),\s*([vp][0-9]+)\},\s*Lorg\/json\/JSONObject;->put\(Ljava\/lang\/String;Z\)Lorg\/json\/JSONObject;$/.exec(sink)
+      if (!put || put[3] !== register) return false
+      // The key's most recent assignment must be the expected literal. Do not
+      // borrow a literal whose register was subsequently overwritten.
+      for (let previous=next-1; previous>=Math.max(0,index-12); previous--) {
+        const value = instructions[previous]
+        if (new RegExp(`^[a-z][a-z0-9/-]*\\s+${put[2]}(?:\\s*,|$)`).test(value))
+          return new RegExp(`^const-string(?:/jumbo)?\\s+${put[2]},\\s*"${escaped(jsonField)}"$`).test(value)
+      }
+      return false
+    })
   }
   const diagnosticLiteral = (body, reference) => new RegExp(`const-string(?:/jumbo)?\\s+([vp][0-9]+),\\s*"nimoDiagnostic"[\\s\\S]*?invoke-[^\\n]+\\{[^}]*\\b\\1\\b[^}]*\\}[^\\n]*${reference}`).test(body)
   if (!diagnosticLiteral(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual') || !consumed(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual\\(Ljava/lang/Object;Ljava/lang/Object;\\)Z') ||
@@ -79,7 +105,7 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
       !consumed(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'), `${escaped(target)}->allowUnarmedWearable(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;Ljava/lang/String;\\)Z`) ||
       !consumed(unarmed,policyCall) || !/const-string(?:\/jumbo)?[^\n]*"NIMO"/.test(unarmed) ||
       !['admit','allowPeer','beginTransport'].every(name=>consumed(method(diagnostics,`${name}(${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z)Z`),defaultCall)) ||
-      !snapshot.includes('"captureRequiredBeforeArm"') || !consumed(snapshot,defaultCall))
+      !consumed(snapshot,defaultCall,'captureRequiredBeforeArm'))
     throw new Error('Diagnostic APK lacks compiled diagnostic-only deny-before-arm policy wiring')
 
   if (checks.some(([code, cls, signature, guards]) => !hasClass(code ?? '',descriptor(cls)) || guards.some(guard=>!guarded(method(code,signature),guard))) ||
