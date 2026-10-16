@@ -2017,7 +2017,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendHotspotState(enabled)
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        if (expectedBluetoothMac != null) {
+            val current = sgc as? MentraLive ?: throw BluetoothSdkException(
+                "glasses_not_connected", "Mentra Live glasses are not connected.")
+            current.sendWifiAdbStateToPeer(enabled, expectedBluetoothMac)
+            return
+        }
         Bridge.log("MAN: Setting glasses Wi-Fi ADB state: $enabled")
         sgc?.sendWifiAdbState(enabled)
     }

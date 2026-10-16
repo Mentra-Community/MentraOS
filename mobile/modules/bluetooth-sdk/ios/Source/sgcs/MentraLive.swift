@@ -1152,13 +1152,14 @@ extension MentraLive: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
+        _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
     ) {
+        guard let token = notificationIngress.capture(peripheral) else { return }
         let uuid = characteristic.uuid
         let data = characteristic.value
         let errorDescription = error?.localizedDescription
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.connectedPeripheral === peripheral, self.notificationIngress.current(token) else { return }
             // Bridge.log("LIVE: DEBUG: didUpdateValueFor CALLED - characteristic: \(uuid), dataSize: \(data?.count ?? 0)")
             // Log raw hex for debugging glasses_ready issue
             if let data {
@@ -1195,7 +1196,7 @@ extension MentraLive: CBPeripheralDelegate {
             }
 
             // Handle regular data (JSON messages, file transfers, etc.)
-            self.processReceivedData(data)
+            self.receiveBleNotification(data, token: token)
         }
     }
 
@@ -1278,6 +1279,29 @@ typealias JSONObject = [String: Any]
 
 // MARK: - Main Manager Class
 
+/// Captures CoreBluetooth callback provenance before its MainActor hop.
+final class MentraLiveNotificationIngress: @unchecked Sendable {
+    struct Token: Equatable, Sendable { let source: ObjectIdentifier; let epoch: UInt64 }
+    private let lock = NSLock()
+    private var epoch: UInt64 = 0
+    private var source: ObjectIdentifier?
+    func begin(_ peer: AnyObject?) -> Token? {
+        lock.lock(); defer { lock.unlock() }
+        epoch &+= 1
+        source = peer.map(ObjectIdentifier.init)
+        return source.map { Token(source: $0, epoch: epoch) }
+    }
+    func capture(_ peer: AnyObject) -> Token? {
+        lock.lock(); defer { lock.unlock() }
+        guard source == ObjectIdentifier(peer) else { return nil }
+        return Token(source: ObjectIdentifier(peer), epoch: epoch)
+    }
+    func current(_ token: Token) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return source == token.source && epoch == token.epoch
+    }
+}
+
 @MainActor
 class MentraLive: NSObject, SGCManager {
     // Feature Flags
@@ -1321,11 +1345,25 @@ class MentraLive: NSObject, SGCManager {
         pairingAdvertisement(advertisementData) != nil
     }
 
+    private nonisolated let notificationIngress = MentraLiveNotificationIngress()
+    private var receivingNotification: MentraLiveNotificationIngress.Token?
+    private var wifiAdbPeerIdentity: (mac: String, token: MentraLiveNotificationIngress.Token)?
+    private final class WifiAdbAdmission {
+        let identity: (mac: String, token: MentraLiveNotificationIngress.Token)
+        let wireEpoch: Int
+        var queued = 0
+        var refused = false
+        init(identity: (mac: String, token: MentraLiveNotificationIngress.Token), wireEpoch: Int) {
+            self.identity = identity; self.wireEpoch = wireEpoch
+        }
+    }
+    private var wifiAdbAdmission: WifiAdbAdmission?
     var connectionState: String = ConnTypes.DISCONNECTED
 
     /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
     private func updateConnectionState(_ state: String) {
         if state == ConnTypes.DISCONNECTED {
+            endBleNotificationSession()
             // Device identity is session-bound. Clear it on disconnect so a previous pair's
             // identifiers cannot be associated with the next connection. Connect must NOT clear
             // them: DeviceManager.disconnect already wipes them before any new connection, and
@@ -1530,7 +1568,9 @@ class MentraLive: NSObject, SGCManager {
     /// BLE Properties
     private var centralManager: CBCentralManager?
 
-    private var connectedPeripheral: CBPeripheral?
+    private var connectedPeripheral: CBPeripheral? {
+        didSet { _ = beginBleNotificationSession(source: connectedPeripheral) }
+    }
     /// Peripheral for the in-flight connect; used to ignore stale disconnect/fail callbacks.
     private var connectingPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
@@ -2193,10 +2233,13 @@ class MentraLive: NSObject, SGCManager {
             return commands.removeFirst()
         }
 
+        var count: Int { commands.count }
         func removeAll() {
             commands.removeAll()
         }
     }
+
+    var pendingBleCommandCount: Int { commandQueue.count }
 
     private func setupCommandQueue() {
         Task.detached { [weak self] in
@@ -2611,6 +2654,7 @@ class MentraLive: NSObject, SGCManager {
     private func attachL2capFileChannel(_ channel: CBL2CAPChannel) {
         closeL2capFileChannel()
 
+        guard let peer = connectedPeripheral, let token = notificationIngress.capture(peer) else { return }
         let channelId = UUID()
         l2capFileChannelId = channelId
         let reader = MentraLiveL2capChannel(
@@ -2620,7 +2664,7 @@ class MentraLive: NSObject, SGCManager {
                 // while the existing transfer state remains serialized on the main actor.
                 DispatchQueue.main.async {
                     guard let self, self.l2capFileChannelId == channelId else { return }
-                    self.processReceivedData(frame)
+                    self.receiveBleNotification(frame, token: token)
                 }
             },
             onClose: { [weak self] in
@@ -3204,6 +3248,7 @@ class MentraLive: NSObject, SGCManager {
                     )
                 }
                 if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
+                    recordWifiAdbPeerIdentity(bluetoothMacAddress)
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
                 }
                 if let wifiMacAddress = nonEmptyStringValue(fields, "wifi_mac_address") {
@@ -3690,6 +3735,66 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    @discardableResult func beginBleNotificationSession(source: AnyObject?) -> MentraLiveNotificationIngress.Token? {
+        wifiAdbPeerIdentity = nil
+        incomingChunkReassembler.clear()
+        resetWireNegotiationState()
+        commandQueue.removeAll()
+        return notificationIngress.begin(source)
+    }
+
+    func endBleNotificationSession() {
+        wifiAdbPeerIdentity = nil
+        incomingChunkReassembler.clear()
+        resetWireNegotiationState()
+        commandQueue.removeAll()
+        _ = notificationIngress.begin(nil)
+    }
+
+    func receiveBleNotification(_ data: Data, token: MentraLiveNotificationIngress.Token) {
+        guard notificationIngress.current(token) else { return }
+        let previous = receivingNotification
+        receivingNotification = token
+        defer { receivingNotification = previous }
+        processReceivedData(data)
+    }
+
+    private func recordWifiAdbPeerIdentity(_ mac: String) {
+        guard let token = receivingNotification, notificationIngress.current(token) else { return }
+        wifiAdbPeerIdentity = (mac, token)
+    }
+
+    private func currentWifiAdbAdmission(_ admission: WifiAdbAdmission) -> Bool {
+        notificationIngress.current(admission.identity.token) && wireSessionGeneration == admission.wireEpoch &&
+            wifiAdbPeerIdentity?.mac == admission.identity.mac && wifiAdbLinkReady
+    }
+
+    var wifiAdbLinkReady: Bool {
+        connectionState == ConnTypes.CONNECTED && connectedPeripheral?.state == .connected && txCharacteristic != nil
+    }
+
+    func enqueueWifiAdbState(_ enabled: Bool) -> Bool {
+        // Match Wi-Fi forget: public log delegates must not reenter between validation and enqueue.
+        sendJson(["type": "set_wifi_adb_state", "enabled": enabled], wakeUp: true, requireAck: true, bridgeLogging: false)
+    }
+
+    /// MainActor performs identity validation and queue insertion without suspension.
+    func sendWifiAdbState(_ enabled: Bool, expectedBluetoothMac: String) throws {
+        guard expectedBluetoothMac.range(of: "^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", options: .regularExpression) != nil,
+              let identity = wifiAdbPeerIdentity,
+              identity.mac.caseInsensitiveCompare(expectedBluetoothMac) == .orderedSame,
+              notificationIngress.current(identity.token), wifiAdbLinkReady else {
+            throw BluetoothSdkError(code: "device_identity_changed", message: "The selected glasses identity or connection changed.")
+        }
+        let admission = WifiAdbAdmission(identity: identity, wireEpoch: wireSessionGeneration)
+        wifiAdbAdmission = admission
+        defer { wifiAdbAdmission = nil }
+        guard enqueueWifiAdbState(enabled), !admission.refused, admission.queued > 0,
+              currentWifiAdbAdmission(admission) else {
+            throw BluetoothSdkError(code: "command_send_failed", message: "Could not queue Wi-Fi debugging for the selected glasses.")
+        }
+    }
+
     func sendWifiAdbState(_ enabled: Bool) {
         Bridge.log("LIVE: 🔧 Sending Wi-Fi ADB state: \(enabled)")
 
@@ -4043,6 +4148,7 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "otaVersionUrl", otaVersionUrl)
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
         if let bluetoothMacAddress {
+            recordWifiAdbPeerIdentity(bluetoothMacAddress)
             DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
         }
         if let serialNumber {
@@ -4725,6 +4831,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
+        if let admission = wifiAdbAdmission {
+            guard currentWifiAdbAdmission(admission) else { admission.refused = true; return }
+            admission.queued += 1
+        }
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
         // Insert synchronously on MainActor so fragments and dependent commands retain call order.
         let generation = wireSessionGeneration
@@ -4829,7 +4939,8 @@ class MentraLive: NSObject, SGCManager {
             }
         }
 
-        BleTraceLogger.logMap(direction: "phone_to_glasses", layer: layer, type: trace.commandType, payload: payload)
+        BleTraceLogger.logMap(direction: "phone_to_glasses", layer: layer, type: trace.commandType, payload: payload,
+                              forwardToBridge: wifiAdbAdmission == nil)
     }
 
     private func bleTraceWarningReason(stage: String, extra: [String: Any?]) -> String? {
@@ -5159,7 +5270,8 @@ class MentraLive: NSObject, SGCManager {
                     direction: "phone_to_glasses",
                     layer: "sdk_ble_command",
                     payload: json,
-                    bytes: jsonData.count
+                    bytes: jsonData.count,
+                    forwardToBridge: bridgeLogging
                 )
 
                 if useBinaryWireProtocol, isNewVersion {
