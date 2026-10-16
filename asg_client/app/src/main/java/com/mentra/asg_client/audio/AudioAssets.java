@@ -71,6 +71,13 @@ public final class AudioAssets {
     /** Spoken confirmation after the glasses leave pairing mode. */
     public static final String PAIRING_EXITED = PAIRING_PREFIX + "pairing_exited.wav";
 
+    /** “Pairing mode ended. No new phone paired.” Spoken when the pairing window times out. */
+    public static final String AUDIO_PAIRING_ENDED_NO_PHONE =
+            PAIRING_PREFIX + "pairing_ended_no_phone.wav";
+
+    /** “Pairing cancelled.” Spoken when the user cancels pairing mode on the glasses. */
+    public static final String AUDIO_PAIRING_CANCELLED = PAIRING_PREFIX + "pairing_cancelled.wav";
+
     /** Battery level announcement audio folder prefix */
     public static final String BATTERY_LEVEL_PREFIX = "battery/";
 

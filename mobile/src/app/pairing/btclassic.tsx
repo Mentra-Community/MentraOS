@@ -10,6 +10,7 @@ import {engine} from "@mentra/engine"
 import type {Device} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {cancelPendingPairing, routePairingKickoffFailure} from "@/utils/PairingUtils"
+import {isClassicAudioUp} from "@/utils/pairing/pairAudio"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -37,9 +38,9 @@ export default function BtClassicPairingScreen() {
       return null
     }
   }, [route.params])
-  const bluetoothClassicConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
-    engine.pairing.onReadiness(onChange),
-  ).bluetoothClassicConnected
+  const audioReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) => engine.pairing.onReadiness(onChange))
+  // Any of the three audio signals counts, so Pair Audio never stays open over working audio.
+  const audioUp = isClassicAudioUp(audioReadiness)
   const otherBtConnected = useEngineSnapshot(engine.pairing.otherBtConnected, (onChange) =>
     engine.pairing.onOtherBtConnected(onChange),
   )
@@ -50,8 +51,12 @@ export default function BtClassicPairingScreen() {
 
   focusEffectPreventBack()
 
+  const advancedRef = useRef(false)
+
   const handleSuccess = () => {
-    if (cancellingPairing.current) return
+    if (cancellingPairing.current || advancedRef.current) return
+    // Exactly one navigation, however many audio signals flip.
+    advancedRef.current = true
     if (device) {
       // The loading screen owns the selected-device connect. Revealing it first
       // keeps one cancellable kickoff path for Android, iOS, and controllers.
@@ -103,11 +108,14 @@ export default function BtClassicPairingScreen() {
   }, [device])
 
   useEffect(() => {
-    console.log("BTCLASSIC: check bluetoothClassicConnected", bluetoothClassicConnected)
-    if (bluetoothClassicConnected) {
+    console.log(
+      `PAIRFLOW: btclassic device=${deviceName} audioUp=${audioUp} ${audioUp ? "advance" : "wait_for_audio_route"}`,
+    )
+    // On mount this advances at once when audio is already up.
+    if (audioUp) {
       handleSuccess()
     }
-  }, [bluetoothClassicConnected])
+  }, [audioUp])
 
   useEffect(() => {
     if (device) return

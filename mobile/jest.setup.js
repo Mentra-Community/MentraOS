@@ -553,6 +553,8 @@ const mockIslandEntries = () => {
             connected: realGlasses.isGlassesConnected(glassesState.connection),
             fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
             bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+            bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+            bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
             nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
           }
         }),
@@ -564,6 +566,8 @@ const mockIslandEntries = () => {
               connected: realGlasses.isGlassesConnected(glassesState.connection),
               fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
               bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+              bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+              bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
               nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
             }
           }

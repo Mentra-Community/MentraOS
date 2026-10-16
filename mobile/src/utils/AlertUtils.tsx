@@ -39,6 +39,7 @@ let modalRef: {
     },
   ) => void
   isVisible: () => boolean
+  hideModal: (title: string) => void
 } | null = null
 
 // Function to register the modal reference
@@ -91,6 +92,8 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   const pendingDismissCallback = useRef<(() => void) | undefined>(undefined)
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+  const titleRef = useRef(title)
+  titleRef.current = title
 
   // Effects run after React commits. Dispatch callbacks from here so a button
   // that opens a native surface cannot race the custom overlay's removal.
@@ -187,6 +190,12 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     // Register the modal functions for global access
     setModalRef({
       isVisible: () => visibleRef.current,
+      // Close the modal without running a button handler, but only if it is still showing `title`.
+      hideModal: (hideTitle) => {
+        if (!visibleRef.current || titleRef.current !== hideTitle) return
+        pendingDismissCallback.current = undefined
+        setVisible(false)
+      },
       showModal: (title, message, alertButtons = [], opts = {}) => {
         setTitle(title)
         setMessage(message)
@@ -334,6 +343,14 @@ const showAlert = (title: string, message: string, buttons: AlertButton[] = [], 
     // Fallback to system alert if modal is not available
     Alert.alert(title, message, buttons, options)
   }
+}
+
+/**
+ * Closes the alert that is showing `title` without running any button handler. Does nothing when a
+ * different alert, or none, is showing. For alerts whose condition resolved on its own.
+ */
+const dismissAlert = (title: string) => {
+  modalRef?.hideModal(title)
 }
 
 /**
@@ -536,6 +553,7 @@ const showDestructiveAlert = (title: string, message: string, buttons: AlertButt
 
 export {
   showAlert,
+  dismissAlert,
   showConnectivityAlert,
   showBluetoothAlert,
   showLocationAlert,

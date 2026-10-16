@@ -876,9 +876,43 @@ export type StreamKeepAliveRequest = {
   ackId: string
 }
 
+/**
+ * Stable machine-readable `pair_failure` causes. Unknown native codes still typecheck.
+ * `ios_forget_pairing`: iOS holds a stale Bluetooth pairing for these glasses during an
+ * explicit attempt; the user must remove it in Settings > Bluetooth before pairing again.
+ */
+export type PairFailureCode = "ios_forget_pairing" | string
+
 export type PairFailureEvent = {
   type: "pair_failure"
   error: string
+  /** Stable cause, when the SDK can classify the failure. */
+  code?: PairFailureCode
+}
+
+/**
+ * Mentra Live pairing state, owned by the SDK.
+ * - `normal`: no pairing mode in effect; automatic reconnect is allowed.
+ * - `pairing_mode`: the glasses opened a pairing window. Automatic reconnect is paused until
+ *   `endsAtMs` or until the glasses report the window ended. `windowId` identifies the
+ *   window and survives a cold restart.
+ * - `pairing_rejected`: the glasses no longer accept this phone (another phone took over).
+ *   Reconnect has stopped. Render Pair Again.
+ */
+export type MentraLivePairingState =
+  | {state: "normal"}
+  | {state: "pairing_mode"; windowId: number; endsAtMs: number}
+  | {state: "pairing_rejected"}
+
+export type PairingStateChangedEvent = {
+  state: MentraLivePairingState
+}
+
+export type PairingModeEndedReason = "paired" | "cancelled" | "timeout" | string
+
+export type PairingModeEndedEvent = {
+  reason: PairingModeEndedReason
+  window_id?: number
 }
 
 export type PairingInfoEvent = {
@@ -887,13 +921,27 @@ export type PairingInfoEvent = {
   classic_bond_ready?: boolean
   secure_pairing_capable?: boolean
   protocol_version?: number
+  /** Present when the glasses build includes ownership transfer. */
+  ownership_transfer?: boolean
+  /** True when the glasses derive Classic audio from the LE pair (CTKD), so audio should connect on its own. */
+  auto_audio?: boolean
+  /** True only after a BLE bond committed the owner and the window closed. */
+  owner_committed?: boolean
 }
 
 export type EnteringPairingModeEvent = {
   window_ms: number
+  /** Identifies this pairing window. Also carried in `pairing_mode_ended` and the advertisement. */
+  window_id?: number
   reason?: string
+  /** The glasses kept their bonds when the window opened; they change only if another phone pairs. */
+  owner_retained?: boolean
 }
 
+/**
+ * @deprecated No longer emitted. Observe `pairing_state_changed` (or `GlassesStatus.pairingState`)
+ * and render Pair Again for `pairing_rejected`.
+ */
 export type OwnerReplacedEvent = {
   reason: string
 }
@@ -1182,6 +1230,9 @@ export type BluetoothSdkModuleEvents = {
   pair_failure: (event: PairFailureEvent) => void
   pairing_info: (event: PairingInfoEvent) => void
   entering_pairing_mode: (event: EnteringPairingModeEvent) => void
+  pairing_mode_ended: (event: PairingModeEndedEvent) => void
+  pairing_state_changed: (event: PairingStateChangedEvent) => void
+  /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: (event: OwnerReplacedEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
@@ -1346,6 +1397,9 @@ export type BluetoothSdkEventMap = {
   pair_failure: PairFailureEvent
   pairing_info: PairingInfoEvent
   entering_pairing_mode: EnteringPairingModeEvent
+  pairing_mode_ended: PairingModeEndedEvent
+  pairing_state_changed: PairingStateChangedEvent
+  /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: OwnerReplacedEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
@@ -1639,6 +1693,10 @@ export interface GlassesStatus {
   micEnabled: boolean
   voiceActivityDetectionEnabled: boolean
   bluetoothClassicConnected: boolean
+  /** iOS: an HFP input is available or a matching Bluetooth output is active. Android: same as `bluetoothClassicConnected`. */
+  bluetoothClassicProfilesConnected: boolean
+  /** iOS: a matching Bluetooth output is the active audio route. Android: same as `bluetoothClassicConnected`. */
+  bluetoothAudioRouted: boolean
   signalStrength: number
   /** Milliseconds since epoch when signalStrength was last refreshed by the phone BLE stack. */
   signalStrengthUpdatedAt: number
@@ -1653,6 +1711,8 @@ export interface GlassesStatus {
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
+  /** Mentra Live pairing state owned by the SDK. Absent on other models. */
+  pairingState?: MentraLivePairingState
   /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
   systemTimeMs?: number
   otaVersionUrl: string
@@ -1747,6 +1807,14 @@ export interface ConnectOptions {
    * Android accepts this option as a no-op.
    */
   requiresAncs?: boolean
+  /**
+   * iOS Mentra Live only. When true, CoreBluetooth is asked to bring up the
+   * Classic profiles (A2DP/HFP) after the BLE connection
+   * (CBConnectPeripheralOptionEnableTransportBridgingKey). Defaults to true:
+   * without it the pairing screen waits for an audio route that never appears.
+   * Android accepts this option as a no-op.
+   */
+  enableTransportBridging?: boolean
 }
 
 export type ScanResultsCallback = (devices: Device[]) => void

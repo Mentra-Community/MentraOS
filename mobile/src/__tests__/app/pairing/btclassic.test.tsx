@@ -19,8 +19,14 @@ jest.mock("@/utils/SettingsNavigationUtils", () => ({
 
 jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 
+// Onboarding copy resolves to the real English string so the rendered steps are asserted exactly.
+// Every other namespace stays a key.
 jest.mock("@/i18n", () => ({
-  translate: jest.fn((key: string) => key),
+  translate: jest.fn((key: string, options?: Record<string, string>) => {
+    if (!key.startsWith("onboarding:")) return key
+    const value = require("@/i18n/en").default.onboarding[key.slice("onboarding:".length)]
+    return String(value).replace(/\{\{(\w+)\}\}/g, (_match: string, name: string) => options?.[name] ?? "")
+  }),
 }))
 
 jest.mock("@/contexts/ThemeContext", () => ({
@@ -70,9 +76,21 @@ jest.mock("@/components/ignite", () => {
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))
 
 jest.mock("@/components/onboarding/OnboardingGuide", () => {
-  const {View} = require("react-native")
-  function MockOnboardingGuide() {
-    return <View />
+  const {Text, View} = require("react-native")
+  function MockOnboardingGuide({steps}: {steps: {title?: string; subtitle?: string; numberedBullets?: string[]}[]}) {
+    return (
+      <View>
+        {steps.map((step) => (
+          <View key={step.title}>
+            <Text>{step.title}</Text>
+            <Text>{step.subtitle}</Text>
+            {step.numberedBullets?.map((bullet) => (
+              <Text key={bullet}>{bullet}</Text>
+            ))}
+          </View>
+        ))}
+      </View>
+    )
   }
   return {OnboardingGuide: MockOnboardingGuide}
 })
@@ -88,6 +106,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
 
 const device = {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}
@@ -115,6 +134,60 @@ describe("btclassic pairing screen", () => {
       history: ["/pairing/scan", "/pairing/loading"],
     })
     ;(usePushPrevious as jest.Mock).mockReturnValue(pushPrevious)
+  })
+
+  it("shows Pair Audio with the four exact steps", () => {
+    const screen = render(<BtClassicPairingScreen />)
+
+    expect(screen.getByText("Pair Audio")).toBeTruthy()
+    expect(
+      screen.getByText(
+        `${device.name} is already listed under My Devices in your iPhone Bluetooth settings. It only needs a tap to connect audio.`,
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText("Tap Open Settings")).toBeTruthy()
+    expect(screen.getByText("Tap Bluetooth")).toBeTruthy()
+    expect(screen.getByText(`Tap "${device.name}" under My Devices or Other Devices`)).toBeTruthy()
+    expect(screen.getByText('Return to the app once it says "Connected"')).toBeTruthy()
+    expect(translate).toHaveBeenCalledWith("onboarding:btClassicStep3", {name: device.name})
+  })
+
+  it("advances at once when audio is already up on mount", async () => {
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({bluetoothAudioRouted: true})
+    })
+    render(<BtClassicPairingScreen />)
+
+    await waitFor(() => expect(pushPrevious).toHaveBeenCalledTimes(1))
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["the Classic bond", {bluetoothClassicConnected: true}],
+    ["the connected profiles", {bluetoothClassicProfilesConnected: true}],
+    ["the audio route", {bluetoothAudioRouted: true}],
+  ])("advances exactly once when %s reports audio up", async (_label, signal) => {
+    render(<BtClassicPairingScreen />)
+    expect(pushPrevious).not.toHaveBeenCalled()
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo(signal)
+    })
+    // The other signals follow in the same pairing. They must not navigate again.
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({
+        bluetoothClassicConnected: true,
+        bluetoothClassicProfilesConnected: true,
+        bluetoothAudioRouted: true,
+      })
+    })
+
+    await waitFor(() => expect(pushPrevious).toHaveBeenCalledTimes(1))
+  })
+
+  it("stays on Pair Audio while no audio signal is up", () => {
+    render(<BtClassicPairingScreen />)
+    expect(pushPrevious).not.toHaveBeenCalled()
   })
 
   it("reveals loading once Bluetooth Classic links and lets loading own the connect", async () => {

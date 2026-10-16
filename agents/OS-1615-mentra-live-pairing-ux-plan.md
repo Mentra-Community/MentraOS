@@ -1,10 +1,20 @@
 # OS-1615 — Mentra Live Secure Pairing and Ownership Transfer
 
+> **Superseded by [OS-2055](https://linear.app/mentralabs/issue/OS-2055) (Mentra 3.3).** Everything below is historical design history. Where it disagrees with the current behavior, the current behavior wins. The firmware source of truth is `docs/pairing-spec.md` in `mentra-live-bes`.
+>
+> **Current behavior (3.3):**
+> - Three power-button presses (not five) open a 120 s pairing window, only after MTK readiness. Unowned glasses open it automatically once per boot at MTK readiness.
+> - Entering pairing mode forgets the previous owner immediately; the first BLE bond wins. No media wipe, no finalize/abort/transfer-status, and no transfer confirmation timer.
+> - The spoken code repeats every 30 s (not 15 s).
+> - Upgraded iPhones with only a Classic bond attach their BLE identity once while their Classic link is up.
+> - The previous owner's phone keeps the glasses listed as "Paired to another phone" with Pair again and Unpair.
+> - Both flags are on: BES `MENTRA_SECURE_PAIRING` and the app's `EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING`.
+
 **Linear:** [OS-1615](https://linear.app/mentralabs/issue/OS-1615)  
-**Status:** Rule Alpha / Design A (open reclaim) is live. Design B wipe/finalize/abort is retired.  
+**Status:** Historical. Rule Alpha / Design A (open reclaim) shipped in 3.3 with the OS-2055 revisions above. Design B wipe/finalize/abort is retired.  
 **Repos:** MentraOS (mobile + asg_client + Bluetooth SDK), mentra-live-bes (BES firmware)
 
-This document is the authoritative end-to-end design for Mentra Live pairing. Five-tap clears prior owner/bonds; the first successful pair wins. `pairing_info` is a readiness signal only — do not gate UI or commands on `had_previous_bond`. Design B media wipe, pairing finalize/abort, and pairing-transfer status APIs must not be re-armed.
+This document was the original end-to-end design for Mentra Live pairing. `pairing_info` is a readiness signal only — do not gate UI or commands on `had_previous_bond`. Design B media wipe, pairing finalize/abort, and pairing-transfer status APIs must not be re-armed.
 
 ---
 

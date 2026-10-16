@@ -9,6 +9,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {decideConnectButtonAction, engine} from "@mentra/engine"
+import {usePairingReconnectHold} from "@/hooks/usePairingReconnectHold"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
@@ -108,6 +109,25 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }, [glassesFullyBooted, glassesConnected])
 
   const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, pairingReadiness.nativeLinkBusy)
+  const pairingState = glassesStatus.pairingState
+  const inPairingMode =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_mode"
+  const pairingRejected =
+    pairedModel === DeviceTypes.LIVE && !glassesConnected && pairingState?.state === "pairing_rejected"
+  // The SDK publishes "normal" before CONNECTING when the pairing window ends.
+  const holdReconnectAfterPairing = usePairingReconnectHold({
+    inPairingMode,
+    connected: glassesConnected,
+    rejected: pairingRejected,
+    linkBusy: searching || nativeLinkBusy,
+  })
+  // Cancel stops this phone's reconnect. Pairing mode on the glasses continues, but the
+  // card must leave the spinner; the window itself is not a reason to keep it spinning.
+  const [reconnectDismissed, setReconnectDismissed] = useState(false)
+  const pairingWindowId = pairingState?.state === "pairing_mode" ? pairingState.windowId : undefined
+  useEffect(() => {
+    setReconnectDismissed(false)
+  }, [pairingWindowId])
 
   const handleCancelPairing = async () => {
     if (cancellingPairing.current) return
@@ -184,11 +204,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const handleConnectOrDisconnect = async () => {
-    const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy: searching || nativeLinkBusy})
+    const action = decideConnectButtonAction({
+      hasDefaultWearable: !!pairedModel,
+      busy: searching || nativeLinkBusy || inPairingMode || holdReconnectAfterPairing,
+    })
     if (action === "cancel") {
       await engine.glasses.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()
+      setReconnectDismissed(true)
     } else {
       await connectGlasses()
     }
@@ -278,7 +302,20 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     return image
   }
 
-  let isSearching = searching || isCheckingConnectivity || wasSearching || nativeLinkBusy
+  // The SDK pauses reconnect while the glasses are in pairing mode. Home still shows the normal
+  // reconnecting card (spinner + Cancel) over the popup, never Pair Again, until the user
+  // presses Cancel. The pairing watch scan and the reconnect hold are not a new connect
+  // attempt, so they must not bring the spinner back. Keep the card for a moment after the
+  // window ends so "Connect glasses" does not flash before the reconnect starts.
+  const userStoppedReconnect = reconnectDismissed && (inPairingMode || holdReconnectAfterPairing)
+  let isSearching =
+    !userStoppedReconnect &&
+    (searching ||
+      isCheckingConnectivity ||
+      wasSearching ||
+      nativeLinkBusy ||
+      inPairingMode ||
+      holdReconnectAfterPairing)
   let _connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
@@ -289,6 +326,29 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const features = getModelCapabilities(displayModel as DeviceTypes)
   const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
+
+  // The SDK reports `pairing_rejected` when another phone took the glasses over.
+  // The card still opens glasses settings (Unpair lives there). Only Pair Again starts pairing.
+  if (pairingRejected) {
+    return (
+      <View style={style}>
+        <DeviceStatus className="h-28" onPress={onPress} image={getCurrentGlassesImage()}>
+          <View className="flex-row items-center gap-3">
+            <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
+            <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
+          </View>
+          <Button
+            flex
+            compact
+            className="max-h-10"
+            tx="home:pairAgain"
+            preset="primary"
+            onPress={() => push("/pairing/prep", {deviceModel: DeviceTypes.LIVE})}
+          />
+        </DeviceStatus>
+      </View>
+    )
+  }
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (

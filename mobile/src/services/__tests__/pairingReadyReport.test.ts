@@ -170,6 +170,8 @@ describe("pairing ready timeout reports", () => {
       connected: true,
       fullyBooted: true,
       bluetoothClassicConnected: true,
+      bluetoothClassicProfilesConnected: false,
+      bluetoothAudioRouted: false,
       nativeLinkBusy: false,
     })
   })

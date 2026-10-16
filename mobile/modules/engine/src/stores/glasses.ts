@@ -20,6 +20,12 @@ export const selectGlassesConnected = (state: {connection: GlassesConnectionStat
 
 export const selectGlassesReady = (state: {connection: GlassesConnectionStatus}) => isGlassesReady(state.connection)
 
+/**
+ * The SDK-owned Mentra Live pairing state (`normal`, `pairing_mode`, `pairing_rejected`).
+ * The engine mirrors it from `glasses_status` and `pairing_state_changed`; it never derives it.
+ */
+export type LivePairingState = NonNullable<PublicGlassesStatus["pairingState"]>
+
 type EngineGlassesStatus = PublicGlassesStatus & {
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null
@@ -118,6 +124,8 @@ const initialState: GlassesStore = {
   g2MissingArm: null,
   micEnabled: false,
   bluetoothClassicConnected: false,
+  bluetoothClassicProfilesConnected: false,
+  bluetoothAudioRouted: false,
   signalStrength: -1,
   signalStrengthUpdatedAt: 0,
   voiceActivityDetectionEnabled: true,
@@ -130,6 +138,7 @@ const initialState: GlassesStore = {
   leftMacAddress: "",
   rightMacAddress: "",
   buildNumber: "",
+  pairingState: {state: "normal"},
   systemTimeMs: 0,
   otaVersionUrl: "",
   appVersion: "",

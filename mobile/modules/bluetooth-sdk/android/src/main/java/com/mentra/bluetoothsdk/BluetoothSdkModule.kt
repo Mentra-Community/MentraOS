@@ -310,7 +310,9 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onError(error: BluetoothError) {
-                    sendEvent("pair_failure", mapOf("error" to error.message))
+                    val body = mutableMapOf<String, Any>("error" to error.message)
+                    error.failureCode?.let { body["code"] = it }
+                    sendEvent("pair_failure", body)
                 }
 
                 override fun onRawEvent(eventName: String, values: Map<String, Any>) {
@@ -379,6 +381,8 @@ class BluetoothSdkModule : Module() {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
+            "pairing_mode_ended",
+            "pairing_state_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",

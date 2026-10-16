@@ -203,6 +203,8 @@ class MentraLive : SGCManager() {
                 10_000L // 10s before first scan after shutdown
 
         private const val MENTRA_MANUFACTURER_ID = 0xB822
+        /** `phone_hello.pairing_protocol`: this SDK speaks ownership transfer v4. */
+        private const val PAIRING_PROTOCOL_VERSION = 4
 
         private fun manufacturerData(result: ScanResult): ByteArray? {
             return result.scanRecord?.getManufacturerSpecificData(MENTRA_MANUFACTURER_ID)
@@ -221,8 +223,13 @@ class MentraLive : SGCManager() {
             val advertisement =
                     MentraLivePairingAdvertisementParser.parse(manufacturerData(result))
                             ?: return Triple(false, null, false)
+            result.device?.address?.let { securePairingAddresses.add(it) }
             return Triple(advertisement.pairingMode, advertisement.pairingCode, true)
         }
+
+        /** Addresses seen advertising the secure-pairing trailer; survives SGC recreation. */
+        private val securePairingAddresses: MutableSet<String> =
+                java.util.Collections.synchronizedSet(mutableSetOf())
 
         fun isMentraLiveBluetoothName(name: String?): Boolean {
             if (name.isNullOrEmpty()) {
@@ -622,11 +629,28 @@ class MentraLive : SGCManager() {
     private var isConnecting = false
     private var isKilled = false
 
-    /** Glasses opened a pairing window — stop reconnect without forgetting identity/bonds. */
-    private var pairingYieldActive = false
-    private var pairingYieldEndRunnable: Runnable? = null
-    /** After yield ends, auth/not-owner failures may clear saved glasses. */
-    private var pairingYieldAwaitingReclaim = false
+    /**
+     * Ends the pairing-mode pause at its deadline. The pause itself lives in
+     * [MentraLivePairingStateStore] so it survives this instance.
+     */
+    private var pairingPauseEndRunnable: Runnable? = null
+    /** `phone_hello` / `pair_select` went out on this GATT session. */
+    @Volatile private var phoneHelloSentThisSession = false
+    @Volatile private var pairSelectSentThisSession = false
+    /** Fails an explicit secure pair if bonding never reaches a terminal state. */
+    private var secureBondWaitRunnable: Runnable? = null
+    /**
+     * glasses_ready arrived during an explicit secure pair but readiness is parked until the
+     * glasses report `owner_committed` (and the BLE bond exists). Mirrors iOS
+     * `awaitingSecurePairingConfirmation`.
+     */
+    @Volatile private var awaitingSecurePairingConfirmation = false
+    /** The glasses' `pairing_info` reported `owner_committed` on this GATT session. */
+    @Volatile private var securePairingConfirmed = false
+    /** `pairing_info` has arrived on this GATT session. CTKD waits for it on an explicit secure pair. */
+    @Volatile private var pairingInfoSeen = false
+    /** elapsedRealtime of the last GATT link that was not an explicit pairing attempt. */
+    private var lastAutoReconnectLinkAt: Long? = null
     /** Hold GATT teardown until the unpair write can leave the phone. */
     private var unpairFlushPending = false
     private var unpairFlushRunnable: Runnable? = null
@@ -1142,6 +1166,8 @@ class MentraLive : SGCManager() {
         } else {
             Bridge.log("LIVE: 🎵 Phone audio monitor disabled (BLOCK_AUDIO_DUPLEX=false)")
         }
+
+        restorePairingState()
     }
 
     override fun cleanup() {
@@ -1224,8 +1250,14 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "connectionState", state)
 
         if (state == ConnTypes.CONNECTED) {
+            // A session that reached ready means the glasses still admit this phone. An explicit
+            // pair already cleared a rejection in DeviceManager.handleDeviceReady.
+            MentraLivePairingStateStore.update("session_ready") {
+                it.onSessionReady(explicitAttempt = false)
+            }
             DeviceStore.apply("glasses", "connected", true)
-            if (glassesReadyReceived) {
+            // A ready report parked for the owner commit must not be promoted by this path.
+            if (glassesReadyReceived && !awaitingSecurePairingConfirmation) {
                 DeviceStore.apply("glasses", "fullyBooted", true)
             }
             // Drop cached version fields from the previous BLE session so the next version_info
@@ -1301,10 +1333,8 @@ class MentraLive : SGCManager() {
     /** Starts BLE scanning for Mentra Live glasses */
     private fun startScan() {
         if (postGattLifecycle { startScan() }) return
-        if (pairingYieldActive) {
-            Bridge.log("LIVE: startScan blocked — pairing yield active")
-            return
-        }
+        // A pause or rejection still scans: the callback never auto-connects then, and the
+        // saved glasses' advertisement is what ends a pause early.
         if (bluetoothAdapter == null || isScanning) {
             return
         }
@@ -1404,6 +1434,8 @@ class MentraLive : SGCManager() {
                                             "LIVE: 🔌 ⏰ Reconnect scan timed out - scheduling next reconnect attempt"
                                     )
                                     handleReconnection()
+                                } else {
+                                    startPairingWatchScan()
                                 }
                             }
                         }
@@ -1455,7 +1487,7 @@ class MentraLive : SGCManager() {
      * an established owner's connected glasses have no pending name/address and stay hidden.
      */
     private fun emitConnectedPendingDeviceForPairingScan() {
-        if (!manualDiscoveryActive || isReconnecting || pairingYieldActive) return
+        if (!manualDiscoveryActive || isReconnecting) return
         val device = connectedDevice ?: bluetoothGatt?.device ?: return
         val name = safeBondedDeviceName(device)
         if (!isMentraLiveBluetoothName(name)) return
@@ -1550,17 +1582,21 @@ class MentraLive : SGCManager() {
                         // Connect-by-name only when reconnecting OR connectById() asked for
                         // this name. A discovery-only pairing scan must not auto-connect just
                         // because savedDeviceName still matches (spoof risk).
+                        val isSavedGlasses =
+                                savedDeviceName.isNotEmpty() && savedDeviceName == deviceName
                         val isNamedConnectTarget =
-                                savedDeviceName.isNotEmpty() &&
-                                        savedDeviceName == deviceName &&
-                                        (isReconnecting || explicitConnectByName)
-                        if (!isReconnecting &&
-                                        advertisesPairingFlag(result) &&
-                                        !isPairingDiscoverable(result)
+                                isSavedGlasses && (isReconnecting || explicitConnectByName)
+                        if (MentraLiveOwnerLossPolicy.shouldExposeAsNonPairable(
+                                        savedGlasses = isSavedGlasses,
+                                        reconnectScan = isReconnecting,
+                                        secureTrailer = advertisesPairingFlag(result),
+                                        pairingDiscoverable = isPairingDiscoverable(result),
+                                )
                         ) {
-                            // Tell RN a nearby unit is advertising but not pairable. The scan
-                            // screen keeps it visible with pairing-mode guidance but blocks the
-                            // connection until a pairable advertisement arrives.
+                            // Other secure units stay visible with pairing-mode guidance, and
+                            // the scan screen blocks the connection until they are pairable.
+                            // The saved glasses fall through so the pause watch scan can see
+                            // the pairing flag clear and reconnect.
                             Bridge.log(
                                     "LIVE: Nearby $deviceName is secure firmware not in pairing mode — exposing as non-pairable"
                             )
@@ -1597,8 +1633,28 @@ class MentraLive : SGCManager() {
                                 securePairingCapable = secureCapable,
                         )
 
+                        if (savedDeviceName.isNotEmpty() && savedDeviceName == deviceName) {
+                            observeSavedGlassesAdvertisement(result)
+                        }
+
+                        if (isNamedConnectTarget && automaticConnectBlocked()) {
+                            return
+                        }
+
                         // connectById / reconnect: user (or reconnect) asked for this name —
                         // GATT-connect. Discovery-only scans never set explicitConnectByName.
+                        // While the saved glasses advertise pairing mode an automatic reconnect
+                        // waits instead of racing the new phone for the single BLE slot.
+                        if (isNamedConnectTarget &&
+                                        MentraLiveOwnerLossPolicy.shouldStandDownInsteadOfReconnect(
+                                                pairingMode = secureCapable && pairingMode,
+                                                savedGlasses = true,
+                                                explicitPairing = isExplicitPairingAttempt(),
+                                        )
+                        ) {
+                            return
+                        }
+
                         if (isNamedConnectTarget) {
                             Log.i(
                                     TAG,
@@ -1618,7 +1674,7 @@ class MentraLive : SGCManager() {
                                             else " (connectById)")
                             )
                             synchronized(connectionLock) {
-                                if (pairingYieldActive || isConnected || isConnecting) {
+                                if (automaticConnectBlocked() || isConnected || isConnecting) {
                                     return
                                 }
                                 isConnecting = true
@@ -1719,6 +1775,7 @@ class MentraLive : SGCManager() {
         streamControlVersion = 0
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
+        resetSecurePairingConfirmation()
         ctkdInitiatedThisGattSession = false
         classicAudioServiceDiscovery.cancel()
         audioConnected = false
@@ -1839,8 +1896,10 @@ class MentraLive : SGCManager() {
         if (device == null) {
             return
         }
-        if (isKilled || pairingYieldActive) {
-            Bridge.log("LIVE: connectToDevice blocked — pairing yield active")
+        if (isKilled || automaticConnectBlocked()) {
+            Bridge.log(
+                    "LIVE: connectToDevice blocked — pairing state ${MentraLivePairingStateStore.describe()}"
+            )
             isConnecting = false
             isReconnecting = false
             return
@@ -1849,7 +1908,7 @@ class MentraLive : SGCManager() {
         // Never replace a still-open GATT. Its disconnect/close must finish first.
         bluetoothGatt?.let { beginGattTeardown(it) }
         gattTeardownBarrier.runWhenIdle {
-            if (requestEpoch == connectionRequestEpoch && !isKilled && !pairingYieldActive) {
+            if (requestEpoch == connectionRequestEpoch && !isKilled && !automaticConnectBlocked()) {
                 connectToDeviceWhenIdle(device)
             }
         }
@@ -1964,87 +2023,232 @@ class MentraLive : SGCManager() {
     // }
     // }
 
-    private fun enterPairingYield(windowMs: Long) {
-        if (postGattLifecycle { enterPairingYield(windowMs) }) return
+    /**
+     * Automatic connection attempts wait while the glasses run a pairing window for another
+     * phone or after they rejected this phone. An explicit pair (scan screen, Pair Again) is
+     * never blocked.
+     */
+    private fun automaticConnectBlocked(): Boolean =
+            !MentraLivePairingStateStore.allowsAutomaticReconnect && !isExplicitPairingAttempt()
+
+    /** Carry out what a pairing-state input decided. */
+    private fun applyPairingTransition(transition: MentraLivePairingTransition) {
+        when (transition.effect) {
+            MentraLivePairingEffect.NONE -> Unit
+            MentraLivePairingEffect.PAUSE -> enterPairingPause()
+            MentraLivePairingEffect.RESUME -> resumeAfterPairingPause()
+            MentraLivePairingEffect.REJECT -> stopAfterPairingRejected()
+        }
+    }
+
+    /**
+     * The glasses opened a pairing window. Leave the link without forgetting the saved glasses
+     * or any bond, make no automatic connection until the window ends, and keep a passive scan
+     * so a cleared pairing flag can end the pause early.
+     */
+    private fun enterPairingPause() {
+        if (postGattLifecycle { enterPairingPause() }) return
+        if (isKilled) return
+        leaveGlassesLink()
+        armPairingPauseTimer()
+        startPairingWatchScan()
+    }
+
+    /** Pause over (`pairing_mode_ended`, flag cleared, or deadline): reconnect right away. */
+    private fun resumeAfterPairingPause() {
+        if (postGattLifecycle { resumeAfterPairingPause() }) return
+        cancelPairingPauseTimer()
+        if (isKilled || isConnected || isConnecting) return
+        if (isScanning && !isReconnecting && !manualDiscoveryActive) {
+            stopScan()
+            emitStopScanEvent()
+        }
+        reconnectAttempts = 0
+        isReconnecting = false
+        handleReconnection()
+    }
+
+    /**
+     * The glasses belong to another phone. Stop every automatic attempt but keep the saved
+     * glasses and bonds; only an explicit pair or a forget clears this (see
+     * [MentraLivePairingStateStore]).
+     */
+    private fun stopAfterPairingRejected() {
+        if (postGattLifecycle { stopAfterPairingRejected() }) return
+        cancelPairingPauseTimer()
+        if (isKilled) return
+        if (isExplicitPairingAttempt()) return
+        leaveGlassesLink()
+    }
+
+    /** Drop the link and every pending automatic attempt. Bonds and saved identity stay. */
+    private fun leaveGlassesLink() {
         connectionRequestEpoch++
-        pairingYieldActive = true
-        pairingYieldAwaitingReclaim = false
+        // Invalidate delayed reconnect callbacks already on the handler.
+        reconnectGeneration++
         isReconnecting = false
         isConnecting = false
-        pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
+        cancelSecureBondWait()
         if (connectionTimeoutRunnable != null) {
             connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable!!)
             connectionTimeoutRunnable = null
         }
-        // Stop scans/reconnect work; keep default_wearable / Classic bond.
-        if (isScanning) {
+        if (isScanning && !manualDiscoveryActive) {
             stopScan()
             emitStopScanEvent()
         }
-        // Drop A2DP/HFP (keep the Classic bond) so glasses can advertise for reclaim.
-        // Do this before nulling connectedDevice — disconnectClassicProfiles needs it.
-        val yieldingDevice = connectedDevice
-        disconnectClassicProfiles(yieldingDevice)
-        // closeGattQuietly nulls bluetoothGatt before the disconnect callback, so
-        // onConnectionStateChange treats it as stale and never publishes DISCONNECTED.
-        // Mirror a real disconnect for UI + session state, then tear GATT down.
-        isConnected = false
-        connectedDevice = null
-        glassesReady = false
-        glassesSessionId = null
-        streamControlVersion = 0
-        readinessCompletedThisBleSession = false
-        glassesReadyReceived = false
-        ctkdInitiatedThisGattSession = false
-        classicAudioServiceDiscovery.cancel()
+        // Drop A2DP/HFP (keep the Classic bond) so the glasses can serve the new phone.
+        // Capture the device first: GATT teardown nulls connectedDevice.
+        val leavingDevice = connectedDevice
+        val hadLink = bluetoothGatt != null || isConnected
+        if (leavingDevice != null) disconnectClassicProfiles(leavingDevice)
         audioConnected = false
-        notificationsEnabled = false
-        processSendQueueRunnable?.let { handler.removeCallbacks(it) }
-        stopReadinessCheckLoop()
-        stopHeartbeat()
-        stopSignalStrengthPolling()
-        stopMicBeat()
-        closeL2capFileChannel()
-        fileProcessingHandler.removeCallbacksAndMessages(null)
-        clearFilePacketBuffer()
-        updateConnectionState(ConnTypes.DISCONNECTED)
-        closeGattQuietly(true)
-        // Stand down for the whole window. Probing GATT during yield races the new
-        // phone for BLE_CONNECTION_MAX=1 and is exactly what entering_pairing_mode forbids.
-        val end =
-                Runnable {
-                    Bridge.log("LIVE: Pairing yield ended — resume reconnect if still owned")
-                    pairingYieldActive = false
-                    pairingYieldAwaitingReclaim = true
-                    pairingYieldEndRunnable = null
-                    if (!isKilled && !isConnected && !isConnecting) {
-                        handleReconnection()
-                    }
-                }
-        pairingYieldEndRunnable = end
-        handler.postDelayed(end, windowMs)
+        if (hadLink) {
+            // beginGattTeardown resets the session state and publishes DISCONNECTED.
+            closeGattQuietly(true)
+            updateConnectionState(ConnTypes.DISCONNECTED)
+        }
     }
 
-    fun isPairingYieldActive(): Boolean = pairingYieldActive
-
-    private fun clearSavedGlassesAfterOwnerLoss(reason: String) {
-        Bridge.log("LIVE: Owner loss ($reason) — clearing saved glasses (not generic GATT)")
-        pairingYieldAwaitingReclaim = false
-        pairingYieldActive = false
-        pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
-        pairingYieldEndRunnable = null
-        try {
-            forget()
-        } catch (e: Exception) {
-            Bridge.log("LIVE: forget after owner loss failed: ${e.message}")
+    private fun armPairingPauseTimer() {
+        cancelPairingPauseTimer()
+        val remaining = MentraLivePairingStateStore.remainingPauseMs()
+        if (remaining <= 0L) return
+        val end = Runnable {
+            pairingPauseEndRunnable = null
+            applyPairingTransition(
+                    MentraLivePairingStateStore.update("pause_deadline") {
+                        it.onTick(System.currentTimeMillis())
+                    }
+            )
         }
-        DeviceStore.apply("bluetooth", "default_wearable", "")
-        DeviceStore.apply("bluetooth", "device_name", "")
-        DeviceStore.apply("bluetooth", "device_address", "")
-        Bridge.saveSetting("default_wearable", "")
-        Bridge.saveSetting("device_name", "")
-        Bridge.saveSetting("device_address", "")
-        Bridge.sendTypedMessage("owner_replaced", mapOf("reason" to reason))
+        pairingPauseEndRunnable = end
+        handler.postDelayed(end, remaining + 50L)
+    }
+
+    private fun cancelPairingPauseTimer() {
+        pairingPauseEndRunnable?.let { handler.removeCallbacks(it) }
+        pairingPauseEndRunnable = null
+    }
+
+    /**
+     * Observation-only scan during a pause: the scan callback never connects while paused, it
+     * only reads the saved glasses' advertisement. Restarted when the default scan times out.
+     */
+    private fun startPairingWatchScan() {
+        if (isKilled || !MentraLivePairingStateStore.isPaused) return
+        try {
+            if (!isScanning) startScan()
+        } catch (e: SecurityException) {
+            Bridge.log("LIVE: pairing watch scan blocked — ${e.message}")
+        }
+    }
+
+    /** The saved glasses' secure trailer feeds the pause and takeover checks. */
+    private fun observeSavedGlassesAdvertisement(result: ScanResult) {
+        val advertisement =
+                MentraLivePairingAdvertisementParser.parse(manufacturerData(result)) ?: return
+        applyPairingTransition(
+                MentraLivePairingStateStore.update("advertisement") {
+                    it.onAdvertisement(
+                            advertisement.pairingMode,
+                            advertisement.ownerChanged,
+                            advertisement.pairingGeneration,
+                            System.currentTimeMillis(),
+                    )
+                }
+        )
+    }
+
+    /**
+     * Pairing-protocol messages for this GATT session: `phone_hello` so v4 glasses send window
+     * events to this phone, and `pair_select` only when the user chose these glasses.
+     */
+    private fun sendPairingSessionMessages(reason: String) {
+        if (isKilled || !isConnected) return
+        val device = connectedDevice
+        val secure = isSecurePairingTarget(device) || isSavedGlassesSecureFirmware() ||
+                pairingInfoSeen
+        if (!secure) return
+        if (!phoneHelloSentThisSession) {
+            phoneHelloSentThisSession = true
+            val hello = JSONObject()
+            hello.put("type", "phone_hello")
+            hello.put("pairing_protocol", PAIRING_PROTOCOL_VERSION)
+            Bridge.log("PAIRFLOW: phone_hello sent ($reason)")
+            sendJsonWithoutAck(hello)
+        }
+        if (!pairSelectSentThisSession &&
+                        MentraLiveOwnerLossPolicy.shouldSendPairSelect(
+                                isExplicitPairingAttempt(),
+                                isSecurePairingTarget(device),
+                        )
+        ) {
+            pairSelectSentThisSession = true
+            val select = JSONObject()
+            select.put("type", "pair_select")
+            Bridge.log("PAIRFLOW: pair_select sent ($reason)")
+            sendJsonWithoutAck(select)
+        }
+    }
+
+    private fun isSecurePairingTarget(device: BluetoothDevice?): Boolean {
+        val flagged =
+                DeviceStore.get("bluetooth", "pending_device_secure_pairing_capable") as? Boolean
+        return flagged == true || (device?.address?.let { securePairingAddresses.contains(it) } ?: false)
+    }
+
+    /** The user is pairing glasses from the scan screen rather than reconnecting a saved owner. */
+    private fun isExplicitPairingAttempt(): Boolean {
+        val pendingName = DeviceStore.get("bluetooth", "pending_device_name") as? String ?: ""
+        val pendingAddress = DeviceStore.get("bluetooth", "pending_device_address") as? String ?: ""
+        return manualDiscoveryActive || pendingName.isNotEmpty() || pendingAddress.isNotEmpty()
+    }
+
+    /**
+     * The saved glasses run secure-pairing firmware, learned from their last `pairing_info`.
+     * Legacy firmware never rejects a non-owner on purpose, so its failures are not owner loss.
+     */
+    private fun isSavedGlassesSecureFirmware(): Boolean =
+            DeviceStore.get("bluetooth", "mentra_live_secure_firmware") as? Boolean == true
+
+    /** Remember what the connected glasses reported so later rejections can be read correctly. */
+    private fun rememberSecureFirmware(secure: Boolean) {
+        if (isSavedGlassesSecureFirmware() == secure) return
+        DeviceStore.apply("bluetooth", "mentra_live_secure_firmware", secure)
+        Bridge.saveSetting("mentra_live_secure_firmware", secure)
+    }
+
+    /**
+     * One authentication rejection (HCI 0x05/0x0F or a bond the glasses dropped). The machine
+     * ignores it during a pause, while the glasses advertise pairing mode, and on legacy
+     * firmware; it rejects after the `OWNER_CHANGED` verification fails or the streak fills.
+     * @return true when this phone is now rejected
+     */
+    private fun recordAuthRejection(reason: String): Boolean {
+        val transition =
+                MentraLivePairingStateStore.update("auth_rejection:$reason") {
+                    it.onAuthRejection(
+                            isSavedGlassesSecureFirmware(),
+                            isExplicitPairingAttempt(),
+                            System.currentTimeMillis(),
+                    )
+                }
+        Bridge.log("LIVE: Auth rejection ($reason) — ${transition.note}")
+        applyPairingTransition(transition)
+        return transition.effect == MentraLivePairingEffect.REJECT
+    }
+
+    /** Restore the pairing record once per process and act on it. */
+    private fun restorePairingState() {
+        val transition = MentraLivePairingStateStore.ensureRestored(savedDeviceName) ?: run {
+            if (MentraLivePairingStateStore.isPaused) {
+                armPairingPauseTimer()
+                startPairingWatchScan()
+            }
+            return
+        }
+        applyPairingTransition(transition)
     }
 
     /** Handle reconnection with exponential backoff */
@@ -2065,9 +2269,12 @@ class MentraLive : SGCManager() {
             return
         }
 
-        if (pairingYieldActive) {
-            Bridge.log("LIVE: 🔌 RECONNECT ABORTED - pairing yield active (glasses in pairing mode)")
+        if (!MentraLivePairingStateStore.allowsAutomaticReconnect) {
+            Bridge.log(
+                    "LIVE: 🔌 RECONNECT ABORTED - pairing state ${MentraLivePairingStateStore.describe()}"
+            )
             isReconnecting = false
+            if (MentraLivePairingStateStore.isPaused) startPairingWatchScan()
             return
         }
 
@@ -2154,20 +2361,23 @@ class MentraLive : SGCManager() {
                             )
                             return
                         }
-                        if (pairingYieldActive) {
+                        if (!MentraLivePairingStateStore.allowsAutomaticReconnect) {
                             isReconnecting = false
                             Bridge.log(
-                                    "LIVE: 🔌 RECONNECT ABORTED - pairing yield active (glasses in pairing mode)"
+                                    "LIVE: 🔌 RECONNECT ABORTED - pairing state ${MentraLivePairingStateStore.describe()}"
                             )
                             return
                         }
                         if (!isConnected && !isConnecting && !isKilled) {
                             // Prefer saved MAC for direct GATT connect (faster and more reliable
                             // than scanning).
-                            // Falls back to name-based scan if no address is saved.
+                            // Falls back to name-based scan if no address is saved. Right after a
+                            // pairing window the scan comes first so the advertisement's
+                            // OWNER_CHANGED bit is read before the first attempt.
                             val lastDeviceAddress =
                                     selectedConnectionAddress()
                             if (lastDeviceAddress != null &&
+                                            !MentraLivePairingStateStore.awaitingTakeoverCheck &&
                                             !lastDeviceAddress.isEmpty() &&
                                             bluetoothAdapter != null
                             ) {
@@ -2328,6 +2538,9 @@ class MentraLive : SGCManager() {
                                     "LIVE: 🔌 🔗 BLE GATT link connected - validating services/characteristics..."
                             )
                             markPairingTiming("gatt_connected")
+                            lastAutoReconnectLinkAt =
+                                    if (isExplicitPairingAttempt()) null
+                                    else SystemClock.elapsedRealtime()
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
@@ -2365,6 +2578,8 @@ class MentraLive : SGCManager() {
                             bondingRetryCount = 0
                             ctkdInitiatedThisGattSession = false
                             classicAudioServiceDiscovery.cancel()
+                            // A new GATT link has not heard the glasses' owner commit yet.
+                            resetSecurePairingConfirmation()
                             Bridge.log(
                                     "LIVE: CTKD: BLE GATT up - deferring Classic/A2DP until notifications ready"
                             )
@@ -2412,6 +2627,7 @@ class MentraLive : SGCManager() {
 
                             // Reset audio pairing flags
                             glassesReadyReceived = false
+                            resetSecurePairingConfirmation()
                             ctkdInitiatedThisGattSession = false
                             classicAudioServiceDiscovery.cancel()
                             audioConnected = false
@@ -2474,6 +2690,7 @@ class MentraLive : SGCManager() {
                         streamControlVersion = 0
                         readinessCompletedThisBleSession = false
                         glassesReadyReceived = false
+                        resetSecurePairingConfirmation()
                         audioConnected = false
                         ctkdInitiatedThisGattSession = false
                         classicAudioServiceDiscovery.cancel()
@@ -2500,17 +2717,22 @@ class MentraLive : SGCManager() {
                         // Clean up resources
                         closeGattQuietly(false)
 
-                        // Auth/not-owner after pairing yield — not a generic RF blip.
-                        // GATT 8 / 0x08 is connection timeout; a reclaim RF timeout must
-                        // not wipe the saved owner.
-                        if (pairingYieldAwaitingReclaim &&
-                                        (status == 5 ||
-                                                status == 15 ||
-                                                status == 0x05 ||
-                                                status == 0x0F)
+                        // Secure glasses reject a non-owner at connect time with HCI
+                        // Authentication Failure. One rejection can also be a glasses reboot or
+                        // a stale bond, so the pairing state machine decides: one failed
+                        // OWNER_CHANGED verification, or a repeating streak. GATT 8 (timeout),
+                        // 19 (remote terminated) and the window's 0x14 refusal never count.
+                        if (MentraLiveOwnerLossPolicy.isOwnerRejectionOnGattError(
+                                        status,
+                                        isExplicitPairingAttempt(),
+                                        isSavedGlassesSecureFirmware(),
+                                )
                         ) {
-                            clearSavedGlassesAfterOwnerLoss("gatt_auth_status_$status")
-                            return
+                            if (recordAuthRejection("gatt_auth_status_$status")) return
+                        } else {
+                            MentraLivePairingStateStore.update("connect_failed_$status") {
+                                it.onConnectAttemptFailed()
+                            }
                         }
 
                         // Attempt reconnection if not killed
@@ -2975,6 +3197,7 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: Starting send queue and readiness check loop")
             startSignalStrengthPolling()
             handler.post(processSendQueueRunnable!!)
+            sendPairingSessionMessages("gatt_ready")
             startReadinessCheckLoop()
             // Classic/A2DP after BLE is armed — avoids GATT 19 when dual-mode stacks
             // collide during service discovery / descriptor writes.
@@ -4170,23 +4393,78 @@ class MentraLive : SGCManager() {
                     // Process heartbeat pong response
                     Bridge.log("LIVE: Received pong response - connection healthy")
             "entering_pairing_mode" -> {
-                val windowMs = json.optLong("window_ms", 120_000L).coerceIn(5_000L, 180_000L)
-                Bridge.log("LIVE: Glasses entering pairing mode — yield ${windowMs}ms (no forget)")
-                enterPairingYield(windowMs)
+                val ownerRetained = json.optBoolean("owner_retained", false)
+                val windowMs =
+                        json.optLong("window_ms", MentraLiveOwnerLossPolicy.DEFAULT_PAIRING_WINDOW_MS)
+                val windowId = if (json.has("window_id")) json.optInt("window_id") else null
+                val transition =
+                        MentraLivePairingStateStore.update("entering_pairing_mode") {
+                            it.onEnteringPairingMode(
+                                    windowMs = windowMs,
+                                    windowId = windowId,
+                                    ownerRetained = ownerRetained,
+                                    explicitAttempt = isExplicitPairingAttempt(),
+                                    deviceId = savedDeviceName,
+                                    nowMs = System.currentTimeMillis(),
+                            )
+                        }
+                Bridge.log(
+                        "PAIRFLOW: entering_pairing_mode window_id=${windowId ?: ""} " +
+                                "window_ms=$windowMs owner_retained=$ownerRetained " +
+                                "effect=${transition.effect} (${transition.note})"
+                )
                 val body = HashMap<String, Any>()
                 body["window_ms"] = windowMs
+                if (windowId != null) body["window_id"] = windowId
                 body["reason"] = json.optString("reason", "user_gesture")
+                body["owner_retained"] = ownerRetained
                 Bridge.sendTypedMessage("entering_pairing_mode", body)
+                applyPairingTransition(transition)
             }
-            "pairing_info" ->
-                    Bridge.sendPairingInfo(
-                            json.optBoolean("had_previous_bond", false),
-                            jsonNullableString(json, "pairing_code"),
-                            json.optBoolean("classic_bond_ready", false),
-                            // Legacy firmware that omits this field is not secure-capable.
-                            json.optBoolean("secure_pairing_capable", false),
-                            json.optInt("protocol_version", 1),
-                    )
+            "pairing_mode_ended" -> {
+                val reason = jsonNullableString(json, "reason")
+                val windowId = if (json.has("window_id")) json.optInt("window_id") else null
+                val transition =
+                        MentraLivePairingStateStore.update("pairing_mode_ended") {
+                            it.onPairingModeEnded(reason, windowId)
+                        }
+                Bridge.log(
+                        "PAIRFLOW: pairing_mode_ended reason=${reason ?: ""} window_id=${windowId ?: ""} " +
+                                "effect=${transition.effect} (${transition.note})"
+                )
+                val body = HashMap<String, Any>()
+                body["reason"] = reason ?: ""
+                if (windowId != null) body["window_id"] = windowId
+                Bridge.sendTypedMessage("pairing_mode_ended", body)
+                applyPairingTransition(transition)
+            }
+            "pairing_info" -> {
+                // Legacy firmware that omits this field is not secure-capable.
+                val secureCapable = json.optBoolean("secure_pairing_capable", false)
+                rememberSecureFirmware(secureCapable)
+                // Ownership is the separate owner_committed bit, set after the BLE bond.
+                val ownerCommitted = json.optBoolean("owner_committed", false)
+                if (MentraLiveOwnerLossPolicy.pairingInfoConfirmsOwner(ownerCommitted)) {
+                    securePairingConfirmed = true
+                    if (awaitingSecurePairingConfirmation) {
+                        Bridge.log("LIVE: pairing_info owner_committed — finishing parked readiness")
+                        completeSecurePairingReadiness("pairing_info_owner_committed")
+                    }
+                }
+                pairingInfoSeen = true
+                if (secureCapable) sendPairingSessionMessages("pairing_info")
+                maybeInitiateCtkdAudioAfterBleReady()
+                Bridge.sendPairingInfo(
+                        json.optBoolean("had_previous_bond", false),
+                        jsonNullableString(json, "pairing_code"),
+                        json.optBoolean("classic_bond_ready", false),
+                        secureCapable,
+                        json.optInt("protocol_version", 1),
+                        json.optBoolean("ownership_transfer", false),
+                        ownerCommitted,
+                        json.optBoolean("auto_audio", false),
+                )
+            }
             "imu_response",
             "imu_stream_response",
             "imu_gesture_response",
@@ -4614,15 +4892,11 @@ class MentraLive : SGCManager() {
             }
             "glasses_ready" -> {
                 // Glasses SOC has booted and is ready for communication
-                if (pairingYieldActive && !isConnected) {
-                    Bridge.log("LIVE: Ignoring stale glasses_ready during pairing yield")
+                if (!isConnected) {
+                    Bridge.log("LIVE: Ignoring stale glasses_ready without a link")
                     return
                 }
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
-                pairingYieldAwaitingReclaim = false
-                pairingYieldActive = false
-                pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
-                pairingYieldEndRunnable = null
                 markPairingTiming(
                         "glasses_ready",
                         "audioConnected=$audioConnected queueSize=${sendQueue.size}"
@@ -4776,8 +5050,30 @@ class MentraLive : SGCManager() {
                     Bridge.log("LIVE: ⚠️ glasses_ready: mic restore threw: " + t)
                 }
 
-                // Pairing UI / DeviceManager.handleDeviceReady gate on fullyBooted.
-                // Do not wait for CTKD here — iOS already marks ready on glasses_ready alone.
+                // Pairing UI / DeviceManager.handleDeviceReady gate on fullyBooted, and
+                // handleDeviceReady promotes the pairing target to the default device.
+                // Classic CTKD is not awaited, but secure glasses own a phone only once the
+                // BLE bond exists; the BOND_BONDED handler finishes readiness.
+                if (isExplicitPairingAttempt() &&
+                                MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(
+                                        isSecurePairingTarget(connectedDevice),
+                                        connectedDevice?.bondState,
+                                        securePairingConfirmed,
+                                )
+                ) {
+                    Bridge.log(
+                            "LIVE: glasses_ready before BLE bond / owner commit — waiting " +
+                                    "(bond=${connectedDevice?.bondState} ownerCommitted=$securePairingConfirmed)"
+                    )
+                    markPairingTiming(
+                            "waiting_ble_bond",
+                            "queueSize=${sendQueue.size} ownerCommitted=$securePairingConfirmed"
+                    )
+                    awaitingSecurePairingConfirmation = true
+                    armSecureBondWait()
+                    return
+                }
+                awaitingSecurePairingConfirmation = false
                 endPairingTiming(
                         "fully_connected",
                         "via=glasses_ready audioConnected=$audioConnected queueSize=${sendQueue.size}"
@@ -5655,6 +5951,7 @@ class MentraLive : SGCManager() {
                 updateConnectionState(ConnTypes.DISCONNECTED)
                 glassesReady = false
                 glassesReadyReceived = false
+                resetSecurePairingConfirmation()
                 glassesSessionId = null
                 streamControlVersion = 0
                 readinessCompletedThisBleSession = false
@@ -6580,8 +6877,19 @@ class MentraLive : SGCManager() {
 
     override fun connectById(id: String) {
         if (postGattLifecycle { connectById(id) }) return
-        if (pairingYieldActive) {
-            Bridge.log("LIVE: connectById blocked — pairing yield active")
+        if (!isExplicitPairingAttempt()) {
+            // An automatic connect names the saved glasses; a record for other glasses ends.
+            MentraLivePairingStateStore.update("connect_by_id") { it.bindDevice(id) }
+        }
+        if (automaticConnectBlocked()) {
+            Bridge.log(
+                    "LIVE: connectById deferred — pairing state ${MentraLivePairingStateStore.describe()}"
+            )
+            savedDeviceName = id
+            if (MentraLivePairingStateStore.isPaused) {
+                armPairingPauseTimer()
+                startPairingWatchScan()
+            }
             return
         }
         reconnectGeneration++
@@ -6705,8 +7013,10 @@ class MentraLive : SGCManager() {
 
     fun connectToSmartGlasses() {
         if (postGattLifecycle { connectToSmartGlasses() }) return
-        if (pairingYieldActive) {
-            Bridge.log("LIVE: connectToSmartGlasses blocked — pairing yield active")
+        if (automaticConnectBlocked()) {
+            Bridge.log(
+                    "LIVE: connectToSmartGlasses blocked — pairing state ${MentraLivePairingStateStore.describe()}"
+            )
             return
         }
         Bridge.log("LIVE: Connecting to Mentra Live glasses")
@@ -7287,6 +7597,12 @@ class MentraLive : SGCManager() {
                                                 }
                                                 bondingRetryCount =
                                                         0 // Reset retry counter on success
+                                                // During an explicit secure pair the bond alone is
+                                                // not ownership: keep the failure timeout armed
+                                                // until pairing_info reports owner_committed.
+                                                if (!shouldGateReadyOnOwnerCommit(device)) {
+                                                    cancelSecureBondWait()
+                                                }
                                                 // Bond != audio profile. Explicitly open A2DP
                                                 // after createBond() completes (already-bonded
                                                 // path does this at GATT connect).
@@ -7303,10 +7619,26 @@ class MentraLive : SGCManager() {
                                                                     "fullyBooted"
                                                             ) as? Boolean
                                                                     ?: false
-                                                    if (!alreadyBooted) {
+                                                    if (!alreadyBooted &&
+                                                                    shouldGateReadyOnOwnerCommit(device)
+                                                    ) {
+                                                        // Bonded, but the glasses have not
+                                                        // reported owner_committed. pairing_info
+                                                        // finishes readiness (or the wait fails).
+                                                        Bridge.log(
+                                                                "LIVE: CTKD bonded; glasses_ready received but owner not committed yet — waiting for pairing_info"
+                                                        )
+                                                        markPairingTiming(
+                                                                "waiting_owner_commit",
+                                                                "queueSize=${sendQueue.size}"
+                                                        )
+                                                        awaitingSecurePairingConfirmation = true
+                                                        armSecureBondWait()
+                                                    } else if (!alreadyBooted) {
                                                         Bridge.log(
                                                                 "LIVE: Audio: CTKD bonded; catching up fullyBooted (glasses_ready already received)"
                                                         )
+                                                        awaitingSecurePairingConfirmation = false
                                                         endPairingTiming(
                                                                 "fully_connected",
                                                                 "via=ctkd_bond+glasses_ready queueSize=${sendQueue.size}"
@@ -7333,6 +7665,22 @@ class MentraLive : SGCManager() {
                                         Bridge.log(
                                                 "LIVE: CTKD: ❌ Bonding failed or removed for device"
                                         )
+                                        val sinceReconnect =
+                                                lastAutoReconnectLinkAt?.let {
+                                                    SystemClock.elapsedRealtime() - it
+                                                }
+                                        if (MentraLiveOwnerLossPolicy.isOwnerRejectionOnBondRemoved(
+                                                        previousBondState,
+                                                        bondState,
+                                                        isKilled,
+                                                        unpairFlushPending,
+                                                        isExplicitPairingAttempt(),
+                                                        sinceReconnect,
+                                                        isSavedGlassesSecureFirmware(),
+                                                ) && recordAuthRejection("bond_removed_by_glasses")
+                                        ) {
+                                            return
+                                        }
                                         markPairingTiming(
                                                 "ctkd_bond_none",
                                                 "prev=$previousBondState queueSize=${sendQueue.size}"
@@ -7348,7 +7696,20 @@ class MentraLive : SGCManager() {
                                             classicAudioConnectionTracker.clear(device.address)
                                         }
                                         audioConnected = false
-                                        if (previousBondState == BluetoothDevice.BOND_BONDING) {
+                                        if (previousBondState == BluetoothDevice.BOND_BONDING &&
+                                                        isExplicitPairingAttempt() &&
+                                                        isSecurePairingTarget(device)
+                                        ) {
+                                            // Secure glasses own a phone only through this bond.
+                                            // Re-prompting after a decline only repeats the
+                                            // system dialog; let the pairing screen offer Try again.
+                                            Bridge.log(
+                                                    "LIVE: CTKD: secure pairing bond not completed — reporting pairing failure"
+                                            )
+                                            bondingRetryCount = 0
+                                            cancelSecureBondWait()
+                                            Bridge.sendPairFailureEvent("errors:pairingCouldNotStart")
+                                        } else if (previousBondState == BluetoothDevice.BOND_BONDING) {
                                             // User cancelled or bonding failed - retry up to
                                             // MAX_BONDING_RETRIES times
                                             bondingRetryCount++
@@ -7586,6 +7947,16 @@ class MentraLive : SGCManager() {
         if (ctkdInitiatedThisGattSession) {
             return
         }
+        if (MentraLiveOwnerLossPolicy.shouldDeferCtkdBond(
+                        isExplicitPairingAttempt(),
+                        isSecurePairingTarget(device),
+                        device.bondState,
+                        pairingInfoSeen,
+                )
+        ) {
+            Bridge.log("LIVE: CTKD: deferring bond until pairing_info allows it")
+            return
+        }
         ctkdInitiatedThisGattSession = true
         Bridge.log(
                 "LIVE: CTKD: BLE ready - initiating CTKD bonding for BT Classic (bondState=" +
@@ -7667,7 +8038,7 @@ class MentraLive : SGCManager() {
     }
 
     private fun canConnectClassicAudio(device: BluetoothDevice): Boolean =
-            !isKilled && !pairingYieldActive && isConnected && notificationsEnabled &&
+            !isKilled && !automaticConnectBlocked() && isConnected && notificationsEnabled &&
                     ctkdInitiatedThisGattSession && connectedDevice?.address == device.address &&
                     device.bondState == BluetoothDevice.BOND_BONDED
 
@@ -7782,6 +8153,100 @@ class MentraLive : SGCManager() {
         )
     }
 
+    private fun armSecureBondWait() {
+        if (!MentraLiveOwnerLossPolicy.shouldRunSecureBondWait(
+                        isExplicitPairingAttempt(),
+                        isSecurePairingTarget(connectedDevice),
+                )
+        ) {
+            return
+        }
+        if (secureBondWaitRunnable != null) return
+        val runnable = Runnable {
+            secureBondWaitRunnable = null
+            if (isKilled || !isExplicitPairingAttempt()) return@Runnable
+            val alreadyBooted = DeviceStore.store.get("glasses", "fullyBooted") as? Boolean ?: false
+            if (alreadyBooted) return@Runnable
+            // A bond alone no longer ends the wait: the glasses must also have reported
+            // owner_committed. If both arrived, readiness is being finished by the bond or
+            // pairing_info handlers.
+            val device = connectedDevice
+            if (device != null &&
+                            !MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(
+                                    isSecurePairingTarget(device),
+                                    device.bondState,
+                                    securePairingConfirmed,
+                            )
+            ) {
+                return@Runnable
+            }
+            awaitingSecurePairingConfirmation = false
+            Bridge.log(
+                    "LIVE: secure pairing bond wait expired " +
+                            "(bond=${device?.bondState} ownerCommitted=$securePairingConfirmed)"
+            )
+            Bridge.sendPairFailureEvent("errors:pairingCouldNotStart")
+        }
+        secureBondWaitRunnable = runnable
+        handler.postDelayed(runnable, MentraLiveOwnerLossPolicy.SECURE_BOND_WAIT_MS)
+    }
+
+    private fun cancelSecureBondWait() {
+        secureBondWaitRunnable?.let { handler.removeCallbacks(it) }
+        secureBondWaitRunnable = null
+    }
+
+    /** Forget the owner commit when the GATT session ends or a new one starts, like iOS. */
+    private fun resetSecurePairingConfirmation() {
+        securePairingConfirmed = false
+        pairingInfoSeen = false
+        awaitingSecurePairingConfirmation = false
+        phoneHelloSentThisSession = false
+        pairSelectSentThisSession = false
+        // Also tear down any in-flight owner-commit wait so a leftover 40s timer can't fire
+        // pairingCouldNotStart on a later session after GATT drops mid-wait.
+        cancelSecureBondWait()
+    }
+
+    /**
+     * True while an explicit secure pair must keep waiting: either the BLE bond or the glasses'
+     * `owner_committed` is still missing. Non-explicit reconnects and legacy targets never gate.
+     */
+    private fun shouldGateReadyOnOwnerCommit(device: BluetoothDevice?): Boolean =
+            isExplicitPairingAttempt() &&
+                    MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(
+                            isSecurePairingTarget(device),
+                            device?.bondState,
+                            securePairingConfirmed,
+                    )
+
+    /**
+     * Finishes readiness that glasses_ready parked for the owner commit. Runs from
+     * `pairing_info` once `owner_committed` arrives; if the BLE bond is still missing, the
+     * BOND_BONDED handler finishes it instead.
+     */
+    private fun completeSecurePairingReadiness(via: String) {
+        if (isKilled || !glassesReadyReceived) return
+        val alreadyBooted = DeviceStore.store.get("glasses", "fullyBooted") as? Boolean ?: false
+        if (alreadyBooted) {
+            awaitingSecurePairingConfirmation = false
+            cancelSecureBondWait()
+            return
+        }
+        if (shouldGateReadyOnOwnerCommit(connectedDevice)) {
+            Bridge.log("LIVE: owner committed but BLE bond not reported yet — waiting for bond")
+            return
+        }
+        awaitingSecurePairingConfirmation = false
+        cancelSecureBondWait()
+        endPairingTiming("fully_connected", "via=$via queueSize=${sendQueue.size}")
+        DeviceStore.apply("glasses", "fullyBooted", true)
+        updateConnectionState(ConnTypes.CONNECTED)
+        if (!audioConnected) {
+            markPairingTiming("waiting_ctkd_bond", "queueSize=${sendQueue.size}")
+        }
+    }
+
     /** Helper to mark audio as connected and notify */
     private fun markAudioConnected(device: BluetoothDevice) {
         if (isKilled) {
@@ -7796,6 +8261,20 @@ class MentraLive : SGCManager() {
             Bridge.sendAudioConnected(safeDeviceName(device))
         }
         if (glassesReadyReceived) {
+            if (!MentraLiveOwnerLossPolicy.shouldMarkReadyFromAudio(
+                            isExplicitPairingAttempt(),
+                            isSecurePairingTarget(device),
+                            device.bondState,
+                            securePairingConfirmed,
+                    )
+            ) {
+                Bridge.log("LIVE: A2DP up before BLE bond / owner commit — not marking paired")
+                awaitingSecurePairingConfirmation = true
+                armSecureBondWait()
+                return
+            }
+            awaitingSecurePairingConfirmation = false
+            cancelSecureBondWait()
             Bridge.log(
                     "LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected"
             )
@@ -7997,10 +8476,8 @@ class MentraLive : SGCManager() {
         isKilled = true
         classicAudioServiceDiscovery.cancel()
         explicitConnectByName = false
-        pairingYieldActive = false
-        pairingYieldAwaitingReclaim = false
-        pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
-        pairingYieldEndRunnable = null
+        // The pairing state itself lives on in MentraLivePairingStateStore.
+        cancelPairingPauseTimer()
         unpairFlushRunnable?.let { handler.removeCallbacks(it) }
         unpairFlushRunnable = null
         unpairFlushPending = false
@@ -8096,6 +8573,7 @@ class MentraLive : SGCManager() {
         isReconnecting = false
         glassesReady = false
         glassesReadyReceived = false
+        resetSecurePairingConfirmation()
         audioConnected = false
         ctkdInitiatedThisGattSession = false
         classicAudioServiceDiscovery.cancel()

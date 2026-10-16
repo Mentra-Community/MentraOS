@@ -40,6 +40,8 @@ fi
 clips=(
     "pairing_intro|Connect to your Mentra Live in the app. Your code is:"
     "pairing_exited|Pairing mode ended."
+    "pairing_ended_no_phone|Pairing mode ended. No new phone paired."
+    "pairing_cancelled|Pairing cancelled."
     "digit_0|zero"
     "digit_1|one"
     "digit_2|two"

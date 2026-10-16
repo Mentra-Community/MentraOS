@@ -69,6 +69,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "pair_failure",
             "pairing_info",
             "entering_pairing_mode",
+            "pairing_mode_ended",
+            "pairing_state_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
@@ -1038,7 +1040,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
     @MainActor
     public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
-        sendEvent("pair_failure", ["error": error.message])
+        var body: [String: Any] = ["error": error.message]
+        if let failureCode = error.failureCode { body["code"] = failureCode }
+        sendEvent("pair_failure", body)
     }
 }
 
@@ -1075,7 +1079,8 @@ private extension ConnectOptions {
         self.init(
             saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
             cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true,
-            requiresAncs: values?["requiresAncs"] as? Bool ?? true
+            requiresAncs: values?["requiresAncs"] as? Bool ?? true,
+            enableTransportBridging: values?["enableTransportBridging"] as? Bool ?? true
         )
     }
 }

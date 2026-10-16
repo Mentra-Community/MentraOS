@@ -79,6 +79,8 @@ object DeviceStore {
         store.set("glasses", "micEnabled", false)
         store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("glasses", "bluetoothClassicConnected", false)
+        store.set("glasses", "bluetoothClassicProfilesConnected", false)
+        store.set("glasses", "bluetoothAudioRouted", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
         store.set("glasses", "caseCharging", false)
@@ -175,6 +177,11 @@ object DeviceStore {
     fun apply(category: String, key: String, value: Any) {
         val oldValue = store.get(category, key)
         store.set(category, key, value)
+        if (category == "glasses" && key == "bluetoothClassicConnected") {
+            // Android has no separate profile/route signal; keep both equal to the Classic audio state.
+            store.set(category, "bluetoothClassicProfilesConnected", value)
+            store.set(category, "bluetoothAudioRouted", value)
+        }
         val skipped = observableStoreWouldHaveSkipped(oldValue, value)
         val forceMicReset =
                 category == ObservableStore.BLUETOOTH_CATEGORY && key == "mic_tuning" && isMicTuningReset(value)

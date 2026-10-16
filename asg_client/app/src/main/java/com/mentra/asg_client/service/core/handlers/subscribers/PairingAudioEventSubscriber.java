@@ -27,14 +27,22 @@ public final class PairingAudioEventSubscriber implements IPeripheralBus.McuEven
         if (event instanceof PairingModeExitEvent) {
             PairingModeExitEvent exitEvent = (PairingModeExitEvent) event;
             Log.i(TAG, "hm_pairexit received reason=" + exitEvent.getReason());
-            PairingCodeSpeaker.speakPairingEnded(context, hardwareManager);
+            if (PairingModeExitEvent.REASON_PAIRED.equals(exitEvent.getNormalizedReason())) {
+                // A new phone paired: "Mentra connected." follows from the connection path.
+                // Stop whatever is already speaking so the two prompts cannot overlap.
+                hardwareManager.stopAudioPlayback();
+                return;
+            }
+            PairingCodeSpeaker.speakPairingEnded(context, hardwareManager, exitEvent.getReason());
             return;
         }
         if (!(event instanceof SpeakPairingCodeEvent)) {
             return;
         }
         SpeakPairingCodeEvent speakEvent = (SpeakPairingCodeEvent) event;
-        Log.i(TAG, "hm_spkcode received code=" + speakEvent.getCode());
+        // Never log the 4-char secure pairing code at INFO or above (release-hygiene invariant
+        // NEW-9); redact the value while keeping the "code=" marker for pairing-flow diagnostics.
+        Log.i(TAG, "hm_spkcode received code=<redacted>");
         PairingCodeSpeaker.speak(context, hardwareManager, speakEvent.getCode());
     }
 }

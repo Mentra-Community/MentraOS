@@ -151,6 +151,14 @@ struct GlassesStatus: CustomStringConvertible {
         boolValue(values, "bluetoothClassicConnected") ?? false
     }
 
+    var bluetoothClassicProfilesConnected: Bool {
+        boolValue(values, "bluetoothClassicProfilesConnected") ?? false
+    }
+
+    var bluetoothAudioRouted: Bool {
+        boolValue(values, "bluetoothAudioRouted") ?? false
+    }
+
     var signalStrength: Int {
         intValue(values["signalStrength"]) ?? -1
     }
@@ -300,6 +308,11 @@ struct GlassesStatus: CustomStringConvertible {
 
     var ringSignalStrength: Int {
         intValue(values["ringSignalStrength"]) ?? -1
+    }
+
+    /// Mentra Live `MentraLivePairingState` (`{state, windowId?, endsAtMs?}`); nil for other glasses.
+    var pairingState: [String: Any]? {
+        values["pairingState"] as? [String: Any]
     }
 
     var description: String {
@@ -688,6 +701,14 @@ struct GlassesStatusUpdate: CustomStringConvertible {
         optionalBoolValue(values, "bluetoothClassicConnected")
     }
 
+    var bluetoothClassicProfilesConnected: Bool? {
+        optionalBoolValue(values, "bluetoothClassicProfilesConnected")
+    }
+
+    var bluetoothAudioRouted: Bool? {
+        optionalBoolValue(values, "bluetoothAudioRouted")
+    }
+
     var signalStrength: Int? {
         optionalIntValue(values, "signalStrength")
     }
@@ -846,6 +867,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var ringSignalStrength: Int? {
         optionalIntValue(values, "ringSignalStrength")
+    }
+
+    var pairingState: [String: Any]? {
+        values["pairingState"] as? [String: Any]
     }
 
     var description: String {
