@@ -59,7 +59,17 @@ class NimoLifecycleTest {
   private var listener: String? = null
 
   @Before fun setup() {
-    NimoResourceDiagnostics::class.java.getDeclaredField("capture").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    // Each Robolectric case has a new app/files directory; simulate its fresh process
+    // rather than retaining the preceding test's registered receiver and output root.
+    val collaborator = NimoResourceDiagnostics::class.java
+    collaborator.getDeclaredField("capture").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    collaborator.getDeclaredField("registered").apply { isAccessible = true }.setBoolean(NimoResourceDiagnostics, false)
+    collaborator.getDeclaredField("application").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    for (name in listOf("sessions", "requests")) {
+      val value = collaborator.getDeclaredField(name).apply { isAccessible = true }.get(NimoResourceDiagnostics)
+      if (value is MutableMap<*, *>) value.clear()
+      if (value is MutableSet<*>) value.clear()
+    }
     context = TrackingContext(ApplicationProvider.getApplicationContext())
     Bridge.initialize(context)
     manager = DeviceManager(initializeHardware = false)
