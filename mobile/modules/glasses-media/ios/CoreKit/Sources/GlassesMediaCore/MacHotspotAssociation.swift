@@ -70,6 +70,10 @@ final class MacHotspotAssociation {
         try interface?.currentSSID()
     }
 
+    static func observeCurrentSSID() throws -> String? {
+        try PublicCoreWlanInterface().currentSSID()
+    }
+
     private func discoverNetwork(ssid: String, interface: MacWifiInterface) throws -> NSObject? {
         while true {
             try checkDiscoveryCurrent()
