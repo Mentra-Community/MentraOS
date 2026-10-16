@@ -168,66 +168,74 @@ public final class GlassesHotspotNetwork {
     }
 
     public func awaitInternet(allowWifiAfterRelease: Bool = false, completion: @escaping (Bool, String) -> Void) {
-        queue.async {
-            let gen = self.generation
-            self.cancelInternetWait?()
-            let observation = HotspotInternetObservation(generation: gen, glassesSSID: self.lastHotspotSSID)
-            let monitor = NWPathMonitor()
-            let sampleTimer = DispatchSource.makeTimerSource(queue: self.queue)
-            let finish: (Bool, String) -> Void = { usable, detail in
-                guard observation.settle() else { return }
-                monitor.pathUpdateHandler = nil
-                monitor.cancel()
-                sampleTimer.setEventHandler {}
-                sampleTimer.cancel()
+        queue.async { self.startInternetObservation(allowWifiAfterRelease: allowWifiAfterRelease, completion: completion) }
+    }
+
+    /// Called on the owner queue, including directly from completeLeave. A queued
+    /// cancellation therefore cannot overtake observation initialization.
+    private func startInternetObservation(allowWifiAfterRelease: Bool, completion: @escaping (Bool, String) -> Void) {
+        let gen = generation
+        cancelInternetWait?()
+        let observation = HotspotInternetObservation(generation: gen, glassesSSID: lastHotspotSSID)
+        let monitor = NWPathMonitor()
+        let sampleTimer = DispatchSource.makeTimerSource(queue: queue)
+        var currentPath: Network.NWPath?
+        let finish: (Bool, String) -> Void = { usable, detail in
+            guard observation.settle() else { return }
+            monitor.pathUpdateHandler = nil
+            monitor.cancel()
+            sampleTimer.setEventHandler {}
+            sampleTimer.cancel()
+            currentPath = nil
+            let reply = {
                 self.cancelInternetWait = nil
                 completion(usable, detail)
             }
-            self.cancelInternetWait = { finish(false, "Hotspot internet observation cancelled") }
-            var currentPath: Network.NWPath?
-            var currentPathRevision = 0
-            var readingSSID = false
-            let sample = {
-                guard let path = currentPath else { return }
-                if let route = HotspotInternetPolicy.route(satisfied: path.status == .satisfied,
-                                                           cellular: path.usesInterfaceType(.cellular),
-                                                           ethernet: path.usesInterfaceType(.wiredEthernet))
-                {
+            // Even a timed-out/cancelled observation joins its dispatched
+            // CoreWLAN read before releasing this session's owner.
+            observation.afterSSIDRead(reply)
+        }
+        cancelInternetWait = { finish(false, "Hotspot internet observation cancelled") }
+        var currentPathRevision = 0
+        let sample = {
+            guard let path = currentPath else { return }
+            if let route = HotspotInternetPolicy.route(satisfied: path.status == .satisfied,
+                                                       cellular: path.usesInterfaceType(.cellular),
+                                                       ethernet: path.usesInterfaceType(.wiredEthernet))
+            {
+                finish(true, route)
+                return
+            }
+            // Sample returned membership while the route remains on Wi-Fi;
+            // NWPath need not report a new interface when the SSID changes.
+            guard allowWifiAfterRelease, path.status == .satisfied,
+                  path.usesInterfaceType(.wifi), observation.beginSSIDRead() else { return }
+            let pathRevision = currentPathRevision
+            let observed: (String?) -> Void = { ssid in
+                self.queue.async {
+                    observation.completeSSIDRead()
+                    guard gen == self.generation else { finish(false, "Hotspot session changed"); return }
+                    guard let route = observation.restoredWifiRoute(ssid: ssid, pathRevision: pathRevision, currentGeneration: self.generation)
+                    else { return }
                     finish(true, route)
-                    return
                 }
-                // Sample returned membership while the route remains on Wi-Fi;
-                // NWPath need not report a new interface when the SSID changes.
-                guard allowWifiAfterRelease, path.status == .satisfied,
-                      path.usesInterfaceType(.wifi), !readingSSID else { return }
-                readingSSID = true
-                let pathRevision = currentPathRevision
-                let observed: (String?) -> Void = { ssid in
-                    self.queue.async {
-                        readingSSID = false
-                        guard gen == self.generation else { finish(false, "Hotspot session changed"); return }
-                        guard let route = observation.restoredWifiRoute(ssid: ssid, pathRevision: pathRevision, currentGeneration: self.generation)
-                        else { return }
-                        finish(true, route)
-                    }
-                }
-                if ProcessInfo.processInfo.isiOSAppOnMac {
-                    self.macWorker.async { observed(try? MacHotspotAssociation.observeCurrentSSID()) }
-                } else { NEHotspotNetwork.fetchCurrent { observed($0?.ssid) } }
             }
-            monitor.pathUpdateHandler = { path in
-                guard let pathRevision = observation.beginPath(currentGeneration: self.generation) else { finish(false, "Hotspot session changed"); return }
-                currentPath = path
-                currentPathRevision = pathRevision
-                sample()
-            }
-            sampleTimer.setEventHandler(handler: sample)
-            sampleTimer.schedule(deadline: .now() + 0.5, repeating: 0.5)
-            sampleTimer.resume()
-            monitor.start(queue: self.queue)
-            self.queue.asyncAfter(deadline: .now() + 15) {
-                finish(false, allowWifiAfterRelease ? "Internet did not return after leaving the glasses hotspot" : "Cellular or Ethernet internet did not become the default route")
-            }
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                self.macWorker.async { observed(try? MacHotspotAssociation.observeCurrentSSID()) }
+            } else { NEHotspotNetwork.fetchCurrent { observed($0?.ssid) } }
+        }
+        monitor.pathUpdateHandler = { path in
+            guard let pathRevision = observation.beginPath(currentGeneration: self.generation) else { finish(false, "Hotspot session changed"); return }
+            currentPath = path
+            currentPathRevision = pathRevision
+            sample()
+        }
+        sampleTimer.setEventHandler(handler: sample)
+        sampleTimer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        sampleTimer.resume()
+        monitor.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 15) {
+            finish(false, allowWifiAfterRelease ? "Internet did not return after leaving the glasses hotspot" : "Cellular or Ethernet internet did not become the default route")
         }
     }
 
@@ -500,7 +508,7 @@ public final class GlassesHotspotNetwork {
             // Keep this owner until the default route returns or the existing
             // bounded observation ends. Route readiness is not HTTP success;
             // the following ordinary update check still owns that result.
-            awaitInternet(allowWifiAfterRelease: true) { ready, reason in
+            startInternetObservation(allowWifiAfterRelease: true) { ready, reason in
                 self.logger.info("HOTSPOT_LEAVE internet_recovery ready=\(ready) reason=\(reason, privacy: .public)")
                 finish()
             }

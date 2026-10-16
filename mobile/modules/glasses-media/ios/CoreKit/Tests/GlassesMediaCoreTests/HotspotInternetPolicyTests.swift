@@ -104,4 +104,18 @@ final class HotspotInternetPolicyTests: XCTestCase {
         XCTAssertTrue(receivedFailure)
         XCTAssertFalse(released)
     }
+
+    func testTimeoutOrCancelJoinsPendingNativeReadBeforeReleasingTheOwner() {
+        let wait = HotspotInternetObservation(generation: 10, glassesSSID: "MentraLive-03BE")
+        XCTAssertTrue(wait.beginSSIDRead())
+        XCTAssertFalse(wait.beginSSIDRead())
+        XCTAssertTrue(wait.settle())
+        var released = false
+        wait.afterSSIDRead { released = true }
+        XCTAssertFalse(released)
+        XCTAssertFalse(wait.beginSSIDRead())
+        wait.completeSSIDRead()
+        XCTAssertTrue(released)
+        XCTAssertFalse(wait.settle())
+    }
 }

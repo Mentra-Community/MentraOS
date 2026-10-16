@@ -22,6 +22,8 @@ public final class HotspotInternetObservation {
     private let glassesSSID: String?
     private var pathRevision = 0
     private var finished = false
+    private var readingSSID = false
+    private var settledReply: (() -> Void)?
 
     public init(generation: Int, glassesSSID: String?) {
         self.generation = generation
@@ -38,6 +40,23 @@ public final class HotspotInternetObservation {
         guard !finished, currentGeneration == generation, pathRevision == self.pathRevision else { return nil }
         return HotspotInternetPolicy.route(satisfied: true, cellular: false, ethernet: false,
                                            restoredWifiSSID: ssid, glassesSSID: glassesSSID)
+    }
+
+    public func beginSSIDRead() -> Bool {
+        guard !finished, !readingSSID else { return false }
+        readingSSID = true
+        return true
+    }
+
+    public func completeSSIDRead() {
+        readingSSID = false
+        let reply = settledReply
+        settledReply = nil
+        reply?()
+    }
+
+    public func afterSSIDRead(_ reply: @escaping () -> Void) {
+        if readingSSID { settledReply = reply } else { reply() }
     }
 
     public func settle() -> Bool {
