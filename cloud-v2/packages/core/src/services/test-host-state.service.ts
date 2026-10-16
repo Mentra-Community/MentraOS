@@ -1,5 +1,5 @@
 import {validateResourceLifecycleAdvance} from './resource-lifecycle.service'
-import {resourceLifecycleSchema} from '../types/resource-lifecycle.types'
+import {resourceIdleContractSchema,resourceLifecycleSchema} from '../types/resource-lifecycle.types'
 import {recorderStorageObservationSchema} from '../types/recorder-storage.types'
 import {exclusiveResourceDependenciesSchema, hostResourceReservationsSchema, resourceReservationObservationSchema, type HostResourceReservation} from '../types/resource-reservations.types'
 import {laneControlExchangeSchema} from './lane-controls.service'
@@ -29,6 +29,7 @@ const resource = z
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
     storage: recorderStorageObservationSchema.optional(),
+    idleContract: resourceIdleContractSchema.optional(),
     exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   })
   .strict().refine(value => !value.exclusiveDependencies || value.exclusiveDependencies.every(dependency =>

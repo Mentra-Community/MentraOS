@@ -1,9 +1,12 @@
+import {createHash} from 'node:crypto';
+import {z} from 'zod';
+import {hostResourceReservationsSchema,isExclusiveHostReservation,resourceReservationObservationSchema} from '../types/resource-reservations.types';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {TestHostStateModel} from '../models/test-host-state.model';
 import {resourceLifecycleSchema,type ResourceLifecycleList} from '../types/resource-lifecycle.types';
 import {TestRunError} from './test-result-error';
 const FRESH_MS=180_000;
-export interface ResourceLifecycleRow {hostId:string;receivedAt:Date;snapshot:unknown}
+export interface ResourceLifecycleRow {hostId:string;receivedAt:Date;snapshot:unknown;resourceReservationVersion?:number;resourceReservations?:unknown}
 export function projectResourceLifecycle(rows:ResourceLifecycleRow[],now=Date.now()):ResourceLifecycleList {
   const subjects:ResourceLifecycleList['subjects']=[],history=new Map<string,ResourceLifecycleList['history'][number]>();
   for(const row of rows.slice(0,100)) {
@@ -27,6 +30,7 @@ export function projectResourceLifecycle(rows:ResourceLifecycleRow[],now=Date.no
       history.set(key,event);
     }
   }
+  projectFleetResourceAuthorities(rows.slice(0,100),subjects,history,now);
   return {generatedAt:new Date(now).toISOString(),subjects:subjects.sort((a,b)=>a.subject.id.localeCompare(b.subject.id)),
     history:[...history.values()].sort((a,b)=>b.at.localeCompare(a.at)).slice(0,2000),truncated:rows.length>100 || history.size>2000};
 }
@@ -60,8 +64,61 @@ export class ResourceLifecycleService {
       coverage:'retained authority journal window; at most 200 events per host',truncated:result.truncated};
   }
   async list() {
-    const rows=await TestHostStateModel.find({}).select({hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,_id:0})
+    const rows=await TestHostStateModel.find({}).select({hostId:1,receivedAt:1,'snapshot.hostId':1,'snapshot.resourceLifecycle':1,'snapshot.lanes':1,'snapshot.resourceReservations':1,resourceReservationVersion:1,resourceReservations:1,_id:0})
       .sort({hostId:1}).limit(101).maxTimeMS(5000).read('primary').readConcern('majority').lean();
     return projectResourceLifecycle(rows as ResourceLifecycleRow[]);
+  }
+}
+
+/** Derives fleet dependency visibility from the existing CAS authority; never grants capacity. */
+function projectFleetResourceAuthorities(rows:ResourceLifecycleRow[],subjects:ResourceLifecycleList['subjects'],history:Map<string,ResourceLifecycleList['history'][number]>,now:number) {
+  const enrollment=z.object({lanes:z.array(z.object({id:z.string(),resources:z.array(z.object({exclusiveDependencies:z.array(z.object({resourceId:z.string(),authorityHostId:z.string(),capability:z.string()})).optional()}))})).optional()});
+  const enrolled=new Map<string,{authorityHostId:string;capabilities:Set<string>}>();
+  for(const row of rows) {
+    const parsed=enrollment.safeParse(row.snapshot);if(!parsed.success) throw new TestRunError(503,'Invalid resource dependency observation');
+    for(const lane of parsed.data.lanes??[]) for(const resource of lane.resources) for(const dependency of resource.exclusiveDependencies??[]) {
+      if(!frameworkIdentitySchema.safeParse(dependency.resourceId).success || !frameworkIdentitySchema.safeParse(dependency.authorityHostId).success) throw new TestRunError(503,'Unsafe canonical resource identity');
+      const previous=enrolled.get(dependency.resourceId);
+      if(previous && previous.authorityHostId!==dependency.authorityHostId) throw new TestRunError(503,'Conflicting canonical resource authority');
+      const value=previous??{authorityHostId:dependency.authorityHostId,capabilities:new Set<string>()};value.capabilities.add(dependency.capability);enrolled.set(dependency.resourceId,value);
+    }
+  }
+  for(const row of rows) for(const claim of hostResourceReservationsSchema.parse(row.resourceReservations??[]).filter(isExclusiveHostReservation)) {
+    if(claim.authorityHostId!==row.hostId) throw new TestRunError(503,'Exclusive claim differs from canonical authority');
+    const previous=enrolled.get(claim.resourceId);
+    if(previous && previous.authorityHostId!==row.hostId) throw new TestRunError(503,'Conflicting canonical resource authority');
+    if(!previous) enrolled.set(claim.resourceId,{authorityHostId:row.hostId,capabilities:new Set()});
+  }
+  for(const [resourceId,offer] of enrolled) {
+    const authority=rows.find(row=>row.hostId===offer.authorityHostId);
+    const claims=authority?hostResourceReservationsSchema.parse(authority.resourceReservations??[]).filter(isExclusiveHostReservation).filter(claim=>claim.resourceId===resourceId):[];
+    if(claims.length>1) throw new TestRunError(503,'Conflicting canonical resource claims');
+    const claim=claims[0],generation=authority?.resourceReservationVersion??0;
+    const existing=subjects.findIndex(subject=>subject.subject.id===resourceId);
+    if(existing>=0 && subjects[existing]!.subject.authorityHostId!==offer.authorityHostId) throw new TestRunError(503,'Conflicting canonical resource authority');
+    if(claim || existing<0) {
+      // A retained grant remains reserved even with a stale borrower. Freshness cannot release it.
+      const value:ResourceLifecycleList['subjects'][number]={subject:{kind:'resource',id:resourceId,authorityHostId:offer.authorityHostId},generation,
+        status:claim?'reserved':'unknown',current:!!claim,observedAt:claim?new Date(now).toISOString():null,receivedAt:claim?new Date(now).toISOString():authority?.receivedAt.toISOString()??null,
+        reason:{code:claim?'retained-exclusive-claim':'not-commissioned',message:claim?'Exclusive custody is retained by the recorded borrower; execution activity and idle are not established.':'No commissioned idle check was reported for this fleet resource.'},
+        owner:claim?{...claim.owner,generation:null,hostId:claim.borrowerHostId,laneId:claim.laneId}:null,
+        idle:{contractVersion:'not-commissioned',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'unqualified'},evidenceRefs:[]},
+        repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'exclusive-dependency',capabilities:[...offer.capabilities],memberships:[],dependencies:[],placement:'fleet'}};
+      if(existing>=0) subjects[existing]=value;else subjects.push(value);
+    }
+    if(claim) {
+      const id=`claim:${claim.id}`;
+      history.set(`${offer.authorityHostId}:${resourceId}:${id}`,{id,resourceId,subjectGeneration:null,at:claim.reservedAt,event:'reserved',ownerId:claim.owner.id,hostId:claim.borrowerHostId,laneId:claim.laneId});
+    }
+    for(const borrower of rows) {
+      const snapshot=borrower.snapshot as {resourceReservations?:unknown};
+      if(!snapshot.resourceReservations) continue;
+      const observation=resourceReservationObservationSchema.parse(snapshot.resourceReservations);
+      for(const receipt of observation.returns.filter(receipt=>receipt.resourceId===resourceId && receipt.authorityHostId===offer.authorityHostId)) {
+        const id=`return:${createHash('sha256').update(`${receipt.claimId}:${receipt.release.eventId}`).digest('hex')}`;
+        const original=receipt.release.lineage.find(owner=>owner.id===receipt.originalOwner.id && owner.kind===receipt.originalOwner.kind);
+        history.set(`${offer.authorityHostId}:${resourceId}:${id}`,{id,resourceId,subjectGeneration:null,at:receipt.release.releasedAt,event:'return-reported',ownerId:receipt.originalOwner.id,...(original?{ownerGeneration:original.generation}:{}),hostId:borrower.hostId,laneId:receipt.laneId});
+      }
+    }
   }
 }

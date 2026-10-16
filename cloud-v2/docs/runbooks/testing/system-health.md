@@ -196,3 +196,29 @@ placement, borrower lineage and stale observations.
 `repair.configured` reports the provider commissioning declaration. It does not
 prove a repair worker is installed or enabled; runtime readiness is checked
 independently before offering commissioned capacity.
+
+
+Fleet exclusive dependencies (including the shared Google account) also project
+from the existing resource reservation authority, independently of local lane
+provider lifecycle subjects. Core reads the canonical enrollment and retained
+exclusive claims from the existing majority-read host CAS rows; installed aliases
+produce one fleet resource with no physical memberships. A retained claim is
+reserved, even when the borrower stopped reporting or enrollment was removed.
+Its observation timestamp records the authoritative database read, not a new
+physical idle check. Unclaimed capacity remains unknown until a real commissioned
+idle observation exists. A matching retained claim overrides a reported idle card.
+
+Existing exclusive claims do not store an execution owner generation or the CAS
+revision at the original grant. These fields are explicitly unknown (`null`) in
+derived legacy ownership/history, rather than borrowing a controller incarnation
+or a later authority revision. Unknown ownership generations cannot enable
+control actions. Local lifecycle journal events continue carrying exact original
+generations. Fleet history uses stable claim IDs and original normal-return
+receipt IDs; return-reported records the borrower's receipt without claiming an
+archival authority release event. Coverage is the currently retained claim and
+borrower-return observation window, not a new event store.
+
+Host resource offers may additionally carry an optional strict `idleContract`:
+version, maximumAgeMs (at most one day), typed qualifiedScope, unique conditions,
+repairConfigured, and at most eight dependency IDs. Immutable execution refs are
+unchanged; the installed controller overlays its canonical provider contract.

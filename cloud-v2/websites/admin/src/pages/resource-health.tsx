@@ -17,13 +17,13 @@ export function ResourceHealthSection() {
       return <article key={value.subject.id} className="rounded-xl border border-[#e0e4de] p-4">
         <h3 className="font-semibold">{value.subject.id}</h3><ReservableStatusBadge status={value.status} current={current} />
         <p className="text-sm">{value.resource.kind} · {value.resource.placement==='fleet'?'Fleet resource':`Installed: ${value.resource.memberships.map(v=>`${v.hostId}/${v.laneId}`).join(', ') || 'placement not reported'}`}</p>
-        <p className="mt-2 text-sm">{current?'Owner':'Last reported owner'}: {value.owner?`${value.owner.kind} ${value.owner.id} (${value.owner.hostId}${value.owner.laneId?`/${value.owner.laneId}`:''})`:'None'}</p>
+        <p className="mt-2 text-sm">{current?'Owner':'Last reported owner'}: {value.owner?`${value.owner.kind} ${value.owner.id}, owner generation ${value.owner.generation??'unknown'} (${value.owner.hostId}${value.owner.laneId?`/${value.owner.laneId}`:''})`:'None'}</p>
         <p className="text-sm">Idle check: {value.idle.outcome} · contract {value.idle.contractVersion || 'not configured'} · scope {value.idle.qualifiedScope.kind}</p>
         <p className="text-sm">Repair: {value.repair.configured?value.repair.state:'Not configured'}</p>
         {value.reason?<p className="mt-2 text-sm">{value.reason.message}</p>:null}
         <p className="mt-2 text-xs">Observed {value.observedAt?new Date(value.observedAt).toLocaleString():'unknown'} · generation {value.generation}</p>
         <details className="mt-3"><summary>Use history ({events.length})</summary>
-          {!events.length?<p className="text-sm">No use history reported.</p>:<ol className="mt-2 space-y-2 text-sm">{events.map(event=><li key={event.id}>{new Date(event.at).toLocaleString()} · {event.event.replaceAll('-',' ')}{event.ownerId?` · ${event.ownerId}${event.ownerGeneration!==undefined?` (owner generation ${event.ownerGeneration})`:''}`:''}{event.hostId?` · ${event.hostId}${event.laneId?`/${event.laneId}`:''}`:''} · generation {event.subjectGeneration}</li>)}</ol>}
+          {!events.length?<p className="text-sm">No use history reported.</p>:<ol className="mt-2 space-y-2 text-sm">{events.map(event=><li key={event.id}>{new Date(event.at).toLocaleString()} · {event.event.replaceAll('-',' ')}{event.ownerId?` · ${event.ownerId}${event.ownerGeneration!==undefined?` (owner generation ${event.ownerGeneration})`:''}`:''}{event.hostId?` · ${event.hostId}${event.laneId?`/${event.laneId}`:''}`:''} · generation {event.subjectGeneration??'unknown'}</li>)}</ol>}
           <p className="mt-2 text-xs">Recent journal events reported by the authority; this is a bounded history.</p>
         </details>
       </article>;
