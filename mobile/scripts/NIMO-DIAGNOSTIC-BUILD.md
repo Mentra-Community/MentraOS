@@ -66,3 +66,11 @@ require its consumed return values, and check the SDK/peer admission policy
 wiring. Core and harness reject missing/false startup denial evidence before
 installation. This is scoped bytecode evidence plus reviewed native source;
 it is not a general control-flow proof.
+
+The application transform supports Expo 55's `ExpoReactHostFactory` template by
+passing its supported `useDevSupport` argument. Ordinary variants retain the
+factory's React Native `ReactBuildConfig.DEBUG` default; `nimoDiagnostic` sets
+it false. A fixture from the pinned `expo@55.0.24` package guards this template
+and existing custom developer-support arguments fail closed. The legacy
+ReactNativeHost template remains supported. The ESM helper has explicit TypeScript
+declarations so the mobile plugin is checked by the ordinary compile gate.
