@@ -939,6 +939,7 @@ class Nimo : SGCManager() {
     private var resourcePairAddress: String? = null
     private var resourcePairName: String? = null
     private var resourceTwsAt: Long? = null
+    private var resourceHandshakeTwsAt: Long? = null
     private var resourceTimeAckAt: Long? = null
     private var resourceTimeCommandId: String? = null
     private var resourceTimeWriteStartedAt: Long? = null
@@ -977,7 +978,7 @@ class Nimo : SGCManager() {
                 .put("canvasCommands", canvas.pendingCount()).put("canvasEncodes", canvasEncoder.pendingCount())
                 .put("audioWorkersAndPackets", audioClient.lifecyclePending()).put("acks", pendingAcks.size))
             .put("localEffectsSettled", pending == 0 && !resourceClosedWithPending)
-            .put("tws", JSONObject().put("connected", twsConnected).put("atEpochMs", resourceTwsAt ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
+            .put("tws", JSONObject().put("handshakeAtEpochMs", resourceHandshakeTwsAt ?: JSONObject.NULL).put("connected", twsConnected).put("atEpochMs", resourceTwsAt ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
             .put("timeAck", JSONObject().put("statusCode", if (resourceTimeAckAt != null) 0 else JSONObject.NULL)
                 .put("writeStartedAtEpochMs", resourceTimeWriteStartedAt ?: JSONObject.NULL).put("atEpochMs", resourceTimeAckAt ?: JSONObject.NULL).put("commandId", resourceTimeCommandId ?: JSONObject.NULL).put("sessionGeneration", resourceSessionGeneration))
             .put("release", JSONObject().put("result", resourceReleaseResult).put("pending", resourceReleasePending)
@@ -1837,7 +1838,7 @@ class Nimo : SGCManager() {
         resourceClosedWithPending = false; resourceReleaseResult = "not-requested"
         resourcePairAddress = device.address
         resourcePairName = device.name ?: ""
-        resourceTwsAt = null; resourceTimeAckAt = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null
+        resourceTwsAt = null; resourceHandshakeTwsAt = null; resourceTimeAckAt = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null
         resourceCloseCalled = false; resourceCloseObserved = false; resourceDisconnectCallbackStatus = null; resourceCloseError = null
         NimoResourceDiagnostics.track(this)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
@@ -2254,6 +2255,7 @@ class Nimo : SGCManager() {
     private fun proceedToTimeSync() {
         if (handshakeState != HandshakeState.AWAITING_TWS) return
         cancelTwsTimeout()
+        resourceHandshakeTwsAt = resourceTwsAt
         handshakeState = HandshakeState.AWAITING_TIME_ACK
         Bridge.log("NIMO: TWS OK — sending setTime (awaiting ACK)")
         setTimeAttempts = 0
