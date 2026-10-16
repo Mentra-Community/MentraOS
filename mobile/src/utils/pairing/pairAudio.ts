@@ -7,10 +7,11 @@ export const BT_CLASSIC_ROUTE = "/pairing/btclassic"
 
 /**
  * When the glasses derive Classic audio from the LE pair (`pairing_info.auto_audio === true`), audio
- * should connect on its own. The loading screen waits this long, then re-checks the real audio state
- * before it opens Pair Audio.
+ * should connect on its own. A 2026-10-16 iPhone log showed that route within about 5 s when it
+ * worked, and still on the phone speaker 30 s later when the phone already had a Bluetooth
+ * connection. The loading screen waits only long enough for that reconnect, then opens Pair Audio.
  */
-export const AUTO_AUDIO_WAIT_MS = 30_000
+export const AUTO_AUDIO_WAIT_MS = 8_000
 
 /**
  * After the app link to the glasses comes up, iOS reconnects the Classic audio route on its own a
