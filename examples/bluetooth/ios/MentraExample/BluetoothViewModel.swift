@@ -423,6 +423,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamStartPending = false
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
+    @Published private(set) var touchGestureDefaults: [TouchGesture: Bool] = [:]
+    @Published private(set) var touchGesturePending: TouchGesture?
     @Published private(set) var galleryModeEnabled = false
     @Published private(set) var hotspotEnabled = false
     /// Optimistic local toggle — glasses do not report Wi-Fi ADB status.
@@ -752,6 +754,22 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let ack = try await mentraBluetoothSdk.setGalleryModeEnabled(enabled)
             append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
             galleryModeEnabled = enabled
+        }
+    }
+
+    func setTouchGestureDefaultBehaviorEnabled(_ gesture: TouchGesture, enabled: Bool) {
+        guard touchGesturePending == nil else { return }
+        let generation = glassesConnectionGeneration
+        touchGesturePending = gesture
+        runAsyncAction("\(enabled ? "Enable" : "Disable") \(gesture.rawValue) default action") { [self] in
+            defer {
+                if generation == glassesConnectionGeneration { touchGesturePending = nil }
+            }
+            try requireConnected("change touchpad default actions")
+            let ack = try await mentraBluetoothSdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled: enabled)
+            guard generation == glassesConnectionGeneration else { return }
+            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
+            touchGestureDefaults[gesture] = enabled
         }
     }
 
@@ -2837,6 +2855,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func applyDisconnectedState(status: String) {
+        touchGestureDefaults = [:]
+        touchGesturePending = nil
         glassesValues = .disconnected(connection: .disconnected)
         hideOtaNoUpdateCard()
         stopPreviewHealthPoll()
