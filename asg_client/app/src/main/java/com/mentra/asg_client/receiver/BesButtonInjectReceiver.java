@@ -76,7 +76,8 @@ public class BesButtonInjectReceiver extends BroadcastReceiver {
     }
 
     /**
-     * Builds {@code {"C":"mh_dbgkey","V":1,"B":{"key":"pwr","gesture":"<g>"}}}.
+     * Builds {@code {"C":"mh_dbgkey","V":1,"B":"{\"key\":\"pwr\",\"gesture\":\"<g>\"}"}}.
+     * BES reads a UART body only as a JSON string, so {@code B} is the body serialized.
      *
      * @return the JSON line, or {@code null} for a missing or unknown gesture
      */
@@ -92,7 +93,7 @@ public class BesButtonInjectReceiver extends BroadcastReceiver {
             JSONObject command = new JSONObject();
             command.put("C", "mh_dbgkey");
             command.put("V", 1);
-            command.put("B", body);
+            command.put("B", body.toString());
             return command.toString();
         } catch (JSONException e) {
             Log.e(TAG, "failed to build mh_dbgkey", e);
