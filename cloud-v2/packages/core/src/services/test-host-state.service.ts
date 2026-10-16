@@ -201,6 +201,9 @@ export const hostStateSchema = z
     for (const lane of snapshot.lanes) if (lane.waiting?.some(value => Date.parse(value.observedAt) > Date.parse(snapshot.observedAt)) ||
       new Set(lane.waiting?.map(value => value.requestId)).size !== (lane.waiting?.length ?? 0))
       ctx.addIssue({code: 'custom', message: 'Queued blocker observations must have unique identities and actual past timestamps'})
+    if (snapshot.resourceLifecycle && [...snapshot.resourceLifecycle.subjects.map(subject=>subject.observedAt),
+        ...snapshot.resourceLifecycle.history.map(event=>event.at)].some(at=>at!==null && Date.parse(at)>Date.parse(snapshot.observedAt)))
+      ctx.addIssue({code: 'custom', message: 'Resource observation is newer than host observation'})
     if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
       ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
     validateHostLaneInventory(snapshot, ctx)

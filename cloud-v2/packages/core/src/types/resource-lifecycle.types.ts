@@ -29,6 +29,11 @@ export const resourceLifecycleHistorySchema=z.object({id,resourceId:id,subjectGe
 export const resourceLifecycleSchema=z.object({schemaVersion:z.literal(1),subjects:z.array(resourceLifecycleSubjectSchema).max(200),history:z.array(resourceLifecycleHistorySchema).max(200)}).strict().superRefine((value,ctx)=>{
   if(new Set(value.subjects.map(v=>v.subject.id)).size!==value.subjects.length || new Set(value.history.map(v=>v.id)).size!==value.history.length)
     ctx.addIssue({code:'custom',message:'Duplicate resource lifecycle identity'});
+  for(const event of value.history) {
+    const subject=value.subjects.find(subject=>subject.subject.id===event.resourceId);
+    if(!subject || event.subjectGeneration>subject.generation)
+      ctx.addIssue({code:'custom',message:'History must identify an enrolled resource and accepted generation'});
+  }
 });
 export type ResourceLifecycleSubject=z.infer<typeof resourceLifecycleSubjectSchema>;
 export type ResourceLifecycleHistory=z.infer<typeof resourceLifecycleHistorySchema>;

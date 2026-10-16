@@ -192,3 +192,7 @@ host), not an archival completeness claim. Resource check/repair control actions
 are not exposed by these read endpoints. Mobile walkthrough routines do not cover
 Admin resource cards; frontend render tests cover canonical identity, fleet
 placement, borrower lineage and stale observations.
+
+`repair.configured` reports the provider commissioning declaration. It does not
+prove a repair worker is installed or enabled; runtime readiness is checked
+independently before offering commissioned capacity.

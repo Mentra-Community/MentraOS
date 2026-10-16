@@ -16,7 +16,7 @@ describe('resource lifecycle projection',()=>{
 
 test('accepted subject generation cannot regress and original journal IDs cannot change',()=>{
  const before=row().snapshot.resourceLifecycle;
- const next=structuredClone(before);next.subjects[0]!.generation=1;next.subjects[0]!.idle.acceptedCheck!.subjectGeneration=1;
+ const next=structuredClone(before);next.subjects[0]!.generation=1;next.subjects[0]!.idle.acceptedCheck!.subjectGeneration=1;next.history[0]!.subjectGeneration=1;
  expect(()=>validateResourceLifecycleAdvance(before,next)).toThrow('generation regressed');
  const changed=structuredClone(before);changed.history[0]!.event='active';
  expect(()=>validateResourceLifecycleAdvance(before,changed)).toThrow('immutable');
@@ -30,4 +30,10 @@ test('retained history pages are bounded with explicit coverage and strict curso
  expect((await service.history(subject.subject.id,'event-49')).events).toHaveLength(10);
  expect(first.coverage).toContain('200 events');
  await expect(service.history(subject.subject.id,'/bad')).rejects.toThrow('cursor');
+});
+
+test('history cannot attribute another canonical resource or future subject generation',()=>{
+ const value=row().snapshot.resourceLifecycle;
+ expect(resourceLifecycleSchema.safeParse({...value,history:[{...value.history[0]!,resourceId:'other-resource'}]}).success).toBe(false);
+ expect(resourceLifecycleSchema.safeParse({...value,history:[{...value.history[0]!,subjectGeneration:3}]}).success).toBe(false);
 });
