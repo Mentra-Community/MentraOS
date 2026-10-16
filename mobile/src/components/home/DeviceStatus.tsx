@@ -121,6 +121,13 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     rejected: pairingRejected,
     linkBusy: searching || nativeLinkBusy,
   })
+  // Cancel stops this phone's reconnect. Pairing mode on the glasses continues, but the
+  // card must leave the spinner; the window itself is not a reason to keep it spinning.
+  const [reconnectDismissed, setReconnectDismissed] = useState(false)
+  const pairingWindowId = pairingState?.state === "pairing_mode" ? pairingState.windowId : undefined
+  useEffect(() => {
+    setReconnectDismissed(false)
+  }, [pairingWindowId])
 
   const handleCancelPairing = async () => {
     if (cancellingPairing.current) return
@@ -205,6 +212,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       await engine.glasses.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()
+      setReconnectDismissed(true)
     } else {
       await connectGlasses()
     }
@@ -295,15 +303,19 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   // The SDK pauses reconnect while the glasses are in pairing mode. Home still shows the normal
-  // reconnecting card (spinner + Cancel) over the popup, never Pair Again. Keep that card for a
-  // moment after the window ends so "Connect glasses" does not flash before the reconnect starts.
+  // reconnecting card (spinner + Cancel) over the popup, never Pair Again, until the user
+  // presses Cancel. The pairing watch scan and the reconnect hold are not a new connect
+  // attempt, so they must not bring the spinner back. Keep the card for a moment after the
+  // window ends so "Connect glasses" does not flash before the reconnect starts.
+  const userStoppedReconnect = reconnectDismissed && (inPairingMode || holdReconnectAfterPairing)
   let isSearching =
-    searching ||
-    isCheckingConnectivity ||
-    wasSearching ||
-    nativeLinkBusy ||
-    inPairingMode ||
-    holdReconnectAfterPairing
+    !userStoppedReconnect &&
+    (searching ||
+      isCheckingConnectivity ||
+      wasSearching ||
+      nativeLinkBusy ||
+      inPairingMode ||
+      holdReconnectAfterPairing)
   let _connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
