@@ -6,19 +6,25 @@ import Foundation
 final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     private var manager: CLLocationManager?
     private var completion: ((Result<Void, Error>) -> Void)?
-    private var finished = false
+    private var started = false
+    private var closed = false
+    private var ready = false
     private let facts: MacHotspotAuthorizationFacts
+    private let makeManager: () -> CLLocationManager
+    var onRevoked: ((Error) -> Void)?
 
-    init(facts: MacHotspotAuthorizationFacts = MacHotspotAuthorizationFacts()) {
+    init(facts: MacHotspotAuthorizationFacts = MacHotspotAuthorizationFacts(), makeManager: @escaping () -> CLLocationManager = { CLLocationManager() }) {
         self.facts = facts
+        self.makeManager = makeManager
         super.init()
     }
 
     func start(completion: @escaping (Result<Void, Error>) -> Void) {
         DispatchQueue.main.async {
-            guard !self.finished else { completion(.failure(CancellationError())); return }
+            guard !self.closed, !self.started else { completion(.failure(CancellationError())); return }
+            self.started = true
             self.completion = completion
-            let manager = CLLocationManager()
+            let manager = self.makeManager()
             self.manager = manager
             manager.delegate = self
             self.handle(manager.authorizationStatus, getter: .instanceInitial)
@@ -27,10 +33,43 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     }
 
     func cancel() {
-        DispatchQueue.main.async { self.finish(.failure(CancellationError())) }
+        DispatchQueue.main.async {
+            self.closed = true
+            self.ready = false
+            self.reply(.failure(CancellationError()))
+            self.manager?.delegate = nil
+            self.manager = nil
+            self.onRevoked = nil
+        }
+    }
+
+    /// A ready session retains its manager through owned Wi-Fi cleanup. An unanswered
+    /// authorization request must still settle when the join is cancelled.
+    func cancelPending() {
+        DispatchQueue.main.async {
+            if self.completion != nil { self.cancel() }
+        }
+    }
+
+    /// Query the same initialized recipient on its owning thread for every native read
+    /// or write. An earlier success is never an authorization cache.
+    func requireCurrentAuthorization() throws {
+        let check = {
+            guard !self.closed, let manager = self.manager else { throw CancellationError() }
+            let status = manager.authorizationStatus
+            let foreground = MacHotspotAuthorizationFacts.foreground()
+            self.facts.observeInstance(raw: status.rawValue, getter: .instanceCurrent, foreground: foreground)
+            guard Self.isAuthorized(status) else {
+                throw self.facts.failure("Location access is required to verify the current Mac Wi-Fi network", raw: status.rawValue,
+                                         getter: .instanceCurrent, foreground: foreground)
+            }
+        }
+        if Thread.isMainThread { try check() }
+        else { try DispatchQueue.main.sync(execute: check) }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard manager === self.manager, !closed else { return }
         handle(manager.authorizationStatus, getter: .instanceCallback)
     }
 
@@ -44,22 +83,25 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
 
     private func handle(_ status: CLAuthorizationStatus, getter: MacHotspotAuthorizationFacts.Getter) {
         let foreground = MacHotspotAuthorizationFacts.foreground()
-        if !finished { facts.observeInstance(raw: status.rawValue, getter: getter, foreground: foreground) }
-        if Self.isAuthorized(status) { finish(.success(())); return }
+        guard !closed else { return }
+        facts.observeInstance(raw: status.rawValue, getter: getter, foreground: foreground)
+        if Self.isAuthorized(status) { ready = true; reply(.success(())); return }
+        let error = facts.failure("Location access is required to identify the glasses hotspot on Mac", raw: status.rawValue, getter: getter, foreground: foreground)
+        if ready {
+            ready = false
+            onRevoked?(error)
+            return
+        }
         switch status {
         case .denied, .restricted:
-            finish(.failure(facts.failure("Location access is required to identify the glasses hotspot on Mac", raw: status.rawValue, getter: getter, foreground: foreground)))
+            reply(.failure(error))
         case .notDetermined: break
         default:
-            finish(.failure(facts.failure("Mac hotspot Location authorization is unavailable", raw: status.rawValue, getter: getter, foreground: foreground)))
+            reply(.failure(facts.failure("Mac hotspot Location authorization is unavailable", raw: status.rawValue, getter: getter, foreground: foreground)))
         }
     }
 
-    private func finish(_ result: Result<Void, Error>) {
-        guard !finished else { return }
-        finished = true
-        manager?.delegate = nil
-        manager = nil
+    private func reply(_ result: Result<Void, Error>) {
         let reply = completion
         completion = nil
         reply?(result)
