@@ -2362,15 +2362,6 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
-    // One stream per miniapp: opening a second closes the first.
-    const previous = app.activeSpeakerStreamId
-    if (previous) {
-      app.activeSpeakerStreamId = undefined
-      await audioPlaybackService.abortStream(previous).catch((error) => {
-        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
-      })
-    }
-
     const sampleRate = typeof payload.sampleRate === "number" ? payload.sampleRate : 16000
     if (!LocalMiniappRuntime.SPEAKER_STREAM_SAMPLE_RATES.has(sampleRate)) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2396,6 +2387,15 @@ class LocalMiniappRuntime {
       return
     }
 
+    // One stream per miniapp: opening a second closes the first.
+    const previous = app.activeSpeakerStreamId
+    if (previous) {
+      app.activeSpeakerStreamId = undefined
+      await audioPlaybackService.abortStream(previous).catch((error) => {
+        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
+      })
+    }
+
     const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`
     this.setSpeakerState(packageName, "loading")
     try {
@@ -2412,7 +2412,11 @@ class LocalMiniappRuntime {
           // respawn. Its abort may finish after the new app has registered and
           // must not overwrite that app's speaker state.
           if (current !== app) return
-          if (current.activeSpeakerStreamId === endedId) current.activeSpeakerStreamId = undefined
+          if (current.activeSpeakerStreamId !== endedId) {
+            // Stale completion from an aborted predecessor; do not overwrite active state
+            return
+          }
+          current.activeSpeakerStreamId = undefined
           if (success) {
             this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined})
           } else {
@@ -2446,8 +2450,9 @@ class LocalMiniappRuntime {
     }
     app.activeSpeakerStreamId = streamId
     // Optimistic "playing", same as play(): the chunk player starts as soon
-    // as the first write lands. Microtask so "loading" flushes first.
-    queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+    // as the first write lands. Synchronous so SPEAKER_STATE ("playing")
+    // is queued before sendResult resolves createStream() in the miniapp.
+    this.setSpeakerState(packageName, "playing")
     this.sendResult(packageName, requestId, true, {streamId})
   }
 
