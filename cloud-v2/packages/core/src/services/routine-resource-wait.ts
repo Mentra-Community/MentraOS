@@ -23,7 +23,7 @@ export function sharedResourceWaitingReason(row: StoredRoutineJob, hosts: Routin
   const parsed = fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission);
   const admission = parsed.success ? parsed.data : undefined;
   if (!admission || admission.intent.owner.kind !== 'run' || admission.intent.owner.id !== row.requestId ||
-      admission.intent.inputSha256 !== row.fleetInputSha256 || row.fleetBinding || row.fleetCancellation || row.state !== 'awaiting-runner') return;
+      admission.intent.inputSha256 !== row.fleetInputSha256 || row.fleetBinding || row.fleetCancellation || row.state !== 'awaiting-runner') return undefined;
   for (const dependency of admission.dependencies) {
     const authority = hosts.find(host => host.hostId === dependency.authorityHostId);
     const blocked = authority?.authorityReservations?.filter(isExclusiveHostReservation).find(claim =>
@@ -32,6 +32,7 @@ export function sharedResourceWaitingReason(row: StoredRoutineJob, hosts: Routin
         claim.borrowerHostId === admission.intent.hostId && claim.laneId === admission.intent.laneId));
     if (blocked) return sharedResourceWait(dependency.capability);
   }
+  return undefined;
 }
 
 export function dependencyWaitingReason(dependencies: ExclusiveResourceDependency[] | undefined, resourceId: string) {

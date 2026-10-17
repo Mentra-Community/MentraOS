@@ -2,6 +2,7 @@ import {expect, test} from 'bun:test';
 import {dependencyWaitingReason, recorderWait, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT, RESOURCE_ADMISSION_WAIT,
   sharedResourceWait, sharedResourceWaitingReason} from './routine-resource-wait';
 import type {StoredRoutineJob} from '../types/routine-job.types';
+import type {ExclusiveHostReservation} from '../types/resource-reservations.types';
 import type {RoutingTestHostState} from './test-host-state.service';
 
 const now = Date.parse('2026-10-17T01:00:00Z'), gib = 1024 ** 3;
@@ -11,10 +12,13 @@ function fixture() {
     intent: {operationId: 'run:waiting', hostId: 'borrower', laneId: 'mac', controller: {incarnation: 'process', generation: 1, sequence: 1},
       owner: {id: 'waiting', kind: 'run'}, inputSha256: 'a'.repeat(64), resources: [{id: 'fixture', capabilities: ['google-authentication']}]},
     dependencies: [dependency]}} as StoredRoutineJob;
-  const hosts = [{hostId: 'authority', receivedAt: new Date(now).toISOString(), lanes: [], authorityReservations: [{kind: 'exclusive',
+  const claim: ExclusiveHostReservation = {kind: 'exclusive',
     id: 'da63eacd-8c98-4a09-a459-405d362f9dcb', resourceId: dependency.resourceId, authorityHostId: 'authority', borrowerHostId: 'other-host',
-    laneId: 'other-lane', owner: {id: 'private-owner-id', kind: 'run'}}]}] as RoutingTestHostState[];
-  return {row, hosts};
+    laneId: 'other-lane', owner: {id: 'private-owner-id', kind: 'run'}, operationId: 'run:private-owner-id',
+    intentSha256: 'c'.repeat(64), inputSha256: 'd'.repeat(64), controllerIncarnation: 'other-process', controllerGeneration: 1,
+    borrowerSequence: 1, reservedAt: new Date(now).toISOString()};
+  const hosts: RoutingTestHostState[] = [{hostId: 'authority', receivedAt: new Date(now).toISOString(), lanes: [], authorityReservations: [claim]}];
+  return {row, hosts, claim};
 }
 
 test('shared waiting text uses the actual dependency capability without exposing private resource, account, owner or host identities', () => {
@@ -27,12 +31,12 @@ test('shared waiting text uses the actual dependency capability without exposing
 });
 
 test('read-only projection distinguishes an actual authority holder from returned, unrelated or unchanged own claims', () => {
-  const {row, hosts} = fixture(), claim = hosts[0]!.authorityReservations![0]! as any;
+  const {row, hosts, claim} = fixture();
   claim.resourceId = 'another-resource'; expect(sharedResourceWaitingReason(row, hosts)).toBeUndefined();
   claim.resourceId = dependency.resourceId; claim.owner = {id: row.requestId, kind: 'run'};
-  claim.origin = {kind: 'fleet', fleetInputSha256: row.fleetInputSha256}; claim.borrowerHostId = 'borrower'; claim.laneId = 'mac';
+  claim.origin = {kind: 'fleet', fleetInputSha256: row.fleetInputSha256!}; claim.borrowerHostId = 'borrower'; claim.laneId = 'mac';
   expect(sharedResourceWaitingReason(row, hosts)).toBeUndefined();
-  claim.origin.fleetInputSha256 = 'b'.repeat(64); expect(sharedResourceWaitingReason(row, hosts)).toBeUndefined();
+  claim.origin!.fleetInputSha256 = 'b'.repeat(64); expect(sharedResourceWaitingReason(row, hosts)).toBeUndefined();
   hosts[0]!.authorityReservations = []; expect(sharedResourceWaitingReason(row, hosts)).toBeUndefined();
 });
 
