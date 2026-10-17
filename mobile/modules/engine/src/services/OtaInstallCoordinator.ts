@@ -1652,7 +1652,9 @@ class OtaInstallCoordinator {
     if (existingOwnership?.outcome === "rejected" && !this.prepareFreshOtaStartAttempt()) {
       return Promise.resolve()
     }
-    this.selectedTransport = useGlassesStore.getState().hotspotOtaVersion === 1 ? "hotspot" : "wifi"
+    // Capability is cleared on link loss before version_info returns. Preserve
+    // hotspot selection for these paired glasses; the device boundary resets it.
+    if (useGlassesStore.getState().hotspotOtaVersion === 1) this.selectedTransport = "hotspot"
     const ownership: OtaStartOwnership = {
       outcome: "pending",
       promise: Promise.resolve(),

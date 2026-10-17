@@ -216,6 +216,31 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     checkSpy.mockRestore()
   })
 
+  it.each(["retry", "query-fallback"] as const)(
+    "retains hotspot after reconnect before version_info on %s",
+    async (action) => {
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1,
+        wifi: {state: "disconnected"},
+      })
+      expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed", error: "download_failed"}))
+      otaInstallCoordinator.attach()
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      expect(useGlassesStore.getState().hotspotOtaVersion).toBe(0)
+      if (action === "retry") otaInstallCoordinator.retry()
+      else {
+        useGlassesStore.getState().setOtaStatus(idleStatus())
+        await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+      }
+      await flushNativeStartPromise()
+      expect(otaInstallCoordinator.snapshot().transport).toBe("hotspot")
+      expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("http://192.168.43.2:8791/version.json")
+    },
+  )
+
   it("initializes recovered downgrade guards before staging without a prepared offer", async () => {
     const restored = otaInstallCoordinator
     const store = useGlassesStore
