@@ -65,8 +65,64 @@ struct NimoResourcePair: Codable, Equatable {
     let peripheralUuid: String
 }
 
+/// Accepted selection remains immutable even after connected-service discovery.
+struct NimoResourceSelection: Codable, Equatable {
+    static let connectedService = "connected-service-exact-name-v1"
+    let name: String
+    let peripheralUuid: String?
+    let peripheralSelection: String?
+    init(name: String, peripheralUuid: String? = nil, peripheralSelection: String? = nil) { self.name = name; self.peripheralUuid = peripheralUuid; self.peripheralSelection = peripheralSelection }
+    init(pair: NimoResourcePair) { name = pair.name; peripheralUuid = pair.peripheralUuid; peripheralSelection = nil }
+    var dictionary: [String: Any] {
+        if let peripheralUuid { return ["name": name, "peripheralUuid": peripheralUuid] }
+        return ["name": name, "peripheralSelection": peripheralSelection ?? ""]
+    }
+}
+
+/// Pure candidate ledger. Selection is committed only once, after the bounded
+/// observer has stopped; a later callback cannot replace its physical identity.
+final class NimoResourceDiscovery {
+    static let serviceUuid = "00007033-0000-1000-8000-00805f9b34fb"
+    let name: String
+    let startedElapsedMs: UInt64
+    private(set) var settledElapsedMs: UInt64?
+    private(set) var selectedPeripheralUuid: String?
+    private(set) var candidates: [String: String] = [:]
+    private var currentlyConnected: Set<String> = []
+    private(set) var errors: [String] = []
+    private(set) var cancelled = false
+    init(name: String, startedElapsedMs: UInt64) { self.name = name; self.startedElapsedMs = startedElapsedMs }
+    func observe(uuid: String, name: String?) {
+        guard settledElapsedMs == nil, !cancelled, name == self.name else { return }
+        guard UUID(uuidString: uuid)?.uuidString.lowercased() == uuid else { recordError("invalid-discovery-uuid"); return }
+        if candidates.count >= 16, candidates[uuid] == nil { recordError("discovery-candidate-budget"); return }
+        candidates[uuid] = name
+        currentlyConnected.insert(uuid)
+        if candidates.count > 1 { recordError("ambiguous-connected-service-peer") }
+    }
+    func observeConnectedSnapshot(_ peers: [(String, String?)]) {
+        guard settledElapsedMs == nil, !cancelled else { return }
+        currentlyConnected.removeAll()
+        for (uuid, name) in peers { observe(uuid: uuid, name: name) }
+    }
+    func recordError(_ error: String) { guard settledElapsedMs == nil else { return }; if errors.count < 16, !errors.contains(error) { errors.append(error) } }
+    func cancel() { guard settledElapsedMs == nil else { return }; cancelled = true }
+    func finish(at: UInt64, callbacksPending: Int) {
+        guard settledElapsedMs == nil, callbacksPending == 0, at >= startedElapsedMs else { return }
+        if !cancelled, errors.isEmpty, candidates.count == 1, currentlyConnected.count == 1 { selectedPeripheralUuid = candidates.keys.first }
+        else if !cancelled, currentlyConnected.isEmpty { recordError("no-connected-service-peer") }
+        settledElapsedMs = at
+    }
+    func dictionary(callbacksPending: Int) -> [String: Any] {
+        ["kind": NimoResourceSelection.connectedService, "selectedPeripheralUuid": nullable(selectedPeripheralUuid),
+         "candidates": candidates.keys.sorted().map { ["peripheralUuid": $0, "name": candidates[$0]!, "source": "connected-service", "serviceUuid": Self.serviceUuid] },
+         "startedElapsedMs": startedElapsedMs, "settledElapsedMs": nullable(settledElapsedMs),
+         "settled": settledElapsedMs != nil && callbacksPending == 0, "callbacksPending": callbacksPending, "errors": errors]
+    }
+}
+
 struct NimoResourceRequest: Codable, Equatable {
-    enum Operation: String, Codable { case arm, status, release, cancel }
+    enum Operation: String, Codable { case discover, arm, status, release, cancel }
     let version: Int
     let operation: Operation
     let requestNonce: String
@@ -74,7 +130,7 @@ struct NimoResourceRequest: Codable, Equatable {
     let planSha256: String
     let grantSha256: String
     let expectedProcess: NimoResourceProcess
-    let expectedPair: NimoResourcePair
+    let expectedPair: NimoResourceSelection
     let original: NimoResourceOriginal?
 }
 
@@ -130,9 +186,9 @@ final class NimoResourceSession {
     private var peripheral: AnyObject?
     private let now: () -> UInt64
 
-    init(captureNonce: String, pair: NimoResourcePair, now: @escaping () -> UInt64 = NimoResourceClock.now) {
+    init(captureNonce: String, pair: NimoResourcePair, now: @escaping () -> UInt64 = NimoResourceClock.now, armedElapsedMs: UInt64? = nil) {
         self.captureNonce = captureNonce; self.pair = pair; self.now = now
-        armedElapsedMs = now()
+        self.armedElapsedMs = armedElapsedMs ?? now()
     }
 
     func isOwner(_ candidate: AnyObject) -> Bool { owner === candidate }
@@ -320,18 +376,28 @@ extension NimoResourceRequest {
         guard bytes.count <= 16_384, let value = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
               Set(value.keys) == Set(["version","operation","requestNonce","captureNonce","planSha256","grantSha256","expectedProcess","expectedPair","original"]),
               let process = value["expectedProcess"] as? [String: Any], Set(process.keys) == Set(["pid","instanceId"]),
-              let pair = value["expectedPair"] as? [String: Any], Set(pair.keys) == Set(["name","peripheralUuid"]) else { throw failure("invalid-request-schema") }
+              let pair = value["expectedPair"] as? [String: Any],
+              Set(pair.keys) == Set(["name","peripheralUuid"]) || Set(pair.keys) == Set(["name","peripheralSelection"]) else { throw failure("invalid-request-schema") }
         if let original = value["original"] as? [String: Any], Set(original.keys) != Set(["instanceId","peripheralUuid","sessionGeneration"]) { throw failure("invalid-original-schema") }
         let result = try JSONDecoder().decode(NimoResourceRequest.self, from: bytes)
-        let ids = [result.requestNonce, result.captureNonce, result.expectedProcess.instanceId, result.expectedPair.peripheralUuid] +
+        let ids = [result.requestNonce, result.captureNonce, result.expectedProcess.instanceId] + (result.expectedPair.peripheralUuid.map { [$0] } ?? []) +
             (result.original.map { [$0.instanceId, $0.peripheralUuid] } ?? [])
         for id in ids {
             guard UUID(uuidString: id)?.uuidString.lowercased() == id else { throw failure("invalid-uuid") }
         }
-        if let original = result.original {
-            guard original.sessionGeneration <= 1, original.peripheralUuid == result.expectedPair.peripheralUuid else { throw failure("invalid-original-identity") }
+        if result.operation == .discover {
+            guard result.expectedPair.peripheralSelection == NimoResourceSelection.connectedService,
+                  result.requestNonce == result.captureNonce, result.original == nil else { throw failure("invalid-discovery-identity") }
         }
-        guard result.expectedProcess.pid > 1, result.version == 1, !result.expectedPair.name.isEmpty, result.expectedPair.name.utf8.count <= 128,
+        if result.operation == .arm {
+            guard result.original == nil,
+                  (result.expectedPair.peripheralUuid != nil ? result.requestNonce == result.captureNonce : result.requestNonce != result.captureNonce) else { throw failure("invalid-arm-identity") }
+        }
+        if let original = result.original {
+            guard original.sessionGeneration <= 1, (result.expectedPair.peripheralUuid == nil || original.peripheralUuid == result.expectedPair.peripheralUuid) else { throw failure("invalid-original-identity") }
+        }
+        guard (result.expectedPair.peripheralUuid != nil && result.expectedPair.peripheralSelection == nil || result.expectedPair.peripheralUuid == nil && result.expectedPair.peripheralSelection == NimoResourceSelection.connectedService),
+              result.expectedProcess.pid > 1, result.version == 1, !result.expectedPair.name.isEmpty, result.expectedPair.name.utf8.count <= 128,
               result.planSha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
               result.grantSha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { throw failure("invalid-request-identity") }
         return result

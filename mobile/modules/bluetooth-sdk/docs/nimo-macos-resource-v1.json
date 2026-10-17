@@ -3,7 +3,7 @@
   "clockKind": "darwin-continuous-time-v1",
   "request": {
     "version": 1,
-    "operation": "arm|status|release|cancel",
+    "operation": "discover|arm|status|release|cancel",
     "requestNonce": "UUID",
     "captureNonce": "UUID",
     "planSha256": "64lowerhex",
@@ -26,7 +26,7 @@
   "receipt": {
     "version": 1,
     "protocol": "nimo-macos-resource-v1",
-    "operation": "arm|status|release|cancel",
+    "operation": "discover|arm|status|release|cancel",
     "requestNonce": "UUID",
     "captureNonce": "UUID",
     "planSha256": "64lowerhex",
@@ -112,5 +112,26 @@
     "gen0 admission retains original object even before CB peripheral; no replacement adoption.",
     "Transport bootstrap and hello require the verified selected app, exact supervised owner identity and private socket; they do not authorize NIMO input.",
     "One capture per app process; 192 ordinary entries +64 cleanup/postrelease status reserved entries. Exact existing nonce readbacks bypass budget; no renewed windows."
-  ]
+  ],
+  "discoveryExpectedPairAlternative": {
+    "name": "exact name",
+    "peripheralSelection": "connected-service-exact-name-v1"
+  },
+  "discoveryReceiptOnlyForSelectionMode": {
+    "kind": "connected-service-exact-name-v1",
+    "selectedPeripheralUuid": "UUID|null",
+    "candidates": [
+      {
+        "peripheralUuid": "UUID",
+        "name": "exact name",
+        "source": "connected-service",
+        "serviceUuid": "00007033-0000-1000-8000-00805f9b34fb"
+      }
+    ],
+    "startedElapsedMs": 1,
+    "settledElapsedMs": "integer|null",
+    "settled": true,
+    "callbacksPending": 0,
+    "errors": []
+  }
 }

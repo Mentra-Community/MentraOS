@@ -1,4 +1,5 @@
 import Foundation
+import CoreBluetooth
 
 /// One process-local authority shared by the typed Expo bridge and the Mac
 /// fixture socket. Neither accepts packets, connection addresses or file paths.
@@ -16,6 +17,14 @@ final class NimoResourceFixture {
     let process = NimoResourceProcess(pid: ProcessInfo.processInfo.processIdentifier, instanceId: UUID().uuidString.lowercased())
     private(set) var session: NimoResourceSession?
     private(set) var owner: Nimo?
+    private var acceptedPair: NimoResourceSelection?
+    private var captureNonce: String?
+    private var armedElapsedMs: UInt64?
+    private var discovery: NimoResourceConnectedDiscovery?
+    private var discoveryRequestNonce: String?
+    private var discoveryReleaseNonce: String?
+    private var discoveryReleaseStartedElapsedMs: UInt64?
+    private var discoveryCancelled = false
     private var completed: [String: (Data, Data)] = [:]
     private var pending: [String: (Data, Task<Data, Error>)] = [:]
     private var transport: NimoMacResourceTransport?
@@ -33,7 +42,16 @@ final class NimoResourceFixture {
     #else
     private let requested = false
     #endif
-    var enabled: Bool { requested }
+    #if SWIFT_PACKAGE
+    private var packageEnabled = false
+    #endif
+    var enabled: Bool {
+        #if SWIFT_PACKAGE
+        return requested || packageEnabled
+        #else
+        return requested
+        #endif
+    }
 
     func start() {
         guard enabled, transport == nil, startupError == nil else { return }
@@ -44,7 +62,7 @@ final class NimoResourceFixture {
         guard enabled else { return true }
         // A different manager can clean up the captured Nimo object. Permit it
         // only after the original resource has actually completed teardown.
-        guard wearable.contains("NIMO") else { return NimoResourceManagerState.allowsReplacement(fixtureEnabled: enabled, originalClosed: originalClosed && session?.errors.isEmpty == true && session?.connected == false) }
+        guard wearable.contains("NIMO") else { return NimoResourceManagerState.allowsReplacement(fixtureEnabled: enabled, originalClosed: originalClosed && (session == nil || session?.errors.isEmpty == true && session?.connected == false)) }
         guard let session, !session.cancelled, session.releaseNonce == nil, session.original == nil,
               name == nil || name == session.pair.name else { return false }
         return true
@@ -108,14 +126,15 @@ final class NimoResourceFixture {
         if let (original, task) = pending[request.requestNonce] {
             guard original == bytes else { throw failure("request-nonce-reused") }; return try await task.value
         }
-        if request.operation != .arm {
-            guard let session, session.captureNonce == request.captureNonce, session.pair == request.expectedPair else { throw failure("capture-mismatch") }
-            let observed = session.original ?? session.instanceId.map { NimoResourceOriginal(instanceId: $0, peripheralUuid: session.pair.peripheralUuid, sessionGeneration: 0) }
+        if request.operation != .arm && request.operation != .discover {
+            guard captureNonce == request.captureNonce, acceptedPair == request.expectedPair else { throw failure("capture-mismatch") }
+            let session = self.session
+            let observed = session?.original ?? session?.instanceId.map { NimoResourceOriginal(instanceId: $0, peripheralUuid: session!.pair.peripheralUuid, sessionGeneration: 0) }
             if let expected = request.original { guard expected == observed else { throw failure("original-session-mismatch") } }
-            if request.operation == .release, session.hasOwner, request.original == nil { throw failure("release-requires-original") }
-            if request.operation == .release, let release = session.releaseNonce, release != request.requestNonce { throw failure("original-release-nonce-required") }
+            if request.operation == .release, session?.hasOwner == true, request.original == nil { throw failure("release-requires-original") }
+            if request.operation == .release, let release = session?.releaseNonce ?? discoveryReleaseNonce, release != request.requestNonce { throw failure("original-release-nonce-required") }
         }
-        let recovery = request.operation == .release || request.operation == .cancel || session?.releaseNonce != nil
+        let recovery = request.operation == .release || request.operation == .cancel || session?.releaseNonce != nil || discoveryReleaseNonce != nil
         guard completed.count + pending.count < (recovery ? 256 : 192) else { throw failure("request-budget-exhausted") }
         // Intent is persisted before ANY capture or release mutation. No caller
         // path is used; replay compares the exact original request bytes.
@@ -140,11 +159,46 @@ final class NimoResourceFixture {
     }
 
     private func perform(_ request: NimoResourceRequest, received: UInt64) async throws -> [String: Any] {
+        if request.operation == .discover {
+            guard request.expectedPair.peripheralSelection == NimoResourceSelection.connectedService,
+                  captureNonce == nil, request.original == nil, DeviceManager.shared.sgc == nil, pendingManagerEntries == 0 else { throw failure("discover-requires-unowned-manager") }
+            acceptedPair = request.expectedPair; captureNonce = request.captureNonce; armedElapsedMs = NimoResourceClock.now()
+            let observer = NimoResourceConnectedDiscovery(name: request.expectedPair.name, startedElapsedMs: armedElapsedMs!)
+            discovery = observer; discoveryRequestNonce = request.requestNonce
+            await observer.discoverConnected()
+        }
         if request.operation == .arm {
             guard session == nil, request.original == nil, DeviceManager.shared.sgc == nil, pendingManagerEntries == 0 else { throw failure("arm-requires-unowned-manager") }
-            session = NimoResourceSession(captureNonce: request.captureNonce, pair: request.expectedPair)
+            let uuid: String
+            if let observed = request.expectedPair.peripheralUuid {
+                guard captureNonce == nil else { throw failure("capture-already-exists") }
+                acceptedPair = request.expectedPair; captureNonce = request.captureNonce
+                uuid = observed
+            } else {
+                guard captureNonce == request.captureNonce, acceptedPair == request.expectedPair,
+                      !discoveryCancelled, discoveryReleaseNonce == nil,
+                      let discoveryRequestNonce, completed[discoveryRequestNonce] != nil,
+                      let discovery, discovery.ledger.settledElapsedMs != nil, discovery.callbacksPending == 0,
+                      discovery.ledger.errors.isEmpty, let selected = discovery.ledger.selectedPeripheralUuid else { throw failure("discovery-not-admissible") }
+                uuid = selected
+            }
+            if armedElapsedMs == nil { armedElapsedMs = NimoResourceClock.now() }
+            session = NimoResourceSession(captureNonce: request.captureNonce, pair: NimoResourcePair(name: request.expectedPair.name, peripheralUuid: uuid), armedElapsedMs: armedElapsedMs!)
         }
-        guard let session, session.captureNonce == request.captureNonce, session.pair == request.expectedPair else { throw failure("capture-mismatch") }
+        guard captureNonce == request.captureNonce, acceptedPair == request.expectedPair else { throw failure("capture-mismatch") }
+        if session == nil {
+            guard request.original == nil else { throw failure("original-session-mismatch") }
+            if request.operation == .release || request.operation == .cancel {
+                if let original = discoveryReleaseNonce, request.operation == .release, original != request.requestNonce { throw failure("original-release-nonce-required") }
+                if discoveryReleaseNonce == nil {
+                    discoveryReleaseNonce = request.requestNonce; discoveryReleaseStartedElapsedMs = NimoResourceClock.now()
+                    discoveryCancelled = request.operation == .cancel
+                    await discovery?.stopDiscovery(cancel: true)
+                }
+            }
+            return discoveryOnlyReceipt(request, received: received)
+        }
+        guard let session, session.captureNonce == request.captureNonce, acceptedPair == request.expectedPair else { throw failure("capture-mismatch") }
         if let expected = request.original {
             let observed = session.original ?? session.instanceId.map { NimoResourceOriginal(instanceId: $0, peripheralUuid: session.pair.peripheralUuid, sessionGeneration: 0) }
             guard expected == observed else { throw failure("original-session-mismatch") }
@@ -171,17 +225,127 @@ final class NimoResourceFixture {
         let manager = DeviceManager.shared.sgc
         let managerId = (manager as? Nimo)?.resourceInstanceId
         let current: [String: Any] = ["type": nullable(manager?.type), "instanceId": nullable(managerId)]
-        return ["version": 1, "protocol": "nimo-macos-resource-v1", "operation": request.operation.rawValue,
+        var result: [String: Any] = ["version": 1, "protocol": "nimo-macos-resource-v1", "operation": request.operation.rawValue,
                 "requestNonce": request.requestNonce, "captureNonce": request.captureNonce,
                 "planSha256": request.planSha256, "grantSha256": request.grantSha256,
                 "process": ["pid": process.pid, "instanceId": process.instanceId],
                 "clock": ["kind": "darwin-continuous-time-v1", "receivedElapsedMs": received, "observedElapsedMs": NimoResourceClock.now()],
                 "capture": ["armedElapsedMs": session.armedElapsedMs, "admittedElapsedMs": nullable(session.admittedElapsedMs), "cancelled": session.cancelled,
-                            "expectedPair": ["name": session.pair.name, "peripheralUuid": session.pair.peripheralUuid]],
+                            "expectedPair": request.expectedPair.dictionary],
                 "currentManager": current, "session": nullable(session.sessionDictionary()),
                 "release": session.releaseDictionary(producers: producers), "producers": producers.dictionary, "errors": session.errors]
+        if let discovery { result["discovery"] = discovery.ledger.dictionary(callbacksPending: discovery.callbacksPending) }
+        return result
     }
+
+    private func discoveryOnlyReceipt(_ request: NimoResourceRequest, received: UInt64) -> [String: Any] {
+        let settled = discovery?.ledger.settledElapsedMs != nil && discovery?.callbacksPending == 0
+        let manager = DeviceManager.shared.sgc
+        let managerSafe = manager == nil || originalClosed && !(manager?.type.contains("NIMO") ?? false)
+        let closed = discoveryReleaseNonce != nil && settled && pendingOriginalManagerEntries == 0 && managerSafe
+        originalClosed = closed
+        var producers = NimoResourceProducers()
+        producers.postedCallbacks = pendingOriginalManagerEntries + (discovery?.callbacksPending ?? 0)
+        producers.timers = settled ? 0 : 1
+        let release: [String: Any] = ["nonce": nullable(discoveryReleaseNonce), "startedElapsedMs": nullable(discoveryReleaseStartedElapsedMs),
+            "micStopRequired": false, "displayExitRequired": false, "micStopStartedElapsedMs": NSNull(), "micStopWrittenElapsedMs": NSNull(), "micStopMarkerElapsedMs": NSNull(),
+            "exitStatusCode": NSNull(), "exitAckElapsedMs": NSNull(), "disconnectRequestedElapsedMs": NSNull(), "disconnectCallbackElapsedMs": NSNull(), "disconnectError": NSNull(),
+            "connectionFailedElapsedMs": NSNull(), "noTransport": closed, "settled": closed]
+        return ["version": 1, "protocol": "nimo-macos-resource-v1", "operation": request.operation.rawValue,
+            "requestNonce": request.requestNonce, "captureNonce": request.captureNonce, "planSha256": request.planSha256, "grantSha256": request.grantSha256,
+            "process": ["pid": process.pid, "instanceId": process.instanceId],
+            "clock": ["kind": "darwin-continuous-time-v1", "receivedElapsedMs": received, "observedElapsedMs": NimoResourceClock.now()],
+            "capture": ["armedElapsedMs": armedElapsedMs!, "admittedElapsedMs": NSNull(), "cancelled": discoveryCancelled, "expectedPair": request.expectedPair.dictionary],
+            "currentManager": ["type": nullable(DeviceManager.shared.sgc?.type), "instanceId": nullable((DeviceManager.shared.sgc as? Nimo)?.resourceInstanceId)],
+            "session": NSNull(), "release": release, "producers": producers.dictionary, "errors": [],
+            "discovery": discovery!.ledger.dictionary(callbacksPending: discovery!.callbacksPending)]
+    }
+
+    #if SWIFT_PACKAGE
+    /// Test-only original discovery seed; no CoreBluetooth object is created.
+    /// Tests still execute the real perform/status/cancel/arm authority branches.
+    func packageSeedDiscovery(name: String, capture: String, discoveryOperation: String, candidates: [(String, String?)], persisted: Bool) {
+        packageEnabled = true
+        acceptedPair = NimoResourceSelection(name: name, peripheralSelection: NimoResourceSelection.connectedService)
+        captureNonce = capture; armedElapsedMs = NimoResourceClock.now()
+        let observer = NimoResourceConnectedDiscovery(name: name, startedElapsedMs: armedElapsedMs!)
+        discovery = observer; discoveryRequestNonce = discoveryOperation
+        for (uuid, candidateName) in candidates { observer.ledger.observe(uuid: uuid, name: candidateName) }
+        observer.ledger.finish(at: NimoResourceClock.now(), callbacksPending: 0)
+        if persisted { completed[discoveryOperation] = (Data(), Data()) }
+    }
+    func packagePerform(_ bytes: Data) async throws -> [String: Any] {
+        try await perform(try decode(bytes), received: NimoResourceClock.now())
+    }
+    #endif
 
     private func decode(_ bytes: Data) throws -> NimoResourceRequest { try NimoResourceRequest.decode(bytes) }
     private func failure(_ code: String) -> Error { NSError(domain: "NimoResourceFixture", code: 1, userInfo: [NSLocalizedDescriptionKey: code]) }
+}
+
+
+/// Retrieval only: no scan, connection, peripheral delegate, service discovery or
+/// writes. The serial state-delegate queue drains before candidate commitment.
+@MainActor
+final class NimoResourceConnectedDiscovery: NSObject, CBCentralManagerDelegate {
+    let ledger: NimoResourceDiscovery
+    private let queue = DispatchQueue(label: "com.mentra.nimo.resource.connected-discovery")
+    private var central: CBCentralManager?
+    private var stopped = false
+    private var running = false
+    nonisolated private let callbacks = NimoResourceCallbackCounter()
+    var callbacksPending: Int { callbacks.value }
+    init(name: String, startedElapsedMs: UInt64) {
+        ledger = NimoResourceDiscovery(name: name, startedElapsedMs: startedElapsedMs); super.init()
+    }
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        callbacks.add(1)
+        defer { callbacks.add(-1) }
+        // No deferred work. State is sampled by the owned bounded Main loop.
+    }
+    @inline(never)
+    private func retrieveConnected(_ central: CBCentralManager) -> [CBPeripheral] {
+        central.retrieveConnectedPeripherals(withServices: [CBUUID(string: "00007033-0000-1000-8000-00805F9B34FB")])
+    }
+    @inline(never)
+    func discoverConnected() async {
+        guard !running, !stopped else { return }
+        running = true
+        central = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        let deadline = ledger.startedElapsedMs + 5_000
+        while !stopped, NimoResourceClock.now() < deadline {
+            if let central {
+                switch central.state {
+                case .poweredOn:
+                    ledger.observeConnectedSnapshot(retrieveConnected(central).map { ($0.identifier.uuidString.lowercased(), $0.name) })
+                case .unsupported, .unauthorized: ledger.recordError("connected-service-observer-unavailable"); finishDiscovery(); return
+                default: break
+                }
+            }
+            do { try await Task.sleep(nanoseconds: 50_000_000) }
+            catch { ledger.recordError("discovery-task-cancelled"); ledger.cancel(); finishDiscovery(); return }
+        }
+        finishDiscovery()
+    }
+    @inline(never)
+    func stopDiscovery(cancel: Bool) async {
+        if cancel { ledger.cancel() }
+        stopped = true
+        let deadline = NimoResourceClock.now() + 1_000
+        while running, NimoResourceClock.now() < deadline {
+            do { try await Task.sleep(nanoseconds: 1_000_000) } catch { await Task.yield() }
+        }
+        guard !running else { ledger.recordError("discovery-loop-not-settled"); return }
+        finishDiscovery()
+    }
+    @inline(never)
+    private func finishDiscovery() {
+        stopped = true
+        central?.delegate = nil
+        // Callback contains no Main work; the queue barrier cannot deadlock.
+        queue.sync {}
+        central = nil
+        ledger.finish(at: NimoResourceClock.now(), callbacksPending: callbacksPending)
+        running = false
+    }
 }

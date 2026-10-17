@@ -36,7 +36,10 @@ export type NimoCommissioningAuthority=z.infer<typeof nimoCommissioningAuthority
 export const nimoCommissioningPlanSchema=z.object({schemaVersion:z.literal(1),kind:z.literal('nimo-mac-commissioning-v1'),planId:id,
   reference:nimoCommissioningReferenceSchema,referenceSha256:digest,hostId:id,
   source:z.object({revision,manifestSha256:digest}).strict(),framework:frameworkBindingSchema,machineProfileSha256:digest,
-  mac:z.object({laneId:id,controllerAddress:address,peripheralUuid:z.string().uuid(),build:macPackageSelectionSchema}).strict(),
+  mac:z.union([
+    z.object({laneId:id,controllerAddress:address,peripheralUuid:z.string().uuid(),build:macPackageSelectionSchema}).strict(),
+    z.object({laneId:id,controllerAddress:address,peripheralSelection:z.literal('connected-service-exact-name-v1'),build:macPackageSelectionSchema}).strict(),
+  ]),
   window:z.object({admittedAt:z.number().int().nonnegative().safe(),deadlineAt:z.number().int().positive().safe()}).strict(),
   maximumAttempts:z.literal(1),
 }).strict().superRefine((value,context)=>{

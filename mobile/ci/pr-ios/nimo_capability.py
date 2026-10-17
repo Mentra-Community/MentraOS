@@ -223,11 +223,20 @@ def optional_nimo_capability(executable, source_root, expected_revision=None, ru
         log_root = os.environ.get('IOS_BUILD_LOG_DIR')
         diagnostic = Path(log_root) / 'xcodebuild-attempt-nimo-capability.log' if log_root else None
         async_edges = set()
-        nm, demangled, assembly = archive_symbol_sections(executable, source_root, tuple(ROLES.values()), supplied_run, diagnostic_path=diagnostic, async_edges=async_edges)
+        from nimo_discovery_witness import compiled_discovery, distinct_witnesses
+        discovery = {}
+        nm, demangled, assembly = archive_symbol_sections(executable, source_root, tuple(ROLES.values()) + ('NimoResourceConnectedDiscovery.',), supplied_run, diagnostic_path=diagnostic, async_edges=async_edges, discovery_proof=discovery)
         witnesses = compiled_witness(nm, demangled, assembly, async_edges)
-        return {'protocol': PROTOCOL, 'sourceSha256': source_digest(source_root),
+        result = {'protocol': PROTOCOL, 'sourceSha256': source_digest(source_root),
                 'executableSha256': sha(data), 'platform': 'ios-on-mac',
                 'proof': 'compiled-symbols-v1', 'symbols': witnesses}
+        try:
+            supported = compiled_discovery(nm, demangled, assembly, async_edges, discovery)
+            distinct_witnesses(witnesses, supported['symbols'])
+            result['discovery'] = supported
+        except ValueError as error:
+            print(f'NIMO connected-service discovery omitted: {error}', file=sys.stderr)
+        return result
     except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
         print(f'NIMO Mac capability omitted: {type(error).__name__}: {error}', file=sys.stderr)
         return None

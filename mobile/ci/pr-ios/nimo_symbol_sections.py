@@ -114,7 +114,7 @@ def delivered_sections(data):
     return sections
 
 
-def data_imports_from_indirect(output, data):
+def data_imports_from_indirect(output, data, allowed=('__NSConcreteStackBlock',)):
     if len(output) > 16 * 1024 * 1024:
         raise ValueError('delivered data import table exceeds bound')
     sections, active, result = delivered_sections(data), None, {}
@@ -133,7 +133,7 @@ def data_imports_from_indirect(output, data):
             address, name = int(match[1], 16), match[2]
             if address % 8 or not active[0] <= address or address + 8 > active[1]:
                 raise ValueError('data import is outside exact delivered pointer section')
-            if name != '__NSConcreteStackBlock':
+            if name not in allowed:
                 continue
             if address in result:
                 raise ValueError('duplicate delivered data import')
@@ -457,7 +457,7 @@ def persist_trace(path, trace):
         raise ValueError('compiler trace parent changed during persistence')
 
 
-def archive_symbol_sections(executable, source_root, selectors, run=None, clock=None, diagnostic_path=None, async_edges=None):
+def archive_symbol_sections(executable, source_root, selectors, run=None, clock=None, diagnostic_path=None, async_edges=None, discovery_proof=None):
     clock = clock or time.monotonic
     deadline = clock() + PROOF_SECONDS
     def remaining():
@@ -553,6 +553,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             raise ValueError('initial compiler function entry is aliased')
         disassemble(start, stop, symbol)
     async_error = None
+    discovery_error = None
     async_data_imports, async_reads, async_pointers, fixup_metrics = {}, {}, {}, {}
     if async_edges is not None:
         from nimo_async_invocations import prove_async_edges
@@ -605,6 +606,46 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer, get_body))
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
+        if discovery_proof is not None and async_error is None:
+            try:
+                from nimo_discovery_witness import DISCOVERY_SELECTORS, retrieval_argument, objc_selector, observer_calls
+                candidates = [(symbol, name) for symbol, name in by_symbol.items()
+                              if name.startswith('MentraBluetoothSDK.' + DISCOVERY_SELECTORS['discoveryRetrieve'])]
+                if len(candidates) != 1 or candidates[0][0] not in functions:
+                    raise ValueError('unique compiled discovery retrieval entry unavailable')
+                symbol = candidates[0][0]
+                extra_imports = data_imports_from_indirect(indirect, delivered, ('_objc_msgSend', '_OBJC_CLASS_$_CBUUID'))
+                sections = delivered_sections(delivered)
+                def in_section(address, count, segment, section):
+                    remaining()
+                    keys = [(segment, section)]
+                    if segment == '__DATA': keys.append(('__DATA_CONST', section))
+                    return any((bounds := sections.get(key)) is not None and bounds[0] <= address and address + count <= bounds[1]
+                               and bounds[3] & 0xff not in (1, 12, 18) for key in keys)
+                metadata = set()
+                body = functions[symbol][2]
+                # Only exact, unaliased compiler metadata helper identities,
+                # never a guessed annotation or arbitrary call target.
+                for target in re.findall(r'\bbl 0x([0-9a-f]+)', body):
+                    address = int(target, 16)
+                    if address in symbols and symbols[address][0] in ('___swift_instantiateConcreteTypeFromMangledNameV2', '_$sSo6CBUUIDCMaTm'):
+                        get_function(address)
+                        metadata.add(address)
+                def method(address):
+                    return objc_selector(address, read_bytes, read_pointer, extra_imports.get, in_section)
+                retrieval_argument(body, read_bytes, extra_imports.get, method, metadata,
+                                   lambda address, count, section: in_section(address, count, '__TEXT', section))
+                observed = observer_calls(functions, by_symbol,
+                    {address: by_symbol.get(value[0], '') for address, value in symbols.items()},
+                    lambda address: in_section(address, 1, '__TEXT', '__objc_stubs'),
+                    lambda address: objc_selector(address, read_bytes, read_pointer, extra_imports.get, in_section, retrieval_only=False))
+                discovery_proof['retrievalSymbol'] = symbol
+                discovery_proof['fixedServiceArgument'] = True
+                discovery_proof['observerDirectCallDiagnostic'] = observed
+            except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+                discovery_error = error
+                discovery_proof.clear()
+                discovery_proof['error'] = str(error)[:1024]
     # Only actually disassembled consumed entries can extend the processed
     # roster. Exact names are demangled under the original total deadline.
     known = {symbol for _, symbol in rows}
@@ -656,6 +697,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
                  'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol.get(symbol, symbol)} for symbol, (start, stop, _) in functions.items()],
                  'imports': imports, 'assembly': '\n'.join(blocks),
                  'asyncProofError': str(async_error)[:1024] if async_error is not None else None,
+                 'discoveryProof': discovery_proof,
                  'directCallSymbols': direct_diagnostic,
                  'anonymousAbiWindows': [{'start': a, 'stop': b, 'assembly': body} for a, b, body in anonymous.values()],
                  'fixupMetadata': fixup_metrics, 'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}

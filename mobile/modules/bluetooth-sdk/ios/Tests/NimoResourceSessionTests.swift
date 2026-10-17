@@ -3,6 +3,92 @@ import Foundation
 import XCTest
 
 final class NimoResourceSessionTests: XCTestCase {
+    func testConnectedDiscoverySelectionRequiresExactUniquePeerAndCannotChangeAfterSettlement() {
+        let model = NimoResourceDiscovery(name: "NIMO exact", startedElapsedMs: 10)
+        model.observe(uuid: uuid, name: "NIMO exact_BLE")
+        XCTAssertTrue(model.candidates.isEmpty)
+        model.observe(uuid: uuid, name: "NIMO exact")
+        model.observe(uuid: uuid, name: "NIMO exact")
+        model.finish(at: 20, callbacksPending: 1)
+        XCTAssertNil(model.settledElapsedMs)
+        XCTAssertNil(model.selectedPeripheralUuid)
+        model.finish(at: 21, callbacksPending: 0)
+        XCTAssertEqual(model.selectedPeripheralUuid, uuid)
+        model.observe(uuid: "00000000-0000-4000-8000-000000000002", name: "NIMO exact")
+        model.cancel(); model.finish(at: 30, callbacksPending: 0)
+        XCTAssertEqual(model.selectedPeripheralUuid, uuid)
+        XCTAssertEqual(model.settledElapsedMs, 21)
+        XCTAssertEqual(model.candidates.count, 1)
+    }
+    func testConnectedDiscoveryAmbiguityCancellationAndMissingPeerNeverSelect() {
+        for scenario in 0..<3 {
+            let model = NimoResourceDiscovery(name: "NIMO exact", startedElapsedMs: 10)
+            if scenario != 2 { model.observe(uuid: uuid, name: "NIMO exact") }
+            if scenario == 0 { model.observe(uuid: "00000000-0000-4000-8000-000000000002", name: "NIMO exact") }
+            if scenario == 1 { model.cancel() }
+            model.finish(at: 20, callbacksPending: 0)
+            XCTAssertNil(model.selectedPeripheralUuid)
+            XCTAssertEqual(model.settledElapsedMs, 20)
+            if scenario != 1 { XCTAssertFalse(model.errors.isEmpty) }
+        }
+    }
+    func testConnectedDiscoveryDoesNotSelectPeerThatDisappearedBeforeFinalObservation() {
+        let model = NimoResourceDiscovery(name: "NIMO exact", startedElapsedMs: 10)
+        model.observeConnectedSnapshot([(uuid, "NIMO exact")])
+        model.observeConnectedSnapshot([])
+        model.finish(at: 20, callbacksPending: 0)
+        XCTAssertNil(model.selectedPeripheralUuid)
+        XCTAssertEqual(model.candidates.count, 1)
+        XCTAssertFalse(model.errors.isEmpty)
+    }
+    private func discoveryRequest(operation: String, capture: String, nonce: String, extraPair: [String: Any] = [:]) throws -> Data {
+        var pair: [String: Any] = ["name": "NIMO exact", "peripheralSelection": "connected-service-exact-name-v1"]
+        for (key, value) in extraPair { pair[key] = value }
+        return try JSONSerialization.data(withJSONObject: ["version": 1, "operation": operation, "requestNonce": nonce, "captureNonce": capture,
+            "planSha256": String(repeating: "a", count: 64), "grantSha256": String(repeating: "b", count: 64),
+            "expectedProcess": ["pid": 123, "instanceId": uuid], "expectedPair": pair, "original": NSNull()])
+    }
+    func testDiscoveryWireRejectsMixedOrUnknownSelectionRatherThanPlaceholderUuid() throws {
+        let data = try discoveryRequest(operation: "discover", capture: uuid, nonce: uuid)
+        XCTAssertEqual(try NimoResourceRequest.decode(data).expectedPair.peripheralSelection, NimoResourceSelection.connectedService)
+        XCTAssertThrowsError(try NimoResourceRequest.decode(discoveryRequest(operation: "discover", capture: uuid, nonce: uuid, extraPair: ["peripheralUuid": uuid])))
+        XCTAssertThrowsError(try NimoResourceRequest.decode(discoveryRequest(operation: "discover", capture: uuid, nonce: uuid, extraPair: ["peripheralSelection": "name-only"])))
+        XCTAssertThrowsError(try NimoResourceRequest.decode(discoveryRequest(operation: "discover", capture: uuid, nonce: uuid, extraPair: ["peripheralSelection": NSNull()])))
+    }
+    @MainActor
+    func testActualFixtureDiscoveryCannotAdmitManagerUntilSeparateArmAndPersistedDiscoveryReceipt() async throws {
+        let discoveryId = "00000000-0000-4000-8000-000000000002"
+        for persisted in [false, true] {
+            let fixture = NimoResourceFixture()
+            fixture.packageSeedDiscovery(name: "NIMO exact", capture: uuid, discoveryOperation: discoveryId, candidates: [(uuid, "NIMO exact")], persisted: persisted)
+            XCTAssertNil(fixture.session)
+            XCTAssertFalse(fixture.allowsManager("NIMO", name: "NIMO exact"))
+            let status = try await fixture.packagePerform(discoveryRequest(operation: "status", capture: uuid, nonce: discoveryId))
+            XCTAssertTrue(status["session"] is NSNull)
+            let anchor = (status["capture"] as! [String: Any])["armedElapsedMs"] as! UInt64
+            do {
+                let armed = try await fixture.packagePerform(discoveryRequest(operation: "arm", capture: uuid, nonce: "00000000-0000-4000-8000-000000000003"))
+                XCTAssertTrue(persisted)
+                XCTAssertEqual(fixture.session?.pair.peripheralUuid, uuid)
+                XCTAssertEqual((armed["capture"] as! [String: Any])["armedElapsedMs"] as? UInt64, anchor)
+                XCTAssertTrue(fixture.allowsManager("NIMO", name: "NIMO exact"))
+            } catch { XCTAssertFalse(persisted) }
+        }
+    }
+    @MainActor
+    func testActualFixtureDiscoveryOnlyCancelClosesObserverWithoutSessionOrFakeDisconnectAndForbidsLaterArm() async throws {
+        let fixture = NimoResourceFixture(), discoveryId = "00000000-0000-4000-8000-000000000002"
+        fixture.packageSeedDiscovery(name: "NIMO exact", capture: uuid, discoveryOperation: discoveryId, candidates: [(uuid, "NIMO exact")], persisted: true)
+        let result = try await fixture.packagePerform(discoveryRequest(operation: "cancel", capture: uuid, nonce: discoveryId))
+        XCTAssertNil(fixture.session)
+        let release = result["release"] as! [String: Any]
+        XCTAssertEqual(release["noTransport"] as? Bool, true)
+        XCTAssertEqual(release["settled"] as? Bool, true)
+        XCTAssertTrue(release["disconnectCallbackElapsedMs"] is NSNull)
+        XCTAssertTrue(fixture.allowsManager("G2", name: "G2"))
+        do { _ = try await fixture.packagePerform(discoveryRequest(operation: "arm", capture: uuid, nonce: "00000000-0000-4000-8000-000000000003")); XCTFail("cancelled discovery admitted arm") }
+        catch { XCTAssertNil(fixture.session) }
+    }
     private let uuid = "00000000-0000-4000-8000-000000000001"
     private final class Clock { var value: UInt64 = 100; func next() -> UInt64 { value += 1; return value } }
     private func fixture() -> (NimoResourceSession, NSObject, NSObject, Clock) {
