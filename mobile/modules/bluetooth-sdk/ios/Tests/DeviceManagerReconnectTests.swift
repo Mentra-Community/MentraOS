@@ -55,9 +55,21 @@ final class DeviceManagerReconnectTests: XCTestCase {
             producers.postedCallbacks = NimoResourceFixture.shared.pendingOriginalManagerEntries
             XCTAssertTrue(model.settled(producers: producers)) // Fresh status during replacement wait.
             XCTAssertTrue(model.errors.isEmpty)
-            let completed = expectation(description: "Replacement queued work has finished")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { completed.fulfill() }
-            wait(for: [completed], timeout: 1)
+            let completed = expectation(description: "Replacement queued work has actually settled")
+            Task { @MainActor in
+                let deadline = ProcessInfo.processInfo.systemUptime + 2
+                while ProcessInfo.processInfo.systemUptime < deadline {
+                    if NimoResourceFixture.shared.pendingManagerEntries == 0,
+                       manager.sgc?.type == DeviceTypes.SIMULATED {
+                        completed.fulfill()
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 5_000_000)
+                }
+                // Leave the expectation unmet on timeout; elapsed delay alone
+                // cannot stand in for the queued manager's actual completion.
+            }
+            wait(for: [completed], timeout: 2.5)
             XCTAssertEqual(NimoResourceFixture.shared.pendingManagerEntries, 0)
             XCTAssertTrue(model.settled(producers: NimoResourceProducers()))
             XCTAssertEqual(manager.sgc?.type, DeviceTypes.SIMULATED)
