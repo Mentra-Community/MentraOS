@@ -40,10 +40,14 @@ export function retryUntilSucceeded(
   }
 }
 
-// Model.init() would keep a rejected promise for the life of the process, so
-// one throttled index request (Azure Cosmos DB limits metadata requests, which
-// every model makes at startup) would fail every later write.
-const ensureSupportProfileIndexes = retryUntilSucceeded(() => SupportProfileModel.createIndexes(), INDEX_RETRY_MS)
+// Core waits for each model's automatic build (Model.init()) at startup, so a
+// successful one is reused as is. Model.init() keeps a rejected promise for the
+// life of the process, though: when the startup build failed, for example on a
+// throttled Azure Cosmos DB metadata request, the index is built again here.
+const ensureSupportProfileIndexes = retryUntilSucceeded(
+  () => SupportProfileModel.init().catch(() => SupportProfileModel.createIndexes()),
+  INDEX_RETRY_MS,
+)
 
 export interface SupportStateInput {
   observedAt: string
