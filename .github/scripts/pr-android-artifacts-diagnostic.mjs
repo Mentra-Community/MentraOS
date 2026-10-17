@@ -53,25 +53,57 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
     reachableNested.add(cls)
     pendingNested.push(...nestedReferences(nestedNimo[cls]))
   }
-  const recorderConsumed = name => {
-    const reference=`${escaped(descriptor(NIMO_DEVICE))}->${name}\\(\\)V`
-    // Kotlin class lambdas call access$record...; D8/indy may retain the body in
-    // Nimo itself. An unused recorder/accessor alone is never sufficient.
-    return definitions(nimo ?? '').some(([_,header,body])=>{
-      if (!invoke(body,reference) || new RegExp(` ${name}\\(\\)V$`).test(header)) return false
-      if (!/ access\$/.test(header)) return true
-      const accessor=/ (access\$[A-Za-z0-9_$]+)\(/.exec(header)?.[1]
-      return accessor && [...reachableNested].some(cls=>invoke(nestedNimo[cls],`${escaped(descriptor(NIMO_DEVICE))}->${escaped(accessor)}\\(`))
-    })
+  const native = descriptor(NIMO_DEVICE)
+  const nodes=new Map()
+  for(const [cls,code] of [[native,nimo ?? ''],...Object.entries(nestedNimo)])
+    for(const [,header,body] of definitions(code)) {
+      const signature=header.trim().split(/\s+/).at(-1)
+      nodes.set(`${cls}->${signature}`,{cls,signature,body})
+    }
+  const matching=(cls,expression)=>[...nodes.entries()].filter(([,node])=>node.cls===cls && expression.test(node.signature)).map(([key])=>key)
+  const callback=/^(?:invoke\(|run\(\)V$|onReceive\(Landroid\/content\/Context;Landroid\/content\/Intent;\)V$|on(?:ConnectionStateChange|ServicesDiscovered|MtuChanged|CharacteristicChanged|CharacteristicWrite|DescriptorWrite)\()/
+  const walk=roots=>{
+    const reached=new Set(),pending=[...roots]
+    while(pending.length) {
+      const key=pending.shift(),node=nodes.get(key)
+      if(reached.has(key)||!node)continue
+      if(reached.size>=2048)throw new Error('Diagnostic capture callback method graph exceeds limit')
+      reached.add(key)
+      for(const [,cls,signature] of node.body.matchAll(/invoke-[^\n]*? (L[^;]+;)->([^\s]+)/g))
+        if(nodes.has(`${cls}->${signature}`))pending.push(`${cls}->${signature}`)
+      // External Android/queue dispatch invokes only these fixed callback entries
+      // on classes actually instantiated by this already-reached method.
+      for(const cls of nestedReferences(node.body))
+        pending.push(...matching(cls,callback),...matching(cls,/^<init>\(/))
+    }
+    return reached
+  }
+  const releaseSignature='releaseOriginalResource(JZLkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;Ljava/lang/String;Ljava/lang/Long;)V'
+  const releaseKey=`${native}->${releaseSignature}`
+  const roots=[...matching(native,/^<init>\(\)V$/),...matching(native,/^connectById\(Ljava\/lang\/String;\)V$/),...matching(native,/^findCompatibleDevices\(\)V$/),
+    ...matching(native,/^releaseResource(?:\$[A-Za-z0-9_]+)?\(JLkotlin\/jvm\/functions\/Function0;Lkotlin\/jvm\/functions\/Function1;Ljava\/lang\/String;J\)V$/),
+    ...matching(native,/^releaseCapturedResource(?:\$[A-Za-z0-9_]+)?\(Lkotlin\/jvm\/functions\/Function0;Lkotlin\/jvm\/functions\/Function1;Ljava\/lang\/String;J\)V$/)]
+  const reached=walk(roots)
+  const eventRoots={recordResourceFirmwareClock:[native,/^handleRxPacket\(\[B\)V$/],recordResourceTwsClock:[native,/^handleRxPacket\(\[B\)V$/],
+    recordResourceTimeAckClock:[native,/^attemptSetTime\(\)V$/],recordResourceTimeWriteClock:[native,/^enqueueWrite\(Landroid\/bluetooth\/BluetoothGattCharacteristic;\[B\)V$/],
+    recordResourceMicStopStartedClock:[native,new RegExp(`^${escaped(releaseSignature)}$`)],recordResourceMicStopWrittenClock:[native,new RegExp(`^${escaped(releaseSignature)}$`)],
+    recordResourceMicStopMarkerClock:[native.slice(0,-1)+'$gattCallback$1;',/^onCharacteristicChanged\(Landroid\/bluetooth\/BluetoothGatt;Landroid\/bluetooth\/BluetoothGattCharacteristic;\)V$/],
+    recordResourceExitClock:[native,/^<init>\(\)V$/]}
+  const recorderConsumed=name=>{
+    const [cls,expression]=eventRoots[name]
+    const event=matching(cls,expression).filter(key=>reached.has(key))
+    return walk(event).has(`${native}->${name}()V`)
   }
   const recorder={firmwareElapsedMs:'recordResourceFirmwareClock',twsElapsedMs:'recordResourceTwsClock',timeWriteStartedElapsedMs:'recordResourceTimeWriteClock',timeAckElapsedMs:'recordResourceTimeAckClock',micStopStartedElapsedMs:'recordResourceMicStopStartedClock',micStopMarkerElapsedMs:'recordResourceMicStopMarkerClock',micStopWrittenElapsedMs:'recordResourceMicStopWrittenClock',displayExitElapsedMs:'recordResourceExitClock'}
-  const clockBody = field => recorder[field] ? method(nimo ?? '', `${recorder[field]}()V`) : (nimo ?? '')
+  const clockBody = field => recorder[field] ? method(nimo ?? '', `${recorder[field]}()V`) : field === 'resourceSessionStartedElapsedMs' ? method(nimo ?? '', 'connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V') : (nodes.get(releaseKey)?.body ?? '')
   const monotonicWrite = field => new RegExp(`invoke-static\\s+\\{\\},\\s*${elapsed}\\s*\\n\\s*move-result-wide\\s+([vp][0-9]+)\\s*\\n\\s*iput-wide\\s+\\1,\\s*[vp][0-9]+,\\s*${escaped(descriptor(NIMO_DEVICE))}->${field}:J`).test(clockBody(field).replace(/^\s*\.(?:line|local|end local|restart local)\b[^\n]*$/gm,''))
   // Nullable event values compile to boxed Long. Bind the sampled wide register
   // through valueOf and its object register to the exact event field assignment.
   const boxedMonotonicWrite = field => new RegExp(`invoke-static\\s+\\{\\},\\s*${elapsed}\\s*\\n\\s*move-result-wide\\s+([vp][0-9]+)\\s*\\n\\s*invoke-static(?:/range)?\\s+\\{\\1(?:,\\s*[vp][0-9]+|\\s+\\.\\.\\s+[vp][0-9]+)?\\},\\s*Ljava/lang/Long;->valueOf\\(J\\)Ljava/lang/Long;\\s*\\n\\s*move-result-object\\s+([vp][0-9]+)\\s*\\n\\s*iput-object\\s+\\2,\\s*[vp][0-9]+,\\s*${escaped(descriptor(NIMO_DEVICE))}->${field}:Ljava/lang/Long;`).test(clockBody(field).replace(/^\s*\.(?:line|local|end local|restart local)\b[^\n]*$/gm,''))
   const eventFields=['resourceSessionStartedElapsedMs','resourceReleaseStartedElapsedMs','firmwareElapsedMs','twsElapsedMs','timeWriteStartedElapsedMs','timeAckElapsedMs','micStopStartedElapsedMs','micStopMarkerElapsedMs','micStopWrittenElapsedMs','displayExitElapsedMs']
   if (!diagnostics.includes(`"${CLOCK_PROTOCOL}"`) || !invoke(diagnostics,elapsed) || !invoke(nativeSnapshot,elapsed) ||
+      !reached.has(`${native}->connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V`) ||
+      !reached.has(releaseKey) ||
       eventFields.some(field=>!boxedMonotonicWrite(field) && !monotonicWrite(field)) ||
       Object.values(recorder).some(name=>!recorderConsumed(name)) ||
       !diagnostics.includes('"requestReceivedElapsedMs"') || !diagnostics.includes('"android-elapsed-realtime-v1"') ||
