@@ -9,6 +9,7 @@ import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routin
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState, RoutingTestHostState} from './test-host-state.service';
 import type {ExclusiveHostReservation} from '../types/resource-reservations.types';
+import {RESOURCE_ADMISSION_WAIT, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT, sharedResourceWait} from './routine-resource-wait';
 const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttempt:2};
 const selection = {requestId:'job-one',routineId:'new-routine',platform:'android' as const,source,routineRevision:'a'.repeat(40)};
 const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',
@@ -60,6 +61,95 @@ test('bound observation never substitutes prepared input before executable prepa
   const bound = await f.service.bind(selection.requestId, 'mini', input);
   expect(bound.observation).toMatchObject({inputSha256: prepared.inputSha256, state: 'preparing', terminal: false});
   expect(bound.observation).not.toHaveProperty('boundInputSha256');
+});
+test('portable preparation preserves an actual resource blocker instead of inventing recorder shortage when admission returns no winner', async () => {
+  const f = fixture(), original = f.rows.reserveResources!; await f.prepare();
+  const frozen = structuredClone(f.row);
+  f.rows.reserveResources = async (_id, _digest, _host, _lane, _now, onWaiting) => {onWaiting?.(sharedResourceWait('google-authentication'), true); return null;};
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(sharedResourceWait('google-authentication'));
+  expect(f.row).toEqual(frozen);
+  f.rows.reserveResources = async () => null;
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT);
+  f.rows.reserveResources = original;
+});
+test('existing observation reports a staged authority blocker without changing custody or manufacturing a recorder reason', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined};
+  row.fleetResourceAdmission = {intent: {operationId: `run:${row.requestId}`, hostId: 'mini', laneId: f.lane.id,
+    owner: {id: row.requestId, kind: 'run'}, inputSha256: row.fleetInputSha256!, controller: {incarnation: 'one', generation: 1, sequence: 1},
+    resources: [{id: 'fixture', capabilities: ['google-authentication']}]},
+    dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]};
+  f.restore(row);
+  f.offer([{hostId: 'mini', receivedAt: '2026-10-08T00:00:00Z', lanes: [f.lane], authorityReservations: [{kind: 'exclusive',
+    resourceId: 'private-account', authorityHostId: 'mini', borrowerHostId: 'elsewhere', laneId: 'other', owner: {id: 'other-owner', kind: 'run'}}]} as any]);
+  expect((await f.service.observation(row.requestId)).waitingReason).toBe(sharedResourceWait('google-authentication'));
+  expect(f.row).toEqual(row);
+});
+test('portable routing distinguishes known capacity shortage, missing measurements and mixed unknowns before authority admission', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined}; f.restore(row);
+  const now = Date.parse('2026-10-08T00:00:00Z');
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), lanes: [structuredClone(f.lane)]};
+  host.lanes[0]!.resources.find(value => value.kind === 'recorder')!.storage!.availableBytes = 0; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RECORDER_CAPACITY_WAIT);
+  delete host.lanes[0]!.resources.find(value => value.kind === 'recorder')!.storage; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RECORDER_OBSERVATION_WAIT);
+  host.lanes.push({...structuredClone(f.lane), id: 'other'});
+  host.lanes[1]!.resources.find(value => value.kind === 'recorder')!.storage!.availableBytes = 0; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT);
+});
+
+test('an observed exclusive blocker cannot be overwritten by a later candidate after its immutable target is staged', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined}; f.restore(row);
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00Z', receivedAt: '2026-10-08T00:00:00Z', lanes: [structuredClone(f.lane), {...structuredClone(f.lane), id: 'other'}]};
+  f.offer([host]);
+  const candidates: string[] = [];
+  f.rows.reserveResources = async (_id, _digest, hostId, laneId, _now, onWaiting) => {
+    candidates.push(laneId);
+    f.restore({...row, fleetResourceAdmission: {intent: {operationId: `run:${row.requestId}`, hostId, laneId,
+      owner: {id: row.requestId, kind: 'run'}, inputSha256: row.fleetInputSha256!, controller: {incarnation: 'one', generation: 1, sequence: 1},
+      resources: [{id: 'fixture', capabilities: ['google-authentication']}]},
+      dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]}});
+    onWaiting?.(candidates.length === 1 ? sharedResourceWait('google-authentication') : RECORDER_CAPACITY_WAIT, candidates.length === 1);
+    return null;
+  };
+  expect((await f.service.preparation(row.requestId)).waitingReason).toBe(sharedResourceWait('google-authentication'));
+  expect(candidates).toHaveLength(1);
+  expect(f.row!.fleetResourceAdmission!.intent.laneId).toBe(candidates[0]!);
+  expect(f.row!.fleetBinding).toBeUndefined(); expect(f.row!.fleetResourceReservation).toBeUndefined();
+});
+
+test('staged target disk shortage or absent observation is not hidden by another available lane', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined};
+  row.fleetResourceAdmission = {intent: {operationId: `run:${row.requestId}`, hostId: 'mini', laneId: f.lane.id,
+    owner: {id: row.requestId, kind: 'run'}, inputSha256: row.fleetInputSha256!, controller: {incarnation: 'one', generation: 1, sequence: 1},
+    resources: [{id: 'recorder', capabilities: []}]}, dependencies: []};
+  f.restore(row);
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00Z', receivedAt: '2026-10-08T00:00:00Z', lanes: [structuredClone(f.lane), {...structuredClone(f.lane), id: 'other'}]};
+  let calls = 0; f.rows.reserveResources = async () => {calls++; return null;};
+  host.lanes[0]!.resources.find(resource => resource.kind === 'recorder')!.storage!.availableBytes = 0; f.offer([host]);
+  expect((await f.service.preparation(row.requestId)).waitingReason).toBe(RECORDER_CAPACITY_WAIT);
+  delete host.lanes[0]!.resources.find(resource => resource.kind === 'recorder')!.storage; f.offer([host]);
+  expect((await f.service.preparation(row.requestId)).waitingReason).toBe(RECORDER_OBSERVATION_WAIT);
+  expect(calls).toBe(0); expect(f.row).toEqual(row);
+});
+
+test('mixed candidate refusal and skipped recorder observations use truthful general wording regardless of order', async () => {
+  const f = fixture(); await f.prepare(); f.restore({...f.row!, fleetResourceReservation: undefined});
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00Z', receivedAt: '2026-10-08T00:00:00Z', lanes: [structuredClone(f.lane), {...structuredClone(f.lane), id: 'other'}]};
+  f.rows.reserveResources = async (_id, _digest, _host, _lane, _now, onWaiting) => {onWaiting?.(RECORDER_CAPACITY_WAIT); return null;};
+  delete host.lanes[1]!.resources.find(resource => resource.kind === 'recorder')!.storage;
+  for (const lanes of [host.lanes, [...host.lanes].reverse()]) {
+    f.offer([{...host, lanes}]); expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT);
+  }
+  host.lanes[1]!.resources.find(resource => resource.kind === 'recorder')!.storage = {...f.lane.resources.find(resource => resource.kind === 'recorder')!.storage!, availableBytes: 0};
+  f.offer([host]); expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RECORDER_CAPACITY_WAIT);
 });
 
 test('observation phase diagnostics follow existing reads without changing original custody or outcome',async()=>{

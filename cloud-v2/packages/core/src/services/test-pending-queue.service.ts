@@ -10,6 +10,7 @@ import {TestHostStateService, type RoutingTestHostState} from './test-host-state
 import {TestRunError} from './test-result-error';
 import {permissionContext} from '../types/resource-permissions.types';
 import {pendingRequestFilter} from './test-request-activity';
+import {sharedResourceWaitingReason} from './routine-resource-wait';
 
 /** Read-only projection; compatible hardware is distinct from current acceptance. */
 function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostState[], now: number): PendingQueueItem {
@@ -29,7 +30,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostSt
     return {...base, reason: 'Stored request identity is unavailable.'};
   const selected = selection.data;
   const item: PendingQueueItem = {...base, routineId: selected.routineId, platform: selected.platform, build: selected.build,
-    reason: row.fleetPreparationStatus?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error,
+    reason: row.fleetPreparationStatus?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error ?? sharedResourceWaitingReason(row, hosts),
     ...(row.fleetBinding ? {assignment: {hostId: row.fleetBinding.hostId, laneId: row.fleetBinding.laneId}} : {})};
   let requirements;
   if (row.fleetPreparation) {

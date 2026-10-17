@@ -21,10 +21,12 @@ import {PrRoutineCheckService} from '../../services/pr-routine-check.service';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 import {PrRerunReferenceService} from '../../services/pr-rerun-reference.service';
 import {TestRequestProgressService} from '../../services/test-request-progress.service';
+import {TestHostStateService, type RoutingTestHostState} from '../../services/test-host-state.service';
+import {sharedResourceWaitingReason} from '../../services/routine-resource-wait';
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService(), hosts: Pick<TestHostStateService, 'list'> = new TestHostStateService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
@@ -50,9 +52,13 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
   app.get("/", async c => c.json(await results.list(c.req.query())));
   app.get("/pending-queue", async c => c.json(await new TestPendingQueueService().list(c.req.query("cursor"))));
-  app.get("/activity", async c => c.json({requests: await TestRequestModel.find({state: {$ne: "terminal"}})
-    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1, fleetPreparationStatus: 1})
-    .read("primary").readConcern("majority").lean().then(rows => rows.map(row => displayRequest(row as StoredRequest)))}));
+  app.get("/activity", async c => {
+    const rows = await TestRequestModel.find({state: {$ne: "terminal"}})
+      .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1, fleetPreparationStatus: 1, fleetResourceAdmission: 1})
+      .read("primary").readConcern("majority").lean();
+    const observations = rows.some(row => row.state === 'awaiting-runner' && row.fleetResourceAdmission && !row.fleetBinding) ? await hosts.list().catch(() => []) : [];
+    return c.json({requests: rows.map(row => displayRequest(row as StoredRequest, observations))});
+  });
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
   app.get('/lanes/:hostId/controls', async c => {
@@ -89,7 +95,8 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
     const row = await requests.get(id);
     if (!row) throw new TestRunError(404, "Routine run or request was not found");
-    const request = displayRequest(row);
+    const fleet = row as unknown as StoredRoutineJob;
+    const request = displayRequest(row, fleet.state === 'awaiting-runner' && fleet.fleetResourceAdmission && !fleet.fleetBinding ? await hosts.list().catch(() => []) : []);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const live = await Promise.race([progress.get(row), new Promise<never>((_, reject) => {
@@ -104,7 +111,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => results.mediaByRun(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   return app;
 }
-function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
+function displayRequest(row: StoredRequest, hosts: RoutingTestHostState[] = []): FrameworkRequestDisplay {
     const fleet = row as unknown as StoredRoutineJob;
     if (fleet.fleetSelection && !fleet.fleetBinding) {
       const parsed = portableRoutineSelectionSchema.safeParse(fleet.fleetSelection);
@@ -115,7 +122,7 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
         definitionRevision: selected.routineRevision, ...(selected.routineSource ? {routineSource: selected.routineSource} : {}),
         minimumFrameworkVersion: selected.minimumFrameworkVersion, build: selected.build, state: fleet.state,
         terminalStatus: fleet.terminalStatus, createdAt: fleet.createdAt?.toISOString(),
-        reason: fleet.fleetCancellation?.reason ?? fleet.fleetPreparationStatus?.reason ?? fleet.fleetDispatch?.error ?? (fleet.state === 'awaiting-source' ?
+        reason: fleet.fleetCancellation?.reason ?? fleet.fleetPreparationStatus?.reason ?? fleet.fleetDispatch?.error ?? sharedResourceWaitingReason(fleet, hosts) ?? (fleet.state === 'awaiting-source' ?
           'Preparing the exact routine source.' : 'Awaiting a compatible testing runner.'),
         ...(fleet.fleetCancellation ? {cancellationRequested: true, cancellationAcknowledged: true} : {}),
         actionsRuns: fleet.fleetActions ?? []};

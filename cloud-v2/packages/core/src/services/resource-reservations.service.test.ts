@@ -78,6 +78,16 @@ test('portable requests contend on the same existing authority before binding an
   expect(winner.receipt!.origin).toEqual({kind: 'fleet', fleetInputSha256: 'a'.repeat(64)})
   expect(winner.receipt!.intent.operationId).toBe(`run:${winner.id}`)
 })
+test('portable contention reports its existing canonical blocker without changing any authority or request custody', async () => {
+  const f = fixture(); f.requests.set('first', fleetRequest('first')); f.requests.set('second', fleetRequest('second'));
+  const winner = await f.service.reserveFleet('first', 'a'.repeat(64), 'air1', 'mac');
+  const before = structuredClone(f.rows.get('mini')!.resourceReservations), blocked: unknown[] = [];
+  expect(await f.service.reserveFleet('second', 'a'.repeat(64), 'air2', 'mac', (value, dependencies) => blocked.push({value, dependencies}))).toBeNull();
+  expect(blocked).toEqual([{value: {resourceId: dependency.resourceId, hostId: 'air1', laneId: 'mac', owner: {id: 'first', kind: 'run'}}, dependencies: [dependency]}]);
+  expect(f.rows.get('mini')!.resourceReservations).toEqual(before); expect(f.writes).toHaveLength(1);
+  expect(f.requests.get('second')).not.toHaveProperty('fleetExclusiveReservation');
+  expect(winner!.intent.hostId).toBe('air1');
+});
 test('an unanswered portable authority claim survives until an exact terminal pre-execution cancellation, then only its original claims return', async () => {
   const f = fixture(), row = fleetRequest('cancelled'); f.requests.set(row.requestId, row)
   const receipt = await f.service.reserveFleet(row.requestId, 'a'.repeat(64), 'air1', 'mac')
