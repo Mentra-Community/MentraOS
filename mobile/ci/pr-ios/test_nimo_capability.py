@@ -80,6 +80,24 @@ class CapabilityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compiled_witness(nm, demangled, assembly)
 
+    def test_real_compiler_peer_window_satisfies_unchanged_kernel_arguments(self):
+        # Only peerAllowed is actual compiled transport code; all other roles
+        # remain the explicit synthetic graph fixture, not full APK evidence.
+        nm, demangled, assembly = witnesses()
+        index = list(ROLES).index('peerAllowed')
+        old_address = 0x1000 + index * 0x100
+        actual = (Path(__file__).parent / 'fixtures/nimo-peer-bounded.txt').read_text()
+        symbol = actual.splitlines()[0][:-1]
+        nm = nm.replace(f'{old_address:016x} t _$sSyntheticpeerAllowed', f'{0x62a8:016x} t {symbol}')
+        demangled[index] = 'MentraBluetoothSDK.NimoMacResourceTransport.peerAllowed(Swift.Int32) -> Swift.Bool'
+        start = assembly.index('_$sSyntheticpeerAllowed:')
+        end = assembly.find('\n_$sSynthetic', start + 1)
+        assembly = assembly[:start] + actual + (assembly[end:] if end >= 0 else '')
+        assembly = assembly.replace(f'bl 0x{old_address:x}', 'bl 0x62a8')
+        self.assertEqual(len(compiled_witness(nm, demangled, assembly)), len(ROLES))
+        with self.assertRaisesRegex(ValueError, 'socket option call arguments'):
+            compiled_witness(nm, demangled, assembly.replace('6300 bl ', '6300 ldp x0,x1,[sp]\n6300 bl ', 1))
+
     def test_source_hash_binds_all_fixed_source_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -111,7 +129,7 @@ class CapabilityTests(unittest.TestCase):
                     return args[-1].split(':', 1)[1].encode()
                 return (nm if args[1] == 'nm' else assembly).encode()
             result = subprocess.CompletedProcess([], 0, stdout=('\n'.join(demangled)+'\n').encode())
-            with patch('nimo_capability.subprocess.run', return_value=result):
+            with patch('nimo_capability.archive_symbol_sections', return_value=(nm, demangled, assembly)):
                 descriptor = optional_nimo_capability(executable, root, 'a'*40, run)
                 self.assertEqual(descriptor['executableSha256'], hashlib.sha256(macho()).hexdigest())
                 self.assertEqual(descriptor['sourceSha256'], source_digest(root))

@@ -6,11 +6,13 @@ ordinary app publication remains available.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import struct
 import subprocess
 import sys
+from nimo_symbol_sections import archive_symbol_sections
 
 PROTOCOL = 'nimo-macos-resource-v1'
 SOURCE_FILES = tuple('mobile/modules/bluetooth-sdk/ios/' + path for path in (
@@ -115,8 +117,9 @@ def compiled_witness(nm, demangled, disassembly):
     roots = {role: {symbol for (_, symbol), name in zip(rows, demangled)
                     if re.match(r'^(?:static )?[A-Za-z_][A-Za-z0-9_]*\.' + re.escape(selector), name)}
              for role, selector in ROLES.items()}
-    if any(not values for values in roots.values()):
-        raise ValueError('required native method entry unavailable')
+    missing = sorted(role for role, values in roots.items() if not values)
+    if missing:
+        raise ValueError('required native method entries unavailable: ' + ','.join(missing))
     by_address = {address: symbol for address, symbol in rows}
     graph = {symbol: set() for _, symbol in rows}
     current = None
@@ -193,6 +196,7 @@ def compiled_witness(nm, demangled, disassembly):
 
 
 def optional_nimo_capability(executable, source_root, expected_revision=None, run=None):
+    supplied_run = run
     run = run or (lambda *args: subprocess.check_output([str(arg) for arg in args], timeout=60))
     try:
         if not isinstance(expected_revision, str) or not re.fullmatch(r'[a-f0-9]{40}', expected_revision):
@@ -203,17 +207,9 @@ def optional_nimo_capability(executable, source_root, expected_revision=None, ru
                 raise ValueError('fixture source differs from compilation revision')
         data = executable.read_bytes()
         ios_arm64(data)
-        nm = run('xcrun', 'nm', '-anU', executable).decode('utf-8', errors='strict')
-        symbols = [m[1] for line in nm.splitlines()
-                   if (m := re.fullmatch(r'[0-9a-fA-F]{1,16}\s+[tT]\s+(\S+)', line.strip()))]
-        if not symbols or len(symbols) > 200000:
-            raise ValueError('text symbols unavailable')
-        # stdin avoids command-length limits for ordinary application binaries.
-        demangled = subprocess.run(['xcrun', 'swift-demangle', '--compact'], input=('\n'.join(symbols)+'\n').encode(),
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=60).stdout.decode().splitlines()
-        assembly = run('xcrun', 'otool', '-arch', 'arm64', '-tvV', executable).decode('utf-8', errors='strict')
-        if len(assembly) > 64 * 1024 * 1024:
-            raise ValueError('disassembly exceeds proof bound')
+        log_root = os.environ.get('IOS_BUILD_LOG_DIR')
+        diagnostic = Path(log_root) / 'xcodebuild-attempt-nimo-capability.log' if log_root else None
+        nm, demangled, assembly = archive_symbol_sections(executable, source_root, tuple(ROLES.values()), supplied_run, diagnostic_path=diagnostic)
         witnesses = compiled_witness(nm, demangled, assembly)
         return {'protocol': PROTOCOL, 'sourceSha256': source_digest(source_root),
                 'executableSha256': sha(data), 'platform': 'ios-on-mac',
