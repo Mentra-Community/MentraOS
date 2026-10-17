@@ -39,7 +39,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date,
-    onWaiting?: (reason: string) => void): Promise<StoredRoutineJob | null>;
+    onWaiting?: (reason: string, exclusiveBlocker?: boolean) => void): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   qualificationCandidates?(hostId: string, laneId: string, limit: number, now: Date, timeoutMS: number, includeQueued: boolean, includeAccepted?: boolean): AsyncIterable<StoredRoutineJob>;
@@ -146,7 +146,7 @@ export const routineJobRepository: RoutineJobRepository = {
       // The existing authority may have committed before its request receipt write failed. Always
       // reconcile that winner; current offers alone cannot establish the absence of an old claim.
       const exclusive = await exclusiveResources.reserveFleet(requestId, fleetInputSha256, hostId, laneId,
-        (blocked, dependencies) => onWaiting?.(dependencyWaitingReason(dependencies, blocked.resourceId)));
+        (blocked, dependencies) => onWaiting?.(dependencyWaitingReason(dependencies, blocked.resourceId), true));
       if (exclusive === null || selected && exclusive && (!row.fleetExclusiveReservation || requestInputDigest(row.fleetExclusiveReservation) !== requestInputDigest(exclusive))) return null;
       row = await TestRequestModel.collection.findOne({requestId, fleetInputSha256, state: 'awaiting-runner',
         fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
@@ -683,11 +683,12 @@ export class RoutineJobService {
   }
   private async routing(row: StoredRoutineJob) {
     const hosts = await this.hosts.list?.() ?? [], requirements = recorderCapacityRequirements(row.fleetPreparation!);
-    const routed = routineJobRouting(requirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build);
+    const retained = row.fleetResourceReservation, admitted = row.fleetResourceAdmission;
+    const target = retained ? {hostId: retained.hostId, laneId: retained.laneId} : admitted
+      ? {hostId: admitted.intent.hostId, laneId: admitted.intent.laneId} : row.fleetTarget;
+    const routed = routineJobRouting(requirements, hosts, this.now(), target, row.fleetSelection.build);
     const inventoryRequirements = {...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)};
-    const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build);
-    const retained = row.fleetResourceReservation;
-    const admitted = row.fleetResourceAdmission;
+    const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), target, row.fleetSelection.build);
     let waitingReason: string | undefined;
     const onWaiting = (reason: string) => {waitingReason = reason;};
     if (retained) {
@@ -705,7 +706,7 @@ export class RoutineJobService {
     if (routed.waitingReason) {
       const reasons = hosts.flatMap(host => host.lanes.filter(lane =>
         Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
-        (!row.fleetTarget?.hostId || row.fleetTarget.hostId === host.hostId) && (!row.fleetTarget?.laneId || row.fleetTarget.laneId === lane.id) &&
+        (!target?.hostId || target.hostId === host.hostId) && (!target?.laneId || target.laneId === lane.id) &&
         lane.state === 'idle' && lane.dispatchMode === 'automatic' && compatibleRoutineLane(inventoryRequirements, lane,
           permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now()), this.now())).map(lane => {
         const resource = lane.resources.find(resource => resource.kind === 'recorder');
@@ -716,17 +717,35 @@ export class RoutineJobService {
           ? RECORDER_OBSERVATION_WAIT : RESOURCE_ADMISSION_WAIT};
     }
     const selected = admitted ? [] : await this.rows.selectedLanes?.(hosts.map(host => host.hostId)) ?? [];
+    const candidateReasons: (string | undefined)[] = [];
     for (const {host, lane} of orderedRoutineCandidates(row.requestId, hosts, selected)) {
       // A staged admission may survive an interrupted authority/receipt write.
       // Continue that exact candidate; a preference change cannot move its custody.
       if (admitted && (admitted.intent.hostId !== host.hostId || admitted.intent.laneId !== lane.id)) continue;
       if (row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
-        lane.state !== 'idle' || lane.dispatchMode !== 'automatic' || !compatibleRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now()), this.now())) continue;
-      const saved = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, host.hostId, lane.id, new Date(this.now()), onWaiting);
+        lane.state !== 'idle' || lane.dispatchMode !== 'automatic') continue;
+      const context = permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now());
+      if (!compatibleRoutineLane(requirements, lane, context, this.now())) {
+        if (Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
+            compatibleRoutineLane(inventoryRequirements, lane, context, this.now()))
+          candidateReasons.push(recorderWait(lane.resources.find(resource => resource.kind === 'recorder')?.storage,
+            requirements.resources.find(resource => resource.kind === 'recorder')!.storage!.minimumAvailableBytes, this.now()));
+        continue;
+      }
+      let candidateReason: string | undefined, exclusiveBlocker = false;
+      const saved = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, host.hostId, lane.id, new Date(this.now()),
+        (reason, exclusive) => {candidateReason = reason; exclusiveBlocker = Boolean(exclusive);});
       if (saved?.fleetResourceReservation) return {...routed, chosenModel: saved.fleetResourceReservation.chosenModel, resourceTarget: {hostId: saved.fleetResourceReservation.hostId, laneId: saved.fleetResourceReservation.laneId},
         routingLabels: routineRequirementLabels(requirements, saved.fleetResourceReservation.chosenModel, saved.fleetResourceReservation)};
+      // reserveFleet reports this only after staging its immutable candidate. Later
+      // lanes cannot become this request's target or overwrite its observed blocker.
+      if (exclusiveBlocker) return {...routed, waitingReason: candidateReason ?? RESOURCE_ADMISSION_WAIT};
+      candidateReasons.push(candidateReason);
     }
-    return {...routed, waitingReason: waitingReason ?? sharedResourceWaitingReason(row, hosts) ?? RESOURCE_ADMISSION_WAIT};
+    return {...routed, waitingReason: sharedResourceWaitingReason(row, hosts) ??
+      (candidateReasons.length && candidateReasons.every(reason => reason === RECORDER_CAPACITY_WAIT) ? RECORDER_CAPACITY_WAIT
+        : candidateReasons.length && candidateReasons.every(reason => reason === RECORDER_OBSERVATION_WAIT) ? RECORDER_OBSERVATION_WAIT
+          : RESOURCE_ADMISSION_WAIT)};
   }
   async preparationStatus(jobId: string, value: unknown) {
     const input = routinePreparationStatusSchema.parse(value), row = await this.job(jobId);

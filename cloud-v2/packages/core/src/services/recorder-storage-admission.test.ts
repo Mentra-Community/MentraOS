@@ -197,12 +197,13 @@ test('same-host exclusive commitment advances the existing authority CAS, then r
  }finally{f.restore()}
 })
 test('portable waiting reason distinguishes exclusive contention from measured recorder shortages without admitting the loser', async () => {
- const f=admissionFixture({exclusive:true}), reasons:string[]=[]
+ const f=admissionFixture({exclusive:true}), reasons:string[]=[], exclusive:boolean[]=[]
  try {
   const first=await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)
   expect(first!.fleetExclusiveReservation).toBeDefined()
-  const result=await routineJobRepository.reserveResources!('two','a'.repeat(64),'other','mac',now,value=>reasons.push(value))
+  const result=await routineJobRepository.reserveResources!('two','a'.repeat(64),'other','mac',now,(value,blocked)=>{reasons.push(value);exclusive.push(Boolean(blocked))})
   expect(result).toBeNull();expect(reasons).toEqual([sharedResourceWait('google-authentication')])
+  expect(exclusive).toEqual([true])
   expect(f.requests.get('two').fleetResourceReservation).toBeUndefined();expect(f.host('other').resourceReservations).toEqual([])
   for(const lane of f.host('other').snapshot.lanes)lane.resources.find((value:any)=>value.kind==='recorder').storage.availableBytes=6*gib
   reasons.length=0
