@@ -5,7 +5,7 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
-from nimo_capability import EDGES, ROLES, SOURCE_FILES, compiled_witness, ios_arm64, optional_nimo_capability, source_digest
+from nimo_capability import EDGES, ROLES, SOURCE_FILES, compiled_witness, select_role_witnesses, ios_arm64, optional_nimo_capability, source_digest
 
 
 def macho(platform=2):
@@ -30,6 +30,13 @@ def witnesses():
 
 
 class CapabilityTests(unittest.TestCase):
+    def test_one_symbol_cannot_witness_multiple_roles(self):
+        for alias in (False, True):
+            roots = {role: {('' if alias and index % 2 else '_') + '$sReusedMethod'}
+                     for index, role in enumerate(ROLES)}
+            with self.assertRaisesRegex(ValueError, 'multiple roles'):
+                select_role_witnesses(roots)
+
     def test_platform_is_actual_bounded_macho_not_a_string(self):
         ios_arm64(macho())
         for data in (b'ios-on-mac', macho(1), macho()[:-1], macho()[:16]):

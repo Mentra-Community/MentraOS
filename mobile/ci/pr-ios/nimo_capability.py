@@ -82,6 +82,19 @@ def ios_arm64(data):
         raise ValueError('expected unique iOS build platform')
 
 
+def select_role_witnesses(roots):
+    if set(roots) != set(ROLES) or any(not values for values in roots.values()):
+        raise ValueError('compiled capability requires every exact method role')
+    selected = {role: sorted(values)[0] for role, values in roots.items()}
+    canonical = [symbol.removeprefix('_') for symbol in selected.values()]
+    if len(set(canonical)) != len(ROLES):
+        raise ValueError('one compiled method symbol cannot witness multiple roles')
+    if any(not re.fullmatch(r'_?\$s[A-Za-z0-9_$]+', symbol) or len(role + ':' + symbol) > 4096
+           for role, symbol in selected.items()):
+        raise ValueError('invalid compiled Swift method witness')
+    return sorted(f'{role}:{symbol}' for role, symbol in selected.items())
+
+
 def compiled_witness(nm, demangled, disassembly):
     """Accept only actual text symbols with reconstructible direct call edges.
 
@@ -176,7 +189,7 @@ def compiled_witness(nm, demangled, disassembly):
         registers.clear()
     if not {2, 6}.issubset(options):
         raise ValueError('peer PID/token socket option call arguments unavailable')
-    return sorted(f'{role}:{sorted(values)[0]}' for role, values in roots.items())
+    return select_role_witnesses(roots)
 
 
 def optional_nimo_capability(executable, source_root, expected_revision=None, run=None):
