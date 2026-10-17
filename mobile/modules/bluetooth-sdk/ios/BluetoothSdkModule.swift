@@ -162,6 +162,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await sdk.setDashboardContent(content)
         }
 
+        // Fixed typed fixture protocol; native schema/launch/peer authority is
+        // validated before effects. Ordinary launches return fixture-unavailable.
+        AsyncFunction("nimoResourceSession") { (requestJSON: String) async throws -> String in
+            try await NimoResourceFixtureBridge.execute(requestJSON)
+        }
+
         // MARK: - Connection Commands
 
         AsyncFunction("connectDefault") {

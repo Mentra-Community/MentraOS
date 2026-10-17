@@ -1,0 +1,115 @@
+{
+  "protocol": "nimo-macos-resource-v1",
+  "clockKind": "darwin-continuous-time-v1",
+  "request": {
+    "version": 1,
+    "operation": "arm|status|release|cancel",
+    "requestNonce": "UUID",
+    "captureNonce": "UUID",
+    "planSha256": "64lowerhex",
+    "grantSha256": "64lowerhex",
+    "expectedProcess": {
+      "pid": 123,
+      "instanceId": "UUID"
+    },
+    "expectedPair": {
+      "name": "exact name",
+      "peripheralUuid": "UUID"
+    },
+    "original": null
+  },
+  "originalWhenKnown": {
+    "instanceId": "UUID",
+    "peripheralUuid": "UUID",
+    "sessionGeneration": 1
+  },
+  "receipt": {
+    "version": 1,
+    "protocol": "nimo-macos-resource-v1",
+    "operation": "arm|status|release|cancel",
+    "requestNonce": "UUID",
+    "captureNonce": "UUID",
+    "planSha256": "64lowerhex",
+    "grantSha256": "64lowerhex",
+    "process": {
+      "pid": 123,
+      "instanceId": "UUID"
+    },
+    "clock": {
+      "kind": "darwin-continuous-time-v1",
+      "receivedElapsedMs": 1,
+      "observedElapsedMs": 2
+    },
+    "capture": {
+      "armedElapsedMs": 1,
+      "admittedElapsedMs": null,
+      "cancelled": false,
+      "expectedPair": {
+        "name": "exact name",
+        "peripheralUuid": "UUID"
+      }
+    },
+    "currentManager": {
+      "type": null,
+      "instanceId": null
+    },
+    "session": null,
+    "release": {
+      "nonce": null,
+      "startedElapsedMs": null,
+      "micStopRequired": false,
+      "displayExitRequired": false,
+      "micStopStartedElapsedMs": null,
+      "micStopWrittenElapsedMs": null,
+      "micStopMarkerElapsedMs": null,
+      "exitStatusCode": null,
+      "exitAckElapsedMs": null,
+      "disconnectRequestedElapsedMs": null,
+      "disconnectCallbackElapsedMs": null,
+      "disconnectError": null,
+      "noTransport": false,
+      "settled": false
+    },
+    "producers": {
+      "writerActive": 0,
+      "writerQueued": 0,
+      "encoderWorker": 0,
+      "encoderDelivery": 0,
+      "postedCallbacks": 0,
+      "canvasCommands": 0,
+      "pendingAcks": 0,
+      "audioWorkers": 0,
+      "scan": 0,
+      "timers": 0,
+      "reconnectTask": 0
+    },
+    "errors": []
+  },
+  "sessionWhenKnown": {
+    "instanceId": "UUID",
+    "peripheralUuid": "UUID",
+    "sessionGeneration": 1,
+    "startedElapsedMs": "null for generation0; continuous integer for generation1",
+    "connected": true,
+    "initializationPending": false,
+    "twsConnected": false,
+    "twsObservedElapsedMs": null,
+    "handshakeTwsElapsedMs": null,
+    "timeCommandId": null,
+    "timeWriteStartedElapsedMs": null,
+    "timeWriteCompletedElapsedMs": null,
+    "timeAckElapsedMs": null,
+    "timeAckStatusCode": null
+  },
+  "rules": [
+    "All nullable keys explicit null; no omitted properties. UUID normalized lower-case. Clock integers continuous milliseconds, no host comparisons.",
+    "original null arm/first capture-bound status; status never adopts current manager. Normal release requires exact original once owner admitted. Cancel null allowed for any exact pinned capture generation, including setup failure before first readback.",
+    "requestNonce immutable per-operation receipt; repeated exact request returns original bytes, changed request same nonce rejects. Fresh status uses new nonce but preserves original release nonce/markers.",
+    "release.settled requires actual producer roster zero, original CB disconnect callback or proven noTransport, and all required mic/Exit markers. Unknown stays unsettled/errors.",
+    "micStopMarkerElapsedMs remains null if native protocol has no observed stop marker; micStopRequired never passes based solely on logical state/write callback.",
+    "currentManager.type/instanceId always emitted; G2/replacement vetoes qualification without mutating that manager.",
+    "gen0 admission retains original object even before CB peripheral; no replacement adoption.",
+    "transport bootstrap/hello separate no native effect; awaiting root approval before coding.",
+    "One capture per app process; 192 ordinary entries +64 cleanup/postrelease status reserved entries. Exact existing nonce readbacks bypass budget; no renewed windows."
+  ]
+}

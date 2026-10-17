@@ -1,3 +1,4 @@
+from test_nimo_capability import CapabilityTests
 import datetime as dt
 import json
 from pathlib import Path
