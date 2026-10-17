@@ -100,22 +100,25 @@ public enum JSCPolyfillBridge {
             }
 
             var urlRequest = URLRequest(url: url)
-            urlRequest.httpMethod = (req["method"] as? String) ?? "GET"
+            let method = (req["method"] as? String) ?? "GET"
+            urlRequest.httpMethod = method
             if let headers = req["headers"] as? [String: Any] {
                 for (k, v) in headers {
                     urlRequest.setValue(String(describing: v), forHTTPHeaderField: k)
                 }
             }
             // ArrayBuffer and typed-array bodies arrive as base64 of their bytes.
+            // As on Android, an empty body is still sent, and POST, PUT and PATCH
+            // always carry one, so the server sees Content-Length: 0.
             if let encoded = req["bodyBase64"] as? String {
                 guard let data = Data(base64Encoded: encoded) else {
                     return .error(code: "INVALID_ARGS", message: "fetch.request: bodyBase64 is not base64")
                 }
-                if !data.isEmpty {
-                    urlRequest.httpBody = data
-                }
-            } else if let body = req["body"] as? String, !body.isEmpty {
-                urlRequest.httpBody = body.data(using: .utf8)
+                urlRequest.httpBody = data
+            } else if let body = req["body"] as? String {
+                urlRequest.httpBody = Data(body.utf8)
+            } else if ["POST", "PUT", "PATCH"].contains(method.uppercased()) {
+                urlRequest.httpBody = Data()
             }
 
             // Reasonable defaults — caller can override later by passing
