@@ -587,7 +587,16 @@ class Nimo: NSObject, SGCManager {
     nonisolated private let resourceCallbackCounter = NimoResourceCallbackCounter()
     var resourceCanvasRequired: Bool { canvas.mayHaveEntered }
     var resourceMicStopRequired: Bool { resourceMicEnabled || resourceSession?.connected == true }
-    private var resourceSession: NimoResourceSession? { NimoResourceFixture.shared.captured(self) }
+    #if SWIFT_PACKAGE
+        // Package-only, radio-free fixture for exercising actual private wiring.
+        private var packageTestResourceSession: NimoResourceSession?
+    #endif
+    private var resourceSession: NimoResourceSession? {
+        #if SWIFT_PACKAGE
+            if let packageTestResourceSession { return packageTestResourceSession }
+        #endif
+        return NimoResourceFixture.shared.captured(self)
+    }
 
     nonisolated private func postCallback(_ action: @escaping @MainActor () -> Void) {
         resourceCallbackCounter.add(1)
@@ -1274,16 +1283,20 @@ class Nimo: NSObject, SGCManager {
             previous.timeoutItem.cancel()
             previous.onResult(false)
         }
-        let timeoutItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.pendingAcks.removeValue(forKey: ackKey)?.onResult(false)
-        }
+        let timeoutItem = pendingAckTimeout(ackKey)
         pendingAcks[ackKey] = PendingAck(onResult: onResult, timeoutItem: timeoutItem)
         DispatchQueue.main.asyncAfter(deadline: .now() + Const.ackTimeoutSeconds, execute: timeoutItem)
         guard let peripheral, let txChar else { resolvePendingAck(cmd: cmd, key: key, success: false); return }
         writes.enqueue(peripheral, characteristic: txChar,
                        frames: [NimoFrameCodec.encodeFrame(cmd: cmd, key: key, payload: payload, needsAck: true)],
                        finalStarted: writeStarted, completed: writeCompleted)
+    }
+
+    private func pendingAckTimeoutAction(_ ackKey: Int) -> () -> Void {
+        { [weak self] in self?.pendingAcks.removeValue(forKey: ackKey)?.onResult(false) }
+    }
+    private func pendingAckTimeout(_ ackKey: Int) -> DispatchWorkItem {
+        DispatchWorkItem(block: pendingAckTimeoutAction(ackKey))
     }
 
     private func resolvePendingAck(cmd: Int, key: Int, success: Bool) {
@@ -1352,15 +1365,19 @@ class Nimo: NSObject, SGCManager {
                             if self.resourceSession?.ready == true, self.handshakeState == .awaitingTimeAck { self.finishHandshake() }
                         })
         { [weak self] ok in
-            guard let self, self.peripheral === expected, self.handshakeState == .awaitingTimeAck else { return }
-            if ok { if self.resourceSession == nil || self.resourceSession?.ready == true { self.finishHandshake() } }
-            else if self.resourceSession == nil, self.setTimeAttempts < 3 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    guard let self, self.peripheral === expected else { return }
-                    self.attemptSetTime()
-                }
-            } else { self.handshakeFailed() }
+            self?.handleTimeSyncResult(ok, expected: expected)
         }
+    }
+
+    private func handleTimeSyncResult(_ ok: Bool, expected: CBPeripheral?) {
+        guard peripheral === expected, handshakeState == .awaitingTimeAck else { return }
+        if ok { if resourceSession == nil || resourceSession?.ready == true { finishHandshake() } }
+        else if resourceSession == nil, setTimeAttempts < 3 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, self.peripheral === expected else { return }
+                self.attemptSetTime()
+            }
+        } else { handshakeFailed() }
     }
 
     private func finishHandshake() {
@@ -1394,10 +1411,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func handshakeFailed() {
-        if let resourceSession {
-            resourceSession.recordError("handshake-failed")
-            if resourceSession.releaseNonce != nil { resourceSession.disconnectRequested(self) }
-        }
+        if let resourceSession, !resourceSession.recordHandshakeFailure(self) { return }
         handshakeState = .idle
         if let peripheral {
             centralManager?.cancelPeripheralConnection(peripheral)
@@ -1718,8 +1732,13 @@ class Nimo: NSObject, SGCManager {
     func releaseResource(_ original: NimoResourceSession) async {
         if let resourceReleaseTask { await resourceReleaseTask.value; return }
         guard original.isOwner(self) else { return }
-        // Install the drain synchronously before scheduling or awaiting cleanup.
-        // Original ACKs may arrive while reconnect tasks are settling.
+        // Retire setup waiters synchronously. Their ACK/timeout can already be
+        // queued when the capture fence is installed; shutdown is not a failed
+        // handshake. The real transport writes and Canvas drain remain intact.
+        handshakeState = .idle
+        cancelTwsTimeout()
+        resolvePendingAck(cmd: NimoProtocol.CMD_SET_PARAMETER, key: NimoProtocol.SET_TIME, success: false)
+        // Original Canvas ACKs may arrive while reconnect tasks are settling.
         canvas.drainForRelease()
         let task = Task { @MainActor [self] in
             isDisconnecting = true
@@ -1770,6 +1789,51 @@ class Nimo: NSObject, SGCManager {
     }
 
 }
+
+#if SWIFT_PACKAGE
+// SDK-package-only, radio-free regression fixture; no app or command API.
+struct NimoPackageHandshakeObservation {
+    let errors: [String]
+    let pendingAcks: Int
+    let idle: Bool
+    let ready: Bool
+    let sameWriteEvidence: Bool
+    let ackStillAbsent: Bool
+    let noRadio: Bool
+    let physicalClosure: Bool
+}
+extension Nimo {
+    @MainActor
+    func packageExercisePendingTimeAck(cancel: Bool, timeoutBeforeEntry: Bool, activeTimeout: Bool = false) async -> NimoPackageHandshakeObservation {
+        let id = "00000000-0000-4000-8000-000000000001"
+        var tick: UInt64 = 100
+        let session = NimoResourceSession(captureNonce: id, pair: NimoResourcePair(name: "NIMO test", peripheralUuid: id), now: { tick += 1; return tick })
+        let peer = NSObject()
+        _ = session.admit(self, instanceId: resourceInstanceId, name: "NIMO test")
+        _ = session.beginTransport(self, peripheral: peer, uuid: id)
+        session.transportConnected(self, peer); session.observeTws(self, connected: true)
+        let command = session.beginTimeCommand(self)!
+        session.timeWriteStarted(self, command: command); session.timeWriteCompleted(self, command: command)
+        let started = session.timeWriteStartedElapsedMs, completed = session.timeWriteCompletedElapsedMs
+        packageTestResourceSession = session; resourceTimeCommand = command; handshakeState = .awaitingTimeAck
+        let key = (NimoProtocol.CMD_SET_PARAMETER << 8) | NimoProtocol.SET_TIME
+        let alreadyQueuedTimeout = pendingAckTimeoutAction(key)
+        pendingAcks[key] = PendingAck(onResult: { [weak self] ok in self?.handleTimeSyncResult(ok, expected: nil) }, timeoutItem: DispatchWorkItem(block: alreadyQueuedTimeout))
+        if activeTimeout { alreadyQueuedTimeout() }
+        _ = session.beginRelease(nonce: id, cancel: cancel, mic: false, canvas: false)
+        if timeoutBeforeEntry { alreadyQueuedTimeout() }
+        await releaseResource(session)
+        alreadyQueuedTimeout() // Closure already dequeued before cancellation.
+        handleTimeSyncResult(true, expected: nil)
+        session.timeAck(self, command: command, status: 0)
+        return NimoPackageHandshakeObservation(errors: session.errors, pendingAcks: pendingAcks.count,
+            idle: handshakeState == .idle, ready: session.ready,
+            sameWriteEvidence: started == session.timeWriteStartedElapsedMs && completed == session.timeWriteCompletedElapsedMs,
+            ackStillAbsent: session.timeAckElapsedMs == nil, noRadio: centralManager == nil && peripheral == nil && !scanRequested,
+            physicalClosure: session.settled(producers: NimoResourceProducers()))
+    }
+}
+#endif
 
 // MARK: - CBCentralManagerDelegate
 

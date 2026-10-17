@@ -197,6 +197,13 @@ final class NimoResourceSession {
         guard let startedElapsedMs, received >= startedElapsedMs else { return }
         twsConnected = connected; twsObservedElapsedMs = received
     }
+    /// A setup timeout after the release fence is an abandoned handshake, not
+    /// a new failure or authority to disconnect/retry the original transport.
+    func recordHandshakeFailure(_ candidate: AnyObject) -> Bool {
+        guard owner === candidate, releaseNonce == nil else { return false }
+        recordError("handshake-failed")
+        return true
+    }
     func beginTimeCommand(_ candidate: AnyObject) -> String? {
         guard owner === candidate, releaseNonce == nil, connected, twsConnected, let twsObservedElapsedMs else { return nil }
         if handshakeTwsElapsedMs == nil { handshakeTwsElapsedMs = twsObservedElapsedMs }

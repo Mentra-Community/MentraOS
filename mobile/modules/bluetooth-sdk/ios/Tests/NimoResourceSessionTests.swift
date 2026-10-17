@@ -11,6 +11,48 @@ final class NimoResourceSessionTests: XCTestCase {
         XCTAssertTrue(model.admit(owner, instanceId: uuid, name: "NIMO test"))
         return (model, owner, peer, clock)
     }
+    @MainActor
+    func testActualNimoReleaseRetiresPendingTimeAckWithoutRadioOrFalseHandshakeFailure() async {
+        for cancel in [false, true] {
+            for timeoutBeforeEntry in [false, true] {
+                let result = await Nimo().packageExercisePendingTimeAck(cancel: cancel, timeoutBeforeEntry: timeoutBeforeEntry)
+                XCTAssertTrue(result.errors.isEmpty)
+                XCTAssertEqual(result.pendingAcks, 0)
+                XCTAssertTrue(result.idle)
+                XCTAssertFalse(result.ready)
+                XCTAssertTrue(result.sameWriteEvidence)
+                XCTAssertTrue(result.ackStillAbsent)
+                XCTAssertTrue(result.noRadio)
+                XCTAssertFalse(result.physicalClosure)
+            }
+        }
+    }
+    @MainActor
+    func testActualNimoActiveTimeAckTimeoutRemainsFailure() async {
+        let result = await Nimo().packageExercisePendingTimeAck(cancel: true, timeoutBeforeEntry: false, activeTimeout: true)
+        XCTAssertTrue(result.errors.contains("handshake-failed"))
+        XCTAssertFalse(result.ready)
+        XCTAssertTrue(result.noRadio)
+    }
+    func testReleaseFenceDoesNotTurnHandshakeAbandonmentIntoCommandOrWriterProof() {
+        let (model, owner, peer, _) = fixture()
+        XCTAssertTrue(model.beginTransport(owner, peripheral: peer, uuid: uuid))
+        model.transportConnected(owner, peer); model.observeTws(owner, connected: true)
+        let command = model.beginTimeCommand(owner)!
+        model.timeWriteStarted(owner, command: command)
+        let started = model.timeWriteStartedElapsedMs
+        XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: true, mic: true, canvas: true))
+        XCTAssertFalse(model.recordHandshakeFailure(owner))
+        model.timeWriteCompleted(owner, command: command); model.timeAck(owner, command: command, status: 0)
+        XCTAssertEqual(model.timeWriteStartedElapsedMs, started)
+        XCTAssertNil(model.timeWriteCompletedElapsedMs)
+        XCTAssertNil(model.timeAckElapsedMs)
+        XCTAssertFalse(model.ready)
+        XCTAssertFalse(model.commandsSettled)
+        var producers = NimoResourceProducers(); producers.writerQueued = 1
+        XCTAssertFalse(model.settled(producers: producers))
+        XCTAssertTrue(model.errors.isEmpty)
+    }
     func testForeignManagerCannotReplaceCaptureUntilOriginalClosure() {
         XCTAssertTrue(NimoResourceManagerState.allowsReplacement(fixtureEnabled: false, originalClosed: false))
         XCTAssertFalse(NimoResourceManagerState.allowsReplacement(fixtureEnabled: true, originalClosed: false))
