@@ -536,6 +536,7 @@ private class NimoOpusDecoder {
 
 actor NimoReconnectionManager {
     private var task: Task<Void, Never>?
+    private(set) var liveTasks = 0
     private let intervalSeconds: UInt64
 
     init(intervalSeconds: UInt64 = 30) {
@@ -544,7 +545,9 @@ actor NimoReconnectionManager {
 
     func start(_ onAttempt: @escaping () async -> Bool) {
         stop()
+        liveTasks += 1
         task = Task {
+            defer { liveTasks -= 1 }
             var attempts = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: intervalSeconds * 1_000_000_000)
@@ -559,6 +562,13 @@ actor NimoReconnectionManager {
         }
     }
 
+    func stopAndWait() async {
+        let original = task
+        original?.cancel()
+        await original?.value
+        if liveTasks == 0 { task = nil }
+    }
+
     func stop() {
         task?.cancel()
         task = nil
@@ -568,6 +578,34 @@ actor NimoReconnectionManager {
 // MARK: - Nimo Class
 
 class Nimo: NSObject, SGCManager {
+    let resourceInstanceId = UUID().uuidString.lowercased()
+    private(set) var resourceMicEnabled = false
+    private var resourceReleaseTask: Task<Void, Never>?
+    private var resourceNotificationElapsedMs: UInt64?
+    private var resourceTimeCommand: String?
+    private var resourceReconnectTasks = 0
+    nonisolated private let resourceCallbackCounter = NimoResourceCallbackCounter()
+    var resourceCanvasRequired: Bool { canvas.mayHaveEntered }
+    var resourceMicStopRequired: Bool { resourceMicEnabled || resourceSession?.connected == true }
+    #if SWIFT_PACKAGE
+        // Package-only, radio-free fixture for exercising actual private wiring.
+        private var packageTestResourceSession: NimoResourceSession?
+    #endif
+    private var resourceSession: NimoResourceSession? {
+        #if SWIFT_PACKAGE
+            if let packageTestResourceSession { return packageTestResourceSession }
+        #endif
+        return NimoResourceFixture.shared.captured(self)
+    }
+
+    nonisolated private func postCallback(_ action: @escaping @MainActor () -> Void) {
+        resourceCallbackCounter.add(1)
+        DispatchQueue.main.async { [self] in
+            action()
+            resourceCallbackCounter.add(-1)
+        }
+    }
+
     var type: String = DeviceTypes.NIMO
     let hasMic = true
     let showBrightnessConfirmation = false
@@ -680,7 +718,11 @@ class Nimo: NSObject, SGCManager {
         enqueue: { [weak self] frames, started, completed in
             self?.enqueueFrames(frames, finalStarted: started, completed: completed) ?? false
         }, reconnect: { [weak self] in self?.abortTransport($0) },
-        rejected: { Bridge.log("NIMO: canvas rejected status=\($0); not a render ACK") }
+        rejected: { Bridge.log("NIMO: canvas rejected status=\($0); not a render ACK") },
+        observedResult: { [weak self] key, status, received in
+            guard let self else { return }
+            if key == 3 { self.resourceSession?.exitAcknowledged(self, status: status, receivedElapsedMs: received) }
+        }, continuousNow: NimoResourceClock.now
     )
     private var batteryPollTimer: Timer?
 
@@ -700,6 +742,7 @@ class Nimo: NSObject, SGCManager {
     // MARK: - SGCManager: Connection Management
 
     func findCompatibleDevices() {
+        guard NimoResourceFixture.shared.admit(self, name: nil) else { return }
         Bridge.log("NIMO: findCompatibleDevices()")
         DEVICE_SEARCH_ID = "NOT_SET"
         isDisconnecting = false
@@ -709,6 +752,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     func connectById(_ id: String) {
+        guard NimoResourceFixture.shared.admit(self, name: id) else { return }
         Bridge.log("NIMO: connectById(\(id))")
         DEVICE_SEARCH_ID = id
         scanRequested = true
@@ -725,6 +769,10 @@ class Nimo: NSObject, SGCManager {
 
     func disconnect() {
         Bridge.log("NIMO: disconnect()")
+        if let resourceSession,
+           !resourceSession.shouldRunOrdinaryDisconnect(self, originalClosed: NimoResourceFixture.shared.hasVerifiedOriginalClosure(self)) {
+            return
+        }
         isDisconnecting = true
         cancelPairingTimeout()
         cancelTwsTimeout()
@@ -749,6 +797,7 @@ class Nimo: NSObject, SGCManager {
 
     /// Explicit Unpair only; passive forget/cleanup must never reset the glasses.
     func resetForUnpair(onResult: @escaping (Bool) -> Void) {
+        if let resourceSession { resourceSession.recordError("factory-reset-refused-during-capture"); onResult(false); return }
         guard peripheral != nil, txChar != nil, handshakeState == .ready else {
             Bridge.log("NIMO: unpair while offline; remote reset unavailable")
             onResult(false)
@@ -769,6 +818,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     func forget() {
+        if let resourceSession { resourceSession.recordError("forget-refused-during-capture"); return }
         Bridge.log("NIMO: forget()")
         disconnect()
         lastDeviceName = nil
@@ -801,11 +851,13 @@ class Nimo: NSObject, SGCManager {
     // MARK: - SGCManager: Audio Control
 
     func setMicEnabled(_ enabled: Bool) {
+        guard NimoResourceFixture.shared.allowsProducer(self) else { return }
         Bridge.log("NIMO: setMicEnabled(\(enabled))")
         guard let micChar else {
             Bridge.log("NIMO: mic characteristic not available")
             return
         }
+        resourceMicEnabled = enabled
         DeviceStore.shared.apply("glasses", "micEnabled", enabled)
         if enabled {
             if opusDecoder == nil {
@@ -912,6 +964,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func encodeCanvas(scope: String, force: Bool = false, encode: @escaping () throws -> Data) {
+        guard NimoResourceFixture.shared.allowsProducer(self) else { return }
         canvasEncoder.submit(encode: encode) { [weak self] bytes in
             self?.canvas.offer(bytes, scope: scope, force: force)
         }
@@ -1110,7 +1163,7 @@ class Nimo: NSObject, SGCManager {
 
     @discardableResult
     private func startScan() -> Bool {
-        guard scanRequested, !isDisconnecting else { return false }
+        guard scanRequested, !isDisconnecting, NimoResourceFixture.shared.allowsProducer(self) else { return false }
         Bridge.log("NIMO: startScan()")
         if centralManager == nil {
             centralManager = CBCentralManager(
@@ -1142,6 +1195,7 @@ class Nimo: NSObject, SGCManager {
         guard DEVICE_SEARCH_ID != "NOT_SET", name == DEVICE_SEARCH_ID,
               self.peripheral == nil else { return }
         Bridge.log("NIMO: Connecting to \(name)")
+        guard NimoResourceFixture.shared.beginTransport(self, peripheral: peripheral, uuid: peripheral.identifier.uuidString) else { return }
         stopScan()
         lastDeviceName = name
         lastDeviceUUID = peripheral.identifier.uuidString
@@ -1161,6 +1215,7 @@ class Nimo: NSObject, SGCManager {
         else { return false }
 
         Bridge.log("NIMO: connectByUUID - \(known.name ?? uuidString)")
+        guard NimoResourceFixture.shared.beginTransport(self, peripheral: known, uuid: known.identifier.uuidString) else { return false }
         peripheral = known
         known.delegate = self
         centralManager?.connect(known, options: nil)
@@ -1188,7 +1243,7 @@ class Nimo: NSObject, SGCManager {
     // MARK: - Write Queue
 
     private func enqueueWrite(_ characteristic: CBCharacteristic, _ bytes: Data) {
-        guard let peripheral else { return }
+        guard NimoResourceFixture.shared.allowsProducer(self), let peripheral else { return }
         writes.enqueue(peripheral, characteristic: characteristic, frames: [bytes])
     }
 
@@ -1201,12 +1256,17 @@ class Nimo: NSObject, SGCManager {
                                completed: @escaping () -> Void) -> Bool
     {
         guard let peripheral, let txChar else { return false }
+        if let resourceSession, resourceSession.releaseNonce != nil, frames.first?.count ?? 0 > 9, frames.first?[9] != 3 { return false }
         return writes.enqueue(peripheral, characteristic: txChar, frames: frames,
                               finalStarted: finalStarted, completed: completed)
     }
 
     private func abortTransport(_ reason: String) {
         Bridge.log("NIMO: retiring transport: \(reason)")
+        if let resourceSession {
+            resourceSession.recordError("transport-retired: \(reason)")
+            if resourceSession.releaseNonce != nil { resourceSession.disconnectRequested(self) }
+        }
         resetSessionState()
         if let peripheral { centralManager?.cancelPeripheralConnection(peripheral) }
     }
@@ -1214,21 +1274,29 @@ class Nimo: NSObject, SGCManager {
     // MARK: - Pending ACKs
 
     private func sendAwaitingAck(
-        cmd: Int, key: Int, payload: Data, onResult: @escaping (Bool) -> Void
+        cmd: Int, key: Int, payload: Data, writeStarted: @escaping () -> Void = {}, writeCompleted: @escaping () -> Void = {}, onResult: @escaping (Bool) -> Void
     ) {
+        guard NimoResourceFixture.shared.allowsProducer(self) else { onResult(false); return }
         let ackKey = (cmd << 8) | key
         // Only one in-flight ack per (cmd,key); fail any previous waiter.
         if let previous = pendingAcks.removeValue(forKey: ackKey) {
             previous.timeoutItem.cancel()
             previous.onResult(false)
         }
-        let timeoutItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.pendingAcks.removeValue(forKey: ackKey)?.onResult(false)
-        }
+        let timeoutItem = pendingAckTimeout(ackKey)
         pendingAcks[ackKey] = PendingAck(onResult: onResult, timeoutItem: timeoutItem)
         DispatchQueue.main.asyncAfter(deadline: .now() + Const.ackTimeoutSeconds, execute: timeoutItem)
-        sendFrame(NimoFrameCodec.encodeFrame(cmd: cmd, key: key, payload: payload, needsAck: true))
+        guard let peripheral, let txChar else { resolvePendingAck(cmd: cmd, key: key, success: false); return }
+        writes.enqueue(peripheral, characteristic: txChar,
+                       frames: [NimoFrameCodec.encodeFrame(cmd: cmd, key: key, payload: payload, needsAck: true)],
+                       finalStarted: writeStarted, completed: writeCompleted)
+    }
+
+    private func pendingAckTimeoutAction(_ ackKey: Int) -> () -> Void {
+        { [weak self] in self?.pendingAcks.removeValue(forKey: ackKey)?.onResult(false) }
+    }
+    private func pendingAckTimeout(_ ackKey: Int) -> DispatchWorkItem {
+        DispatchWorkItem(block: pendingAckTimeoutAction(ackKey))
     }
 
     private func resolvePendingAck(cmd: Int, key: Int, success: Bool) {
@@ -1286,23 +1354,34 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func attemptSetTime() {
-        guard handshakeState == .awaitingTimeAck, let expected = peripheral else { return }
+        guard NimoResourceFixture.shared.allowsProducer(self), handshakeState == .awaitingTimeAck, let expected = peripheral else { return }
         setTimeAttempts += 1
+        let command = resourceSession?.beginTimeCommand(self)
+        resourceTimeCommand = command
         sendAwaitingAck(cmd: NimoProtocol.CMD_SET_PARAMETER, key: NimoProtocol.SET_TIME,
-                        payload: NimoFrameCodec.encodeDeviceTime())
+                        payload: NimoFrameCodec.encodeDeviceTime(),
+                        writeStarted: { [weak self] in guard let self, let command else { return }; self.resourceSession?.timeWriteStarted(self, command: command) },
+                        writeCompleted: { [weak self] in guard let self, let command else { return }; self.resourceSession?.timeWriteCompleted(self, command: command)
+                            if self.resourceSession?.ready == true, self.handshakeState == .awaitingTimeAck { self.finishHandshake() }
+                        })
         { [weak self] ok in
-            guard let self, self.peripheral === expected, self.handshakeState == .awaitingTimeAck else { return }
-            if ok { self.finishHandshake() }
-            else if self.setTimeAttempts < 3 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    guard let self, self.peripheral === expected else { return }
-                    self.attemptSetTime()
-                }
-            } else { self.handshakeFailed() }
+            self?.handleTimeSyncResult(ok, expected: expected)
         }
     }
 
+    private func handleTimeSyncResult(_ ok: Bool, expected: CBPeripheral?) {
+        guard peripheral === expected, handshakeState == .awaitingTimeAck else { return }
+        if ok { if resourceSession == nil || resourceSession?.ready == true { finishHandshake() } }
+        else if resourceSession == nil, setTimeAttempts < 3 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, self.peripheral === expected else { return }
+                self.attemptSetTime()
+            }
+        } else { handshakeFailed() }
+    }
+
     private func finishHandshake() {
+        guard NimoResourceFixture.shared.allowsProducer(self) else { return }
         Bridge.log("NIMO: handshake complete — fully connected")
         handshakeState = .ready
         sendFrame(
@@ -1332,6 +1411,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func handshakeFailed() {
+        if let resourceSession, !resourceSession.recordHandshakeFailure(self) { return }
         handshakeState = .idle
         if let peripheral {
             centralManager?.cancelPeripheralConnection(peripheral)
@@ -1353,7 +1433,10 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func startReconnectionTimer() {
-        Task {
+        guard resourceSession == nil, NimoResourceFixture.shared.allowsProducer(self) else { return }
+        resourceReconnectTasks += 1
+        Task { [self] in
+            defer { resourceReconnectTasks -= 1 }
             await reconnectionManager.start { [weak self] in
                 guard let self else { return false }
                 if await MainActor.run(body: {
@@ -1397,11 +1480,14 @@ class Nimo: NSObject, SGCManager {
     private func handleRxPacket(_ packet: Data) {
         if packet.count >= 10, packet[8] == 7, [1, 3, 4].contains(packet[9]) {
             if let response = NimoCanvasCodec.response(packet) {
+                let productAllowed = (DeviceManager.shared.sgc as? Nimo) === self && NimoResourceFixture.shared.allowsProducer(self)
+                guard productAllowed || (resourceSession?.releaseNonce != nil && canvas.acceptsReleaseResponse(key: response.key, payload: response.payload)) else { return }
                 if response.key == 1 { Bridge.log("NIMO: canvas Launch response status=\(response.payload.first.map(Int.init) ?? -1)") }
-                canvas.response(key: response.key, payload: response.payload)
+                canvas.response(key: response.key, payload: response.payload, receivedElapsedMs: resourceNotificationElapsedMs)
             }
             return
         }
+        guard (DeviceManager.shared.sgc as? Nimo) === self, NimoResourceFixture.shared.allowsProducer(self) else { return }
         receiveAssembler.cleanup()
         for frame in receiveAssembler.ingest(packet) {
             guard let decoded = NimoFrameCodec.decode(frame),
@@ -1479,6 +1565,7 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func onTwsState(_ connected: Bool) {
+        resourceSession?.observeTws(self, connected: connected, receivedElapsedMs: resourceNotificationElapsedMs)
         twsConnected = connected
         if connected, handshakeState == .awaitingTws {
             proceedToTimeSync()
@@ -1524,6 +1611,13 @@ class Nimo: NSObject, SGCManager {
     private func handleResponse(cmd: Int, key: Int, statusCode: Int, data: Data) {
         if cmd == NimoProtocol.CMD_SET_PARAMETER, key == NimoProtocol.SET_SYSTEM_LANGUAGE {
             Bridge.log("NIMO: English menu setting acknowledged=\(statusCode == 0) status=\(statusCode)")
+        }
+        if cmd == NimoProtocol.CMD_SET_PARAMETER, key == NimoProtocol.SET_TIME, let resourceSession {
+            guard let started = resourceSession.timeWriteStartedElapsedMs,
+                  let received = resourceNotificationElapsedMs, received >= started else { return }
+        }
+        if cmd == NimoProtocol.CMD_SET_PARAMETER, key == NimoProtocol.SET_TIME, let command = resourceTimeCommand {
+            resourceSession?.timeAck(self, command: command, status: statusCode, receivedElapsedMs: resourceNotificationElapsedMs)
         }
         resolvePendingAck(cmd: cmd, key: key, success: statusCode == 0)
 
@@ -1590,6 +1684,9 @@ class Nimo: NSObject, SGCManager {
     // MARK: - Mic Audio
 
     private func handleMicPacket(_ data: Data) {
+        if data == Data([0x52, 0, 0, 0]) { resourceSession?.micStopMarker(self, receivedElapsedMs: resourceNotificationElapsedMs) }
+        guard (DeviceManager.shared.sgc as? Nimo) === self, NimoResourceFixture.shared.allowsProducer(self) else { return }
+        if resourceSession?.releaseNonce != nil { return }
         guard let packet = NimoAudioParser.parse(data) else { return }
         let now = Date()
         switch packet.type {
@@ -1616,14 +1713,134 @@ class Nimo: NSObject, SGCManager {
             }
         }
     }
+
+    func resourceProducers() async -> NimoResourceProducers {
+        var result = NimoResourceProducers()
+        result.writerActive = writes.activeCount; result.writerQueued = writes.queuedCount
+        result.encoderWorker = canvasEncoder.workerCount; result.encoderDelivery = canvasEncoder.deliveryCount
+        result.postedCallbacks = resourceCallbackCounter.value + NimoResourceFixture.shared.pendingOriginalManagerEntries
+        result.canvasCommands = canvas.pendingCount; result.pendingAcks = pendingAcks.count
+        // Opus decode, LC3 conversion and Bridge emission are synchronous on
+        // Main on macOS; their entire extent is inside the posted CB callback.
+        result.audioWorkers = 0
+        result.scan = scanRequested ? 1 : 0
+        result.timers = (batteryPollTimer == nil ? 0 : 1) + (twsTimeoutItem == nil ? 0 : 1) + (pairingTimeoutItem == nil ? 0 : 1)
+        result.reconnectTask = await reconnectionManager.liveTasks + resourceReconnectTasks
+        return result
+    }
+
+    func releaseResource(_ original: NimoResourceSession) async {
+        if let resourceReleaseTask { await resourceReleaseTask.value; return }
+        guard original.isOwner(self) else { return }
+        // Retire setup waiters synchronously. Their ACK/timeout can already be
+        // queued when the capture fence is installed; shutdown is not a failed
+        // handshake. The real transport writes and Canvas drain remain intact.
+        handshakeState = .idle
+        cancelTwsTimeout()
+        resolvePendingAck(cmd: NimoProtocol.CMD_SET_PARAMETER, key: NimoProtocol.SET_TIME, success: false)
+        // Original Canvas ACKs may arrive while reconnect tasks are settling.
+        canvas.drainForRelease()
+        let task = Task { @MainActor [self] in
+            isDisconnecting = true
+            stopScan(); stopTimers(); cancelPairingTimeout(); cancelTwsTimeout()
+            canvasEncoder.invalidate()
+            await reconnectionManager.stopAndWait()
+            // Existing pending commands retain their real callbacks/deadlines.
+            // Exit is queued through the same canvas/write state machine.
+            if original.micStopRequired {
+                if let peripheral, let micChar {
+                    writes.enqueue(peripheral, characteristic: micChar, frames: [Data([0x52, 0, 0, 0])],
+                        finalStarted: { [weak self] in guard let self else { return }; original.micStopStarted(self) },
+                        completed: { [weak self] in guard let self else { return }; original.micStopWritten(self) })
+                } else { original.recordError("mic-stop-transport-unavailable") }
+            }
+            let deadline = NimoResourceClock.now() + 15_000
+            while NimoResourceClock.now() < deadline {
+                let producers = await resourceProducers()
+                if original.commandsSettled, producers.writerActive == 0, producers.writerQueued == 0,
+                   producers.encoderWorker == 0, producers.encoderDelivery == 0, producers.pendingAcks == 0,
+                   producers.canvasCommands == 0, producers.reconnectTask == 0, producers.postedCallbacks == 0,
+                   producers.scan == 0, producers.timers == 0, producers.audioWorkers == 0 { break }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            if !original.commandsSettled { original.recordError("release-command-evidence-incomplete") }
+            if let peripheral {
+                original.disconnectRequested(self)
+                centralManager?.cancelPeripheralConnection(peripheral)
+                // Retain this exact peripheral and delegate until original closure.
+                while original.disconnectCallbackElapsedMs == nil, original.connectionFailedElapsedMs == nil, NimoResourceClock.now() < deadline + 5_000 {
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+                if original.disconnectCallbackElapsedMs == nil, original.connectionFailedElapsedMs == nil { original.recordError("original-disconnect-callback-missing") }
+            } else if original.connectionFailedElapsedMs == nil { original.proveNoTransport() }
+            if original.disconnectCallbackElapsedMs != nil || original.connectionFailedElapsedMs != nil || original.noTransport {
+                resetSessionState()
+                peripheral = nil; txChar = nil; rxChar = nil; micChar = nil; opusDecoder = nil
+                resourceMicEnabled = false
+                NimoResourceManagerState.publish(owner: self, current: DeviceManager.shared.sgc as? Nimo) {
+                    DeviceStore.shared.apply("glasses", "micEnabled", false)
+                    DeviceStore.shared.apply("glasses", "connected", false)
+                    DeviceStore.shared.apply("glasses", "fullyBooted", false)
+                }
+            }
+        }
+        resourceReleaseTask = task
+        await task.value
+    }
+
 }
+
+#if SWIFT_PACKAGE
+// SDK-package-only, radio-free regression fixture; no app or command API.
+struct NimoPackageHandshakeObservation {
+    let errors: [String]
+    let pendingAcks: Int
+    let idle: Bool
+    let ready: Bool
+    let sameWriteEvidence: Bool
+    let ackStillAbsent: Bool
+    let noRadio: Bool
+    let physicalClosure: Bool
+}
+extension Nimo {
+    @MainActor
+    func packageExercisePendingTimeAck(cancel: Bool, timeoutBeforeEntry: Bool, activeTimeout: Bool = false) async -> NimoPackageHandshakeObservation {
+        let id = "00000000-0000-4000-8000-000000000001"
+        var tick: UInt64 = 100
+        let session = NimoResourceSession(captureNonce: id, pair: NimoResourcePair(name: "NIMO test", peripheralUuid: id), now: { tick += 1; return tick })
+        let peer = NSObject()
+        _ = session.admit(self, instanceId: resourceInstanceId, name: "NIMO test")
+        _ = session.beginTransport(self, peripheral: peer, uuid: id)
+        session.transportConnected(self, peer); session.observeTws(self, connected: true)
+        let command = session.beginTimeCommand(self)!
+        session.timeWriteStarted(self, command: command); session.timeWriteCompleted(self, command: command)
+        let started = session.timeWriteStartedElapsedMs, completed = session.timeWriteCompletedElapsedMs
+        packageTestResourceSession = session; resourceTimeCommand = command; handshakeState = .awaitingTimeAck
+        let key = (NimoProtocol.CMD_SET_PARAMETER << 8) | NimoProtocol.SET_TIME
+        let alreadyQueuedTimeout = pendingAckTimeoutAction(key)
+        pendingAcks[key] = PendingAck(onResult: { [weak self] ok in self?.handleTimeSyncResult(ok, expected: nil) }, timeoutItem: DispatchWorkItem(block: alreadyQueuedTimeout))
+        if activeTimeout { alreadyQueuedTimeout() }
+        _ = session.beginRelease(nonce: id, cancel: cancel, mic: false, canvas: false)
+        if timeoutBeforeEntry { alreadyQueuedTimeout() }
+        await releaseResource(session)
+        alreadyQueuedTimeout() // Closure already dequeued before cancellation.
+        handleTimeSyncResult(true, expected: nil)
+        session.timeAck(self, command: command, status: 0)
+        return NimoPackageHandshakeObservation(errors: session.errors, pendingAcks: pendingAcks.count,
+            idle: handshakeState == .idle, ready: session.ready,
+            sameWriteEvidence: started == session.timeWriteStartedElapsedMs && completed == session.timeWriteCompletedElapsedMs,
+            ackStillAbsent: session.timeAckElapsedMs == nil, noRadio: centralManager == nil && peripheral == nil && !scanRequested,
+            physicalClosure: session.settled(producers: NimoResourceProducers()))
+    }
+}
+#endif
 
 // MARK: - CBCentralManagerDelegate
 
 extension Nimo: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         let state = central.state
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Bluetooth state: \(state.rawValue)")
             if state == .poweredOn {
@@ -1640,7 +1857,7 @@ extension Nimo: CBCentralManagerDelegate {
     ) {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let rssiValue = rssi.intValue
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             self?.discovery.receive(peripheral, advertisedName: advertisedName, rssi: rssiValue)
         }
     }
@@ -1650,17 +1867,27 @@ extension Nimo: CBCentralManagerDelegate {
             _: CBCentralManager, connectionEventDidOccur event: CBConnectionEvent, for peripheral: CBPeripheral
         ) {
             guard event == .peerConnected else { return }
-            DispatchQueue.main.async { [weak self] in
+            self.postCallback { [weak self] in
                 self?.discovery.receive(peripheral)
             }
         }
     #endif
 
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Connected to \(peripheral.name ?? "unknown")")
+            if let original = self.resourceSession, original.matches(self, peripheral), original.connectionFailedElapsedMs != nil {
+                original.transportConnected(self, peripheral)
+                self.centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
             guard self.peripheral === peripheral else { return }
+            self.resourceSession?.transportConnected(self, peripheral)
+            guard NimoResourceFixture.shared.allowsProducer(self) else {
+                if self.resourceSession?.releaseNonce != nil { self.resourceSession?.disconnectRequested(self) }
+                self.centralManager?.cancelPeripheralConnection(peripheral); return
+            }
             self.writes.connected(peripheral)
             self.lastDeviceUUID = peripheral.identifier.uuidString
             peripheral.discoverServices([NimoBLE.SERVICE_UUID])
@@ -1670,12 +1897,15 @@ extension Nimo: CBCentralManagerDelegate {
     nonisolated func centralManager(
         _: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
     ) {
-        DispatchQueue.main.async { [weak self] in
+        let receivedElapsedMs = NimoResourceClock.now()
+        self.postCallback { [weak self] in
             guard let self else { return }
             Bridge.log(
                 "NIMO: Failed to connect \(peripheral.name ?? "unknown"): \(error?.localizedDescription ?? "unknown")"
             )
             guard self.peripheral === peripheral else { return }
+            self.resourceSession?.connectionFailed(self, peripheral, receivedElapsedMs: receivedElapsedMs)
+            self.writes.connectionClosed(peripheral)
             self.peripheral = nil
             self.startReconnectionTimer()
         }
@@ -1684,9 +1914,14 @@ extension Nimo: CBCentralManagerDelegate {
     nonisolated func centralManager(
         _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
     ) {
-        DispatchQueue.main.async { [weak self] in
+        let receivedElapsedMs = NimoResourceClock.now()
+        self.postCallback { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Disconnected: \(error?.localizedDescription ?? "clean")")
+            if let original = self.resourceSession, original.matches(self, peripheral) {
+                original.disconnected(self, peripheral, error: error?.localizedDescription, receivedElapsedMs: receivedElapsedMs)
+            }
+            self.writes.connectionClosed(peripheral)
             if self.isDisconnecting || self.peripheral !== peripheral { return }
 
             self.peripheral = nil
@@ -1695,9 +1930,11 @@ extension Nimo: CBCentralManagerDelegate {
             self.micChar = nil
             self.resetSessionState()
 
-            DeviceStore.shared.apply("glasses", "connected", false)
-            DeviceStore.shared.apply("glasses", "fullyBooted", false)
-            DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+            NimoResourceManagerState.publish(owner: self, current: DeviceManager.shared.sgc as? Nimo) {
+                DeviceStore.shared.apply("glasses", "connected", false)
+                DeviceStore.shared.apply("glasses", "fullyBooted", false)
+                DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+            }
             self.startReconnectionTimer()
         }
     }
@@ -1707,8 +1944,8 @@ extension Nimo: CBCentralManagerDelegate {
 
 extension Nimo: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.peripheral === peripheral else { return }
+        self.postCallback { [weak self] in
+            guard let self, self.peripheral === peripheral, NimoResourceFixture.shared.allowsProducer(self) else { return }
             guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == NimoBLE.SERVICE_UUID }) else {
                 self.abortTransport("NIMO service discovery failed")
                 return
@@ -1724,9 +1961,9 @@ extension Nimo: CBPeripheralDelegate {
               let characteristics = service.characteristics
         else { return }
 
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             guard let self else { return }
-            guard self.peripheral === peripheral else { return }
+            guard self.peripheral === peripheral, NimoResourceFixture.shared.allowsProducer(self) else { return }
             guard error == nil else { self.abortTransport("NIMO characteristic discovery failed"); return }
             for char in characteristics {
                 switch char.uuid {
@@ -1756,9 +1993,9 @@ extension Nimo: CBPeripheralDelegate {
         _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             guard let self else { return }
-            guard self.peripheral === peripheral else { return }
+            guard self.peripheral === peripheral, NimoResourceFixture.shared.allowsProducer(self) else { return }
             if let error {
                 self.abortTransport("Notification subscription failed")
                 Bridge.log("NIMO: notify enable failed: \(error.localizedDescription)")
@@ -1777,11 +2014,14 @@ extension Nimo: CBPeripheralDelegate {
     nonisolated func peripheral(
         _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
     ) {
+        let receivedElapsedMs = NimoResourceClock.now()
         guard let data = characteristic.value, error == nil else { return }
         let uuid = characteristic.uuid
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             guard let self else { return }
             guard self.peripheral === peripheral else { return }
+            self.resourceNotificationElapsedMs = receivedElapsedMs
+            defer { self.resourceNotificationElapsedMs = nil }
             if uuid == NimoBLE.CHAR_RX, characteristic === self.rxChar {
                 self.handleRxPacket(data)
             } else if uuid == NimoBLE.CHAR_MIC, characteristic === self.micChar {
@@ -1793,7 +2033,7 @@ extension Nimo: CBPeripheralDelegate {
     nonisolated func peripheral(
         _ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?
     ) {
-        DispatchQueue.main.async { [weak self] in
+        self.postCallback { [weak self] in
             self?.writes.written(peripheral, characteristic: characteristic, success: error == nil)
         }
     }

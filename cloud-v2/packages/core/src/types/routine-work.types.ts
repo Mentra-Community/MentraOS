@@ -1,4 +1,5 @@
 import {z} from 'zod'
+import {nimoCommissioningPlanSchema} from './nimo-commissioning.types'
 import {frameworkIdentitySchema} from './framework-request.types'
 import {routineIdentitySchema, routineResourceRequirementSchema} from './routine-definition.types'
 import {routineJobTargetSchema, portableRequirementsSchema} from './routine-job.types'
@@ -109,8 +110,17 @@ export const routineWorkRequestSchema = z.object({...fields,
   buildSource: testBuildSourceSchema, deadline: z.string().datetime({offset: true}).optional(),
 }).strict().refine(value => !value.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo' && value.requirements.resources.some(resource => resource.kind === 'glasses'), 'NIMO diagnostic requires exact Android NIMO authoring')
 export const authoringWorkSchema = z
-  .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema})
+  .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema,nimoCommissioning:nimoCommissioningPlanSchema.optional()})
   .strict()
+  .superRefine((work,ctx)=>{
+    if(!work.nimoCommissioning)return
+    const plan=work.nimoCommissioning
+    const ordered=(value:unknown):unknown=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,child])=>[key,ordered(child)])):value
+    if(work.requirements.platform!=='mac'||work.requirements.glasses.length!==1||work.requirements.glasses[0]!=='nimo'||
+      work.target.hostId!==plan.hostId||work.target.laneId!==plan.mac.laneId||work.source.revision!==plan.source.revision||
+      JSON.stringify(ordered(work.build))!==JSON.stringify(ordered(plan.mac.build)))
+      ctx.addIssue({code:'custom',message:'NIMO commissioning work differs from its exact Mac plan/source/build/host/target'})
+  })
   .refine(value => !value.build.diagnostic || value.requirements.platform === 'android' && value.requirements.glasses.length === 1 && value.requirements.glasses[0] === 'nimo', 'Diagnostic build requires exact NIMO authoring')
   .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= 256 * 1024, 'Work envelope exceeds its byte limit')
   .refine(
