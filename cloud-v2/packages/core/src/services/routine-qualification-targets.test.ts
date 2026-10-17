@@ -24,7 +24,7 @@ function row(jobId = 'pending-ota'): StoredRoutineJob {
   const definition = {id: 'ota-test', minimumRoutineApiVersion: 38, title: 'OTA', purpose: 'Check the selected app',
     platforms: ['ios-on-mac'], entry: 'home', account: 'lane', requirements: [], fixtures: [],
     steps: [{id: 'check', instruction: 'Check updates', expected: 'Updates checked'}],
-    execution: {resourceKinds: ['app', 'recorder']}, resourceRequirements: requirements.resources,
+    execution: {resourceKinds: ['app', 'recorder']}, resourceRequirements: structuredClone(requirements.resources),
     source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision, path: 'routines/ota-test/routine.ts'}};
   const value = {requestId: jobId, state: 'awaiting-runner' as const, fleetSelection: selection,
     fleetSelectionSha256: requestInputDigest(selection), fleetDeadline: new Date(now + 60_000),
@@ -60,7 +60,7 @@ function queuedRow(jobId = 'queued-ota') {
 function fixture(rows = [row()], observed = host()) {
   const reads: unknown[] = [];
   const forbidden = async (): Promise<never> => {throw new Error('Qualification must not mutate or resolve source/builds');};
-  const repository: RoutineJobRepository = {get: forbidden, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
+  const repository: RoutineJobRepository = {async get(jobId) {reads.push({jobId});return structuredClone(rows.find(value=>value.requestId===jobId) ?? null);}, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
     async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS, includeQueued, includeAccepted) {reads.push({hostId, laneId, limit, at, timeoutMS, includeQueued, includeAccepted});
       yield* structuredClone(rows.filter(value => includeQueued || value.state === 'awaiting-runner'));}};
   const service = new RoutineJobService(repository, {resolve: forbidden, isPrSuperseded: forbidden},
@@ -386,4 +386,41 @@ test('accepted target preserves exact dependency authority and counts its own re
  const wrong=structuredClone(current);(wrong.lanes[0]!.resources.at(-1) as any).exclusiveDependencies[0].resourceId='different';
  original.fleetBinding.descriptorRevision=routineLaneDescriptorRevision(wrong.lanes[0]!);
  expect(await fixture([original],wrong).service.qualificationTargets('pro1')).toEqual([]);
+});
+
+test('exact passive owner status preserves original target during busy-lane discovery omission without writes',async()=>{
+ const f=fixture(),target=(await f.service.qualificationTargets('pro1'))[0]!,before=structuredClone(f.rows);
+ f.observed.lanes[0]!.state='reserved';f.observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
+ const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
+  binding,controller:{incarnation:'boot',generation:1}};
+ expect(await f.service.qualificationTargets('pro1')).toEqual([]);
+ f.reads.splice(0);expect(await f.service.qualificationTargets('pro1',owned)).toEqual([target]);
+ expect(f.reads).toEqual([{jobId:target.jobId}]);expect(f.rows).toEqual(before);
+});
+test('owned lookup rejects cancellation, expiry, terminal effects, changed frozen inputs and another borrower',async()=>{
+ const baseline=fixture(),target=(await baseline.service.qualificationTargets('pro1'))[0]!;
+ const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
+  binding,controller:{incarnation:'boot',generation:1}};
+ const changes:Array<(value:StoredRoutineJob)=>void>=[
+  value=>{value.fleetCancellation={requestedAt:new Date(now).toISOString(),reason:'withdrawn'};},
+  value=>{value.fleetDeadline=new Date(now);},value=>{value.state='terminal';},value=>{value.runId='started';},
+  value=>{value.preparationRejection={code:'source-invalid',rejectedAt:new Date(now).toISOString(),inputSha256:hash,reason:'withdrawn'}as any;},
+  value=>{value.fleetTarget={hostId:'other'};},
+  value=>{value.fleetResourceReservation={id:'00000000-0000-4000-8000-000000000001',requestId:value.requestId,
+    fleetInputSha256:value.fleetInputSha256!,hostId:'other',laneId:'other-mac',poolId:'pool',minimumAvailableBytes:0,reservedAt:new Date(now).toISOString()};},
+  value=>{value.fleetSelection.build.headSha='c'.repeat(40);value.fleetSelectionSha256=requestInputDigest(value.fleetSelection);value.fleetInputSha256=routineJobInputDigest(value);},
+ ];
+ for(const change of changes){const value=row();change(value);const observed=host();observed.lanes[0]!.state='reserved';
+  observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
+  expect(await fixture([value],observed).service.qualificationTargets('pro1',owned)).toEqual([]);
+ }
+});
+test('owned target refuses stale or replacement reporter, grant, binding and substituted executable digest',async()=>{
+ const f=fixture(),target=(await f.service.qualificationTargets('pro1'))[0]!;
+ f.observed.lanes[0]!.state='reserved';f.observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
+ const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,
+  binding,controller:{incarnation:'boot',generation:1}};
+ for(const changed of [{...owned,generation:45},{...owned,ownerId:'other'},{...owned,controller:{incarnation:'other',generation:1}},
+   {...owned,binding:{...binding,installationId:'other'}},{...owned,inputSha256:f.rows[0]!.fleetInputSha256!}])
+  expect(await f.service.qualificationTargets('pro1',changed)).toEqual([]);
 });

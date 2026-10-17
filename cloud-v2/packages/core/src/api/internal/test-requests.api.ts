@@ -8,6 +8,7 @@ import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth
 import {RoutineDispatchService} from '../../services/routine-dispatch.service';
 import {GithubRoutineSourceGateway} from '../../services/routine-source-selection.service';
 import {RoutineJobService} from '../../services/routine-job.service';
+import {ownedRoutineQualificationSchema} from '../../types/routine-job.types';
 
 const acceptanceSchema = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/), acceptedAt: z.string().datetime({offset: true})}).strict();
@@ -30,8 +31,16 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   app.get("/", async c => {
     const requested = c.req.query('qualificationTargets');
     if (requested !== undefined && requested !== '1') return c.json({error: 'invalid_request'}, 400);
+    const ownedQuery = c.req.query('ownedQualification');
+    if (ownedQuery !== undefined && (requested !== '1' || ownedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
+    let owned;
+    if (ownedQuery !== undefined) {
+      let parsed: unknown;
+      try {parsed = JSON.parse(ownedQuery);} catch {return c.json({error: 'invalid_request'}, 400);}
+      owned = ownedRoutineQualificationSchema.parse(parsed);
+    }
     const page = await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50));
-    return c.json(requested === '1' ? {...page, qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId)} : page);
+    return c.json(requested === '1' ? {...page, qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId, owned), ...(owned ? {ownedQualification: owned} : {})} : page);
   });
   app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));

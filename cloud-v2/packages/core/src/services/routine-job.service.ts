@@ -11,7 +11,7 @@ import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-
 import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
-  routineQualificationTargetSchema, routineJobBindingSchema, type RoutineQualificationTarget, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
+  routineQualificationTargetSchema, routineJobBindingSchema, type RoutineQualificationTarget, ownedRoutineQualificationSchema, type OwnedRoutineQualification, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {selectedBuildInput} from '../types/test-build.types';
@@ -465,19 +465,26 @@ export class RoutineJobService {
       throw new TestRunError(503, 'Stored routine job exact inputs are unavailable');
   }
   /** Passive target discovery precedes permission matching; only local reservation can acquire resources. */
-  async qualificationTargets(hostId: string): Promise<RoutineQualificationTarget[]> {
+  async qualificationTargets(hostId: string, ownedInput?: OwnedRoutineQualification): Promise<RoutineQualificationTarget[]> {
+    const owned = ownedInput && ownedRoutineQualificationSchema.parse(ownedInput);
     const now = this.now(), host = await this.hosts.get(hostId), binding = host?.frameworkBinding;
     if (!host || host.hostId !== hostId || !binding || binding.routineApiVersion < 38 ||
       !Number.isFinite(Date.parse(host.receivedAt)) || Date.parse(host.receivedAt) > now || now - Date.parse(host.receivedAt) > 120_000) return [];
+    if (owned && (host.incarnation !== owned.controller.incarnation || host.incarnationGeneration !== owned.controller.generation ||
+      requestInputDigest(binding) !== requestInputDigest(owned.binding))) return [];
     const targets: RoutineQualificationTarget[] = [], queryDeadline = now + 5_000;
     for (const lane of host.lanes) {
-      if (lane.platform !== 'ios-on-mac' || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic' ||
+      if (lane.platform !== 'ios-on-mac' || (owned ? lane.id !== owned.laneId || !['reserved', 'running'].includes(lane.state) ||
+        lane.activity?.owner.kind !== 'authoring' || lane.activity.owner.id !== owned.ownerId || lane.activity.generation !== owned.generation
+        : lane.state !== 'idle' || Boolean(lane.activity)) || lane.dispatchMode !== 'automatic' ||
         (lane.glasses?.length ?? 0) > 1 || new Set(lane.resources.map(resource => resource.kind)).size !== lane.resources.length) continue;
-      if (!this.rows.qualificationCandidates || this.now() >= queryDeadline) break;
+      if (!owned && !this.rows.qualificationCandidates || this.now() >= queryDeadline) break;
       // Finite ordered scan, shared five-second query budget; current 26-member suites fit without a mutable cursor.
       let scanned = 0;
-      for await (const row of this.rows.qualificationCandidates(hostId, lane.id, 100, new Date(now), queryDeadline - this.now(),
-        binding.version >= QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION, binding.routineApiVersion >= ACCEPTED_APP_QUALIFICATION_API_VERSION)) {
+      const candidates = owned ? [await this.rows.get(owned.jobId)].filter((row): row is StoredRoutineJob => row !== null) :
+        this.rows.qualificationCandidates!(hostId, lane.id, 100, new Date(now), queryDeadline - this.now(),
+          binding.version >= QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION, binding.routineApiVersion >= ACCEPTED_APP_QUALIFICATION_API_VERSION);
+      for await (const row of candidates) {
         if (++scanned > 100 || this.now() >= queryDeadline) break;
         const accepted = row.state === 'accepted', queued = row.state === 'queued', bound = queued || accepted;
         const receipt = row.hostReceipt;
@@ -491,6 +498,9 @@ export class RoutineJobService {
           row.fleetCancellation || !row.fleetPreparation ||
           row.fleetDeadline.getTime() <= now || row.fleetSelection.platform !== 'ios-on-mac' ||
           row.fleetTarget?.hostId && row.fleetTarget.hostId !== hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id) continue;
+        if (owned && row.fleetResourceReservation && (row.fleetResourceReservation.hostId !== hostId ||
+          row.fleetResourceReservation.laneId !== lane.id || row.fleetResourceReservation.requestId !== row.requestId ||
+          row.fleetResourceReservation.fleetInputSha256 !== row.fleetInputSha256)) continue;
         this.assertExactInputs(row);
         const admission = row.fleetResourceAdmission === undefined ? undefined : fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission);
         if (admission && (!admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== lane.id ||
@@ -514,12 +524,14 @@ export class RoutineJobService {
         const observedLane = accepted ? {...lane, resources: lane.resources.map(resource => resource.kind === 'recorder' && resource.storage ?
           {...resource, storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
             value.requestId !== row.requestId || value.inputSha256 !== row.inputSha256)}} : resource)} : lane;
-        if (!compatibleRoutineLane(structural, observedLane, undefined, now) || appGranted) continue;
+        if (!compatibleRoutineLane(structural, observedLane, undefined, now) || !owned && appGranted) continue;
         const target = {jobId: row.requestId, hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(),
           selection: accepted ? {...row.fleetSelection, routineSource: row.fleetPreparation.routineSource} : row.fleetSelection, requirements,
           ...(accepted ? {accepted: {...receipt!, binding, controller: {incarnation: host.incarnation, generation: host.incarnationGeneration}}} : {}),
           ...(bound || admission ? {target: {hostId, laneId: lane.id}} : row.fleetTarget ? {target: row.fleetTarget} : {})};
-        targets.push(routineQualificationTargetSchema.parse({...target, inputSha256: requestInputDigest(target)}));
+        const projected = routineQualificationTargetSchema.parse({...target, inputSha256: requestInputDigest(target)});
+        if (owned && (projected.jobId !== owned.jobId || projected.inputSha256 !== owned.inputSha256)) continue;
+        targets.push(projected);
         break;
       }
     }
