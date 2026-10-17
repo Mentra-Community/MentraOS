@@ -293,6 +293,16 @@ final class NimoResourceConnectedDiscovery: NSObject, CBCentralManagerDelegate {
     private var central: CBCentralManager?
     private var stopped = false
     private var running = false
+    private var now: () -> UInt64 = NimoResourceClock.now
+    private var pause: () async throws -> Void = { try await Task.sleep(nanoseconds: 50_000_000) }
+    #if SWIFT_PACKAGE
+    private var packageSample: (() -> (CBManagerState, [(String, String?)]))?
+    func packageConfigureObserver(now: @escaping () -> UInt64, pause: @escaping () async throws -> Void,
+                                  sample: @escaping () -> (CBManagerState, [(String, String?)])) {
+        precondition(!running && central == nil)
+        self.now = now; self.pause = pause; packageSample = sample
+    }
+    #endif
     nonisolated private let callbacks = NimoResourceCallbackCounter()
     var callbacksPending: Int { callbacks.value }
     init(name: String, startedElapsedMs: UInt64) {
@@ -311,18 +321,41 @@ final class NimoResourceConnectedDiscovery: NSObject, CBCentralManagerDelegate {
     func discoverConnected() async {
         guard !running, !stopped else { return }
         running = true
+        #if SWIFT_PACKAGE
+        if packageSample == nil {
+            central = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        }
+        #else
         central = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        #endif
         let deadline = ledger.startedElapsedMs + 5_000
-        while !stopped, NimoResourceClock.now() < deadline {
-            if let central {
-                switch central.state {
-                case .poweredOn:
-                    ledger.observeConnectedSnapshot(retrieveConnected(central).map { ($0.identifier.uuidString.lowercased(), $0.name) })
-                case .unsupported, .unauthorized: ledger.recordError("connected-service-observer-unavailable"); finishDiscovery(); return
-                default: break
-                }
+        while !stopped {
+            // A post-sleep final powered-on retrieval replaces earlier facts.
+            let finalSample = now() >= deadline
+            var state = central?.state ?? .unknown
+            #if SWIFT_PACKAGE
+            let simulated = packageSample?()
+            if let simulated { state = simulated.0 }
+            #endif
+            switch state {
+            case .poweredOn:
+                #if SWIFT_PACKAGE
+                if let simulated { ledger.observeConnectedSnapshot(simulated.1) }
+                else if let central { ledger.observeConnectedSnapshot(retrieveConnected(central).map { ($0.identifier.uuidString.lowercased(), $0.name) }) }
+                else { ledger.observeConnectedSnapshot([]) }
+                #else
+                if let central { ledger.observeConnectedSnapshot(retrieveConnected(central).map { ($0.identifier.uuidString.lowercased(), $0.name) }) }
+                else { ledger.observeConnectedSnapshot([]) }
+                #endif
+            case .unsupported, .unauthorized:
+                ledger.observeConnectedSnapshot([])
+                ledger.recordError("connected-service-observer-unavailable"); finishDiscovery(); return
+            default:
+                // Radio loss invalidates the current snapshot, not history.
+                ledger.observeConnectedSnapshot([])
             }
-            do { try await Task.sleep(nanoseconds: 50_000_000) }
+            if finalSample { break }
+            do { try await pause() }
             catch { ledger.recordError("discovery-task-cancelled"); ledger.cancel(); finishDiscovery(); return }
         }
         finishDiscovery()
@@ -345,7 +378,7 @@ final class NimoResourceConnectedDiscovery: NSObject, CBCentralManagerDelegate {
         // Callback contains no Main work; the queue barrier cannot deadlock.
         queue.sync {}
         central = nil
-        ledger.finish(at: NimoResourceClock.now(), callbacksPending: callbacksPending)
+        ledger.finish(at: now(), callbacksPending: callbacksPending)
         running = false
     }
 }

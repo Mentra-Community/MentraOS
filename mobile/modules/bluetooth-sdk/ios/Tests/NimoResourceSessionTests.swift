@@ -1,4 +1,5 @@
 import Foundation
+import CoreBluetooth
 @testable import MentraBluetoothSDK
 import XCTest
 
@@ -88,6 +89,47 @@ final class NimoResourceSessionTests: XCTestCase {
         XCTAssertTrue(fixture.allowsManager("G2", name: "G2"))
         do { _ = try await fixture.packagePerform(discoveryRequest(operation: "arm", capture: uuid, nonce: "00000000-0000-4000-8000-000000000003")); XCTFail("cancelled discovery admitted arm") }
         catch { XCTAssertNil(fixture.session) }
+    }
+    @MainActor
+    func testActualObserverLoopRequiresFreshFinalRetrievalAndRejectsRadioStateLossWithoutRadio() async {
+        for finalState in [CBManagerState.poweredOn, .poweredOff, .resetting] {
+            for finalPeerPresent in [false, true] {
+                var clock: UInt64 = 100, samples = 0, pauses = 0
+                let observer = NimoResourceConnectedDiscovery(name: "NIMO exact", startedElapsedMs: clock)
+                observer.packageConfigureObserver(now: { clock }, pause: {
+                    pauses += 1; clock += 5_000
+                }, sample: {
+                    samples += 1
+                    if samples == 1 { return (.poweredOn, [(self.uuid, "NIMO exact")]) }
+                    return (finalState, finalPeerPresent ? [(self.uuid, "NIMO exact")] : [])
+                })
+                await observer.discoverConnected()
+                XCTAssertEqual(samples, 2)
+                XCTAssertEqual(pauses, 1)
+                XCTAssertEqual(observer.callbacksPending, 0)
+                XCTAssertEqual(observer.ledger.settledElapsedMs, 5_100)
+                XCTAssertEqual(observer.ledger.selectedPeripheralUuid, finalState == .poweredOn && finalPeerPresent ? uuid : nil)
+                XCTAssertEqual(observer.ledger.candidates.count, 1)
+            }
+        }
+    }
+    @MainActor
+    func testActualObserverInvalidatesIntermediateRadioLossAndCancellationCannotReusePreviousSample() async {
+        var clock: UInt64 = 100, samples = 0
+        let observer = NimoResourceConnectedDiscovery(name: "NIMO exact", startedElapsedMs: clock)
+        observer.packageConfigureObserver(now: { clock }, pause: {
+            clock += 2_500
+            if clock == 5_100 { throw CancellationError() }
+        }, sample: {
+            samples += 1
+            return samples == 1 ? (.poweredOn, [(self.uuid, "NIMO exact")]) : (.resetting, [])
+        })
+        await observer.discoverConnected()
+        XCTAssertEqual(samples, 2)
+        XCTAssertNil(observer.ledger.selectedPeripheralUuid)
+        XCTAssertEqual(observer.ledger.settledElapsedMs, 5_100)
+        XCTAssertTrue(observer.ledger.cancelled)
+        XCTAssertTrue(observer.ledger.errors.contains("discovery-task-cancelled"))
     }
     private let uuid = "00000000-0000-4000-8000-000000000001"
     private final class Clock { var value: UInt64 = 100; func next() -> UInt64 { value += 1; return value } }
