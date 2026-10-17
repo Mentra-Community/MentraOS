@@ -27,7 +27,7 @@ import {waitForOtaInternet} from "./OtaInternetRecovery"
 import {submitOtaFailureReport, type OtaFailureReason} from "./OtaFailureReportService"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
-import {isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
+import {checkCurrentGlassesForUpdate, isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
@@ -325,17 +325,17 @@ class OtaInstallCoordinator {
   prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
     if (!isOtaCheckForCurrentDevice(checkResult)) throw new Error("The checked glasses have changed")
     const state = useGlassesStore.getState()
-    if (!state.wifiStatusKnown) {
+    const hotspotSupported = state.hotspotOtaVersion === 1
+    if (!hotspotSupported && !state.wifiStatusKnown) {
       throw new Error("Glasses Wi-Fi status is not available")
     }
-    const hotspotSupported = state.hotspotOtaVersion === 1
     const wifiConnected = state.wifi.state === "connected"
     if (!wifiConnected && !hotspotSupported) {
       throw new Error("Connected glasses require Wi-Fi for OTA")
     }
     this.reportAttemptId = `${Date.now()}-${++this.reportAttemptSequence}`
     this.preparedCheckResult = checkResult
-    this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
+    this.selectedTransport = hotspotSupported ? "hotspot" : "wifi"
     this.observedTransport = this.selectedTransport
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
@@ -343,6 +343,18 @@ class OtaInstallCoordinator {
     this.hotspotArtifact = null
     this.emitInternalChange()
     return this.selectedTransport
+  }
+
+  private initializeCheckedInstall(selected: OtaCheckCurrentGlassesResult["updateInfo"]): void {
+    const target =
+      selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0
+        ? selected.versionCode
+        : null
+    this.versionChangeSession = target !== null
+    this.versionChangeTarget = target
+    if (target !== null) {
+      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${target}`)
+    }
   }
 
   /**
@@ -364,11 +376,7 @@ class OtaInstallCoordinator {
     // A late completion from the previous OTA step can clear the store's offer
     // between check and mount. Keep this install bound to its prepared check.
     const selected = this.preparedCheckResult ? this.preparedCheckResult.updateInfo : initialState.otaUpdateAvailable
-    if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
-      this.versionChangeSession = true
-      this.versionChangeTarget = selected.versionCode
-      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${selected.versionCode}`)
-    }
+    this.initializeCheckedInstall(selected)
     const recoveryTarget = this.otaStartOwnership?.versionChangeTarget
     if (this.otaStartOwnership?.outcome === "acknowledged" && recoveryTarget !== undefined) {
       // The progress route is an observer of this acknowledged install. A remount
@@ -1648,6 +1656,9 @@ class OtaInstallCoordinator {
     if (existingOwnership?.outcome === "rejected" && !this.prepareFreshOtaStartAttempt()) {
       return Promise.resolve()
     }
+    // Capability is cleared on link loss before version_info returns. Preserve
+    // hotspot selection for these paired glasses; the device boundary resets it.
+    if (useGlassesStore.getState().hotspotOtaVersion === 1) this.selectedTransport = "hotspot"
     const ownership: OtaStartOwnership = {
       outcome: "pending",
       promise: Promise.resolve(),
@@ -1674,7 +1685,20 @@ class OtaInstallCoordinator {
       if (this.selectedTransport === "hotspot") {
         if (!this.hotspotManifestUrl) {
           if (!this.preparedCheckResult) {
-            throw new Error("No selected OTA check is available for hotspot staging")
+            const result = await checkCurrentGlassesForUpdate()
+            if (!isCurrentAttempt()) return
+            if (!result.hasCheckCompleted || !result.updateAvailable || !result.manifestBody) {
+              throw new Error("No selected OTA check is available for hotspot staging")
+            }
+            this.preparedCheckResult = result
+            this.initializeCheckedInstall(result.updateInfo)
+            // The recovery check can reveal a downgrade after the start attempt
+            // was created. Give that detour its full bounded recovery deadline.
+            if (this.versionChangeSession) {
+              ownership.deadlineAt = Date.now() + LEGACY_GLOBAL_OTA_TIMEOUT_MS
+              this.clearGlobalTimeout()
+              this.maybeStartGlobalTimeout()
+            }
           }
           const manifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
             if (!isCurrentAttempt()) return
