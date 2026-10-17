@@ -360,12 +360,16 @@ class NimoLifecycleTest {
     assertEquals(0, snapshot.getJSONObject("timeAck").getInt("statusCode"))
     assertFalse(snapshot.getJSONObject("timeAck").isNull("writeStartedAtEpochMs"))
     assertEquals("READY", snapshot.getString("handshake"))
-    val causalTws = snapshot.getJSONObject("tws").getLong("handshakeAtEpochMs")
+    val causalTws = snapshot.getJSONObject("clock").getLong("handshakeTwsElapsedMs")
     Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
     Nimo::class.java.getDeclaredMethod("onTwsState", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(nimo, true)
     val heartbeat = nimo.resourceSnapshot()
-    assertEquals(causalTws, heartbeat.getJSONObject("tws").getLong("handshakeAtEpochMs"))
-    assertTrue(heartbeat.getJSONObject("tws").getLong("atEpochMs") > heartbeat.getJSONObject("timeAck").getLong("atEpochMs"))
+    // Raw phone epochs are diagnostics; event order belongs to phone elapsed time.
+    assertFalse(heartbeat.getJSONObject("tws").isNull("atEpochMs"))
+    assertFalse(heartbeat.getJSONObject("timeAck").isNull("atEpochMs"))
+    val clock = heartbeat.getJSONObject("clock")
+    assertEquals(causalTws, clock.getLong("handshakeTwsElapsedMs"))
+    assertTrue(clock.getLong("twsElapsedMs") > clock.getLong("timeAckElapsedMs"))
     assertEquals("READY", heartbeat.getString("handshake"))
   }
 
