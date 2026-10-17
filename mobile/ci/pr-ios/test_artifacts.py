@@ -1,4 +1,5 @@
 from test_nimo_capability import CapabilityTests
+from test_nimo_symbol_sections import SectionsTests
 import datetime as dt
 import json
 from pathlib import Path
