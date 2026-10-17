@@ -34,8 +34,18 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
     if (!row) continue;
     const message = object(row.error)?.message;
     if (run.platform === 'android' && row.command === 'failure' && row.state === 'error' && typeof row.phase === 'string' &&
-      typeof row.actionId === 'string' && typeof message === 'string' && typeof row.screenshotAssetId === 'string')
-      add(row.phase, row.actionId, message, row.screenshotAssetId);
+      typeof row.actionId === 'string' && typeof message === 'string') {
+      if (typeof row.screenshotAssetId === 'string') add(row.phase, row.actionId, message, row.screenshotAssetId);
+      // The Android producer records up to four desktop images on this same
+      // terminal row, independently of phone capture. Multiple displays remain
+      // evidence, but the single-image viewer cannot choose between them.
+      if (row.desktopAssetIds !== undefined) {
+        const ids = row.desktopAssetIds;
+        if (Array.isArray(ids) && ids.length > 0 && ids.length <= 4 && ids.every(id => typeof id === 'string'))
+          for (const id of ids) add(row.phase, row.actionId, message, id, 'desktop');
+        else add(row.phase, row.actionId, message, '', 'desktop');
+      }
+    }
     if (run.platform !== 'ios-on-mac' || row.privateEvidence) continue;
     // Only the execution boundary associates a terminal failure. A retained
     // nested reporter row may have been caught before more app interaction.
