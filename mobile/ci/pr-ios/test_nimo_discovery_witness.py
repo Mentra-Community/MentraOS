@@ -2,14 +2,14 @@ import copy
 import json
 from pathlib import Path
 import unittest
-from nimo_discovery_witness import retrieval_argument, objc_selector, compiled_discovery, DISCOVERY_SELECTORS, observer_calls, distinct_witnesses
+from nimo_discovery_witness import retrieval_argument, objc_selector, compiled_discovery, DISCOVERY_SELECTORS, observer_calls, distinct_witnesses, RETRIEVAL_SIGNATURE, RETRIEVAL_SPECIALIZATION, StorageMetadata
 
 
 class DiscoveryWitnessTests(unittest.TestCase):
     def setUp(self):
         self.fixture = json.loads((Path(__file__).parent / 'fixtures/nimo-connected-retrieval.json').read_text())
 
-    def prove(self, body=None, fixture=None):
+    def prove(self, body=None, fixture=None, metadata=None):
         f = fixture or self.fixture
         def read(address, count): return bytes.fromhex(f['reads'][f'{address:x}:{count}'])
         def pointer(slot): return f['pointers'][hex(slot)]
@@ -19,10 +19,118 @@ class DiscoveryWitnessTests(unittest.TestCase):
             return b is not None and b[0] <= address and address + count <= b[1]
         def selector(address): return objc_selector(address, read, pointer, imported, section)
         return retrieval_argument(body or f['body'], read, imported, selector, set(f['metadataCalls']),
-                                  lambda address, count, name: section(address, count, '__TEXT', name))
+                                  lambda address, count, name: section(address, count, '__TEXT', name), metadata)
+
+    def actual_fixture(self):
+        return json.loads((Path(__file__).parent / 'fixtures/nimo-connected-retrieval-ios-10a04.json').read_text())
+
+    def prove_actual(self, fixture=None):
+        f = fixture or self.actual_fixture()
+        def read(address, count):
+            try: return bytes.fromhex(f['reads'][f'{address:x}:{count}'])
+            except KeyError: raise ValueError('unavailable actual selected bytes')
+        def bind(slot):
+            try: return f['bindings'][hex(slot)]
+            except KeyError: raise ValueError('unavailable actual selected bind')
+        def imported(slot): return bind(slot)['symbol']
+        def pointer(slot):
+            try: return f['pointers'][hex(slot)]
+            except KeyError: raise ValueError('unavailable actual selected rebase')
+        def section(address, count, segment, name):
+            b = f['sections'].get(segment + ',' + name)
+            return b is not None and b[0] <= address and address + count <= b[1]
+        def static(address, count, kind):
+            if kind == 'zero-cache':
+                b = f['sections'].get('__DATA,__data')
+                valid = address % 8 == 0 and count == 8 and f['segmentProtections'].get('__DATA', 0) & 3 == 3 and b is not None and b[3] & 0xff == 0 and section(address, count, '__DATA', '__data')
+            else:
+                name = {'descriptor': '__const', 'typeref': '__swift5_typeref'}[kind]
+                b = f['sections'].get('__TEXT,' + name)
+                valid = f['segmentProtections'].get('__TEXT', 0) & 1 and not f['segmentProtections'].get('__TEXT', 0) & 2 and b is not None and b[3] & 0xff == 0 and section(address, count, '__TEXT', name)
+            if not valid: raise ValueError('wrong actual static section')
+            return read(address, count)
+        def body(address):
+            try: return f['functions'][hex(address)]
+            except KeyError: raise ValueError('unavailable exact delivered helper body')
+        metadata = StorageMetadata(body, lambda address: f['names'].get(hex(address)),
+                                   {int(a, 16): v for a, v in f['imports'].items()}, bind, static)
+        return retrieval_argument(body(f['retrievalAddress']), read, imported,
+            lambda address: objc_selector(address, read, pointer, imported, section), set(),
+            lambda address, count, name: bool(f['segmentProtections'].get('__TEXT', 0) & 1 and not f['segmentProtections'].get('__TEXT', 0) & 2 and section(address, count, '__TEXT', name)), metadata)
+
+    def test_actual_ios_storage_policy_both_branches_and_aliased_helper_bodies(self):
+        self.assertTrue(self.prove_actual())
+        f = self.actual_fixture()
+        # The class helper has no usable compiler identity; names do not grant
+        # authority. Its entire delivered body still must match.
+        f['names']['0x10002a694'] = 'an arbitrary aliased helper name'
+        self.assertTrue(self.prove_actual(f))
+        f['functions']['0x10002a694'] = f['functions']['0x10002a694'].replace('ldr x0, [x2]', 'mov x0, #0x0')
+        with self.assertRaises(ValueError): self.prove_actual(f)
+
+    def test_actual_metadata_wrong_bind_descriptors_caches_and_layout_are_refused(self):
+        mutations = [
+            ('binding', '0x10385c828', 'CoreBluetooth', '_OBJC_CLASS_$_CBPeripheral'),
+            ('binding', '0x103570948', 'libswiftCore', '_$sWrongStorageContext'),
+            ('binding', '0x103570948', 'Foreign', '_$ss23_ContiguousArrayStorageCMn'),
+            ('read', '10304de6a:17'), ('read', '10302fb1e:10'), ('read', '103920058:8'),
+            ('body', '0x100dbd498', 'ldr w8, [x0, #0x30]', 'ldr x8, [x0, #0x30]'),
+            ('body', '0x100dbd498', 'ldrh w9, [x0, #0x34]', 'ldr w9, [x0, #0x34]'),
+            ('body', '0x100dbd498', 'and x8, x8, #0x1fffffff8', 'and x8, x8, #0xfffffff8'),
+            ('body', '0x100dbd498', 'orr x2, x9, #0x7', 'orr x2, x9, #0xf'),
+            ('body', '0x100dbd498', 'add x1, x1, #0x58', 'add x1, x1, #0x50'),
+            ('body', '0x100b8cd28', 'adrp x0, 0x103920000', 'adrp x0, 0x10304d000'),
+            ('body', '0x100b8cd28', 'add x0, x0, #0x58', 'add x0, x0, #0x50'),
+            ('body', '0x10002a694', 'stlr x0, [x19]', 'stlr x0, [x20]'),
+            ('body', '0x10063002c', 'cbz w0, 0x10063008c', 'cbz w0, 0x100630094'),
+            ('body', '0x100005b7c', 'mov x3, #0x0', 'mov x3, x19'),
+        ]
+        for mutation in mutations:
+            f = self.actual_fixture()
+            if mutation[0] == 'binding': f['bindings'][mutation[1]] = {'library': mutation[2], 'symbol': mutation[3]}
+            elif mutation[0] == 'read':
+                value = bytes.fromhex(f['reads'][mutation[1]])
+                f['reads'][mutation[1]] = (bytes([value[0] ^ 1]) + value[1:]).hex()
+            else:
+                self.assertIn(mutation[2], f['functions'][mutation[1]])
+                f['functions'][mutation[1]] = f['functions'][mutation[1]].replace(mutation[2], mutation[3])
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError): self.prove_actual(f)
+
+    def test_actual_early_releases_and_w_pointer_truncation_still_refuse(self):
+        for before, after in [('100dbd554 mov x0, x20', '100dbd554 mov x0, x19'),
+                              ('100dbd524 mov x0, x21', '100dbd524 mov x0, x20'),
+                              ('100dbd524 mov x0, x21', '100dbd524 mov x0, x23'),
+                              ('100dbd554 mov x0, x20', '100dbd554 mov x0, x21'),
+                              ('mov x19, x0', 'mov w19, w0')]:
+            f = self.actual_fixture();key=hex(f['retrievalAddress'])
+            self.assertIn(before, f['functions'][key])
+            f['functions'][key] = f['functions'][key].replace(before, after)
+            with self.subTest(before=before, after=after), self.assertRaises(ValueError): self.prove_actual(f)
+
+    def test_cache_must_be_writable_and_descriptors_must_be_readonly_regular_data(self):
+        for segment, protection in (('__DATA', 1), ('__DATA', 2), ('__TEXT', 3)):
+            f = self.actual_fixture();f['segmentProtections'][segment] = protection
+            with self.subTest(segment=segment, protection=protection), self.assertRaises(ValueError): self.prove_actual(f)
+        for section in ('__DATA,__data', '__TEXT,__const', '__TEXT,__swift5_typeref'):
+            f = self.actual_fixture();f['sections'][section][3] = 1
+            with self.subTest(section=section), self.assertRaises(ValueError): self.prove_actual(f)
+
+    def test_allocator_cannot_mix_two_recognized_storage_returns(self):
+        f = self.actual_fixture();key=hex(f['retrievalAddress'])
+        lines = f['functions'][key].splitlines()[1:]
+        index = next(i for i, line in enumerate(lines) if '; _swift_allocObject' in line)
+        operations = [line.split(' ', 1)[1] for line in lines]
+        operations[index:index] = ['mov x21, x1', 'mov x22, x2', 'bl 0x100b8cd28', 'mov x1, x21', 'mov x2, x22']
+        f['functions'][key] = '[mutated-body]:\n' + '\n'.join(f'{f["retrievalAddress"]+4*i:x} {op}' for i, op in enumerate(operations))
+        with self.assertRaisesRegex(ValueError, 'allocation changed'): self.prove_actual(f)
 
     def test_actual_optimized_fixed_service_expression(self):
         self.assertTrue(self.prove())
+
+    def test_production_requires_validated_dynamic_metadata_not_legacy_constant_layout(self):
+        def unavailable(*_): raise ValueError('unsupported prototype metadata shape')
+        production = StorageMetadata(unavailable, lambda _: None, {}, unavailable, unavailable)
+        with self.assertRaises(ValueError): self.prove(metadata=production)
 
     def test_cross_capability_method_reuse_including_macho_underscore_is_refused(self):
         distinct_witnesses(['fixturePerform:_$sLifecycle'], ['discoveryStart:_$sDiscovery'])
@@ -89,12 +197,22 @@ class DiscoveryWitnessTests(unittest.TestCase):
         selectors = {'fixturePerform': 'NimoResourceFixture.perform(', **DISCOVERY_SELECTORS,
                      'discoveryFinish': 'NimoResourceConnectedDiscovery.finishDiscovery('}
         names = ['MentraBluetoothSDK.' + value + ')' for value in selectors.values()]
+        names[list(selectors).index('discoveryRetrieve')] = RETRIEVAL_SIGNATURE
         symbols = {key: '_$sProof' + key for key in selectors}
         addresses = {key: 0x1000 + index * 0x100 for index, key in enumerate(selectors)}
         nm = '\n'.join(f'{addresses[key]:x} t {symbols[key]}' for key in selectors)
         assembly = symbols['fixturePerform'] + ':\n1000 bl 0x1100\n1004 bl 0x1300\n' + symbols['discoveryStart'] + ':\n1100 bl 0x1200\n1104 bl 0x1400\n' + symbols['discoveryStop'] + ':\n1300 bl 0x1400\n'
         facts = {'fixedServiceArgument': True, 'retrievalSymbol': symbols['discoveryRetrieve']}
         self.assertEqual(len(compiled_discovery(nm, names, assembly, (), facts)['symbols']), 3)
+        specialized = names.copy();specialized[list(selectors).index('discoveryRetrieve')] = RETRIEVAL_SPECIALIZATION + RETRIEVAL_SIGNATURE
+        self.assertEqual(len(compiled_discovery(nm, specialized, assembly, (), facts)['symbols']), 3)
+        with self.assertRaisesRegex(ValueError, 'unproven discovery edge'):
+            compiled_discovery(nm, specialized, assembly.replace('bl 0x1200', 'nop'), (), facts)
+        for bad_name in ('function signature specialization <Arg[0] = Dead> of ' + RETRIEVAL_SIGNATURE,
+                         'arbitrary prefix ' + RETRIEVAL_SIGNATURE,
+                         RETRIEVAL_SPECIALIZATION + RETRIEVAL_SIGNATURE.replace('__C.CBCentralManager', 'Swift.Int')):
+            bad = specialized.copy();bad[list(selectors).index('discoveryRetrieve')] = bad_name
+            with self.subTest(name=bad_name), self.assertRaises(ValueError): compiled_discovery(nm, bad, assembly, (), facts)
         for bad in (assembly.replace('bl 0x1100', 'nop'), assembly.replace('bl 0x1200', 'nop'), assembly.replace('bl 0x1300', 'nop'), assembly.replace('bl 0x1400', 'nop')):
             with self.assertRaisesRegex(ValueError, 'unproven discovery edge'): compiled_discovery(nm, names, bad, (), facts)
         with self.assertRaises(ValueError): compiled_discovery(nm, names, assembly, (), {})

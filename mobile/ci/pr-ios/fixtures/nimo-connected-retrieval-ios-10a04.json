@@ -1,0 +1,145 @@
+{
+  "sourceCommit": "10a04c29d9e17e01d3d848eb99c2774749df1791",
+  "executableSha256": "8cf0c299064afd44cd626242fa4199ca7137f9721124951d9dc0298a4605af46",
+  "fixupsSha256": "05b1fb094e200cbe683a87482bf649e4bdfa4c0b61f6290ed02d1ce0363d8289",
+  "retrievalAddress": 4309374104,
+  "retrievalSymbol": "_$s18MentraBluetoothSDK30NimoResourceConnectedDiscoveryC08retrieveF033_54BC54EBBC8DB0E627CCC67F708BF2A6LLySaySo12CBPeripheralCGSo16CBCentralManagerCFTf4nd_n",
+  "retrievalName": "function signature specialization <Arg[1] = Dead> of MentraBluetoothSDK.NimoResourceConnectedDiscovery.retrieveConnected(__C.CBCentralManager) -> [__C.CBPeripheral]",
+  "functions": {
+    "0x100dbd498": "[address-only]:\n100dbd498 stp x24, x23, [sp, #-0x40]!\n100dbd49c stp x22, x21, [sp, #0x10]\n100dbd4a0 stp x20, x19, [sp, #0x20]\n100dbd4a4 stp x29, x30, [sp, #0x30]\n100dbd4a8 add x29, sp, #0x30\n100dbd4ac mov x19, x0\n100dbd4b0 bl 0x100b8cd28\n100dbd4b4 ldr w8, [x0, #0x30]\n100dbd4b8 ldrh w9, [x0, #0x34]\n100dbd4bc add x8, x8, #0x7\n100dbd4c0 and x8, x8, #0x1fffffff8\n100dbd4c4 add x1, x8, #0x8\n100dbd4c8 orr x2, x9, #0x7\n100dbd4cc bl 0x102c1318c ; _swift_allocObject\n100dbd4d0 mov x20, x0\n100dbd4d4 adrp x8, 0x102cd7000\n100dbd4d8 ldr q0, [x8, #0xf10]\n100dbd4dc str q0, [x0, #0x10]\n100dbd4e0 adrp x8, 0x1031ab000\n100dbd4e4 add x8, x8, #0xb20\n100dbd4e8 sub x8, x8, #0x20\n100dbd4ec orr x1, x8, #0x8000000000000000\n100dbd4f0 mov x0, #0x24\n100dbd4f4 movk x0, #0xd000, lsl #48\n100dbd4f8 bl 0x102c0becc ; _$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF\n100dbd4fc mov x21, x0\n100dbd500 adrp x22, 0x10385c000\n100dbd504 add x22, x22, #0x828\n100dbd508 ldr x0, [x22]\n100dbd50c bl 0x102c1291c ; _objc_opt_self\n100dbd510 mov x2, x21\n100dbd514 bl 0x102c15880\n100dbd518 mov x29, x29\n100dbd51c bl 0x102c12964 ; _objc_retainAutoreleasedReturnValue\n100dbd520 mov x23, x0\n100dbd524 mov x0, x21\n100dbd528 bl 0x102c12934 ; _objc_release\n100dbd52c str x23, [x20, #0x20]\n100dbd530 adrp x1, 0x103920000\n100dbd534 add x1, x1, #0x58\n100dbd538 mov x0, #0x0\n100dbd53c mov x2, x22\n100dbd540 bl 0x10002a694\n100dbd544 mov x1, x0\n100dbd548 mov x0, x20\n100dbd54c bl 0x102c0c448 ; _$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF\n100dbd550 mov x21, x0\n100dbd554 mov x0, x20\n100dbd558 bl 0x102c135a0 ; _swift_release\n100dbd55c mov x0, x19\n100dbd560 mov x2, x21\n100dbd564 bl 0x102c59620\n100dbd568 mov x29, x29\n100dbd56c bl 0x102c12964 ; _objc_retainAutoreleasedReturnValue\n100dbd570 mov x19, x0\n100dbd574 mov x0, x21\n100dbd578 bl 0x102c12934 ; _objc_release\n100dbd57c adrp x1, 0x103920000\n100dbd580 add x1, x1, #0x48\n100dbd584 adrp x2, 0x10385c000\n100dbd588 add x2, x2, #0x820\n100dbd58c mov x0, #0x0\n100dbd590 bl 0x10002a694\n100dbd594 mov x1, x0\n100dbd598 mov x0, x19\n100dbd59c bl 0x102c0c46c ; _$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ\n100dbd5a0 mov x20, x0\n100dbd5a4 mov x0, x19\n100dbd5a8 bl 0x102c12934 ; _objc_release\n100dbd5ac mov x0, x20\n100dbd5b0 ldp x29, x30, [sp, #0x30]\n100dbd5b4 ldp x20, x19, [sp, #0x20]\n100dbd5b8 ldp x22, x21, [sp, #0x10]\n100dbd5bc ldp x24, x23, [sp], #0x40\n100dbd5c0 ret",
+    "0x100b8cd28": "[address-only]:\n100b8cd28 adrp x0, 0x103920000\n100b8cd2c add x0, x0, #0x58\n100b8cd30 adrp x1, 0x10385c000\n100b8cd34 add x1, x1, #0x828\n100b8cd38 adrp x2, 0x103920000\n100b8cd3c add x2, x2, #0x50\n100b8cd40 adrp x3, 0x102d5d000\n100b8cd44 add x3, x3, #0xa18\n100b8cd48 b 0x10063002c",
+    "0x10063002c": "[address-only]:\n10063002c stp x22, x21, [sp, #-0x30]!\n100630030 stp x20, x19, [sp, #0x10]\n100630034 stp x29, x30, [sp, #0x20]\n100630038 add x29, sp, #0x20\n10063003c mov x19, x3\n100630040 mov x20, x2\n100630044 mov x21, x1\n100630048 mov x22, x0\n10063004c mov w0, #0x2\n100630050 mov w1, #0x10\n100630054 mov w2, #0x0\n100630058 mov w3, #0x0\n10063005c bl 0x102baac14\n100630060 cbz w0, 0x10063008c\n100630064 mov x0, #0x0\n100630068 mov x1, x22\n10063006c mov x2, x21\n100630070 bl 0x10002a694\n100630074 cbz x0, 0x10063008c\n100630078 adrp x0, 0x1038d3000\n10063007c add x0, x0, #0x7f8\n100630080 adrp x1, 0x102d19000\n100630084 add x1, x1, #0xc80\n100630088 b 0x100630094\n10063008c mov x0, x20\n100630090 mov x1, x19\n100630094 ldp x29, x30, [sp, #0x20]\n100630098 ldp x20, x19, [sp, #0x10]\n10063009c ldp x22, x21, [sp], #0x30\n1006300a0 b 0x100005b7c",
+    "0x102baac14": "[address-only]:\n102baac14 sub sp, sp, #0x40\n102baac18 stp x22, x21, [sp, #0x10]\n102baac1c stp x20, x19, [sp, #0x20]\n102baac20 stp x29, x30, [sp, #0x30]\n102baac24 adrp x8, 0x103567000\n102baac28 ldr x8, [x8, #0x600]\n102baac2c ldr x8, [x8]\n102baac30 str x8, [sp, #0x8]\n102baac34 adrp x8, 0x103a7e000\n102baac38 ldr x8, [x8, #0x4b8]\n102baac3c cmn x8, #0x1\n102baac40 b.ne 0x102baac88\n102baac44 adrp x8, 0x103a7e000\n102baac48 ldr x8, [x8, #0x4c0]\n102baac4c cbz x8, 0x102baacb8\n102baac50 lsl w8, w1, #16\n102baac54 bfi w8, w2, #8, #8\n102baac58 bfxil w8, w3, #0, #8\n102baac5c stp w0, w8, [sp]\n102baac60 mov x1, sp\n102baac64 mov w0, #0x1\n102baac68 bl 0x102c11bc0 ; __availability_version_check\n102baac6c ldr x8, [sp, #0x8]\n102baac70 adrp x9, 0x103567000\n102baac74 ldr x9, [x9, #0x600]\n102baac78 ldr x9, [x9]\n102baac7c cmp x9, x8\n102baac80 b.eq 0x102baad28\n102baac84 b 0x102baad68\n102baac88 mov x19, x3\n102baac8c mov x21, x2\n102baac90 mov x20, x1\n102baac94 mov x22, x0\n102baac98 bl 0x102c07404\n102baac9c mov x0, x22\n102baaca0 mov x1, x20\n102baaca4 mov x2, x21\n102baaca8 mov x3, x19\n102baacac adrp x8, 0x103a7e000\n102baacb0 ldr x8, [x8, #0x4c0]\n102baacb4 cbnz x8, 0x102baac50\n102baacb8 adrp x8, 0x103a7e000\n102baacbc ldr x8, [x8, #0x4b0]\n102baacc0 cmn x8, #0x1\n102baacc4 b.ne 0x102baad6c\n102baacc8 adrp x8, 0x103a7e000\n102baaccc ldr w8, [x8, #0x4a0]\n102baacd0 cmp w1, w8\n102baacd4 b.lt 0x102baad0c\n102baacd8 b.le 0x102baacfc\n102baacdc mov w0, #0x0\n102baace0 ldr x8, [sp, #0x8]\n102baace4 adrp x9, 0x103567000\n102baace8 ldr x9, [x9, #0x600]\n102baacec ldr x9, [x9]\n102baacf0 cmp x9, x8\n102baacf4 b.eq 0x102baad28\n102baacf8 b 0x102baad68\n102baacfc adrp x8, 0x103a7e000\n102baad00 ldr w8, [x8, #0x4a4]\n102baad04 cmp w2, w8\n102baad08 b.ge 0x102baad3c\n102baad0c mov w0, #0x1\n102baad10 ldr x8, [sp, #0x8]\n102baad14 adrp x9, 0x103567000\n102baad18 ldr x9, [x9, #0x600]\n102baad1c ldr x9, [x9]\n102baad20 cmp x9, x8\n102baad24 b.ne 0x102baad68\n102baad28 ldp x29, x30, [sp, #0x30]\n102baad2c ldp x20, x19, [sp, #0x20]\n102baad30 ldp x22, x21, [sp, #0x10]\n102baad34 add sp, sp, #0x40\n102baad38 ret\n102baad3c b.gt 0x102baacdc\n102baad40 adrp x8, 0x103a7e000\n102baad44 ldr w8, [x8, #0x4a8]\n102baad48 cmp w3, w8\n102baad4c cset w0, le\n102baad50 ldr x8, [sp, #0x8]\n102baad54 adrp x9, 0x103567000\n102baad58 ldr x9, [x9, #0x600]\n102baad5c ldr x9, [x9]\n102baad60 cmp x9, x8\n102baad64 b.eq 0x102baad28\n102baad68 bl 0x102c11b60 ; ___stack_chk_fail\n102baad6c mov x19, x3\n102baad70 mov x21, x2\n102baad74 mov x20, x1\n102baad78 bl 0x102c0741c\n102baad7c mov x1, x20\n102baad80 mov x2, x21\n102baad84 mov x3, x19\n102baad88 adrp x8, 0x103a7e000\n102baad8c ldr w8, [x8, #0x4a0]\n102baad90 cmp w1, w8\n102baad94 b.lt 0x102baad0c\n102baad98 b 0x102baacd8",
+    "0x10002a694": "[address-only]:\n10002a694 ldr x0, [x1]\n10002a698 cbz x0, 0x10002a6a4\n10002a69c mov x1, #0x0\n10002a6a0 ret\n10002a6a4 stp x20, x19, [sp, #-0x20]!\n10002a6a8 stp x29, x30, [sp, #0x10]\n10002a6ac add x29, sp, #0x10\n10002a6b0 mov x19, x1\n10002a6b4 ldr x0, [x2]\n10002a6b8 bl 0x102c1291c ; _objc_opt_self\n10002a6bc bl 0x102c1342c ; _swift_getObjCClassMetadata\n10002a6c0 stlr x0, [x19]\n10002a6c4 ldp x29, x30, [sp, #0x10]\n10002a6c8 ldp x20, x19, [sp], #0x20\n10002a6cc mov x1, #0x0\n10002a6d0 ret",
+    "0x100005b7c": "[address-only]:\n100005b7c stp x20, x19, [sp, #-0x20]!\n100005b80 stp x29, x30, [sp, #0x10]\n100005b84 add x29, sp, #0x10\n100005b88 mov x19, x0\n100005b8c ldr x0, [x0]\n100005b90 and x8, x0, #0x1\n100005b94 cmp x0, #0x0\n100005b98 ccmp x8, #0x0, #0x0, ne\n100005b9c b.eq 0x100005bc0\n100005ba0 ldr x9, [x1]\n100005ba4 asr x8, x9, #32\n100005ba8 add x0, x1, w9, sxtw\n100005bac mov x1, x8\n100005bb0 mov x2, #0x0\n100005bb4 mov x3, #0x0\n100005bb8 bl 0x102c134a4 ; _swift_getTypeByMangledNameInContext\n100005bbc str x0, [x19]\n100005bc0 ldp x29, x30, [sp, #0x10]\n100005bc4 ldp x20, x19, [sp], #0x20\n100005bc8 ret"
+  },
+  "names": {
+    "0x100dbd498": "function signature specialization <Arg[1] = Dead> of MentraBluetoothSDK.NimoResourceConnectedDiscovery.retrieveConnected(__C.CBCentralManager) -> [__C.CBPeripheral]",
+    "0x100b8cd28": "generic specialization <__C.CBUUID> of Swift.getContiguousArrayStorageType<A>(for: A.Type) -> Swift._ContiguousArrayStorage<A>.Type",
+    "0x102baac14": "___isPlatformVersionAtLeast"
+  },
+  "reads": {
+    "10385c828:8": "3923000000001080",
+    "103920058:8": "0000000000000000",
+    "103920050:8": "0000000000000000",
+    "1038d37f8:8": "0000000000000000",
+    "102d5da18:8": "52042f0011000000",
+    "10304de6a:17": "02dd2a520079536f364342555549444347",
+    "103570948:8": "9012000000001080",
+    "102d19c80:8": "9e5e31000a000000",
+    "10302fb1e:10": "02290e54007979586c47",
+    "102cd7f10:16": "01000000000000000300000000000000",
+    "1031abb20:37": "30303030373033332d303030302d313030302d383030302d30303830354639423334464200",
+    "102c15880:32": "016100d0212042f9b04a00f0108642f900021fd6200020d4200020d4200020d4",
+    "10356c508:8": "090a000000001080",
+    "103837440:8": "e6a8f70200001000",
+    "102f7a8e6:16": "5555494457697468537472696e673a00",
+    "102c59620:32": "615f00f021d441f9904800f0108642f900021fd6200020d4200020d4200020d4",
+    "1038483a8:8": "c715ff0200001000",
+    "102ff15c7:16": "7265747269657665436f6e6e65637465",
+    "102ff15c7:42": "7265747269657665436f6e6e65637465645065726970686572616c735769746853657276696365733a00",
+    "10385c820:8": "3823000000001080",
+    "103920048:8": "0000000000000000"
+  },
+  "pointers": {
+    "0x103837440": 4344752358,
+    "0x1038483a8": 4345238983
+  },
+  "bindings": {
+    "0x10385c828": {
+      "library": "CoreBluetooth",
+      "symbol": "_OBJC_CLASS_$_CBUUID"
+    },
+    "0x103570948": {
+      "library": "libswiftCore",
+      "symbol": "_$ss23_ContiguousArrayStorageCMn"
+    },
+    "0x10356c508": {
+      "library": "libobjc",
+      "symbol": "_objc_msgSend"
+    },
+    "0x10385c820": {
+      "library": "CoreBluetooth",
+      "symbol": "_OBJC_CLASS_$_CBPeripheral"
+    }
+  },
+  "imports": {
+    "0x102c0becc": "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF",
+    "0x102c0c448": "_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF",
+    "0x102c0c46c": "_$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ",
+    "0x102c11b60": "___stack_chk_fail",
+    "0x102c11bc0": "__availability_version_check",
+    "0x102c1291c": "_objc_opt_self",
+    "0x102c12934": "_objc_release",
+    "0x102c12964": "_objc_retainAutoreleasedReturnValue",
+    "0x102c1318c": "_swift_allocObject",
+    "0x102c1342c": "_swift_getObjCClassMetadata",
+    "0x102c134a4": "_swift_getTypeByMangledNameInContext",
+    "0x102c135a0": "_swift_release"
+  },
+  "sections": {
+    "__TEXT,__objc_stubs": [
+      4341185760,
+      4341628352,
+      46218464,
+      2147484672
+    ],
+    "__TEXT,__const": [
+      4341988096,
+      4344566068,
+      47020800,
+      0
+    ],
+    "__TEXT,__objc_methname": [
+      4344682304,
+      4345406564,
+      49715008,
+      2
+    ],
+    "__TEXT,__swift5_typeref": [
+      4345406576,
+      4345655954,
+      50439280,
+      0
+    ],
+    "__TEXT,__cstring": [
+      4346660096,
+      4348421180,
+      51692800,
+      2
+    ],
+    "__DATA_CONST,__got": [
+      4350951424,
+      4351026184,
+      55984128,
+      6
+    ],
+    "__DATA,__objc_selrefs": [
+      4353908928,
+      4354056680,
+      58941632,
+      268435461
+    ],
+    "__DATA,__objc_classrefs": [
+      4354058352,
+      4354074752,
+      59091056,
+      268435456
+    ],
+    "__DATA,__data": [
+      4354371424,
+      4355096784,
+      59404128,
+      0
+    ]
+  },
+  "result": true,
+  "scope": "Actual delivered 10a04 retrieval and LC_FUNCTION_STARTS-bounded helper instructions; compiler identities only for unaliased retained roots, other helpers are address-only ABI windows. No hardware qualification.",
+  "segmentProtections": {
+    "__PAGEZERO": 0,
+    "__TEXT": 5,
+    "__DATA_CONST": 3,
+    "__DATA": 3,
+    "__LINKEDIT": 1
+  }
+}

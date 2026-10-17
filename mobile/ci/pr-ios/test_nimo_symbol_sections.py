@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows, BoundedRebaseLookup, function_start_windows, owned_roster_diagnostic, selected_direct_call_symbols, SCHEDULER_SELECTOR
+from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows, BoundedRebaseLookup, function_start_windows, owned_roster_diagnostic, selected_direct_call_symbols, SCHEDULER_SELECTOR, delivered_segment_protections
 
 UUID = bytes(range(16))
 def macho():
@@ -36,6 +36,66 @@ def macho_starts():
     return bytes(header+old[32:56]+segment+struct.pack('<IIII',0x26,16,244,4)+bytes(20)+bytes([4,8,0,0]))
 
 class SectionsTests(unittest.TestCase):
+    def test_segment_init_protection_is_delivered_metadata_not_section_name(self):
+        data=bytearray(macho_got())
+        self.assertEqual(delivered_segment_protections(data)['__DATA_CONST'],5)
+        # Second segment starts immediately after UUID and first segment.
+        struct.pack_into('<I',data,32+24+152+60,3)
+        self.assertEqual(delivered_segment_protections(data)['__DATA_CONST'],3)
+    def test_selected_bind_and_rebase_share_slots_deadline_and_exact_section_authority(self):
+        metadata=' __DATA_CONST __got 0x2000 rebase 0x1004\n __DATA_CONST __got 0x2008 bind CoreBluetooth/_OBJC_CLASS_$_CBUUID\n'
+        state={'expired':False}
+        def check():
+            if state['expired']:raise ValueError('original deadline expired')
+        lookup=BoundedRebaseLookup(metadata,macho_got(),check)
+        self.assertEqual(lookup(0x2000),0x1004)
+        self.assertEqual(lookup.binding(0x2008),{'library':'CoreBluetooth','symbol':'_OBJC_CLASS_$_CBUUID'})
+        self.assertEqual(lookup.requests,2)
+        with self.assertRaises(ValueError):lookup.binding(0x2000)
+        with self.assertRaises(ValueError):lookup(0x2008)
+        self.assertEqual(lookup.requests,2)
+        state['expired']=True
+        with self.assertRaisesRegex(ValueError,'deadline'):lookup.binding(0x2008)
+        for text in (metadata+metadata.splitlines()[1]+'\n',
+                     metadata.replace('bind CoreBluetooth','auth-bind CoreBluetooth'),
+                     metadata.replace('_CBUUID','_CBUUID + 0x1'),
+                     metadata.replace('__DATA_CONST __got 0x2008','__TEXT __text 0x2008')):
+            with self.subTest(text=text),self.assertRaises(ValueError):BoundedRebaseLookup(text,macho_got()).binding(0x2008)
+        lookup=BoundedRebaseLookup('',macho_got())
+        for i in range(64):
+            with self.assertRaises(ValueError):
+                (lookup if i%2 else lookup.binding)(0x3000+8*i)
+        with self.assertRaisesRegex(ValueError,'64-slot'):lookup.binding(0x5000)
+
+    def test_archive_discovery_wires_strict_metadata_and_no_legacy_bypass(self):
+        from nimo_discovery_witness import RETRIEVAL_SIGNATURE
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve();exe=root/'Mentra';exe.write_bytes(macho_starts())
+            dwarf=root/'mobile/build/pr-ios/Mentra.xcarchive/dSYMs/Mentra.app.dSYM/Contents/Resources/DWARF/Mentra';dwarf.parent.mkdir(parents=True);dwarf.write_bytes(b'dsym')
+            def run(*args,timeout):
+                if 'dwarfdump' in args:return b'UUID: 00010203-0405-0607-0809-0a0b0c0d0e0f (arm64) file\n'
+                if 'nm' in args:return b'1004 t _$s18MentraBluetoothSDK9retrievalyyF\n'
+                if '--indirect-symbols' in args or 'dyld_info' in args:return b''
+                return b'1004: nop\n1008: ret\n'
+            # This is collector callback wiring, not a fabricated successful
+            # compiler proof. The argument checker is observed, never used to
+            # qualify a capability in this test.
+            sentinel=object()
+            def argument(body,read,imports,selector,legacy,readonly,metadata):
+                self.assertEqual(legacy,set());self.assertIs(metadata,sentinel)
+                self.assertFalse(readonly(0x1004,4,'__const'))
+                with self.assertRaisesRegex(ValueError,'supported delivered bind'):imports(0x2000)
+                return True
+            facts={}
+            with patch('nimo_symbol_sections.subprocess.run',return_value=SimpleNamespace(stdout=(RETRIEVAL_SIGNATURE+'\n').encode())),patch('nimo_async_invocations.prove_async_edges',return_value=set()),patch('nimo_discovery_witness.StorageMetadata',return_value=sentinel) as constructor,patch('nimo_discovery_witness.retrieval_argument',side_effect=argument):
+                archive_symbol_sections(exe,root,['NimoResourceConnectedDiscovery.'],run,async_edges=set(),discovery_proof=facts)
+            self.assertIs(facts['fixedServiceArgument'],True)
+            self.assertEqual(facts['retrievalSymbol'],'_$s18MentraBluetoothSDK9retrievalyyF')
+            actual_body,actual_name,_,bind,static=constructor.call_args.args
+            self.assertIsNone(actual_name(0xdead))
+            with self.assertRaises(ValueError):actual_body(0x1008)
+            with self.assertRaises(ValueError):static(0x1004,8,'zero-cache')
+            with self.assertRaises(ValueError):bind(0x2000)
     def test_selected_direct_callee_diagnostics_have_no_invented_identity(self):
         windows=['_root:\n1000 bl 0x2000\n1004 b 0x3000\n1008 b 0x3004\n100c bl 0x4000\n1010 bl 0x5000\n1014 blr x8\n']
         entries={0x2000,0x3000,0x4000,0x5000}

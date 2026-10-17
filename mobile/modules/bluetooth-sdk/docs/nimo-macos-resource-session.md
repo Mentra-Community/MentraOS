@@ -69,6 +69,15 @@ its actual invocation and settlement edges. It is not a whole-program proof of
 absence of effects. The no-scan/no-connect policy comes from the reviewed nine-file
 native source and native tests, bound to the capability's source digest. The
 observer call inventory is explicitly diagnostic (`provesNoEffects:false`).
+The bounded verifier follows the retained retrieval entry, including its recognized
+dead-self specialization, and the actual one-element UUID array into retrieval.
+Swift can allocate this reference array using `CBUUID` storage or its `AnyObject`
+storage optimization. Both emitted metadata branches and their helper bodies must
+match the supported templates; the verifier does not assume an OS-version branch.
+Cache-slot and helper validation is not a whole-image proof that no other code can
+write those slots. An unsupported compiler shape omits discovery support.
+The earlier constant-size local prototype is not a supported production metadata
+template and cannot qualify an artifact.
 If no observed/accepted UUID exists, preflight must remain blocked.
 
 Arm requires an unowned app manager. Connection admission retains the exact
