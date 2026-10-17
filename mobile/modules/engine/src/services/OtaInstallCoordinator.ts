@@ -346,10 +346,14 @@ class OtaInstallCoordinator {
   }
 
   private initializeCheckedInstall(selected: OtaCheckCurrentGlassesResult["updateInfo"]): void {
-    if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
-      this.versionChangeSession = true
-      this.versionChangeTarget = selected.versionCode
-      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${selected.versionCode}`)
+    const target =
+      selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0
+        ? selected.versionCode
+        : null
+    this.versionChangeSession = target !== null
+    this.versionChangeTarget = target
+    if (target !== null) {
+      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${target}`)
     }
   }
 

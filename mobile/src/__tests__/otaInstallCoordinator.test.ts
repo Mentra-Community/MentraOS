@@ -241,6 +241,33 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     },
   )
 
+  it("clears a stale downgrade target when recovery selects an upgrade", async () => {
+    const checker = require("../../modules/engine/src/services/OtaUpdateCheckService")
+    const target = 303000500
+    const checkSpy = jest.spyOn(checker, "checkCurrentGlassesForUpdate").mockResolvedValue({
+      ...checkResult(), updateInfo: {versionCode: target, versionName: "3.3.0", isDowngrade: false, updates: ["apk"]},
+    })
+    ;(otaInstallCoordinator as unknown as {preparedCheckResult: OtaCheckCurrentGlassesResult | null}).preparedCheckResult = null
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1, buildNumber: "303000100",
+    })
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      versionCode: 302000100, versionName: "3.2.0", isDowngrade: true, updates: ["apk"],
+    })
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(checkSpy).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().isVersionChange).toBe(false)
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install"}))
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBeNull()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber: String(target)})
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+    expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalled()
+    checkSpy.mockRestore()
+  })
+
   it("initializes recovered downgrade guards before staging without a prepared offer", async () => {
     const restored = otaInstallCoordinator
     const store = useGlassesStore
