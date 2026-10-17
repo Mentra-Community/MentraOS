@@ -40,6 +40,12 @@ export const routineQualificationTargetSchema = z.object({jobId: frameworkIdenti
     (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId),
   'Qualification target differs from its selected job, platform or explicit lane constraint');
 export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;
+/** Exact passive owner lookup on the existing host-authenticated target read. */
+export const ownedRoutineQualificationSchema = z.object({jobId: frameworkIdentitySchema, laneId: frameworkIdentitySchema,
+  inputSha256: jobHashSchema, ownerId: frameworkIdentitySchema, generation: z.number().int().positive().safe(),
+  binding: frameworkBindingSchema, controller: z.object({incarnation: frameworkIdentitySchema,
+    generation: z.number().int().positive().safe()}).strict()}).strict();
+export type OwnedRoutineQualification = z.infer<typeof ownedRoutineQualificationSchema>;
 export const completeRoutineJobPreparationSchema = routineJobPreparationSchema.omit({requirements: true}).extend({inputSha256: jobHashSchema});
 export const routineJobBindingSchema = z.object({jobId: frameworkIdentitySchema, requestId: frameworkIdentitySchema,
   hostId: frameworkIdentitySchema, laneId: frameworkIdentitySchema, descriptorRevision: jobHashSchema,
