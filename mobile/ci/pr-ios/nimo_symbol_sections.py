@@ -25,6 +25,8 @@ PROOF_SECONDS = 120
 MAX_WINDOW = 1024 * 1024
 MAX_TOTAL_TEXT = 16 * 1024 * 1024
 MAX_ASSEMBLY = 64 * 1024 * 1024
+MAX_DIRECT_TARGETS = 2048
+MAX_DIRECT_DIAGNOSTIC_BYTES = 2 * 1024 * 1024
 
 
 def macho_layout(data):
@@ -212,6 +214,58 @@ class BoundedRebaseLookup:
         return resolved[slot]
 
 
+def function_start_windows(data, checkpoint=lambda: None):
+    _, text = macho_layout(data)
+    count = struct.unpack_from('<I', data, 16)[0]
+    offset, commands, bases = 32, [], []
+    for _ in range(count):
+        command, length = struct.unpack_from('<II', data, offset)
+        if command == 0x26:
+            if length != 16:
+                raise ValueError('invalid LC_FUNCTION_STARTS command')
+            commands.append(struct.unpack_from('<II', data, offset + 8))
+        if command == 0x19 and data[offset + 8:offset + 24].rstrip(b'\0') == b'__TEXT':
+            bases.append(struct.unpack_from('<Q', data, offset + 24)[0])
+        offset += length
+    if len(commands) != 1 or len(bases) != 1:
+        raise ValueError('unique delivered function-start metadata unavailable')
+    start, size = commands[0]
+    if not size or size > 8 * 1024 * 1024 or start + size > len(data):
+        raise ValueError('delivered function-start metadata extent exceeds bound')
+    starts, address, value, shift, width = [], bases[0], 0, 0, 0
+    terminated = False
+    for index, byte in enumerate(data[start:start + size]):
+        if index % 1024 == 0:
+            checkpoint()
+        if terminated:
+            if byte:
+                raise ValueError('nonzero data after function-start terminator')
+            continue
+        width += 1
+        if width > 10 or shift == 63 and byte & 0xfe:
+            raise ValueError('overflow in delivered function-start delta')
+        value |= (byte & 0x7f) << shift
+        if byte & 0x80:
+            shift += 7
+            continue
+        if width > 1 and byte == 0:
+            raise ValueError('noncanonical delivered function-start delta')
+        if value == 0:
+            terminated = True
+            continue
+        address += value
+        if address % 4 or not text[0] <= address < text[1]:
+            raise ValueError('function start is outside exact delivered text')
+        starts.append(address)
+        if len(starts) > MAX_ROSTER_ROWS:
+            raise ValueError('delivered function-start roster exceeds bound')
+        value, shift, width = 0, 0, 0
+    checkpoint()
+    if not terminated or not starts:
+        raise ValueError('unterminated or empty delivered function-start roster')
+    return dict(zip(starts, starts[1:] + [text[1]]))
+
+
 def normalize_demangled(name):
     # swift-demangle's private-method spelling, observed from the real compiler.
     name = re.sub(r'(?<=\.)\(([A-Za-z_][A-Za-z0-9_]*) in _[A-Fa-f0-9]+\)(?=\()', r'\1', name)
@@ -255,6 +309,52 @@ def owned_symbol_rows(roster):
     if not rows or len(rows) > MAX_SYMBOLS:
         raise ValueError(f'owned compiler symbols unavailable or unbounded: parsed={len(rows)} limit={MAX_SYMBOLS}')
     return rows
+
+
+def owned_roster_diagnostic(rows, names, selectors, uuid, executable_sha):
+    retained, size = [], 0
+    for (address, symbol), name in zip(rows, names):
+        item = {'address': address, 'symbol': symbol, 'demangled': name}
+        encoded = json.dumps(item, separators=(',', ':')).encode()
+        if size + len(encoded) > 8 * 1024 * 1024 - 16384:
+            break
+        retained.append(item);size += len(encoded)
+    return {'kind': 'nimo-owned-symbol-roster-only-v1', 'capabilityVerified': False,
+            'uuid': uuid, 'executableSha256': executable_sha, 'totalRows': len(rows),
+            'retainedRows': len(retained), 'truncated': len(retained) != len(rows),
+            'roleCandidateCounts': {selector: sum(selector in name for name in names) for selector in selectors},
+            'rows': retained}
+
+
+def selected_direct_call_symbols(windows, entries, address_rows, symbol_counts, checkpoint=lambda: None):
+    targets, truncated = set(), False
+    for window in windows:
+        checkpoint()
+        for index, line in enumerate(io.StringIO(window)):
+            if index % 1024 == 0:
+                checkpoint()
+            match = re.fullmatch(r'\s*[0-9a-fA-F]+\s+(?:bl|b)\s+0x([0-9a-fA-F]+)(?:\s*;.*)?\s*', line)
+            if not match:
+                continue
+            address = int(match[1], 16)
+            if address not in entries or address in targets:
+                continue
+            if len(targets) == MAX_DIRECT_TARGETS:
+                truncated = True
+                break
+            targets.add(address)
+        if truncated:
+            break
+    records = []
+    for address in sorted(targets):
+        values = address_rows.get(address, [])
+        if len(values) == 1 and symbol_counts.get(values[0][0]) == 1:
+            records.append({'address': address, 'identity': 'compiler-symbol', 'symbol': values[0][0]})
+        else:
+            records.append({'address': address, 'identity': 'ambiguous' if values else 'unavailable'})
+    checkpoint()
+    return {'kind': 'nimo-selected-direct-call-symbols-only-v1', 'capabilityVerified': False,
+            'truncated': truncated, 'entries': records}
 
 
 def symbol_windows(rows, demangled, selectors, text, roster=None):
@@ -385,11 +485,12 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
     rows = owned_symbol_rows(roster)
     initial_owned_count = len(rows)
     print(f'NIMO compiler roster: {len(roster)} metadata entries, {initial_owned_count} unaliased owned/Task candidates')
-    demangle_size = 0
+    demangle_size, demangle_count = 0, 0
     def demangle(selected):
-        nonlocal demangle_size
-        if not selected or len(selected) > MAX_SYMBOLS:
+        nonlocal demangle_size, demangle_count
+        if not selected or len(selected) + demangle_count > MAX_SYMBOLS:
             raise ValueError('selected compiler demangle budget exceeded')
+        demangle_count += len(selected)
         result = subprocess.run(['xcrun', 'swift-demangle', '--compact'], input=('\n'.join(symbol for _, symbol in selected)+'\n').encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=remaining())
         demangle_size += len(result.stdout)
         if demangle_size > 64 * 1024 * 1024:
@@ -399,10 +500,19 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             raise ValueError('compiler demangle roster changed')
         return names
     demangled = demangle(rows)
-    windows = symbol_windows(rows, demangled, selectors, text, roster)
+    if diagnostic_path is not None:
+        persist_trace(Path(diagnostic_path).with_name('xcodebuild-attempt-nimo-owned-symbols.log'),
+                      owned_roster_diagnostic(rows, demangled, selectors, uuid, hashlib.sha256(delivered).hexdigest()))
+    remaining()
+    entry_stops = function_start_windows(delivered, remaining)
+    windows = []
+    for start, stop, symbol in symbol_windows(rows, demangled, selectors, text, roster):
+        if start not in entry_stops:
+            raise ValueError('named compiler entry is not an exact delivered function start')
+        windows.append((start, min(stop, entry_stops[start]), symbol))
     indirect = bounded('xcrun', 'llvm-objdump', '--macho', '--indirect-symbols', executable).decode('utf-8', errors='strict')
     imports = imported_stubs(indirect)
-    blocks, size, functions = [], 0, {}
+    blocks, size, functions, anonymous = [], 0, {}, {}
     by_symbol = {symbol: name for (_, symbol), name in zip(rows, demangled)}
     address_rows = {}
     for address, symbol in roster:
@@ -417,9 +527,9 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         remaining()
         if symbol in functions:
             return functions[symbol]
-        if len(functions) >= MAX_FUNCTIONS or stop <= start or stop - start > MAX_WINDOW:
+        if len(functions) + len(anonymous) >= MAX_FUNCTIONS or stop <= start or stop - start > MAX_WINDOW:
             raise ValueError('lazy compiler function window exceeds bound')
-        if sum(window[1] - window[0] for window in functions.values()) + stop - start > MAX_TOTAL_TEXT:
+        if sum(window[1] - window[0] for window in list(functions.values()) + list(anonymous.values())) + stop - start > MAX_TOTAL_TEXT:
             raise ValueError('lazy compiler selected text exceeds bound')
         output = bounded('xcrun', 'llvm-objdump', '--disassemble', '--arch=arm64', '--no-show-raw-insn', f'--start-address=0x{start:x}', f'--stop-address=0x{stop:x}', executable).decode('utf-8', errors='strict')
         block = normalize_window(output, start, stop, symbol, imports)
@@ -443,7 +553,29 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         def get_function(address):
             if address not in symbols:
                 raise ValueError('async compiler function entry is absent or ambiguous')
-            return disassemble(address, stops[address], symbols[address][0])
+            if address not in entry_stops:
+                raise ValueError('named lazy entry is not an exact delivered function start')
+            return disassemble(address, min(stops[address], entry_stops[address]), symbols[address][0])
+        def get_body(address):
+            nonlocal size
+            remaining()
+            if address not in entry_stops:
+                raise ValueError('anonymous ABI address is not an exact delivered function start')
+            if address in anonymous:
+                return anonymous[address]
+            stop = entry_stops[address]
+            if len(functions) + len(anonymous) >= MAX_FUNCTIONS or stop - address > MAX_WINDOW:
+                raise ValueError('anonymous ABI function window exceeds bound')
+            if sum(window[1] - window[0] for window in list(functions.values()) + list(anonymous.values())) + stop - address > MAX_TOTAL_TEXT:
+                raise ValueError('anonymous ABI selected text exceeds bound')
+            output = bounded('xcrun', 'llvm-objdump', '--disassemble', '--arch=arm64', '--no-show-raw-insn', f'--start-address=0x{address:x}', f'--stop-address=0x{stop:x}', executable).decode('utf-8', errors='strict')
+            # Diagnostic address-only body, never a fabricated compiler symbol.
+            body = '\n'.join(normalize_window(output, address, stop, '[address-only ABI]', imports).splitlines()[1:])
+            size += len(body)
+            if size > MAX_ASSEMBLY:
+                raise ValueError('anonymous ABI disassembly exceeds shared proof bound')
+            anonymous[address] = (address, stop, body)
+            return anonymous[address]
         try:
             data_imports = data_imports_from_indirect(indirect, delivered)
             async_data_imports = {hex(slot): name for slot, name in data_imports.items() if name == '__NSConcreteStackBlock'}
@@ -461,7 +593,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
                 delivered_reader(slot, 8)
                 async_pointers[hex(slot)] = hex(value)
                 return value
-            async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer))
+            async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer, get_body))
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
     # Only actually disassembled consumed entries can extend the processed
@@ -477,13 +609,46 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             by_symbol.update({symbol: name for (_, symbol), name in zip(loaded, names)})
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
+    # Diagnostics identify actual direct callees, never role or graph witnesses.
+    direct_diagnostic = {'kind': 'nimo-selected-direct-call-symbols-only-v1', 'capabilityVerified': False}
+    try:
+        direct_diagnostic = selected_direct_call_symbols(
+            [body for _, _, body in list(functions.values()) + list(anonymous.values())],
+            entry_stops, address_rows, symbol_counts, remaining)
+        diagnostic_names = dict(by_symbol)
+        candidates = [(row['address'], row['symbol']) for row in direct_diagnostic['entries']
+                      if row['identity'] == 'compiler-symbol' and row['symbol'] not in diagnostic_names]
+        allowance = max(0, MAX_SYMBOLS - demangle_count)
+        selected = candidates[:allowance]
+        if len(selected) != len(candidates):
+            direct_diagnostic['demangleTruncated'] = True
+        if selected:
+            names = demangle(selected)
+            diagnostic_names.update({symbol: name for (_, symbol), name in zip(selected, names)})
+        for row in direct_diagnostic['entries']:
+            if row['identity'] == 'compiler-symbol':
+                row['demangled'] = diagnostic_names.get(row['symbol'])
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+        direct_diagnostic['error'] = str(error)[:1024]
+    if 'entries' in direct_diagnostic:
+        retained, diagnostic_size = [], 0
+        for row in direct_diagnostic['entries']:
+            encoded = json.dumps(row, separators=(',', ':')).encode()
+            if diagnostic_size + len(encoded) > MAX_DIRECT_DIAGNOSTIC_BYTES - 4096:
+                direct_diagnostic['truncated'] = True
+                break
+            retained.append(row);diagnostic_size += len(encoded)
+        direct_diagnostic['entries'] = retained
     if diagnostic_path is not None:
         trace = {'kind': 'nimo-compiler-sections-only-v1', 'capabilityVerified': False, 'uuid': uuid,
                  'executableSha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
                  'rosterRows': len(roster), 'initialOwnedRows': initial_owned_count, 'processedRows': len(rows),
+                 'demangleRowsSpent': demangle_count, 'demangleBytesSpent': demangle_size,
                  'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol.get(symbol, symbol)} for symbol, (start, stop, _) in functions.items()],
                  'imports': imports, 'assembly': '\n'.join(blocks),
                  'asyncProofError': str(async_error)[:1024] if async_error is not None else None,
+                 'directCallSymbols': direct_diagnostic,
+                 'anonymousAbiWindows': [{'start': a, 'stop': b, 'assembly': body} for a, b, body in anonymous.values()],
                  'fixupMetadata': fixup_metrics, 'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}
         # Fixed producer log basename; normal workflow already retains this glob.
         persist_trace(diagnostic_path, trace)

@@ -226,6 +226,8 @@ final class NimoResourceSession {
         return start <= tws && tws <= written && written <= completed && written <= ack
     }
 
+    // Preserve the genuine release-admission boundary for delivered compiler proof.
+    @inline(never)
     func beginRelease(nonce: String, cancel: Bool, mic: Bool, canvas: Bool) -> Bool {
         if let releaseNonce { return releaseNonce == nonce }
         releaseNonce = nonce; releaseStartedElapsedMs = now(); cancelled = true
