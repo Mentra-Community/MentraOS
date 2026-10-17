@@ -30,7 +30,7 @@ type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'resul
 
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
 export interface RoutineJobRepository {
-  get(jobId: string): Promise<StoredRoutineJob | null>;
+  get(jobId: string, timeoutMS?: number): Promise<StoredRoutineJob | null>;
   completionRequest?(jobId: string): Promise<StoredRoutineJob | null>;
   insert(row: StoredRoutineJob): Promise<void>;
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
@@ -52,8 +52,8 @@ export interface RoutineJobRepository {
   cancel(jobId: string, inputSha256: string, value: NonNullable<StoredRoutineJob['fleetCancellation']>): Promise<StoredRoutineJob | null>;
 }
 export const routineJobRepository: RoutineJobRepository = {
-  async get(requestId) {return await TestRequestModel.findOne({requestId, fleetSelection: {$exists: true}})
-    .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
+  async get(requestId, timeoutMS) {return await TestRequestModel.findOne({requestId, fleetSelection: {$exists: true}})
+    .read('primary').readConcern('majority').setOptions(timeoutMS === undefined ? {} : {timeoutMS, maxTimeMS: timeoutMS}).lean() as unknown as StoredRoutineJob | null;},
   async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async insert(row) {await TestRequestModel.create([row], {writeConcern: testWriteConcern});},
@@ -481,7 +481,7 @@ export class RoutineJobService {
       if (!owned && !this.rows.qualificationCandidates || this.now() >= queryDeadline) break;
       // Finite ordered scan, shared five-second query budget; current 26-member suites fit without a mutable cursor.
       let scanned = 0;
-      const candidates = owned ? [await this.rows.get(owned.jobId)].filter((row): row is StoredRoutineJob => row !== null) :
+      const candidates = owned ? [await this.rows.get(owned.jobId, Math.max(1, queryDeadline - this.now()))].filter((row): row is StoredRoutineJob => row !== null) :
         this.rows.qualificationCandidates!(hostId, lane.id, 100, new Date(now), queryDeadline - this.now(),
           binding.version >= QUEUED_APP_QUALIFICATION_FRAMEWORK_VERSION, binding.routineApiVersion >= ACCEPTED_APP_QUALIFICATION_API_VERSION);
       for await (const row of candidates) {

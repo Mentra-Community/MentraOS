@@ -60,7 +60,7 @@ function queuedRow(jobId = 'queued-ota') {
 function fixture(rows = [row()], observed = host()) {
   const reads: unknown[] = [];
   const forbidden = async (): Promise<never> => {throw new Error('Qualification must not mutate or resolve source/builds');};
-  const repository: RoutineJobRepository = {async get(jobId) {reads.push({jobId});return structuredClone(rows.find(value=>value.requestId===jobId) ?? null);}, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
+  const repository: RoutineJobRepository = {async get(jobId,timeoutMS) {reads.push({jobId,timeoutMS});return structuredClone(rows.find(value=>value.requestId===jobId) ?? null);}, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
     async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS, includeQueued, includeAccepted) {reads.push({hostId, laneId, limit, at, timeoutMS, includeQueued, includeAccepted});
       yield* structuredClone(rows.filter(value => includeQueued || value.state === 'awaiting-runner'));}};
   const service = new RoutineJobService(repository, {resolve: forbidden, isPrSuperseded: forbidden},
@@ -395,7 +395,7 @@ test('exact passive owner status preserves original target during busy-lane disc
   binding,controller:{incarnation:'boot',generation:1}};
  expect(await f.service.qualificationTargets('pro1')).toEqual([]);
  f.reads.splice(0);expect(await f.service.qualificationTargets('pro1',owned)).toEqual([target]);
- expect(f.reads).toEqual([{jobId:target.jobId}]);expect(f.rows).toEqual(before);
+ expect(f.reads).toEqual([{jobId:target.jobId,timeoutMS:5000}]);expect(f.rows).toEqual(before);
 });
 test('owned lookup rejects cancellation, expiry, terminal effects, changed frozen inputs and another borrower',async()=>{
  const baseline=fixture(),target=(await baseline.service.qualificationTargets('pro1'))[0]!;
@@ -423,4 +423,26 @@ test('owned target refuses stale or replacement reporter, grant, binding and sub
  for(const changed of [{...owned,generation:45},{...owned,ownerId:'other'},{...owned,controller:{incarnation:'other',generation:1}},
    {...owned,binding:{...binding,installationId:'other'}},{...owned,inputSha256:f.rows[0]!.fleetInputSha256!}])
   expect(await f.service.qualificationTargets('pro1',changed)).toEqual([]);
+});
+
+test('exact owned primary-majority query applies its remaining client and database timeout',async()=>{
+ const findOne=TestRequestModel.findOne,calls:unknown[]=[];
+ const query={read(value:unknown){calls.push({read:value});return this;},readConcern(value:unknown){calls.push({readConcern:value});return this;},
+  setOptions(value:unknown){calls.push({options:value});return this;},lean(){return Promise.resolve(null);}};
+ try{TestRequestModel.findOne=mock((value)=>{calls.push({query:value});return query;})as any;
+  expect(await routineJobRepository.get('original',123)).toBeNull();
+  expect(calls).toEqual([{query:{requestId:'original',fleetSelection:{$exists:true}}},{read:'primary'},{readConcern:'majority'},{options:{timeoutMS:123,maxTimeMS:123}}]);
+ }finally{TestRequestModel.findOne=findOne;}
+});
+test('late or failed owned database read cannot produce positive target authority',async()=>{
+ for(const unavailable of [false,true]){
+  const f=fixture(),target=(await f.service.qualificationTargets('pro1'))[0]!;f.observed.lanes[0]!.state='reserved';
+  f.observed.lanes[0]!.activity={owner:{id:'passive-owner',kind:'authoring'},generation:44};
+  const owned={jobId:target.jobId,laneId:target.laneId,inputSha256:target.inputSha256,ownerId:'passive-owner',generation:44,binding,controller:{incarnation:'boot',generation:1}};
+  let elapsed=now;
+  (f.service as any).now=()=>elapsed;
+  (f.service as any).rows.get=async(_job:string,budget:number)=>{expect(budget).toBe(5000);elapsed+=5001;if(unavailable)throw Error('Mongo client timeout');return f.rows[0];};
+  if(unavailable)await expect(f.service.qualificationTargets('pro1',owned)).rejects.toThrow('Mongo client timeout');
+  else expect(await f.service.qualificationTargets('pro1',owned)).toEqual([]);
+ }
 });
