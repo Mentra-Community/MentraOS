@@ -286,6 +286,24 @@ test('descriptor/capability and target fences reject incompatible assignments be
   f.lane.resources.find(resource => resource.kind === 'network')!.capabilities=[];f.lane.descriptorRevision=routineLaneDescriptorRevision(f.lane);
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:f.lane.descriptorRevision})).rejects.toThrow('compatible');expect(f.row?.fleetBinding).toBeUndefined();
 });
+test('phone backend readiness capability cannot be supplied by the host uplink or an older phone provider', async () => {
+  const f = fixture({...definition, resourceRequirements: definition.resourceRequirements.map(resource =>
+    resource.kind === 'phone' ? {...resource, capabilities: ['backend-connectivity']} : resource)});
+  const waiting = await f.prepare();
+  expect(waiting.waitingReason).toBe('Awaiting a compatible enrolled runner');
+  expect(f.row?.fleetPreparation?.requirements.resources.find(resource => resource.kind === 'phone')?.capabilities)
+    .toEqual(['backend-connectivity']);
+  f.lane.resources.find(resource => resource.kind === 'phone')!.capabilities = ['backend-connectivity'];
+  f.lane.descriptorRevision = routineLaneDescriptorRevision(f.lane);
+  const prepared = await f.service.preparation(selection.requestId);
+  expect(prepared.state).toBe('awaiting-runner');
+  const phone = prepared.prepared!.requirements.resources.find(resource => resource.kind === 'phone')!;
+  expect(phone.capabilities).toEqual(['backend-connectivity']);
+  f.lane.resources.find(resource => resource.kind === 'phone')!.capabilities = [];
+  f.lane.descriptorRevision = routineLaneDescriptorRevision(f.lane);
+  await expect(f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+    descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible');
+});
 test('reviewed fixture operations exclude generic fixtures from routing and binding while preserving exact source', async () => {
   const selectedDefinition = {...definition,
     fixtures: [{provider: 'miniapp-appearance', description: 'Owned reviewed references and decoder'}],
