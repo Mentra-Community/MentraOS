@@ -266,7 +266,8 @@ test('candidate database stream is bounded, closed and includes only unbound or 
   for (const [includeQueued, includeAccepted] of [[false,false],[true,false],[true,true]]) {
   let filter: unknown, limit: number | undefined, closed = false;
   const cursor = {async *[Symbol.asyncIterator]() {yield row();}, async close() {closed = true;}};
-  const query = {sort(value: unknown) {expect(value).toEqual(includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}); return this;},
+  const query = {sort(value: unknown) {expect(value).toEqual(includeAccepted ? {'hostReceipt.acceptedAt': -1, state: -1, createdAt: 1, requestId: 1} :
+    includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}); return this;},
     limit(value: number) {limit = value; return this;}, read(value: string) {expect(value).toBe('primary'); return this;},
     readConcern(value: string) {expect(value).toBe('majority'); return this;},
     setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 123, maxTimeMS: 123}); return this;},
@@ -307,6 +308,30 @@ function acceptedRow() {
  return{...value,state:'accepted' as const,hostReceipt:{requestId:value.requestId,hostId:'pro1',inputSha256:value.inputSha256,
   acceptedAt:new Date(now-500).toISOString()}}
 }
+test('an accepted original remains reachable before the finite cap of earlier incompatible candidates', async () => {
+ const original=acceptedRow(), rows=[...Array.from({length:100},(_,index)=>{
+  const value=row(`earlier-${index}`);value.fleetPreparation!.requirements.resources[0]!.capabilities=['unoffered'];
+  value.fleetInputSha256=routineJobInputDigest(value);return value;
+ }),original];
+ let order:Record<string,number>={},limit=0,scanned=0,closed=false;
+ const query={sort(value:Record<string,number>){order=value;return this},limit(value:number){limit=value;return this},
+  read(){return this},readConcern(){return this},setOptions(){return this},lean(){return this},cursor(){return{
+   async *[Symbol.asyncIterator](){
+    const ordered=[...rows].sort((left,right)=>{for(const[field,direction]of Object.entries(order)){
+     const read=(row:unknown)=>field.split('.').reduce<unknown>((value,key)=>value&&typeof value==='object'?(value as Record<string,unknown>)[key]:undefined,row);
+     const a=read(left),b=read(right);if(a===b)continue;if(a===undefined)return-direction;if(b===undefined)return direction;
+     return(String(a)<String(b)?-1:1)*direction;
+    }return 0});
+    for(const value of ordered.slice(0,limit)){scanned++;yield value}
+   },async close(){closed=true},
+  }}};
+ const find=TestRequestModel.find,f=fixture([],acceptedHost());
+ (f.service as unknown as {rows:RoutineJobRepository}).rows.qualificationCandidates=routineJobRepository.qualificationCandidates;
+ try{TestRequestModel.find=mock(()=>query) as unknown as typeof find;
+  expect((await f.service.qualificationTargets('pro1')).map(value=>value.jobId)).toEqual([original.requestId]);
+  expect(limit).toBe(100);expect(scanned).toBe(1);expect(closed).toBe(true);
+ }finally{TestRequestModel.find=find}
+});
 test('exact accepted unstarted request gets a current-binding target with a separate immutable executable digest',async()=>{
  const original=acceptedRow(),current=acceptedHost()
  const f=fixture([original],current),before=structuredClone(original),targets=await f.service.qualificationTargets('pro1')
