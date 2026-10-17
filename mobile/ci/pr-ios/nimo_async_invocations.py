@@ -13,7 +13,7 @@ MAX_SLICE = 128
 MAX_ANALYSIS_WORK = 1_000_000
 # Explicit modeled write sets. Unknown multi-destination/implicit-write opcodes
 # cannot be treated as an irrelevant first-operand-only instruction.
-MODELED_OPS={'add','sub','adr','adrp','mov','movk','movz','and','orr','bfxil','sxtw','ldr','ldur','ldrsw','ldp','ldpsw','str','stur','stp','b','bl','blr','br','ret','cmp','cmn','tst','cbz','cbnz','tbz','tbnz','nop'}
+MODELED_OPS={'add','sub','adr','adrp','mov','movk','movz','and','orr','bfxil','sxtw','ldr','ldur','ldrsw','ldp','ldpsw','str','strb','stur','stp','b','bl','blr','br','ret','cmp','cmn','tst','cbz','cbnz','tbz','tbnz','nop'}
 
 def modeled(ins):
     return ins[1] in MODELED_OPS or ins[1].startswith('b.')
@@ -57,6 +57,7 @@ class AsyncProof:
         self.get_function = get_function
         self.get_body = get_body
         self.bodies = {}
+        self.decoded = {}
         self.data_imports=data_imports or {}
         self.read_pointer=read_pointer
         self.extra = 0
@@ -67,8 +68,13 @@ class AsyncProof:
         if self.work < 0:raise ValueError('async analysis work bound exhausted')
 
     def decode(self, window):
+        key=(window[0],window[1],window[2])
+        if key in self.decoded:
+            self.charge(1)
+            return self.decoded[key]
         self.charge(len(window[2]))
-        return instructions(window)
+        self.decoded[key]=tuple(instructions(window))
+        return self.decoded[key]
 
     def load(self, address):
         if address not in self.symbols:
@@ -134,7 +140,7 @@ class AsyncProof:
         found=self.constant_witness(code,end,reg)
         return found[0] if found is not None else None
 
-    def descriptor(self, address, endpoint=True):
+    def descriptor_entry(self, address):
         if not isinstance(address, int) or address % 4:
             raise ValueError('async descriptor address unavailable')
         data = self.read_bytes(address, 8)
@@ -143,7 +149,10 @@ class AsyncProof:
         relative, size = struct.unpack('<iI', data)
         if not relative or size > 1024 * 1024:
             raise ValueError('invalid async descriptor')
-        entry = address + relative
+        return address + relative
+
+    def descriptor(self, address, endpoint=True):
+        entry=self.descriptor_entry(address)
         if endpoint:self.load(entry)
         else:self.body(entry)
         return entry
@@ -471,8 +480,15 @@ class AsyncProof:
             if ins[1]!='bl' or callee is None or callee in self.imports:continue
             proof=self.constant_witness(code,call,'x3')
             arg=self.last_write(code,call,'x4')
-            if proof is None or arg is None or code[arg][1:]!=('mov','x4, x0') or arg==0 or not self.runtime(code[arg-1],'_swift_allocObject'):continue
-            if not self.unchanged(code,arg+1,call,['x4']) or not self.single_entry(code,arg-1,call):continue
+            if proof is None or arg is None or code[arg][1]!='mov':continue
+            context=re.fullmatch(r'x4, (x\d+)',code[arg][2])
+            if not context:continue
+            source=context[1]
+            saved=arg if source=='x0' else self.last_write(code,arg,source)
+            if saved is None or saved==0 or code[saved][1:]!=('mov',(source if source!='x0' else 'x4')+', x0') or not self.runtime(code[saved-1],'_swift_allocObject'):continue
+            if source!='x0' and not self.unchanged(code,saved+1,arg,[source]):continue
+            if any(boundary(z) for z in code[saved-1:call]) or not self.single_entry(code,saved-1,call):continue
+            if not self.unchanged(code,arg+1,call,['x4']):continue
             runtime=self.body(callee)
             # Actual generic throwing-Task specialization supplies only x5
             # metadata, preserving original descriptor/context arguments.
@@ -483,7 +499,9 @@ class AsyncProof:
                 runtime=self.body(forward);forwarded=True
             sinks=[i for i,z in enumerate(runtime) if self.runtime(z,'_swift_task_create')]
             if not sinks:continue
-            original=self.descriptor(proof[0]) # Compiler identity required at endpoint.
+            original=self.descriptor_entry(proof[0])
+            if original not in self.symbols:continue # No edge for absent/ambiguous compiler endpoint.
+            self.load(original)
             if forwarded:
                 if self.direct_task_arguments(runtime,sinks):edges.add((symbol,self.symbols[original][0]))
                 continue

@@ -270,4 +270,53 @@ class ThrowingTaskInvocationTests(unittest.TestCase):
                 self.f['windows'][symbol][2]=original.replace(old,new)
                 self.assertNotIn((self.caller,self.endpoint),self.prove())
 
+class ManagerTaskContextTests(unittest.TestCase):
+    def setUp(self):
+        self.f=json.loads((FIXTURE.parent/'nimo-async-dca-manager-task.json').read_text())
+        self.symbols={int(a):tuple(v)for a,v in self.f['symbols'].items()};self.caller=self.symbols[0x100c0a6c4][0];self.endpoint=self.symbols[0x100c0f838][0]
+    def prove(self):
+        f=self.f
+        return prove_async_edges({s:f['windows'][s]for s in f.get('initial',[self.caller])},self.symbols,{int(a):n for a,n in f['imports'].items()},lambda a,n:bytes.fromhex(f['reads'][f'{a:x}:{n}']),lambda a:f['windows'][self.symbols[a][0]],get_body=lambda a:f['bodies'][str(a)])
+    def test_actual_saved_context_reaches_original_manager_task(self):
+        self.assertIn((self.caller,self.endpoint),self.prove())
+    def test_saved_context_allocation_and_strb_writebacks_cannot_change(self):
+        original=self.f['windows'][self.caller][2]
+        for old,new in [('100c0abe0 mov x0, x19','100c0abe0 mov x27, x19'),('100c0abc4 bl 0x102c0b540','100c0abc4 bl 0xdead'),('100c0abd4 stp x21, x19, [x0, #0x30]','100c0abd4 b 0x100c0abc8'),('100c0abdc strb w8, [x0, #0x40]','100c0abdc strb w8, [x27, #0x40]!'),('100c0abdc strb w8, [x0, #0x40]','100c0abdc strb w8, [x27], #0x40')]:
+            with self.subTest(new=new):
+                self.f['windows'][self.caller][2]=original.replace(old,new)
+                self.assertNotIn((self.caller,self.endpoint),self.prove())
+    def test_missing_required_compiler_endpoint_never_adopted(self):
+        del self.symbols[0x100c0f838]
+        self.assertNotIn((self.caller,self.endpoint),self.prove())
+
+    def test_unrelated_absent_endpoint_does_not_veto_independent_manager(self):
+        other=json.loads((FIXTURE.parent/'nimo-async-dca-throwing-task.json').read_text())
+        for address,value in other['symbols'].items():
+            if int(address)!=0x100db77c8:self.symbols[int(address)]=tuple(value)
+        for key in ['windows','bodies','reads','imports']:self.f[key].update(other[key])
+        other_caller=other['symbols'][str(0x100db148c)][0]
+        self.f['initial']=[self.caller,other_caller]
+        edges=self.prove()
+        self.assertIn((self.caller,self.endpoint),edges)
+        self.assertFalse(any(a==other_caller for a,b in edges))
+
+class AsyncDecodeBudgetTests(unittest.TestCase):
+    def test_exact_immutable_window_decode_cached_with_bounded_hit_charge(self):
+        from nimo_async_invocations import AsyncProof
+        proof=AsyncProof({}, {}, {}, lambda a,n:None,lambda a:None)
+        window=(0x1000,0x1004,'1000 ret')
+        proof.work=len(window[2])+2
+        first=proof.decode(window)
+        self.assertIsInstance(first,tuple)
+        self.assertIs(first,proof.decode(window))
+        self.assertEqual(proof.work,1)
+        with self.assertRaises(ValueError):proof.decode((0x1000,0x1004,'1000 br x9'))
+    def test_same_text_with_changed_extent_is_not_cached(self):
+        from nimo_async_invocations import AsyncProof
+        proof=AsyncProof({}, {}, {}, lambda a,n:None,lambda a:None)
+        proof.decode((0x1000,0x1004,'1000 ret'))
+        before=proof.work
+        proof.decode((0x1000,0x1008,'1000 ret'))
+        self.assertEqual(before-proof.work,len('1000 ret'))
+
 if __name__=='__main__':unittest.main()
