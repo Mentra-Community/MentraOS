@@ -268,4 +268,66 @@ final class NimoCanvasTransportTests: XCTestCase {
         XCTAssertEqual(encoder.deliveryCount, 0)
     }
 
+    func testReleaseDrainsOriginalLaunchAndUpdateBeforeExit() {
+        for releaseKey in [1, 4] {
+            let clock = NimoTestClock()
+            var now: UInt64 = 100
+            var started: (() -> Void)?, completed: (() -> Void)?
+            var keys: [Int] = [], observed: [(Int, UInt64?)] = []
+            let canvas = NimoCanvasCoordinator(schedule: clock.schedule, writeCapacity: { 512 }, enqueue: { frames, start, complete in
+                keys.append(Int(frames[0][9])); started = start; completed = complete; return true
+            }, reconnect: { XCTFail($0) }, rejected: { _ in }, observedResult: { key, _, received in observed.append((key, received)) }, continuousNow: { now })
+            canvas.activate(); canvas.readiness(true)
+            if releaseKey == 4 {
+                started?(); completed?(); canvas.response(key: 1, payload: Data([0, 0xFD]), receivedElapsedMs: 100)
+                now = 110
+            }
+            started?(); let originalCompletion = completed
+            canvas.drainForRelease()
+            canvas.offer(Data([9]), scope: "new", force: true)
+            canvas.activate(); canvas.readiness(true); canvas.nativeApp(99, entered: true)
+            let payload = releaseKey == 4 ? Data([0, 0xFD, 0, 0, 0]) : Data([0, 0xFD])
+            func deliver(_ key: Int, _ data: Data, _ received: UInt64) {
+                if canvas.acceptsReleaseResponse(key: key, payload: data) { canvas.response(key: key, payload: data, receivedElapsedMs: received) }
+            }
+            XCTAssertFalse(canvas.acceptsReleaseResponse(key: 3, payload: Data([0, 0xFD])))
+            XCTAssertFalse(canvas.acceptsReleaseResponse(key: releaseKey, payload: Data([0, 1])))
+            XCTAssertTrue(canvas.acceptsReleaseResponse(key: releaseKey, payload: payload))
+            deliver(releaseKey, payload, now - 1) // Callback received before actual final write.
+            XCTAssertEqual(keys.last, releaseKey)
+            deliver(releaseKey, payload, now + 2) // Early ACK buffered until real didWrite.
+            XCTAssertEqual(keys.last, releaseKey)
+            originalCompletion?()
+            XCTAssertEqual(keys.last, 3)
+            XCTAssertEqual(observed.last?.0, releaseKey); XCTAssertEqual(observed.last?.1, now + 2)
+            now += 10; started?(); completed?()
+            deliver(releaseKey, payload, now)
+            XCTAssertEqual(canvas.pendingCount, 1)
+            deliver(3, Data([0, 0xFD]), now + 1)
+            XCTAssertEqual(canvas.pendingCount, 0); XCTAssertFalse(canvas.mayHaveEntered)
+            XCTAssertEqual(keys, releaseKey == 1 ? [1, 3] : [1, 4, 3])
+            canvas.offer(Data([8]), scope: "replacement"); clock.advance(2)
+            XCTAssertEqual(keys.last, 3)
+        }
+    }
+
+    func testReleaseMissingOrRejectedOriginalAckCannotInventExitOrRetry() {
+        for status: UInt8? in [nil, 7, 8, 2] {
+            let clock = NimoTestClock()
+            var keys: [Int] = [], reconnects: [String] = [], results: [Int] = []
+            let canvas = NimoCanvasCoordinator(schedule: clock.schedule, writeCapacity: { 512 }, enqueue: { frames, start, complete in
+                keys.append(Int(frames[0][9])); start(); complete(); return true
+            }, reconnect: { reconnects.append($0) }, rejected: { _ in }, result: { key, _ in results.append(key) })
+            canvas.activate(); canvas.readiness(true); canvas.drainForRelease()
+            if let status {
+                let payload = Data([status])
+                XCTAssertTrue(canvas.acceptsReleaseResponse(key: 1, payload: payload))
+                canvas.response(key: 1, payload: payload)
+            }
+            clock.advance(46)
+            XCTAssertEqual(keys, [1]); XCTAssertFalse(results.contains(3))
+            if status == nil || status == 2 { XCTAssertEqual(reconnects.count, 1) }
+        }
+    }
+
 }

@@ -25,6 +25,7 @@ final class NimoCanvasCoordinator {
     private let observedResult: (Int, Int, UInt64?) -> Void
     private let session = NimoCanvasSession()
     private var flight: Flight?
+    private var releaseDraining = false
     private var cancelRetry: (() -> Void)?
     private var cancelDeadline: (() -> Void)?
 
@@ -38,14 +39,17 @@ final class NimoCanvasCoordinator {
     }
 
     func offer(_ bytes: Data, scope: String, force: Bool = false) {
+        guard !releaseDraining else { return }
         run(session.offer(bytes, scope: scope, force: force))
     }
 
     func activate() {
+        guard !releaseDraining else { return }
         run(session.activate())
     }
 
     func readiness(_ value: Bool, confirmed: Bool = false) {
+        guard !releaseDraining else { return }
         if !value { cancelRetry?(); cancelRetry = nil }
         run(session.readiness(value, confirmed: confirmed))
     }
@@ -55,7 +59,20 @@ final class NimoCanvasCoordinator {
         run(session.exit())
     }
 
+    /// Fence new scenes/retries while retaining only the already-issued command
+    /// and its exact ACK, followed by the final Exit through the same queue.
+    func drainForRelease() {
+        releaseDraining = true
+        cancelRetry?(); cancelRetry = nil
+        run(session.exit())
+    }
+
+    func acceptsReleaseResponse(key: Int, payload: Data) -> Bool {
+        releaseDraining && flight?.key == key && session.acceptsResponse(key: key, payload: payload)
+    }
+
     func nativeApp(_ appId: Int, entered: Bool) {
+        guard !releaseDraining else { return }
         run(session.nativeApp(appId, entered: entered))
     }
 
@@ -112,7 +129,7 @@ final class NimoCanvasCoordinator {
             case let .reconnect(reason): disconnected(); reconnect(reason)
             case let .rejected(status):
                 rejected(status)
-                if status == 7 {
+                if status == 7 && !releaseDraining {
                     cancelRetry?()
                     cancelRetry = schedule(1) { [weak self] in
                         guard let self else { return }

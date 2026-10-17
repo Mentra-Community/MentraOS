@@ -1467,7 +1467,7 @@ class Nimo: NSObject, SGCManager {
         if packet.count >= 10, packet[8] == 7, [1, 3, 4].contains(packet[9]) {
             if let response = NimoCanvasCodec.response(packet) {
                 let productAllowed = (DeviceManager.shared.sgc as? Nimo) === self && NimoResourceFixture.shared.allowsProducer(self)
-                guard productAllowed || (resourceSession?.releaseNonce != nil && response.key == 3) else { return }
+                guard productAllowed || (resourceSession?.releaseNonce != nil && canvas.acceptsReleaseResponse(key: response.key, payload: response.payload)) else { return }
                 if response.key == 1 { Bridge.log("NIMO: canvas Launch response status=\(response.payload.first.map(Int.init) ?? -1)") }
                 canvas.response(key: response.key, payload: response.payload, receivedElapsedMs: resourceNotificationElapsedMs)
             }
@@ -1717,15 +1717,17 @@ class Nimo: NSObject, SGCManager {
 
     func releaseResource(_ original: NimoResourceSession) async {
         if let resourceReleaseTask { await resourceReleaseTask.value; return }
+        guard original.isOwner(self) else { return }
+        // Install the drain synchronously before scheduling or awaiting cleanup.
+        // Original ACKs may arrive while reconnect tasks are settling.
+        canvas.drainForRelease()
         let task = Task { @MainActor [self] in
-            guard original.isOwner(self) else { return }
             isDisconnecting = true
             stopScan(); stopTimers(); cancelPairingTimeout(); cancelTwsTimeout()
             canvasEncoder.invalidate()
             await reconnectionManager.stopAndWait()
             // Existing pending commands retain their real callbacks/deadlines.
             // Exit is queued through the same canvas/write state machine.
-            if original.displayExitRequired { canvas.exit() }
             if original.micStopRequired {
                 if let peripheral, let micChar {
                     writes.enqueue(peripheral, characteristic: micChar, frames: [Data([0x52, 0, 0, 0])],
