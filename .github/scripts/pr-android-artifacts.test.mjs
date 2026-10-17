@@ -467,6 +467,8 @@ test('pre-arm policy inversions must reach the exact branch, return or capture f
   invertedSnapshot.replace('invoke-virtual {v2, v1, v3}', 'invoke-virtual {v2, v1, v0}'),
   invertedSnapshot.replace('xor-int/lit8 v3, v0, 0x1','const-string v1, "unrelatedFlag"\n xor-int/lit8 v3, v0, 0x1'),
   diagnosticCode.diagnostics.replace(snapshotSink,'return v0'), // marker is not a JSON fact
+  diagnosticCode.diagnostics.replace('const-string v1, "captureRequiredBeforeArm"','const-string v1, "captureRequiredBeforeArm"\n :unproven'),
+  diagnosticCode.diagnostics.replace('const-string v1, "captureRequiredBeforeArm"','const-string v1, "captureRequiredBeforeArm"\n invoke-static {}, Lother/Policy;->unproven()V'),
  ]) assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}),/policy/)
 })
 
@@ -558,4 +560,52 @@ test('clock command overloads and admission must be called by their live entry m
   assert.notEqual(diagnostics,diagnosticCode.diagnostics)
   assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}),/monotonic/)
  }
+})
+
+test('pinned Kotlin2.3/AGP8.12 policy output preserves boolean consumption without adjacency assumptions', async () => {
+ const actual=await readFile(new URL('./fixtures/nimo-policy-kotlin23/diagnostics.smali',import.meta.url),'utf8')
+ const body=(text,signature)=>text.match(new RegExp(`^\\.method[^\\n]* ${signature.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\n([\\s\\S]*?)^\\.end method`,'m'))?.[1]
+ const replaceBody=(text,signature,value)=>{
+  const old=body(text,signature); assert.ok(old,signature); return text.replace(old,value)
+ }
+ let diagnostics=diagnosticCode.diagnostics
+ for(const signature of [`${policy}(Ljava/lang/String;)Z`,policyDefault,'allowUnarmedWearable$bluetooth_sdk_nimoDiagnostic(Ljava/lang/String;Ljava/lang/String;)Z','allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z']) {
+  const emitted=body(actual,signature);assert.ok(emitted,signature);diagnostics=replaceBody(diagnostics,signature,emitted)
+ }
+ // Actual simplified admit wrapper uses the same !default-policy expression as
+ // the full source's capture-null path. It is not a full APK fixture.
+ for(const name of ['admit','allowPeer','beginTransport']) diagnostics=replaceBody(diagnostics,`${name}(${desc(NIMO_DEVICE)}Ljava/lang/String;Z)Z`,(name==='admit' ? ` invoke-virtual {v0}, ${desc(NIMO_DEVICE)}->resourceCaptureAdmission$bluetooth_sdk_nimoDiagnostic(Ljava/lang/String;JJ)V\n` : '')+body(actual,'admit()Z'))
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics}))
+ const admitSignature=`admit(${desc(NIMO_DEVICE)}Ljava/lang/String;Z)Z`
+ const admitted=body(diagnostics,admitSignature)
+ for(const [label,changed] of [
+  ['self xor preloaded one',admitted.replace('const/4 v1, 0x1','const/4 v0, 0x1').replace('xor-int/2addr v0, v1','xor-int/2addr v0, v0')],
+  ['zero',admitted.replace('v1, 0x1','v1, 0x0')],
+  ['two',admitted.replace('v1, 0x1','v1, 0x2')],
+  ['unknown',admitted.replace('const/4 v1, 0x1','move v1, p1')],
+  ['clobbered one',admitted.replace('xor-int/2addr','const/4 v1, 0x0\n xor-int/2addr')],
+  ['clobbered result',admitted.replace('xor-int/2addr','const/4 v0, 0x1\n xor-int/2addr')],
+  ['wrong xor destination',admitted.replace('xor-int/2addr v0','xor-int/2addr v2')],
+  ['wrong sink',admitted.replace('return v0','return v1')],
+  ['label',admitted.replace('xor-int/2addr',':unproven\n xor-int/2addr')],
+  ['goto',admitted.replace('xor-int/2addr','goto :unproven\n xor-int/2addr')],
+  ['borrowed across label',admitted.replace('invoke-static',':unproven\n invoke-static')],
+  ['unknown call',admitted.replace('xor-int/2addr','invoke-static {}, Lother/Policy;->unproven()V\n xor-int/2addr')],
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,diagnostics:replaceBody(diagnostics,admitSignature,changed)}),/policy wiring: admit/,label)
+})
+
+test('exact capture snapshot expression consumes its post-call literal JSON key',async()=>{
+ const emitted=await readFile(new URL('./fixtures/nimo-policy-kotlin23/snapshot.smali',import.meta.url),'utf8')
+ const actual=emitted.match(/^\.method[^\n]* captureSnapshot\([^\n]*\n([\s\S]*?)^\.end method/m)[1]
+ const original=diagnosticCode.diagnostics.match(/^\.method[^\n]* captureSnapshot\([^\n]*\n([\s\S]*?)^\.end method/m)[1]
+ const replace=body=>({...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace(original,body)})
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode(replace(actual)))
+ for(const changed of [
+  actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v1, "captureRequiredBeforeArm"'),
+  actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v2, "captureRequiredBeforeArm"\n const-string v2, "wrong"'),
+  actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v2, "captureRequiredBeforeArm"\n const/4 v2, 0x1'),
+  actual.replace('invoke-virtual {v0, v2, v1}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)','invoke-virtual {v0, v2, v3}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)'),
+  actual.replace('const-string v2, "captureRequiredBeforeArm"',':unproven\n const-string v2, "captureRequiredBeforeArm"'),
+  actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v2, "1"\n xor-int/2addr v1, v2\n const-string v2, "captureRequiredBeforeArm"'),
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode(replace(changed)),/policy wiring: captureRequiredBeforeArm JSON field/)
 })

@@ -160,10 +160,40 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
       let register = /^move-result\s+([vp][0-9]+)$/.exec(instructions[index+1] ?? '')?.[1]
       if (!register) return false
       let next = index+2
-      const inversion = /^xor-int\/lit8\s+([vp][0-9]+),\s*([vp][0-9]+),\s*(?:0x1|1)$/.exec(instructions[next] ?? '')
-      if (inversion) {
-        if (inversion[2] !== register) return false
-        register = inversion[1]; next++
+      const constants = new Map()
+      // Recover only straight-line literal assignments, never across a label or
+      // branch. Kotlin/D8 can materialize boolean one before the policy call.
+      for (let prior=index-1; prior>=Math.max(0,index-12); prior--) {
+        const value=instructions[prior]
+        if (/^(?::|(?:if-|goto|return|throw|invoke-))/.test(value)) break
+        const write=/^[a-z][a-z0-9/-]*\s+([vp][0-9]+)(?:\s*,|$)/.exec(value)
+        if (!write || constants.has(write[1])) continue
+        const literal=/^const(?:\/4|\/16)?\s+([vp][0-9]+),\s*(0x[0-9a-f]+|[0-9]+)$/.exec(value)
+        constants.set(write[1], literal ? Number(literal[2]) : null)
+      }
+      constants.delete(register) // move-result overwrote any pre-call literal.
+      let inverted=false
+      for (let steps=0; steps<8; steps++) {
+        const value=instructions[next] ?? ''
+        const literal=/^const(?:\/4|\/16)?\s+([vp][0-9]+),\s*(0x[0-9a-f]+|[0-9]+)$/.exec(value)
+        if (literal) {
+          if (literal[1] === register) return false
+          constants.set(literal[1],Number(literal[2])); next++; continue
+        }
+        const stringLiteral=/^const-string(?:\/jumbo)?\s+([vp][0-9]+),\s*"[^"\n]*"$/.exec(value)
+        if (stringLiteral) {
+          if (stringLiteral[1] === register) return false
+          constants.set(stringLiteral[1],null); next++; continue
+        }
+        const inversion=/^xor-int\/lit8\s+([vp][0-9]+),\s*([vp][0-9]+),\s*(?:0x1|1)$/.exec(value)
+        const twoAddress=/^xor-int\/2addr\s+([vp][0-9]+),\s*([vp][0-9]+)$/.exec(value)
+        if (!inverted && inversion && inversion[2]===register) {
+          register=inversion[1]; constants.delete(register); inverted=true; next++; continue
+        }
+        if (!inverted && twoAddress && twoAddress[1]===register && twoAddress[2]!==register && constants.get(twoAddress[2])===1) {
+          inverted=true; next++; continue
+        }
+        break
       }
       const sink = instructions[next] ?? ''
       if (!jsonField) return new RegExp(`^(?:return\\s+${register}$|if-(?:eqz|nez)\\s+${register}\\s*,)`).test(sink)
@@ -173,6 +203,7 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
       // borrow a literal whose register was subsequently overwritten.
       for (let previous=next-1; previous>=Math.max(0,index-12); previous--) {
         const value = instructions[previous]
+        if (/^(?::|(?:if-|goto|return|throw))/.test(value) || previous!==index && /^invoke-/.test(value)) return false
         if (new RegExp(`^[a-z][a-z0-9/-]*\\s+${put[2]}(?:\\s*,|$)`).test(value))
           return new RegExp(`^const-string(?:/jumbo)?\\s+${put[2]},\\s*"${escaped(jsonField)}"$`).test(value)
       }
@@ -180,14 +211,17 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
     })
   }
   const diagnosticLiteral = (body, reference) => new RegExp(`const-string(?:/jumbo)?\\s+([vp][0-9]+),\\s*"nimoDiagnostic"[\\s\\S]*?invoke-[^\\n]+\\{[^}]*\\b\\1\\b[^}]*\\}[^\\n]*${reference}`).test(body)
-  if (!diagnosticLiteral(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual') || !consumed(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual\\(Ljava/lang/Object;Ljava/lang/Object;\\)Z') ||
-      !diagnosticLiteral(defaults,policyCall) || !consumed(defaults,policyCall) ||
-      !diagnosticLiteral(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'),`${escaped(target)}->allowUnarmedWearable`) ||
-      !consumed(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'), `${escaped(target)}->allowUnarmedWearable(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;Ljava/lang/String;\\)Z`) ||
-      !consumed(unarmed,policyCall) || !/const-string(?:\/jumbo)?[^\n]*"NIMO"/.test(unarmed) ||
-      !['admit','allowPeer','beginTransport'].every(name=>consumed(method(diagnostics,`${name}(${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z)Z`),defaultCall)) ||
-      !consumed(snapshot,defaultCall,'captureRequiredBeforeArm'))
-    throw new Error('Diagnostic APK lacks compiled diagnostic-only deny-before-arm policy wiring')
+  const policyObligations = [
+    ['policy equality', diagnosticLiteral(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual') && consumed(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual\\(Ljava/lang/Object;Ljava/lang/Object;\\)Z')],
+    ['diagnostic default', diagnosticLiteral(defaults,policyCall) && consumed(defaults,policyCall)],
+    ['manager unarmed gate', diagnosticLiteral(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'),`${escaped(target)}->allowUnarmedWearable`) && consumed(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'), `${escaped(target)}->allowUnarmedWearable(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;Ljava/lang/String;\\)Z`)],
+    ['unarmed wearable policy', consumed(unarmed,policyCall) && /const-string(?:\/jumbo)?[^\n]*"NIMO"/.test(unarmed)],
+    ...['admit','allowPeer','beginTransport'].map(name=>[name,consumed(method(diagnostics,`${name}(${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z)Z`),defaultCall)]),
+    ['captureRequiredBeforeArm JSON field', consumed(snapshot,defaultCall,'captureRequiredBeforeArm')],
+  ]
+  const failedPolicy=policyObligations.filter(([,valid])=>!valid).map(([name])=>name)
+  if (failedPolicy.length) throw new Error(`Diagnostic APK lacks compiled diagnostic-only deny-before-arm policy wiring: ${failedPolicy.join(', ')}`)
+
 
   if (checks.some(([code, cls, signature, guards]) => !hasClass(code ?? '',descriptor(cls)) || guards.some(guard=>!guarded(method(code,signature),guard))) ||
       ['arm-capture','capture-status','cancel-capture'].some(value=>!execute.includes(`"${value}"`)) ||
