@@ -120,6 +120,63 @@ class NimoLifecycleTest {
       .set(null, previousManager)
   }
 
+  @Test fun monotonicSnapshotRetainsOriginalAdmissionWhenWallMarkersJumpBothDirections() {
+    val armed = android.os.SystemClock.elapsedRealtime()
+    val nonce = java.util.UUID.randomUUID().toString()
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(25, TimeUnit.MILLISECONDS)
+    val admitted = android.os.SystemClock.elapsedRealtime()
+    nimo.resourceCaptureAdmission(nonce, armed, admitted)
+    setField("resourceSessionStartedElapsedMs", admitted)
+    setField("resourceSessionGeneration", 1L)
+    setField("twsElapsedMs", admitted)
+    setField("handshakeTwsElapsedMs", admitted)
+    setField("timeWriteStartedElapsedMs", admitted)
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(10, TimeUnit.MILLISECONDS)
+    val ack = android.os.SystemClock.elapsedRealtime()
+    setField("timeAckElapsedMs", ack)
+    // Model independent phone epoch jumps: neither direction can rewrite causal time.
+    for (epoch in listOf(1L, 4_000_000_000_000L)) {
+      setField("resourceTwsAt", epoch)
+      setField("resourceHandshakeTwsAt", epoch)
+      setField("resourceTimeWriteStartedAt", epoch)
+      setField("resourceTimeAckAt", epoch)
+      val clock = nimo.resourceSnapshot().getJSONObject("clock")
+      assertEquals("android-elapsed-realtime-v1", clock.getString("kind"))
+      assertEquals(nonce, clock.getString("captureNonce"))
+      assertEquals(armed, clock.getLong("armedElapsedMs"))
+      assertEquals(admitted, clock.getLong("admittedElapsedMs"))
+      assertEquals(ack, clock.getLong("timeAckElapsedMs"))
+      assertTrue(clock.getLong("observedElapsedMs") >= ack)
+    }
+  }
+
+  @Test fun originalReleaseClockAndNonceSurviveLaterStatusAndRepeatedRelease() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    setField("resourceSessionGeneration", 1L)
+    setField("resourcePairAddress", "00:11:22:33:44:55")
+    val nonce = java.util.UUID.randomUUID().toString()
+    val received = android.os.SystemClock.elapsedRealtime()
+    var first: JSONObject? = null
+    nimo.releaseResource(1L, { true }, { first = it }, nonce, received)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(300, TimeUnit.MILLISECONDS)
+    val original = requireNotNull(first).getJSONObject("clock")
+    assertEquals(nonce, original.getString("releaseNonce"))
+    assertTrue(original.getLong("releaseStartedElapsedMs") >= received)
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(10, TimeUnit.SECONDS)
+    val status = resourceCommand("status")
+    assertEquals("nimo-monotonic-receipt-v1", status.getString("clockProtocol"))
+    val statusClock = status.getJSONObject("clock")
+    assertTrue(statusClock.getLong("observedElapsedMs") >= statusClock.getLong("requestReceivedElapsedMs"))
+    var repeated: JSONObject? = null
+    nimo.releaseResource(1L, { true }, { repeated = it }, java.util.UUID.randomUUID().toString(), android.os.SystemClock.elapsedRealtime())
+    for (snapshot in listOf(status.getJSONObject("session"), requireNotNull(repeated))) {
+      val clock = snapshot.getJSONObject("clock")
+      assertEquals(nonce, clock.getString("releaseNonce"))
+      assertEquals(original.getLong("releaseStartedElapsedMs"), clock.getLong("releaseStartedElapsedMs"))
+    }
+  }
+
   @Test fun offMainDisconnectCompletesOnMainAndInterruptsActiveCapture() {
     runOffMain { nimo.disconnect() }
     assertDisconnectedOnMain()
@@ -393,7 +450,32 @@ class NimoLifecycleTest {
     File(context.filesDir, "nimo-lifecycle/$nonce.admission.tmp").mkdir()
     assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
     assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").exists())
+    val clock = nimo.resourceSnapshot().getJSONObject("clock")
+    assertTrue(clock.isNull("captureNonce")); assertTrue(clock.isNull("admittedElapsedMs"))
+    val capture = captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture")
+    assertTrue(capture.getBoolean("cancelled"))
+    assertTrue(capture.getJSONObject("clock").isNull("admittedElapsedMs"))
     assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun preexistingAdmissionIsNeverOverwrittenOrStampedOntoLiveInstance() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    val original = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    original.writeText("preexisting-immutable-evidence")
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertEquals("preexisting-immutable-evidence", original.readText())
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    val clock = nimo.resourceSnapshot().getJSONObject("clock")
+    assertTrue(clock.isNull("captureNonce")); assertTrue(clock.isNull("admittedElapsedMs"))
+    assertTrue(captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture").getJSONObject("clock").isNull("admittedElapsedMs"))
   }
 
   @Test fun capturedGenerationZeroCancellationDrainsOriginalAndFencesQueuedAdmission() {

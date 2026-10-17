@@ -314,7 +314,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       'Diagnostic APK cannot enter ordinary build selection');
     const rawProof = (receipt.value as {diagnosticVerification?:unknown})?.diagnosticVerification;
     if (diagnostic) {
-      const proof=z.object({kind:z.literal('compiled-capture-wiring-v2'),captureProtocol:z.literal('nimo-preconnect-capture-v1'),captureRequiredBeforeArm:z.literal(true),scanInstancePreserved:z.literal(true),apkSha256:digest,wiringSha256:digest,
+      const proof=z.object({kind:z.literal('compiled-capture-wiring-v3'),clockProtocol:z.literal('nimo-monotonic-receipt-v1'),captureProtocol:z.literal('nimo-preconnect-capture-v1'),captureRequiredBeforeArm:z.literal(true),scanInstancePreserved:z.literal(true),apkSha256:digest,wiringSha256:digest,
         analyzer:z.object({source:z.literal('android-sdk-command-line-tools'),revision:z.string().regex(/^[0-9.]+$/).max(128),sha256:digest}).strict()}).strict().parse(rawProof);
       requireThat(proof.apkSha256 === (receipt.value as {artifacts?:{android?:{sha256?:string}}}).artifacts?.android?.sha256, 'Diagnostic wiring proof belongs to another APK');
     } else requireThat(rawProof === undefined, 'Diagnostic wiring proof cannot enter ordinary selection');
