@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows, BoundedRebaseLookup, function_start_windows, owned_roster_diagnostic, selected_direct_call_symbols
+from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows, BoundedRebaseLookup, function_start_windows, owned_roster_diagnostic, selected_direct_call_symbols, SCHEDULER_SELECTOR
 
 UUID = bytes(range(16))
 def macho():
@@ -52,6 +52,31 @@ class SectionsTests(unittest.TestCase):
         self.assertTrue(limited['truncated']);self.assertEqual(len(limited['entries']),1)
         def expired():raise ValueError('original deadline expired')
         with self.assertRaisesRegex(ValueError,'deadline'):selected_direct_call_symbols(windows,entries,rows,{},expired)
+
+    def test_transport_init_collects_only_exact_scheduler_auxiliary_family(self):
+        rows=[(0x1000+4*i,'_method%d'%i) for i in range(7)]
+        names=['MentraBluetoothSDK.NimoMacResourceTransport.init(process: Process) throws -> Transport',
+               'MentraBluetoothSDK.'+SCHEDULER_SELECTOR+' -> ()',
+               'closure #1 in MentraBluetoothSDK.'+SCHEDULER_SELECTOR+' -> ()',
+               'MentraBluetoothSDK.NimoMacResourceTransport.enqueueServe(qos: Foreign.QoS, flags: Foreign.Flags) -> ()',
+               'MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()',
+               'MentraBluetoothSDK.'+SCHEDULER_SELECTOR.replace('NimoMacResourceTransport','OtherTransport')+' -> ()',
+               'ForeignSDK.'+SCHEDULER_SELECTOR+' -> ()']
+        selected=symbol_windows(rows,names,['NimoMacResourceTransport.init('],(0x1000,0x1020))
+        self.assertEqual([r[2] for r in selected],['_method0','_method1','_method2'])
+        selected=symbol_windows(rows,names,['NimoMacResourceTransport.serve('],(0x1000,0x1020))
+        self.assertEqual([r[2] for r in selected],['_method4'])
+
+    def test_native_scheduler_precomputes_empty_flags_before_real_registration(self):
+        source=(Path(__file__).resolve().parents[2]/'modules/bluetooth-sdk/ios/Source/sgcs/NimoMacResourceTransport.swift').read_text()
+        start=source.index('        let schedulerQoS: DispatchQoS = .unspecified')
+        flags=source.index('        let schedulerFlags = DispatchWorkItemFlags(rawValue: 0)',start)
+        enqueue=source.index('        enqueueServe(qos: schedulerQoS, flags: schedulerFlags)',flags)
+        helper=source.index('    @inline(never)\n    private func enqueueServe(qos: DispatchQoS, flags: DispatchWorkItemFlags)',enqueue)
+        self.assertLess(start,flags);self.assertLess(flags,enqueue);self.assertLess(enqueue,helper)
+        self.assertEqual(source.count('queue.async('),1)
+        self.assertIn('queue.async(group: nil, qos: qos, flags: flags) { [weak self] in self?.serve() }',source[helper:])
+        self.assertIn('private let queue = DispatchQueue(label: "NimoResourceFixtureSocket")',source)
 
     def test_actual_function_starts_bound_exact_anonymous_entries(self):
         data=macho_starts();self.assertEqual(function_start_windows(data),{0x1004:0x100c,0x100c:0x1014})

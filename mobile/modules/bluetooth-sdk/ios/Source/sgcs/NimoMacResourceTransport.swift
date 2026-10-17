@@ -75,7 +75,15 @@ final class NimoMacResourceTransport {
         let result = withUnsafePointer(to: &address) { ptr in ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(socketFd, $0, length) } }
         guard result == 0, chmod(socketPath, 0o600) == 0, listen(socketFd, 4) == 0 else { throw transportError("fixture-socket-bind") }
         let flags = fcntl(socketFd, F_GETFD); _ = fcntl(socketFd, F_SETFD, flags | FD_CLOEXEC)
-        queue.async { [weak self] in self?.serve() }
+        let schedulerQoS: DispatchQoS = .unspecified
+        let schedulerFlags = DispatchWorkItemFlags(rawValue: 0)
+        enqueueServe(qos: schedulerQoS, flags: schedulerFlags)
+    }
+
+    // A narrow scheduling boundary for this transport's original accept loop.
+    @inline(never)
+    private func enqueueServe(qos: DispatchQoS, flags: DispatchWorkItemFlags) {
+        queue.async(group: nil, qos: qos, flags: flags) { [weak self] in self?.serve() }
     }
 
     private func sameDirectory() -> Bool {

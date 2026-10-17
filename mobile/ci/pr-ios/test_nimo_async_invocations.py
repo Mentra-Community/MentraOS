@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -318,5 +319,28 @@ class AsyncDecodeBudgetTests(unittest.TestCase):
         before=proof.work
         proof.decode((0x1000,0x1008,'1000 ret'))
         self.assertEqual(before-proof.work,len('1000 ret'))
+
+class DirectSchedulerTests(unittest.TestCase):
+    def setUp(self):
+        self.f=json.loads((FIXTURE.parent/'nimo-async-forwarded-scheduler.json').read_text())
+        self.symbols={int(a):tuple(v)for a,v in self.f['symbols'].items()};self.entry=self.f['initial'][0]
+    def prove(self):
+        f=self.f
+        return prove_async_edges({self.entry:f['windows'][self.entry]},self.symbols,{int(a):n for a,n in f['imports'].items()},lambda a,n:bytes.fromhex(f['reads'][f'{a:x}:{n}']),lambda a:f['windows'][self.symbols[a][0]],{int(a):n for a,n in f['data_imports'].items()},lambda a:f['pointers'][str(a)],lambda a:f['bodies'][str(a)])
+    def test_real_optimized_fixed_frame_scheduler_consumes_copied_block(self):
+        source=FIXTURE.parent/self.f['provenance']['sourceFixture']
+        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),self.f['provenance']['sourceSha256'])
+        self.assertEqual(self.prove(),{tuple(e)for e in self.f['expected_edges']})
+        self.assertEqual(len(self.prove()),1)
+    def test_sp_frame_copy_lineage_and_unknown_effects_fail_closed(self):
+        original=self.f['windows'][self.entry][2]
+        for old,new in [('1644 sub sp, sp, #0x70','1644 sub sp, sp, #0x20'),('1668 ldr x20, [x20, #0x10]','1668 add sp, sp, #0x70'),('16c8 mov x0, sp','16c8 mov x0, x29'),('16d4 mov x0, x23','16d4 mov x22, x23'),('16e8 mov x3, x22','16e8 mov x3, x23'),('16e0 mov x1, x21','16e0 mov x1, x22'),('16e4 mov x2, x19','16e4 mov x2, x21'),('1664 mov x21, x0','1664 mov x21, x1'),('1668 ldr x20, [x20, #0x10]','1668 ldr x20, [x21, #0x10]'),('16dc mov x0, #0x0','16dc mov x20, #0x0'),('1668 ldr x20, [x20, #0x10]','1668 mov x19, x20'),('16e0 mov x1, x21','16e0 bl 0xdead'),('16b0 str d0, [sp, #0x8]','16b0 str d0, [sp]'),('165c mov x22, x20','165c mystery x22, x20')]:
+            with self.subTest(new=new):
+                self.f['windows'][self.entry][2]=original.replace(old,new)
+                self.assertFalse(self.prove())
+    def test_skipped_unknown_bytes_or_changed_entry_cannot_match(self):
+        window=self.f['windows'][self.entry]
+        window[2]=window[2].replace('165c mov x22, x20','165c .word 0xffffffff')
+        self.assertFalse(self.prove())
 
 if __name__=='__main__':unittest.main()

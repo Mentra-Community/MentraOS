@@ -195,7 +195,8 @@ class AsyncProof:
         for off in (base,base+8):
             candidates=[]
             for i in range(max(0,copy-MAX_SLICE),copy):
-                m=re.fullmatch(r'([xd]\d+), \['+frame+r', #0x'+format(off,'x')+r'\]',code[i][2])
+                memory=r'\['+frame+(r'(?:, #0x0)?' if off==0 else r', #0x'+format(off,'x'))+r'\]'
+                m=re.fullmatch(r'([xd]\d+), '+memory,code[i][2])
                 if code[i][1]=='str' and m:candidates.append((i,m[1]))
             if not candidates:return False
             at,reg=candidates[-1]
@@ -231,6 +232,71 @@ class AsyncProof:
         body=self.tail_body(disposer)
         if len(body)!=2 or body[0][1:]!=('ldr','x0, [x0, #0x28]') or body[1][1]!='b' or not self.runtime(body[1],'_swift_release'):return False
         return True
+
+    def direct_dispatch(self, symbol, code):
+        # Observed fixed-frame Swift scheduler: copy a complete stack block,
+        # keep its heap result in a callee-saved register, and pass that exact
+        # result to Dispatch.async. No metadata calls or stack reuse span.
+        edges=set()
+        for call,ins in enumerate(code):
+            name=self.imports.get(target(ins),'')
+            if not (name.startswith('_$sSo17OS_dispatch_queueC8DispatchE5async') and 'executey' in name):continue
+            if not code or code[0][0]!=self.functions[symbol][0] or code[0][1]!='sub':continue
+            allocation=re.fullmatch(r'sp, sp, #(0x[0-9a-f]+)',code[0][2])
+            if not allocation or int(allocation[1],16)<48:continue
+            if any(z[0]!=code[0][0]+4*i or not modeled(z) or boundary(z) or 'sp' in writes(z) for i,z in enumerate(code[1:call],1)):continue
+            receiver=self.last_write(code,call,'x20')
+            queue=re.fullmatch(r'x20, \[x20, #(0x[0-9a-f]+)\]',code[receiver][2]) if receiver is not None and code[receiver][1]=='ldr' else None
+            if not queue or int(queue[1],16)%8 or not self.unchanged(code,0,receiver,['x20']) or not self.unchanged(code,receiver+1,call,['x20']):continue
+            setter=self.last_write(code,call,'x3')
+            m=re.fullmatch(r'x3, (x(?:19|2[0-8]))',code[setter][2]) if setter is not None and code[setter][1]=='mov' else None
+            if not m or not self.unchanged(code,setter+1,call,['x3']):continue
+            held=m[1];saved=self.last_write(code,setter,held)
+            if saved is None or saved<2 or code[saved][1:]!=('mov',held+', x0'):continue
+            copy=saved-1
+            if not self.runtime(code[copy],'__Block_copy') or code[copy-1][1:]!=('mov','x0, sp'):continue
+            if not self.unchanged(code,saved+1,setter,[held]):continue
+            stores={}
+            for i,z in enumerate(code[:copy]):
+                pair=re.fullmatch(r'(x\d+), (x\d+), \[sp, #(0x[0-9a-f]+)\]',z[2]) if z[1]=='stp' else None
+                if pair:stores[int(pair[3],16)]=(i,pair[1],pair[2])
+            if 16 not in stores or 32 not in stores:continue
+            invoke_store,invoke_reg,_=stores[16]
+            closure_store,closure_reg,context=stores[32]
+            invoke=self.constant(code,invoke_store,invoke_reg);closure=self.constant(code,closure_store,closure_reg)
+            if invoke is None or closure is None or context==held:continue
+            begin=min(invoke_store,closure_store)
+            if any(boundary(z) or z[1] in ('bl','blr') for z in code[begin:copy]):continue
+            fields=True
+            for i in range(begin+1,copy):
+                z=code[i]
+                if not z[1].startswith('st'):continue
+                offset=re.fullmatch(r'(?:[xd]\d+(?:, x\d+)?), \[sp(?:, #(0x[0-9a-f]+))?\]',z[2])
+                if not offset:fields=False;break
+                at=int(offset[1],16) if offset[1]else 0
+                if at not in (0,8,16,32) or at in (16,32) and i not in (invoke_store,closure_store) or at in (0,8) and z[1]!='str':fields=False;break
+            if not fields or not self.block_header(code,stores,'sp',0,copy):continue
+            # The only intervening call retains the original captured context;
+            # it never receives or overwrites the copied block pointer.
+            if copy+7>=len(code) or code[copy+2][1:]!=('mov','x0, '+context):continue
+            if not self.runtime(code[copy+3],'_swift_retain') or code[copy+4][1:]!=('mov','x0, #0x0'):continue
+            if not self.unchanged(code,closure_store+1,copy+2,[context]):continue
+            if setter!=copy+7 or call!=copy+8:continue
+            arguments=[]
+            for restore,output,original in [(copy+5,'x1','x0'),(copy+6,'x2','x1')]:
+                moved=re.fullmatch(output+r', (x(?:19|2[0-8]))',code[restore][2]) if code[restore][1]=='mov' else None
+                if not moved:break
+                register=moved[1];save=self.last_write(code,restore,register)
+                if save is None or code[save][1:]!=('mov',register+', '+original):break
+                if not self.unchanged(code,0,save,[original]) or not self.unchanged(code,save+1,restore,[register]):break
+                arguments.append(register)
+            if len(arguments)!=2 or len(set(arguments))!=2:continue
+            thunk=self.tail_body(invoke);ops=[z[1:]for z in thunk]
+            k=next((i for i in range(len(ops)-3)if ops[i:i+2]==[('ldp','x19, x20, [x0, #0x20]'),('mov','x0, x20')]),None)
+            if k is None or any(z[1].startswith('st')and not re.search(r'\[(?:sp|x29)[,\]]',z[2])for z in thunk[:k])or any(boundary(z)for z in thunk[:k+4])or not self.unchanged(thunk,0,k,['x0'])or not self.runtime(thunk[k+2],'_swift_retain')or ops[k+3]!=('blr','x19'):continue
+            self.load(closure)
+            edges.add((symbol,self.symbols[closure][0]))
+        return edges
 
     def dispatch(self, symbol, code):
         edges = set()
@@ -630,6 +696,7 @@ def prove_async_edges(functions, symbols, imports, read_bytes, get_function, dat
         code=proof.decode(window)
         edges.update(proof.switches(symbol,code))
         edges.update(proof.dispatch(symbol,code))
+        edges.update(proof.direct_dispatch(symbol,code))
         edges.update(proof.task(symbol,code))
         edges.update(proof.registered_task(symbol,code))
         edges.update(proof.relative_branches(symbol,code))

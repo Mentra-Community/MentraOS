@@ -12,7 +12,7 @@ import re
 import struct
 import subprocess
 import sys
-from nimo_symbol_sections import archive_symbol_sections
+from nimo_symbol_sections import archive_symbol_sections, SCHEDULER_SELECTOR
 
 PROTOCOL = 'nimo-macos-resource-v1'
 SOURCE_FILES = tuple('mobile/modules/bluetooth-sdk/ios/' + path for path in (
@@ -141,10 +141,19 @@ def compiled_witness(nm, demangled, disassembly, async_edges=()):
         if caller not in graph or target not in graph:
             raise ValueError('async edge is not backed by exact compiler symbols')
         graph[caller].add(target)
+    # A genuine scheduler boundary is private producer bookkeeping, not an
+    # eighteenth capability role. Only its uniquely named actual method and
+    # causally invoked callback family can bridge constructor -> serve.
+    scheduler_roots={symbol for (_,symbol),name in zip(rows,demangled)
+                     if name=='MentraBluetoothSDK.'+SCHEDULER_SELECTOR+' -> ()'}
+    scheduler_family={symbol for (_,symbol),name in zip(rows,demangled)
+                      if re.search(r'(?<![A-Za-z0-9_.])MentraBluetoothSDK\.'+re.escape(SCHEDULER_SELECTOR),name)}
     def reaches(source, target):
         # Follow only actual direct-call edges through compiler-emitted method/
         # closure families, never infer invocation from a closure's name alone.
         allowed = roles[source] | roles[target]
+        if (source,target)==('transportInit','transportServe') and len(scheduler_roots)==1 and any(graph[root] & scheduler_roots for root in roots[source]):
+            allowed |= scheduler_family
         pending, visited = list(roots[source]), set()
         while pending and len(visited) < 4096:
             symbol = pending.pop()

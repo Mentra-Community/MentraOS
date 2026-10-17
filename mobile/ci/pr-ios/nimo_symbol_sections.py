@@ -25,6 +25,7 @@ PROOF_SECONDS = 120
 MAX_WINDOW = 1024 * 1024
 MAX_TOTAL_TEXT = 16 * 1024 * 1024
 MAX_ASSEMBLY = 64 * 1024 * 1024
+SCHEDULER_SELECTOR = 'NimoMacResourceTransport.enqueueServe(qos: Dispatch.DispatchQoS, flags: Dispatch.DispatchWorkItemFlags)'
 MAX_DIRECT_TARGETS = 2048
 MAX_DIRECT_DIAGNOSTIC_BYTES = 2 * 1024 * 1024
 
@@ -365,6 +366,9 @@ def selected_direct_call_symbols(windows, entries, address_rows, symbol_counts, 
 def symbol_windows(rows, demangled, selectors, text, roster=None):
     if len(rows) != len(demangled):
         raise ValueError('compiler demangle roster changed')
+    selectors = tuple(selectors)
+    if 'NimoMacResourceTransport.init(' in selectors:
+        selectors += ('MentraBluetoothSDK.' + SCHEDULER_SELECTOR,)
     addresses = sorted({address for address, _ in (roster if roster is not None else rows) if text[0] <= address < text[1]})
     next_address = dict(zip(addresses, addresses[1:] + [text[1]]))
     selected = [(address, symbol) for (address, symbol), name in zip(rows, demangled)

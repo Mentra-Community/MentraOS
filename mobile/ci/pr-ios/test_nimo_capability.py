@@ -30,6 +30,25 @@ def witnesses():
 
 
 class CapabilityTests(unittest.TestCase):
+    def test_only_called_unique_scheduler_helper_bridges_constructor_to_serve(self):
+        from nimo_symbol_sections import SCHEDULER_SELECTOR
+        nm,names,assembly=witnesses()
+        serve=0x1000+list(ROLES).index('transportServe')*0x100
+        root='_$sSynthetictransportInit:'
+        original=root+'\n'+f'0000 bl 0x{serve:x}'
+        self.assertIn(original,assembly)
+        nm+='\n000000000000f000 t _$sScheduler\n000000000000f100 t _$sSchedulerClosure'
+        names+=['MentraBluetoothSDK.'+SCHEDULER_SELECTOR+' -> ()','closure #1 in MentraBluetoothSDK.'+SCHEDULER_SELECTOR+' -> ()']
+        changed=assembly.replace(original,root+'\n0000 bl 0xf000')+'\n_$sScheduler:\n0000 ret\n_$sSchedulerClosure:\n'+f'0000 bl 0x{serve:x}'
+        edges={('_$sScheduler','_$sSchedulerClosure')}
+        self.assertEqual(len(compiled_witness(nm,names,changed,edges)),17)
+        for bad,proof in [(changed,set()),(changed.replace(root+'\n0000 bl 0xf000',root+'\n0000 ret'),edges)]:
+            with self.assertRaisesRegex(ValueError,'transportInit->transportServe'):compiled_witness(nm,names,bad,proof)
+        with self.assertRaisesRegex(ValueError,'transportInit->transportServe'):
+            compiled_witness(nm+'\n000000000000f200 t _$sOtherScheduler',names+[names[-2]],changed,edges)
+        foreign=names[:-1]+['closure #1 in Foreign.MentraBluetoothSDK.'+SCHEDULER_SELECTOR+' -> ()']
+        with self.assertRaisesRegex(ValueError,'transportInit->transportServe'):compiled_witness(nm,foreign,changed,edges)
+
     def test_one_symbol_cannot_witness_multiple_roles(self):
         for alias in (False, True):
             roots = {role: {('' if alias and index % 2 else '_') + '$sReusedMethod'}
