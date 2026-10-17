@@ -28,3 +28,20 @@ test('the pinned Expo 55 ReactHost template receives a diagnostic-only supported
   assert.throws(()=>withNimoDiagnosticApplication(source.replace('context = applicationContext,','useDevSupport = customPolicy,\n      context = applicationContext,')),/safely/)
   assert.throws(()=>withNimoDiagnosticApplication(source+source),/safely/)
 })
+
+test('diagnostic native CMake mode matches RN debugOptimized release prefabs without changing other variants',()=>{
+  const ordinary='android { buildTypes { debug { debuggable true } release { minifyEnabled true } } }'
+  const output=withNimoDiagnosticGradle(ordinary)
+  const native='            externalNativeBuild { cmake { arguments "-DCMAKE_BUILD_TYPE=Release" } }'
+  assert.equal(output.slice(0,ordinary.length),ordinary)
+  assert.equal((output.match(/-DCMAKE_BUILD_TYPE=Release/g) ?? []).length,1)
+  assert.match(output,/nimoDiagnostic \{\n            initWith release\n            debuggable true\n            externalNativeBuild/)
+  assert.match(output,/matchingFallbacks = \['release'\]/)
+  assert.equal(withNimoDiagnosticGradle(output),output)
+  // Upgrade an already generated prior diagnostic block, not just fresh prebuilds.
+  assert.equal(withNimoDiagnosticGradle(output.replace(native+'\n','')),output)
+  assert.throws(()=>withNimoDiagnosticGradle(output.replace('-DCMAKE_BUILD_TYPE=Release','-DCMAKE_BUILD_TYPE=Debug')),/safely/)
+  assert.throws(()=>withNimoDiagnosticGradle(output.replace(native,native+'\n'+native)),/safely/)
+  assert.throws(()=>withNimoDiagnosticGradle(output.replace(native,native+'\n            externalNativeBuild { cmake { arguments \"-DCMAKE_BUILD_TYPE=Debug\" } }')),/safely/)
+  assert.throws(()=>withNimoDiagnosticGradle(output+output),/safely/)
+})
