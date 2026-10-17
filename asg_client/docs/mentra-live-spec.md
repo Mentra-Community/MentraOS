@@ -287,6 +287,17 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
   acknowledgment and exposes a correlated result for either phone platform's shared setup.
   This command has no app UI, retry, reset, or firmware update side effects.
 
+The Bluetooth SDK can independently enable or disable the stock action for
+`single_tap`, `double_tap`, `triple_tap`, `long_press`, `forward_swipe`,
+`backward_swipe`, `up_swipe`, and `down_swipe`. Disabling a gesture suppresses its
+stock media/volume and feedback actions on BES while retaining input events for
+the phone and factory diagnostics. The direct BES `cs_tpdef` command requires a
+correlated `sr_tpdef` settings acknowledgement before the caller reports success.
+BES 26.10.16.0 or newer supports this contract; older firmware times out rather
+than acknowledging suppression. Overrides are RAM-only, default to all enabled,
+and reset on BLE disconnect or reboot. Apps reapply desired overrides after
+reconnecting; existing global control switches still apply to enabled gestures.
+
 ### WiFi and hotspot management
 
 The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific network managers should be used when platform APIs are required; generic Android fallbacks exist for non-K900 paths.

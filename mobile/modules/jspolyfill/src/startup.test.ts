@@ -546,6 +546,268 @@ describe("startup bundle — WebSocket", () => {
   })
 })
 
+interface FetchResponseLike {
+  status: number
+  ok: boolean
+  headers: {get: (name: string) => string | null}
+  text: () => Promise<string>
+  json: () => Promise<unknown>
+  arrayBuffer: () => Promise<ArrayBuffer>
+}
+type FetchLike = (url: string, init?: Record<string, unknown>) => Promise<FetchResponseLike>
+
+/**
+ * Stands in for the Android and iOS `fetch.request` handlers: records each
+ * request and answers asynchronously the way both native bridges do, with
+ * `body` when the bytes are exactly that string's UTF-8 encoding and
+ * `bodyBase64` otherwise. `body: "base64"` forces the base64 shape and a
+ * `{base64}` object sends that raw value.
+ */
+function nativeFetch(responseBody: Uint8Array = new Uint8Array(0), body?: "base64" | {base64: string}) {
+  const stubs = freshStubs()
+  const requests: Array<Record<string, unknown>> = []
+  let deliver: (json: string) => void = () => {}
+  const bytes = Buffer.from(responseBody)
+  const text = bytes.toString("utf8")
+  const bodyField =
+    typeof body === "object"
+      ? {bodyBase64: body.base64}
+      : body !== "base64" && Buffer.from(text, "utf8").equals(bytes)
+      ? {body: text}
+      : {bodyBase64: bytes.toString("base64")}
+  stubs.dispatchHandlers.set("fetch.request", (args, reqId) => {
+    requests.push(args[0] as Record<string, unknown>)
+    const result = {
+      status: 200,
+      statusText: "OK",
+      headers: {"content-type": "application/octet-stream"},
+      ...bodyField,
+      ok: true,
+    }
+    queueMicrotask(() => deliver(JSON.stringify({kind: "response", reqId, ok: true, result})))
+    return null
+  })
+  const sandbox = evalBundle(stubs)
+  deliver = sandbox.__deliver as (json: string) => void
+  return {fetch: sandbox.fetch as FetchLike, requests, sandbox}
+}
+
+function utf8(text: string): Uint8Array {
+  return new Uint8Array(Buffer.from(text, "utf8"))
+}
+
+/** Deterministic bytes so a failure reproduces exactly. */
+function pseudoRandomBytes(length: number, seed: number): Uint8Array {
+  const out = new Uint8Array(length)
+  let state = seed >>> 0
+  for (let i = 0; i < length; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    out[i] = state >>> 24
+  }
+  return out
+}
+
+/** Byte sequences that exercise every branch of the WHATWG UTF-8 decoder. */
+const MALFORMED_UTF8: number[][] = [
+  [0xff],
+  [0x80],
+  [0xbf, 0x41],
+  [0xc0, 0x80],
+  [0xc1, 0xbf],
+  [0xc2],
+  [0xc2, 0x41],
+  [0xe0, 0x80, 0x80],
+  [0xe0, 0xa0],
+  [0xe2, 0x82],
+  [0xe2, 0x82, 0x41],
+  [0xed, 0xa0, 0x80],
+  [0xed, 0x9f, 0xbf],
+  [0xef, 0xbf, 0xbd],
+  [0xf0, 0x80, 0x80, 0x80],
+  [0xf0, 0x90, 0x80],
+  [0xf0, 0x9f, 0x98, 0x80],
+  [0xf4, 0x8f, 0xbf, 0xbf],
+  [0xf4, 0x90, 0x80, 0x80],
+  [0xf5, 0x80, 0x80, 0x80],
+  [0xf8, 0x88, 0x80, 0x80, 0x80],
+  [0x41, 0xe2, 0x82, 0xac, 0xe2, 0x82],
+]
+
+describe("startup bundle — fetch", () => {
+  test("arrayBuffer() returns the exact response bytes, including bytes that are not UTF-8", async () => {
+    // A 24 kHz 16-bit sine is the shape of a miniapp's TTS reply: roughly
+    // half its bytes are >= 0x80 and most of them are not valid UTF-8.
+    const pcm = new Int16Array(2400)
+    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.round(Math.sin((2 * Math.PI * 220 * i) / 24000) * 20000)
+    const body = new Uint8Array(pcm.buffer)
+    const {fetch} = nativeFetch(body)
+
+    const res = await fetch("https://agent.example.com/reply.pcm")
+    const bytes = new Uint8Array(await res.arrayBuffer())
+
+    expect(bytes.byteLength).toBe(body.byteLength)
+    expect(Buffer.from(bytes).equals(Buffer.from(body))).toBe(true)
+  })
+
+  test("arrayBuffer() preserves every byte value and a large body", async () => {
+    const everyByte = Uint8Array.from({length: 256}, (_, i) => i)
+    const large = pseudoRandomBytes(1024 * 1024 + 1, 7)
+    for (const body of [new Uint8Array(0), everyByte, large]) {
+      const {fetch} = nativeFetch(body)
+      const bytes = new Uint8Array(await (await fetch("https://example.com/blob")).arrayBuffer())
+      expect(Buffer.from(bytes).equals(Buffer.from(body))).toBe(true)
+    }
+  })
+
+  test("each arrayBuffer() call returns an independent copy", async () => {
+    const {fetch} = nativeFetch(new Uint8Array([1, 2, 3]))
+    const res = await fetch("https://example.com/blob")
+    const first = new Uint8Array(await res.arrayBuffer())
+    first[0] = 99
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual([1, 2, 3])
+  })
+
+  test("text() and json() decode the response bytes as UTF-8", async () => {
+    const payload = {message: "héllo 😀 中文", nested: [1, "ü"]}
+    const {fetch} = nativeFetch(utf8(JSON.stringify(payload)))
+    const res = await fetch("https://example.com/data.json")
+    expect(await res.text()).toBe(JSON.stringify(payload))
+    expect(await res.json()).toEqual(payload)
+  })
+
+  test("text() decodes multi-byte text over either transport", async () => {
+    // Long enough to cross the JS decoder's internal chunks.
+    const text = "aé中😀".repeat(40_000)
+    for (const transport of [undefined, "base64"] as const) {
+      const {fetch} = nativeFetch(utf8(text), transport)
+      expect(await (await fetch("https://example.com/long.txt")).text()).toBe(text)
+    }
+  })
+
+  test("arrayBuffer() returns the exact bytes of a UTF-8 body, including its BOM", async () => {
+    const body = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8('{"a":"é😀"}'), 0x00, 0x7f])
+    const {fetch} = nativeFetch(body)
+    const res = await fetch("https://example.com/bom.json")
+    expect(Buffer.from(await res.arrayBuffer()).equals(Buffer.from(body))).toBe(true)
+    expect(await res.text()).toBe('{"a":"é😀"}\u0000\u007f')
+  })
+
+  test("text() strips a UTF-8 BOM and replaces malformed bytes like a browser", async () => {
+    const decoder = new TextDecoder()
+    for (const transport of [undefined, "base64"] as const) {
+      for (const body of [
+        new Uint8Array([0xef, 0xbb, 0xbf, 0x41]),
+        new Uint8Array([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf]),
+        ...MALFORMED_UTF8.map((sequence) => new Uint8Array([0x3c, ...sequence, 0x3e])),
+      ]) {
+        const {fetch} = nativeFetch(body, transport)
+        expect(await (await fetch("https://example.com/x")).text()).toBe(decoder.decode(body))
+      }
+      const {fetch} = nativeFetch(new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d]), transport)
+      expect(await (await fetch("https://example.com/bom.json")).json()).toEqual({})
+    }
+  })
+
+  test("a response body that is not canonical base64 rejects instead of decoding wrongly", async () => {
+    for (const malformed of ["QUJ\u00c1", "QU=B", "QUJ", "Q===", "QUJD\u0141UJD", "QUJ\u0000"]) {
+      const {fetch} = nativeFetch(undefined, {base64: malformed})
+      const res = await fetch("https://example.com/x")
+      let thrown: unknown
+      try {
+        await res.arrayBuffer()
+      } catch (error) {
+        thrown = error
+      }
+      expect((thrown as Error | undefined)?.message).toBe("Invalid base64 from the native bridge")
+    }
+  })
+
+  test("json() rejects with a SyntaxError that names the URL", async () => {
+    const {fetch} = nativeFetch(utf8("not json"))
+    const res = await fetch("https://example.com/broken")
+    await expect(res.json()).rejects.toThrow(/Failed to parse JSON response from https:\/\/example\.com\/broken/)
+  })
+
+  test("binary request bodies cross the bridge as base64 of exactly the viewed bytes", async () => {
+    const backing = pseudoRandomBytes(64, 3)
+    const view = new Uint8Array(backing.buffer, 5, 37)
+    const pcm = new Int16Array([-32768, -1, 0, 1, 32767])
+    const {fetch, requests} = nativeFetch()
+
+    await fetch("https://example.com/upload", {method: "POST", body: view})
+    await fetch("https://example.com/upload", {method: "POST", body: backing.buffer})
+    await fetch("https://example.com/upload", {method: "POST", body: pcm})
+    await fetch("https://example.com/upload", {method: "POST", body: new DataView(backing.buffer, 60, 4)})
+
+    const sent = requests.map((r) => Buffer.from(r.bodyBase64 as string, "base64"))
+    expect(sent[0]!.equals(Buffer.from(view))).toBe(true)
+    expect(sent[1]!.equals(Buffer.from(backing))).toBe(true)
+    expect(sent[2]!.equals(Buffer.from(pcm.buffer))).toBe(true)
+    expect(sent[3]!.equals(Buffer.from(backing.subarray(60)))).toBe(true)
+    for (const request of requests) expect(request.body ?? null).toBeNull()
+  })
+
+  test("string request bodies and bodyless requests are unchanged", async () => {
+    const {fetch, requests} = nativeFetch()
+    await fetch("https://example.com/api", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: "héllo"}),
+    })
+    await fetch("https://example.com/api")
+
+    expect(requests[0]).toEqual({
+      url: "https://example.com/api",
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: '{"text":"héllo"}',
+    })
+    expect(requests[1]!.body ?? null).toBeNull()
+    expect(requests[1]!.bodyBase64).toBeUndefined()
+  })
+})
+
+describe("startup bundle — TextDecoder", () => {
+  type Decoder = {decode: (bytes?: Uint8Array) => string}
+  type DecoderCtor = new (label?: string, options?: {fatal?: boolean; ignoreBOM?: boolean}) => Decoder
+
+  test("matches the WHATWG UTF-8 decoder on malformed and random input", () => {
+    const Polyfill = evalBundle().TextDecoder as DecoderCtor
+    const polyfill = new Polyfill()
+    const reference = new TextDecoder()
+    for (const sequence of MALFORMED_UTF8) {
+      const bytes = new Uint8Array(sequence)
+      expect(polyfill.decode(bytes)).toBe(reference.decode(bytes))
+    }
+    for (let seed = 1; seed <= 300; seed++) {
+      const bytes = pseudoRandomBytes(64 + seed, seed)
+      expect(polyfill.decode(bytes)).toBe(reference.decode(bytes))
+    }
+  })
+
+  test("fatal mode throws a TypeError on malformed input", () => {
+    const Polyfill = evalBundle().TextDecoder as DecoderCtor
+    const fatal = new Polyfill("utf-8", {fatal: true})
+    expect(fatal.decode(utf8("ok ✓"))).toBe("ok ✓")
+    // The vm sandbox has its own TypeError intrinsic, so match by name.
+    let thrown: unknown
+    try {
+      fatal.decode(new Uint8Array([0x41, 0xff]))
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).name).toBe("TypeError")
+    expect((thrown as Error).message).toMatch(/not valid utf-8/)
+  })
+
+  test("strips a leading BOM unless ignoreBOM is set", () => {
+    const Polyfill = evalBundle().TextDecoder as DecoderCtor
+    const bom = new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69])
+    expect(new Polyfill().decode(bom)).toBe("hi")
+    expect(new Polyfill("utf-8", {ignoreBOM: true}).decode(bom)).toBe("﻿hi")
+  })
+})
+
 describe("AbortController polyfill", () => {
   test("installs AbortController + AbortSignal on globalThis", () => {
     const sandbox = evalBundle()
