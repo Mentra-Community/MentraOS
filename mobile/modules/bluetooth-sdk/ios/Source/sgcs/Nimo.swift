@@ -760,9 +760,9 @@ class Nimo: NSObject, SGCManager {
 
     func disconnect() {
         Bridge.log("NIMO: disconnect()")
-        if let resourceSession {
-            resourceSession.recordError("ordinary-disconnect-during-capture")
-            if resourceSession.releaseNonce != nil { resourceSession.disconnectRequested(self) }
+        if let resourceSession,
+           !resourceSession.shouldRunOrdinaryDisconnect(self, originalClosed: NimoResourceFixture.shared.hasVerifiedOriginalClosure(self)) {
+            return
         }
         isDisconnecting = true
         cancelPairingTimeout()
@@ -1704,7 +1704,7 @@ class Nimo: NSObject, SGCManager {
         var result = NimoResourceProducers()
         result.writerActive = writes.activeCount; result.writerQueued = writes.queuedCount
         result.encoderWorker = canvasEncoder.workerCount; result.encoderDelivery = canvasEncoder.deliveryCount
-        result.postedCallbacks = resourceCallbackCounter.value + NimoResourceFixture.shared.pendingManagerEntries
+        result.postedCallbacks = resourceCallbackCounter.value + NimoResourceFixture.shared.pendingOriginalManagerEntries
         result.canvasCommands = canvas.pendingCount; result.pendingAcks = pendingAcks.count
         // Opus decode, LC3 conversion and Bridge emission are synchronous on
         // Main on macOS; their entire extent is inside the posted CB callback.

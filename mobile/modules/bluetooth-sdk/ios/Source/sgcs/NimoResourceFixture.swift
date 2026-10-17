@@ -21,7 +21,11 @@ final class NimoResourceFixture {
     private var transport: NimoMacResourceTransport?
     private var startupError: Error?
     private var originalClosed = false
-    var pendingManagerEntries = 0
+    private let managerEntries = NimoResourceManagerEntries()
+    var pendingManagerEntries: Int { managerEntries.all }
+    var pendingOriginalManagerEntries: Int { managerEntries.originalNimo }
+    func beginManagerEntry(_ wearable: String) -> NimoResourceManagerEntries.Ticket { managerEntries.begin(wearable) }
+    func endManagerEntry(_ ticket: NimoResourceManagerEntries.Ticket) { managerEntries.end(ticket) }
     #if os(macOS)
     private let requested = ProcessInfo.processInfo.environment["MENTRA_NIMO_RESOURCE_BOOTSTRAP"] != nil
     #elseif os(iOS)
@@ -44,6 +48,10 @@ final class NimoResourceFixture {
         guard let session, !session.cancelled, session.releaseNonce == nil, session.original == nil,
               name == nil || name == session.pair.name else { return false }
         return true
+    }
+    func hasVerifiedOriginalClosure(_ candidate: Nimo) -> Bool {
+        originalClosed && owner === candidate && session?.isOwner(candidate) == true
+            && session?.errors.isEmpty == true && session?.connected == false
     }
     func admit(_ candidate: Nimo, name: String?) -> Bool {
         guard enabled else { return true }
@@ -148,8 +156,8 @@ final class NimoResourceFixture {
                 if let owner { await owner.releaseResource(session) }
                 else {
                     let deadline = NimoResourceClock.now() + 1_000
-                    while pendingManagerEntries != 0, NimoResourceClock.now() < deadline { try? await Task.sleep(nanoseconds: 10_000_000) }
-                    if pendingManagerEntries != 0 { session.recordError("pending-manager-entry-not-settled") }
+                    while pendingOriginalManagerEntries != 0, NimoResourceClock.now() < deadline { try? await Task.sleep(nanoseconds: 10_000_000) }
+                    if pendingOriginalManagerEntries != 0 { session.recordError("pending-manager-entry-not-settled") }
                     session.proveNoTransport()
                 }
             } else if request.operation == .release, session.releaseNonce != request.requestNonce {
@@ -157,7 +165,7 @@ final class NimoResourceFixture {
             }
         }
         var producers = NimoResourceProducers()
-        producers.postedCallbacks = pendingManagerEntries
+        producers.postedCallbacks = pendingOriginalManagerEntries
         if let owner { producers = await owner.resourceProducers() }
         originalClosed = session.settled(producers: producers)
         let manager = DeviceManager.shared.sgc

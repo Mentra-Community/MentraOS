@@ -25,6 +25,30 @@ enum NimoResourceManagerState {
     }
 }
 
+/// Queue tickets freeze dispatch scope before DeviceManager's asynchronous work.
+/// All entries fence initial arm; only original NIMO entries belong to its drain.
+final class NimoResourceManagerEntries {
+    final class Ticket {
+        fileprivate weak var owner: NimoResourceManagerEntries?
+        fileprivate let nimo: Bool
+        fileprivate var ended = false
+        fileprivate init(owner: NimoResourceManagerEntries, nimo: Bool) { self.owner = owner; self.nimo = nimo }
+    }
+    private(set) var all = 0
+    private(set) var originalNimo = 0
+    func begin(_ wearable: String) -> Ticket {
+        let nimo = wearable.contains("NIMO")
+        all += 1
+        if nimo { originalNimo += 1 }
+        return Ticket(owner: self, nimo: nimo)
+    }
+    func end(_ ticket: Ticket) {
+        guard ticket.owner === self, !ticket.ended else { return }
+        ticket.ended = true; all -= 1
+        if ticket.nimo { originalNimo -= 1 }
+    }
+}
+
 struct NimoResourceOriginal: Codable, Equatable {
     let instanceId: String
     let peripheralUuid: String
@@ -114,6 +138,17 @@ final class NimoResourceSession {
     func isOwner(_ candidate: AnyObject) -> Bool { owner === candidate }
     var hasOwner: Bool { owner != nil }
     func recordError(_ value: String) { let bounded = String(value.prefix(160)); if errors.count < 16, !errors.contains(bounded) { errors.append(bounded) } }
+
+    /// Ordinary manager disposal may follow an already accepted original close.
+    /// It must not rewrite that physical history or touch a replacement device.
+    /// An active or contradicted capture retains the original diagnostic error.
+    func shouldRunOrdinaryDisconnect(_ candidate: AnyObject, originalClosed: Bool) -> Bool {
+        guard isOwner(candidate) else { return false }
+        if originalClosed && settled(producers: NimoResourceProducers()) { return false }
+        recordError("ordinary-disconnect-during-capture")
+        if releaseNonce != nil { disconnectRequested(candidate) }
+        return true
+    }
 
     /// Called before scanning/connecting, not from a status response.
     func admit(_ candidate: AnyObject, instanceId: String, name: String?, persist: (UInt64) -> Bool = { _ in true }) -> Bool {

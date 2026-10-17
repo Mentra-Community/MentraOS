@@ -1927,9 +1927,9 @@ struct ViewState {
             return
         }
 
-        NimoResourceFixture.shared.pendingManagerEntries += 1
+        let managerEntry = NimoResourceFixture.shared.beginManagerEntry(pendingWearable)
         Task {
-            defer { NimoResourceFixture.shared.pendingManagerEntries -= 1 }
+            defer { NimoResourceFixture.shared.endManagerEntry(managerEntry) }
             guard NimoResourceFixture.shared.allowsManager(self.pendingWearable, name: name) else { return }
             if !NimoResourceFixture.shared.preserveScan(name) { disconnect(clearPendingConnection: false) }
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms

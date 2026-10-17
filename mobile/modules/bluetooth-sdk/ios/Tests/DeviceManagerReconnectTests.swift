@@ -5,6 +5,65 @@ import XCTest
 final class DeviceManagerReconnectTests: XCTestCase {
     private let requests = ["should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active"]
 
+    func testActualManagerHandoffCleanupDoesNotInvalidateClosedOriginalStatus() {
+        withRecordingDevice { manager, _ in
+            let original = manager.sgc as! ReconnectRecordingDevice
+            original.type = DeviceTypes.NIMO
+            let uuid = "00000000-0000-4000-8000-000000000001"
+            let model = NimoResourceSession(captureNonce: uuid, pair: NimoResourcePair(name: "Nimo-Test", peripheralUuid: uuid))
+            XCTAssertTrue(model.admit(original, instanceId: uuid, name: "Nimo-Test"))
+            XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false))
+            model.proveNoTransport()
+            let verifiedClosed = model.settled(producers: NimoResourceProducers())
+            var cleanupCalls = 0, disconnectEffects = 0
+            original.onCleanup = {
+                cleanupCalls += 1
+                // Same original-session guard used by actual Nimo.disconnect.
+                if model.shouldRunOrdinaryDisconnect(original, originalClosed: verifiedClosed) { disconnectEffects += 1 }
+            }
+            manager.initSGC(DeviceTypes.SIMULATED) // Actual manager replacement; no Bluetooth device.
+            XCTAssertEqual(cleanupCalls, 1)
+            XCTAssertEqual(disconnectEffects, 0)
+            XCTAssertTrue(model.errors.isEmpty)
+            XCTAssertTrue(model.settled(producers: NimoResourceProducers())) // Fresh status after cleanup.
+            XCTAssertTrue(NimoResourceManagerState.allowsReplacement(fixtureEnabled: true, originalClosed: model.settled(producers: NimoResourceProducers())))
+            XCTAssertEqual(manager.sgc?.type, DeviceTypes.SIMULATED)
+        }
+    }
+
+    func testActualQueuedReplacementDoesNotJoinOriginalNimoProducerRoster() {
+        withRecordingDevice { manager, store in
+            let original = manager.sgc as! ReconnectRecordingDevice
+            original.type = DeviceTypes.NIMO
+            let uuid = "00000000-0000-4000-8000-000000000001"
+            let model = NimoResourceSession(captureNonce: uuid, pair: NimoResourcePair(name: "Nimo-Test", peripheralUuid: uuid))
+            XCTAssertTrue(model.admit(original, instanceId: uuid, name: "Nimo-Test"))
+            XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false)); model.proveNoTransport()
+            let stopped = expectation(description: "Original disposal inside real queued manager handoff")
+            original.onDisconnect = {
+                XCTAssertFalse(model.shouldRunOrdinaryDisconnect(original, originalClosed: true))
+                stopped.fulfill()
+            }
+            // Same asynchronous connectByName path as G2; simulated replacement
+            // avoids any Bluetooth transport in this source regression.
+            store.set("bluetooth", "pending_wearable", DeviceTypes.SIMULATED)
+            manager.connectByName("Simulated")
+            XCTAssertEqual(NimoResourceFixture.shared.pendingManagerEntries, 1)
+            XCTAssertEqual(NimoResourceFixture.shared.pendingOriginalManagerEntries, 0)
+            wait(for: [stopped], timeout: 1)
+            var producers = NimoResourceProducers()
+            producers.postedCallbacks = NimoResourceFixture.shared.pendingOriginalManagerEntries
+            XCTAssertTrue(model.settled(producers: producers)) // Fresh status during replacement wait.
+            XCTAssertTrue(model.errors.isEmpty)
+            let completed = expectation(description: "Replacement queued work has finished")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { completed.fulfill() }
+            wait(for: [completed], timeout: 1)
+            XCTAssertEqual(NimoResourceFixture.shared.pendingManagerEntries, 0)
+            XCTAssertTrue(model.settled(producers: NimoResourceProducers()))
+            XCTAssertEqual(manager.sgc?.type, DeviceTypes.SIMULATED)
+        }
+    }
+
     func testDelayedReconnectReplayPreservesNimoDepthEndpoints() {
         for depth in [0, 10] {
             withRecordingDevice { manager, store in
@@ -280,6 +339,8 @@ final class DeviceManagerReconnectTests: XCTestCase {
 
 @MainActor
 private final class ReconnectRecordingDevice: SGCManager {
+    var onCleanup: (() -> Void)?
+    var onDisconnect: (() -> Void)?
     var type = "Reconnect test glasses"
     let hasMic = true
     let showConnectionConfirmation = false
@@ -333,7 +394,7 @@ private final class ReconnectRecordingDevice: SGCManager {
     func sendShutdown() {}
     func sendReboot() {}
     func sendRgbLedControl(requestId _: String, packageName _: String?, action _: String, color _: String?, onDurationMs _: Int, offDurationMs _: Int, count _: Int) {}
-    func disconnect() {}
+    func disconnect() { onDisconnect?() }
     func forget() {}
     func findCompatibleDevices() {}
     func stopScan() {}
@@ -342,7 +403,7 @@ private final class ReconnectRecordingDevice: SGCManager {
         nil
     }
 
-    func cleanup() {}
+    func cleanup() { onCleanup?() }
     func ping() {}
     func dbg1() {}
     func dbg2() {}

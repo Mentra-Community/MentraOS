@@ -52,6 +52,48 @@ final class NimoResourceSessionTests: XCTestCase {
         XCTAssertNil(fenced.connectionFailedElapsedMs)
         XCTAssertFalse(fenced.settled(producers: NimoResourceProducers()))
     }
+    func testOrdinaryManagerCleanupPreservesVerifiedOriginalClosureButNotActiveCapture() {
+        let (model, owner, _, _) = fixture()
+        XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false))
+        model.proveNoTransport()
+        let accepted = model.settled(producers: NimoResourceProducers())
+        XCTAssertTrue(accepted)
+        XCTAssertFalse(model.shouldRunOrdinaryDisconnect(owner, originalClosed: accepted))
+        XCTAssertFalse(model.shouldRunOrdinaryDisconnect(owner, originalClosed: accepted))
+        XCTAssertTrue(model.errors.isEmpty)
+        XCTAssertTrue(model.settled(producers: NimoResourceProducers())) // Fresh status, not old bytes.
+        XCTAssertTrue(NimoResourceManagerState.allowsReplacement(fixtureEnabled: true, originalClosed: model.settled(producers: NimoResourceProducers())))
+        let (active, other, _, _) = fixture()
+        XCTAssertTrue(active.shouldRunOrdinaryDisconnect(other, originalClosed: false))
+        XCTAssertTrue(active.errors.contains("ordinary-disconnect-during-capture"))
+        XCTAssertFalse(active.settled(producers: NimoResourceProducers()))
+        let (failed, third, peer, clock) = fixture()
+        XCTAssertTrue(failed.beginTransport(third, peripheral: peer, uuid: uuid))
+        failed.connectionFailed(third, peer, receivedElapsedMs: clock.next())
+        XCTAssertTrue(failed.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false))
+        XCTAssertTrue(failed.settled(producers: NimoResourceProducers()))
+        failed.transportConnected(third, peer) // A late contradictory callback still invalidates closure.
+        XCTAssertTrue(failed.shouldRunOrdinaryDisconnect(third, originalClosed: true))
+        XCTAssertFalse(failed.settled(producers: NimoResourceProducers()))
+    }
+    func testManagerEntryRosterScopesOriginalNimoWithoutIgnoringItsCallbacks() {
+        let entries = NimoResourceManagerEntries(), foreign = NimoResourceManagerEntries()
+        let (model, owner, _, _) = fixture()
+        XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false)); model.proveNoTransport()
+        let nimo = entries.begin("NIMO")
+        var producers = NimoResourceProducers(); producers.postedCallbacks = entries.originalNimo
+        XCTAssertFalse(model.settled(producers: producers))
+        let g2 = entries.begin("G2")
+        XCTAssertEqual(entries.all, 2); XCTAssertEqual(entries.originalNimo, 1)
+        foreign.end(nimo); XCTAssertEqual(entries.originalNimo, 1)
+        entries.end(nimo); entries.end(nimo) // Exact one-shot ticket, never an early/duplicate decrement.
+        producers.postedCallbacks = entries.originalNimo
+        XCTAssertEqual(entries.all, 1); XCTAssertTrue(model.settled(producers: producers))
+        XCTAssertFalse(model.shouldRunOrdinaryDisconnect(owner, originalClosed: true))
+        entries.end(g2); XCTAssertEqual(entries.all, 0)
+        producers.postedCallbacks = 1 // A late actual original callback still holds closure.
+        XCTAssertFalse(model.settled(producers: producers))
+    }
     func testOriginalClosureCannotClearReplacementManagerSharedState() {
         let (model, owner, _, _) = fixture()
         XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: false, mic: false, canvas: false))
