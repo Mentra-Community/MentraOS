@@ -14,7 +14,8 @@ export function coreEndpointOrigin(value: string | null): CoreEndpointObservatio
     if (!url.username && !url.password && !url.search && !url.hash && /^\/*$/.test(url.pathname)) {
       if (url.origin === "https://core.dev.us-west-2.mentraglass.com") return "official-dev"
       if (url.origin === "https://core.staging.us-west-2.mentraglass.com") return "official-staging"
-      if (url.origin === "https://core.us-west-2.mentraglass.com") return "official-prod"
+      if (url.origin === "https://core.us-west-2.mentraglass.com" || url.origin === "https://core.mentraglass.com")
+        return "official-prod"
     }
     return "custom"
   } catch {

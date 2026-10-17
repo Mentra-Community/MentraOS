@@ -3,6 +3,7 @@ jest.mock("@/services/cloudClient", () => ({resolvedEndpoints: jest.fn()}))
 jest.mock("@/utils/auth/authClient", () => ({AuthClient: class {}}))
 
 import {resolvedEndpoints} from "@/services/cloudClient"
+import {coreEndpointOrigin} from "@/services/deployment/endpointObservation"
 import {AccountAuthProvider} from "./accountClient"
 import {ACCOUNT_ENDPOINT_MARKER} from "./accountLoginObservation"
 
@@ -55,6 +56,36 @@ describe("AccountAuthProvider endpoint evidence", () => {
       requestId: fetchMock.mock.calls[0][1].headers["x-request-id"],
     })
     expect(JSON.stringify(rows)).not.toMatch(/private|https|password@|selected/)
+  })
+
+  it("records the existing Cloud Prod preset as official at actual password resolution", async () => {
+    const core = "https://core.mentraglass.com/"
+    jest.mocked(resolvedEndpoints).mockImplementation((observe) => {
+      observe?.({
+        activeDeployment: "consumer",
+        origin: coreEndpointOrigin(core),
+        provenance: "override",
+        overrideScope: "scoped",
+      })
+      return {core, runtime: "https://runtime.example.test"}
+    })
+    const provider = new AccountAuthProvider(),
+      error = new TypeError("Network request failed")
+    const fetchMock = jest.fn().mockRejectedValue(error)
+    global.fetch = fetchMock as unknown as typeof fetch
+    await provider.signInWithPassword({email: "private@example.test", password: "private-password"})
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe("https://core.mentraglass.com/api/account/login")
+    const rows = info.mock.calls.map(([line]) => JSON.parse(line.slice(ACCOUNT_ENDPOINT_MARKER.length)))
+    expect(rows).toEqual([
+      expect.objectContaining({phase: "provider-initialization", origin: "official-prod", requestId: null}),
+      expect.objectContaining({
+        phase: "password-request",
+        origin: "official-prod",
+        requestId: fetchMock.mock.calls[0][1].headers["x-request-id"],
+      }),
+    ])
+    expect(JSON.stringify(rows)).not.toMatch(/https|mentraglass|private/)
   })
 
   it("contains diagnostic failure at construction and at the sink while preserving one original request", async () => {
