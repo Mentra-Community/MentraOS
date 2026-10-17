@@ -7,7 +7,7 @@ import Foundation
 
 /// Diagnostic observations only. These facts never authorize a network read or a join.
 final class MacHotspotAuthorizationFacts {
-    enum Getter: String { case instanceInitial = "instance-initial", instanceCallback = "instance-callback", staticSSID = "static-ssid" }
+    enum Getter: String { case instanceInitial = "instance-initial", instanceCallback = "instance-callback", instanceCurrent = "instance-current", staticSSID = "static-ssid" }
     enum Foreground: String { case active, inactive, background, unknown }
     private let lock = NSLock()
     private var instance: (raw: Int32, getter: Getter, foreground: Foreground)?

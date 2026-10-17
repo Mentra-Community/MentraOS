@@ -31,6 +31,7 @@ public final class GlassesHotspotNetwork {
     private let macWorker = DispatchQueue(label: "com.mentra.glassesmedia.mac-wifi")
     private var macAssociation: MacHotspotAssociation?
     private var macAuthorization: MacHotspotAuthorization?
+    private var macCleanupContinuation: MacHotspotCleanupContinuation?
     private var ownershipToken: UUID?
     private var finishingLeave = false
     private var waitForInternetAfterLeave = false
@@ -75,7 +76,7 @@ public final class GlassesHotspotNetwork {
                 guard gen == self.generation, self.joinReply != nil, self.localAccess == nil else { return }
                 self.cancelled = true
                 self.macAssociation?.cancel()
-                self.macAuthorization?.cancel()
+                self.macAuthorization?.cancelPending()
                 self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
                 // apply() cannot be cancelled. Retain the reservation until its callback and remove the
                 // late configuration before another call is permitted to acquire the network.
@@ -91,7 +92,7 @@ public final class GlassesHotspotNetwork {
             self.waitForInternetAfterLeave = self.waitForInternetAfterLeave || waitForInternet
             self.cancelled = true
             self.macAssociation?.cancel()
-            self.macAuthorization?.cancel()
+            self.macAuthorization?.cancelPending()
             if self.leaveCompletion == nil {
                 self.leaveCompletion = HotspotLeaveCompletion {
                     if let token = self.ownershipToken { HotspotNetworkOwnership.shared.release(token) }
@@ -242,12 +243,30 @@ public final class GlassesHotspotNetwork {
         let facts = MacHotspotAuthorizationFacts()
         let authorization = MacHotspotAuthorization(facts: facts)
         macAuthorization = authorization
+        authorization.onRevoked = { [weak self] error in
+            guard let self else { return }
+            self.queue.async {
+                guard gen == self.generation, !self.cancelled else { return }
+                self.cancelled = true
+                self.macAssociation?.cancel()
+                self.finishJoin(.failure(error))
+                self.onLost?("Glasses hotspot Location authorization was revoked")
+                if !self.applying { self.finishLeave() }
+            }
+        }
+        macCleanupContinuation = MacHotspotCleanupContinuation(authorization: authorization, queue: queue,
+                                                               isCurrentCancelledSession: { [weak self] in
+                                                                   guard let self else { return false }
+                                                                   return gen == self.generation && self.cancelled
+                                                               }, requestCleanup: { [weak self] in
+                                                                   guard let self, !self.applying else { return }
+                                                                   self.finishLeave()
+                                                               })
         authorization.start { result in
             self.queue.async {
                 guard gen == self.generation, !self.cancelled else { return }
-                self.macAuthorization = nil
                 switch result {
-                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline, authorizationFacts: facts)
+                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline, authorizationFacts: facts, authorization: authorization)
                 case let .failure(error):
                     self.finishJoin(.failure(error)); self.finishLeave()
                 }
@@ -255,8 +274,8 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval, authorizationFacts: MacHotspotAuthorizationFacts) {
-        let association = MacHotspotAssociation(deadline: deadline, authorizationFacts: authorizationFacts)
+    private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval, authorizationFacts: MacHotspotAuthorizationFacts, authorization: MacHotspotAuthorization) {
+        let association = MacHotspotAssociation(deadline: deadline, authorizationFacts: authorizationFacts, authorization: authorization)
         macAssociation = association
         applying = true
         macWorker.async {
@@ -457,6 +476,7 @@ public final class GlassesHotspotNetwork {
     private func finishLeave() {
         guard !finishingLeave else { return }
         finishingLeave = true
+        macCleanupContinuation?.cleanupStarted()
         if let association = macAssociation {
             association.cancel()
             // This queue is also the association queue: cleanup cannot overtake
@@ -475,6 +495,7 @@ public final class GlassesHotspotNetwork {
                         let completion = self.leaveCompletion
                         self.leaveCompletion = nil
                         completion?.complete(.failure(error))
+                        self.macCleanupContinuation?.cleanupFailed()
                     }
                 }
             }
@@ -483,6 +504,7 @@ public final class GlassesHotspotNetwork {
 
     private func completeLeave() {
         internetObservationOwner.cancel()
+        macCleanupContinuation = nil
         generation += 1
         macAuthorization?.cancel(); macAuthorization = nil
         localAccess?.cancel(); localAccess = nil
