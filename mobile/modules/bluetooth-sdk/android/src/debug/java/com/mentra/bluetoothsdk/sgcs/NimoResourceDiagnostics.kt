@@ -90,18 +90,21 @@ internal object NimoResourceDiagnostics {
             owned.instance != null && owned.instance !== instance || owned.connectStarted) return false
         if (owned.instance == null) {
             if (!instance.resourceCaptureEligible()) return false
-            owned.admittedElapsedMs = SystemClock.elapsedRealtime()
-            instance.resourceCaptureAdmission(owned.nonce, owned.armedElapsedMs, owned.admittedElapsedMs!!)
+            val candidateAdmittedElapsedMs = SystemClock.elapsedRealtime()
             owned.instance = instance
             // Immutable admission survives a setup timeout before any GATT session exists.
-            val app = application ?: return false
+            val app = application ?: run { owned.cancelled = true; return false }
             val root = File(app.filesDir, "nimo-lifecycle")
             val target = File(root, "${owned.nonce}.admission.json")
             if (target.exists()) { owned.cancelled = true; return false }
             val pending = File(root, "${owned.nonce}.admission.tmp")
             try {
-                pending.outputStream().use { it.write(captureSnapshot(owned).toString().toByteArray(Charsets.UTF_8)); it.flush() }
+                pending.outputStream().use { it.write(captureSnapshot(owned, candidateAdmittedElapsedMs).toString().toByteArray(Charsets.UTF_8)); it.flush() }
                 check(pending.renameTo(target))
+                // Durable admission is authoritative; no live clock may claim it
+                // before the original immutable receipt is safely committed.
+                instance.resourceCaptureAdmission(owned.nonce, owned.armedElapsedMs, candidateAdmittedElapsedMs)
+                owned.admittedElapsedMs = candidateAdmittedElapsedMs
             } catch (_: Exception) {
                 owned.cancelled = true
                 return false
@@ -129,10 +132,10 @@ internal object NimoResourceDiagnostics {
     }
 
     @Synchronized
-    private fun captureSnapshot(owned: Capture): JSONObject = JSONObject()
+    private fun captureSnapshot(owned: Capture, admittedElapsedMs: Long? = owned.admittedElapsedMs): JSONObject = JSONObject()
         .put("clockProtocol", CLOCK_PROTOCOL)
         .put("clock", JSONObject().put("kind", "android-elapsed-realtime-v1").put("armedElapsedMs", owned.armedElapsedMs)
-            .put("admittedElapsedMs", owned.admittedElapsedMs ?: JSONObject.NULL).put("observedElapsedMs", SystemClock.elapsedRealtime()))
+            .put("admittedElapsedMs", admittedElapsedMs ?: JSONObject.NULL).put("observedElapsedMs", SystemClock.elapsedRealtime()))
         .put("version", "nimo-preconnect-capture-v1").put("nonce", owned.nonce)
         .put("captureRequiredBeforeArm", preArmCaptureRequired())
         .put("expectedPair", JSONObject().put("name", owned.name).put("bluetoothAddress", owned.address))

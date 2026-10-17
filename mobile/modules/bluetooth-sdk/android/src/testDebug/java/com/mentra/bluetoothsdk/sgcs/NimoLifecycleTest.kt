@@ -450,7 +450,32 @@ class NimoLifecycleTest {
     File(context.filesDir, "nimo-lifecycle/$nonce.admission.tmp").mkdir()
     assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
     assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").exists())
+    val clock = nimo.resourceSnapshot().getJSONObject("clock")
+    assertTrue(clock.isNull("captureNonce")); assertTrue(clock.isNull("admittedElapsedMs"))
+    val capture = captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture")
+    assertTrue(capture.getBoolean("cancelled"))
+    assertTrue(capture.getJSONObject("clock").isNull("admittedElapsedMs"))
     assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun preexistingAdmissionIsNeverOverwrittenOrStampedOntoLiveInstance() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    val original = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    original.writeText("preexisting-immutable-evidence")
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertEquals("preexisting-immutable-evidence", original.readText())
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    val clock = nimo.resourceSnapshot().getJSONObject("clock")
+    assertTrue(clock.isNull("captureNonce")); assertTrue(clock.isNull("admittedElapsedMs"))
+    assertTrue(captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture").getJSONObject("clock").isNull("admittedElapsedMs"))
   }
 
   @Test fun capturedGenerationZeroCancellationDrainsOriginalAndFencesQueuedAdmission() {

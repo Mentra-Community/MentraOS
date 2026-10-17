@@ -53,6 +53,8 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
     reachableNested.add(cls)
     pendingNested.push(...nestedReferences(nestedNimo[cls]))
   }
+  const fixedExecute=definitions(diagnostics).find(([,header])=>/ execute(?:\$[A-Za-z0-9_]+)?\(Landroid\/content\/Intent;\)V$/.test(header.trim()))?.[2] ?? ''
+  const captureAdmission=method(diagnostics,`admit(${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z)Z`)
   const native = descriptor(NIMO_DEVICE)
   const nodes=new Map()
   for(const [cls,code] of [[native,nimo ?? ''],...Object.entries(nestedNimo)])
@@ -108,8 +110,9 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
       Object.values(recorder).some(name=>!recorderConsumed(name)) ||
       !diagnostics.includes('"requestReceivedElapsedMs"') || !diagnostics.includes('"android-elapsed-realtime-v1"') ||
       clockFields.some(field=>!nativeSnapshot.includes(`"${field}"`)) ||
-      !invoke(diagnostics,`${escaped(descriptor(NIMO_DEVICE))}->resourceCaptureAdmission(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;JJ\\)V`) ||
-      !invoke(diagnostics,`${escaped(descriptor(NIMO_DEVICE))}->releaseCapturedResource(?:\\$[A-Za-z0-9_]+)?\\(Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;Ljava/lang/String;J\\)V`) ||
+      !invoke(captureAdmission,`${escaped(descriptor(NIMO_DEVICE))}->resourceCaptureAdmission(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;JJ\\)V`) ||
+      !invoke(fixedExecute,`${escaped(descriptor(NIMO_DEVICE))}->releaseCapturedResource(?:\\$[A-Za-z0-9_]+)?\\(Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;Ljava/lang/String;J\\)V`) ||
+      !invoke(fixedExecute,`${escaped(native)}->releaseResource(?:\\$[A-Za-z0-9_]+)?\\(JLkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;Ljava/lang/String;J\\)V`) ||
       !invoke(method(nimo ?? '','connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V'),elapsed))
     throw new Error('Diagnostic APK lacks compiled capture monotonic receipt clock and original causal anchors')
 
