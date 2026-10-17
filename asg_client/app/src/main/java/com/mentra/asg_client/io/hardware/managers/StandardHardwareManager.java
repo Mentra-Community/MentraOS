@@ -8,6 +8,7 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.MediaPlayer;
 import android.os.BatteryManager;
+import android.os.Looper;
 import android.util.Log;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
@@ -18,6 +19,8 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -32,6 +35,7 @@ public class StandardHardwareManager extends BaseHardwareManager {
     private boolean torchEnabled;
 
     private MediaPlayer mediaPlayer;
+    private CountDownLatch primaryAwait;
     private final Map<Long, MediaPlayer> overlayPlayers = new HashMap<>();
     private final AtomicLong nextOverlayToken = new AtomicLong(1L);
 
@@ -105,7 +109,34 @@ public class StandardHardwareManager extends BaseHardwareManager {
 
     @Override
     public void playAudioAsset(String assetName) {
+        playPrimary(assetName, null);
+    }
+
+    @Override
+    public void playAudioAssetAndAwait(String assetName, long timeoutMs) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(TAG, "playAudioAssetAndAwait refused on the main thread for " + assetName);
+            return;
+        }
+        CountDownLatch latch = new CountDownLatch(1);
+        playPrimary(assetName, latch);
+        try {
+            if (!latch.await(Math.max(0L, timeoutMs), TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Audio cue wait elapsed for " + assetName);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Override
+    public void playAudioAssetClaimingBridge(String assetName) {
+        playAudioAsset(assetName);
+    }
+
+    private synchronized void playPrimary(String assetName, CountDownLatch awaitLatch) {
         stopAudioPlayback();
+        primaryAwait = awaitLatch;
         mediaPlayer = new MediaPlayer();
         try {
             var afd = context.getAssets().openFd(assetName);
@@ -114,30 +145,53 @@ public class StandardHardwareManager extends BaseHardwareManager {
             afd.close();
             mediaPlayer.setOnCompletionListener(
                     mp -> {
-                        mp.release();
-                        mediaPlayer = null;
+                        synchronized (StandardHardwareManager.this) {
+                            if (mediaPlayer != mp) {
+                                return;
+                            }
+                            mp.release();
+                            mediaPlayer = null;
+                            signalPrimaryAwait();
+                        }
                     });
             mediaPlayer.setOnErrorListener(
                     (mp, what, extra) -> {
-                        Log.e(
-                                TAG,
-                                "Error playing asset "
-                                        + assetName
-                                        + " ("
-                                        + what
-                                        + "/"
-                                        + extra
-                                        + ")");
-                        mp.release();
-                        mediaPlayer = null;
-                        return true;
+                        synchronized (StandardHardwareManager.this) {
+                            if (mediaPlayer != mp) {
+                                return true;
+                            }
+                            Log.e(
+                                    TAG,
+                                    "Error playing asset "
+                                            + assetName
+                                            + " ("
+                                            + what
+                                            + "/"
+                                            + extra
+                                            + ")");
+                            mp.release();
+                            mediaPlayer = null;
+                            signalPrimaryAwait();
+                            return true;
+                        }
                     });
             mediaPlayer.prepare();
             mediaPlayer.start();
         } catch (IOException e) {
             Log.e(TAG, "Unable to play asset " + assetName, e);
-            mediaPlayer.release();
-            mediaPlayer = null;
+            if (mediaPlayer != null) {
+                mediaPlayer.release();
+                mediaPlayer = null;
+            }
+            signalPrimaryAwait();
+        }
+    }
+
+    private void signalPrimaryAwait() {
+        CountDownLatch latch = primaryAwait;
+        primaryAwait = null;
+        if (latch != null) {
+            latch.countDown();
         }
     }
 
@@ -281,7 +335,8 @@ public class StandardHardwareManager extends BaseHardwareManager {
     }
 
     @Override
-    public void stopAudioPlayback() {
+    public synchronized void stopAudioPlayback() {
+        signalPrimaryAwait();
         if (mediaPlayer != null) {
             try {
                 if (mediaPlayer.isPlaying()) {
