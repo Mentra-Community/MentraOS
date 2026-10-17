@@ -253,6 +253,14 @@ public final class GlassesHotspotNetwork {
                 if !self.applying { self.finishLeave() }
             }
         }
+        authorization.onRestored = { [weak self] in
+            guard let self else { return }
+            self.queue.async {
+                // Only finish this revoked session's retained cleanup. Never rejoin.
+                guard gen == self.generation, self.cancelled, !self.applying else { return }
+                self.finishLeave()
+            }
+        }
         authorization.start { result in
             self.queue.async {
                 guard gen == self.generation, !self.cancelled else { return }

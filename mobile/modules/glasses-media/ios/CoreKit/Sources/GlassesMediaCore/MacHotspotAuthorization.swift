@@ -9,10 +9,12 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     private var started = false
     private var closed = false
     private var ready = false
+    private var revoked = false
     private let facts: MacHotspotAuthorizationFacts
     private let makeManager: () -> CLLocationManager
     private let locationServicesEnabled: () -> Bool
     var onRevoked: ((Error) -> Void)?
+    var onRestored: (() -> Void)?
 
     init(facts: MacHotspotAuthorizationFacts = MacHotspotAuthorizationFacts(), makeManager: @escaping () -> CLLocationManager = { CLLocationManager() },
          locationServicesEnabled: @escaping () -> Bool = { CLLocationManager.locationServicesEnabled() })
@@ -44,6 +46,7 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
             self.manager?.delegate = nil
             self.manager = nil
             self.onRevoked = nil
+            self.onRestored = nil
         }
     }
 
@@ -93,10 +96,16 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
         let foreground = MacHotspotAuthorizationFacts.foreground()
         guard !closed else { return }
         facts.observeInstance(raw: status.rawValue, getter: getter, foreground: foreground)
-        if Self.isAuthorized(status) { ready = true; reply(.success(())); return }
+        if Self.isAuthorized(status) {
+            ready = true
+            if revoked { revoked = false; onRestored?() }
+            reply(.success(()))
+            return
+        }
         let error = facts.failure("Location access is required to identify the glasses hotspot on Mac", raw: status.rawValue, getter: getter, foreground: foreground)
         if ready {
             ready = false
+            revoked = true
             onRevoked?(error)
             return
         }

@@ -200,9 +200,18 @@ final class MacHotspotAuthorizationTests: XCTestCase {
         XCTAssertEqual(wifi.joins, 1)
         XCTAssertThrowsError(try association.leave())
         XCTAssertEqual(wifi.leaves, 0, "Unknown membership must not disconnect a replacement network")
+        authorization.locationManagerDidChangeAuthorization(manager)
+        var cleanupReturns = 0
+        authorization.onRestored = {
+            do { try association.leave(); cleanupReturns += 1 }
+            catch { XCTFail("Restored permission did not settle retained cleanup: \(error)") }
+        }
         manager.status = .authorizedAlways
-        try association.leave()
+        authorization.locationManagerDidChangeAuthorization(manager)
+        authorization.locationManagerDidChangeAuthorization(manager)
+        XCTAssertEqual(cleanupReturns, 1)
         XCTAssertEqual(wifi.leaves, 1)
+        XCTAssertEqual(wifi.joins, 1, "Reauthorization must not repeat association")
         closed(authorization)
     }
 
