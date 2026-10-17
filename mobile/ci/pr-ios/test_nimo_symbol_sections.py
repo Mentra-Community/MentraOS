@@ -1,9 +1,11 @@
 import struct
+import json
+from types import SimpleNamespace
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace
+from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader
 
 UUID = bytes(range(16))
 def macho():
@@ -15,6 +17,27 @@ def macho():
     return header + uuid + segment + section + bytes(16)
 
 class SectionsTests(unittest.TestCase):
+    def test_symbol_rejection_names_actual_count_and_bound(self):
+        with self.assertRaisesRegex(ValueError, r'parsed=0 limit=200000 nmBytes=4'):
+            symbol_rows('none')
+        with patch('nimo_symbol_sections.MAX_SYMBOLS', 1):
+            with self.assertRaisesRegex(ValueError, r'parsed=2 limit=1'):
+                symbol_rows('1000 t _one\n1004 t _two\n')
+
+    def test_async_descriptor_reads_only_exact_file_backed_bytes_with_finite_budget(self):
+        data=bytearray(macho())
+        # The fixture header maps __text at the section file offset.
+        struct.pack_into('<QQQQ',data,32+24+24,0x1000,16,len(data)-16,16)
+        read=file_backed_reader(bytes(data))
+        self.assertEqual(read(0x1000,16),bytes(16))
+        for address,count in ((0xfff,1),(0x100f,2),(0x1000,0),(0x1000,257)):
+            with self.assertRaises(ValueError):read(address,count)
+        for _ in range(4095):read(0x1000,16)
+        with self.assertRaisesRegex(ValueError,'bound'):read(0x1000,1)
+        # Zero-fill VM space cannot supply compiler descriptors.
+        struct.pack_into('<QQQQ',data,32+24+24,0x1000,32,len(data)-16,16)
+        with self.assertRaisesRegex(ValueError,'file-backed'):file_backed_reader(bytes(data))(0x1010,1)
+
     def test_delivered_uuid_and_exact_text_extent(self):
         self.assertEqual(macho_layout(macho()), (UUID.hex(), (0x1000, 0x1010)))
         for data in (macho()[:-1], b'fake UUID', macho()[:40]):
@@ -55,6 +78,26 @@ class SectionsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'identity changed'):persist_trace(path,trace)
             path.unlink();path.symlink_to(root/'foreign')
             with self.assertRaises(OSError):persist_trace(path,trace)
+
+    def test_async_failure_retains_selected_delivered_sections_without_qualifying(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp).resolve();exe=root/'Mentra';data=bytearray(macho())
+            struct.pack_into('<QQQQ',data,32+24+24,0x1000,16,len(data)-16,16);exe.write_bytes(data)
+            dwarf=root/'mobile/build/pr-ios/Mentra.xcarchive/dSYMs/Mentra.app.dSYM/Contents/Resources/DWARF/Mentra';dwarf.parent.mkdir(parents=True);dwarf.write_bytes(b'dsym')
+            def run(*args,timeout):
+                if 'dwarfdump' in args:return ('UUID: '+UUID.hex()[:8]+'-'+UUID.hex()[8:12]+'-'+UUID.hex()[12:16]+'-'+UUID.hex()[16:20]+'-'+UUID.hex()[20:]+' (arm64) file\n').encode()
+                if 'nm' in args:return b'1000 t _entry\n'
+                if '--indirect-symbols' in args:return b''
+                return b'1000: nop\n1004: nop\n1008: nop\n100c: ret\n'
+            trace=root/'xcodebuild-attempt-nimo-capability.log'
+            with patch('nimo_symbol_sections.subprocess.run',return_value=SimpleNamespace(stdout=b'SDK.Entry.method()\n')), patch('nimo_async_invocations.prove_async_edges',side_effect=ValueError('exact scheduler unsupported')):
+                with self.assertRaisesRegex(ValueError,'scheduler unsupported'):
+                    archive_symbol_sections(exe,root,['Entry.method('],run,diagnostic_path=trace,async_edges=set())
+            saved=json.loads(trace.read_text());self.assertFalse(saved['capabilityVerified'])
+            self.assertEqual(saved['asyncProofError'],'exact scheduler unsupported')
+            self.assertIn('100c ret',saved['assembly'])
+            stage=json.loads((root/'xcodebuild-attempt-nimo-symbol-stage.log').read_text())
+            self.assertEqual(stage['parsedTextCount'],1)
 
     def test_uuid_mismatch_and_finite_remaining_timeout_before_disassembly(self):
         with tempfile.TemporaryDirectory() as temp:

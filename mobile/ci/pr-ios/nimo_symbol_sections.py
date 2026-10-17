@@ -58,6 +58,35 @@ def macho_layout(data):
     return uuids[0], texts[0]
 
 
+def file_backed_reader(data):
+    # Runtime descriptors are read only from the same delivered Mach-O bytes.
+    # Zero-fill memory and overlapping file mappings are not proof authority.
+    macho_layout(data)
+    count, size = struct.unpack_from('<II', data, 16)
+    offset, segments = 32, []
+    for _ in range(count):
+        command, length = struct.unpack_from('<II', data, offset)
+        if command == 0x19:
+            vmaddr, vmsize, fileoff, filesize = struct.unpack_from('<QQQQ', data, offset + 24)
+            if filesize > vmsize or fileoff + filesize > len(data):
+                raise ValueError('invalid delivered file-backed segment')
+            if filesize:
+                segments.append((vmaddr, vmaddr + filesize, fileoff))
+        offset += length
+    budget = 65536
+    def read(address, count):
+        nonlocal budget
+        if not isinstance(address, int) or not isinstance(count, int) or count <= 0 or count > 256 or count > budget:
+            raise ValueError('async delivered-byte read exceeds bound')
+        matches = [(start, fileoff) for start, stop, fileoff in segments if start <= address and address + count <= stop]
+        if len(matches) != 1:
+            raise ValueError('async descriptor is not uniquely file-backed')
+        budget -= count
+        start, fileoff = matches[0]
+        return data[fileoff + address - start:fileoff + address - start + count]
+    return read
+
+
 def normalize_demangled(name):
     # swift-demangle's private-method spelling, observed from the real compiler.
     name = re.sub(r'(?<=\.)\(([A-Za-z_][A-Za-z0-9_]*) in _[A-Fa-f0-9]+\)(?=\()', r'\1', name)
@@ -70,7 +99,7 @@ def symbol_rows(nm):
     rows = [(int(match[1], 16), match[2]) for line in nm.splitlines()
             if (match := re.fullmatch(r'([a-fA-F0-9]{1,16})\s+[tT]\s+(\S+)', line.strip()))]
     if not rows or len(rows) > MAX_SYMBOLS:
-        raise ValueError('archive compiler text symbols unavailable or unbounded')
+        raise ValueError(f'archive compiler text symbols unavailable or unbounded: parsed={len(rows)} limit={MAX_SYMBOLS} nmBytes={len(nm.encode())}')
     return rows
 
 
@@ -165,7 +194,7 @@ def persist_trace(path, trace):
         raise ValueError('compiler trace parent changed during persistence')
 
 
-def archive_symbol_sections(executable, source_root, selectors, run=None, clock=None, diagnostic_path=None):
+def archive_symbol_sections(executable, source_root, selectors, run=None, clock=None, diagnostic_path=None, async_edges=None):
     clock = clock or time.monotonic
     deadline = clock() + PROOF_SECONDS
     def remaining():
@@ -182,12 +211,22 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
     dwarf = source_root / 'mobile/build/pr-ios/Mentra.xcarchive/dSYMs/Mentra.app.dSYM/Contents/Resources/DWARF/Mentra'
     if not dwarf.is_file() or dwarf.is_symlink() or dwarf.stat().st_size > 512 * 1024 * 1024:
         raise ValueError('matching ordinary archive dSYM is unavailable')
-    uuid, text = macho_layout(executable.read_bytes())
+    delivered = executable.read_bytes()
+    uuid, text = macho_layout(delivered)
     identity = bounded('xcrun', 'dwarfdump', '--uuid', dwarf).decode('utf-8', errors='strict')
     matches = re.findall(r'^UUID: ([a-fA-F0-9-]{36}) \(([^)]+)\) ', identity, re.MULTILINE)
     if len(matches) != 1 or matches[0][1] != 'arm64' or matches[0][0].replace('-', '').lower() != uuid:
         raise ValueError('archive dSYM UUID differs from delivered arm64 executable')
     nm = bounded('xcrun', 'nm', '-anU', dwarf).decode('utf-8', errors='strict')
+    # Preserve bounded causal metadata even if symbol selection fails before
+    # full sections can be emitted. This is diagnostic evidence, never proof.
+    if diagnostic_path is not None:
+        stage = {'kind': 'nimo-compiler-symbol-stage-v1', 'capabilityVerified': False,
+                 'uuid': uuid, 'executableSha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
+                 'nmBytes': len(nm.encode()), 'nmSha256': hashlib.sha256(nm.encode()).hexdigest(),
+                 'parsedTextCount': sum(bool(re.fullmatch(r'([a-fA-F0-9]{1,16})\s+[tT]\s+(\S+)', line.strip())) for line in nm.splitlines()),
+                 'firstLines': [line[:512] for line in nm.splitlines()[:16]]}
+        persist_trace(Path(diagnostic_path).with_name('xcodebuild-attempt-nimo-symbol-stage.log'), stage)
     rows = symbol_rows(nm)
     result = subprocess.run(['xcrun', 'swift-demangle', '--compact'], input=('\n'.join(symbol for _, symbol in rows)+'\n').encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=remaining())
     if len(result.stdout) > 64 * 1024 * 1024:
@@ -195,22 +234,60 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
     demangled = [normalize_demangled(name) for name in result.stdout.decode('utf-8', errors='strict').splitlines()]
     windows = symbol_windows(rows, demangled, selectors, text)
     imports = imported_stubs(bounded('xcrun', 'llvm-objdump', '--macho', '--indirect-symbols', executable).decode('utf-8', errors='strict'))
-    blocks, size = [], 0
-    for start, stop, symbol in windows:
+    blocks, size, functions = [], 0, {}
+    by_symbol = {symbol: name for (_, symbol), name in zip(rows, demangled)}
+    address_rows = {}
+    for (address, symbol), name in zip(rows, demangled):
+        if text[0] <= address < text[1]:
+            address_rows.setdefault(address, []).append((symbol, name))
+    addresses = sorted(address_rows)
+    stops = dict(zip(addresses, addresses[1:] + [text[1]]))
+    def disassemble(start, stop, symbol):
+        nonlocal size
+        remaining()
+        if symbol in functions:
+            return functions[symbol]
+        if len(functions) >= MAX_FUNCTIONS or stop <= start or stop - start > MAX_WINDOW:
+            raise ValueError('lazy compiler function window exceeds bound')
+        if sum(window[1] - window[0] for window in functions.values()) + stop - start > MAX_TOTAL_TEXT:
+            raise ValueError('lazy compiler selected text exceeds bound')
         output = bounded('xcrun', 'llvm-objdump', '--disassemble', '--arch=arm64', '--no-show-raw-insn', f'--start-address=0x{start:x}', f'--stop-address=0x{stop:x}', executable).decode('utf-8', errors='strict')
         block = normalize_window(output, start, stop, symbol, imports)
         size += len(block)
         if size > MAX_ASSEMBLY:
             raise ValueError('selected fixture disassembly exceeds proof bound')
+        functions[symbol] = (start, stop, block)
         blocks.append(block)
-    remaining()
+        return functions[symbol]
+    for start, stop, symbol in windows:
+        disassemble(start, stop, symbol)
+    async_error = None
+    if async_edges is not None:
+        from nimo_async_invocations import prove_async_edges
+        # Aliased addresses cannot select an arbitrary compiler identity.
+        symbols = {address: values[0] for address, values in address_rows.items() if len(values) == 1}
+        def get_function(address):
+            if address not in symbols:
+                raise ValueError('async compiler function entry is absent or aliased')
+            return disassemble(address, stops[address], symbols[address][0])
+        delivered_reader = file_backed_reader(delivered)
+        def read_bytes(address, count):
+            remaining()
+            return delivered_reader(address, count)
+        try:
+            async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function))
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+            async_error = error
     if diagnostic_path is not None:
-        by_symbol = {symbol: name for (_, symbol), name in zip(rows, demangled)}
         trace = {'kind': 'nimo-compiler-sections-only-v1', 'capabilityVerified': False, 'uuid': uuid,
                  'executableSha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
-                 'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol[symbol]} for start, stop, symbol in windows],
-                 'imports': imports, 'assembly': '\n'.join(blocks)}
+                 'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol[symbol]} for symbol, (start, stop, _) in functions.items()],
+                 'imports': imports, 'assembly': '\n'.join(blocks),
+                 'asyncProofError': str(async_error)[:1024] if async_error is not None else None}
         # Fixed producer log basename; normal workflow already retains this glob.
         persist_trace(diagnostic_path, trace)
+    if async_error is not None:
+        raise async_error
+    remaining()
     print(f'NIMO compiler witness UUID {uuid}: {len(windows)} bounded symbol sections, {size} disassembly bytes')
     return nm, demangled, '\n'.join(blocks)

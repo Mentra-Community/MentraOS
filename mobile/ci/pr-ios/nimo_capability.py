@@ -97,7 +97,7 @@ def select_role_witnesses(roots):
     return sorted(f'{role}:{symbol}' for role, symbol in selected.items())
 
 
-def compiled_witness(nm, demangled, disassembly):
+def compiled_witness(nm, demangled, disassembly, async_edges=()):
     """Accept only actual text symbols with reconstructible direct call edges.
 
     Outlined async methods may supply multiple symbols for a role; every selected
@@ -137,6 +137,10 @@ def compiled_witness(nm, demangled, disassembly):
         for target in re.findall(r';\s*(\S+)', line):
             if re.search(r'\b(?:bl|b)\s', line) and target in graph:
                 graph[current].add(target)
+    for caller, target in async_edges:
+        if caller not in graph or target not in graph:
+            raise ValueError('async edge is not backed by exact compiler symbols')
+        graph[caller].add(target)
     def reaches(source, target):
         # Follow only actual direct-call edges through compiler-emitted method/
         # closure families, never infer invocation from a closure's name alone.
@@ -209,8 +213,9 @@ def optional_nimo_capability(executable, source_root, expected_revision=None, ru
         ios_arm64(data)
         log_root = os.environ.get('IOS_BUILD_LOG_DIR')
         diagnostic = Path(log_root) / 'xcodebuild-attempt-nimo-capability.log' if log_root else None
-        nm, demangled, assembly = archive_symbol_sections(executable, source_root, tuple(ROLES.values()), supplied_run, diagnostic_path=diagnostic)
-        witnesses = compiled_witness(nm, demangled, assembly)
+        async_edges = set()
+        nm, demangled, assembly = archive_symbol_sections(executable, source_root, tuple(ROLES.values()), supplied_run, diagnostic_path=diagnostic, async_edges=async_edges)
+        witnesses = compiled_witness(nm, demangled, assembly, async_edges)
         return {'protocol': PROTOCOL, 'sourceSha256': source_digest(source_root),
                 'executableSha256': sha(data), 'platform': 'ios-on-mac',
                 'proof': 'compiled-symbols-v1', 'symbols': witnesses}
