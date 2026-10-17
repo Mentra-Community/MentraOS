@@ -351,7 +351,12 @@ def selected_direct_call_symbols(windows, entries, address_rows, symbol_counts, 
         if len(values) == 1 and symbol_counts.get(values[0][0]) == 1:
             records.append({'address': address, 'identity': 'compiler-symbol', 'symbol': values[0][0]})
         else:
-            records.append({'address': address, 'identity': 'ambiguous' if values else 'unavailable'})
+            record = {'address': address, 'identity': 'ambiguous' if values else 'unavailable'}
+            if values:
+                # Raw aliases are diagnostics only; ambiguity never supplies proof identity.
+                aliases = sorted({symbol for symbol, _ in values})
+                record.update(rawAliases=aliases[:16], rawAliasesTruncated=len(aliases) > 16)
+            records.append(record)
     checkpoint()
     return {'kind': 'nimo-selected-direct-call-symbols-only-v1', 'capabilityVerified': False,
             'truncated': truncated, 'entries': records}

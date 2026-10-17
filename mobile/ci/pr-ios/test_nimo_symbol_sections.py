@@ -42,7 +42,11 @@ class SectionsTests(unittest.TestCase):
         rows={0x2000:[('_actual','raw')],0x3000:[('_aliasA','raw'),('_aliasB','raw')],0x4000:[('_duplicateName','raw')]}
         result=selected_direct_call_symbols(windows,entries,rows,{'_actual':1,'_duplicateName':2})
         self.assertFalse(result['capabilityVerified']);self.assertFalse(result['truncated'])
-        self.assertEqual(result['entries'],[{'address':0x2000,'identity':'compiler-symbol','symbol':'_actual'},{'address':0x3000,'identity':'ambiguous'},{'address':0x4000,'identity':'ambiguous'},{'address':0x5000,'identity':'unavailable'}])
+        self.assertEqual(result['entries'],[{'address':0x2000,'identity':'compiler-symbol','symbol':'_actual'},{'address':0x3000,'identity':'ambiguous','rawAliases':['_aliasA','_aliasB'],'rawAliasesTruncated':False},{'address':0x4000,'identity':'ambiguous','rawAliases':['_duplicateName'],'rawAliasesTruncated':False},{'address':0x5000,'identity':'unavailable'}])
+        aliases={0x2000:[('_alias%02d'%i,'raw') for i in range(20)]}
+        alias_result=selected_direct_call_symbols(windows,entries,aliases,{})['entries'][0]
+        self.assertEqual(alias_result['identity'],'ambiguous');self.assertNotIn('symbol',alias_result)
+        self.assertEqual(len(alias_result['rawAliases']),16);self.assertTrue(alias_result['rawAliasesTruncated'])
         with patch('nimo_symbol_sections.MAX_DIRECT_TARGETS',1):
             limited=selected_direct_call_symbols(windows,entries,rows,{'_actual':1})
         self.assertTrue(limited['truncated']);self.assertEqual(len(limited['entries']),1)
