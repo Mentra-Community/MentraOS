@@ -100,3 +100,14 @@ and `checkedAt`; it compares native markers only to the original phone anchors.
 Process UUID, PID, capture, instance and generation fences remain required.
 Old v2/epoch-only artifacts are refused before native preparation, independently
 of source declarations. Actual SDK disassembly is still a first-build gate.
+
+
+The diagnostic variant mirrors React Native 0.83's supported `debugOptimized`
+native mode: it remains Android-debuggable but passes
+`-DCMAKE_BUILD_TYPE=Release` only to its CMake configuration. This aligns the
+app's generated C++ headers with its release-fallback React Native prefab
+libraries. Android debuggability alone otherwise selects CMake Debug, causing
+undefined debug-only `Sealable`/`DebugStringConvertible` symbols against release
+prefabs. Ordinary variants retain their existing CMake configuration. Existing
+known generated diagnostic blocks are upgraded; conflicting CMake modes fail
+closed. Actual diagnostic compilation and APK proof remain required gates.
