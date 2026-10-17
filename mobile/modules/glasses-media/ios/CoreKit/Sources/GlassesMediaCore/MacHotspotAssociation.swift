@@ -17,12 +17,13 @@ final class MacHotspotAssociation {
     init(deadline: TimeInterval = ProcessInfo.processInfo.systemUptime + 60,
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          pause: ((TimeInterval) -> Void)? = nil,
-         makeInterface: @escaping () throws -> MacWifiInterface = { try PublicCoreWlanInterface() })
+         makeInterface: (() throws -> MacWifiInterface)? = nil,
+         authorizationFacts: MacHotspotAuthorizationFacts? = nil)
     {
         self.deadline = deadline
         self.now = now
         self.pause = pause
-        self.makeInterface = makeInterface
+        self.makeInterface = makeInterface ?? { try PublicCoreWlanInterface(authorizationFacts: authorizationFacts) }
     }
 
     func associate(ssid: String, password: String) throws -> String {
@@ -129,9 +130,11 @@ enum MacWifiInvocation {
 private final class PublicCoreWlanInterface: MacWifiInterface {
     private let bundle: Bundle
     private let interface: NSObject
+    private let authorizationFacts: MacHotspotAuthorizationFacts
     private typealias Disassociate = @convention(c) (AnyObject, Selector) -> Void
 
-    init() throws {
+    init(authorizationFacts: MacHotspotAuthorizationFacts? = nil) throws {
+        self.authorizationFacts = authorizationFacts ?? MacHotspotAuthorizationFacts()
         guard let bundle = Bundle(path: "/System/Library/Frameworks/CoreWLAN.framework") else {
             throw LocalMediaError("Mac Wi-Fi framework is unavailable")
         }
@@ -161,7 +164,8 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
     func currentSSID() throws -> String? {
         let authorization = CLLocationManager.authorizationStatus()
         guard MacHotspotAuthorization.isAuthorized(authorization) else {
-            throw LocalMediaError("Location access is required to verify the current Mac Wi-Fi network")
+            throw authorizationFacts.failure("Location access is required to verify the current Mac Wi-Fi network", raw: authorization.rawValue,
+                                             getter: .staticSSID, foreground: MacHotspotAuthorizationFacts.foreground())
         }
         guard let data = interface.perform(NSSelectorFromString("ssidData"))?.takeUnretainedValue() as? Data else { return nil }
         return String(data: data, encoding: .utf8)
