@@ -466,6 +466,7 @@ test('pre-arm policy inversions must reach the exact branch, return or capture f
   invertedSnapshot.replace('"captureRequiredBeforeArm"','"unrelatedFlag"'),
   invertedSnapshot.replace('invoke-virtual {v2, v1, v3}', 'invoke-virtual {v2, v1, v0}'),
   invertedSnapshot.replace('xor-int/lit8 v3, v0, 0x1','const-string v1, "unrelatedFlag"\n xor-int/lit8 v3, v0, 0x1'),
+  diagnosticCode.diagnostics.replace(snapshotSink,snapshotSink.replace('{v2, v1, v0}','{v1, v1, v0}')), // receiver aliases preloaded string key
   diagnosticCode.diagnostics.replace(snapshotSink,'return v0'), // marker is not a JSON fact
   diagnosticCode.diagnostics.replace('const-string v1, "captureRequiredBeforeArm"','const-string v1, "captureRequiredBeforeArm"\n :unproven'),
   diagnosticCode.diagnostics.replace('const-string v1, "captureRequiredBeforeArm"','const-string v1, "captureRequiredBeforeArm"\n invoke-static {}, Lother/Policy;->unproven()V'),
@@ -602,6 +603,9 @@ test('exact capture snapshot expression consumes its post-call literal JSON key'
  assert.doesNotThrow(()=>validateNimoDiagnosticBytecode(replace(actual)))
  for(const changed of [
   actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v1, "captureRequiredBeforeArm"'),
+  actual.replace('const-string v2, "captureRequiredBeforeArm"','const/4 v0, 0x0\n const-string v2, "captureRequiredBeforeArm"'),
+  actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v0, "clobbered"\n const-string v2, "captureRequiredBeforeArm"'),
+  actual.replace('invoke-virtual {v0, v2, v1}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)','invoke-virtual {v1, v2, v1}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)'),
   actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v2, "captureRequiredBeforeArm"\n const-string v2, "wrong"'),
   actual.replace('const-string v2, "captureRequiredBeforeArm"','const-string v2, "captureRequiredBeforeArm"\n const/4 v2, 0x1'),
   actual.replace('invoke-virtual {v0, v2, v1}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)','invoke-virtual {v0, v2, v3}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)'),

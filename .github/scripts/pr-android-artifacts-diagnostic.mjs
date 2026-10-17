@@ -159,6 +159,7 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
       if (!call.test(line)) return false
       let register = /^move-result\s+([vp][0-9]+)$/.exec(instructions[index+1] ?? '')?.[1]
       if (!register) return false
+      const postCallWrites=new Set([register])
       let next = index+2
       const constants = new Map()
       // Recover only straight-line literal assignments, never across a label or
@@ -178,17 +179,17 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
         const literal=/^const(?:\/4|\/16)?\s+([vp][0-9]+),\s*(0x[0-9a-f]+|[0-9]+)$/.exec(value)
         if (literal) {
           if (literal[1] === register) return false
-          constants.set(literal[1],Number(literal[2])); next++; continue
+          constants.set(literal[1],Number(literal[2])); postCallWrites.add(literal[1]); next++; continue
         }
         const stringLiteral=/^const-string(?:\/jumbo)?\s+([vp][0-9]+),\s*"[^"\n]*"$/.exec(value)
         if (stringLiteral) {
           if (stringLiteral[1] === register) return false
-          constants.set(stringLiteral[1],null); next++; continue
+          constants.set(stringLiteral[1],null); postCallWrites.add(stringLiteral[1]); next++; continue
         }
         const inversion=/^xor-int\/lit8\s+([vp][0-9]+),\s*([vp][0-9]+),\s*(?:0x1|1)$/.exec(value)
         const twoAddress=/^xor-int\/2addr\s+([vp][0-9]+),\s*([vp][0-9]+)$/.exec(value)
         if (!inverted && inversion && inversion[2]===register) {
-          register=inversion[1]; constants.delete(register); inverted=true; next++; continue
+          register=inversion[1]; postCallWrites.add(register); constants.delete(register); inverted=true; next++; continue
         }
         if (!inverted && twoAddress && twoAddress[1]===register && twoAddress[2]!==register && constants.get(twoAddress[2])===1) {
           inverted=true; next++; continue
@@ -198,7 +199,7 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, 
       const sink = instructions[next] ?? ''
       if (!jsonField) return new RegExp(`^(?:return\\s+${register}$|if-(?:eqz|nez)\\s+${register}\\s*,)`).test(sink)
       const put = /^invoke-virtual\s+\{([vp][0-9]+),\s*([vp][0-9]+),\s*([vp][0-9]+)\},\s*Lorg\/json\/JSONObject;->put\(Ljava\/lang\/String;Z\)Lorg\/json\/JSONObject;$/.exec(sink)
-      if (!put || put[3] !== register) return false
+      if (!put || put[3] !== register || postCallWrites.has(put[1]) || put[1]===put[2]) return false
       // The key's most recent assignment must be the expected literal. Do not
       // borrow a literal whose register was subsequently overwritten.
       for (let previous=next-1; previous>=Math.max(0,index-12); previous--) {
