@@ -58,8 +58,10 @@ describe("AccountAuthProvider endpoint evidence", () => {
     expect(JSON.stringify(rows)).not.toMatch(/private|https|password@|selected/)
   })
 
-  it("records the existing Cloud Prod preset as official at actual password resolution", async () => {
-    const core = "https://core.mentraglass.com/"
+  it.each([
+    ["https://core.mentraglass.com/", "official-prod"],
+    ["https://core.debug.us-west-2.mentraglass.com/", "official-debug"],
+  ])("records the existing official preset %s at actual password resolution", async (core, origin) => {
     jest.mocked(resolvedEndpoints).mockImplementation((observe) => {
       observe?.({
         activeDeployment: "consumer",
@@ -75,13 +77,13 @@ describe("AccountAuthProvider endpoint evidence", () => {
     global.fetch = fetchMock as unknown as typeof fetch
     await provider.signInWithPassword({email: "private@example.test", password: "private-password"})
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0][0]).toBe("https://core.mentraglass.com/api/account/login")
+    expect(fetchMock.mock.calls[0][0]).toBe(core.replace(/\/+$/, "") + "/api/account/login")
     const rows = info.mock.calls.map(([line]) => JSON.parse(line.slice(ACCOUNT_ENDPOINT_MARKER.length)))
     expect(rows).toEqual([
-      expect.objectContaining({phase: "provider-initialization", origin: "official-prod", requestId: null}),
+      expect.objectContaining({phase: "provider-initialization", origin, requestId: null}),
       expect.objectContaining({
         phase: "password-request",
-        origin: "official-prod",
+        origin,
         requestId: fetchMock.mock.calls[0][1].headers["x-request-id"],
       }),
     ])

@@ -167,21 +167,23 @@ it("preserves legacy consumer overrides but never applies them to a restored wor
 })
 
 describe("safe Core endpoint resolution evidence", () => {
-  it.each(["https://core.mentraglass.com", "https://core.mentraglass.com/"])(
-    "classifies the existing Cloud Prod preset %s without changing its selected URL",
-    async (core) => {
-      await saveDeploymentCloudOverrides(deploymentStore.getActive(), {core, runtime: ""})
-      const observation = jest.fn()
-      expect(resolvedEndpoints(observation).core).toBe(core)
-      expect(observation).toHaveBeenCalledWith({
-        activeDeployment: "consumer",
-        origin: "official-prod",
-        provenance: "override",
-        overrideScope: "scoped",
-      })
-      expect(JSON.stringify(observation.mock.calls)).not.toContain(core)
-    },
-  )
+  it.each([
+    ["https://core.mentraglass.com", "official-prod"],
+    ["https://core.mentraglass.com/", "official-prod"],
+    ["https://core.debug.us-west-2.mentraglass.com", "official-debug"],
+    ["https://core.debug.us-west-2.mentraglass.com/", "official-debug"],
+  ])("classifies the existing official preset %s without changing its selected URL", async (core, origin) => {
+    await saveDeploymentCloudOverrides(deploymentStore.getActive(), {core, runtime: ""})
+    const observation = jest.fn()
+    expect(resolvedEndpoints(observation).core).toBe(core)
+    expect(observation).toHaveBeenCalledWith({
+      activeDeployment: "consumer",
+      origin,
+      provenance: "override",
+      overrideScope: "scoped",
+    })
+    expect(JSON.stringify(observation.mock.calls)).not.toContain(core)
+  })
 
   it("records the current resolver choice without a second settings or Metro read", async () => {
     const first: CoreEndpointObservation[] = [],

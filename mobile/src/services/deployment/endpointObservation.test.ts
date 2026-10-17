@@ -2,6 +2,11 @@ import {coreEndpointOrigin} from "./endpointObservation"
 
 it.each([
   ["https://core.dev.us-west-2.mentraglass.com", "official-dev"],
+  ["https://core.debug.us-west-2.mentraglass.com", "official-debug"],
+  ["https://core.debug.us-west-2.mentraglass.com/", "official-debug"],
+  ["https://core.debug.us-west-2.mentraglass.com.private.example", "custom"],
+  ["https://private:secret@core.debug.us-west-2.mentraglass.com", "custom"],
+  ["https://core.debug.us-west-2.mentraglass.com/private", "custom"],
   ["https://core.staging.us-west-2.mentraglass.com/", "official-staging"],
   ["https://core.us-west-2.mentraglass.com", "official-prod"],
   ["https://core.us-west-2.mentraglass.com/", "official-prod"],

@@ -18,7 +18,7 @@ export function recordAccountEndpointResolution(
     if (
       !["provider-initialization", "password-request"].includes(phase) ||
       !["consumer", "workspace"].includes(activeDeployment) ||
-      !["official-dev", "official-staging", "official-prod", "custom", "unknown"].includes(origin) ||
+      !["official-dev", "official-debug", "official-staging", "official-prod", "custom", "unknown"].includes(origin) ||
       !["manifest", "override", "metro", "metro-fallback"].includes(provenance) ||
       !["none", "scoped", "legacy-consumer"].includes(overrideScope) ||
       (requestId !== null && (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{22}$/.test(requestId)))

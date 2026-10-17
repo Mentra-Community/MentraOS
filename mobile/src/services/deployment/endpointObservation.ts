@@ -1,7 +1,7 @@
 /** Fixed public facts only; custom endpoints must never become diagnostic text or hashes. */
 export type CoreEndpointObservation = {
   activeDeployment: "consumer" | "workspace"
-  origin: "official-dev" | "official-staging" | "official-prod" | "custom" | "unknown"
+  origin: "official-dev" | "official-debug" | "official-staging" | "official-prod" | "custom" | "unknown"
   provenance: "manifest" | "override" | "metro" | "metro-fallback"
   overrideScope: "none" | "scoped" | "legacy-consumer"
 }
@@ -13,6 +13,7 @@ export function coreEndpointOrigin(value: string | null): CoreEndpointObservatio
     if (url.protocol !== "http:" && url.protocol !== "https:") return "unknown"
     if (!url.username && !url.password && !url.search && !url.hash && /^\/*$/.test(url.pathname)) {
       if (url.origin === "https://core.dev.us-west-2.mentraglass.com") return "official-dev"
+      if (url.origin === "https://core.debug.us-west-2.mentraglass.com") return "official-debug"
       if (url.origin === "https://core.staging.us-west-2.mentraglass.com") return "official-staging"
       if (url.origin === "https://core.us-west-2.mentraglass.com" || url.origin === "https://core.mentraglass.com")
         return "official-prod"
