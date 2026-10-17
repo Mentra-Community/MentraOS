@@ -86,13 +86,21 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   }
 
   const buildNumber = getBuildNumber()
+  const backendTarget = process.env.EXPO_PUBLIC_CLOUD_CORE_URL?.trim()
+  // Generated target metadata cannot be inherited from a previous Expo config.
+  const {mentraBackendTarget: _previousBackendTarget, ...originalExtra} = config.extra ?? {}
+  const packagedExtra = {
+    ...originalExtra,
+    ...(backendTarget ? {mentraBackendTarget: {schemaVersion: 1, coreUrl: backendTarget}} : {}),
+  }
 
   return {
     ...config,
+    extra: packagedExtra,
     ...(process.env.MENTRA_PR_MOBILE_FINGERPRINT
       ? {
           extra: {
-            ...config.extra,
+            ...packagedExtra,
             mentraPrBuild: {
               schemaVersion: 1,
               mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
