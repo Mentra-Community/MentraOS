@@ -1747,12 +1747,12 @@ class Nimo: NSObject, SGCManager {
                 original.disconnectRequested(self)
                 centralManager?.cancelPeripheralConnection(peripheral)
                 // Retain this exact peripheral and delegate until original closure.
-                while original.disconnectCallbackElapsedMs == nil, NimoResourceClock.now() < deadline + 5_000 {
+                while original.disconnectCallbackElapsedMs == nil, original.connectionFailedElapsedMs == nil, NimoResourceClock.now() < deadline + 5_000 {
                     try? await Task.sleep(nanoseconds: 10_000_000)
                 }
-                if original.disconnectCallbackElapsedMs == nil { original.recordError("original-disconnect-callback-missing") }
-            } else { original.proveNoTransport() }
-            if original.disconnectCallbackElapsedMs != nil || original.noTransport {
+                if original.disconnectCallbackElapsedMs == nil, original.connectionFailedElapsedMs == nil { original.recordError("original-disconnect-callback-missing") }
+            } else if original.connectionFailedElapsedMs == nil { original.proveNoTransport() }
+            if original.disconnectCallbackElapsedMs != nil || original.connectionFailedElapsedMs != nil || original.noTransport {
                 resetSessionState()
                 peripheral = nil; txChar = nil; rxChar = nil; micChar = nil; opusDecoder = nil
                 resourceMicEnabled = false
@@ -1811,12 +1811,17 @@ extension Nimo: CBCentralManagerDelegate {
         self.postCallback { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Connected to \(peripheral.name ?? "unknown")")
+            if let original = self.resourceSession, original.matches(self, peripheral), original.connectionFailedElapsedMs != nil {
+                original.transportConnected(self, peripheral)
+                self.centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
             guard self.peripheral === peripheral else { return }
+            self.resourceSession?.transportConnected(self, peripheral)
             guard NimoResourceFixture.shared.allowsProducer(self) else {
                 if self.resourceSession?.releaseNonce != nil { self.resourceSession?.disconnectRequested(self) }
                 self.centralManager?.cancelPeripheralConnection(peripheral); return
             }
-            self.resourceSession?.transportConnected(self, peripheral)
             self.writes.connected(peripheral)
             self.lastDeviceUUID = peripheral.identifier.uuidString
             peripheral.discoverServices([NimoBLE.SERVICE_UUID])
@@ -1826,12 +1831,15 @@ extension Nimo: CBCentralManagerDelegate {
     nonisolated func centralManager(
         _: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
     ) {
+        let receivedElapsedMs = NimoResourceClock.now()
         self.postCallback { [weak self] in
             guard let self else { return }
             Bridge.log(
                 "NIMO: Failed to connect \(peripheral.name ?? "unknown"): \(error?.localizedDescription ?? "unknown")"
             )
             guard self.peripheral === peripheral else { return }
+            self.resourceSession?.connectionFailed(self, peripheral, receivedElapsedMs: receivedElapsedMs)
+            self.writes.connectionClosed(peripheral)
             self.peripheral = nil
             self.startReconnectionTimer()
         }

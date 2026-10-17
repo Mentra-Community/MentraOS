@@ -11,6 +11,47 @@ final class NimoResourceSessionTests: XCTestCase {
         XCTAssertTrue(model.admit(owner, instanceId: uuid, name: "NIMO test"))
         return (model, owner, peer, clock)
     }
+    func testForeignManagerCannotReplaceCaptureUntilOriginalClosure() {
+        XCTAssertTrue(NimoResourceManagerState.allowsReplacement(fixtureEnabled: false, originalClosed: false))
+        XCTAssertFalse(NimoResourceManagerState.allowsReplacement(fixtureEnabled: true, originalClosed: false))
+        XCTAssertTrue(NimoResourceManagerState.allowsReplacement(fixtureEnabled: true, originalClosed: true))
+    }
+    func testFailedOriginalConnectionCanReleaseWithoutInventingDisconnect() {
+        let (model, owner, peer, clock) = fixture()
+        XCTAssertTrue(model.beginTransport(owner, peripheral: peer, uuid: uuid))
+        model.connectionFailed(owner, NSObject(), receivedElapsedMs: clock.next())
+        model.connectionFailed(owner, peer, receivedElapsedMs: model.startedElapsedMs! - 1)
+        XCTAssertNil(model.connectionFailedElapsedMs)
+        model.connectionFailed(owner, peer, receivedElapsedMs: clock.next())
+        XCTAssertNotNil(model.connectionFailedElapsedMs)
+        XCTAssertFalse(model.ready)
+        XCTAssertFalse(model.settled(producers: NimoResourceProducers()))
+        XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false))
+        XCTAssertTrue(model.settled(producers: NimoResourceProducers()))
+        XCTAssertNil(model.disconnectCallbackElapsedMs)
+        XCTAssertFalse(model.noTransport)
+        XCTAssertNotNil(model.original)
+        var producers = NimoResourceProducers(); producers.postedCallbacks = 1
+        XCTAssertFalse(model.settled(producers: producers))
+        model.transportConnected(owner, peer) // A contradictory late callback cannot preserve closure.
+        XCTAssertFalse(model.settled(producers: NimoResourceProducers()))
+        XCTAssertTrue(model.errors.contains("connect-after-failed-attempt"))
+        let (connected, other, otherPeer, otherClock) = fixture()
+        XCTAssertTrue(connected.beginTransport(other, peripheral: otherPeer, uuid: uuid))
+        connected.transportConnected(other, otherPeer)
+        connected.connectionFailed(other, otherPeer, receivedElapsedMs: otherClock.next())
+        XCTAssertNil(connected.connectionFailedElapsedMs)
+        XCTAssertTrue(connected.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false))
+        XCTAssertFalse(connected.settled(producers: NimoResourceProducers()))
+        let (fenced, fencedOwner, fencedPeer, fencedClock) = fixture()
+        XCTAssertTrue(fenced.beginTransport(fencedOwner, peripheral: fencedPeer, uuid: uuid))
+        XCTAssertTrue(fenced.beginRelease(nonce: uuid, cancel: true, mic: false, canvas: false))
+        fenced.transportConnected(fencedOwner, fencedPeer)
+        XCTAssertTrue(fenced.connected)
+        fenced.connectionFailed(fencedOwner, fencedPeer, receivedElapsedMs: fencedClock.next())
+        XCTAssertNil(fenced.connectionFailedElapsedMs)
+        XCTAssertFalse(fenced.settled(producers: NimoResourceProducers()))
+    }
     func testOriginalClosureCannotClearReplacementManagerSharedState() {
         let (model, owner, _, _) = fixture()
         XCTAssertTrue(model.beginRelease(nonce: uuid, cancel: false, mic: false, canvas: false))

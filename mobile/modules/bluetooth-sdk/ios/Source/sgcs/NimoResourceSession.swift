@@ -16,6 +16,9 @@ enum NimoResourceClock {
 /// Shared product state belongs to the current manager, independently of the
 /// retained original object's cleanup and closure evidence.
 enum NimoResourceManagerState {
+    static func allowsReplacement(fixtureEnabled: Bool, originalClosed: Bool) -> Bool {
+        !fixtureEnabled || originalClosed
+    }
     static func publish(owner: AnyObject, current: AnyObject?, _ update: () -> Void) {
         guard current === owner else { return }
         update()
@@ -74,6 +77,8 @@ final class NimoResourceSession {
     private(set) var original: NimoResourceOriginal?
     private(set) var cancelled = false
     private(set) var connected = false
+    private var everConnected = false
+    private(set) var connectionFailedElapsedMs: UInt64?
     private(set) var startedElapsedMs: UInt64?
     private(set) var twsConnected = false
     private(set) var twsObservedElapsedMs: UInt64?
@@ -139,10 +144,17 @@ final class NimoResourceSession {
     }
 
     func matches(_ candidate: AnyObject, _ peer: AnyObject) -> Bool { owner === candidate && peripheral === peer }
-    func mayReceive(_ candidate: AnyObject, _ peer: AnyObject) -> Bool { matches(candidate, peer) && disconnectCallbackElapsedMs == nil }
+    func mayReceive(_ candidate: AnyObject, _ peer: AnyObject) -> Bool { matches(candidate, peer) && disconnectCallbackElapsedMs == nil && connectionFailedElapsedMs == nil }
     func transportConnected(_ candidate: AnyObject, _ peer: AnyObject) {
-        guard matches(candidate, peer), !cancelled, releaseNonce == nil else { return }
-        connected = true
+        guard matches(candidate, peer) else { return }
+        everConnected = true; connected = true
+        if connectionFailedElapsedMs != nil { recordError("connect-after-failed-attempt"); return }
+    }
+    /// The original failed-attempt callback proves this never-connected transport ended.
+    func connectionFailed(_ candidate: AnyObject, _ peer: AnyObject, receivedElapsedMs: UInt64) {
+        guard matches(candidate, peer), !everConnected, let startedElapsedMs, receivedElapsedMs >= startedElapsedMs else { return }
+        if connectionFailedElapsedMs == nil { connectionFailedElapsedMs = receivedElapsedMs }
+        connected = false
     }
     func observeTws(_ candidate: AnyObject, connected: Bool, receivedElapsedMs: UInt64? = nil) {
         guard owner === candidate, releaseNonce == nil, self.connected else { return }
@@ -224,7 +236,7 @@ final class NimoResourceSession {
         guard releaseNonce != nil, original == nil, peripheral == nil else { return }; noTransport = true
     }
     func settled(producers: NimoResourceProducers) -> Bool {
-        releaseNonce != nil && commandsSettled && (noTransport || disconnectCallbackElapsedMs != nil && disconnectError == nil) && producers.settled && errors.isEmpty
+        releaseNonce != nil && commandsSettled && (noTransport || connectionFailedElapsedMs != nil || disconnectCallbackElapsedMs != nil && disconnectError == nil) && producers.settled && errors.isEmpty
     }
 
     func sessionDictionary() -> [String: Any]? {
@@ -244,7 +256,7 @@ final class NimoResourceSession {
          "micStopStartedElapsedMs": nullable(micStopStartedElapsedMs), "micStopWrittenElapsedMs": nullable(micStopWrittenElapsedMs),
          "micStopMarkerElapsedMs": nullable(micStopMarkerElapsedMs), "exitStatusCode": nullable(exitStatusCode), "exitAckElapsedMs": nullable(exitAckElapsedMs),
          "disconnectRequestedElapsedMs": nullable(disconnectRequestedElapsedMs), "disconnectCallbackElapsedMs": nullable(disconnectCallbackElapsedMs),
-         "disconnectError": nullable(disconnectError), "noTransport": noTransport, "settled": settled(producers: producers)]
+         "disconnectError": nullable(disconnectError), "connectionFailedElapsedMs": nullable(connectionFailedElapsedMs), "noTransport": noTransport, "settled": settled(producers: producers)]
     }
 }
 

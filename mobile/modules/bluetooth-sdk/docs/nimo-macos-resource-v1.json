@@ -68,7 +68,8 @@
       "disconnectCallbackElapsedMs": null,
       "disconnectError": null,
       "noTransport": false,
-      "settled": false
+      "settled": false,
+      "connectionFailedElapsedMs": null
     },
     "producers": {
       "writerActive": 0,
@@ -105,11 +106,11 @@
     "All nullable keys explicit null; no omitted properties. UUID normalized lower-case. Clock integers continuous milliseconds, no host comparisons.",
     "original null arm/first capture-bound status; status never adopts current manager. Normal release requires exact original once owner admitted. Cancel null allowed for any exact pinned capture generation, including setup failure before first readback.",
     "requestNonce immutable per-operation receipt; repeated exact request returns original bytes, changed request same nonce rejects. Fresh status uses new nonce but preserves original release nonce/markers.",
-    "release.settled requires actual producer roster zero, original CB disconnect callback or proven noTransport, and all required mic/Exit markers. Unknown stays unsettled/errors.",
+    "release.settled requires actual producer roster zero, original CB disconnect callback, original never-connected didFailToConnect callback, or generation0 proven noTransport, and all required mic/Exit markers. Failed-attempt closure retains original generation1 identity, has no handshake or fabricated disconnect, and records callback-entry continuous time. Unknown stays unsettled/errors.",
     "micStopMarkerElapsedMs remains null if native protocol has no observed stop marker; micStopRequired never passes based solely on logical state/write callback.",
-    "currentManager.type/instanceId always emitted; G2/replacement vetoes qualification without mutating that manager.",
+    "Foreign manager adoption is fenced before and during capture. After original closure a G2 manager may run; original NIMO cleanup and callbacks never mutate it.",
     "gen0 admission retains original object even before CB peripheral; no replacement adoption.",
-    "transport bootstrap/hello separate no native effect; awaiting root approval before coding.",
+    "Transport bootstrap and hello require the verified selected app, exact supervised owner identity and private socket; they do not authorize NIMO input.",
     "One capture per app process; 192 ordinary entries +64 cleanup/postrelease status reserved entries. Exact existing nonce readbacks bypass budget; no renewed windows."
   ]
 }

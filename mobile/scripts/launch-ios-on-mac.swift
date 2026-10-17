@@ -102,7 +102,11 @@ struct LaunchIOSOnMac {
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
-        if let nimoBootstrap { configuration.environment = ["MENTRA_NIMO_RESOURCE_BOOTSTRAP": nimoBootstrap] }
+        if let nimoBootstrap {
+            var environment = ProcessInfo.processInfo.environment
+            environment["MENTRA_NIMO_RESOURCE_BOOTSTRAP"] = nimoBootstrap
+            configuration.environment = environment
+        }
         let timeout = Task { @MainActor in
             try await Task.sleep(for: .seconds(30))
             FileHandle.standardError.write(Data("Launch did not finish within 30 seconds. Inspect macOS setup permissions; no unrelated dialog was accepted.\n".utf8))

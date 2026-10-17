@@ -20,6 +20,7 @@ final class NimoResourceFixture {
     private var pending: [String: (Data, Task<Data, Error>)] = [:]
     private var transport: NimoMacResourceTransport?
     private var startupError: Error?
+    private var originalClosed = false
     var pendingManagerEntries = 0
     #if os(macOS)
     private let requested = ProcessInfo.processInfo.environment["MENTRA_NIMO_RESOURCE_BOOTSTRAP"] != nil
@@ -36,7 +37,10 @@ final class NimoResourceFixture {
         catch { startupError = error }
     }
     func allowsManager(_ wearable: String, name: String? = nil) -> Bool {
-        guard enabled, wearable.contains("NIMO") else { return true }
+        guard enabled else { return true }
+        // A different manager can clean up the captured Nimo object. Permit it
+        // only after the original resource has actually completed teardown.
+        guard wearable.contains("NIMO") else { return NimoResourceManagerState.allowsReplacement(fixtureEnabled: enabled, originalClosed: originalClosed && session?.errors.isEmpty == true && session?.connected == false) }
         guard let session, !session.cancelled, session.releaseNonce == nil, session.original == nil,
               name == nil || name == session.pair.name else { return false }
         return true
@@ -155,6 +159,7 @@ final class NimoResourceFixture {
         var producers = NimoResourceProducers()
         producers.postedCallbacks = pendingManagerEntries
         if let owner { producers = await owner.resourceProducers() }
+        originalClosed = session.settled(producers: producers)
         let manager = DeviceManager.shared.sgc
         let managerId = (manager as? Nimo)?.resourceInstanceId
         let current: [String: Any] = ["type": nullable(manager?.type), "instanceId": nullable(managerId)]
