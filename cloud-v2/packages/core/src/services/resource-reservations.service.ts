@@ -18,6 +18,7 @@ import {z} from 'zod'
 
 export type ResourceReservationHost = {hostId: string; incarnation: string; incarnationGeneration: number; sequence: number;
   receivedAt: Date; snapshot: TestHostState; resourceReservationVersion?: number; resourceReservations?: unknown}
+export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId: string; owner: ExclusiveHostReservation['owner']}
 export interface ResourceReservationRepository {
   get(hostId: string): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
@@ -94,7 +95,8 @@ export class ResourceReservationsService {
   /** One request CAS selects the original candidate before any authority claim or Actions device binding.
    * Request and byte receipts only adopt that candidate; their losing writes never create another exclusive owner.
    */
-  async reserveFleet(requestId: string, digest: string, hostId: string, laneId: string): Promise<FleetExclusiveReservation | null | undefined> {
+  async reserveFleet(requestId: string, digest: string, hostId: string, laneId: string,
+    onBlocked?: (blocked: ExclusiveResourceBlocker, dependencies: ExclusiveResourceDependency[]) => void): Promise<FleetExclusiveReservation | null | undefined> {
     let row = await this.rows.request?.(requestId)
     if (!row?.fleetPreparation || row.fleetInputSha256 !== digest || row.state !== 'awaiting-runner' || row.fleetBinding || row.fleetCancellation ||
       row.hostId || row.inputSha256 || row.input || row.fleetDeadline.getTime() <= this.now()) return null
@@ -143,6 +145,12 @@ export class ResourceReservationsService {
       if (retained.length && (existing.length !== retained.length || retained.some(claim =>
         !existing.some(value => isDeepStrictEqual(value, claim))))) return null
       if (existing.length) {
+        const blocked = existing.find(claim => claim.owner.id !== requestId || claim.owner.kind !== 'run' ||
+          claim.borrowerHostId !== hostId || claim.laneId !== laneId);
+        if (blocked) {
+          onBlocked?.({resourceId: blocked.resourceId, hostId: blocked.borrowerHostId, laneId: blocked.laneId, owner: blocked.owner}, selected);
+          return null;
+        }
         if (existing.length !== selected.length || existing.some(claim => !claim.origin || claim.origin.fleetInputSha256 !== digest ||
           claim.owner.id !== requestId || claim.owner.kind !== 'run' || claim.borrowerHostId !== hostId || claim.laneId !== laneId ||
           claim.operationId !== intent.operationId || claim.controllerGeneration !== existing[0]!.controllerGeneration ||

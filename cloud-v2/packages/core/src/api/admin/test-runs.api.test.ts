@@ -12,6 +12,8 @@ import {requestInputDigest, TestRequestService, type StoredTestRequest, type Sto
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
 import {TestRequestProgressService} from '../../services/test-request-progress.service';
+import {TestHostStateService} from '../../services/test-host-state.service';
+import {sharedResourceWait} from '../../services/routine-resource-wait';
 
 test('the ordinary run detail carries live progress until its published result replaces the request', async () => {
   const input = {routineSource: testRoutineSource(), routineId: 'miniapps', definitionRevision: 'a'.repeat(40), platform: 'android',
@@ -382,6 +384,39 @@ test('activity reads and displays bounded fleet preparation failures', async () 
  const find=spyOn(TestRequestModel,'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[{...row,fleetPreparationStatus:projection?.fleetPreparationStatus?row.fleetPreparationStatus:undefined}]} as any);
  try{const response=await createTestRunAdminApi().request('/activity');expect(response.status).toBe(200);expect(await response.json()).toMatchObject({requests:[{requestId:selected.requestId,reason:row.fleetPreparationStatus.reason}]});expect(projection).toMatchObject({fleetPreparationStatus:1});}
  finally{find.mockRestore();}
+});
+test('Admin activity and request detail project the actual exclusive blocker through existing reason text, with safe unknown fallback', async () => {
+  const {TestRequestModel} = await import('../../models/test-request.model');
+  const source = {channel: 'dev', buildRunId: 1, publicationAttempt: 1};
+  const selected = {requestId: 'account-waiting', routineId: 'account-google', platform: 'ios-on-mac', routineRevision: 'a'.repeat(40), source,
+    build: {repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'dev', kind: 'mac-ci-package', source,
+      archive: {name: 'app.zip', url: 'https://artifactscdn.mentraglass.com/app.zip', size: 100, sha256: 'c'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}}};
+  const row = {requestId: selected.requestId, state: 'awaiting-runner', fleetSelection: selected, fleetSelectionSha256: requestInputDigest(selected),
+    fleetInputSha256: 'e'.repeat(64), fleetResourceAdmission: {intent: {operationId: `run:${selected.requestId}`, hostId: 'borrower', laneId: 'mac',
+      owner: {id: selected.requestId, kind: 'run'}, inputSha256: 'e'.repeat(64), controller: {incarnation: 'one', generation: 1, sequence: 1},
+      resources: [{id: 'fixtures', capabilities: ['google-authentication']}]},
+      dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]}};
+  const hosts = [{hostId: 'mini', lanes: [], receivedAt: '2026-10-17T01:00:00Z', authorityReservations: [{kind: 'exclusive',
+    resourceId: 'private-account', authorityHostId: 'mini', borrowerHostId: 'private-host', laneId: 'private-lane', owner: {id: 'private-owner', kind: 'run'}}]}];
+  let projection: any;
+  const find = spyOn(TestRequestModel, 'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[row]} as any);
+  const read = spyOn(TestHostStateService.prototype, 'list').mockResolvedValue(hosts as any);
+  const detail = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new TestRunError(404, 'pending'));
+  const byRequest = spyOn(FrameworkResultService.prototype, 'detail').mockRejectedValue(new TestRunError(404, 'pending'));
+  const requests = spyOn(TestRequestService.prototype, 'get').mockResolvedValue(row as any);
+  try {
+    const api = createTestRunAdminApi(), before = structuredClone(row);
+    const activity = await (await api.request('/activity')).json() as any;
+    const pending = await (await api.request('/account-waiting')).json() as any;
+    expect(activity.requests[0].reason).toBe(sharedResourceWait('google-authentication'));
+    expect(pending.request.reason).toBe(activity.requests[0].reason); expect(projection.fleetResourceAdmission).toBe(1);
+    for (const secret of ['private-account', 'private-host', 'private-lane', 'private-owner']) expect(JSON.stringify(pending.request)).not.toContain(secret);
+    expect(row).toEqual(before);
+    read.mockRejectedValue(new Error('Authority observation unavailable'));
+    expect((await (await api.request('/account-waiting')).json() as any).request.reason).toBe('Awaiting a compatible testing runner.');
+    expect((await api.request('/activity')).status).toBe(200);
+  } finally {find.mockRestore();read.mockRestore();detail.mockRestore();byRequest.mockRestore();requests.mockRestore();}
 });
 
 test('recovery button body uses existing authenticated lane-control admission and refuses anonymous operators', async () => {

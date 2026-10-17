@@ -6,6 +6,7 @@ import {TestHostStateModel} from '../models/test-host-state.model'
 import {requestInputDigest} from './test-request.service'
 import {ResourceReservationsService, type ResourceReservationRepository} from './resource-reservations.service'
 import type {FleetResourceAdmission} from '../types/resource-reservations.types'
+import {sharedResourceWait, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait'
 const now=new Date('2026-10-15T12:00:00Z'),gib=1024**3,required={minimumAvailableBytes:7*gib}
 const offer={poolId:'host:disk:1',observedAt:now.toISOString(),availableBytes:8*gib,stagingBudgetBytes:10*gib,pendingEvidenceBytes:0,reservations:[]}
 const claim=(requestId:string)=>({id: requestId==='one'?'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba20':'b1f9a5d6-1f7e-4bd9-9ab1-23a5bb3bba21',
@@ -194,6 +195,24 @@ test('same-host exclusive commitment advances the existing authority CAS, then r
   expect(await routineJobRepository.reserveResources!('two','a'.repeat(64),'other','mac',now)).toBeNull()
   expect(f.host().resourceReservations).toEqual(before);expect(f.host('other').resourceReservations).toEqual([])
  }finally{f.restore()}
+})
+test('portable waiting reason distinguishes exclusive contention from measured recorder shortages without admitting the loser', async () => {
+ const f=admissionFixture({exclusive:true}), reasons:string[]=[]
+ try {
+  const first=await routineJobRepository.reserveResources!('one','a'.repeat(64),'host','mac',now)
+  expect(first!.fleetExclusiveReservation).toBeDefined()
+  const result=await routineJobRepository.reserveResources!('two','a'.repeat(64),'other','mac',now,value=>reasons.push(value))
+  expect(result).toBeNull();expect(reasons).toEqual([sharedResourceWait('google-authentication')])
+  expect(f.requests.get('two').fleetResourceReservation).toBeUndefined();expect(f.host('other').resourceReservations).toEqual([])
+  for(const lane of f.host('other').snapshot.lanes)lane.resources.find((value:any)=>value.kind==='recorder').storage.availableBytes=6*gib
+  reasons.length=0
+  expect(await routineJobRepository.reserveResources!('two','a'.repeat(64),'other','mac',now,value=>reasons.push(value))).toBeNull()
+  expect(reasons).toEqual([RECORDER_CAPACITY_WAIT])
+  for(const lane of f.host('other').snapshot.lanes)lane.resources.find((value:any)=>value.kind==='recorder').storage.observedAt=new Date(now.getTime()-120001).toISOString()
+  reasons.length=0
+  expect(await routineJobRepository.reserveResources!('two','a'.repeat(64),'other','mac',now,value=>reasons.push(value))).toBeNull()
+  expect(reasons).toEqual([RECORDER_OBSERVATION_WAIT])
+ } finally {f.restore()}
 })
 test('lost exclusive response or failed request receipt adopts its original winner without spending another host capacity claim',async()=>{
  for(const options of [{exclusiveAnswerLost:true},{selectionFailure:true}]){
