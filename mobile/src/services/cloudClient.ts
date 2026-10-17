@@ -18,12 +18,16 @@ import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost} from "@/utils/cloudClient/devHost"
 import {deploymentStore, type ActiveDeployment} from "@/services/deployment"
 import {deploymentDebugScope, resolveDeploymentManifest} from "@/services/deployment/debugOverrides"
+import type {CoreEndpointObservation} from "@/services/deployment/endpointObservation"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
 /** The selected manifest with its deployment-scoped debug overrides applied. */
-export function resolvedEndpoints(): {core: string; runtime: string} {
-  const manifest = resolveDeploymentManifest(deploymentStore.getActive())
+export function resolvedEndpoints(onCoreResolved?: (observation: CoreEndpointObservation) => void): {
+  core: string
+  runtime: string
+} {
+  const manifest = resolveDeploymentManifest(deploymentStore.getActive(), onCoreResolved)
   return {core: manifest.services.coreUrl!, runtime: manifest.services.runtimeUrl!}
 }
 

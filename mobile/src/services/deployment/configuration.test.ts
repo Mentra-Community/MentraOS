@@ -6,6 +6,7 @@ import {cloudClient, deploymentCloudConfigValues, resolvedEndpoints} from "@/ser
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
 import {deploymentDebugOverrides, resolveDeploymentManifest, saveDeploymentCloudOverrides} from "./debugOverrides"
+import type {CoreEndpointObservation} from "./endpointObservation"
 import {createConsumerDeployment, createOfficialManifest} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
 import {deploymentStore, DeploymentStore, type DeploymentStorage} from "./store"
@@ -163,6 +164,71 @@ it("preserves legacy consumer overrides but never applies them to a restored wor
   expect(resolvedEndpoints().core).toBe("http://localhost:3000")
   const restored = {...workspace, kind: "workspace", source: "manual", activatedAt: new Date().toISOString()} as const
   expect(resolveDeploymentManifest(restored).services).toEqual(workspace.manifest.services)
+})
+
+describe("safe Core endpoint resolution evidence", () => {
+  it("records the current resolver choice without a second settings or Metro read", async () => {
+    const first: CoreEndpointObservation[] = [],
+      second: CoreEndpointObservation[] = []
+    process.env.EXPO_PUBLIC_CLOUD_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
+    await deploymentStore.returnToMentra()
+    expect(resolvedEndpoints((value) => first.push(value)).core).toBe("https://core.dev.us-west-2.mentraglass.com")
+    expect(first).toEqual([
+      {activeDeployment: "consumer", origin: "official-dev", provenance: "manifest", overrideScope: "none"},
+    ])
+    await saveDeploymentCloudOverrides(deploymentStore.getActive(), {core: METRO_AUTO, runtime: ""})
+    jest.mocked(devServerHost).mockReturnValueOnce("192.0.2.10").mockReturnValue("192.0.2.11")
+    expect(resolvedEndpoints((value) => second.push(value)).core).toBe("http://192.0.2.10:3000")
+    expect(devServerHost).toHaveBeenCalledTimes(1)
+    expect(second).toEqual([
+      {activeDeployment: "consumer", origin: "custom", provenance: "metro", overrideScope: "scoped"},
+    ])
+    expect(first[0].origin).toBe("official-dev")
+    expect(JSON.stringify(second)).not.toMatch(/192\.0\.2|http|3000/)
+  })
+
+  it("distinguishes a legacy custom override from a missing Metro host fallback", async () => {
+    await engine.settings.setManyLocal({
+      cloud_core_url: "https://private.example/path?secret=token",
+      cloud_url_deployment: "",
+    })
+    const legacy = jest.fn()
+    expect(resolvedEndpoints(legacy).core).toBe("https://private.example/path?secret=token")
+    expect(legacy).toHaveBeenCalledWith({
+      activeDeployment: "consumer",
+      origin: "custom",
+      provenance: "override",
+      overrideScope: "legacy-consumer",
+    })
+    expect(JSON.stringify(legacy.mock.calls)).not.toMatch(/private|secret|token/)
+    await saveDeploymentCloudOverrides(deploymentStore.getActive(), {core: METRO_AUTO, runtime: ""})
+    const fallback = jest.fn()
+    expect(resolvedEndpoints(fallback).core).toBe(deploymentStore.getActive().manifest.services.coreUrl)
+    expect(fallback).toHaveBeenCalledWith({
+      activeDeployment: "consumer",
+      origin: "custom",
+      provenance: "metro-fallback",
+      overrideScope: "scoped",
+    })
+  })
+
+  it("keeps workspace identity private and ignores a diagnostic callback failure", async () => {
+    await deploymentStore.activate(workspace)
+    const observation = jest.fn()
+    expect(resolvedEndpoints(observation).core).toBe("https://core.organization.example")
+    expect(observation).toHaveBeenCalledWith({
+      activeDeployment: "workspace",
+      origin: "custom",
+      provenance: "manifest",
+      overrideScope: "none",
+    })
+    expect(JSON.stringify(observation.mock.calls)).not.toContain("organization")
+    expect(
+      resolvedEndpoints(() => {
+        throw new Error("private diagnostic sink")
+      }).core,
+    ).toBe("https://core.organization.example")
+  })
 })
 
 it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelection"])(

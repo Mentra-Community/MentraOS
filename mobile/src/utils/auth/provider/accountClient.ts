@@ -17,6 +17,7 @@ import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/au
 import {
   type AccountLoginPhase,
   beginAccountLoginObservation,
+  recordAccountEndpointResolution,
   recordAccountLoginFailure,
 } from "@/utils/auth/provider/accountLoginObservation"
 import {randomUrlSafe, s256Challenge} from "@/utils/auth/pkce"
@@ -68,11 +69,11 @@ function saveCachedProfile(user: MentraAuthUser): void {
   storage.save(PROFILE_KEY, JSON.stringify(user))
 }
 
-function core(path: string): string {
+function core(path: string, onCoreResolved?: Parameters<typeof resolvedEndpoints>[0]): string {
   if (deploymentStore.getActive().kind === "workspace") {
     throw new Error("Mentra account services are unavailable in an organization")
   }
-  return `${resolvedEndpoints().core.replace(/\/+$/, "")}${path}`
+  return `${resolvedEndpoints(onCoreResolved).core.replace(/\/+$/, "")}${path}`
 }
 
 async function throwApiError(res: Response): Promise<never> {
@@ -88,6 +89,15 @@ export class AccountAuthProvider extends AuthClient {
   private static instance: AccountAuthProvider
   /** A logout invalidates every older request, including a pending refresh. */
   private sessionGeneration = 0
+
+  constructor() {
+    super()
+    try {
+      resolvedEndpoints((observation) => recordAccountEndpointResolution("provider-initialization", observation))
+    } catch {
+      // An optional startup snapshot must not prevent the provider from being used.
+    }
+  }
 
   private assertSessionCurrent(generation: number): void {
     if (generation !== this.sessionGeneration) throw new Error("auth session was cleared")
@@ -300,7 +310,9 @@ export class AccountAuthProvider extends AuthClient {
       let status: number | null = null
       try {
         const generation = this.sessionGeneration
-        const url = core("/api/account/login")
+        const url = core("/api/account/login", (endpoint) =>
+          recordAccountEndpointResolution("password-request", endpoint, observation.requestId),
+        )
         const bodyJson = JSON.stringify(credentials)
         phase = "fetch"
         const res = await fetch(url, {

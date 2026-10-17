@@ -1,9 +1,46 @@
 import {randomUrlSafe} from "@/utils/auth/pkce"
+import type {CoreEndpointObservation} from "@/services/deployment/endpointObservation"
 
 export const ACCOUNT_LOGIN_FAILURE_MARKER = "AUTH: account login failure "
+export const ACCOUNT_ENDPOINT_MARKER = "AUTH: account endpoint resolution "
 
 export type AccountLoginPhase = "request" | "fetch" | "http" | "response-json" | "session"
 type Observation = {requestId: string | null; startedAtMs: number | null}
+
+/** Initialization is a snapshot only; the request callback records its own current resolution. */
+export function recordAccountEndpointResolution(
+  phase: "provider-initialization" | "password-request",
+  observation: CoreEndpointObservation,
+  requestId: string | null = null,
+): void {
+  try {
+    const {activeDeployment, origin, provenance, overrideScope} = observation
+    if (
+      !["provider-initialization", "password-request"].includes(phase) ||
+      !["consumer", "workspace"].includes(activeDeployment) ||
+      !["official-dev", "official-staging", "official-prod", "custom", "unknown"].includes(origin) ||
+      !["manifest", "override", "metro", "metro-fallback"].includes(provenance) ||
+      !["none", "scoped", "legacy-consumer"].includes(overrideScope) ||
+      (requestId !== null && (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{22}$/.test(requestId)))
+    )
+      return
+    console.info(
+      ACCOUNT_ENDPOINT_MARKER +
+        JSON.stringify({
+          schemaVersion: 1,
+          phase,
+          requestId,
+          observedAtMs: timestamp(),
+          activeDeployment,
+          origin,
+          provenance,
+          overrideScope,
+        }),
+    )
+  } catch {
+    // Preserve construction and the original password request if diagnostics fail.
+  }
+}
 
 function timestamp(): number | null {
   try {

@@ -4,8 +4,10 @@ jest.mock("@/utils/auth/pkce", () => ({randomUrlSafe: jest.fn(() => "abcdefghijk
 import {randomUrlSafe} from "@/utils/auth/pkce"
 import {
   ACCOUNT_LOGIN_FAILURE_MARKER,
+  ACCOUNT_ENDPOINT_MARKER,
   beginAccountLoginObservation,
   recordAccountLoginFailure,
+  recordAccountEndpointResolution,
 } from "./accountLoginObservation"
 
 describe("account login failure observation", () => {
@@ -122,6 +124,74 @@ describe("account login failure observation", () => {
       recordAccountLoginFailure(beginAccountLoginObservation(), "fetch", null, new Error("offline")),
     ).not.toThrow()
   })
+})
+
+it("projects endpoint snapshots without serializing an extended object or arbitrary data", () => {
+  const info = jest.spyOn(console, "info").mockImplementation(() => {})
+  try {
+    const endpoint = {
+      activeDeployment: "consumer",
+      origin: "custom",
+      provenance: "override",
+      overrideScope: "scoped",
+      url: "https://private.example/secret",
+      name: "private",
+      toJSON: () => {
+        throw Error("must not serialize")
+      },
+    } as const
+    recordAccountEndpointResolution("provider-initialization", endpoint)
+    recordAccountEndpointResolution("password-request", endpoint, "abcdefghijklmnopqrstuv")
+    const rows = info.mock.calls.map(([line]) => JSON.parse(line.slice(ACCOUNT_ENDPOINT_MARKER.length)))
+    expect(rows[0]).toMatchObject({phase: "provider-initialization", requestId: null})
+    expect(rows[1]).toMatchObject({phase: "password-request", requestId: "abcdefghijklmnopqrstuv"})
+    expect(JSON.stringify(rows)).not.toMatch(/private|secret|https|toJSON|url/)
+    expect(Object.keys(rows[0]).sort()).toEqual(
+      [
+        "schemaVersion",
+        "phase",
+        "requestId",
+        "observedAtMs",
+        "activeDeployment",
+        "origin",
+        "provenance",
+        "overrideScope",
+      ].sort(),
+    )
+    info.mockImplementation(() => {
+      throw Error("sink unavailable")
+    })
+    expect(() => recordAccountEndpointResolution("password-request", endpoint)).not.toThrow()
+  } finally {
+    info.mockRestore()
+  }
+})
+
+it("refuses malformed endpoint facts instead of publishing arbitrary enum or request fields", () => {
+  const info = jest.spyOn(console, "info").mockImplementation(() => {})
+  try {
+    const endpoint = {
+      activeDeployment: "consumer",
+      origin: "custom",
+      provenance: "override",
+      overrideScope: "scoped",
+    } as const
+    for (const key of Object.keys(endpoint)) {
+      recordAccountEndpointResolution("password-request", {...endpoint, [key]: "private-secret"} as typeof endpoint)
+    }
+    recordAccountEndpointResolution("password-request", endpoint, "private@example.test")
+    recordAccountEndpointResolution(
+      "provider-initialization",
+      Object.defineProperty({}, "origin", {
+        get() {
+          throw Error("private")
+        },
+      }) as typeof endpoint,
+    )
+    expect(info).not.toHaveBeenCalled()
+  } finally {
+    info.mockRestore()
+  }
 })
 
 it("preserves the single marker verbatim through the existing incident phone ring", () => {
