@@ -446,6 +446,24 @@ class AsyncProof:
         graph=self.flow(code)
         return sink in self.reachable(graph,0) and sink not in self.reachable(graph,0,node)
 
+    def direct_task_arguments(self, runtime, sinks):
+        prefix=[z[1:] for z in runtime[:16]]
+        if ('mov','x21, x3') not in prefix or ('mov','x19, x4') not in prefix:return False
+        saves=[(prefix.index(('mov','x21, x3')),'x21','x3'),(prefix.index(('mov','x19, x4')),'x19','x4')]
+        for save,reg,argument in saves:
+            if any(boundary(z) for z in runtime[:save+1]) or not self.unchanged(runtime,0,save,[argument]):return False
+        for sink in sinks:
+            for save,reg,argument in saves:
+                if not self.dominates(runtime,save,sink):return False
+                span=self.path_indices(runtime,save,sink)
+                setters=[i for i in span if runtime[i][1:]==('mov',argument+', '+reg) and self.dominates(runtime,i,sink)]
+                if len(setters)!=1:return False
+                setter=setters[0]
+                before=[runtime[i] for i in self.path_indices(runtime,save,setter) if i not in (save,setter)]
+                after=[runtime[i] for i in self.path_indices(runtime,setter,sink) if i not in (setter,sink)]
+                if not self.unchanged(before,0,len(before),[reg]) or not self.unchanged(after,0,len(after),[argument]):return False
+        return True
+
     def registered_task(self, symbol, code):
         edges=set()
         for call,ins in enumerate(code):
@@ -456,9 +474,19 @@ class AsyncProof:
             if proof is None or arg is None or code[arg][1:]!=('mov','x4, x0') or arg==0 or not self.runtime(code[arg-1],'_swift_allocObject'):continue
             if not self.unchanged(code,arg+1,call,['x4']) or not self.single_entry(code,arg-1,call):continue
             runtime=self.body(callee)
+            # Actual generic throwing-Task specialization supplies only x5
+            # metadata, preserving original descriptor/context arguments.
+            forwarded=False
+            if len(runtime)==3 and runtime[0][1]=='adrp' and re.fullmatch(r'x5, 0x[0-9a-f]+',runtime[0][2]) and runtime[1][1]=='ldr' and re.fullmatch(r'x5, \[x5, #0x[0-9a-f]+\]',runtime[1][2]) and runtime[2][1]=='b':
+                forward=target(runtime[2])
+                if forward is None or forward==callee:continue
+                runtime=self.body(forward);forwarded=True
             sinks=[i for i,z in enumerate(runtime) if self.runtime(z,'_swift_task_create')]
             if not sinks:continue
             original=self.descriptor(proof[0]) # Compiler identity required at endpoint.
+            if forwarded:
+                if self.direct_task_arguments(runtime,sinks):edges.add((symbol,self.symbols[original][0]))
+                continue
             prefix=[(x[1],x[2]) for x in runtime[:16]]
             if ('mov','x22, x3') not in prefix or ('mov','x19, x4') not in prefix:continue
             descriptor_save=prefix.index(('mov','x22, x3'));context_save=prefix.index(('mov','x19, x4'))

@@ -245,4 +245,29 @@ class InitialActorHopTests(unittest.TestCase):
                 self.assertNotIn((entry,continuation),prove())
         windows[entry][2]=original
 
+class ThrowingTaskInvocationTests(unittest.TestCase):
+    def setUp(self):
+        self.f=json.loads((FIXTURE.parent/'nimo-async-dca-throwing-task.json').read_text())
+        self.symbols={int(a):tuple(v)for a,v in self.f['symbols'].items()}
+        self.caller=self.symbols[0x100db148c][0];self.endpoint=self.symbols[0x100db77c8][0]
+    def prove(self):
+        f=self.f
+        return prove_async_edges({self.caller:f['windows'][self.caller]},self.symbols,{int(a):n for a,n in f['imports'].items()},lambda a,n:bytes.fromhex(f['reads'][f'{a:x}:{n}']),lambda a:f['windows'][self.symbols[a][0]],get_body=lambda a:f['bodies'][str(a)])
+    def test_actual_throwing_task_consumes_original_descriptor_in_both_sinks(self):
+        self.assertIn((self.caller,self.endpoint),self.prove())
+    def test_either_sink_clobber_or_branch_only_setter_refused(self):
+        original=self.f['bodies'][str(0x1009e3578)][2]
+        for old,new in [('1009e3754 mov x3, x21','1009e3754 mov x3, x20'),('1009e37a4 mov x4, x19','1009e37a4 mov x4, x20'),('1009e3750 mov x2, x22','1009e3750 cbz x0, 0x1009e3758'),('1009e36ec stp xzr, xzr, [x29, #-0x90]','1009e36ec mov x21, x0'),('1009e3598 mov x22, x5','1009e3598 mov x4, x5'),('1009e37a0 mov x3, x21','1009e37a0 mov x19, x0'),('1009e3734 b 0x1009e3798','1009e3734 b 0x1009e3720')]:
+            with self.subTest(new=new):
+                self.f['bodies'][str(0x1009e3578)][2]=original.replace(old,new)
+                try:edges=self.prove()
+                except ValueError:continue
+                self.assertNotIn((self.caller,self.endpoint),edges)
+    def test_forwarding_thunk_cannot_clobber_arguments_or_select_dead_runtime(self):
+        symbol=self.symbols[0x100ccf2c0][0];original=self.f['windows'][symbol][2]
+        for old,new in [('100ccf2c0 adrp x5, 0x103566000','100ccf2c0 adrp x3, 0x103566000'),('100ccf2c4 ldr x5, [x5, #0x6f0]','100ccf2c4 ldr x4, [x5, #0x6f0]'),('100ccf2c8 b 0x1009e3578','100ccf2c8 b 0x100ccf2c0'),('100ccf2c8 b 0x1009e3578','100ccf2c8 b 0x100db148c')]:
+            with self.subTest(new=new):
+                self.f['windows'][symbol][2]=original.replace(old,new)
+                self.assertNotIn((self.caller,self.endpoint),self.prove())
+
 if __name__=='__main__':unittest.main()
