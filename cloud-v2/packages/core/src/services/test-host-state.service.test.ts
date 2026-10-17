@@ -919,3 +919,30 @@ test("offline accepted intervals merge idempotently without relabeling current o
     f.stop()
   }
 })
+
+test('lifecycle comparison survives omitted envelope and omitted subject without renewing observation', async () => {
+  const {projectResourceLifecycle} = await import('./resource-lifecycle.service')
+  for (const omission of [undefined, {schemaVersion: 1, subjects: [], history: []}]) {
+    const f = fixture()
+    const at = '2026-10-03T01:00:00Z'
+    const subject = {subject: {kind: 'resource', id: 'resource-one', authorityHostId: 'mini'}, generation: 10,
+      status: 'unknown', observedAt: at, receivedAt: null, current: true, reason: null, owner: null,
+      idle: {contractVersion: 'v1', outcome: 'not-checked', checkedAt: null, acceptedCheck: null, qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []},
+      repair: {configured: false, state: 'none'}, supportedActions: [], resource: {kind: 'account', capabilities: [], memberships: [], dependencies: [], placement: 'fleet'}}
+    const lifecycle = {schemaVersion: 1, subjects: [subject], history: [{id: 'original-event', resourceId: 'resource-one', subjectGeneration: 10, at, event: 'checking'}]}
+    try {
+      await f.service.report({...snapshot(1, 1), resourceLifecycle: lifecycle}, 'mini')
+      await f.service.report({...snapshot(1, 2), ...(omission ? {resourceLifecycle: omission} : {})}, 'mini')
+      expect(f.row().resourceLifecycleCursor.subjects[0].generation).toBe(10)
+      const stored=f.row()
+      const projected = projectResourceLifecycle([{hostId:'mini',receivedAt:stored.receivedAt,snapshot:stored.snapshot,resourceLifecycleCursor:stored.resourceLifecycleCursor}], Date.parse(at)).subjects[0]!
+      expect(projected.status).toBe('unknown'); expect(projected.current).toBe(false)
+      expect(projected.supportedActions).toEqual([])
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        subjects: [{...subject, generation: 1}], history: []}}, 'mini')).rejects.toThrow('generation regressed')
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        history: [{...lifecycle.history[0], event: 'active'}]}}, 'mini')).rejects.toThrow('immutable')
+      expect(f.row().sequence).toBe(2)
+    } finally {f.stop()}
+  }
+})

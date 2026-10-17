@@ -10,6 +10,7 @@ const schema = new Schema(
     receivedAt: {type: Date, required: true},
     observedAt: {type: Date, required: true},
     snapshot: {type: Schema.Types.Mixed, required: true},
+    resourceLifecycleCursor: {type: Schema.Types.Mixed},
     frameworkHistory: {type: [Schema.Types.Mixed], default: []},
     frameworkStopReceipts: {type: [Schema.Types.Mixed], default: []},
     laneControls: {type: [Schema.Types.Mixed], default: []},

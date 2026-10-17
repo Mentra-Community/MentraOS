@@ -61,7 +61,7 @@ function fixture(rows = [row()], observed = host()) {
   const reads: unknown[] = [];
   const forbidden = async (): Promise<never> => {throw new Error('Qualification must not mutate or resolve source/builds');};
   const repository: RoutineJobRepository = {get: forbidden, insert: forbidden, prepare: forbidden, bind: forbidden, cancel: forbidden,
-    async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS, includeQueued) {reads.push({hostId, laneId, limit, at, timeoutMS, includeQueued});
+    async *qualificationCandidates(hostId, laneId, limit, at, timeoutMS, includeQueued, includeAccepted) {reads.push({hostId, laneId, limit, at, timeoutMS, includeQueued, includeAccepted});
       yield* structuredClone(rows.filter(value => includeQueued || value.state === 'awaiting-runner'));}};
   const service = new RoutineJobService(repository, {resolve: forbidden, isPrSuperseded: forbidden},
     {resolve: forbidden, inventory: forbidden, blob: forbidden}, {getExact: forbidden},
@@ -77,7 +77,7 @@ test('an unseen selected build becomes a bounded read-only target while its orig
     selection: f.rows[0]!.fleetSelection, requirements});
   expect(inputSha256).toBe(requestInputDigest(target));
   expect(inputSha256).not.toBe(f.rows[0]!.fleetInputSha256);
-  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 5000, includeQueued: true}]);
+  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 5000, includeQueued: true, includeAccepted: false}]);
   expect(f.rows).toEqual(before);
   expect(f.rows[0]).not.toHaveProperty('fleetBinding');
   expect(f.rows[0]).not.toHaveProperty('hostReceipt');
@@ -243,7 +243,7 @@ test('all candidate streams share the query deadline and stop before a target is
   const times = [now, now + 1, now + 2, now + 5_000];
   service.now = () => times.shift() ?? now + 5_000;
   expect(await f.service.qualificationTargets('pro1')).toEqual([]);
-  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 4998, includeQueued: true}]);
+  expect(f.reads).toEqual([{hostId: 'pro1', laneId: 'pro1-mac', limit: 100, at: new Date(now), timeoutMS: 4998, includeQueued: true, includeAccepted: false}]);
 });
 
 test('the authenticated poll only includes explicitly requested targets and does not bind or acknowledge a product', async () => {
@@ -263,10 +263,11 @@ test('the authenticated poll only includes explicitly requested targets and does
 });
 
 test('candidate database stream is bounded, closed and includes only unbound or exact unaccepted queued handoffs without writes', async () => {
-  for (const includeQueued of [false, true]) {
+  for (const [includeQueued, includeAccepted] of [[false,false],[true,false],[true,true]]) {
   let filter: unknown, limit: number | undefined, closed = false;
   const cursor = {async *[Symbol.asyncIterator]() {yield row();}, async close() {closed = true;}};
-  const query = {sort(value: unknown) {expect(value).toEqual(includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}); return this;},
+  const query = {sort(value: unknown) {expect(value).toEqual(includeAccepted ? {'hostReceipt.acceptedAt': -1, state: -1, createdAt: 1, requestId: 1} :
+    includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}); return this;},
     limit(value: number) {limit = value; return this;}, read(value: string) {expect(value).toBe('primary'); return this;},
     readConcern(value: string) {expect(value).toBe('majority'); return this;},
     setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 123, maxTimeMS: 123}); return this;},
@@ -274,14 +275,15 @@ test('candidate database stream is bounded, closed and includes only unbound or 
   const original = TestRequestModel.find;
   try {
     TestRequestModel.find = mock((value: unknown) => {filter = value; return query;}) as unknown as typeof TestRequestModel.find;
-    for await (const candidate of routineJobRepository.qualificationCandidates!('pro1', 'pro1-mac', 100, new Date(now), 123, includeQueued)) {
+    for await (const candidate of routineJobRepository.qualificationCandidates!('pro1', 'pro1-mac', 100, new Date(now), 123, includeQueued, includeAccepted)) {
       expect(candidate.requestId).toBe('pending-ota'); break;
     }
     expect(limit).toBe(100); expect(closed).toBe(true);
-    expect(filter).toMatchObject({...includeQueued ? {$or: [{state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
-      {state: 'queued', hostId: 'pro1', 'fleetBinding.hostId': 'pro1', 'fleetBinding.laneId': 'pro1-mac', 'input.laneId': 'pro1-mac', inputSha256: {$exists: true}}]} :
-      {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}},
-      hostReceipt: {$exists: false}, runId: {$exists: false}, dispatchCompletion: {$exists: false},
+    expect(filter).toMatchObject({...includeQueued ? {$or: [{state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}, hostReceipt: {$exists: false}},
+      {state: 'queued', hostId: 'pro1', 'fleetBinding.hostId': 'pro1', 'fleetBinding.laneId': 'pro1-mac', 'input.laneId': 'pro1-mac', inputSha256: {$exists: true}, hostReceipt: {$exists: false}},
+      ...includeAccepted ? [{state:'accepted',hostId:'pro1','fleetBinding.hostId':'pro1','fleetBinding.laneId':'pro1-mac','input.laneId':'pro1-mac',inputSha256:{$exists:true},'hostReceipt.hostId':'pro1'}] : []]} :
+      {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}, hostReceipt: {$exists: false}},
+      runId: {$exists: false}, dispatchCompletion: {$exists: false},
       hostCancellation: {$exists: false}, hostRejection: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
       fleetCancellation: {$exists: false}, fleetDeadline: {$gt: new Date(now)}, 'fleetSelection.platform': 'ios-on-mac', fleetPreparation: {$exists: true},
       $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': 'pro1'}]},
@@ -291,4 +293,97 @@ test('candidate database stream is bounded, closed and includes only unbound or 
     if (!includeQueued) expect(filter).not.toHaveProperty('$or');
   } finally {TestRequestModel.find = original;}
   }
+});
+
+function acceptedHost() {
+ const current=host();current.frameworkBinding={...binding,version:1053,routineApiVersion:51};
+ (current.lanes[0]!.resources.find(value=>value.kind==='recorder') as any).storage={poolId:'pro1-pool',observedAt:new Date(now).toISOString(),availableBytes:20*1024**3,stagingBudgetBytes:20*1024**3,pendingEvidenceBytes:0,reservations:[]};
+ return current;
+}
+function acceptedRow() {
+ const value=queuedRow('accepted-original');
+ (value.fleetPreparation!.definition as any).execution.policy={estimatedOutputBytes:0};
+ value.input.policy={estimatedOutputBytes:0};value.inputSha256=requestInputDigest(value.input);
+ value.fleetPreparation!.definitionSha256=requestInputDigest(value.fleetPreparation!.definition);value.fleetInputSha256=routineJobInputDigest(value);
+ return{...value,state:'accepted' as const,hostReceipt:{requestId:value.requestId,hostId:'pro1',inputSha256:value.inputSha256,
+  acceptedAt:new Date(now-500).toISOString()}}
+}
+test('an accepted original remains reachable before the finite cap of earlier incompatible candidates', async () => {
+ const original=acceptedRow(), rows=[...Array.from({length:100},(_,index)=>{
+  const value=row(`earlier-${index}`);value.fleetPreparation!.requirements.resources[0]!.capabilities=['unoffered'];
+  value.fleetInputSha256=routineJobInputDigest(value);return value;
+ }),original];
+ let order:Record<string,number>={},limit=0,scanned=0,closed=false;
+ const query={sort(value:Record<string,number>){order=value;return this},limit(value:number){limit=value;return this},
+  read(){return this},readConcern(){return this},setOptions(){return this},lean(){return this},cursor(){return{
+   async *[Symbol.asyncIterator](){
+    const ordered=[...rows].sort((left,right)=>{for(const[field,direction]of Object.entries(order)){
+     const read=(row:unknown)=>field.split('.').reduce<unknown>((value,key)=>value&&typeof value==='object'?(value as Record<string,unknown>)[key]:undefined,row);
+     const a=read(left),b=read(right);if(a===b)continue;if(a===undefined)return-direction;if(b===undefined)return direction;
+     return(String(a)<String(b)?-1:1)*direction;
+    }return 0});
+    for(const value of ordered.slice(0,limit)){scanned++;yield value}
+   },async close(){closed=true},
+  }}};
+ const find=TestRequestModel.find,f=fixture([],acceptedHost());
+ (f.service as unknown as {rows:RoutineJobRepository}).rows.qualificationCandidates=routineJobRepository.qualificationCandidates;
+ try{TestRequestModel.find=mock(()=>query) as unknown as typeof find;
+  expect((await f.service.qualificationTargets('pro1')).map(value=>value.jobId)).toEqual([original.requestId]);
+  expect(limit).toBe(100);expect(scanned).toBe(1);expect(closed).toBe(true);
+ }finally{TestRequestModel.find=find}
+});
+test('exact accepted unstarted request gets a current-binding target with a separate immutable executable digest',async()=>{
+ const original=acceptedRow(),current=acceptedHost()
+ const f=fixture([original],current),before=structuredClone(original),targets=await f.service.qualificationTargets('pro1')
+ expect(targets).toHaveLength(1)
+ expect(targets[0]).toMatchObject({jobId:original.requestId,hostId:'pro1',laneId:'pro1-mac',deadline:original.fleetDeadline.toISOString(),
+  accepted:{...original.hostReceipt,binding:current.frameworkBinding,controller:{incarnation:current.incarnation,generation:current.incarnationGeneration}},
+  selection:{...original.fleetSelection,routineSource:original.fleetPreparation!.routineSource},target:{hostId:'pro1',laneId:'pro1-mac'}})
+ const{inputSha256,...body}=targets[0]!;expect(inputSha256).toBe(requestInputDigest(body));expect(inputSha256).not.toBe(original.inputSha256)
+ expect(f.rows[0]).toEqual(before);expect(f.reads[0]).toMatchObject({includeAccepted:true})
+ const old=host();old.frameworkBinding={...binding,version:1053,routineApiVersion:50};expect(await fixture([original],old).service.qualificationTargets('pro1')).toEqual([])
+})
+test('accepted target rejects wrong receipt, original source and canceled/running/completed identities',async()=>{
+ const current=acceptedHost()
+ for(const change of [
+  (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.requestId='other'},
+  (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.inputSha256='f'.repeat(64)},
+  (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.hostId='other'},
+  (v:ReturnType<typeof acceptedRow>)=>{v.hostReceipt.acceptedAt=new Date(now+1).toISOString()},
+  (v:ReturnType<typeof acceptedRow>)=>{v.input.resources[0]!.id='other';v.inputSha256=requestInputDigest(v.input);v.hostReceipt.inputSha256=v.inputSha256},
+ ]){const value=acceptedRow();change(value);expect(await fixture([value],current).service.qualificationTargets('pro1')).toEqual([])}
+ for(const extra of [{runId:'original'},{dispatchCompletion:{inputSha256:acceptedRow().inputSha256,disposition:'clean' as const,completedAt:new Date(now).toISOString()}},
+  {fleetCancellation:{requestedAt:new Date(now).toISOString(),reason:'Original canceled'}},
+  {hostCancellation:{requestedAt:new Date(now).toISOString(),reason:'Original canceled'}},
+  {state:'running' as const},{state:'terminal' as const}]){
+  expect(await fixture([{...acceptedRow(),...extra}],current).service.qualificationTargets('pro1')).toEqual([])
+ }
+})
+
+test('accepted target preserves exact dependency authority and counts its own retained recorder reservation only once',async()=>{
+ const gib=1024**3,original=acceptedRow(),current=acceptedHost();
+ const dependency={resourceId:'account',authorityHostId:'mini',capability:'google-sign-in'};
+ // The execution and current offer must retain the same dependency identity.
+ const fixtureResource={id:'fixture',kind:'fixture-data' as const,capabilities:['google-sign-in'],exclusiveDependencies:[dependency]};
+ current.lanes[0]!.resources.push(fixtureResource as never);
+ original.fleetPreparation!.requirements.resources.push({kind:'fixture-data',capabilities:[]} as never);
+ (original.fleetPreparation!.definition as any).resourceRequirements.push({kind:'fixture-data',capabilities:[]});
+ original.fleetPreparation!.definitionSha256=requestInputDigest(original.fleetPreparation!.definition);
+ original.input.resources.push({id:'fixture',kind:'fixture-data',laneId:'pro1-mac',exclusiveDependencies:[dependency]} as never);
+ const estimate=3*gib;(original.fleetPreparation!.definition as any).execution.policy={estimatedOutputBytes:estimate};
+ original.input.policy={estimatedOutputBytes:estimate};
+ original.fleetPreparation!.definitionSha256=requestInputDigest(original.fleetPreparation!.definition);
+ original.inputSha256=requestInputDigest(original.input);original.hostReceipt.inputSha256=original.inputSha256;
+ const recorder=current.lanes[0]!.resources.find(value=>value.kind==='recorder')!;
+ (recorder as any).storage={poolId:'pro1-pool',observedAt:new Date(now).toISOString(),availableBytes:6*gib,stagingBudgetBytes:4*gib,pendingEvidenceBytes:0,
+  reservations:[{requestId:original.requestId,inputSha256:original.inputSha256,remainingOutputBytes:estimate},
+   {requestId:'other',inputSha256:'d'.repeat(64),remainingOutputBytes:gib}]};
+ // Routing descriptor excludes observation values, but includes dependency identities.
+ original.fleetBinding.descriptorRevision=routineLaneDescriptorRevision(current.lanes[0]!);
+ original.fleetInputSha256=routineJobInputDigest(original);
+ const targets=await fixture([original],current).service.qualificationTargets('pro1');expect(targets).toHaveLength(1);
+ expect(targets[0]!.requirements.resources.find(value=>value.kind==='recorder')!.storage!.minimumAvailableBytes).toBe(5*gib);
+ const wrong=structuredClone(current);(wrong.lanes[0]!.resources.at(-1) as any).exclusiveDependencies[0].resourceId='different';
+ original.fleetBinding.descriptorRevision=routineLaneDescriptorRevision(wrong.lanes[0]!);
+ expect(await fixture([original],wrong).service.qualificationTargets('pro1')).toEqual([]);
 });

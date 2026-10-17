@@ -106,7 +106,15 @@ public enum JSCPolyfillBridge {
                     urlRequest.setValue(String(describing: v), forHTTPHeaderField: k)
                 }
             }
-            if let body = req["body"] as? String, !body.isEmpty {
+            // ArrayBuffer and typed-array bodies arrive as base64 of their bytes.
+            if let encoded = req["bodyBase64"] as? String {
+                guard let data = Data(base64Encoded: encoded) else {
+                    return .error(code: "INVALID_ARGS", message: "fetch.request: bodyBase64 is not base64")
+                }
+                if !data.isEmpty {
+                    urlRequest.httpBody = data
+                }
+            } else if let body = req["body"] as? String, !body.isEmpty {
                 urlRequest.httpBody = body.data(using: .utf8)
             }
 
@@ -141,21 +149,27 @@ public enum JSCPolyfillBridge {
                     }
                     return out
                 }()
-                let bodyStr: String = {
-                    guard let data else { return "" }
-                    return String(data: data, encoding: .utf8) ?? ""
-                }()
+                var result: [String: Any] = [
+                    "status": status,
+                    "statusText": HTTPURLResponse.localizedString(forStatusCode: status),
+                    "headers": headersDict,
+                    "ok": (200..<300).contains(status),
+                ]
+                // The string `body` only when the bytes are exactly its UTF-8
+                // encoding; otherwise every byte as base64. The decode fails
+                // on invalid UTF-8, and the round trip also catches a dropped
+                // byte order mark.
+                let body = data ?? Data()
+                if let text = String(data: body, encoding: .utf8), Data(text.utf8) == body {
+                    result["body"] = text
+                } else {
+                    result["bodyBase64"] = body.base64EncodedString()
+                }
                 let payload: [String: Any] = [
                     "kind": "response",
                     "reqId": reqId,
                     "ok": true,
-                    "result": [
-                        "status": status,
-                        "statusText": HTTPURLResponse.localizedString(forStatusCode: status),
-                        "headers": headersDict,
-                        "body": bodyStr,
-                        "ok": (200..<300).contains(status),
-                    ] as [String: Any],
+                    "result": result,
                 ]
                 JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: payload)
             }

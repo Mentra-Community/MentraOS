@@ -5,6 +5,8 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 
+import {TARGETS as PRIVATE_DEPLOYMENT_TARGETS} from "./coordinated-private-deployment-records.mjs"
+
 function workflow(name) {
   return readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
 }
@@ -419,10 +421,10 @@ for (const readyOnAttempt of [2, 13]) {
   })
 }
 
-test("Private Deployment remains release-matched without gating the dev release", () => {
+test("Private Deployment remains release-matched without gating the release", () => {
   const coordinator = workflow("coordinated-release.yml")
   const runtimeImage = workflow("reusable-coordinated-runtime-image.yml")
-  const privateDeployment = workflow("private-deployment-dev.yml")
+  const privateDeployment = workflow("private-deployment.yml")
   const runtimeImageJob = jobBlock(coordinator, "runtime-image")
   const privateDeploymentJob = jobBlock(coordinator, "private-deployment")
   const finalize = jobBlock(coordinator, "finalize")
@@ -470,8 +472,17 @@ test("Private Deployment remains release-matched without gating the dev release"
   assert.equal((installerSteps.match(/if: inputs\.dry_run != true/g) || []).length, 2)
 
   assert.match(privateDeploymentJob, /^    needs: \[plan, runtime-image\]$/m)
-  assert.match(privateDeploymentJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
-  assert.match(privateDeploymentJob, /vars\.ENTERPRISE_DEMO_FROZEN != 'true'/)
+  // Dev always deploys demo-dev; only the staging sales demo can be frozen.
+  assert.match(
+    privateDeploymentJob,
+    /needs\.plan\.outputs\.cloud_environment == 'dev' \|\|\n      \(needs\.plan\.outputs\.cloud_environment == 'staging' && vars\.ENTERPRISE_DEMO_FROZEN != 'true'\)/,
+  )
+  assert.match(privateDeploymentJob, /uses: \.\/\.github\/workflows\/private-deployment\.yml/)
+  // Admin keys come from each stack's Key Vault, not repository secrets.
+  assert.doesNotMatch(privateDeploymentJob, /secrets:/)
+  assert.doesNotMatch(privateDeployment, /\$\{\{ secrets\.|^\s+secrets:/m)
+  assert.match(privateDeployment, /az keyvault secret show --vault-name "\$AZURE_KEY_VAULT" --name mentra-admin-key/)
+  assert.match(privateDeployment, /echo "::add-mask::\$admin_token"/)
   assert.match(privateDeploymentJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
   assert.match(privateDeploymentJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
   assert.match(
@@ -481,7 +492,7 @@ test("Private Deployment remains release-matched without gating the dev release"
   assert.match(privateDeployment, /workflow_call:/)
   assert.doesNotMatch(privateDeployment, /push:/)
   assert.doesNotMatch(privateDeployment, /workflow_dispatch:/)
-  assert.match(privateDeployment, /group: coordinated-private-deployment-dev/)
+  assert.match(privateDeployment, /group: coordinated-private-deployment-\$\{\{ github\.ref_name \}\}/)
   assert.match(privateDeployment, /\[\[ "\$source_commit" == "\$\{\{ inputs\.source_commit \}\}" \]\]/)
   assert.match(privateDeployment, /coordinated-private-deployment-records\.mjs create/)
   assert.match(privateDeployment, /az acr import/)
@@ -492,16 +503,35 @@ test("Private Deployment remains release-matched without gating the dev release"
   assert.match(privateDeployment, /keyVaultName:\{value:\$keyVaultName\}/)
   assert.doesNotMatch(privateDeployment, /MENTRA_JWT_PRIVATE_KEY|REFRESH_TOKEN_PEPPER|TEAMS_GRAPH_CLIENT_SECRET|manageAcrPullRoleAssignment/)
   assert.match(privateDeployment, /source_digest.*image_digest|image_digest.*source_digest/s)
-  assert.match(privateDeployment, /WORKSPACE_HOSTNAME: demo\.acmeworkspace\.com/)
+  // The plan's channel selects the stack; its names match the release records.
+  const stacks = privateDeployment.split("- name: Select the release channel's demo stack\n")[1]
+    .split("      - name: Resolve and verify exact source\n")[0]
+  const deployers = {dev: "DEMO_DEV_AZURE_CLIENT_ID", beta: "DEMO_AZURE_CLIENT_ID"}
+  assert.deepEqual(Object.keys(PRIVATE_DEPLOYMENT_TARGETS).sort(), Object.keys(deployers).sort())
+  for (const [channel, target] of Object.entries(PRIVATE_DEPLOYMENT_TARGETS)) {
+    const stack = stacks.split(`            ${channel})\n`)[1].split("              ;;\n")[0]
+    assert.ok(stack.includes(`azure_client_id="$${deployers[channel]}"`), `${channel} deployer`)
+    for (const [variable, value] of [["AZURE_RESOURCE_GROUP", target.resourceGroup], ["AZURE_REGISTRY", target.registry],
+      ["AZURE_CONTAINER_APP", target.containerApp], ["AZURE_CORE_CONTAINER_APP", target.coreContainerApp],
+      ["WORKSPACE_HOSTNAME", new URL(target.workspaceOrigin).hostname]]) {
+      assert.match(stack, new RegExp(`^          ${variable}=${value.replaceAll(".", "\\.")}$`, "m"), `${channel} ${variable}`)
+    }
+  }
+  assert.match(privateDeployment, /client-id: \$\{\{ env\.AZURE_CLIENT_ID \}\}/)
   assert.match(privateDeployment, /--arg workspaceHostname "\$WORKSPACE_HOSTNAME"/)
-  assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-demo"\}/)
-  // Earlier addresses stay bound for phones that enrolled with them.
-  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"mentra\.acmeworkspace\.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"\},\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
+  assert.match(privateDeployment, /workspaceCertificateName:\{value:\$workspaceCertificateName\}/)
+  // The sales demo keeps its earlier addresses bound for phones that enrolled with them.
+  assert.match(stacks, /^          WORKSPACE_ALIASES=\[\{"hostname":"mentra\.acmeworkspace\.com","certificateName":"ca-mentra-enterprise-reference-acme-workspace"\},\{"hostname":"enterprisedev\.mentraglass\.com","certificateName":"ca-mentra-enterprise-reference-workspace"\}\]$/m)
+  assert.match(stacks, /^          WORKSPACE_ALIASES=\[\]$/m)
+  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\$additionalWorkspaceDomains\}/)
+  // Each Runtime serves its managed bundles on its own origin.
+  assert.match(privateDeployment, /bundlePath:\(\.bundleUrl \| sub\("\^https:\/\/\[\^\/\]\+"; ""\)\)/)
   // Azure issues a managed certificate only for a hostname already on an app.
   const attachHostname = privateDeployment.indexOf("az containerapp hostname add")
   assert.ok(attachHostname >= 0)
   assert.ok(attachHostname < privateDeployment.indexOf("az deployment group create"))
-  assert.match(privateDeployment, /displayName:\{value:\$reference\[0\]\.displayName\}/)
+  assert.match(privateDeployment, /displayName:\{value:\$displayName\}/)
+  assert.match(privateDeployment, /and \.deploymentId == \$deploymentId/)
   assert.match(privateDeployment, /az acr manifest show-metadata/)
   assert.match(privateDeployment, /latestReadyRevisionName/)
   assert.doesNotMatch(finalize, /private-deployment|privateDeployment/)
@@ -514,11 +544,9 @@ test("Private Deployment remains release-matched without gating the dev release"
   const channel = jobBlock(coordinator, "private-cloud-channel")
   assert.match(channel, /^    needs: \[plan, runtime-image, private-deployment\]$/m)
   assert.match(channel, /needs\.runtime-image\.result == 'success'/)
-  assert.match(channel, /needs\.private-deployment\.result == 'success' \|\|/)
-  assert.match(
-    channel,
-    /needs\.plan\.outputs\.cloud_environment != 'dev' && needs\.private-deployment\.result == 'skipped'/,
-  )
+  // Every coordinated channel has a stack, so a frozen stack holds its channel.
+  assert.match(channel, /needs\.private-deployment\.result == 'success'\n/)
+  assert.doesNotMatch(channel, /'skipped'/)
   assert.match(channel, /needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(channel, /cancel-in-progress: false/)
   assert.ok(channel.indexOf("gh attestation verify") < channel.indexOf("publish-private-cloud-channel.mjs"))
@@ -537,7 +565,7 @@ for (const [stuckApp, sameImage, diagnosticsUnavailable, startupLog = "private-t
     // Execute the real verification step through its HTTP health probes. Azure
     // initially reports healthy previous revisions; each target becomes ready
     // on the second poll unless the scenario leaves that service stuck.
-    const step = workflow("private-deployment-dev.yml")
+    const step = workflow("private-deployment.yml")
       .split("      - name: Verify the live enterprise contract\n")[1]
       .split("        run: |\n")[1]
       .split("          jq -e '.status")[0]

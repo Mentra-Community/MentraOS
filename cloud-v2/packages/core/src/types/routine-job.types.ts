@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {frameworkIdentitySchema} from './framework-request.types';
-import {routineSourceRefSchema} from './framework-version.types';
+import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {publishedRoutineDefinitionSchema, routineResourceRequirementSchema, routinePlatformSchema,
   glassesModelSchema, routineIdentitySchema} from './routine-definition.types';
 import {routineDispatchSelectionSchema, routinePreparedBuildSchema, routineRevisionSchema} from './routine-dispatch.types';
@@ -31,9 +31,13 @@ export const routineJobPreparationSchema = z.object({routineSource: routineSourc
 export const routineQualificationTargetSchema = z.object({jobId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   laneId: frameworkIdentitySchema, inputSha256: jobHashSchema, deadline: z.string().datetime({offset: true}),
   selection: portableRoutineSelectionSchema, requirements: portableRequirementsSchema,
+  accepted: z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, inputSha256: jobHashSchema,
+    acceptedAt: z.string().datetime({offset: true}), binding: frameworkBindingSchema,
+    controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
   target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
     value.selection.platform === 'ios-on-mac' && value.requirements.platform === value.selection.platform &&
-    (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)),
+    (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)) &&
+    (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId),
   'Qualification target differs from its selected job, platform or explicit lane constraint');
 export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;
 export const completeRoutineJobPreparationSchema = routineJobPreparationSchema.omit({requirements: true}).extend({inputSha256: jobHashSchema});

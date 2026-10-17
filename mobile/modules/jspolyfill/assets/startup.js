@@ -436,6 +436,140 @@
     }
     ;
     g.crypto = cryptoNs;
+    const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const BASE64_VALUES = new Uint8Array(128).fill(255);
+    for (let i = 0; i < BASE64_ALPHABET.length; i++) BASE64_VALUES[BASE64_ALPHABET.charCodeAt(i)] = i;
+    const CHARS_PER_CHUNK = 8192;
+    function bytesOf(data) {
+      return data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    function bytesToBase64(bytes) {
+      const parts = [];
+      const chars = [];
+      for (let i = 0; i < bytes.length; i += 3) {
+        const b1 = bytes[i];
+        const b2 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+        const b3 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+        chars.push(
+          BASE64_ALPHABET.charCodeAt(b1 >> 2),
+          BASE64_ALPHABET.charCodeAt((b1 & 3) << 4 | b2 >> 4),
+          i + 1 < bytes.length ? BASE64_ALPHABET.charCodeAt((b2 & 15) << 2 | b3 >> 6) : 61,
+          i + 2 < bytes.length ? BASE64_ALPHABET.charCodeAt(b3 & 63) : 61
+        );
+        if (chars.length >= CHARS_PER_CHUNK) {
+          parts.push(String.fromCharCode.apply(null, chars));
+          chars.length = 0;
+        }
+      }
+      parts.push(String.fromCharCode.apply(null, chars));
+      return parts.join("");
+    }
+    function base64ToBytes(base64) {
+      const length = base64.length;
+      if (length % 4 !== 0) throw new TypeError("Invalid base64 from the native bridge");
+      const padding = length === 0 || base64.charCodeAt(length - 1) !== 61 ? 0 : base64.charCodeAt(length - 2) === 61 ? 2 : 1;
+      const out = new Uint8Array(length / 4 * 3 - padding);
+      const unpadded = padding === 0 ? length : length - 4;
+      let codes = 0;
+      let values = 0;
+      let o = 0;
+      for (let i = 0; i < unpadded; i += 4) {
+        const c1 = base64.charCodeAt(i);
+        const c2 = base64.charCodeAt(i + 1);
+        const c3 = base64.charCodeAt(i + 2);
+        const c4 = base64.charCodeAt(i + 3);
+        const v1 = BASE64_VALUES[c1 & 127];
+        const v2 = BASE64_VALUES[c2 & 127];
+        const v3 = BASE64_VALUES[c3 & 127];
+        const v4 = BASE64_VALUES[c4 & 127];
+        codes |= c1 | c2 | c3 | c4;
+        values |= v1 | v2 | v3 | v4;
+        out[o++] = v1 << 2 | v2 >> 4;
+        out[o++] = (v2 & 15) << 4 | v3 >> 2;
+        out[o++] = (v3 & 3) << 6 | v4;
+      }
+      if (padding > 0) {
+        const c1 = base64.charCodeAt(unpadded);
+        const c2 = base64.charCodeAt(unpadded + 1);
+        const c3 = padding === 1 ? base64.charCodeAt(unpadded + 2) : 65;
+        const v1 = BASE64_VALUES[c1 & 127];
+        const v2 = BASE64_VALUES[c2 & 127];
+        const v3 = BASE64_VALUES[c3 & 127];
+        codes |= c1 | c2 | c3;
+        values |= v1 | v2 | v3;
+        out[o++] = v1 << 2 | v2 >> 4;
+        if (padding === 1) out[o++] = (v2 & 15) << 4 | v3 >> 2;
+      }
+      if (codes > 127 || values > 63) throw new TypeError("Invalid base64 from the native bridge");
+      return out;
+    }
+    function decodeUtf8(bytes, fatal, ignoreBOM) {
+      const length = bytes.length;
+      const parts = [];
+      const units = [];
+      let i = !ignoreBOM && length >= 3 && bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191 ? 3 : 0;
+      while (i < length) {
+        const asciiStart = i;
+        while (i < length && bytes[i] < 128) i++;
+        if (i > asciiStart) {
+          if (units.length > 0) {
+            parts.push(String.fromCharCode.apply(null, units));
+            units.length = 0;
+          }
+          for (let start = asciiStart; start < i; start += CHARS_PER_CHUNK) {
+            const chunk = bytes.subarray(start, Math.min(i, start + CHARS_PER_CHUNK));
+            parts.push(String.fromCharCode.apply(null, chunk));
+          }
+          if (i >= length) break;
+        }
+        const lead = bytes[i++];
+        let codePoint;
+        let needed;
+        let lower = 128;
+        let upper = 191;
+        if (lead >= 194 && lead <= 223) {
+          needed = 1;
+          codePoint = lead & 31;
+        } else if (lead >= 224 && lead <= 239) {
+          if (lead === 224) lower = 160;
+          if (lead === 237) upper = 159;
+          needed = 2;
+          codePoint = lead & 15;
+        } else if (lead >= 240 && lead <= 244) {
+          if (lead === 240) lower = 144;
+          if (lead === 244) upper = 143;
+          needed = 3;
+          codePoint = lead & 7;
+        } else {
+          needed = -1;
+          codePoint = 0;
+        }
+        while (needed > 0) {
+          const next = i < length ? bytes[i] : -1;
+          if (next < lower || next > upper) break;
+          codePoint = codePoint << 6 | next & 63;
+          lower = 128;
+          upper = 191;
+          needed--;
+          i++;
+        }
+        if (needed !== 0) {
+          if (fatal) throw new TypeError("The encoded data was not valid utf-8");
+          units.push(65533);
+        } else if (codePoint > 65535) {
+          codePoint -= 65536;
+          units.push(55296 + (codePoint >> 10), 56320 + (codePoint & 1023));
+        } else {
+          units.push(codePoint);
+        }
+        if (units.length >= CHARS_PER_CHUNK) {
+          parts.push(String.fromCharCode.apply(null, units));
+          units.length = 0;
+        }
+      }
+      if (units.length > 0) parts.push(String.fromCharCode.apply(null, units));
+      return parts.join("");
+    }
     if (typeof g.TextEncoder !== "function") {
       class TextEncoderPolyfill {
         constructor() {
@@ -476,36 +610,14 @@
     }
     if (typeof g.TextDecoder !== "function") {
       class TextDecoderPolyfill {
-        constructor(encoding = "utf-8") {
+        constructor(encoding = "utf-8", options) {
           this.encoding = encoding;
+          this.fatal = options?.fatal === true;
+          this.ignoreBOM = options?.ignoreBOM === true;
         }
         decode(buffer) {
           if (!buffer) return "";
-          const bytes = buffer instanceof Uint8Array ? buffer : buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-          let out = "";
-          let i = 0;
-          while (i < bytes.length) {
-            const b1 = bytes[i++];
-            let code;
-            if (b1 < 128) {
-              code = b1;
-            } else if (b1 < 192) {
-              code = 65533;
-            } else if (b1 < 224) {
-              code = (b1 & 31) << 6 | bytes[i++] & 63;
-            } else if (b1 < 240) {
-              code = (b1 & 15) << 12 | (bytes[i++] & 63) << 6 | bytes[i++] & 63;
-            } else {
-              code = (b1 & 7) << 18 | (bytes[i++] & 63) << 12 | (bytes[i++] & 63) << 6 | bytes[i++] & 63;
-            }
-            if (code > 65535) {
-              code -= 65536;
-              out += String.fromCharCode(55296 + (code >> 10), 56320 + (code & 1023));
-            } else {
-              out += String.fromCharCode(code);
-            }
-          }
-          return out;
+          return decodeUtf8(bytesOf(buffer), this.fatal, this.ignoreBOM);
         }
       }
       ;
@@ -552,9 +664,12 @@
         const url = typeof input === "string" ? input : input.toString();
         const method = (init?.method ?? "GET").toUpperCase();
         let bodyString = null;
+        let bodyBase64;
         const reqBody = init?.body;
         if (typeof reqBody === "string") {
           bodyString = reqBody;
+        } else if (reqBody instanceof ArrayBuffer || ArrayBuffer.isView(reqBody)) {
+          bodyBase64 = bytesToBase64(bytesOf(reqBody));
         } else if (reqBody && typeof reqBody.toString === "function") {
           bodyString = reqBody.toString();
         }
@@ -578,9 +693,10 @@
         }
         const sendRequest = g.__mentraSendRequest;
         const result = await sendRequest("fetch", "request", [
-          { url, method, headers, body: bodyString }
+          bodyBase64 === void 0 ? { url, method, headers, body: bodyString } : { url, method, headers, bodyBase64 }
         ]);
-        const bodyText = typeof result.body === "string" ? result.body : "";
+        const responseText = typeof result.body === "string" ? result.body : null;
+        const responseBase64 = typeof result.bodyBase64 === "string" ? result.bodyBase64 : "";
         const responseHeaders = new Map(Object.entries(result.headers ?? {}));
         class ResponseLike {
           constructor() {
@@ -597,11 +713,13 @@
             };
           }
           async text() {
-            return bodyText;
+            if (responseText === null) return decodeUtf8(base64ToBytes(responseBase64), false, false);
+            return responseText.charCodeAt(0) === 65279 ? responseText.slice(1) : responseText;
           }
           async json() {
+            const text = await this.text();
             try {
-              return JSON.parse(bodyText);
+              return JSON.parse(text);
             } catch (e) {
               const err = new Error(
                 `Failed to parse JSON response from ${url}: ${e instanceof Error ? e.message : String(e)}`
@@ -611,52 +729,21 @@
             }
           }
           async arrayBuffer() {
+            if (responseText === null) return base64ToBytes(responseBase64).buffer;
             const enc = new g.TextEncoder();
-            return enc.encode(bodyText).buffer;
+            return enc.encode(responseText).buffer;
           }
         }
         return new ResponseLike();
       };
     }
     if (typeof g.WebSocket !== "function") {
-      let bytesToBase642 = function(bytes) {
-        const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let out = "";
-        let i = 0;
-        while (i < bytes.length) {
-          const c1 = bytes[i++];
-          const c2 = i < bytes.length ? bytes[i++] : NaN;
-          const c3 = i < bytes.length ? bytes[i++] : NaN;
-          const e1 = c1 >> 2;
-          const e2 = (c1 & 3) << 4 | (Number.isNaN(c2) ? 0 : c2 >> 4);
-          const e3 = Number.isNaN(c2) ? 64 : (c2 & 15) << 2 | (Number.isNaN(c3) ? 0 : c3 >> 6);
-          const e4 = Number.isNaN(c3) ? 64 : c3 & 63;
-          out += b64[e1] + b64[e2] + (e3 === 64 ? "=" : b64[e3]) + (e4 === 64 ? "=" : b64[e4]);
-        }
-        return out;
-      }, base64ToBytes2 = function(s) {
-        const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        const clean = s.replace(/=+$/, "");
-        const out = [];
-        let buf = 0;
-        let bits = 0;
-        for (let i = 0; i < clean.length; i++) {
-          const idx = b64.indexOf(clean[i]);
-          if (idx < 0) continue;
-          buf = buf << 6 | idx;
-          bits += 6;
-          if (bits >= 8) {
-            bits -= 8;
-            out.push(buf >> bits & 255);
-          }
-        }
-        return new Uint8Array(out);
-      }, queueMicrotaskSafe2 = function(fn) {
+      let queueMicrotaskSafe2 = function(fn) {
         const q = g.queueMicrotask;
         if (typeof q === "function") q(fn);
         else g.Promise.resolve().then(fn);
       };
-      var bytesToBase64 = bytesToBase642, base64ToBytes = base64ToBytes2, queueMicrotaskSafe = queueMicrotaskSafe2;
+      var queueMicrotaskSafe = queueMicrotaskSafe2;
       const sockets = /* @__PURE__ */ new Map();
       g.__mentraDeliverWebSocketEvent = (sid, type, payload) => {
         const sock = sockets.get(sid);
@@ -718,8 +805,7 @@
             payload = data;
           } else {
             kind = "binary";
-            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            payload = bytesToBase642(bytes);
+            payload = bytesToBase64(bytesOf(data));
           }
           try {
             __dispatch("ws", "send", JSON.stringify([{ sid: this.sid, kind, payload }]));
@@ -752,7 +838,7 @@
           }
           const synth = { type, target: this, ...ev };
           if (type === "message" && ev.kind === "binary" && typeof ev.data === "string") {
-            synth.data = base64ToBytes2(ev.data).buffer;
+            synth.data = base64ToBytes(ev.data).buffer;
           } else if (type === "message" && ev.kind === "text") {
             synth.data = ev.data;
           }
