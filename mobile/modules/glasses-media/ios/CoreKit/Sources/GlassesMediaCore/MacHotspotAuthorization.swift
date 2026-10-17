@@ -11,11 +11,15 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     private var ready = false
     private let facts: MacHotspotAuthorizationFacts
     private let makeManager: () -> CLLocationManager
+    private let locationServicesEnabled: () -> Bool
     var onRevoked: ((Error) -> Void)?
 
-    init(facts: MacHotspotAuthorizationFacts = MacHotspotAuthorizationFacts(), makeManager: @escaping () -> CLLocationManager = { CLLocationManager() }) {
+    init(facts: MacHotspotAuthorizationFacts = MacHotspotAuthorizationFacts(), makeManager: @escaping () -> CLLocationManager = { CLLocationManager() },
+         locationServicesEnabled: @escaping () -> Bool = { CLLocationManager.locationServicesEnabled() })
+    {
         self.facts = facts
         self.makeManager = makeManager
+        self.locationServicesEnabled = locationServicesEnabled
         super.init()
     }
 
@@ -59,6 +63,10 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
             let status = manager.authorizationStatus
             let foreground = MacHotspotAuthorizationFacts.foreground()
             self.facts.observeInstance(raw: status.rawValue, getter: .instanceCurrent, foreground: foreground)
+            guard self.locationServicesEnabled() else {
+                throw self.facts.failure("Location services are required to verify the current Mac Wi-Fi network", raw: status.rawValue,
+                                         getter: .instanceCurrent, foreground: foreground)
+            }
             guard Self.isAuthorized(status) else {
                 throw self.facts.failure("Location access is required to verify the current Mac Wi-Fi network", raw: status.rawValue,
                                          getter: .instanceCurrent, foreground: foreground)

@@ -46,7 +46,7 @@ final class MacHotspotAuthorizationTests: XCTestCase {
     }
 
     private func started(_ manager: Manager) -> MacHotspotAuthorization {
-        let authorization = MacHotspotAuthorization(makeManager: { manager })
+        let authorization = MacHotspotAuthorization(makeManager: { manager }, locationServicesEnabled: { true })
         let ready = expectation(description: "initialized instance ready")
         authorization.start {
             if case let .failure(error) = $0 { XCTFail("Authorization failed: \(error)") }
@@ -113,7 +113,7 @@ final class MacHotspotAuthorizationTests: XCTestCase {
     func testRecordedStaticNotDeterminedDoesNotReplaceCurrentInitializedAlwaysRecipient() throws {
         let manager = Manager()
         let facts = MacHotspotAuthorizationFacts()
-        let authorization = MacHotspotAuthorization(facts: facts, makeManager: { manager })
+        let authorization = MacHotspotAuthorization(facts: facts, makeManager: { manager }, locationServicesEnabled: { true })
         let ready = expectation(description: "same recipient ready")
         authorization.start {
             if case let .failure(error) = $0 { XCTFail("Authorization failed: \(error)") }
@@ -139,6 +139,25 @@ final class MacHotspotAuthorizationTests: XCTestCase {
         let association = MacHotspotAssociation(makeInterface: { wifi }, authorization: authorization)
         XCTAssertThrowsError(try association.associate(ssid: "glasses", password: "private"))
         XCTAssertEqual(wifi.scans, 1)
+        XCTAssertEqual(wifi.joins, 0)
+        closed(authorization)
+    }
+
+    func testDisabledLocationServicesRejectsAlwaysGrantBeforeSSIDRead() {
+        let manager = Manager()
+        let authorization = MacHotspotAuthorization(makeManager: { manager }, locationServicesEnabled: { false })
+        let ready = expectation(description: "initial recipient status")
+        authorization.start { _ in ready.fulfill() }
+        wait(for: [ready], timeout: 2)
+        let wifi = Wifi()
+        var reads = 0
+        wifi.onRead = { reads += 1 }
+        let association = MacHotspotAssociation(makeInterface: { wifi }, authorization: authorization)
+        XCTAssertThrowsError(try association.associate(ssid: "glasses", password: "private")) {
+            XCTAssertTrue(HotspotJoinFailure($0).message.contains("Location services are required"))
+        }
+        XCTAssertEqual(reads, 0)
+        XCTAssertEqual(wifi.scans, 0)
         XCTAssertEqual(wifi.joins, 0)
         closed(authorization)
     }
@@ -189,7 +208,7 @@ final class MacHotspotAuthorizationTests: XCTestCase {
 
     func testCancelWhileInitialCallbackIsHeldSettlesOnceAndIgnoresLateGrant() {
         let manager = Manager(); manager.status = .notDetermined
-        let authorization = MacHotspotAuthorization(makeManager: { manager })
+        let authorization = MacHotspotAuthorization(makeManager: { manager }, locationServicesEnabled: { true })
         let installed = expectation(description: "initial pending read")
         let cancelled = expectation(description: "cancelled reply")
         var replies = 0
@@ -214,7 +233,7 @@ final class MacHotspotAuthorizationTests: XCTestCase {
     func testPendingCallbackGrantKeepsRecipientAndRecordsActualCallback() throws {
         let manager = Manager(); manager.status = .notDetermined
         let facts = MacHotspotAuthorizationFacts()
-        let authorization = MacHotspotAuthorization(facts: facts, makeManager: { manager })
+        let authorization = MacHotspotAuthorization(facts: facts, makeManager: { manager }, locationServicesEnabled: { true })
         let ready = expectation(description: "callback grant")
         authorization.start {
             if case let .failure(error) = $0 { XCTFail("Callback grant failed: \(error)") }
