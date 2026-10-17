@@ -2,6 +2,7 @@ import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
+import {backendTarget} from "./scripts/backend-target.cjs"
 
 const familyBaseVersion = require("../package.json").version as string
 
@@ -86,12 +87,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   }
 
   const buildNumber = getBuildNumber()
-  const backendTarget = process.env.EXPO_PUBLIC_CLOUD_CORE_URL?.trim()
+  const coreUrl = backendTarget(process.env.EXPO_PUBLIC_CLOUD_CORE_URL)
   // Generated target metadata cannot be inherited from a previous Expo config.
   const {mentraBackendTarget: _previousBackendTarget, ...originalExtra} = config.extra ?? {}
   const packagedExtra = {
     ...originalExtra,
-    ...(backendTarget ? {mentraBackendTarget: {schemaVersion: 1, coreUrl: backendTarget}} : {}),
+    mentraBackendTarget: {schemaVersion: 1, coreUrl},
   }
 
   return {

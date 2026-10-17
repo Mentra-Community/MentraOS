@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import {execFileSync} from "node:child_process"
 import {fileURLToPath} from "node:url"
 import test from "node:test"
+import {backendTarget} from "./backend-target.cjs"
 
 const mobile = fileURLToPath(new URL("..", import.meta.url))
 const fingerprint = "f".repeat(64)
@@ -38,6 +39,13 @@ test("ordinary and PR Expo generation retain the exact build backend baseline", 
   }
 })
 
+test("all baseline contexts preserve the existing service URL without consulting Expo runtime extra", () => {
+  for (const value of ["https://core.dev.us-west-2.mentraglass.com", "https://core.staging.us-west-2.mentraglass.com",
+    "https://core.mentraglass.com", "http://localhost:3000/workspace", "  https://custom.example:8443/core  "])
+    assert.equal(backendTarget(value), value.trim())
+  for (const value of [undefined, "", "  "]) assert.equal(backendTarget(value), "https://core.dev.us-west-2.mentraglass.com")
+})
+
 test("unset or blank build environment never retains a stale generated target", () => {
   for (const pr of [false, true]) for (const value of [undefined, "", "  "]) {
     const env = {...process.env,
@@ -49,7 +57,7 @@ test("unset or blank build environment never retains a stale generated target", 
     const extra = JSON.parse(execFileSync(process.execPath, ["--require", "tsx/cjs", "--eval",
       'const configure = require("./app.config.ts"); console.log(JSON.stringify(configure({config: {extra: {unrelated: true, mentraBackendTarget: {schemaVersion: 1, coreUrl: "https://stale.example"}}}}).extra))',
     ], {cwd: mobile, encoding: "utf8", env}))
-    assert.equal(Object.hasOwn(extra, "mentraBackendTarget"), false)
+    assert.deepEqual(extra.mentraBackendTarget, {schemaVersion: 1, coreUrl: "https://core.dev.us-west-2.mentraglass.com"})
     assert.equal(extra.unrelated, true)
     assert.equal(Boolean(extra.mentraPrBuild), pr)
   }
