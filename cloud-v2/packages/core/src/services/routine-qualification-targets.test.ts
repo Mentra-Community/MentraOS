@@ -1,4 +1,4 @@
-import {expect, mock, test} from 'bun:test';
+import {expect, mock, spyOn, test} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
 import {createTestRequestsApi} from '../api/internal/test-requests.api';
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
@@ -263,7 +263,7 @@ test('the authenticated poll only includes explicitly requested targets and does
 });
 
 test('candidate database stream is bounded, closed and includes only unbound or exact unaccepted queued handoffs without writes', async () => {
-  for (const [includeQueued, includeAccepted, includePreparing] of [[false,false,false],[true,false,false],[true,true,false],[true,true,true]]) {
+  for (const [includeQueued, includeAccepted, includePreparing] of [[false,false,false],[true,false,false],[true,true,false]]) {
   let filter: unknown, limit: number | undefined, closed = false;
   const cursor = {async *[Symbol.asyncIterator]() {yield row();}, async close() {closed = true;}};
   const query = {sort(value: unknown) {expect(value).toEqual(includeAccepted ? {'hostReceipt.acceptedAt': -1, state: -1, createdAt: 1, requestId: 1} :
@@ -464,6 +464,72 @@ function preparingFixture() {
    hostId:'pro1',laneId:'pro1-mac',poolId:'pro1-pool',minimumAvailableBytes:7*1024**3,reservedAt:new Date(now-1000).toISOString()}};
  return {value:prepared,observed};
 }
+function repositoryRows(rows: StoredRoutineJob[], onClosed?: () => void) {
+ const reads: Array<{filter: Record<string,unknown>; limit: number; timeoutMS: number}> = [];
+ let scanned=0,closed=0;
+ const find=TestRequestModel.find;
+ TestRequestModel.find=mock((filter:Record<string,unknown>)=>{
+  let order:Record<string,number>={},limit=0,timeoutMS=0;
+  return {sort(value:Record<string,number>){order=value;return this},limit(value:number){limit=value;return this},
+   read(value:string){expect(value).toBe('primary');return this},readConcern(value:string){expect(value).toBe('majority');return this},
+   setOptions(value:{timeoutMS:number;maxTimeMS:number}){expect(value.timeoutMS).toBe(value.maxTimeMS);timeoutMS=value.timeoutMS;return this},
+   lean(){return this},cursor(value:unknown){expect(value).toEqual({batchSize:20});reads.push({filter,limit,timeoutMS});return{
+    async *[Symbol.asyncIterator](){
+     const states=filter.$or ? (filter.$or as Array<{state:string}>).map(value=>value.state) : [filter.state];
+     const ordered=rows.filter(value=>states.includes(value.state)).sort((left,right)=>{
+      for(const[field,direction]of Object.entries(order)){
+       const read=(row:unknown)=>field.split('.').reduce<unknown>((value,key)=>value&&typeof value==='object'?(value as Record<string,unknown>)[key]:undefined,row);
+       const a=read(left),b=read(right);if(a===b)continue;if(a===undefined)return-direction;if(b===undefined)return direction;
+       return(String(a)<String(b)?-1:1)*direction;
+      }return 0;
+     });
+     for(const value of ordered.slice(0,limit)){scanned++;yield structuredClone(value)}
+    },async close(){closed++;onClosed?.()},
+   }}};
+ }) as unknown as typeof find;
+ return {reads,get scanned(){return scanned},get closed(){return closed},restore(){TestRequestModel.find=find}};
+}
+test('preparing remains reachable ahead of 100 already incompatible queued rows through the real repository stream',async()=>{
+ const {value,observed}=preparingFixture();
+ const queued=Array.from({length:100},(_,index)=>{
+  const candidate=queuedRow(`already-queued-${index}`);candidate.fleetPreparation!.requirements.resources[0]!.capabilities=['unoffered'];
+  candidate.fleetInputSha256=routineJobInputDigest(candidate);return candidate;
+ });
+ const db=repositoryRows([...queued,value]),f=fixture([],observed);
+ (f.service as unknown as {rows:RoutineJobRepository}).rows.qualificationCandidates=routineJobRepository.qualificationCandidates;
+ try{
+  expect((await f.service.qualificationTargets('pro1')).map(target=>target.jobId)).toEqual([value.requestId]);
+  expect(db.reads.map(value=>value.filter.state)).toEqual(['accepted','preparing']);
+  expect(db.scanned).toBe(1);expect(db.closed).toBe(2);expect(db.reads.every(value=>value.limit===100)).toBe(true);
+ }finally{db.restore()}
+});
+test('custody priority shares one candidate count and shrinking query budget across accepted, preparing, queued and unbound streams',async()=>{
+ const preparing=preparingFixture().value,accepted=acceptedRow(),queued=queuedRow(),unbound=row(),db=repositoryRows([unbound,queued,preparing,accepted]);
+ const clock=spyOn(performance,'now');let tick=0;clock.mockImplementation(()=>tick+=5);
+ try{
+  const result:StoredRoutineJob[]=[];
+  for await(const value of routineJobRepository.qualificationCandidates!('pro1','pro1-mac',4,new Date(now),100,true,true,true))result.push(value);
+  expect(result.map(value=>value.state)).toEqual(['accepted','preparing','queued','awaiting-runner']);
+  expect(db.reads.map(value=>value.limit)).toEqual([4,3,2,1]);expect(db.reads.map(value=>value.timeoutMS)).toEqual([95,85,75,65]);
+  expect(db.scanned).toBe(4);expect(db.closed).toBe(4);
+ }finally{clock.mockRestore();db.restore()}
+});
+test('prioritized database discovery closes the cursor and refuses a late row or another stream after the original budget',async()=>{
+ let tick=0;const clock=spyOn(performance,'now');clock.mockImplementation(()=>tick);
+ const db=repositoryRows([acceptedRow(),preparingFixture().value],()=>{tick=100});
+ try{
+  const result:StoredRoutineJob[]=[];
+  for await(const value of routineJobRepository.qualificationCandidates!('pro1','pro1-mac',100,new Date(now),100,true,true,true))result.push(value);
+  expect(result.map(value=>value.state)).toEqual(['accepted']);expect(db.reads).toHaveLength(1);expect(db.closed).toBe(1);
+ }finally{clock.mockRestore();db.restore()}
+ let call=0;const lateClock=spyOn(performance,'now');lateClock.mockImplementation(()=>++call>=3?100:0);
+ const late=repositoryRows([acceptedRow()]);
+ try{
+  const result:StoredRoutineJob[]=[];
+  for await(const value of routineJobRepository.qualificationCandidates!('pro1','pro1-mac',100,new Date(now),100,true,true,true))result.push(value);
+  expect(result).toEqual([]);expect(late.closed).toBeGreaterThanOrEqual(1);
+ }finally{lateClock.mockRestore();late.restore()}
+});
 test('a bound preparing original qualifies its exact selected app without constructing an executable or replacing its staged claims',async()=>{
  const {value,observed}=preparingFixture(),before=structuredClone(value),f=fixture([value],observed);
  const targets=await f.service.qualificationTargets('pro1');expect(targets).toHaveLength(1);

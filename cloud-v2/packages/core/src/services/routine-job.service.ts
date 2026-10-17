@@ -203,30 +203,44 @@ export const routineJobRepository: RoutineJobRepository = {
   },
   async *qualificationCandidates(hostId, laneId, limit, now, timeoutMS, includeQueued, includeAccepted = false, includePreparing = false) {
     const unbound = {state: 'awaiting-runner', hostId: {$exists: false}, fleetBinding: {$exists: false}, hostReceipt: {$exists: false}};
-    const cursor = TestRequestModel.find({...includeQueued ? {$or: [unbound,
-      {state: 'queued', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
-        'input.laneId': laneId, inputSha256: {$exists: true}, hostReceipt: {$exists: false}},
-      ...includePreparing ? [{state: 'preparing', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
-        input: {$exists: false}, inputSha256: {$exists: false}, hostReceipt: {$exists: false},
-        dispatchIntentSha256: {$exists: true}, fleetResourceReservation: {$exists: true}, fleetResourceAdmission: {$exists: true}}] : [],
-      ...includeAccepted ? [{state: 'accepted', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
-        'input.laneId': laneId, inputSha256: {$exists: true}, 'hostReceipt.hostId': hostId}] : []]} : unbound,
-      runId: {$exists: false}, dispatchCompletion: {$exists: false},
-      hostCancellation: {$exists: false}, hostRejection: {$exists: false},
-      preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
-      fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}, 'fleetSelection.platform': 'ios-on-mac',
-      fleetPreparation: {$exists: true}, 'fleetPreparation.requirements.resources': {$elemMatch: {permissions: {$elemMatch: {recipient: 'app'}}}},
-      $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': hostId}]},
-        {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': laneId}]},
-        {$or: [{fleetResourceAdmission: {$exists: false}},
-          {'fleetResourceAdmission.intent.hostId': hostId, 'fleetResourceAdmission.intent.laneId': laneId}]}]})
-      // An accepted original already retains authority. Put its nonempty receipt
-      // ahead of pending candidates before applying the finite stream cap.
-      .sort(includeAccepted ? {'hostReceipt.acceptedAt': -1, state: -1, createdAt: 1, requestId: 1} :
-        includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority')
-      .setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean().cursor({batchSize: 20});
-    try {for await (const row of cursor) yield row as unknown as StoredRoutineJob;}
-    finally {await cursor.close();}
+    const queued = {state: 'queued', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
+      'input.laneId': laneId, inputSha256: {$exists: true}, hostReceipt: {$exists: false}};
+    const preparing = {state: 'preparing', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
+      input: {$exists: false}, inputSha256: {$exists: false}, hostReceipt: {$exists: false},
+      dispatchIntentSha256: {$exists: true}, fleetResourceReservation: {$exists: true}, fleetResourceAdmission: {$exists: true}};
+    const accepted = {state: 'accepted', hostId, 'fleetBinding.hostId': hostId, 'fleetBinding.laneId': laneId,
+      'input.laneId': laneId, inputSha256: {$exists: true}, 'hostReceipt.hostId': hostId};
+    // New preparing-capable workers scan existing custody first. Separate ordinary
+    // queries avoid lexical state ordering or database-specific computed sort keys.
+    // Older workers retain their original single-query discovery behavior.
+    const prioritized = includeQueued && includePreparing;
+    const streams = prioritized ? [...includeAccepted ? [accepted] : [], preparing, queued, unbound] :
+      [includeQueued ? {$or: [unbound, queued, ...includeAccepted ? [accepted] : []]} : unbound];
+    const deadline = performance.now() + timeoutMS;
+    let remaining = limit;
+    for (const stream of streams) {
+      const budget = prioritized ? Math.min(timeoutMS, Math.ceil(deadline - performance.now())) : timeoutMS;
+      if (remaining <= 0 || budget <= 0) break;
+      const cursor = TestRequestModel.find({...stream,
+        runId: {$exists: false}, dispatchCompletion: {$exists: false},
+        hostCancellation: {$exists: false}, hostRejection: {$exists: false},
+        preparationCancellation: {$exists: false}, preparationRejection: {$exists: false},
+        fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}, 'fleetSelection.platform': 'ios-on-mac',
+        fleetPreparation: {$exists: true}, 'fleetPreparation.requirements.resources': {$elemMatch: {permissions: {$elemMatch: {recipient: 'app'}}}},
+        $and: [{$or: [{'fleetTarget.hostId': {$exists: false}}, {'fleetTarget.hostId': hostId}]},
+          {$or: [{'fleetTarget.laneId': {$exists: false}}, {'fleetTarget.laneId': laneId}]},
+          {$or: [{fleetResourceAdmission: {$exists: false}},
+            {'fleetResourceAdmission.intent.hostId': hostId, 'fleetResourceAdmission.intent.laneId': laneId}]}]})
+        .sort(prioritized ? stream === accepted ? {'hostReceipt.acceptedAt': -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1} :
+          includeAccepted ? {'hostReceipt.acceptedAt': -1, state: -1, createdAt: 1, requestId: 1} :
+          includeQueued ? {state: -1, createdAt: 1, requestId: 1} : {createdAt: 1, requestId: 1})
+        .limit(remaining).read('primary').readConcern('majority')
+        .setOptions({timeoutMS: budget, maxTimeMS: budget}).lean().cursor({batchSize: 20});
+      try {for await (const row of cursor) {
+        if ((prioritized && performance.now() >= deadline) || remaining <= 0) break;
+        remaining--; yield row as unknown as StoredRoutineJob;
+      }} finally {await cursor.close();}
+    }
   },
   async supersessionCandidates(limit, now) {
     return await TestRequestModel.find({state: {$ne: 'terminal'}, fleetCancellation: {$exists: false},
