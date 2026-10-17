@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader
+from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers
 
 UUID = bytes(range(16))
 def macho():
@@ -16,7 +16,36 @@ def macho():
     section = struct.pack('<16s16sQQIIIIIIII', b'__text', b'__TEXT', 0x1000, 16, offset, 2, 0, 0, 0x80000400, 0, 0, 0)
     return header + uuid + segment + section + bytes(16)
 
+def macho_got():
+    data=bytearray(macho())
+    text=bytes(data[32+24:32+24+152])
+    got=bytearray(text)
+    struct.pack_into('<16sQQQQ',got,8,b'__DATA_CONST',0x2000,16,32+24+304+16,16)
+    struct.pack_into('<16s16sQQI',got,72,b'__got',b'__DATA_CONST',0x2000,16,32+24+304+16)
+    struct.pack_into('<I',got,72+64,6)
+    text=bytearray(text)
+    struct.pack_into('<QQQQ',text,24,0x1000,16,32+24+304,16)
+    struct.pack_into('<I',text,72+48,32+24+304)
+    header=bytearray(data[:32]);struct.pack_into('<II',header,16,3,24+304)
+    return bytes(header+data[32:56]+text+got+bytes(32))
+
 class SectionsTests(unittest.TestCase):
+    def test_data_imports_and_rebases_are_exact_delivered_sections_not_call_stubs(self):
+        data=macho_got()
+        indirect='Indirect symbols for (__DATA_CONST,__got) 1 entries\n0x2000 9 __NSConcreteStackBlock\n'
+        self.assertEqual(data_imports_from_indirect(indirect,data),{0x2000:'__NSConcreteStackBlock'})
+        self.assertEqual(imported_stubs(indirect),{})
+        for changed in (indirect.replace('0x2000','0x2001'),indirect.replace('0x2000','0x2010'),indirect+'0x2000 9 __NSConcreteStackBlock\n'):
+            with self.assertRaises(ValueError):data_imports_from_indirect(changed,data)
+        line=' __DATA_CONST __got 0x2000 rebase 0x1004\n'
+        self.assertEqual(rebase_pointers(line,data),{0x2000:0x1004})
+        self.assertEqual(rebase_pointers(line.replace('rebase 0x1004','bind lib/__Block_copy'),data),{})
+        for changed in (line+line,line.replace('0x2000','0x2001'),line.replace('0x2000','0x2010'),line.replace('0x1004','authenticated 0x1004')):
+            with self.assertRaises(ValueError):rebase_pointers(changed,data)
+        with patch('nimo_symbol_sections.MAX_WINDOW',4):
+            # Data-table validation is section-based, independent of code windows.
+            self.assertEqual(rebase_pointers(line,data),{0x2000:0x1004})
+
     def test_symbol_rejection_names_actual_count_and_bound(self):
         with self.assertRaisesRegex(ValueError, r'parsed=0 limit=200000 nmBytes=4'):
             symbol_rows('none')

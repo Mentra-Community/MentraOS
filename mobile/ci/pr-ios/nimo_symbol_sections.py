@@ -87,6 +87,78 @@ def file_backed_reader(data):
     return read
 
 
+def delivered_sections(data):
+    macho_layout(data)
+    count = struct.unpack_from('<I', data, 16)[0]
+    offset, sections = 32, {}
+    for _ in range(count):
+        command, length = struct.unpack_from('<II', data, offset)
+        if command == 0x19:
+            for index in range(struct.unpack_from('<I', data, offset + 64)[0]):
+                start = offset + 72 + index * 80
+                name, segment, address, size, fileoff = struct.unpack_from('<16s16sQQI', data, start)
+                key = (segment.rstrip(b'\0').decode('ascii'), name.rstrip(b'\0').decode('ascii'))
+                if key in sections:
+                    raise ValueError('ambiguous delivered section identity')
+                flags = struct.unpack_from('<I', data, start + 64)[0]
+                sections[key] = (address, address + size, fileoff, flags)
+        offset += length
+    return sections
+
+
+def data_imports_from_indirect(output, data):
+    if len(output) > 16 * 1024 * 1024:
+        raise ValueError('delivered data import table exceeds bound')
+    sections, active, result = delivered_sections(data), None, {}
+    reader = file_backed_reader(data)
+    for line in output.splitlines():
+        if line.startswith('Indirect symbols for '):
+            active = None
+        header = re.fullmatch(r'Indirect symbols for \(([^,]+),([^)]+)\) [0-9]+ entries', line)
+        if header:
+            key = header.groups()
+            candidate = sections.get(key)
+            active = candidate if (key[0] in ('__DATA', '__DATA_CONST', '__AUTH', '__AUTH_CONST') and candidate is not None and candidate[3] & 0xff == 6) else None
+            continue
+        match = re.fullmatch(r'\s*0x([0-9a-fA-F]+)\s+[0-9]+\s+(\S+)\s*', line)
+        if active is not None and match:
+            address, name = int(match[1], 16), match[2]
+            if address % 8 or not active[0] <= address or address + 8 > active[1]:
+                raise ValueError('data import is outside exact delivered pointer section')
+            if name != '__NSConcreteStackBlock':
+                continue
+            if address in result:
+                raise ValueError('duplicate delivered data import')
+            reader(address, 8)
+            result[address] = name
+    return result
+
+
+def rebase_pointers(output, data):
+    if len(output) > 16 * 1024 * 1024:
+        raise ValueError('delivered fixup table exceeds bound')
+    sections, result, seen = delivered_sections(data), {}, set()
+    for line in output.splitlines():
+        match = re.fullmatch(r'\s*(\S+)\s+(\S+)\s+0x([0-9a-fA-F]+)\s+(\S+)\s+(.*?)\s*', line)
+        if not match:
+            continue
+        segment, section, slot, kind, target = match.groups()
+        slot = int(slot, 16)
+        bounds = sections.get((segment, section))
+        if slot in seen or slot % 8 or bounds is None or not bounds[0] <= slot or slot + 8 > bounds[1]:
+            raise ValueError('ambiguous or out-of-section delivered fixup')
+        seen.add(slot)
+        if kind == 'rebase':
+            if not re.fullmatch(r'0x[0-9a-fA-F]+', target):
+                raise ValueError('unsupported delivered rebase target')
+            # Validate file backing without interpreting chained-pointer bits.
+            # The public dyld tool resolves them from this same executable.
+            if bounds[3] & 0xff in (1, 12, 18) or bounds[2] + slot - bounds[0] + 8 > len(data):
+                raise ValueError('delivered rebase is not file-backed')
+            result[slot] = int(target, 16)
+    return result
+
+
 def normalize_demangled(name):
     # swift-demangle's private-method spelling, observed from the real compiler.
     name = re.sub(r'(?<=\.)\(([A-Za-z_][A-Za-z0-9_]*) in _[A-Fa-f0-9]+\)(?=\()', r'\1', name)
@@ -233,7 +305,8 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         raise ValueError('archive demangled symbols exceed bound')
     demangled = [normalize_demangled(name) for name in result.stdout.decode('utf-8', errors='strict').splitlines()]
     windows = symbol_windows(rows, demangled, selectors, text)
-    imports = imported_stubs(bounded('xcrun', 'llvm-objdump', '--macho', '--indirect-symbols', executable).decode('utf-8', errors='strict'))
+    indirect = bounded('xcrun', 'llvm-objdump', '--macho', '--indirect-symbols', executable).decode('utf-8', errors='strict')
+    imports = imported_stubs(indirect)
     blocks, size, functions = [], 0, {}
     by_symbol = {symbol: name for (_, symbol), name in zip(rows, demangled)}
     address_rows = {}
@@ -262,6 +335,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
     for start, stop, symbol in windows:
         disassemble(start, stop, symbol)
     async_error = None
+    async_data_imports, async_reads, async_pointers = {}, {}, {}
     if async_edges is not None:
         from nimo_async_invocations import prove_async_edges
         # Aliased addresses cannot select an arbitrary compiler identity.
@@ -270,12 +344,24 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             if address not in symbols:
                 raise ValueError('async compiler function entry is absent or aliased')
             return disassemble(address, stops[address], symbols[address][0])
-        delivered_reader = file_backed_reader(delivered)
-        def read_bytes(address, count):
-            remaining()
-            return delivered_reader(address, count)
         try:
-            async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function))
+            data_imports = data_imports_from_indirect(indirect, delivered)
+            async_data_imports = {hex(slot): name for slot, name in data_imports.items() if name == '__NSConcreteStackBlock'}
+            fixups = rebase_pointers(bounded('xcrun', 'dyld_info', '-fixups', executable).decode('utf-8', errors='strict'), delivered)
+            delivered_reader = file_backed_reader(delivered)
+            def read_bytes(address, count):
+                remaining()
+                value = delivered_reader(address, count)
+                async_reads[f'{address:x}:{count}'] = value.hex()
+                return value
+            def read_pointer(slot):
+                remaining()
+                if slot not in fixups:
+                    raise ValueError('async pointer is not an exact delivered rebase slot')
+                delivered_reader(slot, 8)
+                async_pointers[hex(slot)] = hex(fixups[slot])
+                return fixups[slot]
+            async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer))
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
     if diagnostic_path is not None:
@@ -283,7 +369,8 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
                  'executableSha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
                  'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol[symbol]} for symbol, (start, stop, _) in functions.items()],
                  'imports': imports, 'assembly': '\n'.join(blocks),
-                 'asyncProofError': str(async_error)[:1024] if async_error is not None else None}
+                 'asyncProofError': str(async_error)[:1024] if async_error is not None else None,
+                 'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}
         # Fixed producer log basename; normal workflow already retains this glob.
         persist_trace(diagnostic_path, trace)
     if async_error is not None:
