@@ -164,6 +164,54 @@ def rebase_pointers(output, data):
     return result
 
 
+class BoundedRebaseLookup:
+    """Finite whole-image metadata, authority only for requested exact slots."""
+    def __init__(self, output, data, checkpoint=lambda: None):
+        self.output, self.data, self.checkpoint = output, data, checkpoint
+        self.cache = {}
+        self.requests = 0
+        checkpoint()
+        encoded = output.encode()
+        if len(encoded) > MAX_NM_BYTES:
+            raise ValueError('delivered fixup metadata exceeds 64MiB bound')
+        self.metrics = {'bytes': len(encoded), 'sha256': hashlib.sha256(encoded).hexdigest(), 'records': 0}
+        for index, line in enumerate(io.StringIO(output)):
+            if index % 1024 == 0:
+                checkpoint()
+            if re.fullmatch(r'\s*\S+\s+\S+\s+0x[0-9a-fA-F]+\s+\S+\s+.*?\s*', line):
+                self.metrics['records'] += 1
+                if self.metrics['records'] > MAX_ROSTER_ROWS:
+                    raise ValueError('delivered fixup metadata exceeds 500k record bound')
+        checkpoint()
+
+    def __call__(self, slot):
+        self.checkpoint()
+        if not isinstance(slot, int) or slot < 0 or slot % 8:
+            raise ValueError('invalid requested rebase slot')
+        if slot in self.cache:
+            self.checkpoint()
+            return self.cache[slot]
+        self.requests += 1
+        if self.requests > 64:
+            raise ValueError('selected rebase lookup exceeds 64-slot bound')
+        selected = []
+        for index, line in enumerate(io.StringIO(self.output)):
+            if index % 1024 == 0:
+                self.checkpoint()
+            match = re.fullmatch(r'\s*\S+\s+\S+\s+0x([0-9a-fA-F]+)\s+\S+\s+.*?\s*', line)
+            if match and int(match[1], 16) == slot:
+                selected.append(line)
+                if len(selected) > 1:
+                    raise ValueError('duplicate requested delivered fixup slot')
+        self.checkpoint()
+        resolved = rebase_pointers(''.join(selected), self.data)
+        if slot not in resolved:
+            raise ValueError('requested slot has no supported delivered rebase')
+        self.cache[slot] = resolved[slot]
+        self.checkpoint()
+        return resolved[slot]
+
+
 def normalize_demangled(name):
     # swift-demangle's private-method spelling, observed from the real compiler.
     name = re.sub(r'(?<=\.)\(([A-Za-z_][A-Za-z0-9_]*) in _[A-Fa-f0-9]+\)(?=\()', r'\1', name)
@@ -386,7 +434,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             raise ValueError('initial compiler function entry is aliased')
         disassemble(start, stop, symbol)
     async_error = None
-    async_data_imports, async_reads, async_pointers = {}, {}, {}
+    async_data_imports, async_reads, async_pointers, fixup_metrics = {}, {}, {}, {}
     if async_edges is not None:
         from nimo_async_invocations import prove_async_edges
         # Aliased addresses cannot select an arbitrary compiler identity.
@@ -399,7 +447,8 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         try:
             data_imports = data_imports_from_indirect(indirect, delivered)
             async_data_imports = {hex(slot): name for slot, name in data_imports.items() if name == '__NSConcreteStackBlock'}
-            fixups = rebase_pointers(bounded('xcrun', 'dyld_info', '-fixups', executable).decode('utf-8', errors='strict'), delivered)
+            fixups = BoundedRebaseLookup(bounded('xcrun', 'dyld_info', '-fixups', executable).decode('utf-8', errors='strict'), delivered, remaining)
+            fixup_metrics = fixups.metrics
             delivered_reader = file_backed_reader(delivered)
             def read_bytes(address, count):
                 remaining()
@@ -408,11 +457,10 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
                 return value
             def read_pointer(slot):
                 remaining()
-                if slot not in fixups:
-                    raise ValueError('async pointer is not an exact delivered rebase slot')
+                value = fixups(slot)
                 delivered_reader(slot, 8)
-                async_pointers[hex(slot)] = hex(fixups[slot])
-                return fixups[slot]
+                async_pointers[hex(slot)] = hex(value)
+                return value
             async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer))
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
@@ -436,7 +484,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
                  'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol.get(symbol, symbol)} for symbol, (start, stop, _) in functions.items()],
                  'imports': imports, 'assembly': '\n'.join(blocks),
                  'asyncProofError': str(async_error)[:1024] if async_error is not None else None,
-                 'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}
+                 'fixupMetadata': fixup_metrics, 'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}
         # Fixed producer log basename; normal workflow already retains this glob.
         persist_trace(diagnostic_path, trace)
     if async_error is not None:

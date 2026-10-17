@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows
+from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows, BoundedRebaseLookup
 
 UUID = bytes(range(16))
 def macho():
@@ -30,6 +30,43 @@ def macho_got():
     return bytes(header+data[32:56]+text+got+bytes(32))
 
 class SectionsTests(unittest.TestCase):
+    def test_actual_scale_fixup_metadata_resolves_only_consumed_slots(self):
+        # Generated actual record count, not a 29MB repository fixture.
+        metadata=''.join(f' __DATA_CONST __const 0x{0x300000000+8*i:016x} rebase 0x0000000100000000\n' for i in range(326917))
+        metadata+=' __DATA_CONST __got 0x2000 rebase 0x1004\n'
+        self.assertGreater(len(metadata),16*1024*1024)
+        gate={'expired':False}
+        def check():
+            if gate['expired']:raise ValueError('original deadline expired')
+        lookup=BoundedRebaseLookup(metadata,macho_got(),check)
+        self.assertEqual(lookup.metrics['records'],326918)
+        self.assertEqual(lookup(0x2000),0x1004);self.assertEqual(lookup.cache,{0x2000:0x1004})
+        gate['expired']=True
+        with self.assertRaisesRegex(ValueError,'deadline'):lookup(0x2000)
+        with patch('nimo_symbol_sections.MAX_NM_BYTES',16),self.assertRaisesRegex(ValueError,'64MiB'):
+            BoundedRebaseLookup(metadata,macho_got())
+        with patch('nimo_symbol_sections.MAX_ROSTER_ROWS',2),self.assertRaisesRegex(ValueError,'500k'):
+            BoundedRebaseLookup(metadata,macho_got())
+
+    def test_selected_fixup_rejects_bind_duplicate_unknown_and_exhausted_scan(self):
+        valid=' __DATA_CONST __got 0x2000 rebase 0x1004\n'
+        for text in (valid+valid,valid.replace('rebase 0x1004','bind lib/__Block_copy'),valid.replace('rebase','auth-rebase'),''):
+            lookup=BoundedRebaseLookup(text,macho_got())
+            with self.assertRaises(ValueError):lookup(0x2000)
+            self.assertEqual(lookup.cache,{})
+        state={'active':False,'count':0}
+        def check():
+            if state['active']:
+                state['count']+=1
+                if state['count']==3:raise ValueError('expired at scan completion')
+        lookup=BoundedRebaseLookup(valid,macho_got(),check);state['active']=True
+        with self.assertRaisesRegex(ValueError,'scan completion'):lookup(0x2000)
+        self.assertEqual(lookup.cache,{})
+        lookup=BoundedRebaseLookup('',macho_got())
+        for i in range(64):
+            with self.assertRaisesRegex(ValueError,'no supported'):lookup(0x2000+8*i)
+        with self.assertRaisesRegex(ValueError,'64-slot'):lookup(0x5000)
+
     def test_data_imports_and_rebases_are_exact_delivered_sections_not_call_stubs(self):
         data=macho_got()
         indirect='Indirect symbols for (__DATA_CONST,__got) 1 entries\n0x2000 9 __NSConcreteStackBlock\n'
