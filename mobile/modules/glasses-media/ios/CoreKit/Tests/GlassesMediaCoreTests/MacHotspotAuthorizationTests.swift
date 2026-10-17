@@ -215,6 +215,88 @@ final class MacHotspotAuthorizationTests: XCTestCase {
         closed(authorization)
     }
 
+    func testOwnerRestorationBeforeFailedWorkerResultContinuesOnlyRetainedCleanup() throws {
+        let manager = Manager()
+        let authorization = started(manager)
+        let wifi = Wifi()
+        wifi.onJoin = { manager.status = .denied }
+        let association = MacHotspotAssociation(makeInterface: { wifi }, authorization: authorization)
+        XCTAssertThrowsError(try association.associate(ssid: "glasses", password: "private"))
+        authorization.locationManagerDidChangeAuthorization(manager)
+
+        var generation = 17
+        var finishingLeave = false
+        var attempts = 0
+        var workerResult: Result<Void, Error>?
+        var continuation: MacHotspotCleanupContinuation!
+        continuation = MacHotspotCleanupContinuation(authorization: authorization, queue: .main,
+                                                     isCurrentCancelledSession: { generation == 17 }, requestCleanup: {
+                                                         guard !finishingLeave else { return }
+                                                         finishingLeave = true
+                                                         continuation.cleanupStarted()
+                                                         attempts += 1
+                                                         workerResult = Result { try association.leave() }
+                                                     })
+        // The worker has failed, but its result has not reached the owner yet.
+        finishingLeave = true
+        continuation.cleanupStarted()
+        attempts = 1
+        let firstWorkerResult = Result { try association.leave() }
+        XCTAssertThrowsError(try firstWorkerResult.get())
+        manager.status = .authorizedAlways
+        authorization.locationManagerDidChangeAuthorization(manager)
+        authorization.locationManagerDidChangeAuthorization(manager)
+        let restorationQueued = expectation(description: "actual owner restoration callback delivered")
+        DispatchQueue.main.async { restorationQueued.fulfill() }
+        wait(for: [restorationQueued], timeout: 2)
+        XCTAssertEqual(attempts, 1, "Restoration cannot overtake the in-flight cleanup")
+
+        // Now the owner receives the old denied result. The pending restoration
+        // must start one serialized, freshly authorized cleanup, never a rejoin.
+        finishingLeave = false
+        continuation.cleanupFailed()
+        try XCTUnwrap(workerResult).get()
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(wifi.leaves, 1)
+        XCTAssertEqual(wifi.joins, 1)
+        generation += 1
+        continuation.cleanupFailed()
+        XCTAssertEqual(attempts, 2)
+        closed(authorization)
+    }
+
+    func testOwnerRestorationRetainsNoAutomaticLoopOrStaleGeneration() {
+        let manager = Manager()
+        let authorization = started(manager)
+        var current = true
+        var requests = 0
+        let continuation = MacHotspotCleanupContinuation(authorization: authorization, queue: .main,
+                                                         isCurrentCancelledSession: { current }, requestCleanup: { requests += 1 })
+        manager.status = .denied
+        authorization.locationManagerDidChangeAuthorization(manager)
+        manager.status = .authorizedAlways
+        authorization.locationManagerDidChangeAuthorization(manager)
+        let delivered = expectation(description: "first restoration")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 2)
+        XCTAssertEqual(requests, 1)
+        continuation.cleanupStarted()
+        continuation.cleanupFailed()
+        XCTAssertEqual(requests, 1, "Without a newer restoration, failed cleanup retains custody")
+
+        manager.status = .denied
+        authorization.locationManagerDidChangeAuthorization(manager)
+        manager.status = .authorizedAlways
+        authorization.locationManagerDidChangeAuthorization(manager)
+        current = false // Closed generation before the queued callback executes.
+        let stale = expectation(description: "stale restoration")
+        DispatchQueue.main.async { stale.fulfill() }
+        wait(for: [stale], timeout: 2)
+        continuation.cleanupFailed()
+        XCTAssertEqual(requests, 1)
+        closed(authorization)
+    }
+
     func testCancelWhileInitialCallbackIsHeldSettlesOnceAndIgnoresLateGrant() {
         let manager = Manager(); manager.status = .notDetermined
         let authorization = MacHotspotAuthorization(makeManager: { manager }, locationServicesEnabled: { true })
