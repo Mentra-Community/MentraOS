@@ -33,7 +33,7 @@ export function validateAndroidReceipt(receipt, {pr, sha, runId, attempt, diagno
     typeof app.build === "string" && /^[1-9]\d*$/.test(app.build) && Number(app.build) <= 2100000000 &&
     (app.mobileFingerprint === undefined || HASH.test(app.mobileFingerprint)) &&
     (app.mobileSourceCommit === undefined || SHA.test(app.mobileSourceCommit)), "Invalid Android app identity or OTA pin")
-  requireThat(diagnostic ? receipt?.diagnosticVerification?.kind === 'compiled-receiver-wiring-v1' && receipt.diagnosticVerification.apkSha256 === receipt.artifacts?.android?.sha256 && receipt.diagnosticVerification.analyzer?.source === 'android-sdk-command-line-tools' && /^[0-9.]+$/.test(receipt.diagnosticVerification.analyzer?.revision ?? '') && HASH.test(receipt.diagnosticVerification.analyzer?.sha256 ?? '') && HASH.test(receipt.diagnosticVerification.wiringSha256 ?? '') : receipt?.diagnosticVerification === undefined, 'Diagnostic compiled-wiring verification differs')
+  requireThat(diagnostic ? receipt?.diagnosticVerification?.kind === 'compiled-capture-wiring-v2' && receipt.diagnosticVerification.captureProtocol === 'nimo-preconnect-capture-v1' && receipt.diagnosticVerification.captureRequiredBeforeArm === true && receipt.diagnosticVerification.scanInstancePreserved === true && receipt.diagnosticVerification.apkSha256 === receipt.artifacts?.android?.sha256 && receipt.diagnosticVerification.analyzer?.source === 'android-sdk-command-line-tools' && /^[0-9.]+$/.test(receipt.diagnosticVerification.analyzer?.revision ?? '') && HASH.test(receipt.diagnosticVerification.analyzer?.sha256 ?? '') && HASH.test(receipt.diagnosticVerification.wiringSha256 ?? '') : receipt?.diagnosticVerification === undefined, 'Diagnostic compiled-wiring verification differs')
   const asset = receipt.artifacts?.android
   requireThat(Object.keys(receipt.artifacts ?? {}).join() === "android" &&
     asset?.name === name.replace(/\.json$/, ".apk") && HASH.test(asset.sha256 ?? "") && positive(asset.size),
@@ -95,7 +95,7 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
     app.diagnostic = 'nimo-resource-v1'
   }
   const bytes = await readFile(apk)
-  const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1", diagnosticVerification: {...diagnosticProof, kind:"compiled-receiver-wiring-v1", apkSha256:createHash("sha256").update(bytes).digest("hex")}} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
+  const receipt = {schemaVersion: 1, ...(diagnostic ? {diagnostic: "nimo-resource-v1", diagnosticVerification: {...diagnosticProof, kind:"compiled-capture-wiring-v2", apkSha256:createHash("sha256").update(bytes).digest("hex")}} : {}), pr, headSha, baseSha, buildSha, runId, runAttempt, app,
     artifacts: {android: {name: name.replace(/\.json$/, ".apk"), sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length}}}
   validateAndroidReceipt(receipt, {pr, sha: headSha, runId, attempt: runAttempt, diagnostic})
   const file = path.join(path.dirname(apk), name)

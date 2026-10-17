@@ -6,13 +6,16 @@ import path from 'node:path'
 export const NIMO_DIAGNOSTIC = 'com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics'
 export const NIMO_RECEIVER = `${NIMO_DIAGNOSTIC}$receiver$1`
 export const NIMO_MANAGER = 'com.mentra.bluetoothsdk.DeviceManager'
+export const NIMO_SDK = 'com.mentra.bluetoothsdk.MentraBluetoothSdk'
+export const NIMO_DEVICE = 'com.mentra.bluetoothsdk.sgcs.Nimo'
+export const CAPTURE_PROTOCOL = 'nimo-preconnect-capture-v1'
 const descriptor = name => `L${name.replaceAll('.', '/')};`
 const escaped = value => [...value].map(char => '\\^$.*+?()[]{}|'.includes(char) ? '\\' + char : char).join('')
 function method(code, signature) {
   const methods = [...code.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)]
   return methods.find(value => value[1].trim().endsWith(signature))?.[2] ?? ''
 }
-export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager}) {
+export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager, sdk, nimo}) {
   const target = descriptor(NIMO_DIAGNOSTIC), child = descriptor(NIMO_RECEIVER), owner = descriptor(NIMO_MANAGER)
   const hasClass = (text, name) => new RegExp(`^\\.class[^\\n]* ${escaped(name)}$`, 'm').test(text)
   const invoke = (text, reference) => new RegExp(`^\\s*invoke-[^\\n]+${reference}`, 'm').test(text)
@@ -31,6 +34,88 @@ export function validateNimoDiagnosticBytecode({diagnostics, receiver, manager})
       !invoke(receive, `${escaped(target)}->execute(?:\\$[A-Za-z0-9_]+)?\\(Landroid/content/Intent;\\)V`) ||
       !invoke(manager, `${escaped(target)}->start\\(Landroid/content/Context;\\)V`))
     throw new Error('Diagnostic APK lacks compiled NIMO receiver class and registration/startup wiring')
+
+  // Verify actual call sites and consumed boolean guards, not capability strings alone.
+  const guarded = (body, name) => {
+    const instructions = body.replace(/^\s*(?:#.*|\.(?:line|local|end local|restart local|prologue|epilogue)\b[^\n]*)$/gm,'')
+    const args = name === 'dispatchCapturedEntry' ? 'Lkotlin/jvm/functions/Function0;' :
+      ['allowManagerConnect','preserveCapturedScan'].includes(name) ? 'Ljava/lang/String;Ljava/lang/String;' :
+      `${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z`
+    const normal = `${name}\\(${escaped(args)}\\)Z`
+    const bridge = name === 'allowManagerConnect' ? `|${name}\\$default\\(${escaped(target + args + 'ILjava/lang/Object;')}\\)Z` : ''
+    return new RegExp(`invoke-[^\\n]+${escaped(target)}->(?:${normal}${bridge})\\s*\\n\\s*move-result\\s+([vp][0-9]+)\\s*\\n\\s*if-(?:eqz|nez)\\s+\\1\\s*,`).test(instructions)
+  }
+  const checks = [
+    [sdk, NIMO_SDK, 'connect(Lcom/mentra/bluetoothsdk/Device;Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect','preserveCapturedScan']],
+    [sdk, NIMO_SDK, 'connectDefault(Lcom/mentra/bluetoothsdk/ConnectOptions;)V', ['dispatchCapturedEntry','allowManagerConnect','preserveCapturedScan']],
+    [sdk, NIMO_SDK, 'startScan(Lcom/mentra/bluetoothsdk/DeviceModel;)V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [manager, NIMO_MANAGER, 'connectByName(Ljava/lang/String;)V', ['dispatchCapturedEntry','allowManagerConnect','preserveCapturedScan']],
+    [manager, NIMO_MANAGER, 'connectDefault()V', ['dispatchCapturedEntry','allowManagerConnect']],
+    [nimo, NIMO_DEVICE, 'connectById(Ljava/lang/String;)V', ['dispatchCapturedEntry','admit']],
+    [nimo, NIMO_DEVICE, 'findCompatibleDevices()V', ['dispatchCapturedEntry','admit']],
+    [nimo, NIMO_DEVICE, 'connectCompanionGatt(Landroid/bluetooth/BluetoothDevice;)V', ['allowPeer']],
+    [nimo, NIMO_DEVICE, 'startBond(Landroid/bluetooth/BluetoothDevice;)V', ['allowPeer']],
+    [nimo, NIMO_DEVICE, 'connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V', ['beginTransport']],
+  ]
+  const execute = method(diagnostics, 'execute$bluetooth_sdk_nimoDiagnostic(Landroid/content/Intent;)V') ||
+    [...diagnostics.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)].find(v=>/execute(?:\$[A-Za-z0-9_]+)?\(Landroid\/content\/Intent;\)V$/.test(v[1]))?.[2] || ''
+  const snapshot = [...diagnostics.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)].find(v=>/captureSnapshot\(/.test(v[1]))?.[2] || ''
+  const dispatch = method(diagnostics,'dispatchCapturedEntry(Lkotlin/jvm/functions/Function0;)Z')
+  const named = expression => [...diagnostics.matchAll(/^\.method\b([^\n]*)\n([\s\S]*?)^\.end method\s*$/gm)].find(v=>expression.test(v[1].trim()))?.[2] || ''
+  const policyName = 'preArmCaptureRequired(?:\\$[A-Za-z0-9_]+)?'
+  const policy = named(/ preArmCaptureRequired(?:\$[A-Za-z0-9_]+)?\(Ljava\/lang\/String;\)Z$/)
+  const defaults = named(/ preArmCaptureRequired(?:\$[A-Za-z0-9_]+)?\$default\(/)
+  const unarmed = named(/ allowUnarmedWearable(?:\$[A-Za-z0-9_]+)?\(Ljava\/lang\/String;Ljava\/lang\/String;\)Z$/)
+  const policyCall = `${escaped(target)}->${policyName}\\(Ljava/lang/String;\\)Z`
+  const defaultCall = `${escaped(target)}->${policyName}\\$default\\(${escaped(target)}Ljava/lang/String;ILjava/lang/Object;\\)Z`
+  const consumed = (body, reference, jsonField) => {
+    // This is a bounded straight-line compiler pattern, not a control-flow proof.
+    // A boolean inversion is useful only when its destination reaches the sink.
+    const instructions = body.split('\n').map(line=>line.trim()).filter(line=>line &&
+      !/^(?:#|\.(?:line|local|end local|restart local|prologue|epilogue)\b)/.test(line))
+    const call = new RegExp(`^invoke-[^\\n]+${reference}$`)
+    return instructions.some((line,index)=>{
+      if (!call.test(line)) return false
+      let register = /^move-result\s+([vp][0-9]+)$/.exec(instructions[index+1] ?? '')?.[1]
+      if (!register) return false
+      let next = index+2
+      const inversion = /^xor-int\/lit8\s+([vp][0-9]+),\s*([vp][0-9]+),\s*(?:0x1|1)$/.exec(instructions[next] ?? '')
+      if (inversion) {
+        if (inversion[2] !== register) return false
+        register = inversion[1]; next++
+      }
+      const sink = instructions[next] ?? ''
+      if (!jsonField) return new RegExp(`^(?:return\\s+${register}$|if-(?:eqz|nez)\\s+${register}\\s*,)`).test(sink)
+      const put = /^invoke-virtual\s+\{([vp][0-9]+),\s*([vp][0-9]+),\s*([vp][0-9]+)\},\s*Lorg\/json\/JSONObject;->put\(Ljava\/lang\/String;Z\)Lorg\/json\/JSONObject;$/.exec(sink)
+      if (!put || put[3] !== register) return false
+      // The key's most recent assignment must be the expected literal. Do not
+      // borrow a literal whose register was subsequently overwritten.
+      for (let previous=next-1; previous>=Math.max(0,index-12); previous--) {
+        const value = instructions[previous]
+        if (new RegExp(`^[a-z][a-z0-9/-]*\\s+${put[2]}(?:\\s*,|$)`).test(value))
+          return new RegExp(`^const-string(?:/jumbo)?\\s+${put[2]},\\s*"${escaped(jsonField)}"$`).test(value)
+      }
+      return false
+    })
+  }
+  const diagnosticLiteral = (body, reference) => new RegExp(`const-string(?:/jumbo)?\\s+([vp][0-9]+),\\s*"nimoDiagnostic"[\\s\\S]*?invoke-[^\\n]+\\{[^}]*\\b\\1\\b[^}]*\\}[^\\n]*${reference}`).test(body)
+  if (!diagnosticLiteral(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual') || !consumed(policy,'Lkotlin/jvm/internal/Intrinsics;->areEqual\\(Ljava/lang/Object;Ljava/lang/Object;\\)Z') ||
+      !diagnosticLiteral(defaults,policyCall) || !consumed(defaults,policyCall) ||
+      !diagnosticLiteral(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'),`${escaped(target)}->allowUnarmedWearable`) ||
+      !consumed(method(diagnostics,'allowManagerConnect(Ljava/lang/String;Ljava/lang/String;)Z'), `${escaped(target)}->allowUnarmedWearable(?:\\$[A-Za-z0-9_]+)?\\(Ljava/lang/String;Ljava/lang/String;\\)Z`) ||
+      !consumed(unarmed,policyCall) || !/const-string(?:\/jumbo)?[^\n]*"NIMO"/.test(unarmed) ||
+      !['admit','allowPeer','beginTransport'].every(name=>consumed(method(diagnostics,`${name}(${descriptor(NIMO_DEVICE)}Ljava/lang/String;Z)Z`),defaultCall)) ||
+      !consumed(snapshot,defaultCall,'captureRequiredBeforeArm'))
+    throw new Error('Diagnostic APK lacks compiled diagnostic-only deny-before-arm policy wiring')
+
+  if (checks.some(([code, cls, signature, guards]) => !hasClass(code ?? '',descriptor(cls)) || guards.some(guard=>!guarded(method(code,signature),guard))) ||
+      ['arm-capture','capture-status','cancel-capture'].some(value=>!execute.includes(`"${value}"`)) ||
+      !snapshot.includes(`"${CAPTURE_PROTOCOL}"`) ||
+      !invoke(execute, `${escaped(descriptor(NIMO_DEVICE))}->releaseCapturedResource(?:\\$[A-Za-z0-9_]+)?\\(`) ||
+      !invoke(dispatch, 'Landroid/os/Handler;->post\\(') ||
+      !invoke(dispatch, 'Ljava/util/concurrent/FutureTask;->get\\(') ||
+      !invoke(dispatch, 'Ljava/util/concurrent/FutureTask;->cancel\\('))
+    throw new Error('Diagnostic APK lacks compiled pre-connect capture protocol and SDK/NIMO admission guards')
 }
 /** Only installed SDK packages are eligible; neither PATH nor a caller tool path is a fallback. */
 export async function resolveAndroidSdkAnalyzer(sdkHome) {
@@ -78,7 +163,7 @@ export async function inspectNimoDiagnosticBytecode(apk, sdkHome, exec) {
   } }
   await hashFile(analyzer); await hashFile(path.join(root,'source.properties')); await walk(path.join(root,'lib'))
   const read = name => exec(analyzer, ['dex', 'code', '--class', name, apk], {encoding:'utf8', maxBuffer:16 * 1024 * 1024})
-  const code = {diagnostics:read(NIMO_DIAGNOSTIC), receiver:read(NIMO_RECEIVER), manager:read(NIMO_MANAGER)}
+  const code = {diagnostics:read(NIMO_DIAGNOSTIC), receiver:read(NIMO_RECEIVER), manager:read(NIMO_MANAGER), sdk:read(NIMO_SDK), nimo:read(NIMO_DEVICE)}
   validateNimoDiagnosticBytecode(code)
-  return {analyzer:{source:'android-sdk-command-line-tools',revision,sha256:digest.digest('hex')}, wiringSha256:createHash('sha256').update(JSON.stringify(code)).digest('hex')}
+  return {captureProtocol:CAPTURE_PROTOCOL, captureRequiredBeforeArm:true, scanInstancePreserved:true, analyzer:{source:'android-sdk-command-line-tools',revision,sha256:digest.digest('hex')}, wiringSha256:createHash('sha256').update(JSON.stringify(code)).digest('hex')}
 }
