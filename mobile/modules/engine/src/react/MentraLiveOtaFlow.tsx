@@ -79,8 +79,6 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:startingHotspotUpdate": "Starting update…",
   "ota:transferringToGlasses": "Transferring update to glasses…",
   "ota:installingOnGlasses": "Installing update on glasses…",
-  "ota:transportHotspot": "Using glasses hotspot",
-  "ota:transportWifi": "Using Wi-Fi",
   "ota:componentApk": "Glasses software",
   "ota:componentMtk": "System firmware",
   "ota:componentBes": "Bluetooth firmware",
@@ -242,36 +240,12 @@ export function MentraLiveOtaPreview({
 }
 
 function OtaFlowFrame({allowDevSkip, colors, controller, deviceName, style, superMode, translate}: OtaFlowFrameProps) {
-  const {state} = controller
-  const transportLabel =
-    state.transport &&
-    [
-      "starting",
-      "preparing_hotspot",
-      "updating",
-      "restarting",
-      "verifying",
-      "complete",
-      "failed",
-      "disconnected",
-    ].includes(state.screen)
-      ? translate(state.transport === "hotspot" ? "ota:transportHotspot" : "ota:transportWifi")
-      : null
-
   return (
     <SafeAreaView style={[styles.safeArea, {backgroundColor: colors.background}, style]}>
       <View style={styles.header}>
         <View />
         <MentraMark color={colors.primary} />
       </View>
-      {transportLabel ? (
-        <Text
-          accessibilityLabel={transportLabel}
-          style={[styles.transport, {color: colors.textDim}]}
-          testID={`ota.transport.${state.transport}`}>
-          {transportLabel}
-        </Text>
-      ) : null}
       <OtaFlowContent
         allowDevSkip={allowDevSkip}
         colors={colors}
@@ -369,7 +343,7 @@ function OtaFlowContent({
           <>
             <FlowButton
               colors={colors}
-              disabled={!state.wifiStatusKnown}
+              disabled={state.screen === "wifi_required" ? !state.wifiStatusKnown : !state.canInstall}
               label={translate(state.screen === "wifi_required" ? "ota:setupWifi" : "ota:updateNow")}
               onPress={state.screen === "wifi_required" ? controller.openWifiSetup : controller.install}
             />
@@ -924,7 +898,6 @@ const styles = StyleSheet.create({
   svgIcon: {alignItems: "center", height: 72, justifyContent: "center", width: 72},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
-  transport: {fontSize: 12, lineHeight: 16, textAlign: "center"},
   errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},

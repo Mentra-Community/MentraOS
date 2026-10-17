@@ -127,16 +127,16 @@ test("keeps the direct Wi-Fi download label", () => {
 })
 
 test.each(["starting", "preparing_hotspot", "updating", "restarting", "verifying", "complete", "failed"] as const)(
-  "exposes the selected transport during %s without deriving it from current Wi-Fi state",
+  "omits the transport header during %s for either transport",
   (screenName) => {
     state = {...state, screen: screenName, transport: "hotspot", wifiConnected: true}
     const screen = render(flow())
-    expect(screen.getByTestId("ota.transport.hotspot").props.accessibilityLabel).toBe("Using glasses hotspot")
+    expect(screen.queryByText("Using glasses hotspot")).toBeNull()
     expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
 
     state = {...state, transport: "wifi", wifiConnected: false}
     screen.rerender(flow())
-    expect(screen.getByTestId("ota.transport.wifi").props.accessibilityLabel).toBe("Using Wi-Fi")
+    expect(screen.queryByText("Using Wi-Fi")).toBeNull()
     expect(screen.queryByTestId("ota.transport.hotspot")).toBeNull()
   },
 )

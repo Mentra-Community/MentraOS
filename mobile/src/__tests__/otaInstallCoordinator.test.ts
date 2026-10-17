@@ -167,6 +167,7 @@ afterEach(async () => {
   await otaInstallCoordinator.discard()
   useGlassesStore.getState().setGlassesInfo({
     connection: {state: "connected", fullyBooted: true},
+    hotspotOtaVersion: 0,
     wifi: {state: "connected", ssid: "test"},
   })
   otaInstallCoordinator.prepare(checkResult())
@@ -193,13 +194,76 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     restored.detach()
   })
 
+  it.each([false, true])("uses hotspot for a recovered start (failed session: %s)", async (failed) => {
+    const checker = require("../../modules/engine/src/services/OtaUpdateCheckService")
+    const checkSpy = jest.spyOn(checker, "checkCurrentGlassesForUpdate").mockResolvedValue(checkResult())
+    const recovered = otaInstallCoordinator as unknown as {preparedCheckResult: OtaCheckCurrentGlassesResult | null}
+    recovered.preparedCheckResult = null
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "39",
+      hotspotOtaVersion: 1,
+      wifi: {state: "connected", ssid: "office"},
+    })
+    if (failed) useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed", error: "download_failed"}))
+    otaInstallCoordinator.attach()
+    if (failed) otaInstallCoordinator.retry()
+    await flushNativeStartPromise()
+    expect(checkSpy).toHaveBeenCalledTimes(1)
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("http://192.168.43.2:8791/version.json")
+    expect(otaInstallCoordinator.snapshot().transport).toBe("hotspot")
+    checkSpy.mockRestore()
+  })
+
+  it("initializes recovered downgrade guards before staging without a prepared offer", async () => {
+    const restored = otaInstallCoordinator
+    const store = useGlassesStore
+    const events = GlobalEventEmitter
+    const target = 302010070
+    const checker = require("../../modules/engine/src/services/OtaUpdateCheckService")
+    const checkSpy = jest.spyOn(checker, "checkCurrentGlassesForUpdate").mockResolvedValue({
+      ...checkResult(),
+      updateInfo: {versionCode: target, versionName: "3.2.1-beta.70", isDowngrade: true, updates: ["apk"]},
+    })
+    // Simulate process recovery: no selected offer survived with the progress route.
+    ;(restored as unknown as {preparedCheckResult: OtaCheckCurrentGlassesResult | null}).preparedCheckResult = null
+    store.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "303000001",
+      hotspotOtaVersion: 1,
+    })
+    restored.attach()
+    await flushNativeStartPromise()
+    expect(restored.snapshot().isVersionChange).toBe(true)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    events.emit("ota_start_ack", {timestamp: Date.now()})
+    store.getState().setOtaStatus(inProgressStatus({phase: "install"}))
+    expect(restored.snapshot().versionChangePhase).toBe("installing")
+    restored.detach()
+    restored.attach()
+    restored.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    store.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    store.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1})
+    events.emit("glasses_session_changed", {sid: "new"})
+    restored.retry()
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    store.getState().setGlassesInfo({buildNumber: String(target)})
+    expect(restored.snapshot()).toMatchObject({versionChangeConverged: true, displayState: "complete"})
+    restored.detach()
+    await restored.discard()
+    checkSpy.mockRestore()
+  })
+
   it.each(["wifi", "hotspot"] as const)(
     "retains the selected %s transport across a same-process remount",
     (transport) => {
       useGlassesStore.getState().setGlassesInfo({
         connection: {state: "connected", fullyBooted: true},
         buildNumber: "39",
-        hotspotOtaVersion: 1,
+        hotspotOtaVersion: transport === "hotspot" ? 1 : 0,
         wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
       })
       otaInstallCoordinator.prepare(checkResult())
@@ -260,10 +324,27 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
-  it("waits for an explicit glasses Wi-Fi status before choosing a transport", () => {
-    useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 1})
+  it("waits for an explicit glasses Wi-Fi status when hotspot OTA is unavailable", () => {
+    useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 0})
 
     expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("Wi-Fi status is not available")
+  })
+
+  it("selects hotspot without waiting for glasses Wi-Fi status", () => {
+    useGlassesStore
+      .getState()
+      .setGlassesInfo({connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1})
+    expect(useGlassesStore.getState().wifiStatusKnown).toBe(false)
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
+  })
+
+  it("keeps connected Wi-Fi OTA for glasses without hotspot capability", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 0,
+      wifi: {state: "connected", ssid: "office"},
+    })
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("wifi")
   })
 
   it("selects hotspot when glasses have no Wi-Fi and advertise the capability", () => {
@@ -296,14 +377,14 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
     expect(() => otaInstallCoordinator.prepare(checkResult())).toThrow("require Wi-Fi")
   })
 
-  it("uses the existing Wi-Fi transport when glasses Wi-Fi is connected", () => {
+  it("always selects hotspot when supported, even with glasses Wi-Fi connected", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       hotspotOtaVersion: 1,
       wifi: {state: "connected", ssid: "office"},
     })
 
-    expect(otaInstallCoordinator.prepare(checkResult())).toBe("wifi")
+    expect(otaInstallCoordinator.prepare(checkResult())).toBe("hotspot")
   })
 
   it("sends one hotspot ota_start and only queries status across an ASG SID change", async () => {
@@ -685,7 +766,7 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
   const prepareDowngrade = (versionCode = target, transport: "wifi" | "hotspot" = "wifi") => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
-      hotspotOtaVersion: 1,
+      hotspotOtaVersion: transport === "hotspot" ? 1 : 0,
       wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
     })
     const checked = {
