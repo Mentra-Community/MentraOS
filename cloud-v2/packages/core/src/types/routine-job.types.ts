@@ -31,13 +31,16 @@ export const routineJobPreparationSchema = z.object({routineSource: routineSourc
 export const routineQualificationTargetSchema = z.object({jobId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   laneId: frameworkIdentitySchema, inputSha256: jobHashSchema, deadline: z.string().datetime({offset: true}),
   selection: portableRoutineSelectionSchema, requirements: portableRequirementsSchema,
+  preparing: z.object({dispatchIntentSha256: jobHashSchema, fleetInputSha256: jobHashSchema,
+    bindingSha256: jobHashSchema, admissionSha256: jobHashSchema, reservationSha256: jobHashSchema}).strict().optional(),
   accepted: z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, inputSha256: jobHashSchema,
     acceptedAt: z.string().datetime({offset: true}), binding: frameworkBindingSchema,
     controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
   target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
     value.selection.platform === 'ios-on-mac' && value.requirements.platform === value.selection.platform &&
     (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)) &&
-    (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId),
+    (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId) &&
+    (!value.preparing || !value.accepted && value.target?.hostId === value.hostId && value.target.laneId === value.laneId),
   'Qualification target differs from its selected job, platform or explicit lane constraint');
 export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;
 /** Exact passive owner lookup on the existing host-authenticated target read. */
