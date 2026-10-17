@@ -474,7 +474,7 @@ test('diagnostic signed publication is explicit authoring selection and cannot b
  f.rows.set(`${API}/actions/runs/50/attempts/1`, run({path: '.github/workflows/mentra-app-android-build.yml', event: 'workflow_dispatch', head_branch: 'dev',
    display_title: `Routine PR #12 ${HEAD} dev`}));
  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count:1,jobs:[{...jobs[0]!, steps:[{name:'Upload APK to the public artifact CDN', status:'completed', conclusion:'success'}]}]});
- const receipt = {schemaVersion:1,diagnostic:'nimo-resource-v1',diagnosticVerification:{kind:'compiled-capture-wiring-v2',captureProtocol:'nimo-preconnect-capture-v1',captureRequiredBeforeArm:true,scanInstancePreserved:true,apkSha256:HASH,wiringSha256:HASH,analyzer:{source:'android-sdk-command-line-tools',revision:'19.0',sha256:HASH}},pr:12,headSha:HEAD,baseSha:BASE,buildSha:MERGE,runId:50,runAttempt:1,
+ const receipt = {schemaVersion:1,diagnostic:'nimo-resource-v1',diagnosticVerification:{kind:'compiled-capture-wiring-v3',clockProtocol:'nimo-monotonic-receipt-v1',captureProtocol:'nimo-preconnect-capture-v1',captureRequiredBeforeArm:true,scanInstancePreserved:true,apkSha256:HASH,wiringSha256:HASH,analyzer:{source:'android-sdk-command-line-tools',revision:'19.0',sha256:HASH}},pr:12,headSha:HEAD,baseSha:BASE,buildSha:MERGE,runId:50,runAttempt:1,
    app:{packageId:'com.mentra.mentra',version:'3.4.0',build:'42',headSha:HEAD,buildSha:MERGE,backend:'dev', diagnostic:'nimo-resource-v1',otaManifestUrl:`${CDN}pr-builds/ota-pr-12-${HEAD}.json`},
    artifacts:{android:{name:`${name}.apk`,sha256:HASH,size:100}}};
  f.rows.set(`${CDN}pr-builds/${name}.json`,receipt);
@@ -483,6 +483,9 @@ test('diagnostic signed publication is explicit authoring selection and cannot b
  expect(await f.gateway.resolveNimoDiagnostic(source)).toMatchObject({availability:'available',diagnostic:'nimo-resource-v1'});
  for (const proof of [
    {...receipt.diagnosticVerification,kind:'compiled-receiver-wiring-v1'},
+   {...receipt.diagnosticVerification,kind:'compiled-capture-wiring-v2'},
+   {...receipt.diagnosticVerification,clockProtocol:undefined},
+   {...receipt.diagnosticVerification,clockProtocol:'epoch-v1'},
    {...receipt.diagnosticVerification,captureProtocol:undefined},
     {...receipt.diagnosticVerification,captureRequiredBeforeArm:undefined},
     {...receipt.diagnosticVerification,captureRequiredBeforeArm:false},

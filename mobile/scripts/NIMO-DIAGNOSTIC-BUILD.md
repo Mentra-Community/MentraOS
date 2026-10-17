@@ -19,7 +19,7 @@ CI invokes Android SDK `apkanalyzer dex code --class` on the signed APK and veri
 the diagnostic class, DUMP-protected registration/start method, instantiated receiver
 subclass/onReceive dispatch, and DeviceManager startup call. Its package revision and
 launcher/library content digest are recorded in hash-bound `diagnosticVerification`
-(`compiled-capture-wiring-v2`). The first actual diagnostic build must exercise this
+(`compiled-capture-wiring-v3`). The first actual diagnostic build must exercise this
 tool before admission; source mocks alone do not qualify an APK. Discovery is bounded
 to executable, revisioned packages under the canonical SDK cmdline-tools directory;
 a latest alias is resolved before hashing, and PATH/outside-SDK tools are refused. CI also verifies an immutable diagnostic asset,
@@ -82,3 +82,21 @@ in the connection branch. Missing any one guard rejects publication; Core and
 the harness reject earlier/missing/false scan-preservation receipts. The method
 ABI and Kotlin object static receiver initialization were checked with the
 Kotlin compiler and `javap`; actual APK analyzer execution is still required.
+
+
+The v3 proof requires `clockProtocol: "nimo-monotonic-receipt-v1"`. Native receipt
+`clock` values use `android-elapsed-realtime-v1` (`SystemClock.elapsedRealtime`,
+including suspend). Each request retains its original received timestamp before
+any effects; live snapshots carry their observation time. The original captured
+arm, same-instance admission, GATT generation start, and first accepted release
+nonce/start remain immutable. Firmware, TWS, time command/ACK, microphone stop,
+and Exit markers carry explicit nullable monotonic counterparts to the epoch
+fields. Epoch timestamps are human diagnostics and must never be compared with
+host time or used for event ordering. Later status reads preserve original release
+anchors and cannot renew earlier timeout/release evidence.
+
+The harness uses its original durable host operation admission for host freshness
+and `checkedAt`; it compares native markers only to the original phone anchors.
+Process UUID, PID, capture, instance and generation fences remain required.
+Old v2/epoch-only artifacts are refused before native preparation, independently
+of source declarations. Actual SDK disassembly is still a first-build gate.

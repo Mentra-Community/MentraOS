@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import com.mentra.bluetoothsdk.BuildConfig
 import com.mentra.bluetoothsdk.DeviceManager
 import org.json.JSONObject
@@ -18,6 +19,7 @@ import java.util.UUID
 /** Fixed, DUMP-protected debug commands. Expected address is comparison-only, never a connection target.
  * No packet, device-command, caller path, reset, bond or radio inputs are accepted. */
 internal object NimoResourceDiagnostics {
+    const val CLOCK_PROTOCOL = "nimo-monotonic-receipt-v1"
     const val ACTION = "com.mentra.bluetoothsdk.NIMO_RESOURCE_LIFECYCLE"
     private val main = Handler(Looper.getMainLooper())
     private val processInstanceId = UUID.randomUUID().toString()
@@ -28,7 +30,8 @@ internal object NimoResourceDiagnostics {
     private val requests = linkedSetOf<String>()
     private data class Capture(val nonce: String, val name: String, val address: String,
         var instance: Nimo? = null, var cancelled: Boolean = false, var connectStarted: Boolean = false,
-        var transportStarted: Boolean = false)
+        var transportStarted: Boolean = false, val armedElapsedMs: Long,
+        var admittedElapsedMs: Long? = null)
     // One diagnostic attempt per app process. Cancellation is a process-lifetime fence.
     @Volatile private var capture: Capture? = null
     internal fun preArmCaptureRequired(buildType: String = BuildConfig.BUILD_TYPE): Boolean = buildType == "nimoDiagnostic"
@@ -87,16 +90,21 @@ internal object NimoResourceDiagnostics {
             owned.instance != null && owned.instance !== instance || owned.connectStarted) return false
         if (owned.instance == null) {
             if (!instance.resourceCaptureEligible()) return false
+            val candidateAdmittedElapsedMs = SystemClock.elapsedRealtime()
             owned.instance = instance
             // Immutable admission survives a setup timeout before any GATT session exists.
-            val app = application ?: return false
+            val app = application ?: run { owned.cancelled = true; return false }
             val root = File(app.filesDir, "nimo-lifecycle")
             val target = File(root, "${owned.nonce}.admission.json")
             if (target.exists()) { owned.cancelled = true; return false }
             val pending = File(root, "${owned.nonce}.admission.tmp")
             try {
-                pending.outputStream().use { it.write(captureSnapshot(owned).toString().toByteArray(Charsets.UTF_8)); it.flush() }
+                pending.outputStream().use { it.write(captureSnapshot(owned, candidateAdmittedElapsedMs).toString().toByteArray(Charsets.UTF_8)); it.flush() }
                 check(pending.renameTo(target))
+                // Durable admission is authoritative; no live clock may claim it
+                // before the original immutable receipt is safely committed.
+                instance.resourceCaptureAdmission(owned.nonce, owned.armedElapsedMs, candidateAdmittedElapsedMs)
+                owned.admittedElapsedMs = candidateAdmittedElapsedMs
             } catch (_: Exception) {
                 owned.cancelled = true
                 return false
@@ -124,7 +132,10 @@ internal object NimoResourceDiagnostics {
     }
 
     @Synchronized
-    private fun captureSnapshot(owned: Capture): JSONObject = JSONObject()
+    private fun captureSnapshot(owned: Capture, admittedElapsedMs: Long? = owned.admittedElapsedMs): JSONObject = JSONObject()
+        .put("clockProtocol", CLOCK_PROTOCOL)
+        .put("clock", JSONObject().put("kind", "android-elapsed-realtime-v1").put("armedElapsedMs", owned.armedElapsedMs)
+            .put("admittedElapsedMs", admittedElapsedMs ?: JSONObject.NULL).put("observedElapsedMs", SystemClock.elapsedRealtime()))
         .put("version", "nimo-preconnect-capture-v1").put("nonce", owned.nonce)
         .put("captureRequiredBeforeArm", preArmCaptureRequired())
         .put("expectedPair", JSONObject().put("name", owned.name).put("bluetoothAddress", owned.address))
@@ -166,6 +177,7 @@ internal object NimoResourceDiagnostics {
     @Synchronized
     internal fun execute(intent: Intent) {
         check(Looper.myLooper() == main.looper)
+        val requestReceivedElapsedMs = SystemClock.elapsedRealtime()
         val nonce = intent.getStringExtra("nonce") ?: return
         if (!uuid(nonce) || nonce in requests) return
         val app = application ?: return
@@ -181,7 +193,9 @@ internal object NimoResourceDiagnostics {
             .put("instanceId", instanceId ?: JSONObject.NULL).put("sessionGeneration", if (generation >= 0) generation else JSONObject.NULL)
         fun save(session: JSONObject?, error: String? = null): Boolean {
             val current = DeviceManager.getInstance().sgc
-            val receipt = JSONObject().put("schemaVersion", 1).put("request", request).put("observedAtEpochMs", System.currentTimeMillis())
+            val receipt = JSONObject().put("clockProtocol", CLOCK_PROTOCOL)
+                .put("clock", JSONObject().put("kind", "android-elapsed-realtime-v1").put("requestReceivedElapsedMs", requestReceivedElapsedMs).put("observedElapsedMs", SystemClock.elapsedRealtime()))
+                .put("schemaVersion", 1).put("request", request).put("observedAtEpochMs", System.currentTimeMillis())
                 .put("appPid", Process.myPid()).put("processInstanceId", processInstanceId)
                 .put("currentManager", JSONObject().put("type", current?.type ?: JSONObject.NULL)
                     .put("instanceId", (current as? Nimo)?.resourceInstanceId ?: JSONObject.NULL))
@@ -207,7 +221,7 @@ internal object NimoResourceDiagnostics {
                 if (capture != null || captureNonce != nonce || manager != null) {
                     save(null, "capture-arm-refused-existing-owner"); return
                 }
-                capture = Capture(captureNonce, expectedName, address)
+                capture = Capture(captureNonce, expectedName, address, armedElapsedMs = requestReceivedElapsedMs)
             }
             val owned = capture
             if (owned == null || owned.nonce != captureNonce || owned.name != expectedName || owned.address != address) {
@@ -224,7 +238,7 @@ internal object NimoResourceDiagnostics {
             val original = owned.instance
             if (original == null) { captureReceipt(); return }
             if (DeviceManager.getInstance().sgc !== original) { captureReceipt(original.resourceSnapshot(), "capture-cancel-refused-replacement"); return }
-            original.releaseCapturedResource({ DeviceManager.getInstance().sgc === original }) { result -> captureReceipt(result) }
+            original.releaseCapturedResource({ DeviceManager.getInstance().sgc === original }, { result -> captureReceipt(result) }, nonce, requestReceivedElapsedMs)
             return
         }
         if (mode !in listOf("status", "release") || !Regex("^[0-9A-F]{2}(:[0-9A-F]{2}){5}$").matches(address) ||
@@ -250,10 +264,10 @@ internal object NimoResourceDiagnostics {
         if (instanceId == null || generation < 1 || instance == null || instance !== current) {
             save(snapshot, "release-refused-replaced-or-unowned-target"); return
         }
-        instance.releaseResource(generation, { DeviceManager.getInstance().sgc === instance }) { result ->
+        instance.releaseResource(generation, { DeviceManager.getInstance().sgc === instance }, { result ->
             track(instance)
             if (result.has("error")) save(instance.resourceSnapshot(), result.getString("error")) else save(result)
-        }
+        }, nonce, requestReceivedElapsedMs)
     }
 
     private fun uuid(value: String): Boolean = try { UUID.fromString(value).toString() == value } catch (_: IllegalArgumentException) { false }
