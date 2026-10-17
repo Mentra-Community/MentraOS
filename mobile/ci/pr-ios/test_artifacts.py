@@ -1,5 +1,6 @@
 from test_nimo_async_invocations import AsyncInvocationTests, ActualIosAsyncInvocationTests, InitialActorHopTests, ThrowingTaskInvocationTests, ManagerTaskContextTests, AsyncDecodeBudgetTests, DirectSchedulerTests
 from test_nimo_capability import CapabilityTests
+from test_nimo_discovery_witness import DiscoveryWitnessTests
 from test_nimo_symbol_sections import SectionsTests
 import datetime as dt
 import json

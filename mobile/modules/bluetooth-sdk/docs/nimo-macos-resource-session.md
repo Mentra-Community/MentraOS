@@ -34,8 +34,50 @@ executor can read original immutable files only through separately verified
 controller custody and old-writer cessation; it cannot acquire new native input
 authority by copying an old plan or nonce.
 
-The accepted plan must contain the real CoreBluetooth peripheral UUID. No MAC
-address conversion, guessed UUID or connect-by-address discovery is supported.
+The accepted selection is either a real CoreBluetooth UUID or the strict pair
+`{name,peripheralSelection:"connected-service-exact-name-v1"}`. The latter
+requires the separately published compiled discovery capability. `discover`
+creates the original capture guard (`requestNonce == captureNonce`) and performs
+five seconds of retrieval of system-connected peripherals for service 7033.
+It never scans, connects, installs a peripheral delegate or writes. Only one
+exact-name UUID across candidate collection and still present in
+the final observation can be selected. Ambiguity, a missing peer or cancellation
+leaves selection unavailable. A `_BLE` name does not match the exact main name.
+
+Discovery returns only after its polling task and serial state-delegate queue
+have drained. Its candidate UUID, errors and observation interval remain in the
+immutable original receipt. No NIMO manager/session is admitted during this
+phase. The controller independently brackets discovery with observations of the
+exact enrolled Classic MAC paired and connected; this is an explicit correlation
+policy, not a native MAC-to-UUID mapping or cryptographic identity assertion.
+After validating and pinning those facts and the fresh Android prerequisite,
+the parent can authorize a distinct `arm` request with the SAME capture nonce
+and accepted selection. Native arm requires the persisted original discovery
+receipt and uses only its immutable selected UUID. The accepted pair and capture
+clock are never rewritten. Original UUID-only arm retains its existing behavior.
+
+`status` and `cancel` can inspect/drain a discovery capture with `session:null`.
+A discovery-only return proves the observer stopped and no session/transport was
+admitted; it does not fabricate a peripheral disconnect callback. Failed identity
+selection can still be safely returned after that drain and the separately
+verified fresh Android return. Unknown observer settlement retains custody.
+No MAC conversion, guessed UUID, advertising-only selection or connect-by-address
+discovery is supported.
+
+The discovery capability proves the compiled fixed-service retrieval argument and
+its actual invocation and settlement edges. It is not a whole-program proof of
+absence of effects. The no-scan/no-connect policy comes from the reviewed nine-file
+native source and native tests, bound to the capability's source digest. The
+observer call inventory is explicitly diagnostic (`provesNoEffects:false`).
+The bounded verifier follows the retained retrieval entry, including its recognized
+dead-self specialization, and the actual one-element UUID array into retrieval.
+Swift can allocate this reference array using `CBUUID` storage or its `AnyObject`
+storage optimization. Both emitted metadata branches and their helper bodies must
+match the supported templates; the verifier does not assume an OS-version branch.
+Cache-slot and helper validation is not a whole-image proof that no other code can
+write those slots. An unsupported compiler shape omits discovery support.
+The earlier constant-size local prototype is not a supported production metadata
+template and cannot qualify an artifact.
 If no observed/accepted UUID exists, preflight must remain blocked.
 
 Arm requires an unowned app manager. Connection admission retains the exact

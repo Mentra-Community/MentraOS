@@ -114,7 +114,21 @@ def delivered_sections(data):
     return sections
 
 
-def data_imports_from_indirect(output, data):
+def delivered_segment_protections(data):
+    macho_layout(data)
+    count = struct.unpack_from('<I', data, 16)[0]
+    offset, result = 32, {}
+    for _ in range(count):
+        command, length = struct.unpack_from('<II', data, offset)
+        if command == 0x19:
+            name = data[offset + 8:offset + 24].rstrip(b'\0').decode('ascii')
+            if name in result: raise ValueError('ambiguous delivered segment protection')
+            result[name] = struct.unpack_from('<I', data, offset + 60)[0]
+        offset += length
+    return result
+
+
+def data_imports_from_indirect(output, data, allowed=('__NSConcreteStackBlock',)):
     if len(output) > 16 * 1024 * 1024:
         raise ValueError('delivered data import table exceeds bound')
     sections, active, result = delivered_sections(data), None, {}
@@ -133,7 +147,7 @@ def data_imports_from_indirect(output, data):
             address, name = int(match[1], 16), match[2]
             if address % 8 or not active[0] <= address or address + 8 > active[1]:
                 raise ValueError('data import is outside exact delivered pointer section')
-            if name != '__NSConcreteStackBlock':
+            if name not in allowed:
                 continue
             if address in result:
                 raise ValueError('duplicate delivered data import')
@@ -172,6 +186,8 @@ class BoundedRebaseLookup:
     def __init__(self, output, data, checkpoint=lambda: None):
         self.output, self.data, self.checkpoint = output, data, checkpoint
         self.cache = {}
+        self.selected = {}
+        self.bindings = {}
         self.requests = 0
         checkpoint()
         encoded = output.encode()
@@ -187,13 +203,13 @@ class BoundedRebaseLookup:
                     raise ValueError('delivered fixup metadata exceeds 500k record bound')
         checkpoint()
 
-    def __call__(self, slot):
+    def select(self, slot):
         self.checkpoint()
         if not isinstance(slot, int) or slot < 0 or slot % 8:
             raise ValueError('invalid requested rebase slot')
-        if slot in self.cache:
+        if slot in self.selected:
             self.checkpoint()
-            return self.cache[slot]
+            return self.selected[slot]
         self.requests += 1
         if self.requests > 64:
             raise ValueError('selected rebase lookup exceeds 64-slot bound')
@@ -207,12 +223,43 @@ class BoundedRebaseLookup:
                 if len(selected) > 1:
                     raise ValueError('duplicate requested delivered fixup slot')
         self.checkpoint()
-        resolved = rebase_pointers(''.join(selected), self.data)
+        self.selected[slot] = ''.join(selected)
+        return self.selected[slot]
+
+    def __call__(self, slot):
+        self.checkpoint()
+        if slot in self.cache:
+            self.checkpoint()
+            return self.cache[slot]
+        resolved = rebase_pointers(self.select(slot), self.data)
         if slot not in resolved:
             raise ValueError('requested slot has no supported delivered rebase')
         self.cache[slot] = resolved[slot]
         self.checkpoint()
         return resolved[slot]
+
+    def binding(self, slot):
+        """Selected exact bind facts share the same 64-slot metadata budget."""
+        self.checkpoint()
+        if slot in self.bindings:
+            self.checkpoint()
+            return self.bindings[slot]
+        line = self.select(slot)
+        match = re.fullmatch(r'\s*(\S+)\s+(\S+)\s+0x([0-9a-fA-F]+)\s+bind\s+([A-Za-z0-9_.-]+)/(\S+)\s*', line)
+        if not match or int(match[3], 16) != slot:
+            raise ValueError('requested slot has no exact supported delivered bind')
+        segment, section = match[1], match[2]
+        bounds = delivered_sections(self.data).get((segment, section))
+        if bounds is None or not bounds[0] <= slot or slot + 8 > bounds[1] or not (
+            segment in ('__DATA_CONST', '__DATA') and (
+                section == '__got' and bounds[3] & 0xff == 6 or
+                section == '__objc_classrefs' and bounds[3] & 0xff == 0)):
+            raise ValueError('selected bind is outside exact delivered import section')
+        file_backed_reader(self.data)(slot, 8)
+        value = {'library': match[4], 'symbol': match[5]}
+        self.bindings[slot] = value
+        self.checkpoint()
+        return value
 
 
 def function_start_windows(data, checkpoint=lambda: None):
@@ -457,7 +504,7 @@ def persist_trace(path, trace):
         raise ValueError('compiler trace parent changed during persistence')
 
 
-def archive_symbol_sections(executable, source_root, selectors, run=None, clock=None, diagnostic_path=None, async_edges=None):
+def archive_symbol_sections(executable, source_root, selectors, run=None, clock=None, diagnostic_path=None, async_edges=None, discovery_proof=None):
     clock = clock or time.monotonic
     deadline = clock() + PROOF_SECONDS
     def remaining():
@@ -553,6 +600,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             raise ValueError('initial compiler function entry is aliased')
         disassemble(start, stop, symbol)
     async_error = None
+    discovery_error = None
     async_data_imports, async_reads, async_pointers, fixup_metrics = {}, {}, {}, {}
     if async_edges is not None:
         from nimo_async_invocations import prove_async_edges
@@ -605,6 +653,77 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer, get_body))
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
+        if discovery_proof is not None and async_error is None:
+            try:
+                from nimo_discovery_witness import retrieval_entry, retrieval_argument, objc_selector, observer_calls, StorageMetadata
+                candidates = [(symbol, name) for symbol, name in by_symbol.items()
+                              if retrieval_entry(name)]
+                if len(candidates) != 1 or candidates[0][0] not in functions:
+                    raise ValueError('unique compiled discovery retrieval entry unavailable')
+                symbol = candidates[0][0]
+                extra_imports = data_imports_from_indirect(indirect, delivered, ('_objc_msgSend', '_OBJC_CLASS_$_CBUUID'))
+                sections = delivered_sections(delivered)
+                protections = delivered_segment_protections(delivered)
+                def in_section(address, count, segment, section):
+                    remaining()
+                    keys = [(segment, section)]
+                    if segment == '__DATA': keys.append(('__DATA_CONST', section))
+                    return any((bounds := sections.get(key)) is not None and bounds[0] <= address and address + count <= bounds[1]
+                               and bounds[3] & 0xff not in (1, 12, 18) for key in keys)
+                body = functions[symbol][2]
+                def method(address):
+                    return objc_selector(address, read_bytes, read_pointer, extra_imports.get, in_section)
+                bindings = {}
+                def bind(slot):
+                    remaining()
+                    value = fixups.binding(slot)
+                    read_bytes(slot, 8)
+                    bindings[hex(slot)] = value
+                    return value
+                def static(address, count, kind):
+                    remaining()
+                    if kind == 'zero-cache':
+                        bounds = sections.get(('__DATA', '__data'))
+                        valid = address % 8 == 0 and count == 8 and protections.get('__DATA', 0) & 3 == 3 and bounds is not None and bounds[3] & 0xff == 0 and bounds[0] <= address and address + count <= bounds[1]
+                    else:
+                        section = {'descriptor': '__const', 'typeref': '__swift5_typeref'}.get(kind)
+                        bounds = sections.get(('__TEXT', section))
+                        valid = section is not None and protections.get('__TEXT', 0) & 1 and not protections.get('__TEXT', 0) & 2 and bounds is not None and bounds[3] & 0xff == 0 and in_section(address, count, '__TEXT', section)
+                    if not valid: raise ValueError('discovery metadata static region unavailable')
+                    return read_bytes(address, count)
+                def actual_name(address):
+                    if address not in symbols: return None
+                    actual_symbol = symbols[address][0]
+                    if actual_symbol not in by_symbol:
+                        if actual_symbol.startswith('_$s') or actual_symbol.startswith('$s'):
+                            by_symbol[actual_symbol] = demangle([(address, actual_symbol)])[0]
+                        else: by_symbol[actual_symbol] = actual_symbol
+                    return by_symbol[actual_symbol]
+                def actual_body(address):
+                    if address in symbols: return get_function(address)[2]
+                    return get_body(address)[2]
+                storage = StorageMetadata(actual_body, actual_name, imports, bind, static)
+                def class_import(slot):
+                    value = extra_imports.get(slot)
+                    if value is not None: return value
+                    value = bind(slot)
+                    if value.get('library') == 'CoreBluetooth' and value.get('symbol') in ('_OBJC_CLASS_$_CBUUID', '_OBJC_CLASS_$_CBPeripheral'):
+                        return value['symbol']
+                    return None
+                retrieval_argument(body, read_bytes, class_import, method, set(),
+                                   lambda address, count, section: bool(protections.get('__TEXT', 0) & 1 and not protections.get('__TEXT', 0) & 2 and in_section(address, count, '__TEXT', section)), storage)
+                observed = observer_calls(functions, by_symbol,
+                    {address: by_symbol.get(value[0], '') for address, value in symbols.items()},
+                    lambda address: in_section(address, 1, '__TEXT', '__objc_stubs'),
+                    lambda address: objc_selector(address, read_bytes, read_pointer, extra_imports.get, in_section, retrieval_only=False))
+                discovery_proof['retrievalSymbol'] = symbol
+                discovery_proof['fixedServiceArgument'] = True
+                discovery_proof['observerDirectCallDiagnostic'] = observed
+                discovery_proof['metadataBindings'] = bindings
+            except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+                discovery_error = error
+                discovery_proof.clear()
+                discovery_proof['error'] = str(error)[:1024]
     # Only actually disassembled consumed entries can extend the processed
     # roster. Exact names are demangled under the original total deadline.
     known = {symbol for _, symbol in rows}
@@ -656,6 +775,7 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
                  'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol.get(symbol, symbol)} for symbol, (start, stop, _) in functions.items()],
                  'imports': imports, 'assembly': '\n'.join(blocks),
                  'asyncProofError': str(async_error)[:1024] if async_error is not None else None,
+                 'discoveryProof': discovery_proof,
                  'directCallSymbols': direct_diagnostic,
                  'anonymousAbiWindows': [{'start': a, 'stop': b, 'assembly': body} for a, b, body in anonymous.values()],
                  'fixupMetadata': fixup_metrics, 'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}

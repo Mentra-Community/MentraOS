@@ -122,6 +122,21 @@ test('locally accepted NIMO commissioning preserves exact finite plan without fl
   (p:any)=>p.nimoCommissioning.reference.resourceId='alias',(p:any)=>delete p.nimoCommissioning.mac.peripheralUuid,(p:any)=>p.nimoCommissioning.maximumAttempts=2]){
   const changed=structuredClone(input);mutate(changed);expect(authoringWorkSchema.safeParse(changed).success).toBe(false)
  }
+ // Discovery is an explicit alternative, never an additional or implicit selector.
+ const discovery=structuredClone(input) as any
+ delete discovery.nimoCommissioning.mac.peripheralUuid
+ discovery.nimoCommissioning.mac.peripheralSelection='connected-service-exact-name-v1'
+ const discovered=authoringWorkSchema.parse({...discovery,workId:'local-discovery-commissioning'})
+ const discoveryReceipt={...receipt,workId:discovered.workId,inputSha256:requestInputDigest(discovered)}
+ expect(await f.service.registerLocal({work:discovered,receipt:discoveryReceipt},'host')).toEqual(discoveryReceipt)
+ expect(authoringWorkSchema.parse(f.rows.get(discovered.workId)!.work).nimoCommissioning).toEqual(discovery.nimoCommissioning)
+ for(const mutate of [(p:any)=>p.nimoCommissioning.mac.peripheralUuid=plan.mac.peripheralUuid,
+  (p:any)=>delete p.nimoCommissioning.mac.peripheralSelection,
+  (p:any)=>p.nimoCommissioning.mac.peripheralSelection='any-connected-device',
+  (p:any)=>p.target.laneId='android',(p:any)=>p.source.revision='c'.repeat(40),
+  (p:any)=>p.build.archive.sha256='d'.repeat(64),(p:any)=>p.nimoCommissioning.reference.resourceId='alias']){
+  const changed=structuredClone(discovery);mutate(changed);expect(authoringWorkSchema.safeParse(changed).success).toBe(false)
+ }
  const rewritten=structuredClone(parsed);rewritten.nimoCommissioning!.window.deadlineAt++
  await expect(f.service.registerLocal({work:rewritten,receipt:{...accepted,inputSha256:requestInputDigest(rewritten)}},'host')).rejects.toThrow('conflicts')
 })
