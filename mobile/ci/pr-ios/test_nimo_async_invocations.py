@@ -146,4 +146,85 @@ class AsyncInvocationTests(unittest.TestCase):
         del self.symbols[0x9f28]
         with self.assertRaises(ValueError):self.prove()
 
+
+class ActualIosAsyncInvocationTests(unittest.TestCase):
+    def setUp(self):
+        self.f=json.loads((FIXTURE.parent/'nimo-async-af32-ios.json').read_text())
+        self.symbols={int(a):tuple(v) for a,v in self.f['symbols'].items()}
+        self.serve=self.symbols[0x100dac170][0]
+        self.task=self.symbols[0x100db02d4][0]
+
+    def prove(self):
+        f=self.f
+        return prove_async_edges({s:f['windows'][s] for s in f['initial']},self.symbols,{int(a):n for a,n in f['imports'].items()},lambda a,n:bytes.fromhex(f['reads'][f'{a:x}:{n}']),lambda a:f['windows'][self.symbols[a][0]],{int(a,16):n for a,n in f['data_imports'].items()},lambda a:f['pointers'][str(a)],lambda a:f['bodies'][str(a)])
+
+    def mutate_body(self,old,new):
+        body=self.f['bodies'][str(0x100685da8)]
+        self.assertIn(old,body[2]);body[2]=body[2].replace(old,new,1)
+
+    def test_actual_optimized_ios_partial_edges_not_complete_capability(self):
+        self.assertEqual(self.prove(),{tuple(x) for x in self.f['expected_edges']})
+        self.assertFalse(any(a==self.symbols[0x100daa82c][0] for a,b in self.prove()))
+
+    def test_each_task_sink_requires_original_pair_and_consumed_context(self):
+        for old,new in [
+            ('100685f80 stp x22, x19, [x0, #0x10]','100685f80 stp x22, x18, [x0, #0x10]'),
+            ('100685fc8 mov x4, x24','100685fc8 mov x4, x25'),
+            ('100685f34 stp xzr, xzr, [x29, #-0x90]','100685f34 mov x24, x0'),
+        ]:
+            with self.subTest(new=new):
+                self.setUp();self.mutate_body(old,new)
+                self.assertNotIn((self.serve,self.task),self.prove())
+
+    def test_branch_only_setters_and_actual_cycles_refused(self):
+        for old,new in [
+            ('100685fc4 mov x0, x23','100685fc4 cbz x0, 0x100685fcc'),
+            ('100685f0c add x0, x0, #0x6c0','100685f0c b 0x100685f1c'),
+            ('100686010 adrp x3, 0x102d13000','100686010 cbz x0, 0x100686018'),
+            ('100685f40 b 0x100685fa0','100685f40 b 0x100685f30'),
+        ]:
+            with self.subTest(new=new):
+                self.setUp();self.mutate_body(old,new)
+                try:edges=self.prove()
+                except ValueError:continue
+                self.assertNotIn((self.serve,self.task),edges)
+
+    def test_relative_entry_stack_alias_and_sp_changes_refused(self):
+        address=0x100db05f0;symbol=self.symbols[address][0]
+        original=self.f['windows'][symbol][2]
+        # Replace an actual task-context write in the spill-to-restore span.
+        lines=original.splitlines()
+        candidate=next(line for line in lines if ' str ' in line and '[x' in line)
+        at=candidate.split()[0]
+        for op in ['mov sp, x9','str x0, [sp, #0x8]','str x0, [x9, #0x8]']:
+            with self.subTest(op=op):
+                self.setUp();self.f['windows'][symbol][2]=original.replace(candidate,at+' '+op,1)
+                self.assertFalse(any(a==symbol for a,b in self.prove()))
+
+    def test_dispatch_ldr_argument_and_unrelated_load_preserve_exact_block(self):
+        old=AsyncInvocationTests();old.setUp()
+        window=old.windows[old.init]
+        self.assertIn('33ec ldp x23, x20, [x19, #0xe0]',window[2])
+        window[2]=window[2].replace('33ec ldp x23, x20, [x19, #0xe0]','33ec ldr x23, [x19, #0xe0]')
+        self.assertIn((old.init,old.dispatch),old.prove())
+        for replacement in ['33f0 mov x3, x24','33f0 str x0, [x19, #0xe0]']:
+            copy_window=window[2]
+            window[2]=copy_window.replace('33f0 mov x3, x23',replacement)
+            self.assertNotIn((old.init,old.dispatch),old.prove())
+            window[2]=copy_window
+
+    def test_wrapper_relative_spill_cannot_change_stack_or_borrow_alias(self):
+        for replacement in ['7168 mov sp, x9','7168 str x0, [x9, #0x8]','7168 str x0, [sp, #0x8]!']:
+            old=AsyncInvocationTests();old.setUp()
+            old.replace(0x7130,'7168 str x0, [x22, #0x10]',replacement)
+            self.assertNotIn((old.serve,old.task),old.prove())
+
+    def test_backward_layout_poststore_unknown_effects_refused(self):
+        for effect in ['str x0, [x9]','bl 0xdead']:
+            self.setUp()
+            self.mutate_body('100685f40 b 0x100685fa0','100685f40 b 0x100685e6c')
+            self.mutate_body('100685e6c adrp x1, 0x1038c8000','100685e6c '+effect)
+            self.mutate_body('100685e70 add x1, x1, #0x660','100685e70 b 0x100685fa0')
+            self.assertNotIn((self.serve,self.task),self.prove())
+
 if __name__=='__main__':unittest.main()
