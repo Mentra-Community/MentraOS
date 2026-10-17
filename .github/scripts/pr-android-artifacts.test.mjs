@@ -86,6 +86,38 @@ ${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policy}(Ljava/lang/String;)Z`)}.end me
 ${resultCall(`${desc(NIMO_DIAGNOSTIC)}->allowUnarmedWearable$bluetooth_sdk_nimoDiagnostic(Ljava/lang/String;Ljava/lang/String;)Z`)}.end method
 ` + ['admit','allowPeer','beginTransport'].map(name=>`.method public ${name}(${desc(NIMO_DEVICE)}Ljava/lang/String;Z)Z\n${resultCall(`${desc(NIMO_DIAGNOSTIC)}->${policyDefault}`)}.end method\n`).join('')
 
+// Representative compiler ABI for v3 clock-producing methods and call wiring.
+diagnosticCode.diagnostics += `.method private clockReceipt()Lorg/json/JSONObject;
+ const-string v0, "nimo-monotonic-receipt-v1"
+ const-string v0, "android-elapsed-realtime-v1"
+ const-string v0, "requestReceivedElapsedMs"
+ invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J
+ invoke-virtual {v0}, ${desc(NIMO_DEVICE)}->resourceCaptureAdmission$bluetooth_sdk_nimoDiagnostic(Ljava/lang/String;JJ)V
+ invoke-virtual {v0}, ${desc(NIMO_DEVICE)}->releaseCapturedResource$bluetooth_sdk_nimoDiagnostic(Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;Ljava/lang/String;J)V
+.end method
+`
+diagnosticCode.nimo += `.method public resourceSnapshot$bluetooth_sdk_nimoDiagnostic()Lorg/json/JSONObject;
+ invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J
+${['observedElapsedMs','captureNonce','armedElapsedMs','admittedElapsedMs','sessionStartedElapsedMs','releaseNonce','releaseStartedElapsedMs','firmwareElapsedMs','twsElapsedMs','handshakeTwsElapsedMs','timeWriteStartedElapsedMs','timeAckElapsedMs','micStopStartedElapsedMs','micStopMarkerElapsedMs','micStopWrittenElapsedMs','displayExitElapsedMs'].map(key=>` const-string v0, "${key}"`).join('\n')}
+.end method
+`
+diagnosticCode.nimo=diagnosticCode.nimo.replace('.method public final connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V', '.method public final connectBredrTransport(Landroid/bluetooth/BluetoothDevice;)V\n invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J')
+
+const monotonicFields=['resourceSessionStartedElapsedMs','resourceReleaseStartedElapsedMs','firmwareElapsedMs','twsElapsedMs','timeWriteStartedElapsedMs','timeAckElapsedMs','micStopStartedElapsedMs','micStopMarkerElapsedMs','micStopWrittenElapsedMs','displayExitElapsedMs']
+const recorderNames={firmwareElapsedMs:'recordResourceFirmwareClock',twsElapsedMs:'recordResourceTwsClock',timeWriteStartedElapsedMs:'recordResourceTimeWriteClock',timeAckElapsedMs:'recordResourceTimeAckClock',micStopStartedElapsedMs:'recordResourceMicStopStartedClock',micStopMarkerElapsedMs:'recordResourceMicStopMarkerClock',micStopWrittenElapsedMs:'recordResourceMicStopWrittenClock',displayExitElapsedMs:'recordResourceExitClock'}
+diagnosticCode.nimo += monotonicFields.map(field=>`.method private ${recorderNames[field] ?? ('record'+field)}()V
+ invoke-static {}, Landroid/os/SystemClock;->elapsedRealtime()J
+ move-result-wide v0
+ invoke-static {v0, v1}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
+ move-result-object v2
+ iput-object v2, p0, ${desc(NIMO_DEVICE)}->${field}:Ljava/lang/Long;
+.end method
+`).join('')
+diagnosticCode.nimo += `.method private callbackWiring()V
+${Object.values(recorderNames).map(name=>` invoke-direct {p0}, ${desc(NIMO_DEVICE)}->${name}()V`).join('\n')}
+.end method
+`
+
 const codeFor = name => diagnosticCode[({[NIMO_DIAGNOSTIC]:'diagnostics',[NIMO_RECEIVER]:'receiver',[NIMO_MANAGER]:'manager',[NIMO_SDK]:'sdk',[NIMO_DEVICE]:'nimo'})[name]]
 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), fingerprint = "d".repeat(64)
@@ -247,6 +279,9 @@ test('diagnostic APK publication has distinct immutable coordinates and requires
    {...receipt.diagnosticVerification,kind:'compiled-receiver-wiring-v1'},
    {...receipt.diagnosticVerification,captureProtocol:undefined},
    {...receipt.diagnosticVerification,captureRequiredBeforeArm:false},
+   {...receipt.diagnosticVerification,kind:'compiled-capture-wiring-v2'},
+   {...receipt.diagnosticVerification,clockProtocol:undefined},
+   {...receipt.diagnosticVerification,clockProtocol:'epoch-v1'},
    {...receipt.diagnosticVerification,scanInstancePreserved:undefined},
    {...receipt.diagnosticVerification,scanInstancePreserved:false},
    {...receipt.diagnosticVerification,apkSha256:'e'.repeat(64)},
@@ -416,4 +451,30 @@ test('every scan-to-connect destructive boundary consumes the Kotlin scan preser
   const broken=source.slice(0,start)+source.slice(start,end).replace('->preserveCapturedScan(', '->ignoredPreservation(')+source.slice(end)
   assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,[key]:broken}),/capture/)
  }
+})
+
+test('clock v3 rejects epoch-only code, missing release admission and incomplete causal markers',()=>{
+ for (const code of [
+  {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replaceAll('nimo-monotonic-receipt-v1','old-clock')},
+  {...diagnosticCode,nimo:diagnosticCode.nimo.replaceAll('Landroid/os/SystemClock;->elapsedRealtime()J','Ljava/lang/System;->currentTimeMillis()J')},
+  {...diagnosticCode,nimo:diagnosticCode.nimo.replace('"releaseStartedElapsedMs"','"other"')},
+  {...diagnosticCode,nimo:diagnosticCode.nimo.replace('iput-object v2, p0','iput-object v3, p0')},
+  {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('resourceCaptureAdmission$','unusedCaptureAdmission$')},
+  {...diagnosticCode,diagnostics:diagnosticCode.diagnostics.replace('Ljava/lang/String;J)V','Ljava/lang/String;)V')},
+ ]) assert.throws(()=>validateNimoDiagnosticBytecode(code),/monotonic/)
+})
+
+test('capturing clock callbacks require instantiated nested class through exact accessor to recorder',()=>{
+ const helper='recordResourceMicStopStartedClock'
+ const cls=desc(NIMO_DEVICE).slice(0,-1)+'$releaseOriginalResource$1;'
+ const direct=` invoke-direct {p0}, ${desc(NIMO_DEVICE)}->${helper}()V`
+ const accessor=`.method public static access$${helper}(${desc(NIMO_DEVICE)})V\n${direct}\n.end method\n`
+ const noCallback=diagnosticCode.nimo.replace(direct,'')+accessor
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,nimo:noCallback}),/monotonic/)
+ const nestedNimo={[cls]:`.class final ${cls}\n.method public invoke()V\n invoke-static {v0}, ${desc(NIMO_DEVICE)}->access$${helper}(${desc(NIMO_DEVICE)})V\n.end method\n`}
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,nimo:noCallback,nestedNimo}),/monotonic/)
+ const nimo=noCallback.replace('.method private callbackWiring()V',`.method private callbackWiring()V\n new-instance v0, ${cls}`)
+ assert.doesNotThrow(()=>validateNimoDiagnosticBytecode({...diagnosticCode,nimo,nestedNimo}))
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,nimo,nestedNimo:{[cls]:nestedNimo[cls].replace(`->access$${helper}`,`->access$wrongRecorder`)}}),/monotonic/)
+ assert.throws(()=>validateNimoDiagnosticBytecode({...diagnosticCode,nimo}),/callback/)
 })

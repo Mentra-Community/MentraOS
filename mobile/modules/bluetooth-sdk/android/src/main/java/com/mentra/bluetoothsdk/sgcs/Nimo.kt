@@ -969,6 +969,40 @@ class Nimo : SGCManager() {
     private var resourceClosingGatt: BluetoothGatt? = null
     private var resourceReleaseResult = "not-requested"
 
+    private var resourceCaptureNonce: String? = null
+    private var resourceArmedElapsedMs: Long? = null
+    private var resourceAdmittedElapsedMs: Long? = null
+    private var resourceSessionStartedElapsedMs: Long? = null
+    private var resourceReleaseNonce: String? = null
+    private var resourceReleaseStartedElapsedMs: Long? = null
+    private var firmwareElapsedMs: Long? = null
+    private var twsElapsedMs: Long? = null
+    private var handshakeTwsElapsedMs: Long? = null
+    private var timeWriteStartedElapsedMs: Long? = null
+    private var timeAckElapsedMs: Long? = null
+    private var micStopStartedElapsedMs: Long? = null
+    private var micStopMarkerElapsedMs: Long? = null
+    private var micStopWrittenElapsedMs: Long? = null
+    private var displayExitElapsedMs: Long? = null
+
+    // Keep paired clock sampling in this class even when the triggering callback
+    // is an escaping Kotlin lambda. This preserves event timing and permits APK
+    // bytecode inspection without treating an unrelated elapsed clock call as proof.
+    private fun recordResourceFirmwareClock() { resourceFirmwareAt = System.currentTimeMillis(); firmwareElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceTwsClock() { resourceTwsAt = System.currentTimeMillis(); twsElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceTimeWriteClock() { resourceTimeWriteStartedAt = System.currentTimeMillis(); timeWriteStartedElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceTimeAckClock() { resourceTimeAckAt = System.currentTimeMillis(); timeAckElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceMicStopStartedClock() { resourceMicStopStartedAt = System.currentTimeMillis(); micStopStartedElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceMicStopMarkerClock() { resourceMicStopMarkerAt = System.currentTimeMillis(); micStopMarkerElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceMicStopWrittenClock() { resourceMicStopWrittenAt = System.currentTimeMillis(); micStopWrittenElapsedMs = android.os.SystemClock.elapsedRealtime() }
+    private fun recordResourceExitClock() { resourceExitAt = System.currentTimeMillis(); displayExitElapsedMs = android.os.SystemClock.elapsedRealtime() }
+
+    internal fun resourceCaptureAdmission(nonce: String, armed: Long, admitted: Long) {
+        check(Looper.myLooper() == mainHandler.looper)
+        check(resourceCaptureNonce == null && admitted >= armed)
+        resourceCaptureNonce = nonce; resourceArmedElapsedMs = armed; resourceAdmittedElapsedMs = admitted
+    }
+
     internal fun resourceCaptureEligible(): Boolean {
         val snapshot = resourceSnapshot()
         return resourceSessionGeneration == 0L && discoveryReceiver == null &&
@@ -982,6 +1016,20 @@ class Nimo : SGCManager() {
         check(Looper.myLooper() == mainHandler.looper)
         val pending = writes.pendingCount() + canvasEncoder.pendingCount() + audioClient.lifecyclePending() + resourcePostedWrites.get() + pendingAcks.size + canvas.pendingCount()
         return JSONObject().put("observedAtEpochMs", System.currentTimeMillis()).put("sessionObservationCurrent", true).put("instanceId", resourceInstanceId).put("sessionGeneration", resourceSessionGeneration)
+            .put("clock", JSONObject().put("kind", "android-elapsed-realtime-v1").put("observedElapsedMs", android.os.SystemClock.elapsedRealtime())
+                .put("captureNonce", resourceCaptureNonce ?: JSONObject.NULL).put("armedElapsedMs", resourceArmedElapsedMs ?: JSONObject.NULL)
+                .put("admittedElapsedMs", resourceAdmittedElapsedMs ?: JSONObject.NULL).put("sessionStartedElapsedMs", resourceSessionStartedElapsedMs ?: JSONObject.NULL)
+                .put("releaseNonce", resourceReleaseNonce ?: JSONObject.NULL).put("releaseStartedElapsedMs", resourceReleaseStartedElapsedMs ?: JSONObject.NULL)
+                .put("firmwareElapsedMs", firmwareElapsedMs ?: JSONObject.NULL)
+                .put("twsElapsedMs", twsElapsedMs ?: JSONObject.NULL)
+                .put("handshakeTwsElapsedMs", handshakeTwsElapsedMs ?: JSONObject.NULL)
+                .put("timeWriteStartedElapsedMs", timeWriteStartedElapsedMs ?: JSONObject.NULL)
+                .put("timeAckElapsedMs", timeAckElapsedMs ?: JSONObject.NULL)
+                .put("micStopStartedElapsedMs", micStopStartedElapsedMs ?: JSONObject.NULL)
+                .put("micStopMarkerElapsedMs", micStopMarkerElapsedMs ?: JSONObject.NULL)
+                .put("micStopWrittenElapsedMs", micStopWrittenElapsedMs ?: JSONObject.NULL)
+                .put("displayExitElapsedMs", displayExitElapsedMs ?: JSONObject.NULL)
+            )
             .put("pair", JSONObject().put("name", resourcePairName ?: lastDeviceName ?: JSONObject.NULL)
                 .put("bluetoothAddress", resourcePairAddress ?: lastDeviceAddress ?: JSONObject.NULL))
             .put("handshake", handshakeState.name).put("managedSessionPresent", gatt != null)
@@ -1003,21 +1051,32 @@ class Nimo : SGCManager() {
 
     /** Exact original instance only. Never delegates to the manager's current device. */
     internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) =
-        releaseOriginalResource(expectedGeneration, false, isCurrent, completed)
+        releaseOriginalResource(expectedGeneration, false, isCurrent, completed, null, null)
+
+    internal fun releaseResource(expectedGeneration: Long, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit, requestNonce: String, requestReceivedElapsedMs: Long) =
+        releaseOriginalResource(expectedGeneration, false, isCurrent, completed, requestNonce, requestReceivedElapsedMs)
 
     /** Only the private admitted capture may cancel an original pre-GATT generation-zero attempt. */
     internal fun releaseCapturedResource(isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) =
-        releaseOriginalResource(resourceSessionGeneration, true, isCurrent, completed)
+        releaseOriginalResource(resourceSessionGeneration, true, isCurrent, completed, null, null)
 
-    private fun releaseOriginalResource(expectedGeneration: Long, captured: Boolean, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit) {
+    internal fun releaseCapturedResource(isCurrent: () -> Boolean, completed: (JSONObject) -> Unit, requestNonce: String, requestReceivedElapsedMs: Long) =
+        releaseOriginalResource(resourceSessionGeneration, true, isCurrent, completed, requestNonce, requestReceivedElapsedMs)
+
+    private fun releaseOriginalResource(expectedGeneration: Long, captured: Boolean, isCurrent: () -> Boolean, completed: (JSONObject) -> Unit, requestNonce: String?, requestReceivedElapsedMs: Long?) {
         check(Looper.myLooper() == mainHandler.looper)
         if (!isCurrent() || expectedGeneration != resourceSessionGeneration || (!captured && expectedGeneration < 1) || resourceReleasePending || resourceReceiptPending) {
             completed(JSONObject().put("error", "target-mismatch-or-release-pending")); return
         }
         if (resourceReleased) { completed(resourceSnapshot()); return }
+        if (requestReceivedElapsedMs != null && android.os.SystemClock.elapsedRealtime() < requestReceivedElapsedMs) {
+            completed(JSONObject().put("error", "invalid-request-clock")); return
+        }
+        resourceReleaseNonce = requestNonce
+        resourceReleaseStartedElapsedMs = android.os.SystemClock.elapsedRealtime()
         resourceReleasePending = true
         resourceReleaseResult = "draining"
-        resourceExitStatus = null; resourceExitAt = null; resourceMicStopStartedAt = null; resourceMicStopMarkerAt = null; resourceMicStopWrittenAt = null
+        resourceExitStatus = null; resourceExitAt = null; displayExitElapsedMs = null; resourceMicStopStartedAt = null; micStopStartedElapsedMs = null; resourceMicStopMarkerAt = null; micStopMarkerElapsedMs = null; resourceMicStopWrittenAt = null; micStopWrittenElapsedMs = null
         resourceExitRequired = canvas.active() || canvas.pendingCount() > 0
         resourceInitialLaunchPendingAtRelease = !canvas.active() && canvas.launchPending()
         isDisconnecting = true
@@ -1035,7 +1094,7 @@ class Nimo : SGCManager() {
         val mic = micChar
         resourceMicStopRequired = original != null && mic != null
         if (original != null && mic != null) {
-            writes.enqueue(original, mic, listOf(byteArrayOf(0x52, 0, 0, 0)), finalStarted = { resourceMicStopStartedAt = System.currentTimeMillis() }, completed = { resourceMicStopWrittenAt = System.currentTimeMillis() })
+            writes.enqueue(original, mic, listOf(byteArrayOf(0x52, 0, 0, 0)), finalStarted = { recordResourceMicStopStartedClock() }, completed = { recordResourceMicStopWrittenClock() })
         }
         canvas.exit()
         val deadline = android.os.SystemClock.elapsedRealtime() + 15_000
@@ -1099,7 +1158,7 @@ class Nimo : SGCManager() {
         { Bridge.log("NIMO: canvas rejected status=$it; not a render ACK") },
         { diagnostics?.cancelHeldCapture("Canvas scope takeover preempted held capture", resumeCanvas = false) },
         { key, status ->
-            if (key == 3) { resourceExitStatus = status; resourceExitAt = System.currentTimeMillis() }
+            if (key == 3) { resourceExitStatus = status; recordResourceExitClock() }
             if (resourceReleasePending && resourceInitialLaunchPendingAtRelease && key == 1) {
                 // An explicit rejected initial Launch never acquired canvas ownership.
                 // Status 2 is transport-ambiguous and must retain the unknown fence.
@@ -1869,15 +1928,17 @@ class Nimo : SGCManager() {
         // for system-paired dual-mode accessories).
         Bridge.log("NIMO: connecting GATT over BR/EDR to ${device.address}")
         resourceSessionGeneration++
-        resourceExitStatus = null; resourceExitAt = null; resourceMicStopWrittenAt = null
-        resourceMicStopStartedAt = null; resourceMicStopMarkerAt = null; resourceTransportFailure = false; resourceClosingGatt = null
+        resourceSessionStartedElapsedMs = android.os.SystemClock.elapsedRealtime()
+        resourceReleaseNonce = null; resourceReleaseStartedElapsedMs = null
+        resourceExitStatus = null; resourceExitAt = null; displayExitElapsedMs = null; resourceMicStopWrittenAt = null; micStopWrittenElapsedMs = null
+        resourceMicStopStartedAt = null; micStopStartedElapsedMs = null; resourceMicStopMarkerAt = null; micStopMarkerElapsedMs = null; resourceTransportFailure = false; resourceClosingGatt = null
         resourceClosedWithPending = false; resourceReleaseResult = "not-requested"
         resourceMicStopRequired = false; resourceExitRequired = false; resourceInitialLaunchPendingAtRelease = false
         resourceReleased = false
         resourcePairAddress = peer.address
         resourcePairName = try { device.name ?: "" } catch (_: SecurityException) { "" }
-        resourceFirmwareAt = null; resourceFirmwareVersion = null
-        resourceTwsAt = null; resourceHandshakeTwsAt = null; resourceTimeAckAt = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null
+        resourceFirmwareAt = null; firmwareElapsedMs = null; resourceFirmwareVersion = null
+        resourceTwsAt = null; twsElapsedMs = null; resourceHandshakeTwsAt = null; handshakeTwsElapsedMs = null; resourceTimeAckAt = null; timeAckElapsedMs = null; resourceTimeCommandId = null; resourceTimeWriteStartedAt = null; timeWriteStartedElapsedMs = null
         resourceCloseCalled = false; resourceCloseObserved = false; resourceDisconnectCallbackStatus = null; resourceCloseError = null
         NimoResourceDiagnostics.track(this)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
@@ -2121,8 +2182,9 @@ class Nimo : SGCManager() {
                                 handleRxPacket(data)
                             }
                             NimoBLE.CHAR_MIC -> {
-                                if (resourceReleasePending && resourceMicStopStartedAt != null && data.contentEquals(byteArrayOf(0x52, 0, 0, 0)))
-                                    resourceMicStopMarkerAt = System.currentTimeMillis()
+                                if (resourceReleasePending && resourceMicStopStartedAt != null && data.contentEquals(byteArrayOf(0x52, 0, 0, 0))) {
+                                    recordResourceMicStopMarkerClock()
+                                }
                                 audioClient.enqueue(data)
                             }
                         }
@@ -2180,7 +2242,7 @@ class Nimo : SGCManager() {
             resourcePostedWrites.decrementAndGet()
             if (gatt !== expectedGatt || resourceReleasePending || resourceReleased) return@post
             writes.enqueue(expectedGatt, char, listOf(bytes), finalStarted = {
-                if (timeCommand != null && timeCommand == resourceTimeCommandId) resourceTimeWriteStartedAt = System.currentTimeMillis()
+                if (timeCommand != null && timeCommand == resourceTimeCommandId) { recordResourceTimeWriteClock() }
             })
         }
     }
@@ -2294,7 +2356,7 @@ class Nimo : SGCManager() {
     private fun proceedToTimeSync() {
         if (handshakeState != HandshakeState.AWAITING_TWS) return
         cancelTwsTimeout()
-        resourceHandshakeTwsAt = resourceTwsAt
+        resourceHandshakeTwsAt = resourceTwsAt; handshakeTwsElapsedMs = twsElapsedMs
         handshakeState = HandshakeState.AWAITING_TIME_ACK
         Bridge.log("NIMO: TWS OK — sending setTime (awaiting ACK)")
         setTimeAttempts = 0
@@ -2306,7 +2368,7 @@ class Nimo : SGCManager() {
         val expectedGatt = gatt
         setTimeAttempts++
         resourceTimeCommandId = UUID.randomUUID().toString()
-        resourceTimeWriteStartedAt = null
+        resourceTimeWriteStartedAt = null; timeWriteStartedElapsedMs = null
         sendAwaitingAck(
                 NimoProtocol.CMD_SET_PARAMETER,
                 NimoProtocol.SET_TIME,
@@ -2319,7 +2381,7 @@ class Nimo : SGCManager() {
                 return@sendAwaitingAck
             }
             if (ok) {
-                resourceTimeAckAt = System.currentTimeMillis()
+                recordResourceTimeAckClock()
                 finishHandshake()
             } else if (setTimeAttempts < SET_TIME_MAX_ATTEMPTS &&
                             handshakeState == HandshakeState.AWAITING_TIME_ACK &&
@@ -2544,7 +2606,7 @@ class Nimo : SGCManager() {
     }
 
     private fun onTwsState(connected: Boolean) {
-        resourceTwsAt = System.currentTimeMillis()
+        recordResourceTwsClock()
         twsConnected = connected
         if (connected && handshakeState == HandshakeState.AWAITING_TWS) {
             proceedToTimeSync()
@@ -2617,7 +2679,7 @@ class Nimo : SGCManager() {
                     val micro = (v ushr 12) and 0x1FF
                     val build = v and 0xFFF
                     firmwareVersionPacked = "$major.$minor.$micro.$build"
-                    resourceFirmwareVersion = firmwareVersionPacked; resourceFirmwareAt = System.currentTimeMillis()
+                    resourceFirmwareVersion = firmwareVersionPacked; recordResourceFirmwareClock()
                     emitVersionInfo()
                 }
             }
@@ -2626,7 +2688,7 @@ class Nimo : SGCManager() {
                 while (end > 0 && data[end - 1].toInt() == 0) end--
                 firmwareVersionDetail = String(data, 0, end, Charsets.UTF_8).trim()
                 if (firmwareVersionDetail.isNotEmpty() && firmwareVersionDetail.length <= 240) {
-                    resourceFirmwareVersion = firmwareVersionDetail; resourceFirmwareAt = System.currentTimeMillis()
+                    resourceFirmwareVersion = firmwareVersionDetail; recordResourceFirmwareClock()
                 }
                 emitVersionInfo()
             }
