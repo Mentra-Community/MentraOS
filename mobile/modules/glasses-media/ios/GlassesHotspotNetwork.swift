@@ -239,14 +239,15 @@ public final class GlassesHotspotNetwork {
     }
 
     private func authorizeMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval) {
-        let authorization = MacHotspotAuthorization()
+        let facts = MacHotspotAuthorizationFacts()
+        let authorization = MacHotspotAuthorization(facts: facts)
         macAuthorization = authorization
         authorization.start { result in
             self.queue.async {
                 guard gen == self.generation, !self.cancelled else { return }
                 self.macAuthorization = nil
                 switch result {
-                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline)
+                case .success: self.applyMacAssociation(ssid: ssid, passphrase: passphrase, generation: gen, deadline: deadline, authorizationFacts: facts)
                 case let .failure(error):
                     self.finishJoin(.failure(error)); self.finishLeave()
                 }
@@ -254,8 +255,8 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval) {
-        let association = MacHotspotAssociation(deadline: deadline)
+    private func applyMacAssociation(ssid: String, passphrase: String, generation gen: Int, deadline: TimeInterval, authorizationFacts: MacHotspotAuthorizationFacts) {
+        let association = MacHotspotAssociation(deadline: deadline, authorizationFacts: authorizationFacts)
         macAssociation = association
         applying = true
         macWorker.async {

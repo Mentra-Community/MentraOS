@@ -7,6 +7,12 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     private var manager: CLLocationManager?
     private var completion: ((Result<Void, Error>) -> Void)?
     private var finished = false
+    private let facts: MacHotspotAuthorizationFacts
+
+    init(facts: MacHotspotAuthorizationFacts = MacHotspotAuthorizationFacts()) {
+        self.facts = facts
+        super.init()
+    }
 
     func start(completion: @escaping (Result<Void, Error>) -> Void) {
         DispatchQueue.main.async {
@@ -15,7 +21,7 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
             let manager = CLLocationManager()
             self.manager = manager
             manager.delegate = self
-            self.handle(manager.authorizationStatus)
+            self.handle(manager.authorizationStatus, getter: .instanceInitial)
             if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         }
     }
@@ -25,7 +31,7 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        handle(manager.authorizationStatus)
+        handle(manager.authorizationStatus, getter: .instanceCallback)
     }
 
     static func isAuthorized(_ status: CLAuthorizationStatus) -> Bool {
@@ -36,14 +42,16 @@ final class MacHotspotAuthorization: NSObject, CLLocationManagerDelegate {
         return false
     }
 
-    private func handle(_ status: CLAuthorizationStatus) {
+    private func handle(_ status: CLAuthorizationStatus, getter: MacHotspotAuthorizationFacts.Getter) {
+        let foreground = MacHotspotAuthorizationFacts.foreground()
+        if !finished { facts.observeInstance(raw: status.rawValue, getter: getter, foreground: foreground) }
         if Self.isAuthorized(status) { finish(.success(())); return }
         switch status {
         case .denied, .restricted:
-            finish(.failure(LocalMediaError("Location access is required to identify the glasses hotspot on Mac")))
+            finish(.failure(facts.failure("Location access is required to identify the glasses hotspot on Mac", raw: status.rawValue, getter: getter, foreground: foreground)))
         case .notDetermined: break
         default:
-            finish(.failure(LocalMediaError("Mac hotspot Location authorization is unavailable")))
+            finish(.failure(facts.failure("Mac hotspot Location authorization is unavailable", raw: status.rawValue, getter: getter, foreground: foreground)))
         }
     }
 
