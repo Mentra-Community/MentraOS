@@ -10,6 +10,13 @@ import struct
 
 MAX_EXTRA_FUNCTIONS = 64
 MAX_SLICE = 128
+MAX_ANALYSIS_WORK = 1_000_000
+# Explicit modeled write sets. Unknown multi-destination/implicit-write opcodes
+# cannot be treated as an irrelevant first-operand-only instruction.
+MODELED_OPS={'add','sub','adr','adrp','mov','movk','movz','and','orr','bfxil','sxtw','ldr','ldur','ldrsw','ldp','ldpsw','str','stur','stp','b','bl','blr','br','ret','cmp','cmn','tst','cbz','cbnz','tbz','tbnz','nop'}
+
+def modeled(ins):
+    return ins[1] in MODELED_OPS or ins[1].startswith('b.')
 
 
 def instructions(window):
@@ -29,11 +36,12 @@ def writes(ins):
     op, args = ins[1:]
     if op in ('b', 'bl', 'blr', 'br', 'ret', 'cmp', 'cmn', 'tst', 'cbz', 'cbnz', 'tbz', 'tbnz') or op.startswith('b.'):
         return set()
+    writeback=set(re.findall(r'\[(x\d+|sp)[^]]*\](?:!|,\s*#)',args))
     if op.startswith(('st', 'prfm')):
-        # Writeback memory operands also change their base register.
-        return set(re.findall(r'\[(x\d+|sp)[^]]*\]!', args))
+        # Both pre-index and post-index forms change the address register.
+        return writeback
     regs = args.split(',')[:2 if op in ('ldp', 'ldpsw') else 1]
-    return {r.strip().replace('w', 'x', 1) for r in regs if re.fullmatch(r'[wx]\d+|sp', r.strip())}
+    return writeback | {r.strip().replace('w', 'x', 1) for r in regs if re.fullmatch(r'[wx]\d+|sp', r.strip())}
 
 
 def boundary(ins):
@@ -41,13 +49,24 @@ def boundary(ins):
 
 
 class AsyncProof:
-    def __init__(self, functions, symbols, imports, read_bytes, get_function):
+    def __init__(self, functions, symbols, imports, read_bytes, get_function, data_imports=None, read_pointer=None):
         self.functions = dict(functions)
         self.symbols = symbols
         self.imports = imports
         self.read_bytes = read_bytes
         self.get_function = get_function
+        self.data_imports=data_imports or {}
+        self.read_pointer=read_pointer
         self.extra = 0
+        self.work = MAX_ANALYSIS_WORK
+
+    def charge(self, count):
+        self.work -= count
+        if self.work < 0:raise ValueError('async analysis work bound exhausted')
+
+    def decode(self, window):
+        self.charge(len(window[2]))
+        return instructions(window)
 
     def load(self, address):
         if address not in self.symbols:
@@ -61,7 +80,7 @@ class AsyncProof:
             if window[0] != address or window[1] <= address:
                 raise ValueError('async function window changed entry')
             self.functions[symbol] = window
-        return symbol, instructions(self.functions[symbol])
+        return symbol, self.decode(self.functions[symbol])
 
     def runtime(self, ins, name):
         return self.imports.get(target(ins)) == name
@@ -69,9 +88,10 @@ class AsyncProof:
     def constant_witness(self, code, end, reg):
         """Bounded straight-line ADRP/ADD or MOV value; no branch/call clobber."""
         offset = 0
+        self.charge(min(end,MAX_SLICE))
         for i in range(end - 1, max(-1, end - MAX_SLICE), -1):
             ins = code[i]
-            if boundary(ins):
+            if not modeled(ins) or boundary(ins):
                 return None
             if ins[1] in ('bl', 'blr') and int(reg[1:]) < 19:
                 return None
@@ -103,11 +123,13 @@ class AsyncProof:
         self.load(entry)
         return entry
 
-    @staticmethod
-    def unchanged(code, begin, end, regs):
+    def unchanged(self, code, begin, end, regs):
+        self.charge(max(0,end-begin))
         # Caller-saved arguments cannot survive calls. Callee-saved values must
         # still have no explicit writer on *any* instruction in this span.
         for ins in code[begin:end]:
+            if not modeled(ins):
+                return False
             if writes(ins) & set(regs):
                 return False
             if ins[1] in ('bl', 'blr') and any(int(r[1:]) < 19 for r in regs):
@@ -121,14 +143,59 @@ class AsyncProof:
                 return i
         return None
 
-    @staticmethod
-    def single_entry(code, begin, end):
+    def single_entry(self, code, begin, end):
+        self.charge(len(code))
         start, stop = code[begin][0], code[end][0]
         for i, ins in enumerate(code):
             if boundary(ins):
                 jump = re.search(r'(0x[0-9a-f]+)$', ins[2])
                 if jump and start <= int(jump[1],16) <= stop and not begin <= i <= end:
                     return False
+        return True
+
+    def block_header(self, code, stores, frame, base, copy):
+        if self.read_pointer is None: return False
+        # Exact observed 64-bit stack-block ABI: isa/flags followed by
+        # invoke/descriptor and the captured Swift function/context pair.
+        fields={}
+        for off in (base,base+8):
+            candidates=[]
+            for i in range(max(0,copy-MAX_SLICE),copy):
+                m=re.fullmatch(r'([xd]\d+), \['+frame+r', #0x'+format(off,'x')+r'\]',code[i][2])
+                if code[i][1]=='str' and m:candidates.append((i,m[1]))
+            if not candidates:return False
+            at,reg=candidates[-1]
+            definitions=[i for i in range(max(0,at-MAX_SLICE),at) if code[i][2].split(',',1)[0]==reg and code[i][1] not in ('str','stp','stur')]
+            if not definitions:return False
+            load=definitions[-1]
+            # The supported emitted shape is an adjacent load/store pair.
+            # Do not infer SIMD aliasing or preserve flags through other ops.
+            if at!=load+1:return False
+            m=re.fullmatch(re.escape(reg)+r', \[(x\d+), #(0x[0-9a-f]+|[0-9]+)\]',code[load][2])
+            if code[load][1]!='ldr' or not m:return False
+            pointer=self.constant(code,load,m[1])
+            if pointer is None:return False
+            if any(boundary(x) or x[1] in ('bl','blr') for x in code[load+1:at]):return False
+            fields[off]=(load,pointer+int(m[2],0))
+        if self.data_imports.get(fields[base][1])!='__NSConcreteStackBlock':return False
+        flags=self.read_bytes(fields[base+8][1],8)
+        if flags!=bytes.fromhex('0000004200000000'):return False
+        store,_,descriptor_reg=stores[base+16]
+        descriptor=self.constant(code,store,descriptor_reg)
+        if descriptor is None:return False
+        raw=self.read_bytes(descriptor,40)
+        if len(raw)!=40 or struct.unpack_from('<QQ',raw)!=(0,48):return False
+        # Resolve pointer slots through actual delivered dyld rebase metadata,
+        # never by treating chained pointer encoding as a plain VM address.
+        copier=self.read_pointer(descriptor+16)
+        disposer=self.read_pointer(descriptor+24)
+        signature=self.read_pointer(descriptor+32)
+        if self.read_bytes(signature,6)!=b'v8@?0\0':return False
+        _,body=self.load(copier)
+        expected=[('ldr','x8, [x1, #0x28]'),('ldr','q0, [x1, #0x20]'),('str','q0, [x0, #0x20]'),('mov','x0, x8')]
+        if len(body)!=5 or [(x[1],x[2]) for x in body[:4]]!=expected or body[-1][1]!='b' or not self.runtime(body[-1],'_swift_retain'):return False
+        _,body=self.load(disposer)
+        if len(body)!=2 or body[0][1:]!=('ldr','x0, [x0, #0x28]') or body[1][1]!='b' or not self.runtime(body[1],'_swift_release'):return False
         return True
 
     def dispatch(self, symbol, code):
@@ -188,7 +255,7 @@ class AsyncProof:
             if not self.single_entry(code,min(invoke_proof[1],closure_proof[1]),call):continue
             if not self.unchanged(code,min(invoke_store,closure_store),copy,[frame]):
                 continue
-            if any(boundary(x) for x in code[min(invoke_store,closure_store):copy]):
+            if any(boundary(x) or x[1] in ('bl','blr') for x in code[min(invoke_store,closure_store):copy]):
                 continue
             # Every store to these block fields after their definition must be
             # the witnessed store itself, never an unknown/multi-field clobber.
@@ -203,13 +270,14 @@ class AsyncProof:
                 if off in (base+16,base+32) and j not in (invoke_store,closure_store): bad_store=True;break
                 if off in (base,base+8) and x[1]!='str':bad_store=True;break
             if bad_store: continue
+            if not self.block_header(code,stores,frame,base,copy):continue
             invoke_symbol, thunk = self.load(invoke)
             # Exact observed Swift block reabstraction shape. The runtime invokes
             # block+16; that thunk must actually call captured block+32 function.
             body = [(x[1],x[2]) for x in thunk]
             wanted = [('ldp','x19, x20, [x0, #0x20]'),('mov','x0, x20')]
             k = next((i for i in range(len(body)-3) if body[i:i+2]==wanted),None)
-            if k is None or any(boundary(x) for x in thunk[:k+4]) or not self.unchanged(thunk,0,k,['x0']) or not self.runtime(thunk[k+2],'_swift_retain') or body[k+3] != ('blr','x19'):
+            if k is None or any(x[1].startswith('st') and not re.search(r'\[(?:sp|x29)[,\]]',x[2]) for x in thunk[:k]) or any(boundary(x) for x in thunk[:k+4]) or not self.unchanged(thunk,0,k,['x0']) or not self.runtime(thunk[k+2],'_swift_retain') or body[k+3] != ('blr','x19'):
                 continue
             self.load(closure)
             edges.add((symbol,self.symbols[closure][0]))
@@ -239,11 +307,12 @@ class AsyncProof:
             for create,x in enumerate(init):
                 if not self.runtime(x,'_swift_task_create'):
                     continue
+                self.charge(max(0,create-saved))
                 stores=[i for i in range(saved+1,create) if init[i][1:]==('stp','x21, x19, [x0, #0x10]')]
                 if not stores:
                     continue
                 store=stores[-1]
-                if not self.unchanged(init,saved+1,store,['x21','x19']):
+                if not self.unchanged(init,one+1,store,['x21']) or not self.unchanged(init,two+1,store,['x19']):
                     continue
                 if store<2 or init[store-1][1:]!=('mov','x4, x0') or not self.runtime(init[store-2],'_swift_allocObject'):
                     continue
@@ -263,6 +332,7 @@ class AsyncProof:
                     continue
                 load=pairs.index(('ldp','x21, x20, [x20, #0x10]'))
                 if not self.unchanged(wrap,0,load,['x20']):continue
+                if any(z[1] in ('bl','blr') or z[1].startswith('st') and not re.search(r'\[(?:sp|x29)[,\]]',z[2]) for z in wrap[:load]):continue
                 branch=len(wrap)-1
                 if ('mov','x1, x21') not in pairs[load:branch] or ('mov','x2, x20') not in pairs[load:branch]:
                     continue
@@ -282,7 +352,7 @@ class AsyncProof:
                 ops=[(z[1],z[2]) for z in bridge_code]
                 required=[('ldp','w8, w0, [x1]'),('sxtw','x8, w8'),('add','x1, x8, x1'),('str','x1, [sp, #0x8]')]
                 begin=next((i for i in range(len(ops)-3) if ops[i:i+4]==required),None)
-                if begin is None or not self.unchanged(bridge_code,0,begin,['x1']) or ops[-1]!=('br','x1') or ('ldp','x1, x19, [sp, #0x8]') not in ops[begin+4:]:
+                if begin is None or any(z[1] in ('bl','blr') or z[1].startswith('st') and not re.search(r'\[(?:sp|x29)[,\]]',z[2]) for z in bridge_code[:begin]) or not self.unchanged(bridge_code,0,begin,['x1']) or ops[-1]!=('br','x1') or ('ldp','x1, x19, [sp, #0x8]') not in ops[begin+4:]:
                     continue
                 # The bridge calls only actual task allocation, then resumes the
                 # original supplied entry. Unsupported wrappers omit the edge.
@@ -307,7 +377,7 @@ class AsyncProof:
         return edges
 
 
-def prove_async_edges(functions, symbols, imports, read_bytes, get_function):
+def prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports=None, read_pointer=None):
     """Return only verified scheduler edges; callbacks share caller budgets.
 
     functions: {symbol: (start, stop, normalizedAssembly)}
@@ -315,11 +385,13 @@ def prove_async_edges(functions, symbols, imports, read_bytes, get_function):
     imports: {deliveredStubAddress: exactImportName}
     read_bytes(vmAddress, count): exact delivered file-backed bytes
     get_function(exactEntry): same tuple, shared caller limits/deadline
+    data_imports: exact delivered data import slots (separate from call stubs)
+    read_pointer(slot): exact delivered dyld rebase target; no opaque bit masks
     """
-    proof=AsyncProof(functions,symbols,imports,read_bytes,get_function)
+    proof=AsyncProof(functions,symbols,imports,read_bytes,get_function,data_imports,read_pointer)
     edges=set()
     for symbol,window in list(functions.items()):
-        code=instructions(window)
+        code=proof.decode(window)
         edges.update(proof.dispatch(symbol,code))
         edges.update(proof.task(symbol,code))
     # Newly proven closure entrypoints can actor-hop via a consumed continuation.
@@ -330,7 +402,7 @@ def prove_async_edges(functions, symbols, imports, read_bytes, get_function):
         if symbol in seen:
             continue
         seen.add(symbol)
-        code=instructions(proof.functions[symbol])
+        code=proof.decode(proof.functions[symbol])
         added=proof.switches(symbol,code)
         edges.update(added);pending.extend(b for _,b in added)
         # Actual direct branch/call edges remain the existing graph's authority;

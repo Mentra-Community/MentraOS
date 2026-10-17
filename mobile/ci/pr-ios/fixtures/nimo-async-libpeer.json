@@ -1049,6 +1049,16 @@
       36928,
       "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfcyyYbcfU3_TA:\n8ff0 sub sp, sp, #0x40\n8ff4 stp x20, x19, [sp, #0x20]\n8ff8 stp x29, x30, [sp, #0x30]\n8ffc add x29, sp, #0x30\n9000 add x0, x20, #0x10\n9004 add x1, sp, #0x8\n9008 mov x2, #0x0\n900c mov x3, #0x0\n9010 bl 0xac74 ; _swift_beginAccess\n9014 add x0, x20, #0x10\n9018 bl 0xade8 ; _swift_weakLoadStrong\n901c cbz x0, 0x9030\n9020 mov x20, x0\n9024 bl 0x3c00\n9028 mov x0, x20\n902c bl 0xad64 ; _swift_release\n9030 ldp x29, x30, [sp, #0x30]\n9034 ldp x20, x19, [sp, #0x20]\n9038 add sp, sp, #0x40\n903c ret"
     ],
+    "_block_copy_helper": [
+      36928,
+      36948,
+      "_block_copy_helper:\n9040 ldr x8, [x1, #0x28]\n9044 ldr q0, [x1, #0x20]\n9048 str q0, [x0, #0x20]\n904c mov x0, x8\n9050 b 0xad70 ; _swift_retain"
+    ],
+    "_block_destroy_helper": [
+      36948,
+      36956,
+      "_block_destroy_helper:\n9054 ldr x0, [x0, #0x28]\n9058 b 0xad64 ; _swift_release"
+    ],
     "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CMa": [
       38076,
       38108,
@@ -1073,7 +1083,18 @@
   "bytes": {
     "46048": "48ebffff20000000",
     "46136": "b8ecffff20000000",
-    "46128": "00bdffff20000000"
+    "46128": "00bdffff20000000",
+    "44864": "0000004200000000",
+    "67704": "0000000000000000300000000000000040900000000010005490000000001000c4ba000000001000",
+    "47812": "7638403f3000"
+  },
+  "data_imports": {
+    "65568": "__NSConcreteStackBlock"
+  },
+  "rebases": {
+    "67720": 36928,
+    "67728": 36948,
+    "67736": 47812
   },
   "initial": [
     "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfC",
@@ -1088,6 +1109,8 @@
     "dwarfSha256": "dee901f7194d717708530c0ac76269f3e1a9a7ba08dca673b439479560699549",
     "extractor": "xcrun nm -anU <dwarf>; xcrun swift-demangle --compact (stdin); xcrun llvm-objdump --macho --indirect-symbols <binary>; xcrun llvm-objdump --disassemble --arch=arm64 --no-show-raw-insn --start-address=<exactentry> --stop-address=<nextentry> <binary>",
     "normalization": "nimo_symbol_sections.normalize_window; only exact import-table annotations retained; descriptor bytes read from actual file-backed Mach-O segments",
-    "scope": "Native transport compiled previously with Foundation and no-effect fixture/process/clock collaborators; fixture is not a shipped archive/capability or hardware evidence."
+    "scope": "Native transport compiled previously with Foundation and no-effect fixture/process/clock collaborators; fixture is not a shipped archive/capability or hardware evidence.",
+    "headerEvidence": "Actual delivered descriptor40 bytes, flags8 bytes, block signature6 bytes; xcrun dyld_info -fixups exact slots10888/10890/10898 resolved to9040/9054/bac4. Chained pointer bits are retained raw and never masked into addresses.",
+    "dataImportEvidence": "Actual llvm-objdump --macho --indirect-symbols DATA_CONST,__got slot0x10020 __NSConcreteStackBlock, separate from code stub imports."
   }
 }
