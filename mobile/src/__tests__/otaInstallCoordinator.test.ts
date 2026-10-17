@@ -252,6 +252,7 @@ describe("OtaInstallCoordinator hotspot transport selection", () => {
       connection: {state: "connected", fullyBooted: true}, hotspotOtaVersion: 1, buildNumber: "303000100",
     })
     useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true, totalSize: 0,
       versionCode: 302000100, versionName: "3.2.0", isDowngrade: true, updates: ["apk"],
     })
     otaInstallCoordinator.attach()
