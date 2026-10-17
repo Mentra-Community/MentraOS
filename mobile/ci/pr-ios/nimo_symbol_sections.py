@@ -13,8 +13,13 @@ import os
 import stat
 import subprocess
 import time
+import io
+import itertools
+from collections import Counter
 
 MAX_SYMBOLS = 200000
+MAX_NM_BYTES = 64 * 1024 * 1024
+MAX_ROSTER_ROWS = 500000
 MAX_FUNCTIONS = 512
 PROOF_SECONDS = 120
 MAX_WINDOW = 1024 * 1024
@@ -175,10 +180,39 @@ def symbol_rows(nm):
     return rows
 
 
-def symbol_windows(rows, demangled, selectors, text):
+def symbol_roster(nm):
+    # The complete app roster supplies addresses/identities only. It is not a
+    # demangle or traversal budget; the observed app has 213,569 text entries.
+    if len(nm.encode()) > MAX_NM_BYTES:
+        raise ValueError('archive raw symbol metadata exceeds 64MiB bound')
+    rows = []
+    for line in io.StringIO(nm):
+        if (m := re.fullmatch(r'([a-fA-F0-9]{1,16})\s+[tT]\s+(\S+)', line.strip())):
+            rows.append((int(m[1], 16), m[2]))
+            if len(rows) > MAX_ROSTER_ROWS:
+                raise ValueError(f'archive address roster exceeds bound: parsed={len(rows)} limit={MAX_ROSTER_ROWS}')
+    if not rows:
+        raise ValueError('archive address roster unavailable: parsed=0')
+    return rows
+
+
+def owned_symbol_rows(roster):
+    # Exact observed Swift module ABI plus the standard Task specialization
+    # family used to validate consumed runtime descriptors. Other methods can
+    # enter only through the bounded exact-entry lazy callback.
+    counts = Counter(address for address, _ in roster)
+    names = Counter(symbol for _, symbol in roster)
+    rows = [(address, symbol) for address, symbol in roster
+            if counts[address] == 1 and names[symbol] == 1 and symbol.removeprefix('_').startswith(('$s18MentraBluetoothSDK', '$sScT'))]
+    if not rows or len(rows) > MAX_SYMBOLS:
+        raise ValueError(f'owned compiler symbols unavailable or unbounded: parsed={len(rows)} limit={MAX_SYMBOLS}')
+    return rows
+
+
+def symbol_windows(rows, demangled, selectors, text, roster=None):
     if len(rows) != len(demangled):
         raise ValueError('compiler demangle roster changed')
-    addresses = sorted({address for address, _ in rows if text[0] <= address < text[1]})
+    addresses = sorted({address for address, _ in (roster if roster is not None else rows) if text[0] <= address < text[1]})
     next_address = dict(zip(addresses, addresses[1:] + [text[1]]))
     selected = [(address, symbol) for (address, symbol), name in zip(rows, demangled)
                 if any(selector in name for selector in selectors)]
@@ -296,23 +330,38 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         stage = {'kind': 'nimo-compiler-symbol-stage-v1', 'capabilityVerified': False,
                  'uuid': uuid, 'executableSha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
                  'nmBytes': len(nm.encode()), 'nmSha256': hashlib.sha256(nm.encode()).hexdigest(),
-                 'parsedTextCount': sum(bool(re.fullmatch(r'([a-fA-F0-9]{1,16})\s+[tT]\s+(\S+)', line.strip())) for line in nm.splitlines()),
-                 'firstLines': [line[:512] for line in nm.splitlines()[:16]]}
+                 'parsedTextCount': sum(bool(re.fullmatch(r'([a-fA-F0-9]{1,16})\s+[tT]\s+(\S+)', line.strip())) for line in io.StringIO(nm)),
+                 'firstLines': [line.rstrip('\n')[:512] for line in itertools.islice(io.StringIO(nm), 16)]}
         persist_trace(Path(diagnostic_path).with_name('xcodebuild-attempt-nimo-symbol-stage.log'), stage)
-    rows = symbol_rows(nm)
-    result = subprocess.run(['xcrun', 'swift-demangle', '--compact'], input=('\n'.join(symbol for _, symbol in rows)+'\n').encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=remaining())
-    if len(result.stdout) > 64 * 1024 * 1024:
-        raise ValueError('archive demangled symbols exceed bound')
-    demangled = [normalize_demangled(name) for name in result.stdout.decode('utf-8', errors='strict').splitlines()]
-    windows = symbol_windows(rows, demangled, selectors, text)
+    roster = symbol_roster(nm)
+    rows = owned_symbol_rows(roster)
+    initial_owned_count = len(rows)
+    print(f'NIMO compiler roster: {len(roster)} metadata entries, {initial_owned_count} unaliased owned/Task candidates')
+    demangle_size = 0
+    def demangle(selected):
+        nonlocal demangle_size
+        if not selected or len(selected) > MAX_SYMBOLS:
+            raise ValueError('selected compiler demangle budget exceeded')
+        result = subprocess.run(['xcrun', 'swift-demangle', '--compact'], input=('\n'.join(symbol for _, symbol in selected)+'\n').encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=remaining())
+        demangle_size += len(result.stdout)
+        if demangle_size > 64 * 1024 * 1024:
+            raise ValueError('archive total demangled symbols exceed bound')
+        names = [normalize_demangled(name) for name in result.stdout.decode('utf-8', errors='strict').splitlines()]
+        if len(names) != len(selected):
+            raise ValueError('compiler demangle roster changed')
+        return names
+    demangled = demangle(rows)
+    windows = symbol_windows(rows, demangled, selectors, text, roster)
     indirect = bounded('xcrun', 'llvm-objdump', '--macho', '--indirect-symbols', executable).decode('utf-8', errors='strict')
     imports = imported_stubs(indirect)
     blocks, size, functions = [], 0, {}
     by_symbol = {symbol: name for (_, symbol), name in zip(rows, demangled)}
     address_rows = {}
-    for (address, symbol), name in zip(rows, demangled):
+    for address, symbol in roster:
+        name = by_symbol.get(symbol, symbol)
         if text[0] <= address < text[1]:
             address_rows.setdefault(address, []).append((symbol, name))
+    symbol_counts = Counter(symbol for _, symbol in roster)
     addresses = sorted(address_rows)
     stops = dict(zip(addresses, addresses[1:] + [text[1]]))
     def disassemble(start, stop, symbol):
@@ -333,16 +382,19 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         blocks.append(block)
         return functions[symbol]
     for start, stop, symbol in windows:
+        if len(address_rows[start]) != 1:
+            raise ValueError('initial compiler function entry is aliased')
         disassemble(start, stop, symbol)
     async_error = None
     async_data_imports, async_reads, async_pointers = {}, {}, {}
     if async_edges is not None:
         from nimo_async_invocations import prove_async_edges
         # Aliased addresses cannot select an arbitrary compiler identity.
-        symbols = {address: values[0] for address, values in address_rows.items() if len(values) == 1}
+        symbols = {address: values[0] for address, values in address_rows.items()
+                   if len(values) == 1 and symbol_counts[values[0][0]] == 1}
         def get_function(address):
             if address not in symbols:
-                raise ValueError('async compiler function entry is absent or aliased')
+                raise ValueError('async compiler function entry is absent or ambiguous')
             return disassemble(address, stops[address], symbols[address][0])
         try:
             data_imports = data_imports_from_indirect(indirect, delivered)
@@ -364,10 +416,24 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
             async_edges.update(prove_async_edges(functions, symbols, imports, read_bytes, get_function, data_imports, read_pointer))
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             async_error = error
+    # Only actually disassembled consumed entries can extend the processed
+    # roster. Exact names are demangled under the original total deadline.
+    known = {symbol for _, symbol in rows}
+    loaded = [(start, symbol) for symbol, (start, _, _) in functions.items() if symbol not in known]
+    if loaded and async_error is None:
+        try:
+            if len(rows) + len(loaded) > MAX_SYMBOLS:
+                raise ValueError('owned and lazy compiler roster exceeds bound')
+            names = demangle(loaded)
+            rows.extend(loaded);demangled.extend(names)
+            by_symbol.update({symbol: name for (_, symbol), name in zip(loaded, names)})
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+            async_error = error
     if diagnostic_path is not None:
         trace = {'kind': 'nimo-compiler-sections-only-v1', 'capabilityVerified': False, 'uuid': uuid,
                  'executableSha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
-                 'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol[symbol]} for symbol, (start, stop, _) in functions.items()],
+                 'rosterRows': len(roster), 'initialOwnedRows': initial_owned_count, 'processedRows': len(rows),
+                 'symbols': [{'start': start, 'stop': stop, 'symbol': symbol, 'demangled': by_symbol.get(symbol, symbol)} for symbol, (start, stop, _) in functions.items()],
                  'imports': imports, 'assembly': '\n'.join(blocks),
                  'asyncProofError': str(async_error)[:1024] if async_error is not None else None,
                  'asyncDataImports': async_data_imports, 'asyncDescriptorReads': async_reads, 'asyncPointerReads': async_pointers}
@@ -377,4 +443,5 @@ def archive_symbol_sections(executable, source_root, selectors, run=None, clock=
         raise async_error
     remaining()
     print(f'NIMO compiler witness UUID {uuid}: {len(windows)} bounded symbol sections, {size} disassembly bytes')
-    return nm, demangled, '\n'.join(blocks)
+    processed_nm = '\n'.join(f'{address:016x} t {symbol}' for address, symbol in rows)
+    return processed_nm, demangled, '\n'.join(blocks)

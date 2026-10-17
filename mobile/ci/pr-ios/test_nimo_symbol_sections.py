@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers
+from nimo_symbol_sections import macho_layout, normalize_demangled, symbol_windows, normalize_window, imported_stubs, archive_symbol_sections, persist_trace, symbol_rows, file_backed_reader, data_imports_from_indirect, rebase_pointers, symbol_roster, owned_symbol_rows
 
 UUID = bytes(range(16))
 def macho():
@@ -45,6 +45,44 @@ class SectionsTests(unittest.TestCase):
         with patch('nimo_symbol_sections.MAX_WINDOW',4):
             # Data-table validation is section-based, independent of code windows.
             self.assertEqual(rebase_pointers(line,data),{0x2000:0x1004})
+
+    def test_actual_scale_unrelated_roster_never_expands_owned_demangle_budget(self):
+        raw=''.join(f'{0x2000+4*i:x} t _unrelated_{i}\n' for i in range(213569))
+        raw+='1000 t _$s18MentraBluetoothSDK5Entry6methodyyF\n1004 t _$sScTtask\n'
+        roster=symbol_roster(raw);owned=owned_symbol_rows(roster)
+        self.assertEqual(len(roster),213571);self.assertEqual(len(owned),2)
+        self.assertEqual(owned_symbol_rows(roster+[(0x1000,'_foreign_alias')]),[owned[1]])
+        self.assertEqual(owned_symbol_rows(roster+[(0x1008,owned[0][1])]),[owned[1]])
+        with self.assertRaisesRegex(ValueError,'owned compiler symbols'):
+            owned_symbol_rows([(0x1000,owned[0][1]),(0x1000,'_foreign_alias')])
+        self.assertEqual(symbol_windows(owned,['SDK.Entry.method()','Swift.Task.init()'],['Entry.method('],(0x1000,0x200000),roster),[(0x1000,0x1004,owned[0][1])])
+        with self.assertRaisesRegex(ValueError,'owned compiler symbols'):owned_symbol_rows([(0x1000,'_notSDK')])
+        with patch('nimo_symbol_sections.MAX_SYMBOLS',1),self.assertRaisesRegex(ValueError,'owned compiler symbols'):owned_symbol_rows(roster)
+        with patch('nimo_symbol_sections.MAX_ROSTER_ROWS',2),self.assertRaisesRegex(ValueError,'roster exceeds bound'):symbol_roster(raw)
+        with patch('nimo_symbol_sections.MAX_NM_BYTES',10),self.assertRaisesRegex(ValueError,'64MiB'):symbol_roster(raw)
+        with self.assertRaisesRegex(ValueError,'parsed=0'):symbol_roster('no text symbols')
+
+    def test_required_aliased_root_is_omitted_but_unused_alias_is_never_adopted(self):
+        from test_nimo_capability import witnesses
+        from nimo_capability import compiled_witness
+        nm,names,assembly=witnesses()
+        nm=nm.replace('_$sSynthetic','_$s18MentraBluetoothSDK')
+        assembly=assembly.replace('_$sSynthetic','_$s18MentraBluetoothSDK')
+        roster=symbol_roster(nm)
+        by_name={symbol:name for (_,symbol),name in zip(roster,names)}
+        required=next(address for address,symbol in roster if symbol.endswith('sdkInit'))
+        selected=owned_symbol_rows(roster+[(required,'_unrelated_alias')])
+        filtered='\n'.join(f'{a:x} t {symbol}' for a,symbol in selected)
+        with self.assertRaisesRegex(ValueError,'entries unavailable: sdkInit'):
+            compiled_witness(filtered,[by_name[symbol] for _,symbol in selected],assembly)
+        duplicate_name=next(symbol for _,symbol in roster if symbol.endswith('sdkInit'))
+        selected=owned_symbol_rows(roster+[(0xfffc,duplicate_name)])
+        with self.assertRaisesRegex(ValueError,'entries unavailable: sdkInit'):
+            compiled_witness('\n'.join(f'{a:x} t {symbol}' for a,symbol in selected),[by_name[symbol] for _,symbol in selected],assembly)
+        changed=roster+[(0xffff,'_$s18MentraBluetoothSDKunused'),(0xffff,'_foreign_unused_alias')]
+        selected=owned_symbol_rows(changed)
+        self.assertEqual(selected,roster)
+        self.assertEqual(len(compiled_witness('\n'.join(f'{a:x} t {symbol}' for a,symbol in selected),[by_name[symbol] for _,symbol in selected],assembly)),17)
 
     def test_symbol_rejection_names_actual_count_and_bound(self):
         with self.assertRaisesRegex(ValueError, r'parsed=0 limit=200000 nmBytes=4'):
@@ -108,6 +146,24 @@ class SectionsTests(unittest.TestCase):
             path.unlink();path.symlink_to(root/'foreign')
             with self.assertRaises(OSError):persist_trace(path,trace)
 
+    def test_lazy_duplicate_name_cannot_substitute_an_already_cached_body(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp).resolve();exe=root/'Mentra';exe.write_bytes(macho())
+            dwarf=root/'mobile/build/pr-ios/Mentra.xcarchive/dSYMs/Mentra.app.dSYM/Contents/Resources/DWARF/Mentra';dwarf.parent.mkdir(parents=True);dwarf.write_bytes(b'dsym')
+            def run(*args,timeout):
+                if 'dwarfdump' in args:return b'UUID: 00010203-0405-0607-0809-0a0b0c0d0e0f (arm64) file\n'
+                if 'nm' in args:return b'1000 t _$s18MentraBluetoothSDK5Entry6methodyyF\n1004 t _copyHelper\n1008 t _copyHelper\n'
+                if '--indirect-symbols' in args or 'dyld_info' in args:return b''
+                return b'1000: ret\n'
+            def proof(functions,symbols,imports,reader,get_function,*unused):
+                functions['_copyHelper']=(0x1004,0x1008,'_copyHelper:\n1004 ret')
+                self.assertNotIn(0x1004,symbols);self.assertNotIn(0x1008,symbols)
+                for entry in (0x1004,0x1008):
+                    with self.assertRaisesRegex(ValueError,'ambiguous'):get_function(entry)
+                return set()
+            with patch('nimo_symbol_sections.subprocess.run',return_value=SimpleNamespace(stdout=b'SDK.Entry.method()\n')),patch('nimo_async_invocations.prove_async_edges',side_effect=proof):
+                archive_symbol_sections(exe,root,['Entry.method('],run,async_edges=set())
+
     def test_async_failure_retains_selected_delivered_sections_without_qualifying(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp).resolve();exe=root/'Mentra';data=bytearray(macho())
@@ -115,7 +171,7 @@ class SectionsTests(unittest.TestCase):
             dwarf=root/'mobile/build/pr-ios/Mentra.xcarchive/dSYMs/Mentra.app.dSYM/Contents/Resources/DWARF/Mentra';dwarf.parent.mkdir(parents=True);dwarf.write_bytes(b'dsym')
             def run(*args,timeout):
                 if 'dwarfdump' in args:return ('UUID: '+UUID.hex()[:8]+'-'+UUID.hex()[8:12]+'-'+UUID.hex()[12:16]+'-'+UUID.hex()[16:20]+'-'+UUID.hex()[20:]+' (arm64) file\n').encode()
-                if 'nm' in args:return b'1000 t _entry\n'
+                if 'nm' in args:return b'1000 t _$s18MentraBluetoothSDK5Entry6methodyyF\n'
                 if '--indirect-symbols' in args:return b''
                 return b'1000: nop\n1004: nop\n1008: nop\n100c: ret\n'
             trace=root/'xcodebuild-attempt-nimo-capability.log'
