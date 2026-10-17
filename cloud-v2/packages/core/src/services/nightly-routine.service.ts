@@ -156,7 +156,7 @@ export class NightlyRoutineService {
     const catalog = (await this.catalog.list()).filter(row => row.nightlyEnabled !== false)
       .map(row => ({routineId: row.routineId, platform: row.platform}));
     if (catalog.length > 100) throw new TestRunError(503, "Nightly catalog exceeds the occurrence bound; no members were selected");
-    const routineRevision = catalog.length ? await this.sources.resolve() : undefined;
+    const routineRevision = catalog.length ? await this.sources.resolve(undefined, occurrence.startedAt) : undefined;
     const platforms = [...new Set(catalog.map(row => row.platform))].sort();
     const selected = new Map<TestBuildPlatform, PlatformSelection>();
     let anchor: TestBuild | null = null;
