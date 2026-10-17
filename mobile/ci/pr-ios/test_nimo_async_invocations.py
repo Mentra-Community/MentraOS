@@ -227,4 +227,22 @@ class ActualIosAsyncInvocationTests(unittest.TestCase):
             self.mutate_body('100685e70 add x1, x1, #0x660','100685e70 b 0x100685fa0')
             self.assertNotIn((self.serve,self.task),self.prove())
 
+class InitialActorHopTests(unittest.TestCase):
+    def test_actual_initial_actor_hop_reaches_exact_start_call(self):
+        f=json.loads((FIXTURE.parent/'nimo-async-dca-initial-switch.json').read_text())
+        symbols={int(a):tuple(v) for a,v in f['symbols'].items()}
+        entry=symbols[0x100db13e0][0];continuation=symbols[0x100db148c][0]
+        windows=f['windows'];imports={int(a):n for a,n in f['imports'].items()}
+        def prove():
+            return prove_async_edges({entry:windows[entry]},symbols,imports,lambda a,n:None,lambda a:windows[symbols[a][0]])
+        self.assertEqual(prove(),{(entry,continuation)})
+        self.assertIn('100db14b8 bl 0x100db0a50',windows[continuation][2])
+        original=windows[entry][2]
+        # A real dead continuation body remains present in each negative.
+        for old,new in [('100db1478 mov x1, x8','100db1478 mov x0, x8'),('100db1488 b 0x102c0ba80','100db1488 b 0xdead')]:
+            with self.subTest(new=new):
+                windows[entry][2]=original.replace(old,new)
+                self.assertNotIn((entry,continuation),prove())
+        windows[entry][2]=original
+
 if __name__=='__main__':unittest.main()

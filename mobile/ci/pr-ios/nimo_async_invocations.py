@@ -582,6 +582,7 @@ def prove_async_edges(functions, symbols, imports, read_bytes, get_function, dat
     edges=set()
     for symbol,window in list(functions.items()):
         code=proof.decode(window)
+        edges.update(proof.switches(symbol,code))
         edges.update(proof.dispatch(symbol,code))
         edges.update(proof.task(symbol,code))
         edges.update(proof.registered_task(symbol,code))

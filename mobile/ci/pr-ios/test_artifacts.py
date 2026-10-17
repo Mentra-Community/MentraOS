@@ -1,4 +1,4 @@
-from test_nimo_async_invocations import AsyncInvocationTests, ActualIosAsyncInvocationTests
+from test_nimo_async_invocations import AsyncInvocationTests, ActualIosAsyncInvocationTests, InitialActorHopTests
 from test_nimo_capability import CapabilityTests
 from test_nimo_symbol_sections import SectionsTests
 import datetime as dt
