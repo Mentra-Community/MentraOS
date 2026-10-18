@@ -10,7 +10,7 @@ export type OtaArtifactFailureCategory =
   | "verify"
 
 export interface OtaArtifactFailure {
-  artifact: "apk" | "mtk" | "bes"
+  artifact: "apk" | "mtk" | "bes" | null
   stage: "download" | "verify" | "save"
   category: OtaArtifactFailureCategory
   httpStatus?: number
@@ -25,7 +25,11 @@ function privateErrorText(value: unknown): string | undefined {
   return String(value)
     .replace(/(?:https?|file):\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
     .replace(/\/(?:data|var|private|storage|Users)\/[^\s"'<>]*/g, "[REDACTED_PATH]")
-    .replace(/\b(?:bearer\s+\S+|(?:token|password|authorization|signature|api[_-]?key)\s*[:=]\s*\S+)/gi, "[REDACTED]")
+    .replace(/\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*[:=][^\r\n]*/gi, "[REDACTED_HEADER]")
+    .replace(
+      /\b(?:bearer\s+\S+|(?:token|password|signature|api[_-]?key)\s*[:=]\s*(?:"[^"]*"|'[^']*'|\S+))/gi,
+      "[REDACTED]",
+    )
     .slice(0, 500)
 }
 
@@ -68,10 +72,16 @@ export function otaArtifactFailure(
   // A DNS error, timeout, reset, or HTTP failure alone does not establish no internet.
   let category: OtaArtifactFailureCategory = context.stage === "verify" ? "verify" : "download"
   if (/\bENOSPC\b|No space left on device/i.test(text)) category = "storage"
-  else if (context.stage === "save" || /\b(?:EACCES|EROFS)\b|Permission denied|Read-only file system/i.test(text))
-    category = "save"
+  else if (context.stage === "save") category = "save"
   else if (context.stage === "download") {
-    if (httpStatus !== undefined && httpStatus >= 100 && httpStatus <= 599 && httpStatus !== 200 && httpStatus !== 206)
+    if (/\b(?:EACCES|EROFS)\b|Permission denied|Read-only file system/i.test(text)) category = "save"
+    else if (
+      httpStatus !== undefined &&
+      httpStatus >= 100 &&
+      httpStatus <= 599 &&
+      httpStatus !== 200 &&
+      httpStatus !== 206
+    )
       category = "server"
     else if (
       nativeErrors.some((entry) => entry.domain === "NSURLErrorDomain" && entry.code === "-1009") ||

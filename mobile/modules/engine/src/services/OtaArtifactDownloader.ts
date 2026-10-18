@@ -57,6 +57,22 @@ export class OtaArtifactError extends Error {
   }
 }
 
+function artifactPreparationError(
+  error: unknown,
+  context: Omit<OtaArtifactFailure, "category" | "nativeErrors">,
+): OtaArtifactError {
+  return new OtaArtifactError(
+    error instanceof OtaArtifactError
+      ? error.code
+      : context.stage === "verify"
+      ? "artifact_verify_failed"
+      : "artifact_download_failed",
+    error instanceof OtaArtifactError ? error.message : "Preparing the update artifact failed",
+    otaArtifactFailure(error, context),
+    error,
+  )
+}
+
 const ASG_PACKAGE = "com.mentra.asg_client"
 
 export function otaArtifactsDirectory(): string {
@@ -141,7 +157,16 @@ export async function prepareArtifacts(
   ) => Promise<{statusCode: number}>,
 ): Promise<PreparedOtaArtifact[]> {
   const directory = otaArtifactsDirectory()
-  await RNFS.mkdir(directory, {NSURLIsExcludedFromBackupKey: true})
+  try {
+    await RNFS.mkdir(directory, {NSURLIsExcludedFromBackupKey: true})
+  } catch (error) {
+    throw artifactPreparationError(error, {
+      artifact: null,
+      stage: "save",
+      bytesWritten: 0,
+      contentLength: 0,
+    })
+  }
 
   const prepared: PreparedOtaArtifact[] = []
   for (let index = 0; index < plan.length; index++) {
@@ -158,13 +183,22 @@ export async function prepareArtifacts(
     })
 
     const cachedPath = `${directory}/${entry.sha256}`
-    if (await RNFS.exists(cachedPath)) {
-      const cachedHash = (await RNFS.hash(cachedPath, "sha256")).toLowerCase()
-      if (cachedHash === entry.sha256) {
-        prepared.push({...entry, filePath: cachedPath})
-        continue
+    try {
+      if (await RNFS.exists(cachedPath)) {
+        const cachedHash = (await RNFS.hash(cachedPath, "sha256")).toLowerCase()
+        if (cachedHash === entry.sha256) {
+          prepared.push({...entry, filePath: cachedPath})
+          continue
+        }
+        await safeUnlink(cachedPath)
       }
-      await safeUnlink(cachedPath)
+    } catch (error) {
+      throw artifactPreparationError(error, {
+        artifact: entry.kind,
+        stage: "verify",
+        bytesWritten: 0,
+        contentLength: 0,
+      })
     }
 
     const partPath = `${directory}/download-${index}.part`
@@ -228,17 +262,7 @@ export async function prepareArtifacts(
       prepared.push({...entry, filePath: finalPath})
     } catch (error) {
       await safeUnlink(partPath)
-      const failure = otaArtifactFailure(error, {artifact: entry.kind, stage, httpStatus, bytesWritten, contentLength})
-      throw new OtaArtifactError(
-        error instanceof OtaArtifactError
-          ? error.code
-          : stage === "verify"
-          ? "artifact_verify_failed"
-          : "artifact_download_failed",
-        error instanceof OtaArtifactError ? error.message : `Preparing ${entry.kind} artifact failed`,
-        failure,
-        error,
-      )
+      throw artifactPreparationError(error, {artifact: entry.kind, stage, httpStatus, bytesWritten, contentLength})
     }
   }
   return prepared

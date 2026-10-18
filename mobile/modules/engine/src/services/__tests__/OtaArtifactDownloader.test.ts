@@ -170,6 +170,52 @@ describe("planArtifacts", () => {
 })
 
 describe("prepareArtifacts", () => {
+  test.each([
+    ["ENOSPC: No space left on device", "storage"],
+    ["EACCES: Permission denied", "save"],
+  ])("retains a directory creation failure (%s) before any download", async (message, category) => {
+    const original = Object.assign(new Error(`${message} /data/user/0/private/update`), {code: "RNFS"})
+    rnfsMock.mkdir.mockRejectedValueOnce(original)
+    const previousDownloads = rnfsMock.downloadFile.mock.calls.length
+    await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+      code: "artifact_download_failed",
+      failure: {artifact: null, stage: "save", category, nativeErrors: [{name: "Error", code: "RNFS"}]},
+    })
+    expect(rnfsMock.downloadFile.mock.calls.length).toBe(previousDownloads)
+    expect(files.size).toBe(0)
+  })
+
+  test.each(["EACCES: Permission denied", "Unexpected hash read failure"])(
+    "retains a cached hash rejection (%s) without replacing the cache or downloading",
+    async (message) => {
+      const cachedPath = `/docs/ota_artifacts/${hashes.apk}`
+      files.set(cachedPath, "apk")
+      rnfsMock.hash.mockRejectedValueOnce(Object.assign(new Error(message), {code: "RNFS"}))
+      const previousDownloads = rnfsMock.downloadFile.mock.calls.length
+      await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+        code: "artifact_verify_failed",
+        failure: {
+          artifact: "apk",
+          stage: "verify",
+          category: "verify",
+          nativeErrors: [{name: "Error", code: "RNFS", message}],
+        },
+      })
+      expect(rnfsMock.downloadFile.mock.calls.length).toBe(previousDownloads)
+      expect([...files.entries()]).toEqual([[cachedPath, "apk"]])
+    },
+  )
+
+  test("retains a cache existence check rejection before any download", async () => {
+    rnfsMock.exists.mockRejectedValueOnce(Object.assign(new Error("EACCES: Permission denied"), {code: "RNFS"}))
+    const previousDownloads = rnfsMock.downloadFile.mock.calls.length
+    await expect(prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])).rejects.toMatchObject({
+      code: "artifact_verify_failed",
+      failure: {stage: "verify", category: "verify", nativeErrors: [{code: "RNFS"}]},
+    })
+    expect(rnfsMock.downloadFile.mock.calls.length).toBe(previousDownloads)
+  })
+
   test("preserves a redacted native download failure and never repeats the download", async () => {
     const original = Object.assign(
       new Error("Software caused connection abort https://cdn.example.com/a?token=private"),

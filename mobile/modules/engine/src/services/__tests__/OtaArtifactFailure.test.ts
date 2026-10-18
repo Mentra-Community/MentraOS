@@ -54,6 +54,9 @@ describe("phone download failure diagnosis", () => {
   test("does not relabel verification or final save failures as internet problems", () => {
     expect(otaArtifactFailure(new Error("Network is down"), {...context, stage: "verify"}).category).toBe("verify")
     expect(otaArtifactFailure(new Error("Network is down"), {...context, stage: "save"}).category).toBe("save")
+    expect(otaArtifactFailure(new Error("EACCES: Permission denied"), {...context, stage: "verify"}).category).toBe(
+      "verify",
+    )
   })
 
   test("redacts signed URLs, local paths and secrets; bounds cyclic native cause chains", () => {
@@ -69,6 +72,21 @@ describe("phone download failure diagnosis", () => {
     expect(json).not.toContain("private")
     expect(json).not.toContain("secret")
     expect(json).not.toContain("userInfo")
+  })
+
+  test.each([
+    "Authorization: Bearer PRIVATE_SENTINEL",
+    "Proxy-Authorization: Basic PRIVATE_SENTINEL",
+    "Cookie: session=PRIVATE_SENTINEL; account=secret",
+    "Set-Cookie: session=PRIVATE_SENTINEL; Secure",
+    'password="PRIVATE_SENTINEL with spaces"',
+    "token='PRIVATE_SENTINEL with spaces'",
+  ])("redacts complete sensitive header and quoted-secret text: %s", (message) => {
+    const serialized = JSON.stringify(otaArtifactFailure(new Error(`Connection reset\n${message}`), context))
+    expect(serialized).toContain("Connection reset")
+    expect(serialized).not.toContain("PRIVATE_SENTINEL")
+    expect(serialized).not.toContain("with spaces")
+    expect(serialized).not.toContain("account=secret")
   })
 
   test("uses stage-specific copy for legacy wrappers and a plain fallback for unknown failures", () => {
