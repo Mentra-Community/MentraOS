@@ -133,19 +133,19 @@ export class RoutineDispatchService {
     if (!exact) await this.definitions.enroll(enrollment, hostId);
     return this.complete(row, enrollment, value.frameworkBinding);
   }
-  private async complete(row: StoredRequest, definition: z.infer<typeof routineEnrollmentSchema>, responseBinding?: FrameworkBinding) {
+  private async complete(row: StoredRequest, definition: z.infer<typeof routineEnrollmentSchema>, responseBinding?: FrameworkBinding, trustedCachedSource = false) {
     const intent = row.dispatchIntent!;
     const build = recordedRoutineBuild(intent.build, intent.source, intent.platform), host = await this.hosts.get(row.hostId);
     const input = routineAdmissionInput(definition, build, {hostId: row.hostId, laneId: intent.laneId}, host, Date.now(),
       {requireAutomatic: false, minimumFrameworkVersion: intent.minimumFrameworkVersion});
     input.build = frameworkExecutableBuild(intent.build, input.glassesModel);
-    return this.requests.completePreparation(row.requestId, row.hostId, row.dispatchIntentSha256!, input, responseBinding);
+    return this.requests.completePreparation(row.requestId, row.hostId, row.dispatchIntentSha256!, input, responseBinding, trustedCachedSource);
   }
   private async reconcile(row: StoredRequest): Promise<StoredRequest> {
     if (row.state !== 'preparing') return row;
     const intent = row.dispatchIntent!, exact = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
     if (!exact) return row;
-    try {return await this.complete(row, exact);}
+    try {return await this.complete(row, exact, undefined, true);}
     catch (error) {if (error instanceof TestRunError && (error.status === 409 || error.status === 503)) return row; throw error;}
   }
   async detail(requestId: string) {

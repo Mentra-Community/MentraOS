@@ -38,7 +38,11 @@ function fixture(frameworks?: ConstructorParameters<typeof TestRequestService>[3
 }
 test('floor-bound producer completion requires its original eligible binding before enrollment and preserves frozen metadata', async () => {
   const binding = {...testFrameworkBinding(), version: 1085};
-  const f = fixture({async frameworkObservation() {const time = new Date().toISOString(); return {binding, receivedAt: time, observedAt: time}}});
+  const f = fixture({async frameworkObservation() {const time = new Date().toISOString(); return {binding, receivedAt: time, observedAt: time}},
+    async admitPreparationFramework(hostId, requestId, dispatchIntentSha256, requestFenceSha256, minimum, effect) {
+      const time = new Date().toISOString(); return {requestId, dispatchIntentSha256, requestFenceSha256, effect, binding,
+        incarnation: 'current', incarnationGeneration: 1, sequence: 1, receivedAt: time, observedAt: time, admittedAt: time};
+    }});
   const waiting = await f.service.submit({...selected, minimumFrameworkVersion: 1085}), definition = f.definition();
   const completion = {dispatchIntentSha256: waiting.dispatchIntentSha256!, routineSource: definition.routineSource,
     definitionSha256: definition.definitionSha256, definition: definition.definition};

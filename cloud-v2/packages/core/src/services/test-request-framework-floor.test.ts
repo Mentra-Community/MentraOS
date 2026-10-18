@@ -6,6 +6,7 @@ import {TestHostStateService} from './test-host-state.service';
 import {requestInputDigest, TestRequestService, type StoredRequest, type TestRequestRepository} from './test-request.service';
 import {preparedRoutineRequestSchema} from './routine-dispatch.service';
 import {preparationRejectionSchema, preparationStatusSchema} from '../types/routine-dispatch.types';
+import {TestRunError} from './test-result-error';
 
 const now = Date.parse('2026-10-18T09:17:00Z'), current = {...testFrameworkBinding(), version: 1085};
 const build = {repository: 'Mentra-Community/MentraOS' as const, headSha: 'c'.repeat(40), channel: 'dev' as const, kind: 'android-apk' as const,
@@ -35,7 +36,22 @@ function fixture(initial = observation()) {
     async updatePreparation(id, host, digest, value) {if (row?.state !== 'preparing') return null; row = {...row, preparation: value}; return structuredClone(row)},
     async cancelPreparation(id, digest, value) {if (row?.state !== 'preparing') return null; row = {...row, state: 'terminal', terminalStatus: 'cancelled', preparationCancellation: value}; return structuredClone(row)},
   };
-  const service = new TestRequestService(repository, undefined, null, {async frameworkObservation() {return structuredClone(observed)}}, () => now);
+  let admitted: any;
+  const service = new TestRequestService(repository, undefined, null, {
+    async frameworkObservation() {return structuredClone(observed)},
+    async preparationFrameworkAdmission() {return structuredClone(admitted)},
+    async admitPreparationFramework(hostId, requestId, dispatchIntentSha256, requestFenceSha256, minimum, effect, binding) {
+      if (admitted) {
+        if (admitted.requestFenceSha256 !== requestFenceSha256 || requestInputDigest(admitted.effect) !== requestInputDigest(effect) ||
+          binding && requestInputDigest(binding) !== requestInputDigest(admitted.binding)) throw new TestRunError(409, 'Changed admission');
+        return admitted;
+      }
+      if (!observed || observed.binding.version < minimum || binding && requestInputDigest(binding) !== requestInputDigest(observed.binding))
+        throw new TestRunError(409, 'Waiting for framework');
+      admitted = {requestId, dispatchIntentSha256, requestFenceSha256, effect, binding: observed.binding};
+      return admitted;
+    },
+  }, () => now);
   return {service, get observed() {return observed}, set observed(value) {observed = value}, get completions() {return completions}, get rejections() {return rejections}};
 }
 test('unknown, stale, future and below-floor observations withhold preparation without changing immutable identity', async () => {
@@ -69,7 +85,8 @@ test('delayed old or binding-free rejection cannot borrow an upgraded framework,
 });
 test('exact eligible response completes once and an older response cannot commit', async () => {
   const f = fixture(), original = await f.service.prepare('pro', intent), digest = original.dispatchIntentSha256!;
-  await expect(f.service.completePreparation(intent.requestId, 'pro', digest, input, {...current, version: 1083})).rejects.toMatchObject({status: 409});
+  for (const binding of [undefined, {...current, version: 1083}])
+    await expect(f.service.completePreparation(intent.requestId, 'pro', digest, input, binding)).rejects.toMatchObject({status: 409});
   expect(f.completions).toBe(0);
   const queued = await f.service.completePreparation(intent.requestId, 'pro', digest, input, current);
   expect(queued.inputSha256).toBe(requestInputDigest(input));

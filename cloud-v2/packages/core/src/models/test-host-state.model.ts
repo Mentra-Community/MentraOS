@@ -13,6 +13,8 @@ const schema = new Schema(
     resourceLifecycleCursor: {type: Schema.Types.Mixed},
     frameworkHistory: {type: [Schema.Types.Mixed], default: []},
     frameworkStopReceipts: {type: [Schema.Types.Mixed], default: []},
+    preparationFrameworkAdmissions: {type: [Schema.Types.Mixed], default: []},
+    preparationFrameworkAdmissionVersion: {type: Number, default: 0},
     laneControls: {type: [Schema.Types.Mixed], default: []},
     resourceReservationVersion: {type: Number, default: 0},
     resourceReservations: {type: [Schema.Types.Mixed], default: []},
