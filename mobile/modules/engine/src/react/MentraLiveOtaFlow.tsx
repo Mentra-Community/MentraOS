@@ -618,11 +618,7 @@ function OtaFlowContent({
         icon="alert"
         title={translate("ota:updateFailed")}>
         <BodyText colors={colors}>{failureMessage(state.error, translate)}</BodyText>
-        {state.error?.glassesCode ? (
-          <Text style={[styles.errorCode, {color: colors.textDim}]} testID="ota-error-code">
-            {translate("ota:errorCode", {code: state.error.glassesCode})}
-          </Text>
-        ) : null}
+
       </FlowPage>
     )
   }
@@ -898,7 +894,6 @@ const styles = StyleSheet.create({
   svgIcon: {alignItems: "center", height: 72, justifyContent: "center", width: 72},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
-  errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},

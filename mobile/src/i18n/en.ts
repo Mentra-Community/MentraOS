@@ -556,7 +556,7 @@ const en = {
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     // Glasses-reported OTA failure codes. Keys mirror OTA_ERROR_ENGLISH_COPY in the engine's
-    // OtaErrorMapping; the raw code is shown under the message via errorCode.
+    // OtaErrorMapping; raw codes remain in private incident evidence.
     errorDnsFailed: "Could not find the update server — retry, or check glasses Wi-Fi if this continues",
     errorConnectionFailed: "Could not connect to the update server — please retry",
     errorConnectTimeout: "The update server took too long to connect — please retry",
@@ -576,12 +576,12 @@ const en = {
     errorNoInternet: "Glasses Wi-Fi has no internet connection",
     errorClockSkew: "Glasses clock is wrong — syncing time from your phone, then retrying update check",
     errorSslError: "Secure connection failed — try a different Wi-Fi network",
-    errorDownloadFailed: "Download failed — check glasses Wi-Fi connection",
+    errorDownloadFailed: "The update could not be downloaded to your glasses. Please try again.",
     errorInsufficientStorage: "Not enough storage on your glasses — free up space before trying again",
     errorFirmwareTooLarge: "Firmware file is unexpectedly large — please contact support",
     errorFirmwareVerifyFailed: "Firmware verification failed — please try again or contact support",
     errorApkVerifyFailed: "Update verification failed — please try again or contact support",
-    errorInstallFailed: "Install failed — please try again",
+    errorInstallFailed: "The update could not be installed on your glasses. Please try again.",
     errorApkRestartGuardNotPersisted:
       "Your glasses could not save the update before restarting. Restart your glasses and try again.",
     errorDowngradeHandoffRefused:
@@ -590,9 +590,23 @@ const en = {
       "The recovery service on your glasses did not respond. Restart your glasses and try again.",
     errorDowngradeTransactionStalled:
       "The version change on your glasses did not finish. Restart your glasses and try again.",
-    errorGlassesUnknown: "Your glasses reported an unexpected error. Restart your glasses and try again.",
-    errorGeneric: "Update failed",
+    errorGlassesUnknown: "Something went wrong. Please try again.",
+    errorGeneric: "Something went wrong. Please try again.",
     errorBesRestartRequired: "Restart your glasses to safely exit firmware update mode before trying again",
+    errorPhoneInternet: "Your phone could not connect to the internet. Check its connection and try again.",
+    errorPhoneConnection: "Your phone could not reach the update server. Check its connection and try again.",
+    errorPhoneDownloadServer: "The update server could not provide the download. Please try again later.",
+    errorPhoneDownloadTimeout: "The update download took too long. Please try again.",
+    errorPhoneStorage: "There is not enough space on your phone for the update. Free up space and try again.",
+    errorPhoneSave: "Your phone could not save the update. Please try again.",
+    errorPhoneSecureConnection:
+      "Your phone could not make a secure connection to the update server. Please try again later.",
+    errorPhoneDownload: "The update could not be downloaded to your phone. Please try again.",
+    errorPhoneVerify: "The update file could not be verified. Please try again later.",
+    errorPhoneNearbyPermission: "Allow nearby devices access so your phone can connect to your glasses.",
+    errorGlassesHotspotStart: "Your glasses could not start the connection needed for the update. Please try again.",
+    errorPhoneHotspotJoin: "Your phone could not connect to your glasses for the update. Please try again.",
+    errorPhoneShareUpdate: "Your phone could not send the update to your glasses. Please try again.",
     errorCode: "Error code: {{code}}",
     glassesDisconnected: "Glasses Disconnected",
     glassesDisconnectedMessage: "Your glasses disconnected during the update. Please reconnect and try again.",

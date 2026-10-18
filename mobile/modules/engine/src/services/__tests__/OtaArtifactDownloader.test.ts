@@ -14,7 +14,13 @@ const hashes: Record<string, string> = {
   tampered: "e".repeat(64),
 }
 const fakeHash = (content: string) => hashes[content] ?? "f".repeat(64)
-let downloadImpl: (options: {fromUrl: string; toFile: string}) => Promise<{statusCode: number}> = async () => ({
+type DownloadOptions = {
+  fromUrl: string
+  toFile: string
+  begin?: (result: {statusCode: number; contentLength: number}) => void
+  progress?: (result: {bytesWritten: number; contentLength: number}) => void
+}
+let downloadImpl: (options: DownloadOptions) => Promise<{statusCode: number}> = async () => ({
   statusCode: 200,
 })
 
@@ -45,7 +51,7 @@ const rnfsMock = {
         isFile: () => true,
       })),
   ),
-  downloadFile: mock((options: {fromUrl: string; toFile: string}) => ({
+  downloadFile: mock((options: DownloadOptions) => ({
     jobId: 1,
     promise: downloadImpl(options),
   })),
@@ -164,6 +170,35 @@ describe("planArtifacts", () => {
 })
 
 describe("prepareArtifacts", () => {
+  test("preserves a redacted native download failure and never repeats the download", async () => {
+    const original = Object.assign(
+      new Error("Software caused connection abort https://cdn.example.com/a?token=private"),
+      {code: "ECONNABORTED"},
+    )
+    let attempts = 0
+    downloadImpl = async (options) => {
+      attempts++
+      options.begin?.({statusCode: 200, contentLength: 100})
+      options.progress?.({bytesWritten: 40, contentLength: 100})
+      throw original
+    }
+    let failure: unknown
+    try {
+      await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}])
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(OtaArtifactError)
+    expect(failure).toMatchObject({
+      code: "artifact_download_failed",
+      failure: {category: "connection", stage: "download", nativeErrors: [{code: "ECONNABORTED"}]},
+    })
+    expect((failure as Error & {cause: unknown}).cause).toBe(original)
+    expect(JSON.stringify(failure)).not.toContain("private")
+    expect(attempts).toBe(1)
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
+
   test("announces every file before its download, including an unknown-length transfer", async () => {
     const progress = mock((_event: import("../OtaArtifactDownloader").OtaArtifactDownloadProgress) => {})
     await prepareArtifacts(planArtifacts(checkResult()), progress, async (entry, destination, report) => {
@@ -232,7 +267,11 @@ describe("prepareArtifacts", () => {
       files.set(destination, "apk")
       return {statusCode: 206}
     })
-    const prepared = await prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], undefined, nativeDownload)
+    const prepared = await prepareArtifacts(
+      [{kind: "apk", url: APK_URL, sha256: hashes.apk}],
+      undefined,
+      nativeDownload,
+    )
     expect(nativeDownload).toHaveBeenCalledTimes(1)
     expect(prepared[0].filePath).toBe(`/docs/ota_artifacts/${hashes.apk}`)
     expect(files.get(prepared[0].filePath)).toBe("apk")

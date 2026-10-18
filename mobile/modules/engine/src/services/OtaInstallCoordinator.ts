@@ -23,9 +23,11 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import {OTA_ERROR_ENGLISH_COPY, phoneOtaErrorCopyKey} from "./OtaErrorMapping"
+import type {OtaArtifactFailure} from "./OtaArtifactFailure"
 import {waitForOtaInternet} from "./OtaInternetRecovery"
 import {submitOtaFailureReport, type OtaFailureReason} from "./OtaFailureReportService"
-import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
+import {OtaArtifactError, type OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
 import {checkCurrentGlassesForUpdate, isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
@@ -65,28 +67,6 @@ import {
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
   return d === "complete" || d === "failed" || d === "restarting"
-}
-
-function hotspotPreflightErrorMessage(error: unknown): string {
-  const code =
-    typeof error === "object" && error !== null && "code" in error ? String((error as {code: unknown}).code) : ""
-  switch (code) {
-    case "artifact_download_failed":
-      return OtaProgressMessages.hotspotArtifactDownloadFailed
-    case "artifact_verify_failed":
-    case "manifest_invalid":
-      return OtaProgressMessages.hotspotArtifactVerifyFailed
-    case "hotspot_wifi_permission_denied":
-      return OtaProgressMessages.hotspotWifiPermissionDenied
-    case "hotspot_start_failed":
-      return OtaProgressMessages.hotspotStartFailed
-    case "hotspot_join_failed":
-      return OtaProgressMessages.hotspotJoinFailed
-    case "hotspot_server_failed":
-      return OtaProgressMessages.hotspotServerFailed
-    default:
-      return OtaProgressMessages.hotspotServerFailed
-  }
 }
 
 /** Non-empty when glasses are actively reporting work — drives stall timeout reset. */
@@ -149,6 +129,7 @@ function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProg
 export interface OtaInstallSnapshot {
   displayState: DisplayState
   errorMsg: string
+  errorCopyKey?: string | null
   continueButtonDisabled: boolean
   connected: boolean
   otaStatus: OtaStatus | null
@@ -220,6 +201,7 @@ class OtaInstallCoordinator {
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
+  private errorCopyKey: string | null = null
   private reportAttemptId = `${Date.now()}-0`
   private reportAttemptSequence = 0
   private finishCompletion: {attemptId: string; deviceRevision: number; promise: Promise<void>} | null = null
@@ -598,6 +580,7 @@ class OtaInstallCoordinator {
         versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
+      errorCopyKey: this.errorCopyKey,
       // Keep Continue disabled while the expected BES reboot is still in flight.
       continueButtonDisabled: this.continueButtonDisabled || this.besRestartRecovery === "awaiting",
       connected,
@@ -672,6 +655,7 @@ class OtaInstallCoordinator {
   private resetSessionState(): void {
     this.finishCompletion = null
     this.errorMsg = ""
+    this.errorCopyKey = null
     this.versionChangeReconnected = false
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
@@ -736,12 +720,13 @@ class OtaInstallCoordinator {
 
   // Setters mirror the old setState calls: bail on identical values (React's
   // setState bailout), notify snapshot subscribers, and queue a reaction pass.
-  private reportFailure(reason: OtaFailureReason): void {
+  private reportFailure(reason: OtaFailureReason, artifactFailure?: OtaArtifactFailure): void {
     const state = useGlassesStore.getState()
     void submitOtaFailureReport({
       attemptId: this.reportAttemptId,
       deviceRevision: otaDeviceSessionRevision(),
       reason,
+      artifactFailure,
       transport: this.observedTransport,
       hotspotPhase: this.hotspotPhase,
       connected: isGlassesConnected(state.connection),
@@ -763,9 +748,10 @@ class OtaInstallCoordinator {
     })
   }
 
-  private setErrorMsg(next: string, failureReason?: OtaFailureReason): void {
-    if (this.errorMsg === next) return
+  private setErrorMsg(next: string, failureReason?: OtaFailureReason, copyKey: string | null = null): void {
+    if (this.errorMsg === next && this.errorCopyKey === copyKey) return
     this.errorMsg = next
+    this.errorCopyKey = copyKey
     if (next && failureReason) this.reportFailure(failureReason)
     this.emitInternalChange()
     this.react()
@@ -1736,10 +1722,13 @@ class OtaInstallCoordinator {
       if (this.selectedTransport === "hotspot" && !nativeStartAttempted) {
         ownership.outcome = "rejected"
         this.clearStuckTimeout()
-        this.reportFailure("hotspot_preflight_failed")
+        this.reportFailure("hotspot_preflight_failed", err instanceof OtaArtifactError ? err.failure : undefined)
         await this.teardownHotspotTransport()
         if (!isCurrentAttempt()) return
-        if (this.attached) this.setErrorMsg(hotspotPreflightErrorMessage(err))
+        if (this.attached) {
+          const copyKey = phoneOtaErrorCopyKey(err)
+          this.setErrorMsg(OTA_ERROR_ENGLISH_COPY[copyKey], undefined, copyKey)
+        }
         return
       }
 
