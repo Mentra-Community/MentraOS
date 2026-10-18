@@ -3,7 +3,7 @@ import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixt
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {reconcileRecorderHostReservations} from './routine-job.service';
 import {RoutineDispatchService, recordedRoutineBuild} from './routine-dispatch.service';
-import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest, type TestRequestRepository} from './test-request.service';
+import {TestRequestService, TestRequestConflict, requestInputDigest, isExecutableRequest, type StoredRequest, type TestRequestRepository} from './test-request.service';
 import {TestRunError} from './test-result-error';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {frameworkRequestInputSchema} from '../types/framework-request.types';
@@ -34,8 +34,56 @@ function fixture(frameworks?: ConstructorParameters<typeof TestRequestService>[3
     {async get(hostId){return available?{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date().toISOString(),receivedAt:new Date().toISOString(),lanes:[{id:'android-lane',platform:'android',dispatchMode:automatic?'automatic':'paused',state:'idle',resources:[{id:'phone:android',kind:'phone'},{id:'app:android',kind:'app'},{id:'recorder:android',kind:'recorder',storage:{poolId:'mini:disk:1',observedAt:new Date().toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}]}]}:null}},requests,
     {async detail(){throw new TestRunError(404,'not published')}},()=>({android:{hostId:'mini',laneId:'android-lane'}}),
     {async resolve(override){sourceResolves++;return override??revision},async inventory(commit){return {commit,files:[{path:`routines/${selected.routineId}/routine.ts`,gitBlobSha1:'f'.repeat(40),size:10}]}}}, null);
-  return {service,requests,repository,definition,definitions,get resolves(){return resolves},get sourceResolves(){return sourceResolves},get enrollments(){return enrollments},set revision(value:string){revision=value},set available(value:boolean){available=value},set automatic(value:boolean){automatic=value}};
+  return {service,requests,repository,definition,definitions,replaceRequest(value: StoredRequest) {row=structuredClone(value);},get resolves(){return resolves},get sourceResolves(){return sourceResolves},get enrollments(){return enrollments},set revision(value:string){revision=value},set available(value:boolean){available=value},set automatic(value:boolean){automatic=value}};
 }
+
+for (const change of ['selection', 'target', 'deadline', 'expired', 'cancelled'] as const)
+  test(`cached-source detail returns the same current request after a concurrent ${change} change`, async () => {
+    let admissions = 0, completions = 0;
+    const binding = {...testFrameworkBinding(), version: 1085};
+    const f = fixture({async frameworkObservation() {const time = new Date().toISOString(); return {binding, receivedAt: time, observedAt: time}},
+      async admitPreparationFramework() {admissions++; throw new Error('Changed preparation cannot acquire a framework admission');}});
+    const waiting = await f.service.submit({...selected, minimumFrameworkVersion: 1085}), definition = f.definition();
+    f.definitions.set(definition.definitionRevision, definition);
+    const current = {...waiting, ...(change === 'selection' ? {fleetSelectionSha256: 'b'.repeat(64)} : {}),
+      ...(change === 'target' ? {fleetTarget: {hostId: 'mini', laneId: 'another-lane'}} : {}),
+      ...(['deadline', 'expired'].includes(change) ? {fleetDeadline: new Date(Date.now() + (change === 'expired' ? -1 : 60_000))} : {}),
+      ...(change === 'cancelled' ? {state: 'terminal', terminalStatus: 'cancelled', preparationCancellation: {
+        requestedAt: new Date().toISOString(), reason: 'Cancelled during reconciliation'}} : {})} as StoredRequest;
+    const get = f.repository.get;
+    let reads = 0;
+    f.repository.get = async requestId => {
+      // detail -> completePreparation -> admission: change the row before its final pre-admission read.
+      if (++reads === 3) f.replaceRequest(current);
+      return get(requestId);
+    };
+    f.repository.completePreparation = async () => {completions++; return null;};
+    const detail = await f.service.detail(selected.requestId);
+    expect(detail).toEqual({request: current, result: null});
+    expect(detail.request.requestId).toBe(waiting.requestId); expect(detail.request.hostId).toBe('mini');
+    expect(requestInputDigest(detail.request.dispatchIntent)).toBe(requestInputDigest(waiting.dispatchIntent));
+    expect(detail.request.dispatchIntentSha256).toBe(waiting.dispatchIntentSha256!);
+    expect(detail.request).not.toHaveProperty('input'); expect(detail.request).not.toHaveProperty('inputSha256');
+    expect(admissions).toBe(0); expect(completions).toBe(0); expect(f.enrollments).toBe(0);
+    expect(f.definitions.get(definition.definitionRevision)).toEqual(definition);
+    expect(await f.requests.get(selected.requestId)).toEqual(current);
+  });
+
+test('cached-source detail still rejects an immutable dispatch change during reconciliation', async () => {
+  let admissions = 0;
+  const binding = {...testFrameworkBinding(), version: 1085};
+  const f = fixture({async frameworkObservation() {const time = new Date().toISOString(); return {binding, receivedAt: time, observedAt: time}},
+    async admitPreparationFramework() {admissions++; throw new Error('Changed intent cannot acquire a framework admission');}});
+  const waiting = await f.service.submit({...selected, minimumFrameworkVersion: 1085}), definition = f.definition();
+  f.definitions.set(definition.definitionRevision, definition);
+  const changedIntent = {...waiting.dispatchIntent!, minimumFrameworkVersion: 1086};
+  const current = {...waiting, dispatchIntent: changedIntent, dispatchIntentSha256: requestInputDigest(changedIntent)} as StoredRequest;
+  const get = f.repository.get;
+  let reads = 0;
+  f.repository.get = async requestId => {if (++reads === 3) f.replaceRequest(current); return get(requestId);};
+  await expect(f.service.detail(selected.requestId)).rejects.toBeInstanceOf(TestRequestConflict);
+  expect(admissions).toBe(0); expect(await f.requests.get(selected.requestId)).toEqual(current);
+});
 test('floor-bound producer completion requires its original eligible binding before enrollment and preserves frozen metadata', async () => {
   const binding = {...testFrameworkBinding(), version: 1085};
   const f = fixture({async frameworkObservation() {const time = new Date().toISOString(); return {binding, receivedAt: time, observedAt: time}},

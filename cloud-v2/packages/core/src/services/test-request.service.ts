@@ -91,6 +91,10 @@ export interface TestRequestRepository {
     frameworkFence?: Record<string, unknown>): Promise<StoredPreparingRequest | null>;
 }
 export class TestRequestConflict extends Error {}
+/** The same preparation changed while cached-source reconciliation was evaluating it. */
+export class PreparationRequestChanged extends TestRunError {
+  constructor(message: string) {super(409, message);}
+}
 
 /** Sort object keys before hashing: transport formatting cannot change identity. */
 export function requestInputJson(input: unknown): string {
@@ -289,10 +293,10 @@ export class TestRequestService {
     const current = await this.preparation(row.requestId, row.hostId, row.dispatchIntentSha256);
     const source = current as unknown as {fleetDeadline?: Date; fleetCancellation?: unknown};
     if (current.state !== 'preparing' || source.fleetCancellation || source.fleetDeadline && source.fleetDeadline.getTime() <= this.now())
-      throw new TestRunError(409, 'Framework preparation effect is cancelled, withdrawn or past its original deadline');
+      throw new PreparationRequestChanged('Framework preparation effect is cancelled, withdrawn or past its original deadline');
     const fence = this.preparationFrameworkFence(row);
     if (this.preparationFrameworkFenceDigest(row) !== this.preparationFrameworkFenceDigest(current))
-      throw new TestRequestConflict('Framework preparation effect changed its original request selection');
+      throw new PreparationRequestChanged('Framework preparation effect changed its original request selection');
     if (requireResponse && !responseBinding) throw new TestRunError(409, 'Framework preparation effect requires its original response binding');
     if (!this.frameworks?.admitPreparationFramework) throw new TestRunError(503, 'Framework preparation authority is unavailable');
     await this.frameworks.admitPreparationFramework(row.hostId, row.requestId, row.dispatchIntentSha256!, this.preparationFrameworkFenceDigest(row),

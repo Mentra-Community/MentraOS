@@ -7,7 +7,7 @@ import {testBuildSourceSchema, selectedBuildInput, type TestBuild} from '../type
 import {RoutineDefinitionService} from './routine-definition.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {TestHostStateService} from './test-host-state.service';
-import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from './test-request.service';
+import {TestRequestService, PreparationRequestChanged, requestInputDigest, isExecutableRequest, type StoredRequest} from './test-request.service';
 import {FrameworkResultService} from './framework-result.service';
 import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings} from './routine-admission.service';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
@@ -146,7 +146,12 @@ export class RoutineDispatchService {
     const intent = row.dispatchIntent!, exact = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
     if (!exact) return row;
     try {return await this.complete(row, exact, undefined, true);}
-    catch (error) {if (error instanceof TestRunError && (error.status === 409 || error.status === 503)) return row; throw error;}
+    catch (error) {
+      if (error instanceof PreparationRequestChanged)
+        return this.requests.preparation(row.requestId, row.hostId, row.dispatchIntentSha256);
+      if (error instanceof TestRunError && (error.status === 409 || error.status === 503)) return row;
+      throw error;
+    }
   }
   async detail(requestId: string) {
     if (!frameworkIdentitySchema.safeParse(requestId).success) throw new TestRunError(400, 'Invalid request identity');
