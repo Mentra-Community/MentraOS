@@ -84,7 +84,7 @@ test('ordinary preparation polls yield beyond one hundred waiting sources withou
   }) as any) as any);
   const update=spyOn(TestRequestModel,'updateMany').mockImplementation((async(query:any,value:any)=>{for(const row of rows)if(row.hostId===query.hostId&&row.state===query.state&&query.requestId.$in.includes(row.requestId))row.preparationCheckedAt=value.$set.preparationCheckedAt;return {matchedCount:query.requestId.$in.length} as any}) as any);
   try {
-    const service=new TestRequestService(undefined,undefined,null);
+    const service=new TestRequestService(undefined,undefined,null,null);
     const first=await service.queued('mini',undefined,100);expect(first.preparations).toHaveLength(100);expect(first.preparations.some(row=>row.requestId==='source-101')).toBe(false);
     const second=await service.queued('mini',undefined,100);expect(second.preparations.some(row=>row.requestId==='source-101')).toBe(true);
     expect(sort).toEqual({preparationCheckedAt:1,createdAt:1,requestId:1});expect(rows.map(row=>row.dispatchIntentSha256)).toEqual(digests);

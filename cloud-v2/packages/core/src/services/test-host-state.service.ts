@@ -463,6 +463,23 @@ export class TestHostStateService {
         }
       : null
   }
+  /** Source preparation needs the accepted current framework, without device or repair diagnostics. */
+  async frameworkObservation(hostId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, receivedAt: 1,
+      'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    const parsed = z.object({hostId: frameworkIdentitySchema, receivedAt: z.date(), snapshot: z.object({
+      hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema, observedAt: z.string().datetime({offset: true}),
+      frameworkBinding: frameworkBindingSchema, frameworkAcceptedAt: z.string().datetime({offset: true}),
+      frameworkProcess: frameworkProcessSchema}), frameworkHistory: z.array(frameworkHistoryEntrySchema).max(100)}).safeParse(row);
+    if (!parsed.success || parsed.data.hostId !== hostId || parsed.data.snapshot.hostId !== hostId) return null;
+    const {snapshot, frameworkHistory, receivedAt} = parsed.data, current = frameworkHistory.at(-1);
+    if (!current || current.endedAt || current.incarnation !== snapshot.incarnation ||
+      JSON.stringify(current.binding) !== JSON.stringify(snapshot.frameworkBinding) ||
+      JSON.stringify(current.process) !== JSON.stringify(snapshot.frameworkProcess) || current.effectiveAt !== snapshot.frameworkAcceptedAt) return null;
+    return {binding: snapshot.frameworkBinding, receivedAt: receivedAt.toISOString(), observedAt: snapshot.observedAt};
+  }
   /** Run details need one lane's observation, never the host's repair history or diagnostics. */
   async progressObservation(hostId: string, laneId: string) {
     const row = await TestHostStateModel.findOne({hostId}).select({'snapshot.incarnation': 1, 'snapshot.sequence': 1,

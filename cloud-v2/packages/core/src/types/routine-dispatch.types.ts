@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {frameworkBuildSchema, frameworkIdentitySchema} from './framework-request.types';
-import {frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
+import {frameworkBindingSchema, frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
 import {routineIdentitySchema, routinePlatformSchema} from './routine-definition.types';
 import {testBuildSourceSchema} from './test-build.types';
 
@@ -26,6 +26,7 @@ export const routineDispatchIntentSchema = routineDispatchSelectionSchema.extend
 export type RoutineDispatchIntent = z.infer<typeof routineDispatchIntentSchema>;
 
 export const preparationStatusSchema = z.object({dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  frameworkBinding: frameworkBindingSchema.optional(),
   code: frameworkIdentitySchema, reason: z.string().min(1).max(2000), observedAt: z.string().datetime({offset: true})}).strict();
 export const preparationRejectionSchema = preparationStatusSchema.omit({observedAt: true})
   .extend({rejectedAt: z.string().datetime({offset: true}), disposition: z.enum(['not-run', 'not-applicable'])});
