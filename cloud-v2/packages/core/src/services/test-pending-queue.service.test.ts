@@ -2,7 +2,7 @@ import {expect, test} from 'bun:test';
 import {pendingQueueItem} from './test-pending-queue.service';
 import {routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {requestInputDigest} from './test-request.service';
-import {testRoutineSource} from '../testing/framework-fixtures';
+import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
 import {sharedResourceWait} from './routine-resource-wait';
@@ -30,6 +30,20 @@ function fixture() {
   ]} as any;
   return {row,host};
 }
+test('an assigned preparing job reports its unmet framework floor without changing selection or deadline', () => {
+  const {row, host} = fixture();
+  row.state = 'preparing'; row.fleetBinding = {requestId: row.requestId, hostId: host.hostId, laneId: 'idle', descriptorRevision: 'a'.repeat(64),
+    actionsRunId: '1', jobId: 'original-job', actionsJobId: '1', boundAt: new Date(now).toISOString()};
+  row.fleetSelection.minimumFrameworkVersion = 1085; row.fleetSelectionSha256 = requestInputDigest(row.fleetSelection);
+  row.fleetInputSha256 = routineJobInputDigest(row);
+  const original = structuredClone(row);
+  host.frameworkBinding = {...testFrameworkBinding(), version: 1083};
+  expect(pendingQueueItem(row, [host], now).reason).toContain('Waiting for framework 1085');
+  host.frameworkBinding = {...testFrameworkBinding(), version: 1085};
+  host.receivedAt = new Date(now - 120_001).toISOString();
+  expect(pendingQueueItem(row, [host], now).reason).toContain('no fresh accepted framework observation');
+  expect(row).toEqual(original);
+});
 test('pending projection labels every compatible lane and keeps availability separate', () => {
   const {row,host} = fixture(), item = pendingQueueItem(row,[host],now);
   expect(item.compatibilityKnown).toBe(true);

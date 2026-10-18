@@ -21,6 +21,8 @@ import {permissionObservationsSchema} from "../types/resource-permissions.types"
 import {TestRunError} from "./test-result-error"
 import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
+import {isDeepStrictEqual} from 'node:util'
+import {preparationFrameworkAdmissionSchema, type PreparationFrameworkAdmission, type PreparationFrameworkEffect} from '../types/routine-dispatch.types'
 const resource = z
   .object({
     id: frameworkIdentitySchema,
@@ -462,6 +464,85 @@ export class TestHostStateService {
           frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),
         }
       : null
+  }
+  /** Source preparation needs the accepted current framework, without device or repair diagnostics. */
+  async frameworkObservation(hostId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, receivedAt: 1,
+      'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    const parsed = z.object({hostId: frameworkIdentitySchema, receivedAt: z.date(), snapshot: z.object({
+      hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema, observedAt: z.string().datetime({offset: true}),
+      frameworkBinding: frameworkBindingSchema, frameworkAcceptedAt: z.string().datetime({offset: true}),
+      frameworkProcess: frameworkProcessSchema}), frameworkHistory: z.array(frameworkHistoryEntrySchema).max(100)}).safeParse(row);
+    if (!parsed.success || parsed.data.hostId !== hostId || parsed.data.snapshot.hostId !== hostId) return null;
+    const {snapshot, frameworkHistory, receivedAt} = parsed.data, current = frameworkHistory.at(-1);
+    if (!current || current.endedAt || current.incarnation !== snapshot.incarnation ||
+      JSON.stringify(current.binding) !== JSON.stringify(snapshot.frameworkBinding) ||
+      JSON.stringify(current.process) !== JSON.stringify(snapshot.frameworkProcess) || current.effectiveAt !== snapshot.frameworkAcceptedAt) return null;
+    return {binding: snapshot.frameworkBinding, receivedAt: receivedAt.toISOString(), observedAt: snapshot.observedAt};
+  }
+  async preparationFrameworkAdmission(hostId: string, requestId: string) {
+    const row = await TestHostStateModel.findOne({hostId}).select({preparationFrameworkAdmissions: 1, _id: 0})
+      .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+    return z.array(preparationFrameworkAdmissionSchema).max(100).parse(row?.preparationFrameworkAdmissions ?? [])
+      .find(value => value.requestId === requestId);
+  }
+  /** The host CAS admits a floor observation; the separate request CAS remains effect/cancellation authority. */
+  async admitPreparationFramework(hostId: string, requestId: string, dispatchIntentSha256: string,
+    requestFenceSha256: string, minimum: number, effect: PreparationFrameworkEffect, responseBinding?: z.infer<typeof frameworkBindingSchema>) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await TestHostStateModel.findOne({hostId}).select({hostId: 1, incarnation: 1, incarnationGeneration: 1, sequence: 1,
+        deploymentGeneration: 1, deploymentSequence: 1, receivedAt: 1,
+        'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.sequence': 1,
+        'snapshot.observedAt': 1, 'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1, frameworkHistory: 1,
+        preparationFrameworkAdmissions: 1, preparationFrameworkAdmissionVersion: 1})
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean();
+      const admissions = z.array(preparationFrameworkAdmissionSchema).max(100).parse(row?.preparationFrameworkAdmissions ?? []);
+      const existing = admissions.find(value => value.requestId === requestId);
+      if (existing) {
+        if (existing.dispatchIntentSha256 !== dispatchIntentSha256 || existing.requestFenceSha256 !== requestFenceSha256 ||
+          !isDeepStrictEqual(existing.effect, effect) || responseBinding && !isDeepStrictEqual(existing.binding, responseBinding))
+          throw new TestRunError(409, 'Framework preparation admission changed its original request effect');
+        return existing;
+      }
+      const snapshot = z.object({hostId: frameworkIdentitySchema, incarnation: frameworkIdentitySchema,
+        incarnationGeneration: z.number().int().positive().safe(), sequence: z.number().int().nonnegative().safe(),
+        observedAt: z.string().datetime({offset: true}), frameworkBinding: frameworkBindingSchema,
+        frameworkAcceptedAt: z.string().datetime({offset: true}), frameworkProcess: frameworkProcessSchema}).safeParse(row?.snapshot),
+        receivedAt = z.date().safeParse(row?.receivedAt);
+      const history = z.array(frameworkHistoryEntrySchema).max(100).safeParse(row?.frameworkHistory), current = history.success ? history.data.at(-1) : undefined;
+      const now = this.now();
+      if (!row || !snapshot.success || !receivedAt.success || snapshot.data.hostId !== hostId ||
+        row.incarnation !== snapshot.data.incarnation || row.incarnationGeneration !== snapshot.data.incarnationGeneration || row.sequence !== snapshot.data.sequence ||
+        !snapshot.data.frameworkBinding || snapshot.data.frameworkBinding.version < minimum || !current || current.endedAt ||
+        current.incarnation !== row.incarnation || !isDeepStrictEqual(current.binding, snapshot.data.frameworkBinding) ||
+        !isDeepStrictEqual(current.process, snapshot.data.frameworkProcess) || current.effectiveAt !== snapshot.data.frameworkAcceptedAt ||
+        responseBinding && !isDeepStrictEqual(responseBinding, snapshot.data.frameworkBinding) ||
+        ![receivedAt.data.getTime(), Date.parse(snapshot.data.observedAt)].every(at => Number.isFinite(at) && at <= now && now - at <= 120_000))
+        throw new TestRunError(409, `Waiting for framework ${minimum}: preparation requires its fresh accepted host binding`);
+      // Only authoritative request settlement releases a reconciliation slot; age never does.
+      const settled = admissions.length ? await TestRequestModel.find({requestId: {$in: admissions.map(value => value.requestId)},
+        state: {$in: ['queued', 'accepted', 'running', 'terminal']}}).select({requestId: 1, hostId: 1, dispatchIntentSha256: 1}).limit(100)
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() : [];
+      const retained = admissions.filter(value => !settled.some(request => request.requestId === value.requestId &&
+        request.hostId === hostId && request.dispatchIntentSha256 === value.dispatchIntentSha256));
+      if (retained.length >= 100) throw new TestRunError(409, 'Waiting for framework preparation reconciliation: 100 original requests remain unresolved');
+      const admission: PreparationFrameworkAdmission = preparationFrameworkAdmissionSchema.parse({requestId, dispatchIntentSha256,
+        requestFenceSha256, effect, binding: snapshot.data.frameworkBinding, incarnation: row.incarnation,
+        incarnationGeneration: row.incarnationGeneration, sequence: row.sequence,
+        ...(row.deploymentGeneration !== undefined ? {deploymentGeneration: row.deploymentGeneration} : {}),
+        ...(row.deploymentSequence !== undefined ? {deploymentSequence: row.deploymentSequence} : {}),
+        receivedAt: receivedAt.data.toISOString(), observedAt: snapshot.data.observedAt, admittedAt: new Date(now).toISOString()});
+      const saved = await TestHostStateModel.findOneAndUpdate({hostId, incarnation: row.incarnation,
+        incarnationGeneration: row.incarnationGeneration, sequence: row.sequence, ...deploymentCursor(row),
+        frameworkHistory: row.frameworkHistory, receivedAt: row.receivedAt,
+        preparationFrameworkAdmissionVersion: row.preparationFrameworkAdmissionVersion ?? {$exists: false}},
+        {$set: {preparationFrameworkAdmissions: [...retained, admission]}, $inc: {preparationFrameworkAdmissionVersion: 1}},
+        {new: true, writeConcern: testWriteConcern}).select({hostId: 1}).setOptions({timeoutMS: 5000}).lean();
+      if (saved) return admission;
+    }
+    throw new TestRunError(409, 'Framework preparation observation advanced concurrently; retry the unchanged effect');
   }
   /** Run details need one lane's observation, never the host's repair history or diagnostics. */
   async progressObservation(hostId: string, laneId: string) {

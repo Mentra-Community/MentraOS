@@ -32,6 +32,12 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostSt
   const item: PendingQueueItem = {...base, routineId: selected.routineId, platform: selected.platform, build: selected.build,
     reason: row.fleetPreparationStatus?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error ?? sharedResourceWaitingReason(row, hosts),
     ...(row.fleetBinding ? {assignment: {hostId: row.fleetBinding.hostId, laneId: row.fleetBinding.laneId}} : {})};
+  if (row.state === 'preparing' && selected.minimumFrameworkVersion !== undefined && row.fleetBinding) {
+    const host = hosts.find(value => value.hostId === row.fleetBinding!.hostId), receivedAt = Date.parse(host?.receivedAt ?? '');
+    const current = Number.isFinite(receivedAt) && receivedAt <= now && now - receivedAt <= 120_000 ? host?.frameworkBinding : undefined;
+    if (!current || current.version < selected.minimumFrameworkVersion)
+      item.reason = `Waiting for framework ${selected.minimumFrameworkVersion}; assigned host ${row.fleetBinding.hostId} ${current ? `reports framework ${current.version}` : 'has no fresh accepted framework observation'}.`;
+  }
   let requirements;
   if (row.fleetPreparation) {
     const prepared = routineJobPreparationSchema.safeParse(row.fleetPreparation);

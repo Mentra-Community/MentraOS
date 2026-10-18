@@ -6,6 +6,20 @@ import {TestRequestConflict, TestRequestService, type HostAcceptance} from "../.
 const token = "synthetic-controller-credential-" + "x".repeat(32);
 const headers = {authorization: `Bearer ${token}`, "content-type": "application/json"};
 const digest = "a".repeat(64);
+test('preparation minimum is opt-in, authenticated and clears when withheld requests are withdrawn', async () => {
+  let minimum: number | null = 1085; const calls: string[] = [];
+  class Service extends TestRequestService {
+    override async queued() {return {requests: [], preparations: [], dispatchCompletions: [], nextCursor: null};}
+    override async preparationFrameworkMinimum(hostId: string) {calls.push(hostId); return minimum;}
+  }
+  const api = createTestRequestsApi(new Service(), () => JSON.stringify({mini: token}));
+  expect(await (await api.request('/', {headers})).json()).not.toHaveProperty('minimumFrameworkVersion'); expect(calls).toEqual([]);
+  expect(await (await api.request('/?preparationFrameworkMinimum=1&hostId=other', {headers})).json()).toMatchObject({minimumFrameworkVersion: 1085});
+  expect(calls).toEqual(['mini']); minimum = null;
+  expect(await (await api.request('/?preparationFrameworkMinimum=1', {headers})).json()).toMatchObject({minimumFrameworkVersion: null});
+  expect((await api.request('/?preparationFrameworkMinimum=2', {headers})).status).toBe(400);
+  expect((await api.request('/?preparationFrameworkMinimum=1')).status).toBe(401);
+});
 
 test("delivery scopes queue and acceptance to authenticated controller", async () => {
   const calls: unknown[] = [];

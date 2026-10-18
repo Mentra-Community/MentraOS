@@ -31,6 +31,8 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   app.get("/", async c => {
     const requested = c.req.query('qualificationTargets');
     if (requested !== undefined && requested !== '1') return c.json({error: 'invalid_request'}, 400);
+    const minimum = c.req.query('preparationFrameworkMinimum');
+    if (minimum !== undefined && minimum !== '1') return c.json({error: 'invalid_request'}, 400);
     const ownedQuery = c.req.query('ownedQualification');
     if (ownedQuery !== undefined && (requested !== '1' || ownedQuery.length > 8192)) return c.json({error: 'invalid_request'}, 400);
     let owned;
@@ -40,7 +42,8 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
       owned = ownedRoutineQualificationSchema.parse(parsed);
     }
     const page = await service.queued(c.var.testHostId, c.req.query("after"), Number(c.req.query("limit") ?? 50));
-    return c.json(requested === '1' ? {...page, qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId, owned), ...(owned ? {ownedQualification: owned} : {})} : page);
+    return c.json({...page, ...(minimum === '1' ? {minimumFrameworkVersion: await service.preparationFrameworkMinimum(c.var.testHostId)} : {}),
+      ...(requested === '1' ? {qualificationTargets: await qualifications.qualificationTargets(c.var.testHostId, owned), ...(owned ? {ownedQualification: owned} : {})} : {})});
   });
   app.get("/cancellations", async c => c.json(await service.cancellations(c.var.testHostId,
     c.req.query("after"), Number(c.req.query("limit") ?? 50))));
