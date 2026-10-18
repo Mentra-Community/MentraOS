@@ -185,6 +185,8 @@ jobs:
 
       - name: Compile the external iOS host without signing
         working-directory: ${{ runner.temp }}/engine-consumer/ios
+        env:
+          HOME: ${{ runner.temp }}/engine-consumer-home-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           xcodebuild \

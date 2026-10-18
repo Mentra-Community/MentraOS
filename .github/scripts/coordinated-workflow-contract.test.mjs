@@ -31,6 +31,17 @@ function jobBlock(source, name) {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+test("the public Engine iOS consumer keeps Mapbox credentials with both Pod and SPM resolution", () => {
+  const ios = jobBlock(workflow("reusable-coordinated-engine-consumer.yml"), "ios")
+  const home = "HOME: ${{ runner.temp }}/engine-consumer-home-${{ github.run_id }}-${{ github.run_attempt }}"
+  const step = (name) => ios.split(`      - name: ${name}\n`)[1]?.split(/\n      - /)[0]
+  for (const name of ["Configure Mapbox package access", "Prebuild and resolve the autolinked iOS host", "Compile the external iOS host without signing", "Remove this job's Mapbox credentials"]) {
+    assert.ok(step(name)?.includes(home), `${name} must use the same private credential home`)
+  }
+  assert.match(step("Remove this job's Mapbox credentials"), /if: always\(\)/)
+  assert.match(step("Remove this job's Mapbox credentials"), /rm -f "\$HOME\/\.netrc"/)
+})
+
 test("every internal release-asset fetch has authenticated R2 credentials in its step scope", () => {
   const directory = new URL("../workflows/", import.meta.url)
   let fetchSteps = 0
