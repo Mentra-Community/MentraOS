@@ -391,7 +391,7 @@ function GlassesScanScreen() {
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={handleBackOut} RightActionComponent={<MentraLogoStandalone />} />
-      <View className="flex-1 justify-center">
+      <View className={`flex-1 ${shouldShowDeviceList ? "justify-start" : "justify-center"}`}>
         <GlassView className="gap-6 rounded-3xl p-6 bg-primary-foreground" transparent={false}>
           <Image source={selectedImage} className="h-[90px] w-[156px] mx-auto" resizeMode="contain" />
           <Text className="text-center text-xl font-semibold text-text-dim" text={scanTitle} />
