@@ -53,13 +53,25 @@ export function otaArtifactFailure(
     current = detail.cause
   }
   const text = nativeErrors.map((entry) => Object.values(entry).join(" ")).join(" ")
+  let httpStatus = context.httpStatus
+  if (context.stage === "download" && httpStatus === undefined) {
+    // BackgroundOtaArtifactDownloader.swift rejects non-2xx responses instead of
+    // resolving a status. Expo can wrap this exact producer message in another Error.
+    for (const entry of nativeErrors) {
+      const response = /\bArtifact download failed with HTTP ([1-5]\d{2})\b/.exec(entry.message ?? "")
+      if (response) {
+        httpStatus = Number(response[1])
+        break
+      }
+    }
+  }
   // A DNS error, timeout, reset, or HTTP failure alone does not establish no internet.
   let category: OtaArtifactFailureCategory = context.stage === "verify" ? "verify" : "download"
   if (/\bENOSPC\b|No space left on device/i.test(text)) category = "storage"
   else if (context.stage === "save" || /\b(?:EACCES|EROFS)\b|Permission denied|Read-only file system/i.test(text))
     category = "save"
   else if (context.stage === "download") {
-    if (context.httpStatus !== undefined && context.httpStatus !== 200 && context.httpStatus !== 206)
+    if (httpStatus !== undefined && httpStatus >= 100 && httpStatus <= 599 && httpStatus !== 200 && httpStatus !== 206)
       category = "server"
     else if (
       nativeErrors.some((entry) => entry.domain === "NSURLErrorDomain" && entry.code === "-1009") ||
@@ -76,5 +88,5 @@ export function otaArtifactFailure(
     )
       category = "connection"
   }
-  return {...context, category, nativeErrors}
+  return {...context, httpStatus, category, nativeErrors}
 }

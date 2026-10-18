@@ -262,6 +262,21 @@ describe("prepareArtifacts", () => {
     await expect(prepareArtifacts(plan)).rejects.toMatchObject({code: "artifact_download_failed"})
   })
 
+  test("retains an iOS native HTTP rejection without repeating or accepting the download", async () => {
+    const nativeDownload = mock(async () => {
+      throw new Error("Artifact download failed with HTTP 404")
+    })
+    await expect(
+      prepareArtifacts([{kind: "apk", url: APK_URL, sha256: hashes.apk}], undefined, nativeDownload),
+    ).rejects.toMatchObject({
+      code: "artifact_download_failed",
+      failure: {stage: "download", httpStatus: 404, category: "server"},
+    })
+    expect(nativeDownload).toHaveBeenCalledTimes(1)
+    expect(files.has(`/docs/ota_artifacts/${hashes.apk}`)).toBe(false)
+    expect(files.has("/docs/ota_artifacts/download-0.part")).toBe(false)
+  })
+
   test("accepts a completed native 206 download only after its full-file hash verifies", async () => {
     const nativeDownload = mock(async (_entry: unknown, destination: string) => {
       files.set(destination, "apk")

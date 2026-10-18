@@ -36,6 +36,21 @@ describe("phone download failure diagnosis", () => {
     ])
   })
 
+  test.each([404, 503])("recognizes the existing iOS HTTP %s rejection, including Expo wrappers", (status) => {
+    const error = new Error(
+      `Calling the 'downloadArtifact' function has failed\n→ Caused by: Artifact download failed with HTTP ${status}`,
+    )
+    const failure = otaArtifactFailure(error, context)
+    expect(failure).toMatchObject({httpStatus: status, category: "server"})
+    expect(phoneOtaErrorCopyKey({code: "artifact_download_failed", failure})).toBe("ota:errorPhoneDownloadServer")
+  })
+
+  test("does not treat missing HTTP status or unrelated status text as a server response", () => {
+    expect(otaArtifactFailure(new Error("Artifact download failed with HTTP 0"), context).category).toBe("download")
+    expect(otaArtifactFailure(new Error("HTTP 404"), context).httpStatus).toBeUndefined()
+    expect(otaArtifactFailure(new Error("unknown"), {...context, httpStatus: 0}).category).toBe("download")
+  })
+
   test("does not relabel verification or final save failures as internet problems", () => {
     expect(otaArtifactFailure(new Error("Network is down"), {...context, stage: "verify"}).category).toBe("verify")
     expect(otaArtifactFailure(new Error("Network is down"), {...context, stage: "save"}).category).toBe("save")
