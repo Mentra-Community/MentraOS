@@ -297,6 +297,7 @@ async function portableFixture() {
   f.row.snapshot.resourceLifecycle!.subjects[0]!.status = 'unknown'
   f.row.snapshot.lanes[0]!.resources[0]!.backendConnectivity = qualified()
   const current = {host: structuredClone(f.row), request: structuredClone(f.original)}, events: string[] = []
+  const requests = new Map([['original', current.request]])
   const clock = spyOn(Date, 'now').mockReturnValue(now)
   const reserveFleet = ResourceReservationsService.prototype.reserveFleet
   const reserveClock = spyOn(ResourceReservationsService.prototype, 'reserveFleet').mockImplementation(async (...args) =>
@@ -305,19 +306,20 @@ async function portableFixture() {
   let pausedKind: 'probe' | 'run' | undefined, pauseEntered = () => {}, pauseResume = () => {}
   let pausePromise: Promise<void> | undefined
   let duplicates: HostResourceReservation[] = []
-  const requestGet = spyOn(routineJobRepository, 'get').mockImplementation(async () => structuredClone(current.request))
+  const requestGet = spyOn(routineJobRepository, 'get').mockImplementation(async id => structuredClone(requests.get(id) ?? null))
   const hostGet = spyOn(resourceReservationRepository, 'get').mockImplementation(async () => structuredClone(current.host))
-  const originalGet = spyOn(resourceReservationRepository, 'request').mockImplementation(async () => structuredClone(current.request))
+  const originalGet = spyOn(resourceReservationRepository, 'request').mockImplementation(async id => structuredClone(requests.get(id) ?? null))
   const claimedHosts = spyOn(resourceReservationRepository, 'claimedHosts').mockImplementation(async () => [])
-  const recorderClaims = spyOn(resourceReservationRepository, 'recorderClaims').mockImplementation(async () =>
+  const recorderClaims = spyOn(resourceReservationRepository, 'recorderClaims').mockImplementation(async id =>
     [...hostResourceReservationsSchema.parse(current.host.resourceReservations), ...hostResourceReservationsSchema.parse(duplicates)]
-      .filter((claim): claim is import('../types/recorder-storage.types').RecorderHostReservation => !('kind' in claim) && claim.requestId === 'original'))
+      .filter((claim): claim is import('../types/recorder-storage.types').RecorderHostReservation => !('kind' in claim) && claim.requestId === id))
   const requestRead = spyOn(TestRequestModel.collection, 'findOne').mockImplementation((async (filter: Record<string, unknown>) => {
-    const row = current.request
+    const row = requests.get(String(filter.requestId))
+    if (!row) return null
     if (filter.state && (row.state !== filter.state || row.fleetCancellation || row.fleetBinding || row.fleetDeadline <= new Date(now))) return null
     return structuredClone(row)
   }) as never)
-  const requestList = spyOn(TestRequestModel.collection, 'find').mockImplementation((() => ({limit() {return this}, async toArray() {return [structuredClone(current.request)]}})) as never)
+  const requestList = spyOn(TestRequestModel.collection, 'find').mockImplementation((() => ({limit() {return this}, async toArray() {return [...requests.values()].map(value => structuredClone(value))}})) as never)
   const hostRead = spyOn(TestHostStateModel.collection, 'findOne').mockImplementation((async () => structuredClone(current.host)) as never)
   const hostCas = async (filter: Record<string, unknown>, update: {$inc: {resourceReservationVersion: number}; $set: {resourceReservations: HostResourceReservation[]}}) => {
     const kind = update.$set.resourceReservations.some(claim => 'kind' in claim) ? 'probe' : 'run'
@@ -336,7 +338,8 @@ async function portableFixture() {
   const replace = spyOn(resourceReservationRepository, 'replace').mockImplementation(async (host, claims) => Boolean(await hostCas({sequence: host.sequence,
     resourceReservationVersion: host.resourceReservationVersion}, {$inc: {resourceReservationVersion: 1}, $set: {resourceReservations: claims}})))
   const requestWrite = spyOn(TestRequestModel.collection, 'findOneAndUpdate').mockImplementation((async (filter: Record<string, unknown>, update: {$set: Partial<StoredRoutineJob>}) => {
-    const row = current.request
+    const row = requests.get(String(filter.requestId))
+    if (!row) return null
     if (row.fleetCancellation || row.fleetBinding || row.state !== 'awaiting-runner' || row.fleetDeadline <= new Date(now)) return null
     if (update.$set.fleetResourceAdmission) {
       if (row.fleetResourceAdmission) return null
@@ -355,12 +358,18 @@ async function portableFixture() {
   const probe = {kind: 'exclusive' as const, id: '9e62b752-e4ce-46e5-acb9-bc682c5b4862', resourceId: 'phone', authorityHostId: 'mini', borrowerHostId: 'mini',
     laneId: 'android', operationId: f.intent.operationId, intentSha256: hash, inputSha256: f.intent.inputSha256, owner: f.intent.owner,
     prerequisite: f.intent.prerequisite, controllerIncarnation: 'controller', controllerGeneration: 1, borrowerSequence: 1, reservedAt: timestamp}
-  return {...f, current, admission, probe, events,
+  return {...f, current, admission, probe, events, requests,
+    addRequest(id: string, offline = false) {const value = job(); value.requestId = id; value.fleetSelection.requestId = id;
+      value.fleetSelectionSha256 = requestInputDigest(value.fleetSelection)
+      if (offline) {const required = value.fleetPreparation!.requirements.resources[0]!; required.capabilities = []
+        value.fleetPreparation!.definition.resourceRequirements[0]!.capabilities = []
+        value.fleetPreparation!.definitionSha256 = requestInputDigest(value.fleetPreparation!.definition)}
+      value.fleetInputSha256 = routineJobInputDigest(value); requests.set(id, value); return value},
     loseHost() {loseHost = true}, loseStage() {loseStage = true}, cancelOnHost() {cancelOnHost = true}, unavailable() {unavailable = true},
     duplicate() {const claim = current.host.resourceReservations as HostResourceReservation[]; duplicates = [{...claim[0]!, id: '05e28570-91a8-486e-aecb-c1d7b7874e79', hostId: 'other'} as HostResourceReservation]},
     pause(kind: 'probe' | 'run') {pausedKind = kind; pausePromise = new Promise(resolve => {pauseResume = resolve})
       return {entered: new Promise<void>(resolve => {pauseEntered = resolve}), resume() {pauseResume()}}},
-    async reserve(hostId = 'mini', laneId = 'android') {return routineJobRepository.reserveResources!('original', f.original.fleetInputSha256!, hostId, laneId, new Date(now))},
+    async reserve(hostId = 'mini', laneId = 'android', id = 'original') {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(now))},
     restore() {for (const mock of [reserveClock, clock, requestGet, hostGet, originalGet, claimedHosts, recorderClaims, requestRead, requestList, hostRead, hostWrite, replace, requestWrite]) mock.mockRestore()}}
 }
 test('portable backend admission retains the byte claim before staging and refuses a stale probe CAS', async () => {
@@ -610,4 +619,99 @@ test('only the exact selected preparing recorder claim may coexist with its phon
     expect(backendPrerequisiteRequestMatches(other.original, intent, now)).toBe(false)
     expect((await other.service.acquire(intent, 'mini')).status).toBe('unknown'); expect(other.writes).toEqual([])
   }
+})
+
+test('same-phone queued preparation progresses one original at a time even with ample recorder bytes', async () => {
+  for (const offline of [false, true]) {
+    const f = await portableFixture()
+    try {
+      const second = f.addRequest('second', offline)
+      expect(await f.reserve()).not.toBeNull()
+      const firstClaim = structuredClone(f.current.request.fleetResourceReservation!), before = [...f.events]
+      expect(await f.reserve('mini', 'android', 'second')).toBeNull()
+      expect(second.fleetResourceAdmission).toBeUndefined(); expect(second.fleetResourceReservation).toBeUndefined()
+      expect(f.current.host.resourceReservations).toEqual([firstClaim]); expect(f.events).toEqual(before)
+      const intent = routineDispatchIntentSchema.parse({...f.current.request.fleetSelection,
+        routineSource: f.current.request.fleetPreparation!.routineSource, laneId: 'android'})
+      expect(await routineJobRepository.bind('original', f.current.request.fleetInputSha256!,
+        {jobId: 'original', requestId: 'original', hostId: 'mini', laneId: 'android',
+          descriptorRevision: routineLaneDescriptorRevision(f.current.host.snapshot.lanes[0]!), actionsRunId: '1', actionsJobId: '2', boundAt: timestamp},
+        intent, new Date(now))).not.toBeNull()
+      expect(f.current.request.state).toBe('preparing')
+      expect(await f.reserve('mini', 'android', 'second')).toBeNull()
+      const service = new RoutineJobService({async get(id: string) {return structuredClone(f.requests.get(id) ?? null)},
+        async *qualificationCandidates() {yield structuredClone(f.current.request)}} as unknown as RoutineJobRepository,
+        undefined, undefined, undefined, {async get() {return {...structuredClone(f.current.host.snapshot), receivedAt: timestamp}}},
+        undefined, undefined, () => now)
+      const target = (await service.qualificationTargets('mini'))[0]!
+      const subject = f.current.host.snapshot.resourceLifecycle!.subjects[0]!, operationId = `backend-prerequisite:${target.inputSha256}`,
+        owner = {id: `resource-check:${requestInputDigest({operationId, resourceId: 'phone'})}`, kind: 'boundary-cleanup' as const}
+      subject.status = 'checking'; subject.owner = {...owner, generation: 2, hostId: 'mini', laneId: 'android'}
+      const check = new ResourceReservationsService(resourceReservationRepository, () => now,
+        (hostId, owned) => service.qualificationTargets(hostId, owned))
+      const acquired = await check.acquire({...f.intent, operationId, owner, inputSha256: target.inputSha256,
+        prerequisite: {...f.intent.prerequisite!, targetInputSha256: target.inputSha256, preparing: target.preparing!}}, 'mini')
+      expect(acquired.status).toBe('reserved'); expect(acquired.claims).toHaveLength(1)
+      expect(await f.reserve('mini', 'android', 'second')).toBeNull()
+      const claim = acquired.claims[0]!
+      subject.owner = null; subject.status = 'unknown'; subject.generation = 3
+      f.current.host.sequence++; f.current.host.snapshot.sequence = f.current.host.sequence
+      const proof: ExclusiveResourceReturn = {claimId: claim.id, authorityHostId: 'mini', resourceId: 'phone',
+        intentSha256: claim.intentSha256, inputSha256: claim.inputSha256, originalOwner: claim.owner, laneId: 'android',
+        controller: {incarnation: 'controller', generation: 1, sequence: f.current.host.sequence},
+        release: {kind: 'resource-check', operationId, subjectGeneration: 3, releasedAt: timestamp, eventId: 'first-reader-return'}}
+      const {controller: _, ...returned} = proof
+      f.current.host.snapshot.resourceReservations = {claims: [], returns: [returned]}
+      f.current.host.snapshot.resourceLifecycle!.history = [{id: 'first-reader-return', resourceId: 'phone', subjectGeneration: 3,
+        at: timestamp, event: 'resource-check-released', checkOperationId: operationId}]
+      expect((await check.giveBack(proof, 'mini')).status).toBe('returned')
+      const health = qualified(); health.releasedGeneration = 3; health.check.operationId = operationId
+      health.qualification = {jobId: 'original', targetInputSha256: target.inputSha256,
+        inputSha256: requestInputDigest(target.proposedInput), preparing: target.preparing!}
+      f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = health
+      let adoptions = 0
+      const prepared = new TestRequestService({async get() {return structuredClone(f.current.request) as unknown as StoredRequest},
+        async completePreparation(_id: string, _host: string, _intent: string, input: unknown, digest: string) {adoptions++; f.current.request.state = 'queued';
+          Object.assign(f.current.request, {input, inputSha256: digest}); return structuredClone(f.current.request) as unknown as StoredTestRequest}} as unknown as TestRequestRepository,
+        undefined, null, null, () => now, {async get() {return {...structuredClone(f.current.host.snapshot),
+          receivedAt: timestamp, authorityReservations: hostResourceReservationsSchema.parse(f.current.host.resourceReservations)}}})
+      expect((await prepared.completePreparation('original', 'mini', f.current.request.dispatchIntentSha256!, target.proposedInput!)).state).toBe('queued')
+      expect(adoptions).toBe(1); expect(await f.reserve('mini', 'android', 'second')).toBeNull()
+      // Only the original normal completion plus a current empty recorder offer
+      // removes its retained byte claim; elapsed time/health alone never does.
+      f.current.request.dispatchCompletion = {completedAt: timestamp} as StoredRoutineJob['dispatchCompletion']
+      expect(await f.reserve('mini', 'android', 'second')).not.toBeNull()
+      expect(second.fleetResourceReservation?.requestId).toBe('second')
+      expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['second'])
+      expect(adoptions).toBe(1)
+    } finally {f.restore()}
+  }
+})
+test('concurrent same-phone provisional claims choose one host-CAS winner before either request stage', async () => {
+  const f = await portableFixture()
+  try {
+    f.addRequest('second'); const paused = f.pause('run'), original = f.reserve(); await paused.entered
+    expect(await f.reserve('mini', 'android', 'second')).not.toBeNull(); paused.resume()
+    expect(await original).toBeNull()
+    expect(f.current.request.fleetResourceAdmission).toBeUndefined()
+    expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['second'])
+    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+  } finally {f.restore()}
+})
+
+test('serialized phone preparation retains other-lane capacity and refuses unknown same-lane custody', async () => {
+  const f = await portableFixture()
+  try {
+    f.addRequest('second'); expect(await f.reserve()).not.toBeNull()
+    const first = structuredClone(f.current.request.fleetResourceReservation!)
+    const otherLane = structuredClone(f.current.host.snapshot.lanes[0]!)
+    otherLane.id = 'other-android'; otherLane.resources = otherLane.resources.map(({backendConnectivity: _, ...resource}) => ({...resource, id: `other-${resource.id}`}))
+    f.current.host.snapshot.lanes.push(otherLane)
+    expect(await f.reserve('mini', 'other-android', 'second')).not.toBeNull()
+    expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['original', 'second'])
+    f.addRequest('third'); f.requests.delete('original')
+    expect(await f.reserve('mini', 'android', 'third')).toBeNull()
+    expect((f.current.host.resourceReservations as RecorderHostReservation[])[0]).toEqual(first)
+    expect(f.requests.get('third')!.fleetResourceAdmission).toBeUndefined()
+  } finally {f.restore()}
 })

@@ -25,7 +25,7 @@ import {hostStateSchema, TestHostStateService, type RoutingTestHostState, type R
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
-import {backendRecorderClaimMatches, requiresBackendConnectivity, resourceReservationRepository, ResourceReservationsService} from './resource-reservations.service';
+import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, ResourceReservationsService} from './resource-reservations.service';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
 const exclusiveResources = new ResourceReservationsService();
 export type SelectedRoutineLane = {requestId: string; hostId: string; laneId: string};
@@ -65,7 +65,7 @@ export const routineJobRepository: RoutineJobRepository = {
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
   async reconcileBackendRecorderCancellation(requestId, now) {
     const original = await this.get(requestId);
-    if (!original || !requiresBackendConnectivity(original) || !original.fleetCancellation || original.state !== 'terminal' ||
+    if (!original || original.fleetSelection?.platform !== 'android' || !original.fleetCancellation || original.state !== 'terminal' ||
       original.fleetBinding || original.hostId || original.inputSha256 || (original as StoredRoutineJob & {input?: unknown}).input) return;
     const claims = await this.recorderClaims!(requestId);
     for (const hostId of new Set(claims.map(claim => claim.hostId))) {
@@ -141,16 +141,9 @@ export const routineJobRepository: RoutineJobRepository = {
         fleetBinding: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
       if (!row?.fleetPreparation) return null;
-      const backendRequired = requiresBackendConnectivity(row);
-      if (backendRequired) {
-        const originals = await resourceReservationRepository.recorderClaims!(requestId);
-        if (originals.length && !backendRecorderClaimMatches(originals, requestId, fleetInputSha256, hostId, laneId)) {
-          onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;
-        }
-      }
       const selected = row.fleetResourceReservation;
       if (selected && (selected.hostId !== hostId || selected.laneId !== laneId)) return null;
-      if (backendRequired && row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId ||
+      if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId ||
         row.fleetResourceAdmission.intent.laneId !== laneId)) return null;
       const hostRow = await TestHostStateModel.collection.findOne({hostId},
         {readPreference: 'primary', readConcern: {level: 'majority'}, timeoutMS: 10_000});
@@ -172,6 +165,13 @@ export const routineJobRepository: RoutineJobRepository = {
           onWaiting?.(recorderWait(offered, required.minimumAvailableBytes, now.getTime()) ?? RESOURCE_ADMISSION_WAIT);
         return null;
       }
+      const serializedPreparation = requiresSerializedAndroidPreparation(lane);
+      if (serializedPreparation) {
+        const originals = await resourceReservationRepository.recorderClaims!(requestId);
+        if (originals.length && !backendRecorderClaimMatches(originals, requestId, fleetInputSha256, hostId, laneId)) {
+          onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;
+        }
+      }
       const allClaims = hostResourceReservationsSchema.parse(hostRow.resourceReservations ?? []),
         exclusiveClaims = allClaims.filter(isExclusiveHostReservation), claims = allClaims.filter((value): value is RecorderHostReservation => !isExclusiveHostReservation(value));
       // Probe custody and run admission share this host row. Refuse before selecting a fleet candidate.
@@ -186,6 +186,13 @@ export const routineJobRepository: RoutineJobRepository = {
       const own = retained.find(value => value.requestId === requestId && value.fleetInputSha256 === fleetInputSha256);
       if (retained.some(value => value.requestId === requestId && value.fleetInputSha256 !== fleetInputSha256) ||
         selected && own?.id !== selected.id || own && own.poolId !== offered.poolId || !own && retained.length + exclusiveClaims.length >= 1000) return null;
+      // Serialize before any request stage/dependency claim. Byte capacity alone cannot
+      // authorize a future owner that would defeat the selected request's one phone check.
+      if (serializedPreparation && (retained.some(value => value !== own && value.hostId === hostId && value.laneId === laneId) ||
+        exclusiveClaims.some(value => value.borrowerHostId === hostId && value.laneId === laneId &&
+          (value.owner.kind !== 'run' || value.owner.id !== requestId)))) {
+        onWaiting?.('Awaiting the current Android lane preparation or resource return', true); return null;
+      }
       const unobserved = unobservedRecorderHostReservations(retained.filter(value => value !== own), requests, offered);
       if (!recorderStorageAvailable(offered, required, now.getTime(), unobserved)) {
         onWaiting?.(recorderWait(offered, required.minimumAvailableBytes, now.getTime(), unobserved) ?? RESOURCE_ADMISSION_WAIT); return null;
@@ -194,7 +201,7 @@ export const routineJobRepository: RoutineJobRepository = {
         row!.fleetPreparation!.requirements.glasses!.models.includes(value.model))!.model : undefined;
       const claim = own ?? {id: randomUUID(), requestId, fleetInputSha256, hostId, laneId, poolId: offered.poolId,
         minimumAvailableBytes: required.minimumAvailableBytes, reservedAt: now.toISOString(), ...(chosenModel ? {chosenModel} : {})};
-      if (backendRequired) {
+      if (serializedPreparation) {
         // Backend checks and run byte admission contend on this single existing host row.
         // The provisional claim is retained custody, never a request stage or executable grant.
         const current = await this.get(requestId);
@@ -224,7 +231,7 @@ export const routineJobRepository: RoutineJobRepository = {
       if (!row?.fleetPreparation || !admission.success || admission.data.intent.hostId !== hostId || admission.data.intent.laneId !== laneId ||
         admission.data.intent.inputSha256 !== fleetInputSha256 || Boolean(exclusive) !== Boolean(admission.data.dependencies.length)) return null;
       // This existing host resource record is the sole byte-claim authority. Snapshot and claim CAS fences race both reports and other lanes.
-      if (backendRequired) {
+      if (serializedPreparation) {
         const originals = await resourceReservationRepository.recorderClaims!(requestId), currentHost = await resourceReservationRepository.get(hostId),
           currentLane = currentHost?.snapshot.lanes.find(value => value.id === laneId);
         if (!backendRecorderClaimMatches(originals, requestId, fleetInputSha256, hostId, laneId) || originals[0]!.id !== claim.id ||
@@ -261,9 +268,11 @@ export const routineJobRepository: RoutineJobRepository = {
     if (!row || !admission.success || admission.data.intent.inputSha256 !== fleetInputSha256 ||
       admission.data.intent.hostId !== fleetBinding.hostId || admission.data.intent.laneId !== fleetBinding.laneId ||
       Boolean(row.fleetExclusiveReservation) !== Boolean(admission.data.dependencies.length)) return null;
-    if (requiresBackendConnectivity(row)) {
-      const originals = await resourceReservationRepository.recorderClaims!(requestId), host = await resourceReservationRepository.get(fleetBinding.hostId),
-        lane = host?.snapshot.lanes.find(value => value.id === fleetBinding.laneId);
+    const host = row.fleetSelection?.platform === 'android' ? await resourceReservationRepository.get(fleetBinding.hostId) : null,
+      lane = host?.snapshot.lanes.find(value => value.id === fleetBinding.laneId);
+    if (row.fleetSelection?.platform === 'android' && (!host || !lane)) return null;
+    if (requiresBackendConnectivity(row) || lane && requiresSerializedAndroidPreparation(lane)) {
+      const originals = await resourceReservationRepository.recorderClaims!(requestId);
       if (!backendRecorderClaimMatches(originals, requestId, fleetInputSha256, fleetBinding.hostId, fleetBinding.laneId) ||
         originals[0]!.id !== row.fleetResourceReservation?.id || !host || !lane || host.receivedAt > now ||
         now.getTime() - host.receivedAt.getTime() > 120_000 || !hostResourceReservationsSchema.parse(host.resourceReservations ?? [])

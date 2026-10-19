@@ -18,6 +18,11 @@ import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
 
+/** A phone check and ordinary preparation must not queue conflicting owners on one physical Android lane. */
+export function requiresSerializedAndroidPreparation(lane: TestHostState['lanes'][number]) {
+  return lane.platform === 'android' && lane.resources.some(resource => resource.kind === 'phone' &&
+    resource.capabilities?.includes('backend-connectivity'))
+}
 export type ResourceReservationHost = {hostId: string; incarnation: string; incarnationGeneration: number; sequence: number;
   receivedAt: Date; snapshot: TestHostState; resourceReservationVersion?: number; resourceReservations?: unknown}
 export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId: string; owner: ExclusiveHostReservation['owner']}
@@ -186,13 +191,13 @@ export class ResourceReservationsService {
     // Freeze even an empty dependency set before any authority side effect. A global absence read
     // cannot serialize two different candidates for the same request; this existing request CAS can.
     const candidate = fleetResourceAdmissionSchema.parse({intent: candidateIntent, dependencies: selected})
-    const backendRequired = requiresBackendConnectivity(row)
-    if (backendRequired) {
+    const serializedPreparation = requiresSerializedAndroidPreparation(lane)
+    if (serializedPreparation) {
       const originals = await this.rows.recorderClaims?.(requestId)
       if (!originals || !backendRecorderClaimMatches(originals, requestId, digest, hostId, laneId) ||
         !hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(value => isDeepStrictEqual(value, originals[0]))) return null
     }
-    if (!row.fleetResourceAdmission) row = await (backendRequired
+    if (!row.fleetResourceAdmission) row = await (serializedPreparation
       ? this.rows.stageBackend?.(requestId, digest, candidate, borrower, new Date(this.now()))
       : this.rows.stage?.(requestId, digest, candidate, new Date(this.now()))) ?? await this.rows.request?.(requestId)
     if (!row?.fleetResourceAdmission || row.state !== 'awaiting-runner' || row.fleetInputSha256 !== digest || row.fleetBinding ||
