@@ -16,7 +16,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
 import {FORGET_IOS_PAIRING_ROUTE, isIosForgetPairingFailure} from "@/utils/pairing/iosStaleBond"
 import {AUTO_AUDIO_WAIT_MS, BT_CLASSIC_ROUTE, decidePairAudio} from "@/utils/pairing/pairAudio"
-import {advertisedSecurePairingCapable, isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
+import {advertisedSecurePairingCapable} from "@/utils/pairing/securePairingFeature"
 
 // Secure pairing info should arrive immediately after Mentra Live finishes booting.
 // Secure or unknown firmware fails closed instead of spinning forever.
@@ -92,7 +92,7 @@ export default function GlassesPairingLoadingScreen() {
     securePairingCapable,
     selectedDevice?.securePairingCapable,
   )
-  const securePairingRequired = isMentraLive && isMentraLiveSecurePairingEnabled() && advertisedSecurePairing !== false
+  const securePairingRequired = isMentraLive && advertisedSecurePairing !== false
   const pairingTimingStartRef = useRef(Date.now())
   const pairingTimingLastRef = useRef(Date.now())
 

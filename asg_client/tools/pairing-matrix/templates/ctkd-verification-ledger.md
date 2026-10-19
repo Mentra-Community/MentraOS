@@ -27,8 +27,7 @@ Record the installed image. Flag text in source is not that image.
 
 | Flag | Checkout / source default | Installed value |
 | --- | --- | --- |
-| `EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING` | `true` in `mobile/.env` and `mobile/.env.example`. The app treats it as on only when the baked string is exactly `true`. | _not recorded_ |
-| `MENTRA_SECURE_PAIRING` | Mentra 3.3 intends this BES flag on, coordinated with the app flag (`asg_client/docs/mentra-live-spec.md`). This checkout does not contain the flashed BES image. | _not recorded_ |
+| `MENTRA_SECURE_PAIRING` | Mentra 3.3 intends this BES flag on. The app has no flag; it follows the glasses' advertisement (`asg_client/docs/mentra-live-spec.md`). This checkout does not contain the flashed BES image. | _not recorded_ |
 | iOS transport bridging (`ConnectOptions.enableTransportBridging`, `CBConnectPeripheralOptionEnableTransportBridgingKey`) | Source default `false` (key omitted). Run A: `false`. Run B: `true`, with ANCS still required. | _not recorded per run_ |
 
 ## Reset recipes

@@ -56,17 +56,10 @@ describe("Even touchpad reset instructions", () => {
     expect(tips.some((tip) => tip.body.includes("5 times"))).toBe(false)
   })
 
-  describe("Mentra Live pairing tip", () => {
-    afterEach(() => {
-      delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
-    })
-
-    it.each(["true", "false"])("tells users to press three times when secure pairing is %s", (enabled) => {
-      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = enabled
-      const tips = getModelSpecificTips("Mentra Live")
-      expect(tips).toContainEqual({title: en.pairing.livePairingScanTitle, body: en.pairing.livePairingScanBody})
-      expect(tips.some((tip) => /another phone/i.test(`${tip.title} ${tip.body}`))).toBe(false)
-    })
+  it("tells Mentra Live users to press the power button three times", () => {
+    const tips = getModelSpecificTips("Mentra Live")
+    expect(tips).toContainEqual({title: en.pairing.livePairingScanTitle, body: en.pairing.livePairingScanBody})
+    expect(tips.some((tip) => /another phone/i.test(`${tip.title} ${tip.body}`))).toBe(false)
   })
 
   it.each(["Even Realities G2", "Even Realities R1"])(

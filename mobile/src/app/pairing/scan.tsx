@@ -19,7 +19,6 @@ import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
-import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
 import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
 const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCase() ?? ""
@@ -56,7 +55,6 @@ function GlassesScanScreen() {
   const scanGenerationRef = useRef(0)
   const [scanGeneration, setScanGeneration] = useState(0)
   const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
-  const securePairingEnabled = isMentraLiveSecurePairingEnabled()
   const allowedByDeployment = isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)
 
   const selectedDisplayName = useMemo(() => {
@@ -169,10 +167,7 @@ function GlassesScanScreen() {
   // Secure Mentra Live ads with pairingMode=false are nearby but not pairable yet.
   // Existing customer firmware (no secure flag) stays pairable when pairingMode is unset/false.
   const isLivePairable = (device: Device) =>
-    !isMentraLivePairingScan ||
-    !securePairingEnabled ||
-    device.pairingMode !== false ||
-    device.securePairingCapable === false
+    !isMentraLivePairingScan || device.pairingMode !== false || device.securePairingCapable === false
 
   useEffect(() => {
     void startScanAttempt()
@@ -194,24 +189,17 @@ function GlassesScanScreen() {
   const pairableResults = useMemo(
     () =>
       visibleResults.filter(
-        (device) =>
-          !isMentraLivePairingScan ||
-          !securePairingEnabled ||
-          device.pairingMode !== false ||
-          device.securePairingCapable === false,
+        (device) => !isMentraLivePairingScan || device.pairingMode !== false || device.securePairingCapable === false,
       ),
-    [visibleResults, isMentraLivePairingScan, securePairingEnabled],
+    [visibleResults, isMentraLivePairingScan],
   )
   const hasNearbyNotInPairingMode = useMemo(
     () =>
       isMentraLivePairingScan &&
-      securePairingEnabled &&
       visibleResults.some((device) => device.pairingMode === false && device.securePairingCapable !== false),
-    [isMentraLivePairingScan, securePairingEnabled, visibleResults],
+    [isMentraLivePairingScan, visibleResults],
   )
-  const listResults = visibleResults
-  const listedResults =
-    isMentraLivePairingScan && securePairingEnabled ? pairableResults : listResults
+  const listedResults = pairableResults
   const shouldShowDeviceList = listedResults.length > 0
 
   useEffect(() => {
@@ -321,7 +309,7 @@ function GlassesScanScreen() {
   const formatLiveSubtitle = (device: Device) => {
     const base = filterDeviceName(device.name)
     const parts: string[] = [base]
-    if (securePairingEnabled && device.securePairingCapable !== false && device.pairingMode === false) {
+    if (device.securePairingCapable !== false && device.pairingMode === false) {
       parts.push(translate("pairing:notInPairingModeLabel"))
     }
     return parts.join(" · ")
@@ -365,17 +353,13 @@ function GlassesScanScreen() {
     if (scanTimedOut) {
       return translate("pairing:liveScanHelpTitle")
     }
-    // Capability is per device, not per app flag: before any unit is found the app cannot know the
-    // firmware, so the 3-press instruction shows while searching. A legacy unit lists immediately.
-    return securePairingEnabled ? translate("pairing:livePairingScanTitle") : translate("pairing:liveScanTitle")
+    // Capability is per device: before any unit is found the app cannot know the firmware, so the
+    // 3-press instruction shows while searching. A legacy unit lists immediately.
+    return translate("pairing:livePairingScanTitle")
   })()
 
   const showLivePairingHelp =
-    !hasConnectedDeviceHint &&
-    isMentraLivePairingScan &&
-    securePairingEnabled &&
-    !shouldShowDeviceList &&
-    scanTimedOut
+    !hasConnectedDeviceHint && isMentraLivePairingScan && !shouldShowDeviceList && scanTimedOut
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -409,7 +393,7 @@ function GlassesScanScreen() {
                 text={
                   hasConnectedDeviceHint
                     ? translate("pairing:connectedOnPhoneHint")
-                    : !isMentraLivePairingScan || !securePairingEnabled
+                    : !isMentraLivePairingScan
                       ? translate("pairing:liveScanHelpInfo")
                       : hasNearbyNotInPairingMode
                         ? translate("pairing:nearbyNotInPairingModeHint")
@@ -443,7 +427,7 @@ function GlassesScanScreen() {
               <Button preset="primary" tx="pairing:tryAgain" onPress={handleTryAgain} className="w-full" />
             </View>
           ) : !shouldShowDeviceList ? (
-            isMentraLivePairingScan && securePairingEnabled ? (
+            isMentraLivePairingScan ? (
               <View className="justify-center items-center gap-4 py-2">
                 <Text
                   className="text-center text-base font-medium text-foreground"
@@ -463,12 +447,6 @@ function GlassesScanScreen() {
               </View>
             ) : (
               <View className="justify-center items-center gap-3 min-h-20 py-4">
-                {isMentraLivePairingScan ? (
-                  <Text
-                    className="text-center text-sm text-muted-foreground"
-                    text={translate("pairing:liveScanSubtitle")}
-                  />
-                ) : null}
                 <ActivityIndicator size="large" color={theme.colors.foreground} />
               </View>
             )

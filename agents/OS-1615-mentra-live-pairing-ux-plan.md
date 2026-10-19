@@ -8,7 +8,7 @@
 > - The spoken code repeats every 30 s (not 15 s).
 > - Upgraded iPhones with only a Classic bond attach their BLE identity once while their Classic link is up.
 > - The previous owner's phone keeps the glasses listed as "Paired to another phone" with Pair again and Unpair.
-> - Both flags are on: BES `MENTRA_SECURE_PAIRING` and the app's `EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING`.
+> - BES `MENTRA_SECURE_PAIRING` is on. The app has no flag; it follows the glasses' advertisement.
 
 **Linear:** [OS-1615](https://linear.app/mentralabs/issue/OS-1615)  
 **Status:** Historical. Rule Alpha / Design A (open reclaim) shipped in 3.3 with the OS-2055 revisions above. Design B wipe/finalize/abort is retired.  

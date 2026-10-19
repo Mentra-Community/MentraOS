@@ -32,11 +32,11 @@ this brief and the spec disagree, the spec wins; then fix this file.
 2. Phone state machine (Android and iOS mirror each other input for input): `mobile/modules/bluetooth-sdk/android/src/main/java/com/mentra/bluetoothsdk/sgcs/MentraLivePairingStateMachine.kt`, `.../MentraLiveOwnerLossPolicy.kt`, `.../MentraLivePairingAdvertisement.kt`; iOS in `mobile/modules/bluetooth-sdk/ios/Source/sgcs/`.
 3. History only: `agents/OS-1615-mentra-live-pairing-ux-plan.md` (its header says superseded by OS-2055; the body is design history).
 
-## Flags (both sides must agree)
+## Flags
 
 - Firmware: `MENTRA_SECURE_PAIRING`, `MENTRA_OWNERSHIP_TRANSFER` (build-time).
-- App: `EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING` (`mobile/src/utils/pairing/securePairingFeature.ts`). The spec also names `EXPO_PUBLIC_ENABLE_MENTRA_LIVE_OWNERSHIP_TRANSFER`, but it was not found in `mobile/` on branch `nicolo/os-2055-ownership-transfer` (checked 2026-10-17). Confirm which branch has it before assuming the app can show the transfer confirm screen.
-- Behavior differs by flag. "Flag off" means forget-on-entry; "flag on" means the owner is retained on entry. Check which one the question is about before reading code.
+- App: none. The Mentra App and the Bluetooth SDK follow each unit's advertisement (`securePairingCapable`, `pairingMode`), so legacy firmware keeps the legacy flow.
+- Behavior differs by `MENTRA_OWNERSHIP_TRANSFER`. "Flag off" means forget-on-entry; "flag on" means the owner is retained on entry. Check which one the question is about before reading code.
 
 ## Phone-side model
 

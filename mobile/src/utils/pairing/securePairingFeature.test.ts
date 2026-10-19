@@ -1,9 +1,5 @@
 import * as feature from "./securePairingFeature"
-import {
-  advertisedSecurePairingCapable,
-  isMentraLiveSecurePairingEnabled,
-  parseOptionalBoolean,
-} from "./securePairingFeature"
+import {advertisedSecurePairingCapable, parseOptionalBoolean} from "./securePairingFeature"
 
 describe("legacy Mentra Live capability flags", () => {
   it("keeps boolean flags and reads Expo Router strings", () => {
@@ -24,21 +20,9 @@ describe("legacy Mentra Live capability flags", () => {
   })
 })
 
-describe("Mentra Live secure pairing flag", () => {
-  const originalSecure = process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
-
-  afterEach(() => {
-    if (originalSecure === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
-    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = originalSecure
-  })
-
-  it("is on only for exactly true", () => {
-    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
-    expect(isMentraLiveSecurePairingEnabled()).toBe(false)
-    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "TRUE"
-    expect(isMentraLiveSecurePairingEnabled()).toBe(false)
-    process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
-    expect(isMentraLiveSecurePairingEnabled()).toBe(true)
+describe("Mentra Live pairing app flags", () => {
+  it("exposes no app flag: the glasses' advertisement decides the pairing flow", () => {
+    expect(feature).not.toHaveProperty("isMentraLiveSecurePairingEnabled")
   })
 
   it("no longer exposes the retired ownership transfer flag", () => {
