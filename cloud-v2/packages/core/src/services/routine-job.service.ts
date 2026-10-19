@@ -938,7 +938,8 @@ export class RoutineJobService {
   }
   private async routing(row: StoredRoutineJob) {
     const hosts = await this.hosts.list?.() ?? [], requirements = recorderCapacityRequirements(row.fleetPreparation!);
-    const originals = requiresBackendConnectivity(row) ? await this.rows.recorderClaims?.(row.requestId) ??
+    // Provisional physical custody is recovered independently of network-health requirements.
+    const originals = row.fleetSelection.platform === 'android' ? await this.rows.recorderClaims?.(row.requestId) ??
       hosts.flatMap(host => (host.authorityReservations ?? []).filter((claim): claim is RecorderHostReservation =>
         !isExclusiveHostReservation(claim) && claim.requestId === row.requestId)) : [];
     if (originals.length > 1 || originals.some(claim => claim.fleetInputSha256 !== row.fleetInputSha256 ||
