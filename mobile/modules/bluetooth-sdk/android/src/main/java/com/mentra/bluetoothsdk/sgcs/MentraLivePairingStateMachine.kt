@@ -193,7 +193,9 @@ internal class MentraLivePairingStateMachine {
             MentraLivePairingState.Normal -> Unit
         }
         endedWindowId?.let { values[KEY_ENDED_WINDOW_ID] = it }
-        verifiedWindowId?.let { values[KEY_VERIFIED_WINDOW_ID] = it }
+        // Armed verification is not persisted, so a window counts as verified only once its
+        // verification has been used. After a restart the next OWNER_CHANGED advert re-arms it.
+        if (!verificationArmed) verifiedWindowId?.let { values[KEY_VERIFIED_WINDOW_ID] = it }
         return values
     }
 
