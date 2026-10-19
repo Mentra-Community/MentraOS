@@ -19,8 +19,12 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 class MentraLiveGlassesReadyBurstTest {
     @Test fun `repeated glasses_ready burst runs one trailing init`() = withBootedLive { live, inits ->
-        // Replies to the phone_ready messages the glasses buffered while booting.
-        repeat(6) { receive(live, glassesReady("booted")) }
+        // Replies to the phone_ready messages the glasses buffered while booting, with a
+        // stale not-ready heartbeat from the same dump in the middle of them.
+        repeat(6) { reply ->
+            if (reply == 2) receive(live, JSONObject().put("C", "sr_hrt").put("B", JSONObject().put("ready", 0)))
+            receive(live, glassesReady("booted"))
+        }
         assertEquals(1, inits())
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1500))

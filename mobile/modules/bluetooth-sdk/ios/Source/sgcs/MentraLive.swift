@@ -2829,8 +2829,8 @@ class MentraLive: NSObject, SGCManager {
             // readiness loop sent while they booted, so one boot can deliver a burst of
             // glasses_ready for the same process. Every reply still resets the wire epoch
             // below; only the SOC init is coalesced (scheduleRepeatedGlassesReadyInit).
-            let repeatsReadyGlassesSession = readinessCompletedThisBleSession && fullyBooted &&
-                sid == glassesReadySessionId
+            // Not keyed on fullyBooted: stale sr_hrt ready=0 heartbeats can clear it mid-burst.
+            let repeatsReadyGlassesSession = readinessCompletedThisBleSession && sid == glassesReadySessionId
             // glasses_ready is a REMOTE wire-session reset: the glasses ran
             // onTransportReset() before sending it, so their side is back on legacy
             // framing regardless of what this side negotiated earlier. Start a fresh
