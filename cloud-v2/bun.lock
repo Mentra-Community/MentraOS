@@ -6,6 +6,7 @@
       "name": "cloud-v2",
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/node": "25.9.1",
         "jose": "^5.9.6",
         "openid-client": "6.8.8",
         "typescript": "^5.7.0",
