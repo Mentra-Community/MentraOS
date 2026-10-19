@@ -161,6 +161,9 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const connectGlasses = async () => {
+    // An explicit Connect press supersedes an earlier Cancel, so the card shows
+    // the spinner and Cancel again while the connection is attempted.
+    setReconnectDismissed(false)
     if (!pairedModel) {
       // A pending selection resumes its own scan (including the mid-pairing
       // window where the link is up but promotion hasn't echoed yet); only a
@@ -214,9 +217,6 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       resetSearching()
       setReconnectDismissed(true)
     } else {
-      // An explicit Connect press supersedes an earlier Cancel, so the card
-      // shows the spinner and Cancel again while the connection is attempted.
-      setReconnectDismissed(false)
       await connectGlasses()
     }
   }
