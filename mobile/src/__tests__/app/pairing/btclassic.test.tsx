@@ -140,11 +140,7 @@ describe("btclassic pairing screen", () => {
     const screen = render(<BtClassicPairingScreen />)
 
     expect(screen.getByText("Pair Audio")).toBeTruthy()
-    expect(
-      screen.getByText(
-        `${device.name} is already listed under My Devices in your iPhone Bluetooth settings. It only needs a tap to connect audio.`,
-      ),
-    ).toBeTruthy()
+    expect(screen.getByText(`Connect ${device.name} as a Bluetooth audio device`)).toBeTruthy()
     expect(screen.getByText("Tap Open Settings")).toBeTruthy()
     expect(screen.getByText("Tap Bluetooth")).toBeTruthy()
     expect(screen.getByText(`Tap "${device.name}" under My Devices or Other Devices`)).toBeTruthy()

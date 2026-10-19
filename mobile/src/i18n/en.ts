@@ -432,8 +432,7 @@ const en = {
     forgetIosPairingStep2: "Tap ⓘ next to {{name}}, then tap Forget This Device.",
     forgetIosPairingStep3: "Return to the Mentra App to pair again.",
     btClassicTitle: "Pair Audio",
-    btClassicSubtitle:
-      "{{name}} is already listed under My Devices in your iPhone Bluetooth settings. It only needs a tap to connect audio.",
+    btClassicSubtitle: "Connect {{name}} as a Bluetooth audio device",
     unpairEvenTitle: "Unpair Glasses from Even App",
     unpairEvenSubtitle: "To use Mentra, forget your glasses in Bluetooth settings. Unpair them, then try again.",
     unpairEvenTryAgain: "Try Again",
