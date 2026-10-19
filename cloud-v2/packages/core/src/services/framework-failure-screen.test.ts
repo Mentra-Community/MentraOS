@@ -9,7 +9,8 @@ import {TestAssetService} from './test-asset.service';
 import {StorageService} from './storage/storage.service';
 import {S3StorageProvider} from './storage/providers/s3-storage.provider';
 import {TestAssetModel} from '../models/test-run.model';
-import producerTerminal from '../testing/android-crashed-app-terminal.fixture.json';
+import producerTerminal from '../testing/android-crashed-app-terminal.fixture';
+import {recordedFailureImageProvenance} from './framework-failure-image-provenance';
 
 const failure = {phase: 'test' as const, actionId: 'update', message: 'Update Failed'};
 const screenshot = {id: 'failure-screen', kind: 'screenshot' as const, path: 'screenshots/opaque.png',
@@ -38,10 +39,10 @@ function crashWitnessFixture() {
   const original = {pid: 29776, startSeq: 7632, bootId: 'f37d778b-baa3-4c56-a4a8-bc88bd207464', apkSha256: '9'.repeat(64), build: '991'};
   const row = {command: 'failure', state: 'error', ...failure, error: {message: failure.message},
     failureObservedAt: '2026-10-03T19:00:10Z',
-    phoneProcessWitness: {original, state: 'replaced', observedAt: '2026-10-03T19:00:11Z', current: {pid: 30444, startSeq: 7635}},
-    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input', original,
+    phoneProcessWitness: {original, state: 'replaced' as const, observedAt: '2026-10-03T19:00:11Z', current: {pid: 30444, startSeq: 7635}},
+    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input' as const, original,
       captureStartedAt: '2026-10-03T19:00:08Z', captureFinishedAt: '2026-10-03T19:00:09Z'},
-    currentPhoneImage: {assetId: system.id, source: 'system', captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'},
+    currentPhoneImage: {assetId: system.id, source: 'system' as const, captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'},
     desktopAssetIds: [desktop.id], desktopImages: [{assetId: desktop.id, displayId: 0,
       captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:14Z'}]};
   return {run: {...run, assets: [...run.assets, preceding, system, desktop]}, row, preceding, system, desktop};
@@ -99,10 +100,12 @@ test('the actual Harness crash A to B terminal fixture preserves all images and 
     build: {...base.build, kind: 'android-apk', archive: {sha256: producerTerminal.phoneProcessWitness.original.apkSha256}},
     assets: ids.map(id => ({...screenshot, id, path: id})), result: {...base.result, failures: [original]}};
   const [display] = recordedFailureScreens(run, [producerTerminal]);
-  expect(display?.precedingAppImage).toEqual(producerTerminal.precedingAppImage);
-  expect(display?.currentPhoneImage).toEqual(producerTerminal.currentPhoneImage);
-  expect(display?.phoneProcessWitness).toEqual(producerTerminal.phoneProcessWitness);
-  expect(display?.desktopImages).toEqual(producerTerminal.desktopImages);
+  const expected = recordedFailureImageProvenance(run, producerTerminal);
+  expect(expected).toBeDefined();
+  expect(display?.precedingAppImage).toEqual(expected!.precedingAppImage);
+  expect(display?.currentPhoneImage).toEqual(expected!.currentPhoneImage);
+  expect(display?.phoneProcessWitness).toEqual(expected!.phoneProcessWitness);
+  expect(display?.desktopImages).toEqual(expected!.desktopImages);
   expect(display?.assetId).toBeUndefined();
   expect(display?.desktopAssetId).toBeUndefined();
 });

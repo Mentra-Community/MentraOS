@@ -1,4 +1,5 @@
-{
+// Captured from the deterministic Harness original-A/replacement-B regression; no device data.
+export default {
   "command": "failure",
   "state": "error",
   "phase": "setup",
@@ -59,4 +60,4 @@
   "error": {
     "message": "Original password focus failure"
   }
-}
+};
