@@ -4,8 +4,9 @@ import {frameworkExecutableBuild, frameworkRequestInputSchema} from '../types/fr
 import {routineQualificationTargetSchema} from '../types/routine-job.types'
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
 import {exclusiveResourceIntentSchema, resourceReservationObservationSchema, type HostResourceReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
-import {requestInputDigest} from './test-request.service'
-import {RoutineJobService, routinePortableRequirements, type RoutineJobRepository} from './routine-job.service'
+import {requestInputDigest, TestRequestConflict} from './test-request.service'
+import {TestRunError} from './test-result-error'
+import {RoutineJobService, routinePortableRequirements, routineJobInputDigest, type RoutineJobRepository} from './routine-job.service'
 import {hostStateSchema, type ReceivedTestHostState} from './test-host-state.service'
 import {resourceReservationRepository, ResourceReservationsService, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
 import type {RoutineEnrollment} from '../types/routine-definition.types'
@@ -180,4 +181,27 @@ test('reporter advancement during local lookup denies native authority without d
     undefined, undefined, () => now, null, f.candidates, async () => {})
   expect(await service.qualificationTargets('mini')).toEqual([])
   expect(f.observed.resourceReservations!.localPrerequisites).toEqual([f.target])
+})
+
+test('known local withdrawal preserves same-host Mac qualification while outage and unknown errors remain visible', async () => {
+  for (const failure of [new TestRequestConflict('Enrollment removed'), new TestRunError(409, 'Candidate cancelled'),
+    new TestRunError(503, 'Candidate store unavailable'), Error('Unknown candidate read failure')]) {
+    const f = fixture(true), source = {channel: 'dev' as const, buildRunId: 100, publicationAttempt: 1},
+      build = {...f.target.selection.build, kind: 'mac-ci-package' as const},
+      selection = {...f.target.selection, requestId: 'other-mac', platform: 'ios-on-mac' as const, source, build},
+      requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: [],
+        permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}]},
+      preparation = {routineSource: f.enrolled.routineSource, definition: f.enrolled.definition,
+        definitionSha256: f.enrolled.definitionSha256, requirements},
+      row = {requestId: 'other-mac', state: 'awaiting-runner' as const, fleetSelection: selection,
+        fleetSelectionSha256: requestInputDigest(selection), fleetPreparation: preparation, fleetDeadline: new Date(expiry)} as import('../types/routine-job.types').StoredRoutineJob
+    row.fleetInputSha256 = routineJobInputDigest(row)
+    f.observed.lanes.push({id: 'mac', platform: 'ios-on-mac', state: 'idle', dispatchMode: 'automatic', resources: [{id: 'mac-app', kind: 'app'}]})
+    const rows = {...f.rows, async *qualificationCandidates() {yield row}}, candidates = {async authorize() {throw failure}},
+      service = new RoutineJobService(rows, undefined, undefined, {async getExact() {return f.enrolled}},
+        {async get() {return structuredClone(f.observed)}}, undefined, undefined, () => now, null, candidates, async () => {})
+    if (failure instanceof TestRequestConflict || failure instanceof TestRunError && failure.status === 409) {
+      const targets = await service.qualificationTargets('mini'); expect(targets.map(value => value.jobId)).toEqual(['other-mac'])
+    } else await expect(service.qualificationTargets('mini')).rejects.toThrow(failure.message)
+  }
 })

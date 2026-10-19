@@ -649,8 +649,13 @@ export class RoutineJobService {
     const targets: RoutineQualificationTarget[] = [], queryDeadline = now + 5_000;
     for (const lane of host.lanes) {
       if (lane.platform === 'android') {
-        const target = await this.localBackendQualificationTarget(host, lane, owned, queryDeadline) ??
-          await this.backendQualificationTarget(host, lane, owned, queryDeadline);
+        let localTarget: RoutineQualificationTarget | undefined;
+        try {localTarget = await this.localBackendQualificationTarget(host, lane, owned, queryDeadline);}
+        catch (error) {
+          // Known local eligibility withdrawal must not fail the shared delivery GET for other lanes.
+          if (!(error instanceof TestRequestConflict || error instanceof TestRunError && error.status === 409)) throw error;
+        }
+        const target = localTarget ?? await this.backendQualificationTarget(host, lane, owned, queryDeadline);
         if (target) targets.push(target);
         continue;
       }
