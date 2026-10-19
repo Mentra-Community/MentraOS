@@ -253,6 +253,18 @@ final class MentraLivePairingStateMachineTests: XCTestCase {
         XCTAssertTrue(restored.verificationArmed)
     }
 
+    func testAnArmedVerificationIsReArmedAfterARestart() {
+        var machine = pausedMachine(windowId: 42)
+        machine.onTick(nowMs: t0 + 150_000)
+        machine.onAdvertisement(pairingMode: false, ownerChanged: true, generation: 42, nowMs: t0 + 151_000)
+        XCTAssertTrue(machine.verificationArmed)
+        var restored = Machine()
+        restored.restore(values: machine.persisted(), savedDeviceId: device, nowMs: t0 + 160_000)
+        XCTAssertFalse(restored.verificationArmed)
+        restored.onAdvertisement(pairingMode: false, ownerChanged: true, generation: 42, nowMs: t0 + 161_000)
+        XCTAssertTrue(restored.verificationArmed)
+    }
+
     func testAnImplausibleRestoredDeadlineDoesNotPause() {
         var persisted = pausedMachine().persisted()
         persisted[Machine.keyEndsAtMs] = t0 + 10_000_000
