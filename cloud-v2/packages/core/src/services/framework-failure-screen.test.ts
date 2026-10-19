@@ -9,6 +9,8 @@ import {TestAssetService} from './test-asset.service';
 import {StorageService} from './storage/storage.service';
 import {S3StorageProvider} from './storage/providers/s3-storage.provider';
 import {TestAssetModel} from '../models/test-run.model';
+import producerTerminal from '../testing/android-crashed-app-terminal.fixture';
+import {recordedFailureImageProvenance} from './framework-failure-image-provenance';
 
 const failure = {phase: 'test' as const, actionId: 'update', message: 'Update Failed'};
 const screenshot = {id: 'failure-screen', kind: 'screenshot' as const, path: 'screenshots/opaque.png',
@@ -29,6 +31,84 @@ function fixture(platform: 'android' | 'ios-on-mac' = 'android') {
       timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 0, testMs: 1, teardownMs: 0}}});
 }
 const association = [{phase: failure.phase, actionId: failure.actionId, assetId: screenshot.id}];
+
+function crashWitnessFixture() {
+  const run = fixture(), preceding = {...screenshot, id: 'preceding-app', path: 'screenshots/preceding.png'},
+    system = {...screenshot, id: 'current-system', path: 'screenshots/system.png'},
+    desktop = {...screenshot, id: 'failure-desktop', path: 'screenshots/desktop.png'};
+  const original = {pid: 29776, startSeq: 7632, bootId: 'f37d778b-baa3-4c56-a4a8-bc88bd207464', apkSha256: '9'.repeat(64), build: '991'};
+  const row = {command: 'failure', state: 'error', ...failure, error: {message: failure.message},
+    failureObservedAt: '2026-10-03T19:00:10Z',
+    phoneProcessWitness: {original, state: 'replaced' as const, observedAt: '2026-10-03T19:00:11Z', current: {pid: 30444, startSeq: 7635}},
+    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input' as const, original,
+      captureStartedAt: '2026-10-03T19:00:08Z', captureFinishedAt: '2026-10-03T19:00:09Z'},
+    currentPhoneImage: {assetId: system.id, source: 'system' as const, captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'},
+    desktopAssetIds: [desktop.id], desktopImages: [{assetId: desktop.id, displayId: 0,
+      captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:14Z'}]};
+  return {run: {...run, assets: [...run.assets, preceding, system, desktop]}, row, preceding, system, desktop};
+}
+
+test('a ceased or replaced original app preserves preceding and system images without claiming either is the failure app', () => {
+  const {run, row, desktop} = crashWitnessFixture(), frozen = JSON.stringify(run);
+  const {command: _command, state: _state, phase, actionId, message: _message, error: _error, desktopAssetIds: _ids, ...metadata} = row;
+  expect(recordedFailureScreens(run, [row])).toEqual([{phase, actionId, desktopAssetId: desktop.id, ...metadata}]);
+  expect(recordedFailureScreens(run, [row, structuredClone(row)])).toEqual(recordedFailureScreens(run, [row]));
+  const ceased = {...row, phoneProcessWitness: {...row.phoneProcessWitness, state: 'ceased', current: undefined}};
+  expect(recordedFailureScreens(run, [ceased])[0]?.phoneProcessWitness?.state).toBe('ceased');
+  expect(recordedFailureScreens(run, [{...row, currentPhoneImage: undefined}])[0]?.precedingAppImage).toEqual(row.precedingAppImage);
+  expect(JSON.stringify(run)).toBe(frozen);
+});
+
+test('contradictory phone provenance refuses its images while independent recorded desktop evidence survives', () => {
+  const {run, row, desktop, preceding} = crashWitnessFixture();
+  const desktopOnly = [{phase: failure.phase, actionId: failure.actionId, desktopAssetId: desktop.id}];
+  for (const changed of [
+    {failureObservedAt: '2026-10-03T19:02:00Z'},
+    {phoneProcessWitness: {...row.phoneProcessWitness, observedAt: '2026-10-03T19:00:09Z'}},
+    {phoneProcessWitness: {...row.phoneProcessWitness, state: 'same'}},
+    {phoneProcessWitness: {...row.phoneProcessWitness, state: 'ceased'}},
+    {phoneProcessWitness: {...row.phoneProcessWitness, state: 'unknown', original: undefined}},
+    {precedingAppImage: {...row.precedingAppImage, captureFinishedAt: '2026-10-03T19:00:11Z'}},
+    {precedingAppImage: {...row.precedingAppImage, original: {...row.precedingAppImage.original, pid: 30444}}},
+    {precedingAppImage: {...row.precedingAppImage, assetId: 'foreign'}},
+    {screenshotAssetId: preceding.id},
+    {currentPhoneImage: {...row.currentPhoneImage, source: 'original-app'}, screenshotAssetId: row.currentPhoneImage.assetId},
+    {desktopImages: [{...row.desktopImages[0]!, capturedAt: '2026-10-03T19:00:15Z'}]},
+  ]) expect(recordedFailureScreens(run, [{...row, ...changed}])).toEqual(desktopOnly);
+  const sibling = {...row, precedingAppImage: {...row.precedingAppImage, boundary: 'before-email-input'}};
+  expect(recordedFailureScreens(run, [row, sibling])).toEqual(desktopOnly);
+  const legacy = {command: row.command, state: row.state, phase: row.phase, actionId: row.actionId, error: row.error, desktopAssetIds: ['foreign']};
+  expect(recordedFailureScreens(run, [row, legacy])[0]?.desktopImages).toBeUndefined();
+  const earlier = {...failure, message: 'Earlier failure without recorded capture'};
+  expect(recordedFailureScreens({...run, result: {...run.result, failures: [earlier, failure]}}, [row])).toEqual([]);
+  expect(recordedFailureScreens({...run, build: {...run.build, archive: {sha256: '8'.repeat(64)}}}, [row])).toEqual(desktopOnly);
+});
+
+test('new current app evidence requires the original process and capture interval, not just a matching APK', () => {
+  const {run, row} = crashWitnessFixture();
+  const same = {...row, phoneProcessWitness: {...row.phoneProcessWitness, state: 'same', current: {pid: 29776, startSeq: 7632}},
+    screenshotAssetId: screenshot.id, currentPhoneImage: {...row.currentPhoneImage, source: 'original-app', assetId: screenshot.id}};
+  expect(recordedFailureScreens(run, [same])[0]?.assetId).toBe(screenshot.id);
+  const changed = {...same, phoneProcessWitness: {...same.phoneProcessWitness, current: {pid: 30444, startSeq: 7635}}};
+  expect(recordedFailureScreens(run, [changed])[0]?.assetId).toBeUndefined();
+});
+
+test('the actual Harness crash A to B terminal fixture preserves all images and its final postcapture process witness', () => {
+  const original = {...failure, phase: producerTerminal.phase as 'setup', actionId: producerTerminal.actionId, message: producerTerminal.error.message};
+  const ids = [producerTerminal.precedingAppImage.assetId, producerTerminal.currentPhoneImage.assetId, ...producerTerminal.desktopAssetIds];
+  const base = fixture(), run = {...base, startedAt: '2026-10-19T03:26:00Z', finishedAt: '2026-10-19T03:26:03Z',
+    build: {...base.build, kind: 'android-apk', archive: {sha256: producerTerminal.phoneProcessWitness.original.apkSha256}},
+    assets: ids.map(id => ({...screenshot, id, path: id})), result: {...base.result, failures: [original]}};
+  const [display] = recordedFailureScreens(run, [producerTerminal]);
+  const expected = recordedFailureImageProvenance(run, producerTerminal);
+  expect(expected).toBeDefined();
+  expect(display?.precedingAppImage).toEqual(expected!.precedingAppImage);
+  expect(display?.currentPhoneImage).toEqual(expected!.currentPhoneImage);
+  expect(display?.phoneProcessWitness).toEqual(expected!.phoneProcessWitness);
+  expect(display?.desktopImages).toEqual(expected!.desktopImages);
+  expect(display?.assetId).toBeUndefined();
+  expect(display?.desktopAssetId).toBeUndefined();
+});
 
 test('Android failure image requires its exact recorded phase, action, message and declared image', () => {
   const run = fixture();

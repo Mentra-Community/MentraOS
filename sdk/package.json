@@ -23,5 +23,8 @@
     "build": "bun run build:miniapp",
     "postinstall": "bun run build:miniapp || echo '\\n[sdk postinstall] WARNING: failed to build @mentra/miniapp. The example miniapp will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'",
     "test": "cd ../mobile/modules/miniapp && bun test"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1"
   }
 }

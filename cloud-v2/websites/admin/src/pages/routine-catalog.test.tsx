@@ -29,6 +29,55 @@ import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routi
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
 import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
 
+test('crashed app evidence distinguishes preceding app from the current phone screen', () => {
+  const image = (id: string) => ({id, kind: 'screenshot' as const, path: `screenshots/${id}.png`, sha256: 'd'.repeat(64), size: 10, mimeType: 'image/png' as const});
+  const preceding = image('preceding-app'), system = image('current-system'), desktop = image('failure-desktop');
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'crash-display', hostId: 'testing-pro-1', laneId: 'phone',
+    routineId: 'login', definitionRevision: 'c'.repeat(40), platform: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [preceding, system, desktop],
+    result: {runId: 'crash-display', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'failed', actionId: 'entry'}, test: 'not-run',
+      steps: [{id: 'connect', status: 'not-run', durationMs: 0}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: 'setup', actionId: 'entry', message: 'App process disappeared'}], evidence: [],
+      timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 10000, testMs: 0, teardownMs: 1000}}});
+  const original = {pid: 29776, startSeq: 7632, bootId: 'f37d778b-baa3-4c56-a4a8-bc88bd207464', apkSha256: '9'.repeat(64), build: '991'};
+  const screen = {phase: 'setup' as const, actionId: 'entry', desktopAssetId: desktop.id, failureObservedAt: '2026-10-03T19:00:10Z',
+    phoneProcessWitness: {state: 'replaced' as const, original, current: {pid: 30444, startSeq: 7635}, observedAt: '2026-10-03T19:00:11Z'},
+    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input' as const, original,
+      captureStartedAt: '2026-10-03T19:00:08Z', captureFinishedAt: '2026-10-03T19:00:09Z'},
+    currentPhoneImage: {assetId: system.id, source: 'system' as const, captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'}};
+  const client = new QueryClient(), display = {run, definition: null, outcome: 'setup-failed', uploadsComplete: true,
+    evidenceStatus: 'complete', failureScreens: [screen]};
+  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  client.setQueryData(['framework-run', run.requestId], display);
+  expect(render()).toContain('The original app stopped and another app process was observed.');
+  expect(render()).toContain('alt="Phone after failure: entry"');
+  expect(render()).toContain('/assets/current-system');
+  expect(render()).toContain('App before failure</button>');
+  expect(render()).not.toContain('Failure screenshot</button>');
+  expect(render()).toContain('Execution: setup failed');
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup')).toBeUndefined();
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup', 'preceding')).toEqual(preceding);
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup', 'system')).toEqual(system);
+  client.setQueryData(['framework-run', run.requestId], {...display, failureScreens: [{...screen, currentPhoneImage: undefined}]});
+  expect(render()).toContain('alt="App before failure: entry"');
+  expect(render()).toContain('This image precedes the failure; it does not show the failure state.');
+  expect(render()).not.toContain('alt="Failure screenshot:');
+  client.setQueryData(['framework-run', run.requestId], {...display, uploadsComplete: false});
+  expect(render()).not.toContain('<img');
+  expect(selectedFailureScreen(run, [{...screen, precedingAppImage: {...screen.precedingAppImage, assetId: 'foreign'}}], 'entry', 'setup', 'preceding')).toBeUndefined();
+  const second = image('second-desktop'), desktopImages = [desktop, second].map((asset, displayId) => ({assetId: asset.id, displayId,
+    captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:14Z'}));
+  client.setQueryData(['framework-run', run.requestId], {...display, run: {...run, assets: [...run.assets, second]}, failureScreens: [{
+    phase: 'setup', actionId: 'entry', failureObservedAt: screen.failureObservedAt, desktopImages,
+  }]});
+  expect(render()).toContain('Desktop screenshots');
+  expect(render()).toContain('alt="Desktop display 0: entry"');
+  expect(render()).toContain('alt="Desktop display 1: entry"');
+  expect(render().match(/<img /g)).toHaveLength(2);
+  expect(render()).not.toContain('alt="Failure screenshot:');
+});
+
 test('active run page shows current phase, completed count and named steps before final publication', () => {
   const now = new Date().toISOString(), requestId = 'active-miniapps';
   const client = new QueryClient();
