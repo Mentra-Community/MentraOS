@@ -92,10 +92,16 @@ test('backend health matches current APK/controller/released resource generation
   expect(compatibleRoutineLane(requirements, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(false)
   lane.resources[0]!.backendConnectivity = qualified()
   expect(compatibleRoutineLane(requirements, lane, routineLaneContext(f.observed, f.original.fleetSelection.build, now))).toBe(true)
+  const context = routineLaneContext(f.observed, f.original.fleetSelection.build, now)
+  context!.binding = Object.fromEntries(Object.entries(context!.binding).reverse()) as NonNullable<typeof context>['binding']
+  context!.app = Object.fromEntries(Object.entries(context!.app!).reverse()) as NonNullable<typeof context>['app']
+  expect(compatibleRoutineLane(requirements, lane, context)).toBe(true)
   expect(f.observed.resourceLifecycle!.subjects[0]!.idle.outcome).toBe('not-checked')
   for (const mutate of [
     (f: ReturnType<typeof fixture>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.observedAt = new Date(now - 120_001).toISOString()},
     (f: ReturnType<typeof fixture>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.app.headSha = 'c'.repeat(40)},
+    (f: ReturnType<typeof fixture>) => {const value=f.observed.lanes[0]!.resources[0]!.backendConnectivity!;value.binding={...value.binding,publicApiSha256:'f'.repeat(64)}},
+    (f: ReturnType<typeof fixture>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.app.receiptSha256 = 'd'.repeat(64)},
     (f: ReturnType<typeof fixture>) => {f.observed.incarnation = 'replacement'},
     (f: ReturnType<typeof fixture>) => {f.observed.resourceLifecycle!.subjects[0]!.generation++},
     (f: ReturnType<typeof fixture>) => {f.observed.resourceLifecycle!.subjects[0]!.current = false},

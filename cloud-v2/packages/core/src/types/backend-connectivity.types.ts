@@ -1,4 +1,3 @@
-import {isDeepStrictEqual} from 'node:util'
 import {z} from 'zod'
 import {frameworkBindingSchema, type FrameworkBinding} from './framework-version.types'
 import {permissionBuildSchema} from './resource-permissions.types'
@@ -32,6 +31,15 @@ export const BACKEND_CONNECTIVITY_ROUTINE_API_VERSION = 61
 export type BackendConnectivityContext = {hostId: string; incarnation: string; generation: number;
   resourceGenerations: {resourceId: string; generation: number; current: boolean; unowned: boolean}[]}
 
+// These identities contain only parsed JSON fields. Keep the shared type usable
+// by the Admin browser bundle while comparing every field independent of key order.
+const sameIdentity = (left: object, right: object) => {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) :
+    value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : value
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right))
+}
+
 /** Fresh capability health is independent from physical idle and repair qualification. */
 export function backendConnectivityObservationMatches(observation: BackendConnectivityObservation | undefined, resourceId: string,
   context: {now: number; binding: FrameworkBinding; app?: z.infer<typeof permissionBuildSchema>; backend?: BackendConnectivityContext}) {
@@ -40,8 +48,8 @@ export function backendConnectivityObservationMatches(observation: BackendConnec
   const value = parsed.data, at = Date.parse(value.observedAt), closed = Date.parse(value.check.closedAt)
   return value.outcome === 'qualified' && value.phoneResourceId === resourceId &&
     at <= context.now && context.now - at <= BACKEND_CONNECTIVITY_MAX_AGE_MS && closed >= at && closed <= context.now &&
-    context.binding.routineApiVersion >= BACKEND_CONNECTIVITY_ROUTINE_API_VERSION && isDeepStrictEqual(value.binding, context.binding) &&
-    isDeepStrictEqual(value.app, context.app) && value.controller.incarnation === context.backend.incarnation &&
+    context.binding.routineApiVersion >= BACKEND_CONNECTIVITY_ROUTINE_API_VERSION && sameIdentity(value.binding, context.binding) &&
+    sameIdentity(value.app, context.app) && value.controller.incarnation === context.backend.incarnation &&
     value.controller.generation === context.backend.generation && context.backend.resourceGenerations.some(resource =>
       resource.resourceId === resourceId && resource.current && resource.unowned && resource.generation === value.releasedGeneration)
 }
