@@ -1,6 +1,7 @@
 import {z} from 'zod'
 import {recorderHostReservationSchema, type RecorderHostReservation} from './recorder-storage.types'
 import {frameworkBindingSchema} from './framework-version.types'
+import {backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendPrerequisiteOrigin} from './backend-connectivity.types'
 
 const identity = z.string().min(1).max(240)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
@@ -19,7 +20,8 @@ export const localResourceDispatchSchema = z.object({requestId: identity, inputS
 export const exclusiveResourceOwnerSchema = z.object({id: identity, kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer'])}).strict()
 export const backendPrerequisiteIntentSchema = z.object({kind: z.literal('backend-connectivity'), jobId: identity,
   targetInputSha256: hash, resourceId: identity, binding: frameworkBindingSchema,
-  preparing: z.object({dispatchIntentSha256: hash, fleetInputSha256: hash, bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}).strict()}).strict()
+  preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional()
+}).strict().refine(backendPrerequisiteOrigin, 'Prerequisite requires exactly one original cloud or local intent')
 export const exclusiveResourceIntentSchema = z.object({operationId: identity, hostId: identity, laneId: identity,
   controller,
   owner: exclusiveResourceOwnerSchema, inputSha256: hash,
@@ -117,7 +119,11 @@ export const resourceReservationObservationSchema = z.object({
   claims: z.array(exclusiveHostReservationSchema).max(100),
   returns: z.array(observedResourceReturnSchema).max(100),
   dispatches: z.array(localResourceDispatchSchema).max(100).optional(),
+  // Parsed as complete qualification targets by the host/service boundary to avoid schema import cycles.
+  localPrerequisites: z.array(z.unknown()).max(30).optional(),
 }).strict().superRefine((value, context) => {
+  if (new TextEncoder().encode(JSON.stringify(value.localPrerequisites ?? [])).length > 256 * 1024)
+    context.addIssue({code: 'custom', message: 'Local prerequisite projection exceeds its byte bound'})
   if (new Set(value.claims.map(claim => claim.id)).size !== value.claims.length ||
     new Set(value.returns.map(receipt => receipt.claimId)).size !== value.returns.length ||
     new Set(value.dispatches?.map(dispatch => dispatch.requestId)).size !== (value.dispatches?.length ?? 0))

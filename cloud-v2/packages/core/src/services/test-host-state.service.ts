@@ -19,6 +19,7 @@ import {
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {permissionObservationsSchema} from "../types/resource-permissions.types"
 import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
+import {routineQualificationTargetSchema} from '../types/routine-job.types'
 import {TestRunError} from "./test-result-error"
 import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
@@ -228,6 +229,12 @@ export const hostStateSchema = z
       ctx.addIssue({code: 'custom', message: 'Resource observation is newer than host observation'})
     if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
       ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
+    const local = (snapshot.resourceReservations?.localPrerequisites ?? []).map(value => routineQualificationTargetSchema.safeParse(value))
+    if (local.some(value => !value.success || !value.data.local || value.data.hostId !== snapshot.hostId ||
+      !snapshot.lanes.some(lane => lane.id === value.data.laneId && lane.platform === 'android')) ||
+      new Set(local.flatMap(value => value.success ? [value.data.jobId] : [])).size !== local.length ||
+      new Set(local.flatMap(value => value.success ? [value.data.laneId] : [])).size !== local.length)
+      ctx.addIssue({code: 'custom', message: 'Local prerequisites must retain unique original inputs on their authority host'})
     validateHostLaneInventory(snapshot, ctx)
   })
 export type TestHostState = z.infer<typeof hostStateSchema>

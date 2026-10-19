@@ -12,7 +12,7 @@ import {TestRunError} from './test-result-error'
 import {TestRequestModel} from '../models/test-request.model'
 import {assertFleetResourceAdmission, fleetResourceExecutionBinding} from './fleet-resource-binding'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
-import type {StoredRoutineJob, OwnedRoutineQualification, RoutineQualificationTarget} from '../types/routine-job.types'
+import {routineQualificationTargetSchema, type StoredRoutineJob, type OwnedRoutineQualification, type RoutineQualificationTarget} from '../types/routine-job.types'
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
@@ -52,7 +52,7 @@ export function backendRecorderClaimMatches(claims: RecorderHostReservation[], r
 /** Reconstruct the same target from the original request, without choosing a fresh candidate. */
 export function backendPrerequisiteRequestMatches(row: (StoredRoutineJob & {input?: unknown}) | null, intent: ExclusiveResourceIntent, now: number) {
   const purpose = intent.prerequisite, selected = row?.fleetBinding, reservation = row?.fleetResourceReservation, admission = row?.fleetResourceAdmission
-  if (!purpose || !row?.fleetPreparation || row.requestId !== purpose.jobId || row.state !== 'preparing' ||
+  if (!purpose || purpose.local || !purpose.preparing || !row?.fleetPreparation || row.requestId !== purpose.jobId || row.state !== 'preparing' ||
     row.hostId !== intent.hostId || !selected || selected.hostId !== intent.hostId || selected.laneId !== intent.laneId ||
     selected.jobId !== row.requestId || selected.requestId !== row.requestId || !reservation || !admission ||
     reservation.requestId !== row.requestId || reservation.hostId !== intent.hostId || reservation.laneId !== intent.laneId ||
@@ -68,6 +68,17 @@ export function backendPrerequisiteRequestMatches(row: (StoredRoutineJob & {inpu
     row.fleetInputSha256 !== requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation,
       deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null})) return false
   return true
+}
+/** Same host snapshot assertion is the original local authority; it is never a fleet preparing receipt. */
+function localBackendIntentMatches(host: ResourceReservationHost, intent: ExclusiveResourceIntent, now: number) {
+  const local = intent.prerequisite?.local;
+  if (!local || local.controller.incarnation !== host.incarnation || local.controller.generation !== host.incarnationGeneration ||
+    now >= local.admissionExpiresAt || Date.parse(local.requestedAt) > now) return false;
+  const targets = (host.snapshot.resourceReservations?.localPrerequisites ?? []).map(value => routineQualificationTargetSchema.safeParse(value))
+    .flatMap(value => value.success && value.data.jobId === intent.prerequisite!.jobId ? [value.data] : []);
+  return targets.length === 1 && targets[0]!.inputSha256 === intent.prerequisite!.targetInputSha256 &&
+    targets[0]!.laneId === intent.laneId && targets[0]!.hostId === host.hostId &&
+    isDeepStrictEqual(targets[0]!.local, local) && isDeepStrictEqual(targets[0]!.acceptedBinding, intent.prerequisite!.binding);
 }
 export const resourceReservationRepository: ResourceReservationRepository = {
   async get(hostId) {
@@ -107,7 +118,9 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     return this.stage!(requestId, digest, fleetResourceAdmission, now)
   },
   async replaceBackend(host, claims, intent, now) {
-    if (!backendPrerequisiteRequestMatches(await this.request!(intent.prerequisite!.jobId), intent, now.getTime())) return false
+    if (intent.prerequisite!.local) {
+      if (await this.request!(intent.prerequisite!.jobId) || !localBackendIntentMatches(host, intent, now.getTime())) return false
+    } else if (!backendPrerequisiteRequestMatches(await this.request!(intent.prerequisite!.jobId), intent, now.getTime())) return false
     // A recorder claim is retained before any backend run stage. The ordinary host-row
     // CAS makes a competing byte/probe write lose without a cross-collection transaction.
     return this.replace(host, claims)
@@ -480,7 +493,7 @@ export class ResourceReservationsService {
     if (!fresh(host, this.now()) || host.incarnation !== intent.controller.incarnation ||
       host.incarnationGeneration !== intent.controller.generation || host.sequence !== intent.controller.sequence ||
       !isDeepStrictEqual(host.snapshot.frameworkBinding, purpose.binding) || purpose.binding.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
-      !lane || lane.platform !== 'android' || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic' ||
+      !lane || lane.platform !== 'android' || lane.state !== 'idle' || lane.activity || !purpose.local && lane.dispatchMode !== 'automatic' ||
       !lane.resources.some(resource => resource.id === purpose.resourceId && resource.kind === 'phone' &&
         resource.capabilities?.includes('backend-connectivity')) || !subject?.current || subject.subject.authorityHostId !== host.hostId ||
       subject.status !== 'checking' || subject.owner?.kind !== 'boundary-cleanup' || subject.owner.id !== intent.owner.id ||
@@ -498,7 +511,8 @@ export class ResourceReservationsService {
       targets.length === 1 && targets[0]!.jobId === purpose.jobId && targets[0]!.inputSha256 === purpose.targetInputSha256 &&
       targets[0]!.hostId === host.hostId && targets[0]!.laneId === intent.laneId &&
       isDeepStrictEqual(targets[0]!.purpose, {kind: 'backend-connectivity', resourceId: purpose.resourceId}) &&
-      isDeepStrictEqual(targets[0]!.acceptedBinding, purpose.binding) && isDeepStrictEqual(targets[0]!.preparing, purpose.preparing)
+      isDeepStrictEqual(targets[0]!.acceptedBinding, purpose.binding) && isDeepStrictEqual(targets[0]!.preparing, purpose.preparing) &&
+      isDeepStrictEqual(targets[0]!.local, purpose.local)
   }
   private async acquireBackendPrerequisite(intent: ExclusiveResourceIntent, hostId: string) {
     const intentSha256 = this.backendIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
@@ -506,13 +520,14 @@ export class ResourceReservationsService {
       const host = await this.host(hostId)
       if (!await this.backendTargetCurrent(host, intent)) return unknown
       const selected = await this.rows.request?.(intent.prerequisite!.jobId)
-      if (!backendPrerequisiteRequestMatches(selected ?? null, intent, this.now())) return unknown
+      if (intent.prerequisite!.local ? Boolean(selected) || !localBackendIntentMatches(host, intent, this.now()) :
+        !backendPrerequisiteRequestMatches(selected ?? null, intent, this.now())) return unknown
       const claims = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
         current = claims.filter(isExclusiveHostReservation).find(claim => claim.resourceId === intent.prerequisite!.resourceId),
         blocked = claims.find(claim => isExclusiveHostReservation(claim) ?
           claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim !== current &&
-            !selected!.fleetExclusiveReservation?.claims.some(original => isDeepStrictEqual(original, claim)) :
-          claim.hostId === hostId && claim.laneId === intent.laneId && !isDeepStrictEqual(claim, selected!.fleetResourceReservation))
+            (Boolean(intent.prerequisite!.local) || !selected!.fleetExclusiveReservation?.claims.some(original => isDeepStrictEqual(original, claim))) :
+          claim.hostId === hostId && claim.laneId === intent.laneId && (Boolean(intent.prerequisite!.local) || !isDeepStrictEqual(claim, selected!.fleetResourceReservation)))
       if (blocked || current && !this.backendClaimMatches(current, intent, intentSha256)) {
         const blocker = blocked ?? current!
         return {status: 'waiting' as const, intentSha256, claims: [], blocked: {

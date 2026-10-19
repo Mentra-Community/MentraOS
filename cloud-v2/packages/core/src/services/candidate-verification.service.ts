@@ -16,7 +16,7 @@ export interface CandidateWorkRecord {
 }
 export interface CandidateAuthorization {
   authorize(binding: CandidateVerification, hostId: string, selected: {
-    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string; glassesModel?: 'nimo'
+    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string; admissionExpiresAt?:number; glassesModel?: 'nimo'
   }): Promise<void>
 }
 
@@ -27,7 +27,7 @@ export class CandidateVerificationService implements CandidateAuthorization {
     private readonly now:()=>number=Date.now) {}
 
   async authorize(binding: CandidateVerification, hostId: string, selected: {
-    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string; glassesModel?: 'nimo'
+    routineId: string; platform: string; definitionRevision: string; laneId?: string; build?: unknown; requestId?:string; admissionExpiresAt?:number; glassesModel?: 'nimo'
   }) {
     const parsed = candidateVerificationSchema.safeParse(binding)
     const row = parsed.success ? await this.get(parsed.data.workId) : null
@@ -38,6 +38,12 @@ export class CandidateVerificationService implements CandidateAuthorization {
       (original.data.details.requestId===undefined||retry.data.admission?.requestId===original.data.details.requestId)&&
       Date.parse(retry.data.acceptedAt)<=at&&at<Date.parse(retry.data.deadline))
     const view = authoringJobViewSchema.safeParse(retryCurrent?row?.verification?.status.details:row?.status?.details)
+    if (selected.admissionExpiresAt !== undefined) {
+      const epoch = /^local:([0-9]{13}):([A-Za-z0-9_-]{1,120})$/.exec(selected.requestId ?? '')?.[1]
+      if (!epoch || selected.admissionExpiresAt !== (retryCurrent ? Date.parse(retry.data!.deadline) : Number(epoch)) ||
+        retryCurrent && (retry.data!.admission?.requestId !== selected.requestId || retry.data!.admission?.originalAdmissionExpiresAt !== Number(epoch)))
+        throw new TestRunError(409, 'Local candidate deadline differs from its original admission or accepted completion retry')
+    }
     if(retryCurrent&&view.success&&(selected.requestId!==undefined&&selected.requestId!==retry.data!.admission!.requestId||
       view.data.details.requestId!==retry.data!.admission!.requestId||
       !original.success||view.data.attemptId!==original.data.attemptId||view.data.details.sourceRevision!==original.data.details.sourceRevision||
@@ -49,7 +55,7 @@ export class CandidateVerificationService implements CandidateAuthorization {
     if (selected.glassesModel && (row?.work.requirements.platform !== 'android' || !row.work.requirements.glasses.includes('nimo') ||
       glasses?.capabilities.length !== 1 || glasses.capabilities[0] !== 'connection'))
       throw new TestRunError(409, 'NIMO candidate differs from its accepted model and connection requirement')
-    if (!parsed.success || !row?.acceptance || !view.success || row.hostId !== hostId ||
+    if (!parsed.success || !row?.acceptance || row.fleetCancellation || !view.success || row.hostId !== hostId ||
         row.acceptance.hostId !== hostId || row.acceptance.inputSha256 !== row.inputSha256 ||
         row.work.workId !== binding.workId || view.data.workId !== binding.workId ||
         requestInputDigest(row.work) !== row.inputSha256 || view.data.inputSha256 !== row.inputSha256 ||

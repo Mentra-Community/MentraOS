@@ -117,7 +117,7 @@ test('executable adoption refuses stale, different original, unknown, changed ge
     (f: Awaited<ReturnType<typeof executableFixture>>) => {delete f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification},
     (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.jobId = 'other'},
     (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.inputSha256 = 'f'.repeat(64)},
-    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.preparing.bindingSha256 = 'f'.repeat(64)},
+    (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.qualification!.preparing!.bindingSha256 = 'f'.repeat(64)},
     (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.lanes[0]!.resources[0]!.backendConnectivity!.outcome = 'unknown'},
     (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.resourceLifecycle!.subjects[0]!.generation++},
     (f: Awaited<ReturnType<typeof executableFixture>>) => {f.observed.authorityReservations = []},
@@ -146,6 +146,9 @@ test('Android discovery returns exact selected preparing target and legacy API c
   const {inputSha256, ...target} = targets[0]!
   expect(inputSha256).toBe(requestInputDigest(target)); expect(f.original).toEqual(before)
   expect(targets[0]!.preparing?.reservationSha256).toBe(requestInputDigest(f.original.fleetResourceReservation)); expect(targets[0]!.proposedInput).toBeDefined()
+  f.observed.lanes[0]!.dispatchMode = 'paused'
+  expect(await f.service.qualificationTargets('mini')).toEqual([])
+  f.observed.lanes[0]!.dispatchMode = 'automatic'
   f.observed.frameworkBinding!.routineApiVersion = 60
   expect(await f.service.qualificationTargets('mini')).toEqual([])
 })
@@ -615,7 +618,7 @@ test('only the exact selected preparing recorder claim may coexist with its phon
   expect((f.row.resourceReservations as HostResourceReservation[])[0]).toEqual(own)
   for (const changed of ['bindingSha256','reservationSha256','dispatchIntentSha256'] as const) {
     const other = await claimFixture()
-    const intent = structuredClone(other.intent); intent.prerequisite!.preparing[changed] = 'f'.repeat(64)
+    const intent = structuredClone(other.intent); intent.prerequisite!.preparing![changed] = 'f'.repeat(64)
     expect(backendPrerequisiteRequestMatches(other.original, intent, now)).toBe(false)
     expect((await other.service.acquire(intent, 'mini')).status).toBe('unknown'); expect(other.writes).toEqual([])
   }

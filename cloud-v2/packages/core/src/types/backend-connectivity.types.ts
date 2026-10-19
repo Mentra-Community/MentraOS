@@ -1,10 +1,24 @@
 import {z} from 'zod'
 import {frameworkBindingSchema, type FrameworkBinding} from './framework-version.types'
 import {permissionBuildSchema} from './resource-permissions.types'
+import {candidateVerificationSchema} from './candidate-verification.types'
 
 const identity = z.string().min(1).max(240)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const timestamp = z.string().datetime({offset: true})
+/** The installed authenticated controller asserts one immutable pre-admission local operation. */
+export const backendLocalPrerequisiteSchema = z.object({operationId: identity, requestedAt: timestamp,
+  inputSha256: hash, definitionSha256: hash, admissionExpiresAt: z.number().int().positive().max(8_640_000_000_000_000).safe(),
+  controller: z.object({incarnation: identity, generation: z.number().int().positive().safe()}).strict(),
+  authority: z.discriminatedUnion('kind', [z.object({kind: z.literal('operator')}).strict(),
+    z.object({kind: z.literal('candidate'), verification: candidateVerificationSchema,
+      installerReceiptSha256: hash, completionOperationId: identity}).strict()]),
+}).strict()
+export type BackendLocalPrerequisite = z.infer<typeof backendLocalPrerequisiteSchema>
+export const backendPreparingReceiptSchema = z.object({dispatchIntentSha256: hash, fleetInputSha256: hash,
+  bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}).strict()
+export const backendPrerequisiteOrigin = (value: {preparing?: unknown; local?: unknown}) =>
+  Boolean(value.preparing) !== Boolean(value.local)
 export const backendQualificationPurposeSchema = z.object({kind: z.literal('backend-connectivity'), resourceId: identity}).strict()
 export const backendConnectivityTargetSchema = z.object({schemaVersion: z.literal(1), coreUrl: z.string().url().max(4096)}).strict()
   .refine(value => {
@@ -20,8 +34,8 @@ export const backendConnectivityObservationSchema = z.object({schemaVersion: z.l
   phoneResourceId: identity, binding: frameworkBindingSchema,
   controller: z.object({incarnation: identity, generation: z.number().int().positive().safe()}).strict(),
   app: permissionBuildSchema, target: backendConnectivityTargetSchema, targetSource: z.literal('verified-apk-configuration'),
-  qualification: z.object({jobId: identity, targetInputSha256: hash, inputSha256: hash, preparing:
-    z.object({dispatchIntentSha256: hash, fleetInputSha256: hash, bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}).strict()}).strict().optional(),
+  qualification: z.object({jobId: identity, targetInputSha256: hash, inputSha256: hash, preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional()
+  }).strict().refine(backendPrerequisiteOrigin, 'Qualification requires exactly one original cloud or local intent').optional(),
   bootId: z.string().uuid().nullable(), tool: z.object({path: z.string().min(1).max(4096).startsWith('/'), sha256: hash}).strict(),
   check: z.object({operationId: identity, resultSha256: hash, readersSha256: hash, closedAt: timestamp}).strict(),
   releasedGeneration: z.number().int().positive().safe(), appRouteVerified: z.literal(false),

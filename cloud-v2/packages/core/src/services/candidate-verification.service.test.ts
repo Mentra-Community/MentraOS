@@ -41,6 +41,7 @@ test('candidate permits bind accepted host, current attempt, exact reviewed sour
   await service.authorize(verification, 'mini', selected)
   for (const change of [
     () => {row.acceptance = undefined},
+    () => {row.fleetCancellation = {reason: "Cancelled current work"}},
     () => {row.hostId = 'other'},
     () => {
       ;(row.status!.details as any).attemptId = 2
@@ -104,6 +105,9 @@ test('candidate authorization uses only the fresh accepted pre-admission retry o
  }
  Object.assign(row,structuredClone(snapshot));delete row.fleetCancellation
  await service.authorize(verification,'mini',{...selected,requestId})
+ await service.authorize(verification,'mini',{...selected,requestId,admissionExpiresAt:now+1800000})
+ await expect(service.authorize(verification,'mini',{...selected,requestId,admissionExpiresAt:now+1800001})).rejects.toThrow('Local candidate deadline')
+ await expect(service.authorize(verification,'mini',{...selected,requestId,admissionExpiresAt:1792177290232})).rejects.toThrow('Local candidate deadline')
  await expect(service.authorize(verification,'mini',{...selected,requestId:'different-request'})).rejects.toThrow('original source')
  const rows=new Map<string,StoredTestRequest>(),repository={async insert(value:StoredTestRequest){rows.set(value.requestId,value)},async get(id:string){return rows.get(id)??null}}as TestRequestRepository
  const intake=new TestRequestService(repository,service)
@@ -131,3 +135,11 @@ test('NIMO candidate authority omits only Live manifest fields for the exact acc
   row.work.requirements.resources.find(value => value.kind === 'glasses')!.capabilities = [];
   await expect(service.authorize(verification, 'mini', input)).rejects.toThrow('accepted model and connection');
 });
+
+ test('local candidate cannot extend an ordinary admission deadline or alter its recorded original retry epoch', async () => {
+   const row = accepted(), service = new CandidateVerificationService(async () => row)
+   const requestId = 'local:1792422600000:original'
+   await service.authorize(verification, 'mini', {...selected, requestId, admissionExpiresAt: 1792422600000})
+   await expect(service.authorize(verification, 'mini', {...selected, requestId, admissionExpiresAt: 1792422600001})).rejects.toThrow('Local candidate deadline')
+   await expect(service.authorize(verification, 'mini', {...selected, requestId: 'cloud', admissionExpiresAt: 1792422600000})).rejects.toThrow('Local candidate deadline')
+ })

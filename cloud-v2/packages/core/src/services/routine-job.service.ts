@@ -12,7 +12,7 @@ import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
   routineQualificationTargetSchema, routineJobBindingSchema, type RoutineQualificationTarget, ownedRoutineQualificationSchema, type OwnedRoutineQualification, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
-import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
+import {assertEnrolledRequest, requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
@@ -25,6 +25,7 @@ import {hostStateSchema, TestHostStateService, type RoutingTestHostState, type R
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
+import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, ResourceReservationsService} from './resource-reservations.service';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
 const exclusiveResources = new ResourceReservationsService();
@@ -622,7 +623,9 @@ export class RoutineJobService {
     private readonly requests: Pick<TestRequestService, 'cancel'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, 'detail'> = new FrameworkResultService(),
     private readonly now: () => number = Date.now,
-    private readonly actionsTransport: RoutineJobActions | null = rows === routineJobRepository ? new GithubRoutineJobActions() : null) {}
+    private readonly actionsTransport: RoutineJobActions | null = rows === routineJobRepository ? new GithubRoutineJobActions() : null,
+    private readonly localCandidates: CandidateAuthorization = new CandidateVerificationService(),
+    private readonly localEnrollment: typeof assertEnrolledRequest = assertEnrolledRequest) {}
   private async job(jobId: string) {
     if (!frameworkIdentitySchema.safeParse(jobId).success) throw new TestRunError(400, 'Invalid job identity');
     const row = await this.rows.get(jobId);
@@ -646,7 +649,8 @@ export class RoutineJobService {
     const targets: RoutineQualificationTarget[] = [], queryDeadline = now + 5_000;
     for (const lane of host.lanes) {
       if (lane.platform === 'android') {
-        const target = await this.backendQualificationTarget(host, lane, owned, queryDeadline);
+        const target = await this.localBackendQualificationTarget(host, lane, owned, queryDeadline) ??
+          await this.backendQualificationTarget(host, lane, owned, queryDeadline);
         if (target) targets.push(target);
         continue;
       }
@@ -717,6 +721,64 @@ export class RoutineJobService {
       }
     }
     return targets;
+  }
+  /** Local preparation is an authenticated immutable controller assertion, not a fabricated fleet preparing row. */
+  private async localBackendQualificationTarget(host: ReceivedTestHostState,
+    lane: RoutingTestHostState['lanes'][number], owned: OwnedRoutineQualification | undefined, queryDeadline: number) {
+    const values = host.resourceReservations?.localPrerequisites ?? [];
+    const candidates = values.map(value => routineQualificationTargetSchema.safeParse(value))
+      .flatMap(value => value.success && value.data.local ? [value.data] : [])
+      .filter(value => value.laneId === lane.id && (!owned || value.jobId === owned.jobId && value.inputSha256 === owned.inputSha256));
+    if (candidates.length !== 1) return undefined;
+    const target = candidates[0]!, local = target.local!, input = target.proposedInput!, binding = host.frameworkBinding,
+      subject = host.resourceLifecycle?.subjects.find(value => value.subject.id === target.purpose!.resourceId),
+      {inputSha256: _, ...body} = target, now = this.now();
+    if (!binding || binding.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
+      target.hostId !== host.hostId || requestInputDigest(target.acceptedBinding) !== requestInputDigest(binding) ||
+      requestInputDigest(body) !== target.inputSha256 || requestInputDigest(input) !== local.inputSha256 ||
+      host.incarnation !== local.controller.incarnation || host.incarnationGeneration !== local.controller.generation ||
+      Date.parse(local.requestedAt) > now || Date.parse(local.requestedAt) > Date.parse(host.observedAt) ||
+      now >= local.admissionExpiresAt || now >= queryDeadline ||
+      (input.minimumFrameworkVersion ?? 0) > binding.version || input.routineSource.minimumRoutineApiVersion > binding.routineApiVersion || lane.state !== 'idle' ||
+      host.lanes.find(value => value.id === lane.id)?.activity ||
+      !lane.resources.some(value => value.id === target.purpose!.resourceId && value.kind === 'phone' && value.capabilities?.includes('backend-connectivity')) ||
+      !subject?.current || subject.subject.authorityHostId !== host.hostId ||
+      (owned ? subject.status !== 'checking' || subject.owner?.kind !== 'boundary-cleanup' || subject.owner.id !== owned.ownerId ||
+        subject.owner.generation !== owned.generation || subject.owner.laneId !== lane.id : Boolean(subject.owner))) return undefined;
+    // Every existing request identity, including a terminal tombstone, excludes pre-admission local qualification.
+    if (await this.rows.get(target.jobId, Math.max(1, queryDeadline - this.now()))) return undefined;
+    await this.localEnrollment(input);
+    if (local.authority.kind === 'candidate') await this.localCandidates.authorize(local.authority.verification, host.hostId,
+      {...input, requestId: target.jobId, admissionExpiresAt: local.admissionExpiresAt});
+    const definition = await this.definitions.getExact(input.routineId, input.platform, input.definitionRevision,
+      local.authority.kind === 'operator');
+    if (!definition || definition.definitionSha256 !== local.definitionSha256 ||
+      requestInputDigest(definition.definition) !== local.definitionSha256 ||
+      requestInputDigest(definition.routineSource) !== requestInputDigest(input.routineSource) ||
+      requestInputDigest(definition.definition.execution?.policy ?? null) !== requestInputDigest(input.policy ?? null) ||
+      requestInputDigest(routinePortableRequirements(definition)) !== requestInputDigest(target.requirements) ||
+      requestInputDigest(frameworkExecutableBuild(target.selection.build, input.glassesModel)) !== requestInputDigest(input.build) ||
+      input.minimumFrameworkVersion !== target.selection.minimumFrameworkVersion ||
+      !compatibleStructuralRoutineLane(target.requirements, lane, routineLaneContext(host, target.selection.build, now), now) ||
+      !input.resources.some(ref => ref.kind === 'phone' && ref.id === target.purpose!.resourceId) ||
+      input.resources.length !== target.requirements.resources.length || target.requirements.resources.some(required =>
+        input.resources.filter(ref => ref.kind === required.kind && lane.resources.some(offered => offered.kind === ref.kind && offered.id === ref.id &&
+          requestInputDigest(offered.exclusiveDependencies ?? []) === requestInputDigest(ref.exclusiveDependencies ?? [])) && (!ref.laneId || ref.laneId === lane.id)).length !== 1)) return undefined;
+    // Enrollment/work may change during definition and host reads. Recheck before exposing any reader authority.
+    await this.localEnrollment(input);
+    if (local.authority.kind === 'candidate') await this.localCandidates.authorize(local.authority.verification, host.hostId,
+      {...input, requestId: target.jobId, admissionExpiresAt: local.admissionExpiresAt});
+    const current = await this.hosts.get(host.hostId);
+    if (!current || !current.frameworkBinding || current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration ||
+      current.sequence !== host.sequence || requestInputDigest(current.frameworkBinding) !== requestInputDigest(binding) ||
+      requestInputDigest(current.resourceReservations?.localPrerequisites ?? []) !== requestInputDigest(values) ||
+      Date.parse(current.receivedAt) > this.now() || this.now() - Date.parse(current.receivedAt) > 120_000 ||
+      this.now() >= local.admissionExpiresAt || this.now() >= queryDeadline) return undefined;
+    if (await this.rows.get(target.jobId, Math.max(1, queryDeadline - this.now()))) return undefined;
+    const finalHost = await this.hosts.get(host.hostId);
+    if (!finalHost || finalHost.sequence !== host.sequence || finalHost.incarnation !== host.incarnation ||
+      finalHost.incarnationGeneration !== host.incarnationGeneration || this.now() >= local.admissionExpiresAt || this.now() >= queryDeadline) return undefined;
+    return target;
   }
   /** A selected preparing receipt authorizes host-only preparation; only the owned check can observe the phone. */
   private async backendQualificationTarget(host: ReceivedTestHostState,

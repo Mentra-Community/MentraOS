@@ -222,7 +222,7 @@ const mongoRepository: TestRequestRepository = {
   },
 };
 
-const enrolledRequest = async (input: z.infer<typeof frameworkRequestInputSchema>) => {
+export const assertEnrolledRequest = async (input: z.infer<typeof frameworkRequestInputSchema>) => {
   const row = await RoutineDefinitionModel.findOne({routineId: input.routineId, platform: input.platform,
     definitionRevision: input.definitionRevision}).read('primary').readConcern('majority').lean();
   const permitted = input.verification ? (row?.candidateBindings ?? []).some(value =>
@@ -235,7 +235,7 @@ export class TestRequestService {
   constructor(private readonly repository: TestRequestRepository = mongoRepository,
     private readonly candidates: CandidateAuthorization = new CandidateVerificationService(),
     private readonly enrolled: ((input: z.infer<typeof frameworkRequestInputSchema>) => Promise<void>) | null =
-      repository === mongoRepository ? enrolledRequest : null,
+      repository === mongoRepository ? assertEnrolledRequest : null,
     private readonly frameworks: (Pick<TestHostStateService, 'frameworkObservation'> & Partial<Pick<TestHostStateService, 'admitPreparationFramework' | 'preparationFrameworkAdmission'>>) | null = repository === mongoRepository ? new TestHostStateService() : null,
     private readonly now: () => number = Date.now,
     private readonly backendHosts: Pick<TestHostStateService, 'get'> | null = repository === mongoRepository ? new TestHostStateService() : null) {}
@@ -372,7 +372,7 @@ export class TestRequestService {
       const host = await this.backendHosts?.get(hostId), lane = host?.lanes.find(value => value.id === frozen.laneId),
         phone = lane?.resources.find(value => value.kind === 'phone'), preparing = host && lane && preparingQualificationReceipt(row as unknown as import('../types/routine-job.types').StoredRoutineJob, hostId, lane),
         qualification = phone?.backendConnectivity?.qualification, context = host && permissionContext(host.frameworkBinding, intent.build, this.now());
-      if (!host || !phone || !context || !preparing || !qualification || qualification.jobId !== requestId ||
+      if (!host || !phone || !context || !preparing || !qualification || qualification.local || !qualification.preparing || qualification.jobId !== requestId ||
         qualification.inputSha256 !== digest || requestInputDigest(qualification.preparing) !== requestInputDigest(preparing) ||
         phone.backendConnectivity!.check.operationId !== `backend-prerequisite:${qualification.targetInputSha256}` ||
         !host.authorityReservations || host.authorityReservations.some(claim => 'kind' in claim && claim.prerequisite && claim.resourceId === phone.id) ||
