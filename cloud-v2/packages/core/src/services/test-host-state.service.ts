@@ -264,7 +264,7 @@ export const updaterDeploymentSchema = z
     stopped: frameworkStopSchema.optional(),
   })
   .strict()
-export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]}
+export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
 const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequence?: number}) => ({
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
@@ -468,6 +468,7 @@ export class TestHostStateService {
     return row
       ? {
           ...hostStateSchema.parse(row.snapshot),
+          authorityReservations: hostResourceReservationsSchema.parse(row.resourceReservations ?? []),
           receivedAt: row.receivedAt.toISOString(),
           frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),
         }

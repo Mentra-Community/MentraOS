@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {frameworkIdentitySchema} from './framework-request.types';
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from './framework-request.types';
 import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {publishedRoutineDefinitionSchema, routineResourceRequirementSchema, routinePlatformSchema,
   glassesModelSchema, routineIdentitySchema} from './routine-definition.types';
@@ -34,15 +34,16 @@ export const routineQualificationTargetSchema = z.object({jobId: frameworkIdenti
   selection: portableRoutineSelectionSchema, requirements: portableRequirementsSchema,
   purpose: backendQualificationPurposeSchema.optional(),
   acceptedBinding: frameworkBindingSchema.optional(),
+  proposedInput: frameworkRequestInputSchema.optional(),
   preparing: z.object({dispatchIntentSha256: jobHashSchema, fleetInputSha256: jobHashSchema,
     bindingSha256: jobHashSchema, admissionSha256: jobHashSchema, reservationSha256: jobHashSchema}).strict().optional(),
   accepted: z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, inputSha256: jobHashSchema,
     acceptedAt: z.string().datetime({offset: true}), binding: frameworkBindingSchema,
     controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
   target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
-    (value.purpose ? value.selection.platform === 'android' && !!value.acceptedBinding && !value.preparing && !value.accepted &&
+    (value.purpose ? value.selection.platform === 'android' && !!value.acceptedBinding && !!value.preparing && !!value.proposedInput && !value.accepted &&
       value.requirements.resources.some(resource => resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))
-      : value.selection.platform === 'ios-on-mac' && !value.acceptedBinding) && value.requirements.platform === value.selection.platform &&
+      : value.selection.platform === 'ios-on-mac' && !value.acceptedBinding && !value.proposedInput) && value.requirements.platform === value.selection.platform &&
     (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)) &&
     (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId) &&
     (!value.preparing || !value.accepted && value.target?.hostId === value.hostId && value.target.laneId === value.laneId),

@@ -18,7 +18,8 @@ export type ExclusiveResourceDependency = z.infer<typeof exclusiveResourceDepend
 export const localResourceDispatchSchema = z.object({requestId: identity, inputSha256: hash, definitionSha256: hash}).strict()
 export const exclusiveResourceOwnerSchema = z.object({id: identity, kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer'])}).strict()
 export const backendPrerequisiteIntentSchema = z.object({kind: z.literal('backend-connectivity'), jobId: identity,
-  targetInputSha256: hash, resourceId: identity, binding: frameworkBindingSchema}).strict()
+  targetInputSha256: hash, resourceId: identity, binding: frameworkBindingSchema,
+  preparing: z.object({dispatchIntentSha256: hash, fleetInputSha256: hash, bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}).strict()}).strict()
 export const exclusiveResourceIntentSchema = z.object({operationId: identity, hostId: identity, laneId: identity,
   controller,
   owner: exclusiveResourceOwnerSchema, inputSha256: hash,

@@ -6,7 +6,7 @@ import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
 import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
+import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {preparationRejectionSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
@@ -14,6 +14,7 @@ import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeR
   routineQualificationTargetSchema, routineJobBindingSchema, type RoutineQualificationTarget, ownedRoutineQualificationSchema, type OwnedRoutineQualification, type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
+import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
 import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
 import {backendConnectivityObservationMatches, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, type BackendConnectivityContext} from '../types/backend-connectivity.types';
@@ -163,9 +164,9 @@ export const routineJobRepository: RoutineJobRepository = {
         value.requestId !== requestId || value.inputSha256 !== executionDigest)};
       if (host.hostId !== hostId || !lane || !required || !offered || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' ||
         now.getTime() - hostRow.receivedAt.getTime() > 120_000 || hostRow.receivedAt > now ||
-        !compatibleRoutineLane(requirements, {...lane, resources: lane.resources.map(value => value.kind === 'recorder' ? {...value, storage: offered} : value)}, routineLaneContext(host, row.fleetSelection.build, now.getTime()), now.getTime())) {
+        !compatibleStructuralRoutineLane(requirements, {...lane, resources: lane.resources.map(value => value.kind === 'recorder' ? {...value, storage: offered} : value)}, routineLaneContext(host, row.fleetSelection.build, now.getTime()), now.getTime())) {
         if (lane && required && lane.state === 'idle' && lane.dispatchMode === 'automatic' && hostRow.receivedAt <= now &&
-            now.getTime() - hostRow.receivedAt.getTime() <= 120_000 && compatibleRoutineLane({...requirements,
+            now.getTime() - hostRow.receivedAt.getTime() <= 120_000 && compatibleStructuralRoutineLane({...requirements,
               resources: requirements.resources.map(({storage: _, ...resource}) => resource)}, lane,
               routineLaneContext(host, row.fleetSelection.build, now.getTime()), now.getTime()))
           onWaiting?.(recorderWait(offered, required.minimumAvailableBytes, now.getTime()) ?? RESOURCE_ADMISSION_WAIT);
@@ -230,7 +231,7 @@ export const routineJobRepository: RoutineJobRepository = {
           !currentHost || !currentLane || !hostResourceReservationsSchema.parse(currentHost.resourceReservations ?? [])
             .some(value => requestInputDigest(value) === requestInputDigest(claim)) || currentHost.incarnation !== hostRow.incarnation ||
           currentHost.incarnationGeneration !== hostRow.incarnationGeneration ||
-          !compatibleRoutineLane({...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)},
+          !compatibleStructuralRoutineLane({...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)},
             currentLane, routineLaneContext(currentHost.snapshot, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
       } else {
         const savedHost = await TestHostStateModel.collection.findOneAndUpdate({hostId, incarnation: hostRow.incarnation,
@@ -267,7 +268,7 @@ export const routineJobRepository: RoutineJobRepository = {
         originals[0]!.id !== row.fleetResourceReservation?.id || !host || !lane || host.receivedAt > now ||
         now.getTime() - host.receivedAt.getTime() > 120_000 || !hostResourceReservationsSchema.parse(host.resourceReservations ?? [])
           .some(value => requestInputDigest(value) === requestInputDigest(originals[0])) ||
-        !compatibleRoutineLane({...row.fleetPreparation!.requirements,
+        !compatibleStructuralRoutineLane({...row.fleetPreparation!.requirements,
           resources: row.fleetPreparation!.requirements.resources.map(({storage: _, ...resource}) => resource)}, lane,
           routineLaneContext(host.snapshot, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
     }
@@ -300,7 +301,7 @@ export const routineJobRepository: RoutineJobRepository = {
     // queries avoid lexical state ordering or database-specific computed sort keys.
     // Older workers retain their original single-query discovery behavior.
     const prioritized = includeQueued && includePreparing;
-    const streams = prioritized ? [...includeAccepted ? [accepted] : [], preparing, queued, unbound] :
+    const streams = platform === 'android' && includePreparing ? [preparing] : prioritized ? [...includeAccepted ? [accepted] : [], preparing, queued, unbound] :
       [includeQueued ? {$or: [unbound, queued, ...includeAccepted ? [accepted] : []]} : unbound];
     const deadline = performance.now() + timeoutMS;
     let remaining = limit;
@@ -434,6 +435,11 @@ export function recorderCapacityRequirements(preparation: Pick<RoutineJobPrepara
     return {...resource, storage};
   })});
 }
+/** Structural preparation cannot authorize an app or device executor. */
+export function compatibleStructuralRoutineLane(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
+  context?: Parameters<typeof compatibleRoutineLane>[2], now = context?.now ?? Date.now()) {
+  return compatibleRoutineLane(requirements, lane, context, now, false);
+}
 /** Derive routing only from the exact serialized definition. */
 export function routinePortableRequirements(definition: RoutineEnrollment): PortableRequirements {
   const body = definition.definition;
@@ -449,13 +455,14 @@ export function routineLaneDescriptorRevision(lane: RoutingTestHostState['lanes'
     glasses: (lane.glasses ?? []).map(glasses => ({...glasses, capabilities: [...glasses.capabilities].sort()})).sort((a, b) => a.resourceId.localeCompare(b.resourceId))});
 }
 export function compatibleRoutineLane(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
-  context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}; backend?: BackendConnectivityContext}, now = context?.now ?? Date.now()) {
+  context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}; backend?: BackendConnectivityContext}, now = context?.now ?? Date.now(), backendHealth = true) {
   if (lane.platform !== requirements.platform || (lane.glasses?.length ?? 0) > 1 ||
     new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length) return false;
   if (!requirements.resources.every(required => lane.resources.some(offered => offered.kind === required.kind &&
     required.capabilities.every(capability => offered.capabilities?.includes(capability)) &&
     (required.kind !== 'phone' || !required.capabilities.includes('backend-connectivity') || Boolean(context &&
-      backendConnectivityObservationMatches(offered.backendConnectivity, offered.id, context))) &&
+      (backendHealth ? backendConnectivityObservationMatches(offered.backendConnectivity, offered.id, context) :
+        context.binding.routineApiVersion >= BACKEND_CONNECTIVITY_ROUTINE_API_VERSION))) &&
     (!required.storage || recorderStorageAvailable(offered.storage, required.storage, now)) &&
     (required.permissions ?? []).every(value => Boolean(context && permissionObservationMatches(
       offered.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
@@ -515,10 +522,11 @@ export function routineRequirementLabels(requirements: PortableRequirements, mod
 }
 /** Queue model choice follows current accepting lanes; the portable alternatives stay immutable. */
 export function routineJobRouting(requirements: PortableRequirements, hosts: RoutingTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget'],
-  build?: {headSha: string; archive?: {sha256: string}; receipt?: {sha256: string}}) {
+  build?: {headSha: string; archive?: {sha256: string}; receipt?: {sha256: string}}, structuralPreparation = false) {
+  const matches = structuralPreparation ? compatibleStructuralRoutineLane : compatibleRoutineLane;
   const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= now && now - Date.parse(host.receivedAt) <= 120_000 &&
     (!target?.hostId || target.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
-      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && compatibleRoutineLane(requirements, lane, build ? routineLaneContext(host, build, now) : undefined, now)));
+      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && matches(requirements, lane, build ? routineLaneContext(host, build, now) : undefined, now)));
   const accepting = compatible.filter(lane => lane.state === 'idle');
   const chosenModel = requirements.glasses ? [...new Set(accepting.flatMap(lane => (lane.glasses ?? []).filter(glasses =>
     requirements.glasses!.models.includes(glasses.model) && requirements.glasses!.capabilities.every(value => glasses.capabilities.includes(value))).map(glasses => glasses.model)))].sort()[0]
@@ -564,7 +572,7 @@ function queuedQualificationMatches(row: StoredRoutineJob, hostId: string, lane:
 }
 
 /** Preparing has a frozen dispatch and resource selection, but no executable input yet. */
-function preparingQualificationReceipt(row: StoredRoutineJob, hostId: string, lane: RoutingTestHostState['lanes'][number]) {
+export function preparingQualificationReceipt(row: StoredRoutineJob, hostId: string, lane: RoutingTestHostState['lanes'][number]) {
   const binding = routineJobBindingSchema.safeParse(row.fleetBinding), intent = routineDispatchIntentSchema.safeParse(row.dispatchIntent),
     admission = fleetResourceAdmissionSchema.safeParse(row.fleetResourceAdmission), reservation = recorderHostReservationSchema.safeParse(row.fleetResourceReservation),
     prepared = row.fleetPreparation, recorder = lane.resources.find(resource => resource.kind === 'recorder'),
@@ -701,7 +709,7 @@ export class RoutineJobService {
     }
     return targets;
   }
-  /** Android probes do not stage a fleet candidate or borrow app/recorder/glasses custody. */
+  /** A selected preparing receipt authorizes host-only preparation; only the owned check can observe the phone. */
   private async backendQualificationTarget(host: ReceivedTestHostState,
     lane: RoutingTestHostState['lanes'][number], owned: OwnedRoutineQualification | undefined, queryDeadline: number) {
     const binding = host.frameworkBinding, now = this.now(), phone = lane.resources.find(resource => resource.kind === 'phone'),
@@ -715,28 +723,39 @@ export class RoutineJobService {
       !owned && subject?.owner) return undefined;
     let scanned = 0;
     const candidates = owned ? [await this.rows.get(owned.jobId, Math.max(1, queryDeadline - this.now()))].filter((row): row is StoredRoutineJob => row !== null) :
-      this.rows.qualificationCandidates!(host.hostId, lane.id, 100, new Date(now), Math.max(1, queryDeadline - this.now()), false, false, false, 'android');
+      this.rows.qualificationCandidates!(host.hostId, lane.id, 100, new Date(now), Math.max(1, queryDeadline - this.now()), true, false, true, 'android');
     for await (const row of candidates) {
       if (++scanned > 100 || this.now() >= queryDeadline) break;
-      if (row.state !== 'awaiting-runner' || row.hostId || row.fleetBinding || row.fleetResourceAdmission || row.fleetResourceReservation ||
-        row.fleetExclusiveReservation || row.fleetExclusiveExecutionBinding || row.hostReceipt || row.runId || row.dispatchCompletion ||
+      const preparing = preparingQualificationReceipt(row, host.hostId, lane);
+      if (!preparing || row.fleetExclusiveExecutionBinding || row.hostReceipt || row.runId || row.dispatchCompletion ||
         row.hostCancellation || row.hostRejection || row.preparationCancellation || row.preparationRejection || row.fleetCancellation ||
         !row.fleetPreparation || row.fleetDeadline.getTime() <= now || row.fleetSelection.platform !== 'android' ||
         row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
         row.fleetSelection.minimumFrameworkVersion && row.fleetSelection.minimumFrameworkVersion > binding.version ||
         row.fleetPreparation.routineSource.minimumRoutineApiVersion > binding.routineApiVersion) continue;
       this.assertExactInputs(row);
-      const requirements = row.fleetPreparation.requirements,
+      const requirements = recorderCapacityRequirements(row.fleetPreparation),
         requiredPhone = requirements.resources.find(resource => resource.kind === 'phone');
       if (!requiredPhone?.capabilities.includes('backend-connectivity')) continue;
+      const selectedLane = {...lane, resources: lane.resources.map(resource => resource.storage ? {...resource,
+        storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
+          value.requestId !== row.requestId || value.inputSha256 !== row.fleetInputSha256)}} : resource)},
+        selectedHost = {...host, lanes: host.lanes.map(value => value.id === lane.id ? selectedLane : value)};
       // Discovery omits only the health gate. Existing capability, storage and permission requirements still apply.
-      const structural = {...requirements, resources: requirements.resources.map(resource => resource.kind === 'phone'
-        ? {...resource, capabilities: resource.capabilities.filter(value => value !== 'backend-connectivity')} : resource)},
-        context = routineLaneContext(host, row.fleetSelection.build, now);
-      if (!compatibleRoutineLane(structural, lane, context, now) || !owned && compatibleRoutineLane(requirements, lane, context, now)) continue;
+      const context = routineLaneContext(host, row.fleetSelection.build, now);
+      if (!compatibleStructuralRoutineLane(requirements, selectedLane, context, now)) continue;
+      const {recordedRoutineBuild} = await import('./routine-dispatch.service');
+      const enrollment = routineEnrollmentSchema.parse({routineId: row.fleetSelection.routineId, platform: 'android',
+        definitionRevision: row.fleetSelection.routineRevision, definition: row.fleetPreparation.definition,
+        definitionSha256: row.fleetPreparation.definitionSha256, routineSource: row.fleetPreparation.routineSource});
+      let proposedInput;
+      try {proposedInput = routineAdmissionInput(enrollment, recordedRoutineBuild(row.fleetSelection.build, row.fleetSelection.source, 'android'),
+        {hostId: host.hostId, laneId: lane.id}, selectedHost, now, {minimumFrameworkVersion: row.fleetSelection.minimumFrameworkVersion});
+        proposedInput.build = frameworkExecutableBuild(row.fleetSelection.build, proposedInput.glassesModel);
+      } catch (error) {if (error instanceof TestRunError && error.status === 409) continue; throw error;}
       const target = {jobId: row.requestId, hostId: host.hostId, laneId: lane.id, deadline: row.fleetDeadline.toISOString(),
-        selection: row.fleetSelection, requirements, purpose: {kind: 'backend-connectivity' as const, resourceId: phone.id}, acceptedBinding: binding,
-        ...(row.fleetTarget ? {target: row.fleetTarget} : {})},
+        selection: {...row.fleetSelection, routineSource: row.fleetPreparation.routineSource}, requirements, preparing, proposedInput, purpose: {kind: 'backend-connectivity' as const, resourceId: phone.id}, acceptedBinding: binding,
+        target: {hostId: host.hostId, laneId: lane.id}},
         projected = routineQualificationTargetSchema.parse({...target, inputSha256: requestInputDigest(target)});
       if (owned && projected.inputSha256 !== owned.inputSha256) continue;
       // An awaited request read cannot renew a replaced reporter or transfer the original phone check owner.
@@ -750,9 +769,9 @@ export class RoutineJobService {
         owned && (!currentSubject?.current || currentSubject.owner?.id !== owned.ownerId ||
           currentSubject.owner.kind !== 'boundary-cleanup' || currentSubject.owner.generation !== owned.generation)) return undefined;
       const original = await this.rows.get(row.requestId, Math.max(1, queryDeadline - this.now()));
-      if (!original?.fleetPreparation || this.now() >= queryDeadline || original.state !== 'awaiting-runner' ||
-        original.hostId || original.fleetBinding || original.fleetResourceAdmission || original.fleetResourceReservation ||
-        original.fleetExclusiveReservation || original.fleetExclusiveExecutionBinding || original.hostReceipt || original.runId ||
+      if (!original?.fleetPreparation || this.now() >= queryDeadline || !preparingQualificationReceipt(original, host.hostId, lane) ||
+        requestInputDigest(preparingQualificationReceipt(original, host.hostId, lane)) !== requestInputDigest(preparing) ||
+        original.fleetExclusiveExecutionBinding || original.hostReceipt || original.runId ||
         original.dispatchCompletion || original.hostCancellation || original.hostRejection || original.preparationCancellation ||
         original.preparationRejection || original.fleetCancellation || original.fleetDeadline.getTime() <= this.now() ||
         routineJobInputDigest(original) !== row.fleetInputSha256 || original.fleetInputSha256 !== row.fleetInputSha256 ||
@@ -922,15 +941,15 @@ export class RoutineJobService {
     const target = retained ? {hostId: retained.hostId, laneId: retained.laneId} : admitted
       ? {hostId: admitted.intent.hostId, laneId: admitted.intent.laneId} : provisional
         ? {hostId: provisional.hostId, laneId: provisional.laneId} : row.fleetTarget;
-    const routed = routineJobRouting(requirements, hosts, this.now(), target, row.fleetSelection.build);
+    const routed = routineJobRouting(requirements, hosts, this.now(), target, row.fleetSelection.build, true);
     const inventoryRequirements = {...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)};
-    const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), target, row.fleetSelection.build);
+    const inventory = routineJobRouting(inventoryRequirements, hosts, this.now(), target, row.fleetSelection.build, true);
     let waitingReason: string | undefined;
     const onWaiting = (reason: string) => {waitingReason = reason;};
     if (retained) {
       const checked = await this.rows.reserveResources?.(row.requestId, row.fleetInputSha256!, retained.hostId, retained.laneId, new Date(this.now()), onWaiting);
       if (!checked) {
-        const targetInventory = routineJobRouting(inventoryRequirements, hosts, this.now(), retained, row.fleetSelection.build);
+        const targetInventory = routineJobRouting(inventoryRequirements, hosts, this.now(), retained, row.fleetSelection.build, true);
         return {...routed, chosenModel: retained.chosenModel, resourceTarget: {hostId: retained.hostId, laneId: retained.laneId},
           routingLabels: routineRequirementLabels(requirements, retained.chosenModel, retained),
           waitingReason: targetInventory.waitingReason ?? waitingReason ?? sharedResourceWaitingReason(row, hosts) ?? RESOURCE_ADMISSION_WAIT};
@@ -943,7 +962,7 @@ export class RoutineJobService {
       const reasons = hosts.flatMap(host => host.lanes.filter(lane =>
         Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
         (!target?.hostId || target.hostId === host.hostId) && (!target?.laneId || target.laneId === lane.id) &&
-        lane.state === 'idle' && lane.dispatchMode === 'automatic' && compatibleRoutineLane(inventoryRequirements, lane,
+        lane.state === 'idle' && lane.dispatchMode === 'automatic' && compatibleStructuralRoutineLane(inventoryRequirements, lane,
           routineLaneContext(host, row.fleetSelection.build, this.now()), this.now())).map(lane => {
         const resource = lane.resources.find(resource => resource.kind === 'recorder');
         return recorderWait(resource?.storage, requirements.resources.find(resource => resource.kind === 'recorder')!.storage!.minimumAvailableBytes, this.now());
@@ -961,9 +980,9 @@ export class RoutineJobService {
       if (row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
         lane.state !== 'idle' || lane.dispatchMode !== 'automatic') continue;
       const context = routineLaneContext(host, row.fleetSelection.build, this.now());
-      if (!compatibleRoutineLane(requirements, lane, context, this.now())) {
+      if (!compatibleStructuralRoutineLane(requirements, lane, context, this.now())) {
         if (Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
-            compatibleRoutineLane(inventoryRequirements, lane, context, this.now()))
+            compatibleStructuralRoutineLane(inventoryRequirements, lane, context, this.now()))
           candidateReasons.push(recorderWait(lane.resources.find(resource => resource.kind === 'recorder')?.storage,
             requirements.resources.find(resource => resource.kind === 'recorder')!.storage!.minimumAvailableBytes, this.now()));
         continue;
@@ -1049,7 +1068,7 @@ export class RoutineJobService {
         this.now() - Date.parse(host.receivedAt) <= 120_000 && lane?.dispatchMode === 'automatic' && lane.state === 'idle' &&
         (!row.fleetTarget?.hostId || row.fleetTarget.hostId === hostId) && (!row.fleetTarget?.laneId || row.fleetTarget.laneId === input.laneId) &&
         lane.descriptorRevision === input.descriptorRevision && routineLaneDescriptorRevision(lane) === input.descriptorRevision &&
-        compatibleRoutineLane(requirements, {...lane, resources: lane.resources.map(resource => resource.storage ? {...resource,
+        compatibleStructuralRoutineLane(requirements, {...lane, resources: lane.resources.map(resource => resource.storage ? {...resource,
           storage: {...resource.storage, reservations: resource.storage.reservations.filter(value =>
             value.requestId !== jobId || value.inputSha256 !== row.inputSha256)}} : resource)},
         routineLaneContext(host, row.fleetSelection.build, this.now()), this.now());

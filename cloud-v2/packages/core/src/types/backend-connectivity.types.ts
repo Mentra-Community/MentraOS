@@ -20,6 +20,8 @@ export const backendConnectivityObservationSchema = z.object({schemaVersion: z.l
   phoneResourceId: identity, binding: frameworkBindingSchema,
   controller: z.object({incarnation: identity, generation: z.number().int().positive().safe()}).strict(),
   app: permissionBuildSchema, target: backendConnectivityTargetSchema, targetSource: z.literal('verified-apk-configuration'),
+  qualification: z.object({jobId: identity, targetInputSha256: hash, inputSha256: hash, preparing:
+    z.object({dispatchIntentSha256: hash, fleetInputSha256: hash, bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}).strict()}).strict().optional(),
   bootId: z.string().uuid().nullable(), tool: z.object({path: z.string().min(1).max(4096).startsWith('/'), sha256: hash}).strict(),
   check: z.object({operationId: identity, resultSha256: hash, readersSha256: hash, closedAt: timestamp}).strict(),
   releasedGeneration: z.number().int().positive().safe(), appRouteVerified: z.literal(false),

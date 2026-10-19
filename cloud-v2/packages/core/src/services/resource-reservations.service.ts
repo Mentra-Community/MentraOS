@@ -15,8 +15,7 @@ import {frameworkRequestInputSchema} from '../types/framework-request.types'
 import type {StoredRoutineJob, OwnedRoutineQualification, RoutineQualificationTarget} from '../types/routine-job.types'
 import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
-import {backendConnectivityObservationMatches, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
-import {permissionContext} from '../types/resource-permissions.types'
+import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
 
 export type ResourceReservationHost = {hostId: string; incarnation: string; incarnationGeneration: number; sequence: number;
@@ -47,31 +46,23 @@ export function backendRecorderClaimMatches(claims: RecorderHostReservation[], r
 }
 /** Reconstruct the same target from the original request, without choosing a fresh candidate. */
 export function backendPrerequisiteRequestMatches(row: (StoredRoutineJob & {input?: unknown}) | null, intent: ExclusiveResourceIntent, now: number) {
-  const purpose = intent.prerequisite
-  if (!purpose || !row?.fleetPreparation || row.requestId !== purpose.jobId || row.state !== 'awaiting-runner' ||
-    row.hostId || row.fleetBinding || row.fleetResourceAdmission || row.fleetResourceReservation || row.fleetExclusiveReservation ||
-    row.fleetExclusiveExecutionBinding || row.hostReceipt || row.input || row.inputSha256 || row.runId || row.dispatchCompletion ||
-    row.hostCancellation || row.hostRejection || row.preparationCancellation || row.preparationRejection || row.fleetCancellation ||
-    row.fleetDeadline.getTime() <= now || row.fleetSelection.platform !== 'android' ||
-    row.fleetTarget?.hostId && row.fleetTarget.hostId !== intent.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== intent.laneId ||
-    row.fleetSelectionSha256 !== requestInputDigest(row.fleetSelection) || row.fleetInputSha256 !== requestInputDigest({
-      selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null})) return false
-  const target = {jobId: row.requestId, hostId: intent.hostId, laneId: intent.laneId, deadline: row.fleetDeadline.toISOString(),
-    selection: row.fleetSelection, requirements: row.fleetPreparation.requirements,
-    purpose: {kind: 'backend-connectivity', resourceId: purpose.resourceId}, acceptedBinding: purpose.binding,
-    ...(row.fleetTarget ? {target: row.fleetTarget} : {})}
-  return requestInputDigest(target) === purpose.targetInputSha256
-}
-function backendRunHealthCurrent(row: StoredRoutineJob | null, host: ResourceReservationHost, laneId: string, now: number) {
-  const lane = host.snapshot.lanes.find(value => value.id === laneId), phone = lane?.resources.find(value => value.kind === 'phone'),
-    context = row && permissionContext(host.snapshot.frameworkBinding, row.fleetSelection.build, now)
-  return Boolean(row?.fleetPreparation && lane?.platform === 'android' && phone && context &&
-    backendConnectivityObservationMatches(phone.backendConnectivity, phone.id, {...context, backend: {
-      hostId: host.hostId, incarnation: host.incarnation, generation: host.incarnationGeneration,
-      resourceGenerations: host.snapshot.resourceLifecycle?.subjects.map(subject => ({resourceId: subject.subject.id,
-        generation: subject.generation, current: subject.current && subject.subject.authorityHostId === host.hostId,
-        unowned: subject.owner === null})) ?? [],
-    }}))
+  const purpose = intent.prerequisite, selected = row?.fleetBinding, reservation = row?.fleetResourceReservation, admission = row?.fleetResourceAdmission
+  if (!purpose || !row?.fleetPreparation || row.requestId !== purpose.jobId || row.state !== 'preparing' ||
+    row.hostId !== intent.hostId || !selected || selected.hostId !== intent.hostId || selected.laneId !== intent.laneId ||
+    selected.jobId !== row.requestId || selected.requestId !== row.requestId || !reservation || !admission ||
+    reservation.requestId !== row.requestId || reservation.hostId !== intent.hostId || reservation.laneId !== intent.laneId ||
+    reservation.fleetInputSha256 !== row.fleetInputSha256 || admission.intent.hostId !== intent.hostId ||
+    admission.intent.laneId !== intent.laneId || admission.intent.owner.id !== row.requestId || admission.intent.owner.kind !== 'run' ||
+    admission.intent.inputSha256 !== row.fleetInputSha256 || row.fleetExclusiveExecutionBinding || row.hostReceipt ||
+    row.input || row.inputSha256 || row.runId || row.dispatchCompletion || row.hostCancellation || row.hostRejection ||
+    row.preparationCancellation || row.preparationRejection || row.fleetCancellation || row.fleetDeadline.getTime() <= now ||
+    row.fleetSelection.platform !== 'android' || row.fleetSelectionSha256 !== requestInputDigest(row.fleetSelection) ||
+    row.dispatchIntentSha256 !== purpose.preparing.dispatchIntentSha256 || row.dispatchIntentSha256 !== requestInputDigest(row.dispatchIntent) ||
+    requestInputDigest(selected) !== purpose.preparing.bindingSha256 || requestInputDigest(admission) !== purpose.preparing.admissionSha256 ||
+    requestInputDigest(reservation) !== purpose.preparing.reservationSha256 || row.fleetInputSha256 !== purpose.preparing.fleetInputSha256 ||
+    row.fleetInputSha256 !== requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation,
+      deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null})) return false
+  return true
 }
 export const resourceReservationRepository: ResourceReservationRepository = {
   async get(hostId) {
@@ -105,7 +96,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration || current.sequence !== host.sequence ||
       !hostResourceReservationsSchema.parse(current.resourceReservations ?? []).some(claim => isDeepStrictEqual(claim, claims[0])) ||
       hasBackendProbe(hostResourceReservationsSchema.parse(current.resourceReservations ?? []), host.hostId, laneId) ||
-      !fresh(current, now.getTime()) || !backendRunHealthCurrent(original, current, laneId, now.getTime())) return null
+      !fresh(current, now.getTime())) return null
     // The retained byte claim already won the same host CAS as phone probes. It survives
     // failed/lost staging replies; this request CAS selects only that original candidate.
     return this.stage!(requestId, digest, fleetResourceAdmission, now)
@@ -199,8 +190,7 @@ export class ResourceReservationsService {
     if (backendRequired) {
       const originals = await this.rows.recorderClaims?.(requestId)
       if (!originals || !backendRecorderClaimMatches(originals, requestId, digest, hostId, laneId) ||
-        !hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(value => isDeepStrictEqual(value, originals[0])) ||
-        !backendRunHealthCurrent(row, borrower, laneId, this.now())) return null
+        !hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(value => isDeepStrictEqual(value, originals[0]))) return null
     }
     if (!row.fleetResourceAdmission) row = await (backendRequired
       ? this.rows.stageBackend?.(requestId, digest, candidate, borrower, new Date(this.now()))
@@ -503,18 +493,21 @@ export class ResourceReservationsService {
       targets.length === 1 && targets[0]!.jobId === purpose.jobId && targets[0]!.inputSha256 === purpose.targetInputSha256 &&
       targets[0]!.hostId === host.hostId && targets[0]!.laneId === intent.laneId &&
       isDeepStrictEqual(targets[0]!.purpose, {kind: 'backend-connectivity', resourceId: purpose.resourceId}) &&
-      isDeepStrictEqual(targets[0]!.acceptedBinding, purpose.binding)
+      isDeepStrictEqual(targets[0]!.acceptedBinding, purpose.binding) && isDeepStrictEqual(targets[0]!.preparing, purpose.preparing)
   }
   private async acquireBackendPrerequisite(intent: ExclusiveResourceIntent, hostId: string) {
     const intentSha256 = this.backendIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
     for (let attempt = 0; attempt < 3; attempt++) {
       const host = await this.host(hostId)
       if (!await this.backendTargetCurrent(host, intent)) return unknown
+      const selected = await this.rows.request?.(intent.prerequisite!.jobId)
+      if (!backendPrerequisiteRequestMatches(selected ?? null, intent, this.now())) return unknown
       const claims = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
         current = claims.filter(isExclusiveHostReservation).find(claim => claim.resourceId === intent.prerequisite!.resourceId),
         blocked = claims.find(claim => isExclusiveHostReservation(claim) ?
-          claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim !== current :
-          claim.hostId === hostId && claim.laneId === intent.laneId)
+          claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim !== current &&
+            !selected!.fleetExclusiveReservation?.claims.some(original => isDeepStrictEqual(original, claim)) :
+          claim.hostId === hostId && claim.laneId === intent.laneId && !isDeepStrictEqual(claim, selected!.fleetResourceReservation))
       if (blocked || current && !this.backendClaimMatches(current, intent, intentSha256)) {
         const blocker = blocked ?? current!
         return {status: 'waiting' as const, intentSha256, claims: [], blocked: {
