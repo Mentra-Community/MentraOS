@@ -21,7 +21,7 @@ import {selectedBuildInput} from '../types/test-build.types'
 import {TestHostStateService} from './test-host-state.service'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {routineJobBindInputSchema, portableRequirementsSchema, type RoutineJobBinding, type PortableRequirements, routineJobActionsSchema, routineJobCompletionSchema, type RoutineJobCompletion} from '../types/routine-job.types'
-import {compatibleRoutineLane, routineJobRouting, routineLaneDescriptorRevision} from './routine-job.service'
+import {compatibleStructuralRoutineLane, routineJobRouting, routineLaneDescriptorRevision} from './routine-job.service'
 import {requestInputDigest, TestRequestConflict} from './test-request.service'
 import {TestRunError} from './test-result-error'
 import {permissionContext} from '../types/resource-permissions.types'
@@ -358,7 +358,8 @@ export class RoutineWorkService {
     const row = await this.inspect(jobId)
     if (!row.fleetSelection || !row.fleetDeadline || !row.fleetInputSha256) throw new TestRunError(404, 'Authoring fleet job was not found')
     const requirements = this.requirements(row.fleetSelection)
-    const routing = routineJobRouting(requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetSelection.target, row.fleetSelection.build)
+    // Authoring prepares the selected local input before its backend qualification can exist.
+    const routing = routineJobRouting(requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetSelection.target, row.fleetSelection.build, true)
     return {jobId, kind: 'author' as const, inputSha256: row.fleetInputSha256, deadline: row.fleetDeadline.toISOString(),
       ...routing,
       ...(row.fleetSelection.target ? {target: row.fleetSelection.target} : {}), state: row.fleetBinding ? row.status?.state ?? 'bound' : row.fleetCancellation ? 'terminal' : 'awaiting-runner',
@@ -375,7 +376,7 @@ export class RoutineWorkService {
     if (!host || host.hostId !== hostId || !Number.isFinite(Date.parse(host.receivedAt)) || this.now() - Date.parse(host.receivedAt) > 120_000
       || !lane || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' || lane.descriptorRevision !== input.descriptorRevision
       || routineLaneDescriptorRevision(lane) !== input.descriptorRevision || target?.hostId && target.hostId !== hostId
-      || target?.laneId && target.laneId !== input.laneId || !compatibleRoutineLane(this.requirements(row.fleetSelection), lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now())))
+      || target?.laneId && target.laneId !== input.laneId || !compatibleStructuralRoutineLane(this.requirements(row.fleetSelection), lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now())))
       throw new TestRequestConflict('Selected host has no current accepting compatible authoring lane descriptor')
     const binding: RoutineJobBinding = {jobId, requestId: jobId, hostId, laneId: input.laneId,
       descriptorRevision: input.descriptorRevision, actionsJobId: input.actionsJobId, actionsRunId: input.actionsRunId, boundAt: new Date(this.now()).toISOString()}
