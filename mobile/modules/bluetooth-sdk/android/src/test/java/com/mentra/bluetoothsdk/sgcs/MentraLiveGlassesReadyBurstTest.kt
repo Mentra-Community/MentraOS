@@ -3,9 +3,11 @@ package com.mentra.bluetoothsdk.sgcs
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.utils.ConnTypes
 import java.time.Duration
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,12 +34,16 @@ class MentraLiveGlassesReadyBurstTest {
 
     @Test fun `answers to a superseded exchange are ignored until the pending one arrives`() = withLive { live, inits ->
         receive(live, socReady())
-        val readyId = pendingReadyId(live)
+        val first = pendingReadyId(live)
+        receive(live, glassesReady("booted", first))
+        invoke(live, "sendPhoneReady", "readiness re-run")
+        val second = pendingReadyId(live)
 
-        receive(live, glassesReady("booted", "superseded"))
-        assertEquals(0, inits())
-        receive(live, glassesReady("booted", readyId))
+        // The same process already reset for the first exchange; the pending one is still to come.
+        receive(live, glassesReady("booted", first))
         assertEquals(1, inits())
+        receive(live, glassesReady("booted", second))
+        assertEquals(2, inits())
     }
 
     @Test fun `an answer from another glasses process is handled with no exchange pending`() = withLive { live, inits ->
@@ -48,6 +54,32 @@ class MentraLiveGlassesReadyBurstTest {
         // A restarted process reset its transport for this copy, so it is not a repeat.
         receive(live, glassesReady("restarted", readyId))
         assertEquals(2, inits())
+    }
+
+    @Test fun `a restarted process answering an older copy is handled and the pending exchange still counts`() = withLive { live, inits ->
+        receive(live, socReady())
+        val first = pendingReadyId(live)
+        receive(live, glassesReady("booted", first))
+        invoke(live, "sendPhoneReady", "glasses session changed")
+        val second = pendingReadyId(live)
+
+        // The restarted process reset for a buffered copy of the old exchange, then resets
+        // again for the pending one: both answers follow a reset.
+        receive(live, glassesReady("restarted", first))
+        assertEquals(2, inits())
+        receive(live, glassesReady("restarted", second))
+        assertEquals(3, inits())
+        receive(live, glassesReady("restarted", second))
+        assertEquals(3, inits())
+    }
+
+    @Test fun `the readiness exchange ends with the BLE session`() = withLive { live, _ ->
+        receive(live, socReady())
+        val first = pendingReadyId(live)
+        invoke(live, "updateConnectionState", ConnTypes.DISCONNECTED)
+
+        receive(live, socReady())
+        assertNotEquals(first, pendingReadyId(live))
     }
 
     @Test fun `glasses without readyId keep initializing on every answer`() = withLive { live, inits ->
@@ -95,5 +127,11 @@ class MentraLiveGlassesReadyBurstTest {
         MentraLive::class.java.getDeclaredMethod("processJsonMessage", JSONObject::class.java)
             .apply { isAccessible = true }
             .invoke(live, json)
+    }
+
+    private fun invoke(live: MentraLive, name: String, argument: String) {
+        MentraLive::class.java.getDeclaredMethod(name, String::class.java)
+            .apply { isAccessible = true }
+            .invoke(live, argument)
     }
 }

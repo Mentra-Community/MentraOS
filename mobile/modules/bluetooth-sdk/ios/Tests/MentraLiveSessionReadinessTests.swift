@@ -197,6 +197,37 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         }
     }
 
+    func testRestartedProcessAnsweringAnOlderCopyIsHandledAndThePendingExchangeStillCounts() throws {
+        try withReadinessTransport { transport, receive, versionRequests in
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let first = try XCTUnwrap(transport.phoneReadyIds().last)
+            try receive(["type": "glasses_ready", "sid": "booted", "readyId": first])
+            try receive(["type": "version_info_1", "sid": "restarted", "build_number": "302010073"])
+            let second = try XCTUnwrap(transport.phoneReadyIds().last)
+
+            // The restarted process reset for a buffered copy of the old exchange, then resets
+            // again for the pending one: both answers follow a reset.
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": first])
+            XCTAssertEqual(versionRequests(), 2)
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": second])
+            XCTAssertEqual(versionRequests(), 3)
+            try receive(["type": "glasses_ready", "sid": "restarted", "readyId": second])
+            XCTAssertEqual(versionRequests(), 3)
+        }
+    }
+
+    func testReadinessExchangeEndsWithTheBleSession() throws {
+        try withReadinessTransport { transport, receive, _ in
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            let first = try XCTUnwrap(transport.phoneReadyIds().last)
+            transport.cleanup()
+            DeviceStore.shared.store.set("glasses", "fullyBooted", false)
+
+            try receive(["C": "sr_hrt", "B": ["ready": 1]])
+            XCTAssertNotEqual(try XCTUnwrap(transport.phoneReadyIds().last), first)
+        }
+    }
+
     func testGlassesWithoutReadyIdKeepInitializingOnEveryAnswer() throws {
         try withReadinessTransport { _, receive, versionRequests in
             try receive(["type": "glasses_ready", "sid": "legacy"])

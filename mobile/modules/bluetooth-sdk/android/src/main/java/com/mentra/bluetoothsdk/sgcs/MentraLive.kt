@@ -569,8 +569,10 @@ class MentraLive : SGCManager() {
     // Readiness exchange the phone is waiting on. Every phone_ready carries it until the
     // matching glasses_ready arrives, so retries and the copies the BES buffers while the
     // glasses boot are one exchange: the glasses reset their transport once for it and answer
-    // later copies without resetting. Cleared with the wire epoch.
+    // later copies without resetting. Both exchange fields are scoped to the BLE session.
     private var pendingReadyId: String? = null
+    // `sid` of the glasses process whose glasses_ready this BLE session last handled.
+    private var readyGlassesSessionId: String? = null
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -1199,6 +1201,7 @@ class MentraLive : SGCManager() {
             if (state == ConnTypes.DISCONNECTED) {
                 resetWireNegotiationState()
                 resetPendingAckState()
+                resetReadinessExchange()
                 // Queued writes are session-bound: transmitting them into the NEXT session
                 // (e.g. a stale handshake whose reply activates v2 before the new session
                 // negotiated) is the bug class this clear removes. Higher layers re-send
@@ -1254,6 +1257,7 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             resetWireNegotiationState()
             resetPendingAckState()
+            resetReadinessExchange()
             // The glasses reset mic and wear tuning on BLE disconnect, so the
             // next link must be allowed to send them again.
             lastSentMicTuningBody = null
@@ -4626,6 +4630,10 @@ class MentraLive : SGCManager() {
                     )
                     return
                 }
+                if (readyId != null && readyId == pendingReadyId) {
+                    pendingReadyId = null
+                }
+                readyGlassesSessionId = sid
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
                 pairingYieldAwaitingReclaim = false
                 pairingYieldActive = false
@@ -9122,18 +9130,21 @@ class MentraLive : SGCManager() {
         micTuningGeneration = 0
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
-        pendingReadyId = null
     }
 
     /**
-     * A glasses_ready that echoes a readyId answers a phone_ready exchange. Only the answer to the
-     * exchange the phone is waiting on follows a transport reset; when none is pending, another
-     * answer from the glasses process this link is already ready with is a repeat. A different
-     * process (an asg restart) did reset, so its answer is always handled.
+     * A glasses_ready that echoes a readyId answers a phone_ready exchange. The answer to the
+     * exchange the phone is waiting on, and any answer from a glasses process other than the one
+     * this link last handled (an asg restart resets for every exchange it first sees), followed a
+     * transport reset. Any other answer repeats an exchange that process already reset for, or one
+     * superseded by the pending exchange, whose answer is still to come.
      */
-    private fun isRepeatedGlassesReady(readyId: String, sid: String?): Boolean {
-        pendingReadyId?.let { return readyId != it }
-        return readinessCompletedThisBleSession && sid == glassesSessionId
+    private fun isRepeatedGlassesReady(readyId: String, sid: String?): Boolean =
+            readyId != pendingReadyId && sid == readyGlassesSessionId
+
+    private fun resetReadinessExchange() {
+        pendingReadyId = null
+        readyGlassesSessionId = null
     }
 
     /** Sends phone_ready to (re)start the glasses-driven readiness flow. */
