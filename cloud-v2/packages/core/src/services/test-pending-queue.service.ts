@@ -5,7 +5,7 @@ import {portableRoutineSelectionSchema, routineJobPreparationSchema, type Stored
 import type {PendingQueueItem, PendingQueuePage} from '../types/test-pending-queue.types';
 import type {StoredRequest} from './test-request.service';
 import {requestInputDigest} from './test-request.service';
-import {compatibleRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
+import {compatibleStructuralRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {TestHostStateService, type RoutingTestHostState} from './test-host-state.service';
 import {TestRunError} from './test-result-error';
 import {permissionContext} from '../types/resource-permissions.types';
@@ -57,7 +57,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostSt
         glassesModels: (lane.glasses ?? []).map(value => value.model), state: lane.state, dispatchMode: lane.dispatchMode,
         fresh: Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000}})));
   return {...item, compatibilityKnown: !!requirements,
-    compatibleLanes: requirements ? lanes.filter(({host, lane}) => compatibleRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, selected.build, now))).map(value => value.label) : [],
+    compatibleLanes: requirements ? lanes.filter(({host, lane}) => compatibleStructuralRoutineLane(requirements, lane, permissionContext(host.frameworkBinding, selected.build, now))).map(value => value.label) : [],
     platformCandidates: requirements ? [] : lanes.map(value => value.label)};
 }
 /** Bad persisted rows cannot hide valid neighbors, including malformed timestamps. */

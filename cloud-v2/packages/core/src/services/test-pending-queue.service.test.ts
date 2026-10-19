@@ -1,11 +1,13 @@
 import {expect, test} from 'bun:test';
 import {pendingQueueItem} from './test-pending-queue.service';
-import {routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
+import {compatibleRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {requestInputDigest} from './test-request.service';
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
 import {sharedResourceWait} from './routine-resource-wait';
+import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types';
+import {permissionContext} from '../types/resource-permissions.types';
 const now = Date.parse('2026-10-08T01:00:00Z');
 const definition = {id:'check',minimumRoutineApiVersion:1,title:'Check',purpose:'Verify',platforms:['android'],entry:'home',account:'lane',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
@@ -30,6 +32,54 @@ function fixture() {
   ]} as any;
   return {row,host};
 }
+function backendFixture() {
+  const f = fixture(), prepared = f.row.fleetPreparation!;
+  prepared.definition = structuredClone(prepared.definition);
+  prepared.definition.resourceRequirements[0]!.capabilities = ['backend-connectivity'];
+  prepared.definitionSha256 = requestInputDigest(prepared.definition);
+  prepared.requirements = routinePortableRequirements({platform: 'android', definition: prepared.definition} as any);
+  f.row.fleetInputSha256 = routineJobInputDigest(f.row);
+  f.host.frameworkBinding = {...testFrameworkBinding(), routineApiVersion: 61};
+  for (const lane of f.host.lanes.slice(0, 3)) lane.resources[0]!.capabilities = ['backend-connectivity'];
+  const context = {...permissionContext(f.host.frameworkBinding, f.row.fleetSelection.build, now)!, backend: {
+    hostId: f.host.hostId, incarnation: 'original-controller', generation: 1,
+    resourceGenerations: [{resourceId: 'phone', generation: 2, current: true, unowned: true}]}};
+  const health = backendConnectivityObservationSchema.parse({schemaVersion: 1, capability: 'backend-connectivity', outcome: 'qualified',
+    observedAt: new Date(now).toISOString(), phoneResourceId: 'phone', binding: f.host.frameworkBinding,
+    controller: {incarnation: 'original-controller', generation: 1}, app: context.app,
+    target: {schemaVersion: 1, coreUrl: 'https://core.dev.mentraglass.com'}, targetSource: 'verified-apk-configuration',
+    bootId: '06965353-509e-4b20-a6d9-746e553b5315', tool: {path: '/tools/adb', sha256: 'e'.repeat(64)},
+    check: {operationId: 'original-check', resultSha256: 'e'.repeat(64), readersSha256: 'e'.repeat(64), closedAt: new Date(now).toISOString()},
+    releasedGeneration: 2, appRouteVerified: false});
+  return {...f, requirements: prepared.requirements, context, health};
+}
+test('pending backend-capable hardware stays visible before health while executable admission remains strict', () => {
+  const f = backendFixture(), before = structuredClone(f);
+  const projected = pendingQueueItem(f.row, [f.host], now);
+  expect(projected.compatibilityKnown).toBe(true);
+  expect(projected.compatibleLanes.map(lane => lane.laneId)).toEqual(['idle', 'busy', 'paused']);
+  expect(projected.compatibleLanes.map(lane => [lane.state, lane.dispatchMode])).toEqual([
+    ['idle', 'automatic'], ['running', 'automatic'], ['idle', 'paused']]);
+  expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(false);
+  expect(f).toEqual(before);
+});
+test('pending hardware compatibility accepts valid health without conflating withdrawn health with missing hardware', () => {
+  const f = backendFixture(), phone = f.host.lanes[0]!.resources[0]!;
+  phone.backendConnectivity = structuredClone(f.health);
+  expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(true);
+  expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(lane => lane.laneId)).toEqual(['idle', 'busy', 'paused']);
+  for (const change of [
+    () => {phone.backendConnectivity!.observedAt = new Date(now - 120_001).toISOString();},
+    () => {phone.backendConnectivity!.app.archiveSha256 = '0'.repeat(64);},
+    () => {phone.backendConnectivity!.outcome = 'unknown';},
+  ]) {
+    phone.backendConnectivity = structuredClone(f.health); change();
+    expect(compatibleRoutineLane(f.requirements, f.host.lanes[0]!, f.context)).toBe(false);
+    expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes.map(lane => lane.laneId)).toEqual(['idle', 'busy', 'paused']);
+  }
+  f.host.frameworkBinding!.routineApiVersion = 60;
+  expect(pendingQueueItem(f.row, [f.host], now).compatibleLanes).toEqual([]);
+});
 test('an assigned preparing job reports its unmet framework floor without changing selection or deadline', () => {
   const {row, host} = fixture();
   row.state = 'preparing'; row.fleetBinding = {requestId: row.requestId, hostId: host.hostId, laneId: 'idle', descriptorRevision: 'a'.repeat(64),
