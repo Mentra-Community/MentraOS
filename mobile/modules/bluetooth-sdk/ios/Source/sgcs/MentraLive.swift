@@ -1345,6 +1345,7 @@ class MentraLive: NSObject, SGCManager {
         if state == ConnTypes.DISCONNECTED {
             resetPendingAckState(reason: "BLE session ended")
             resetWireNegotiationState()
+            resetReadinessExchange()
             resetAncsRelayState()
             // Queued writes are session-bound: transmitting them into the NEXT session
             // (e.g. a stale handshake whose reply activates v2 before the new session
@@ -1606,8 +1607,10 @@ class MentraLive: NSObject, SGCManager {
     /// Readiness exchange the phone is waiting on. Every phone_ready carries it until the
     /// matching glasses_ready arrives, so retries and the copies the BES buffers while the
     /// glasses boot are one exchange: the glasses reset their transport once for it and answer
-    /// later copies without resetting. Cleared with the wire epoch.
+    /// later copies without resetting. Both exchange fields are scoped to the BLE session.
     private var pendingReadyId: String?
+    /// `sid` of the glasses process whose glasses_ready this BLE session last handled.
+    private var readyGlassesSessionId: String?
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -2823,12 +2826,15 @@ class MentraLive: NSObject, SGCManager {
                 return
             }
             let sid = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            if let readyId = (json["readyId"] as? String).flatMap({ $0.isEmpty ? nil : $0 }),
-               isRepeatedGlassesReady(readyId: readyId, sid: sid)
-            {
+            let readyId = (json["readyId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if let readyId, isRepeatedGlassesReady(readyId: readyId, sid: sid) {
                 Bridge.log("LIVE: Ignoring repeated glasses_ready for readiness exchange \(readyId) - the glasses did not reset for it")
                 return
             }
+            if readyId != nil, readyId == pendingReadyId {
+                pendingReadyId = nil
+            }
+            readyGlassesSessionId = sid
             // glasses_ready is a REMOTE wire-session reset: the glasses ran
             // onTransportReset() before sending it, so their side is back on legacy
             // framing regardless of what this side negotiated earlier. Start a fresh
@@ -3966,15 +3972,18 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Message Handlers
 
-    /// A glasses_ready that echoes a readyId answers a phone_ready exchange. Only the answer to
-    /// the exchange the phone is waiting on follows a transport reset; when none is pending,
-    /// another answer from the glasses process this link is already ready with is a repeat. A
-    /// different process (an asg restart) did reset, so its answer is always handled.
+    /// A glasses_ready that echoes a readyId answers a phone_ready exchange. The answer to the
+    /// exchange the phone is waiting on, and any answer from a glasses process other than the
+    /// one this link last handled (an asg restart resets for every exchange it first sees),
+    /// followed a transport reset. Any other answer repeats an exchange that process already
+    /// reset for, or one superseded by the pending exchange, whose answer is still to come.
     private func isRepeatedGlassesReady(readyId: String, sid: String?) -> Bool {
-        if let pendingReadyId {
-            return readyId != pendingReadyId
-        }
-        return readinessCompletedThisBleSession && sid == glassesSessionId
+        readyId != pendingReadyId && sid == readyGlassesSessionId
+    }
+
+    private func resetReadinessExchange() {
+        pendingReadyId = nil
+        readyGlassesSessionId = nil
     }
 
     private func handleGlassesReady() {
@@ -5830,9 +5839,11 @@ class MentraLive: NSObject, SGCManager {
             // requestReadyK900()
 
             // The timer fires on bluetoothQueue; the pending readiness exchange is main-actor state.
+            // A tick queued just before glasses_ready stopped the loop must not start a new exchange.
             let check = self.readinessCheckCounter
             DispatchQueue.main.async { [weak self] in
-                self?.sendPhoneReady(reason: "readiness check #\(check)")
+                guard let self, self.readinessCheckDispatchTimer != nil else { return }
+                self.sendPhoneReady(reason: "readiness check #\(check)")
             }
         }
 
@@ -6079,6 +6090,7 @@ class MentraLive: NSObject, SGCManager {
         // Stop all timers
         stopAllTimers()
         resetWireNegotiationState()
+        resetReadinessExchange()
         commandQueue.removeAll() // stale writes die with the session
         closeL2capFileChannel()
 
@@ -6196,7 +6208,6 @@ extension MentraLive {
         micTuningGeneration = 0
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
-        pendingReadyId = nil
     }
 
     /// ANCS notification IDs live for the BLE link, not the wire epoch. A
