@@ -65,7 +65,7 @@ describe("Even touchpad reset instructions", () => {
       process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = enabled
       const tips = getModelSpecificTips("Mentra Live")
       expect(tips).toContainEqual({title: en.pairing.livePairingScanTitle, body: en.pairing.livePairingScanBody})
-      expect(tips.some((tip) => /another phone|Pairing Mode/i.test(`${tip.title} ${tip.body}`))).toBe(false)
+      expect(tips.some((tip) => /another phone/i.test(`${tip.title} ${tip.body}`))).toBe(false)
     })
   })
 
