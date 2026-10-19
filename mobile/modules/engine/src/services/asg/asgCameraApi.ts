@@ -27,6 +27,15 @@ export interface GalleryCapabilities {
   max_manifest_page_size?: number
 }
 
+/**
+ * Longest a gallery media transfer may wait for its next bytes, including the
+ * connection. Mentra Live stops its hotspot after 120 s without local HTTP
+ * traffic, so a stalled transfer must fail and retry well before then; a retry
+ * after that cutoff can only reach a hotspot that is gone. This bounds idle
+ * time between bytes, not the total length of a large transfer.
+ */
+export const GALLERY_TRANSFER_IDLE_TIMEOUT_MS = 30_000
+
 type V3ManifestResponse = {
   status: string
   data: {
@@ -929,8 +938,8 @@ export class AsgCameraApiClient {
             "Range": `bytes=${start}-${end}`,
             ...(file.etag ? {"If-Range": file.etag} : {}),
           },
-          connectionTimeout: 300000,
-          readTimeout: 300000,
+          connectionTimeout: GALLERY_TRANSFER_IDLE_TIMEOUT_MS,
+          readTimeout: GALLERY_TRANSFER_IDLE_TIMEOUT_MS,
           backgroundTimeout: 24 * 60 * 60 * 1000,
           progressDivider: 2,
           progressInterval: 250,
@@ -1215,8 +1224,8 @@ export class AsgCameraApiClient {
             "Accept": "*/*",
             "User-Agent": "MentraOS-Mobile/1.0",
           },
-          connectionTimeout: 300000,
-          readTimeout: 300000,
+          connectionTimeout: GALLERY_TRANSFER_IDLE_TIMEOUT_MS,
+          readTimeout: GALLERY_TRANSFER_IDLE_TIMEOUT_MS,
           backgroundTimeout: 600000,
           progressDivider: 5,
           progressInterval: 250,
@@ -1578,8 +1587,8 @@ export class AsgCameraApiClient {
           "Accept": "*/*",
           "User-Agent": "MentraOS-Mobile/1.0",
         },
-        connectionTimeout: 300000, // 5 minutes for connection establishment
-        readTimeout: 300000, // 5 minutes for data reading
+        connectionTimeout: GALLERY_TRANSFER_IDLE_TIMEOUT_MS,
+        readTimeout: GALLERY_TRANSFER_IDLE_TIMEOUT_MS,
         backgroundTimeout: 600000, // 10 minutes for background downloads (iOS)
         progressDivider: 5, // Fire progress every 5% to reduce event frequency
         progressInterval: 250, // Update progress every 250ms max

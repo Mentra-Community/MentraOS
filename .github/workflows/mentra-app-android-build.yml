@@ -80,6 +80,10 @@ on:
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   workflow_dispatch:
     inputs:
+      nimo_diagnostic:
+        description: Build the explicit self-contained NIMO commissioning diagnostic (never ordinary inventory)
+        type: boolean
+        default: false
       routine_pr:
         description: Trusted routine coverage PR number
         type: string
@@ -109,7 +113,7 @@ on:
 # Scoped per-ref so branches never cancel each other; keeps the runner
 # queue from filling with superseded builds.
 concurrency:
-  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}
+  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}${{ inputs.nimo_diagnostic && '-nimo-diagnostic' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -158,6 +162,7 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      MENTRA_NIMO_DIAGNOSTIC: ${{ inputs.nimo_diagnostic && 'true' || 'false' }}
       MENTRA_PR_BUILD_SHA: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
       MENTRA_PR_BASE_REF: ${{ inputs.routine_base || github.base_ref }}
       MENTRA_PR_HEAD_REF: ${{ needs.routine-pr.outputs.head_ref || github.head_ref }}
@@ -179,6 +184,10 @@ jobs:
         # before prebuild instead of letting getBuildNumber() truncate it.
         run: |
           set -euo pipefail
+          if [[ "$MENTRA_NIMO_DIAGNOSTIC" == true && ( "$GITHUB_EVENT_NAME" != workflow_dispatch || -z "$PR_NUMBER" ) ]]; then
+            echo "::error::NIMO diagnostics require an explicit pinned PR dispatch"
+            exit 1
+          fi
           if [[ -n "$MENTRAOS_PINNED_BUILD_NUMBER" ]]; then
             if [[ ! "$MENTRAOS_PINNED_BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] \
               || (( MENTRAOS_PINNED_BUILD_NUMBER > 2100000000 )); then
@@ -268,7 +277,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
+          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs mobile/scripts/nimo-diagnostic-build.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
@@ -440,7 +449,7 @@ jobs:
 
       - name: Select a matching signed PR APK
         id: select-apk
-        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
+        if: ${{ !inputs.nimo_diagnostic && (github.event_name == 'pull_request' || inputs.routine_pr != '') }}
         uses: actions/github-script@v7
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
@@ -513,7 +522,14 @@ jobs:
         # / lintVitalReport*: assembleRelease still runs lintVitalRelease, which
         # then fails looking for those tasks' output files. Android lint stays
         # on this job; Mobile App Quality Checks is TypeScript/Jest only.
-        run: ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
+        run: |
+          if [[ "$MENTRA_NIMO_DIAGNOSTIC" == true ]]; then
+            ./gradlew assembleNimoDiagnostic --build-cache --parallel --max-workers=8 -x test
+            mkdir -p app/build/outputs/apk/release
+            cp app/build/outputs/apk/nimoDiagnostic/app-nimoDiagnostic.apk app/build/outputs/apk/release/app-release.apk
+          else
+            ./gradlew assembleRelease --build-cache --parallel --max-workers=8 -x test
+          fi
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
           # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
@@ -587,6 +603,7 @@ jobs:
         run: |
           set -euo pipefail
           node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk
+          if [[ "$MENTRA_NIMO_DIAGNOSTIC" == true ]]; then exit 0; fi
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
           name="mobile-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
           node .github/scripts/publish-immutable-release-asset.mjs \

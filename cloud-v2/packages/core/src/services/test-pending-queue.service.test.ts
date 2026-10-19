@@ -2,9 +2,10 @@ import {expect, test} from 'bun:test';
 import {pendingQueueItem} from './test-pending-queue.service';
 import {routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {requestInputDigest} from './test-request.service';
-import {testRoutineSource} from '../testing/framework-fixtures';
+import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
+import {sharedResourceWait} from './routine-resource-wait';
 const now = Date.parse('2026-10-08T01:00:00Z');
 const definition = {id:'check',minimumRoutineApiVersion:1,title:'Check',purpose:'Verify',platforms:['android'],entry:'home',account:'lane',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
@@ -29,6 +30,20 @@ function fixture() {
   ]} as any;
   return {row,host};
 }
+test('an assigned preparing job reports its unmet framework floor without changing selection or deadline', () => {
+  const {row, host} = fixture();
+  row.state = 'preparing'; row.fleetBinding = {requestId: row.requestId, hostId: host.hostId, laneId: 'idle', descriptorRevision: 'a'.repeat(64),
+    actionsRunId: '1', jobId: 'original-job', actionsJobId: '1', boundAt: new Date(now).toISOString()};
+  row.fleetSelection.minimumFrameworkVersion = 1085; row.fleetSelectionSha256 = requestInputDigest(row.fleetSelection);
+  row.fleetInputSha256 = routineJobInputDigest(row);
+  const original = structuredClone(row);
+  host.frameworkBinding = {...testFrameworkBinding(), version: 1083};
+  expect(pendingQueueItem(row, [host], now).reason).toContain('Waiting for framework 1085');
+  host.frameworkBinding = {...testFrameworkBinding(), version: 1085};
+  host.receivedAt = new Date(now - 120_001).toISOString();
+  expect(pendingQueueItem(row, [host], now).reason).toContain('no fresh accepted framework observation');
+  expect(row).toEqual(original);
+});
 test('pending projection labels every compatible lane and keeps availability separate', () => {
   const {row,host} = fixture(), item = pendingQueueItem(row,[host],now);
   expect(item.compatibilityKnown).toBe(true);
@@ -74,4 +89,18 @@ test('malformed persisted dates remain visible without hiding valid neighbors', 
   const page=[deadline,created,row].map(value=>pendingQueueItem(value,[host],now));
   expect(page).toHaveLength(3); expect(page[0]!.reason).toContain('unavailable'); expect(page[1]!.reason).toContain('unavailable');
   expect(page[2]!.compatibleLanes).toHaveLength(3);
+});
+test('pending queue shows an existing staged exclusive blocker without taking or returning custody', () => {
+  const {row, host} = fixture();
+  row.fleetResourceAdmission = {intent: {operationId: 'run:request', hostId: 'mini', laneId: 'idle', inputSha256: row.fleetInputSha256!,
+    owner: {id: 'request', kind: 'run'}, controller: {incarnation: 'one', generation: 1, sequence: 1}, resources: [{id: 'phone', capabilities: ['bluetooth-observe']}]},
+    dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]};
+  const observed = {...host, authorityReservations: [{kind: 'exclusive', resourceId: 'private-account', authorityHostId: 'mini',
+    owner: {id: 'private-owner', kind: 'run'}, borrowerHostId: 'elsewhere', laneId: 'private-lane'}]} as any;
+  const before = structuredClone(row), snapshot = structuredClone(observed);
+  const item = pendingQueueItem(row, [observed], now);
+  expect(item.reason).toBe(sharedResourceWait('google-authentication')); expect(item.reason).not.toContain('private-account');
+  expect(row).toEqual(before); expect(observed).toEqual(snapshot);
+  observed.authorityReservations = [];
+  expect(pendingQueueItem(row, [observed], now).reason).toBeUndefined();
 });

@@ -1,0 +1,137 @@
+{
+  "protocol": "nimo-macos-resource-v1",
+  "clockKind": "darwin-continuous-time-v1",
+  "request": {
+    "version": 1,
+    "operation": "discover|arm|status|release|cancel",
+    "requestNonce": "UUID",
+    "captureNonce": "UUID",
+    "planSha256": "64lowerhex",
+    "grantSha256": "64lowerhex",
+    "expectedProcess": {
+      "pid": 123,
+      "instanceId": "UUID"
+    },
+    "expectedPair": {
+      "name": "exact name",
+      "peripheralUuid": "UUID"
+    },
+    "original": null
+  },
+  "originalWhenKnown": {
+    "instanceId": "UUID",
+    "peripheralUuid": "UUID",
+    "sessionGeneration": 1
+  },
+  "receipt": {
+    "version": 1,
+    "protocol": "nimo-macos-resource-v1",
+    "operation": "discover|arm|status|release|cancel",
+    "requestNonce": "UUID",
+    "captureNonce": "UUID",
+    "planSha256": "64lowerhex",
+    "grantSha256": "64lowerhex",
+    "process": {
+      "pid": 123,
+      "instanceId": "UUID"
+    },
+    "clock": {
+      "kind": "darwin-continuous-time-v1",
+      "receivedElapsedMs": 1,
+      "observedElapsedMs": 2
+    },
+    "capture": {
+      "armedElapsedMs": 1,
+      "admittedElapsedMs": null,
+      "cancelled": false,
+      "expectedPair": {
+        "name": "exact name",
+        "peripheralUuid": "UUID"
+      }
+    },
+    "currentManager": {
+      "type": null,
+      "instanceId": null
+    },
+    "session": null,
+    "release": {
+      "nonce": null,
+      "startedElapsedMs": null,
+      "micStopRequired": false,
+      "displayExitRequired": false,
+      "micStopStartedElapsedMs": null,
+      "micStopWrittenElapsedMs": null,
+      "micStopMarkerElapsedMs": null,
+      "exitStatusCode": null,
+      "exitAckElapsedMs": null,
+      "disconnectRequestedElapsedMs": null,
+      "disconnectCallbackElapsedMs": null,
+      "disconnectError": null,
+      "noTransport": false,
+      "settled": false,
+      "connectionFailedElapsedMs": null
+    },
+    "producers": {
+      "writerActive": 0,
+      "writerQueued": 0,
+      "encoderWorker": 0,
+      "encoderDelivery": 0,
+      "postedCallbacks": 0,
+      "canvasCommands": 0,
+      "pendingAcks": 0,
+      "audioWorkers": 0,
+      "scan": 0,
+      "timers": 0,
+      "reconnectTask": 0
+    },
+    "errors": []
+  },
+  "sessionWhenKnown": {
+    "instanceId": "UUID",
+    "peripheralUuid": "UUID",
+    "sessionGeneration": 1,
+    "startedElapsedMs": "null for generation0; continuous integer for generation1",
+    "connected": true,
+    "initializationPending": false,
+    "twsConnected": false,
+    "twsObservedElapsedMs": null,
+    "handshakeTwsElapsedMs": null,
+    "timeCommandId": null,
+    "timeWriteStartedElapsedMs": null,
+    "timeWriteCompletedElapsedMs": null,
+    "timeAckElapsedMs": null,
+    "timeAckStatusCode": null
+  },
+  "rules": [
+    "All nullable keys explicit null; no omitted properties. UUID normalized lower-case. Clock integers continuous milliseconds, no host comparisons.",
+    "original null arm/first capture-bound status; status never adopts current manager. Normal release requires exact original once owner admitted. Cancel null allowed for any exact pinned capture generation, including setup failure before first readback.",
+    "requestNonce immutable per-operation receipt; repeated exact request returns original bytes, changed request same nonce rejects. Fresh status uses new nonce but preserves original release nonce/markers.",
+    "release.settled requires actual producer roster zero, original CB disconnect callback, original never-connected didFailToConnect callback, or generation0 proven noTransport, and all required mic/Exit markers. Failed-attempt closure retains original generation1 identity, has no handshake or fabricated disconnect, and records callback-entry continuous time. Unknown stays unsettled/errors.",
+    "micStopMarkerElapsedMs remains null if native protocol has no observed stop marker; micStopRequired never passes based solely on logical state/write callback.",
+    "Foreign manager adoption is fenced before and during capture. After original closure a G2 manager may run; original NIMO cleanup and callbacks never mutate it.",
+    "gen0 admission retains original object even before CB peripheral; no replacement adoption.",
+    "Transport bootstrap and hello require the verified selected app, exact supervised owner identity and private socket; they do not authorize NIMO input.",
+    "One capture per app process; 192 ordinary entries +64 cleanup/postrelease status reserved entries. Exact existing nonce readbacks bypass budget; no renewed windows."
+  ],
+  "discoveryExpectedPairAlternative": {
+    "name": "exact name",
+    "peripheralSelection": "connected-service-exact-name-v1"
+  },
+  "discoveryReceiptOnlyForSelectionMode": {
+    "kind": "connected-service-exact-name-v1",
+    "selectedPeripheralUuid": "UUID|null",
+    "candidates": [
+      {
+        "peripheralUuid": "UUID",
+        "name": "exact name",
+        "source": "connected-service",
+        "serviceUuid": "00007033-0000-1000-8000-00805f9b34fb"
+      }
+    ],
+    "startedElapsedMs": 1,
+    "settledElapsedMs": "integer|null",
+    "settled": true,
+    "callbacksPending": 0,
+    "errors": []
+  }
+}

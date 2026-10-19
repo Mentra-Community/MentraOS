@@ -10,6 +10,7 @@ import {TestHostStateService, type RoutingTestHostState} from './test-host-state
 import {TestRunError} from './test-result-error';
 import {permissionContext} from '../types/resource-permissions.types';
 import {pendingRequestFilter} from './test-request-activity';
+import {sharedResourceWaitingReason} from './routine-resource-wait';
 
 /** Read-only projection; compatible hardware is distinct from current acceptance. */
 function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostState[], now: number): PendingQueueItem {
@@ -29,8 +30,14 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: RoutingTestHostSt
     return {...base, reason: 'Stored request identity is unavailable.'};
   const selected = selection.data;
   const item: PendingQueueItem = {...base, routineId: selected.routineId, platform: selected.platform, build: selected.build,
-    reason: row.fleetPreparationStatus?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error,
+    reason: row.fleetPreparationStatus?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error ?? sharedResourceWaitingReason(row, hosts),
     ...(row.fleetBinding ? {assignment: {hostId: row.fleetBinding.hostId, laneId: row.fleetBinding.laneId}} : {})};
+  if (row.state === 'preparing' && selected.minimumFrameworkVersion !== undefined && row.fleetBinding) {
+    const host = hosts.find(value => value.hostId === row.fleetBinding!.hostId), receivedAt = Date.parse(host?.receivedAt ?? '');
+    const current = Number.isFinite(receivedAt) && receivedAt <= now && now - receivedAt <= 120_000 ? host?.frameworkBinding : undefined;
+    if (!current || current.version < selected.minimumFrameworkVersion)
+      item.reason = `Waiting for framework ${selected.minimumFrameworkVersion}; assigned host ${row.fleetBinding.hostId} ${current ? `reports framework ${current.version}` : 'has no fresh accepted framework observation'}.`;
+  }
   let requirements;
   if (row.fleetPreparation) {
     const prepared = routineJobPreparationSchema.safeParse(row.fleetPreparation);

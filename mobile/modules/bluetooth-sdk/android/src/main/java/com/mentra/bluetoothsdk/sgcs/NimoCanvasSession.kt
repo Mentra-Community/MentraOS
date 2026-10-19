@@ -60,6 +60,7 @@ internal class NimoCanvasSession {
     return if (!value && resume) pump() else emptyList()
   }
 
+  fun active(): Boolean = active
   fun currentScope(): String? = scope
 
   fun readiness(value: Boolean): List<Action> = updateReadiness(value, confirmed = false)

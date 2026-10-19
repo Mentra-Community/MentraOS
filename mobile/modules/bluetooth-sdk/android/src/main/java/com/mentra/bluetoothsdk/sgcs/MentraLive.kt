@@ -132,6 +132,10 @@ class MentraLive : SGCManager() {
     private val besOtaHeartbeatGuard = BesOtaHeartbeatGuard()
 
     companion object {
+        internal fun wifiAdbPeerMatches(expected: String, identity: Pair<Long, String>?, generation: Long, connected: Boolean): Boolean =
+            connected && expected.matches(Regex("^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")) &&
+                identity != null && identity.first == generation && identity.second.equals(expected, ignoreCase = true)
+
         private const val TAG = "Live"
 
         // Feature Flags
@@ -743,6 +747,7 @@ class MentraLive : SGCManager() {
 
     // Local state tracking (not in parent SGCManager)
     private var isCharging = false // Charging status (batteryLevel is in parent)
+    @Volatile private var wifiAdbPeerIdentity: Pair<Long, String>? = null
     private var isConnected = false
 
     // File transfer management
@@ -1213,6 +1218,7 @@ class MentraLive : SGCManager() {
 
     private fun updateConnectionState(state: String) {
         if (state == ConnTypes.DISCONNECTED) {
+            wifiAdbPeerIdentity = null
             DeviceStore.apply("glasses", "hotspotOtaVersion", 0)
         }
         val isEqual = state == connectionState
@@ -5125,6 +5131,7 @@ class MentraLive : SGCManager() {
                 )
                 DeviceStore.apply("glasses", "firmwareVersion", firmwareVersionLegacy)
                 btMacAddressLegacy.trim().takeIf { it.isNotEmpty() }?.let {
+                    wifiAdbPeerIdentity = bleSessionGeneration.get() to it
                     DeviceStore.apply("glasses", "bluetoothMacAddress", it)
                 }
                 serialNumberLegacy.trim().takeIf { it.isNotEmpty() }?.let {
@@ -5397,6 +5404,7 @@ class MentraLive : SGCManager() {
                         )
                     }
                     (fields["bt_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        wifiAdbPeerIdentity = bleSessionGeneration.get() to it
                         DeviceStore.apply("glasses", "bluetoothMacAddress", it)
                     }
                     (fields["wifi_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
@@ -10532,6 +10540,20 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: 🔥 ✅ Hotspot state command sent successfully")
         } catch (e: JSONException) {
             Log.e(TAG, "🔥 💥 Error creating hotspot state JSON", e)
+        }
+    }
+
+    fun sendWifiAdbStateToPeer(enabled: Boolean, expectedBluetoothMac: String) {
+        val generation = bleSessionGeneration.get()
+        val identity = wifiAdbPeerIdentity
+        if (!wifiAdbPeerMatches(expectedBluetoothMac, identity, generation,
+                isConnected && bluetoothGatt != null && txCharacteristic != null)) {
+            throw BluetoothSdkException("device_identity_changed", "The selected glasses identity or connection changed.")
+        }
+        val command = JSONObject().put("type", "set_wifi_adb_state").put("enabled", enabled)
+        // Preserve the checked generation through framing and the existing BLE queue fence.
+        if (!sendJson(command, true, true, generation)) {
+            throw BluetoothSdkException("command_send_failed", "Could not queue Wi-Fi debugging for the selected glasses.")
         }
     }
 

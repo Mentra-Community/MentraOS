@@ -1,5 +1,9 @@
-name: Coordinated Mentra Private Deployment Dev
+name: Coordinated Mentra Private Deployment
 
+# Each coordinated prerelease deploys its channel's Acme demo stack: dev releases
+# demo-dev.acmeworkspace.com and staging (beta) releases demo.acmeworkspace.com.
+# Signing keys, the Graph client secret and the admin key live in the stack's
+# Key Vault, so this workflow takes no secrets.
 on:
   workflow_call:
     inputs:
@@ -16,11 +20,6 @@ on:
         required: false
         default: false
         type: boolean
-    secrets:
-      # Signing keys and the Graph client secret live in the stack's Key Vault;
-      # Container Apps read them with their managed identity.
-      ENTERPRISE_DEV_ADMIN_TOKEN:
-        required: true
     outputs:
       result_artifact:
         value: ${{ jobs.deploy.outputs.result_artifact }}
@@ -38,25 +37,19 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     concurrency:
-      # Preserve deployment order if coordinated runs overlap.
-      group: coordinated-private-deployment-dev
+      # Preserve deployment order if coordinated runs overlap. The calling
+      # branch selects the stack, so each stack has its own queue.
+      group: coordinated-private-deployment-${{ github.ref_name }}
       cancel-in-progress: false
     outputs:
       result_artifact: ${{ steps.artifact.outputs.name }}
       workspace_origin: ${{ steps.verify.outputs.workspace_origin }}
     env:
-      AZURE_RESOURCE_GROUP: rg-mentra-enterprise-reference
-      AZURE_REGISTRY: mentraenterpriseref
-      AZURE_COMMUNICATION_SERVICE: mentra-enterprise-reference
-      AZURE_CONTAINER_APP: ca-mentra-enterprise-reference
-      AZURE_CORE_CONTAINER_APP: ca-mentra-ent-ref-core
-      # Created once by bootstrap.bicep with Owner rights; this Contributor job never needs role assignments.
-      AZURE_KEY_VAULT: kv-mentra-enterprise-ref
+      # Both stacks share the Acme demo tenant, its Entra apps and the Teams
+      # Graph app; the Graph client secret is in each stack's Key Vault.
       ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
       ENTRA_CORE_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
       ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
-      # Earlier addresses stay bound as aliases (additionalWorkspaceDomains below).
-      WORKSPACE_HOSTNAME: demo.acmeworkspace.com
       # redis:7-alpine, the sidecar behind the demo's speech and photos.
       REDIS_DIGEST: sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     steps:
@@ -78,6 +71,70 @@ jobs:
         with:
           node-version: "24"
 
+      # Keep these names in step with TARGETS in
+      # .github/scripts/coordinated-private-deployment-records.mjs. Each stack
+      # has its own deployer, Contributor on that stack's resource group only.
+      # Its Key Vault, identities and grants were created once with Owner
+      # rights by bootstrap.bicep and access.bicep.
+      - name: Select the release channel's demo stack
+        env:
+          DEMO_AZURE_CLIENT_ID: ${{ vars.ENTERPRISE_DEMO_AZURE_CLIENT_ID }}
+          DEMO_DEV_AZURE_CLIENT_ID: ${{ vars.ENTERPRISE_DEMO_DEV_AZURE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          channel=$(jq -er .channel release-input/plan/release-plan.json)
+          case "$channel" in
+            dev)
+              # For testing dev releases; never frozen.
+              azure_client_id="$DEMO_DEV_AZURE_CLIENT_ID"
+              cat >> "$GITHUB_ENV" <<'EOF'
+          AZURE_RESOURCE_GROUP=rg-mentra-enterprise-demo-dev
+          AZURE_REGISTRY=mentraenterprisedemodev
+          AZURE_KEY_VAULT=kv-mentra-ent-demo-dev
+          AZURE_COMMUNICATION_SERVICE=mentra-enterprise-demo-dev
+          AZURE_ENVIRONMENT=cae-mentra-ent-demo-dev
+          AZURE_CONTAINER_APP=ca-mentra-ent-demo-dev
+          AZURE_CORE_CONTAINER_APP=ca-mentra-ent-demo-dev-core
+          AZURE_CORE_IDENTITY=id-mentra-ent-demo-dev-core
+          AZURE_RUNTIME_IDENTITY=id-mentra-ent-demo-dev-runtime
+          DEPLOYMENT_ID=mentra-enterprise-demo-dev
+          DISPLAY_NAME=Acme Industries (dev)
+          WORKSPACE_HOSTNAME=demo-dev.acmeworkspace.com
+          WORKSPACE_CERTIFICATE=ca-mentra-ent-demo-dev-workspace
+          WORKSPACE_ALIASES=[]
+          CORE_ADMIN_EMAILS=operator@private-cloud.local
+          EOF
+              ;;
+            beta)
+              # The sales demo. Earlier addresses stay bound as aliases for
+              # phones that enrolled with them.
+              azure_client_id="$DEMO_AZURE_CLIENT_ID"
+              cat >> "$GITHUB_ENV" <<'EOF'
+          AZURE_RESOURCE_GROUP=rg-mentra-enterprise-reference
+          AZURE_REGISTRY=mentraenterpriseref
+          AZURE_KEY_VAULT=kv-mentra-enterprise-ref
+          AZURE_COMMUNICATION_SERVICE=mentra-enterprise-reference
+          AZURE_ENVIRONMENT=cae-mentra-enterprise-reference
+          AZURE_CONTAINER_APP=ca-mentra-enterprise-reference
+          AZURE_CORE_CONTAINER_APP=ca-mentra-ent-ref-core
+          AZURE_CORE_IDENTITY=id-mentra-enterprise-reference-core
+          AZURE_RUNTIME_IDENTITY=id-mentra-enterprise-reference-runtime
+          DEPLOYMENT_ID=mentra-enterprise-reference
+          DISPLAY_NAME=Acme Industries
+          WORKSPACE_HOSTNAME=demo.acmeworkspace.com
+          WORKSPACE_CERTIFICATE=ca-mentra-enterprise-reference-acme-demo
+          WORKSPACE_ALIASES=[{"hostname":"mentra.acmeworkspace.com","certificateName":"ca-mentra-enterprise-reference-acme-workspace"},{"hostname":"enterprisedev.mentraglass.com","certificateName":"ca-mentra-enterprise-reference-workspace"}]
+          CORE_ADMIN_EMAILS=api-key@01M35AKTFB5SWCXM35KYEH61VF.local
+          EOF
+              ;;
+            *)
+              echo "No demo stack deploys $channel releases." >&2
+              exit 1
+              ;;
+          esac
+          [[ "$azure_client_id" =~ ^[0-9a-f-]{36}$ ]]
+          echo "AZURE_CLIENT_ID=$azure_client_id" >> "$GITHUB_ENV"
+
       - name: Resolve and verify exact source
         id: source
         run: |
@@ -86,7 +143,6 @@ jobs:
           [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]]
           [[ "$source_commit" == "${{ inputs.source_commit }}" ]]
           [[ "$(jq -er .sourceCommit release-input/plan/release-plan.json)" == "$source_commit" ]]
-          [[ "$(jq -er .channel release-input/plan/release-plan.json)" == "dev" ]]
           node .github/scripts/coordinated-runtime-image-records.mjs validate \
             --plan release-input/plan/release-plan.json \
             --record release-input/runtime-image/runtime-image-publication.json \
@@ -120,9 +176,9 @@ jobs:
         # an Azure Contributor identity, so the mutable tag is not acceptable.
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
-          client-id: ${{ vars.ENTERPRISE_DEV_AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.ENTERPRISE_DEV_AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.ENTERPRISE_DEV_AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.ENTRA_TENANT_ID }}
+          subscription-id: ${{ vars.ENTERPRISE_DEMO_AZURE_SUBSCRIPTION_ID }}
 
       - name: Import the canonical Mentra Cloud digest into Azure
         if: inputs.dry_run != true
@@ -191,24 +247,34 @@ jobs:
       - name: Deploy Core and Runtime
         if: inputs.dry_run != true
         env:
-          CORE_ADMIN_EMAILS: ${{ vars.ENTERPRISE_DEV_CORE_ADMIN_EMAILS }}
-          TEAMS_GRAPH_CLIENT_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID }}
-          TEAMS_GRAPH_ORGANIZER_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID }}
+          TEAMS_GRAPH_CLIENT_ID: ${{ vars.ENTERPRISE_DEMO_TEAMS_GRAPH_CLIENT_ID }}
+          TEAMS_GRAPH_ORGANIZER_ID: ${{ vars.ENTERPRISE_DEMO_TEAMS_GRAPH_ORGANIZER_ID }}
         run: |
           set -euo pipefail
-          parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
+          parameters="$RUNNER_TEMP/private-deployment.parameters.json"
           trap 'rm -f "$parameters"' EXIT
           umask 077
+          # Managed bundles are served by each stack's own Runtime, so they are
+          # passed as paths on its workspace origin.
           jq -n \
             --arg cloudImage "${{ steps.source.outputs.image }}" \
             --arg redisImage "$AZURE_REGISTRY.azurecr.io/redis@$REDIS_DIGEST" \
             --arg registryName "$AZURE_REGISTRY" \
             --arg keyVaultName "$AZURE_KEY_VAULT" \
             --arg communicationName "$AZURE_COMMUNICATION_SERVICE" \
+            --arg environmentName "$AZURE_ENVIRONMENT" \
+            --arg runtimeName "$AZURE_CONTAINER_APP" \
+            --arg coreName "$AZURE_CORE_CONTAINER_APP" \
+            --arg coreIdentityName "$AZURE_CORE_IDENTITY" \
+            --arg runtimeIdentityName "$AZURE_RUNTIME_IDENTITY" \
+            --arg deploymentId "$DEPLOYMENT_ID" \
+            --arg displayName "$DISPLAY_NAME" \
             --arg tenantId "$ENTRA_TENANT_ID" \
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
             --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
             --arg workspaceHostname "$WORKSPACE_HOSTNAME" \
+            --arg workspaceCertificateName "$WORKSPACE_CERTIFICATE" \
+            --argjson additionalWorkspaceDomains "$WORKSPACE_ALIASES" \
             --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             --slurpfile demo cloud-v2/deploy/azure/enterprise-reference/demo-miniapps.json \
             '{
@@ -219,24 +285,31 @@ jobs:
                 registryName:{value:$registryName},
                 keyVaultName:{value:$keyVaultName},
                 communicationName:{value:$communicationName},
+                environmentName:{value:$environmentName},
+                runtimeName:{value:$runtimeName},
+                coreName:{value:$coreName},
+                coreIdentityName:{value:$coreIdentityName},
+                runtimeIdentityName:{value:$runtimeIdentityName},
+                deploymentId:{value:$deploymentId},
+                displayName:{value:$displayName},
                 tenantId:{value:$tenantId},
                 coreApiClientId:{value:$coreApiClientId},
                 mobileClientId:{value:$mobileClientId},
                 coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
-                workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-demo"},
-                additionalWorkspaceDomains:{value:[{hostname:"mentra.acmeworkspace.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"},{hostname:"enterprisedev.mentraglass.com",certificateName:"ca-mentra-enterprise-reference-workspace"}]},
-                displayName:{value:$reference[0].displayName},
+                workspaceCertificateName:{value:$workspaceCertificateName},
+                additionalWorkspaceDomains:{value:$additionalWorkspaceDomains},
                 approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
                 teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},
                 teamsGraphOrganizerId:{value:env.TEAMS_GRAPH_ORGANIZER_ID},
-                managedMiniapps:{value:($reference[0].miniapps.managed + $demo[0])},
+                managedMiniapps:{value:(($reference[0].miniapps.managed + $demo[0])
+                  | map(del(.bundleUrl) + {bundlePath:(.bundleUrl | sub("^https://[^/]+"; ""))}))},
                 cloudSpeechAndPhotos:{value:true},
                 redisImage:{value:$redisImage}
               }
             }' > "$parameters"
           az deployment group create \
-            --name private-deployment-dev \
+            --name private-deployment \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --template-file cloud-v2/deploy/azure/enterprise-reference/main.bicep \
             --parameters "@$parameters" \
@@ -247,24 +320,22 @@ jobs:
       - name: Verify the live enterprise contract
         id: verify
         if: inputs.dry_run != true
-        env:
-          MENTRA_ADMIN_TOKEN: ${{ secrets.ENTERPRISE_DEV_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           workspace_origin=$(az deployment group show \
-            --name private-deployment-dev \
+            --name private-deployment \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query properties.outputs.workspaceOrigin.value \
             --output tsv)
           [[ "$workspace_origin" == https://* ]]
           core_origin=$(az deployment group show \
-            --name private-deployment-dev \
+            --name private-deployment \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query properties.outputs.coreOrigin.value \
             --output tsv)
           [[ "$core_origin" == https://* ]]
           core_hostname=$(az deployment group show \
-            --name private-deployment-dev \
+            --name private-deployment \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query properties.outputs.generatedCoreHostname.value \
             --output tsv)
@@ -371,9 +442,15 @@ jobs:
             --arg tenant "$ENTRA_TENANT_ID" \
             --arg mobile "$ENTRA_MOBILE_CLIENT_ID" \
             --arg coreClient "$ENTRA_CORE_CLIENT_ID" \
+            --arg deploymentId "$DEPLOYMENT_ID" \
+            --arg displayName "$DISPLAY_NAME" \
             --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             --slurpfile demo cloud-v2/deploy/azure/enterprise-reference/demo-miniapps.json \
-            '.schemaVersion == 1
+            '(($reference[0].miniapps.managed + $demo[0])
+               | map(.bundleUrl = $origin + (.bundleUrl | sub("^https://[^/]+"; "")))) as $managed
+             | .schemaVersion == 1
+             and .deploymentId == $deploymentId
+             and .displayName == $displayName
              and (has("releaseIdentity") | not)
              and .services.coreUrl == $core
              and .services.runtimeUrl == $origin
@@ -388,7 +465,7 @@ jobs:
              and .features.nativeMeetings == true
              and .features.cloudSpeech == true
              and .systemMiniapps == $reference[0].systemMiniapps
-             and .miniapps.managed == ($reference[0].miniapps.managed + $demo[0])
+             and .miniapps.managed == $managed
              and any(.miniapps.managed[]; .packageName == "com.mentra.call")
              and .telemetry == false' \
             <<< "$manifest"
@@ -422,8 +499,12 @@ jobs:
 
           jq -s . private-deployment-checks.ndjson > private-deployment-checks.json
 
+          # The stack's operator key, readable by this stack's deployer only.
+          admin_token=$(az keyvault secret show --vault-name "$AZURE_KEY_VAULT" --name mentra-admin-key \
+            --query value --output tsv)
+          echo "::add-mask::$admin_token"
           curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
-            -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+            -H "Authorization: Bearer $admin_token" \
             "$core_origin/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
           az containerapp revision show --name "$AZURE_CORE_CONTAINER_APP" --revision "$core_revision" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -492,7 +573,7 @@ jobs:
       - name: Summarize deployment
         run: |
           {
-            echo "## Mentra Private Deployment dev"
+            echo "## Mentra Private Deployment ${WORKSPACE_HOSTNAME:-}"
             echo
             echo "- Source: \`${{ steps.source.outputs.commit }}\`"
             echo "- Canonical image: \`${{ steps.source.outputs.source_reference || 'validation only' }}\`"

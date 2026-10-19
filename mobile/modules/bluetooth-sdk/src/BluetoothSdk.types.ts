@@ -1484,7 +1484,9 @@ export interface BluetoothSdkPublicModule {
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
-  setWifiAdbState(enabled: boolean): Promise<void>
+  /** When supplied, binds native admission to this full MAC observed in the current BLE session.
+   * Resolves on queue admission, without confirming glasses-side state. */
+  setWifiAdbState(enabled: boolean, expectedBluetoothMac?: string): Promise<void>
 
   /**
    * Persistently enable/disable unauthenticated HTTP gallery access on the glasses' Wi-Fi.

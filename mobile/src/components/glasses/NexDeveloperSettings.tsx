@@ -275,7 +275,7 @@ export default function NexDeveloperSettings() {
   // When on, the Nex display skips ASCII-only sanitization so CJK text renders.
   const [chineseCaptionsEnabled, setChineseCaptionsEnabled] = useSetting(SETTINGS.nex_chinese_captions.key)
 
-  // VAD (Voice Activity Detection) — Manager defaults this on, then syncs it through BLUETOOTH_SETTING_KEYS.
+  // VAD (Voice Activity Detection) — Manager defaults this off, then syncs it through BLUETOOTH_SETTING_KEYS.
   const [vadEnabled, setVadEnabled] = useSetting<boolean>(SETTINGS.voice_activity_detection_enabled.key)
 
   // // // Get both protobuf versions from core status

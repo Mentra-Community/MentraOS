@@ -472,9 +472,12 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Keep glasses mic audio continuous by default: Mentra Live's VAD clips the
+  // first words after a pause, including the Mentra AI wake word. Off also
+  // vetoes miniapp VAD requests (MicStateCoordinator). Users can opt in.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1200,6 +1203,20 @@ export const useSettingsStore = create<SettingsState>()(
             console.log("SETTINGS: loudness gate migration failed:", result.error)
           } else {
             storage.save(LOUDNESS_GATE_MIGRATION_KEY, true)
+          }
+        }
+
+        // Turn VAD off once on every install, whatever it holds. v1 of this migration was removed
+        // when the default briefly went back on, so installs from that window saved true; a new key
+        // reaches them too. Only a later explicit opt-in survives.
+        const VAD_MIGRATION_KEY = "migration:vad_default_off_v2"
+        const vadMigrationDone = storage.load<boolean>(VAD_MIGRATION_KEY)
+        if (vadMigrationDone.is_error() || !vadMigrationDone.value) {
+          const result = await get().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, true)
+          if (result.is_error()) {
+            console.log("SETTINGS: VAD migration failed:", result.error)
+          } else {
+            storage.save(VAD_MIGRATION_KEY, true)
           }
         }
 

@@ -1,3 +1,4 @@
+import {ReservableStatusBadge} from '../components/reservable-status';
 import {useClock} from '../lib/use-clock';
 import {LaneControls} from './lane-controls'
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
@@ -21,7 +22,6 @@ const states: Record<string, {label: string; style: string}> = {
   "out-of-service": {label: "Out of service", style: "bg-red-50 text-red-700"},
   "offline": {label: "Offline", style: "bg-[#f0f2ef] text-[#59655e]"},
 }
-const unknown = {label: "Unknown", style: "bg-[#f0f2ef] text-[#59655e]"}
 const modes: Record<string, string> = {automatic: "Automatic", authoring: "Authoring", paused: "Paused"}
 const time = (value: string) => new Date(value).toLocaleString()
 
@@ -50,7 +50,6 @@ export function LaneHealthHost({
       ) : (
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {host.lanes.map((lane) => {
-            const state = fresh ? (states[lane.state] ?? unknown) : unknown
             return (
               <article key={lane.id} className="rounded-xl border border-[#e0e4de] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -63,7 +62,7 @@ export function LaneHealthHost({
                       laneDisplayLabel(host.hostId, lane)
                     )}
                   </h4>
-                  <span className={`rounded-md px-2 py-1 text-xs font-semibold ${state.style}`}>{state.label}</span>
+                  <ReservableStatusBadge status={lane.state} current={fresh} />
                 </div>
                 <p className="mt-2 text-xs text-[#5d6068]">Lane: <span className="font-mono">{lane.id}</span></p>
                 <p className="mt-2 text-sm text-[#5d6068]">

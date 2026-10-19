@@ -164,6 +164,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await sdk.setDashboardContent(content)
         }
 
+        // Fixed typed fixture protocol; native schema/launch/peer authority is
+        // validated before effects. Ordinary launches return fixture-unavailable.
+        AsyncFunction("nimoResourceSession") { (requestJSON: String) async throws -> String in
+            try await NimoResourceFixtureBridge.execute(requestJSON)
+        }
+
         // MARK: - Connection Commands
 
         AsyncFunction("connectDefault") {
@@ -431,9 +437,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("setWifiAdbState") { (enabled: Bool) in
+        AsyncFunction("setWifiAdbState") { (enabled: Bool, expectedBluetoothMac: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try await sdk.setWifiAdbState(enabled: enabled)
+            try await sdk.setWifiAdbState(enabled: enabled, expectedBluetoothMac: expectedBluetoothMac)
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in

@@ -6,6 +6,7 @@ import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
 import {routineProgressSchema} from '../types/routine-progress.types'
 import {compatibleRoutineLane, routineJobRouting} from './routine-job.service'
 import {permissionContext} from '../types/resource-permissions.types'
+import type {ExclusiveHostReservation} from '../types/resource-reservations.types'
 
 test('run progress lookup selects only one lane snapshot and uses a bounded consistent read', async () => {
   const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
@@ -50,21 +51,25 @@ test('routing reads only fresh current offers and preserves permission and physi
     permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}, {kind: 'glasses' as const, capabilities: ['display']}],
     glasses: {models: ['mentra-live'], capabilities: ['display']}};
   const selections: unknown[] = [], settings: unknown[] = [], filters: unknown[] = [];
+  const retained: ExclusiveHostReservation[] = [{kind: 'exclusive', id: 'a1d9b22e-12c1-4f5b-b210-0bca2b0798c6', authorityHostId: 'mini',
+    borrowerHostId: 'air1', laneId: 'android', resourceId: 'google-account', operationId: 'run:pending-original',
+    owner: {kind: 'run', id: 'pending-original'}, inputSha256: 'a'.repeat(64), intentSha256: 'b'.repeat(64),
+    controllerIncarnation: 'one', controllerGeneration: 1, borrowerSequence: 1, reservedAt: new Date(now).toISOString()}];
   let reads = 0;
   const find = spyOn(TestHostStateModel, 'find').mockImplementation(((filter: unknown) => {
     filters.push(filter);
     const query = {select(value: unknown) {selections.push(value); return query},
       limit(value: unknown) {settings.push(value); return query}, read(value: unknown) {settings.push(value); return query},
       readConcern(value: unknown) {settings.push(value); return query}, async lean() {
-        reads++; return [{hostId: 'mini', snapshot: structuredClone(current), receivedAt: new Date(now)}];
+        reads++; return [{hostId: 'mini', snapshot: structuredClone(current), receivedAt: new Date(now), resourceReservations: retained}];
       }}; return query;
   }) as never);
   const previous = process.env.TEST_HOST_TOKENS;
   process.env.TEST_HOST_TOKENS = JSON.stringify({mini: 't'.repeat(32), invalid: 'short'});
   try {
     const service = new TestHostStateService(), [offered] = await service.list();
-    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString()});
-    expect(selections).toEqual([{hostId: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+    expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), authorityReservations: retained});
+    expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
       'snapshot.lanes.glasses': 1, _id: 0}]);
@@ -912,5 +917,32 @@ test("offline accepted intervals merge idempotently without relabeling current o
     )
   } finally {
     f.stop()
+  }
+})
+
+test('lifecycle comparison survives omitted envelope and omitted subject without renewing observation', async () => {
+  const {projectResourceLifecycle} = await import('./resource-lifecycle.service')
+  for (const omission of [undefined, {schemaVersion: 1, subjects: [], history: []}]) {
+    const f = fixture()
+    const at = '2026-10-03T01:00:00Z'
+    const subject = {subject: {kind: 'resource', id: 'resource-one', authorityHostId: 'mini'}, generation: 10,
+      status: 'unknown', observedAt: at, receivedAt: null, current: true, reason: null, owner: null,
+      idle: {contractVersion: 'v1', outcome: 'not-checked', checkedAt: null, acceptedCheck: null, qualifiedScope: {kind: 'unqualified'}, evidenceRefs: []},
+      repair: {configured: false, state: 'none'}, supportedActions: [], resource: {kind: 'account', capabilities: [], memberships: [], dependencies: [], placement: 'fleet'}}
+    const lifecycle = {schemaVersion: 1, subjects: [subject], history: [{id: 'original-event', resourceId: 'resource-one', subjectGeneration: 10, at, event: 'checking'}]}
+    try {
+      await f.service.report({...snapshot(1, 1), resourceLifecycle: lifecycle}, 'mini')
+      await f.service.report({...snapshot(1, 2), ...(omission ? {resourceLifecycle: omission} : {})}, 'mini')
+      expect(f.row().resourceLifecycleCursor.subjects[0].generation).toBe(10)
+      const stored=f.row()
+      const projected = projectResourceLifecycle([{hostId:'mini',receivedAt:stored.receivedAt,snapshot:stored.snapshot,resourceLifecycleCursor:stored.resourceLifecycleCursor}], Date.parse(at)).subjects[0]!
+      expect(projected.status).toBe('unknown'); expect(projected.current).toBe(false)
+      expect(projected.supportedActions).toEqual([])
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        subjects: [{...subject, generation: 1}], history: []}}, 'mini')).rejects.toThrow('generation regressed')
+      await expect(f.service.report({...snapshot(1, 3), resourceLifecycle: {...lifecycle,
+        history: [{...lifecycle.history[0], event: 'active'}]}}, 'mini')).rejects.toThrow('immutable')
+      expect(f.row().sequence).toBe(2)
+    } finally {f.stop()}
   }
 })

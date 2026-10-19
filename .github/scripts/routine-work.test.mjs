@@ -75,7 +75,7 @@ test('authoring intake retains typed operations and rejects missing, duplicate o
     resources: [
       {kind: 'app', capabilities: ['relaunch']},
       {kind: 'recorder', capabilities: []},
-      {kind: 'phone', capabilities: ['bluetooth-toggle', 'dialogs', 'trace']},
+      {kind: 'phone', capabilities: ['bluetooth-toggle', 'dialogs', 'trace', 'backend-connectivity']},
       {kind: 'glasses', capabilities: ['glasses-ble', 'connection', 'software']},
     ],
   }

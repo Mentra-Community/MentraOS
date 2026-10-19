@@ -26,6 +26,7 @@ import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraLivePairingStateStore
 import com.mentra.bluetoothsdk.sgcs.MentraNex
 import com.mentra.bluetoothsdk.sgcs.Nimo
+import com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -306,7 +307,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             }
         }
         initializeViewStates()
-        if (initializeHardware) initializeHardwareServices()
+        if (initializeHardware) {
+            initializeHardwareServices()
+            NimoResourceDiagnostics.start(Bridge.getContext())
+        }
     }
 
     // Keep host routing usable without starting audio codecs, receivers or services.
@@ -1378,6 +1382,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     // MARK: - Auxiliary Commands
 
     fun initSGC(wearable: String) {
+        if (!NimoResourceDiagnostics.allowManagerConnect(wearable)) return
         Bridge.log("Initializing manager for wearable: $wearable")
         if (sgc != null && sgc?.type != wearable) {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
@@ -2022,7 +2027,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.sendHotspotState(enabled)
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        if (expectedBluetoothMac != null) {
+            val current = sgc as? MentraLive ?: throw BluetoothSdkException(
+                "glasses_not_connected", "Mentra Live glasses are not connected.")
+            current.sendWifiAdbStateToPeer(enabled, expectedBluetoothMac)
+            return
+        }
         Bridge.log("MAN: Setting glasses Wi-Fi ADB state: $enabled")
         sgc?.sendWifiAdbState(enabled)
     }
@@ -2376,6 +2387,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDefault() {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDefault() }) return
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -2397,6 +2409,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: connectDefault skipped — bluetooth runtime permissions not granted")
             return
         }
+        if (!NimoResourceDiagnostics.allowManagerConnect(defaultWearable, reconnectTarget)) return
         initSGC(defaultWearable)
         val live = sgc as? MentraLive
         if (live != null && MentraLivePairingStateStore.isRejected) {
@@ -2433,6 +2446,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectByName(dName: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectByName(dName) }) return
         Bridge.log("MAN: Connecting to wearable: $dName")
 
         var name = dName
@@ -2447,6 +2461,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
+        if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable.ifEmpty { defaultWearable }, name)) return
         if (pendingWearable.isEmpty() && !defaultWearable.isEmpty()) {
             Bridge.log("MAN: No pending wearable, using default wearable")
             pendingWearable = defaultWearable
@@ -2461,8 +2476,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             return
         }
 
-        disconnect(clearPendingIdentity = false)
-        Thread.sleep(100)
+        if (!NimoResourceDiagnostics.allowManagerConnect(pendingWearable, name)) return
+        if (!NimoResourceDiagnostics.preserveCapturedScan(pendingWearable, name)) {
+            disconnect(clearPendingIdentity = false)
+            Thread.sleep(100)
+        }
         searching = true
         pendingDeviceName = name
 
@@ -2471,8 +2489,10 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDevice(deviceModel, deviceName) }) return
         Bridge.log("MAN: Connecting to device: $deviceModel $deviceName")
         if (DeviceTypes.ALL.contains(deviceModel)) {
+            if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel, deviceName)) return
             pendingWearable = deviceModel
             initSGC(pendingWearable)
             sgc?.connectById(deviceName)
@@ -2678,6 +2698,8 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     }
 
     fun findCompatibleDevices(deviceModel: String) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { findCompatibleDevices(deviceModel) }) return
+        if (!NimoResourceDiagnostics.allowManagerConnect(deviceModel)) return
         Bridge.log("MAN: Searching for compatible device names for: $deviceModel")
 
         // reset the search results:

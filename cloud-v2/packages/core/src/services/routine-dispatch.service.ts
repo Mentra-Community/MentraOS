@@ -1,13 +1,13 @@
 import {z} from 'zod';
 import {frameworkExecutableBuild, frameworkIdentitySchema, frameworkRequestInputSchema} from '../types/framework-request.types';
-import {routineSourceRefSchema} from '../types/framework-version.types';
+import {frameworkBindingSchema, routineSourceRefSchema, type FrameworkBinding} from '../types/framework-version.types';
 import {publishedRoutineDefinitionSchema, routineEnrollmentSchema} from '../types/routine-definition.types';
 import {routineDispatchSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {testBuildSourceSchema, selectedBuildInput, type TestBuild} from '../types/test-build.types';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {TestHostStateService} from './test-host-state.service';
-import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from './test-request.service';
+import {TestRequestService, PreparationRequestChanged, requestInputDigest, isExecutableRequest, type StoredRequest} from './test-request.service';
 import {FrameworkResultService} from './framework-result.service';
 import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings} from './routine-admission.service';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
@@ -17,13 +17,13 @@ import {RoutineJobService} from './routine-job.service';
 export {routineDispatchSchema} from '../types/routine-dispatch.types';
 export const preparedRoutineRequestSchema = z.object({dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/),
   routineSource: routineSourceRefSchema, definitionSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  definition: publishedRoutineDefinitionSchema}).strict();
+  definition: publishedRoutineDefinitionSchema, frameworkBinding: frameworkBindingSchema.optional()}).strict();
 /** Source preparation and executable delivery share one immutable request identity. */
 export class RoutineDispatchService {
   constructor(private readonly definitions: Pick<RoutineDefinitionService, 'current' | 'getCurrent' | 'getExact' | 'enroll'> = new RoutineDefinitionService(),
     private readonly builds: Pick<TestBuildGateway, 'resolve'> = new GithubTestBuildGateway(),
     private readonly hosts: Pick<TestHostStateService, 'get'> = new TestHostStateService(),
-    private readonly requests: Pick<TestRequestService, 'get' | 'submit' | 'prepare' | 'preparation' | 'completePreparation'> = new TestRequestService(),
+    private readonly requests: Pick<TestRequestService, 'get' | 'submit' | 'prepare' | 'preparation' | 'completePreparation' | 'assertPreparationFramework'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, 'detail'> = new FrameworkResultService(),
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory'> = new GithubRoutineSourceGateway(),
@@ -115,6 +115,7 @@ export class RoutineDispatchService {
       requestInputDigest(fleet.fleetPreparation.routineSource) !== requestInputDigest(value.routineSource)))
       throw new TestRunError(409, 'Host preparation differs from the frozen offline definition and source');
     if (row.state === 'terminal' && !isExecutableRequest(row)) return row;
+    await this.requests.assertPreparationFramework(row, value.frameworkBinding, true);
     await this.validatePreparationSource(intent);
     const enrollment = routineEnrollmentSchema.parse({routineId: intent.routineId, platform: intent.platform, definitionRevision: intent.routineRevision,
       routineSource: value.routineSource, definitionSha256: value.definitionSha256, definition: value.definition});
@@ -130,22 +131,27 @@ export class RoutineDispatchService {
       return row;
     }
     if (!exact) await this.definitions.enroll(enrollment, hostId);
-    return this.complete(row, enrollment);
+    return this.complete(row, enrollment, value.frameworkBinding);
   }
-  private async complete(row: StoredRequest, definition: z.infer<typeof routineEnrollmentSchema>) {
+  private async complete(row: StoredRequest, definition: z.infer<typeof routineEnrollmentSchema>, responseBinding?: FrameworkBinding, trustedCachedSource = false) {
     const intent = row.dispatchIntent!;
     const build = recordedRoutineBuild(intent.build, intent.source, intent.platform), host = await this.hosts.get(row.hostId);
     const input = routineAdmissionInput(definition, build, {hostId: row.hostId, laneId: intent.laneId}, host, Date.now(),
       {requireAutomatic: false, minimumFrameworkVersion: intent.minimumFrameworkVersion});
     input.build = frameworkExecutableBuild(intent.build, input.glassesModel);
-    return this.requests.completePreparation(row.requestId, row.hostId, row.dispatchIntentSha256!, input);
+    return this.requests.completePreparation(row.requestId, row.hostId, row.dispatchIntentSha256!, input, responseBinding, trustedCachedSource);
   }
   private async reconcile(row: StoredRequest): Promise<StoredRequest> {
     if (row.state !== 'preparing') return row;
     const intent = row.dispatchIntent!, exact = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
     if (!exact) return row;
-    try {return await this.complete(row, exact);}
-    catch (error) {if (error instanceof TestRunError && (error.status === 409 || error.status === 503)) return row; throw error;}
+    try {return await this.complete(row, exact, undefined, true);}
+    catch (error) {
+      if (error instanceof PreparationRequestChanged)
+        return this.requests.preparation(row.requestId, row.hostId, row.dispatchIntentSha256);
+      if (error instanceof TestRunError && (error.status === 409 || error.status === 503)) return row;
+      throw error;
+    }
   }
   async detail(requestId: string) {
     if (!frameworkIdentitySchema.safeParse(requestId).success) throw new TestRunError(400, 'Invalid request identity');

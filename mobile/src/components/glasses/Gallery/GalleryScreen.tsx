@@ -527,6 +527,10 @@ export function GalleryScreen() {
       const snapshot = createMediaViewerSnapshot(
         galleryPhotosRef.current.map((galleryItem) => galleryItem.photo),
         item.photo.name,
+        (photo) => {
+          const status = photoSyncStates.get(photo.name)?.status
+          return !!photo.filePath && status !== "downloading" && status !== "pending"
+        },
       )
       if (!snapshot) {
         console.warn(`[GalleryScreen] Ignoring stale media selection: ${item.photo.name}`)

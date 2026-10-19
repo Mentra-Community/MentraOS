@@ -6,6 +6,11 @@ import {TestRunError} from './test-result-error';
 import {createLogger} from '@mentra/cloud-shared/logger';
 
 const logger = createLogger('core').child({service: 'routine-source-selection.service'});
+const sourceRepository = 'Mentra-Community/Mentra-Automated-Testing';
+const mainRef = 'refs/heads/main';
+const activitySchema = z.array(z.object({id: z.number().int().positive().safe(), ref: z.literal(mainRef),
+  before: routineRevisionSchema, after: routineRevisionSchema, timestamp: z.string().datetime({offset: true}),
+  activity_type: z.enum(['push', 'pr_merge', 'merge_queue_merge', 'force_push', 'branch_creation', 'branch_deletion'])})).max(100);
 type SourceDiagnostic = {phase: 'authentication' | 'request' | 'response' | 'body' | 'integrity';
   blobSha: string; expectedBytes: number; elapsedMs: number; status?: number; receivedBytes?: number;
   failure: 'unavailable' | 'deadline' | 'identity-mismatch'};
@@ -35,22 +40,87 @@ export class GithubRoutineSourceGateway {
       return Buffer.concat(chunks);
     } finally {signal.removeEventListener('abort', cancel); await reader.cancel().catch(() => undefined); reader.releaseLock();}
   }
-  private async get(path: string, maxBytes = 256 * 1024): Promise<unknown> {
-    const deadline = AbortSignal.timeout(20_000);
+  private async withinDeadline<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) throw new Error('Source selection expired');
+    let abort!: () => void;
+    const expired = new Promise<never>((_, reject) => {abort = () => reject(new Error('Source selection expired'));
+      signal.addEventListener('abort', abort, {once: true});});
+    try {return await Promise.race([work, expired]);} finally {signal.removeEventListener('abort', abort);}
+  }
+  private async page(path: string, maxBytes: number, deadline: AbortSignal) {
     try {
-      const response = await this.transport(`https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/${path}`, {
+      const token = await this.withinDeadline(this.app.token('harness'), deadline);
+      const response = await this.withinDeadline(this.transport(`https://api.github.com/repos/${sourceRepository}/${path}`, {
         redirect: 'error', signal: deadline, headers: {
-          Authorization: `Bearer ${await this.app.token('harness')}`, Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28'},
-      });
-      return JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(await this.bytes(response, maxBytes, deadline)));
+      }), deadline);
+      const bytes = await this.withinDeadline(this.bytes(response, maxBytes, deadline), deadline);
+      return {body: JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)) as unknown, link: response.headers.get('link')};
     } catch {throw new TestRunError(503, 'Routine main source is unavailable; retry the same selection');}
   }
-  async resolve(revision?: string): Promise<string> {
+  private async get(path: string, maxBytes = 256 * 1024, deadline = AbortSignal.timeout(20_000)): Promise<unknown> {
+    return (await this.page(path, maxBytes, deadline)).body;
+  }
+  async resolve(revision?: string, before?: string): Promise<string> {
     if (revision && !routineRevisionSchema.safeParse(revision).success) throw new TestRunError(400, 'Invalid routine revision');
+    if (before !== undefined) {
+      if (revision || !z.string().datetime({offset: true}).safeParse(before).success)
+        throw new TestRunError(400, 'Invalid routine source boundary');
+      return this.resolveMainBefore(before);
+    }
     const exact = z.object({sha: routineRevisionSchema}).parse(await this.get(revision ? `git/commits/${revision}` : 'commits/main')).sha;
     if (revision && exact !== revision) throw new TestRunError(503, 'GitHub commit differs from the exact requested routine revision');
     return exact;
+  }
+  /** Repository activity records when main changed; commit dates do not prove branch membership. */
+  private async resolveMainBefore(before: string): Promise<string> {
+    const deadline = AbortSignal.timeout(20_000), boundarySecond = Math.floor(Date.parse(before) / 1000);
+    try {
+      const exact = z.object({sha: routineRevisionSchema});
+      const tip = exact.parse(await this.get('commits/main', 256 * 1024, deadline)).sha;
+      let head = tip, previousTime = Infinity, previousId = Infinity, cursor: string | undefined;
+      const seen = new Set<number>(), heads = new Set([tip]), cursors = new Set<string>();
+      for (let page = 0; page < 3; page++) {
+        const path = `activity?ref=${encodeURIComponent(mainRef)}&direction=desc&per_page=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
+        const response = await this.page(path, 512 * 1024, deadline), rows = activitySchema.parse(response.body);
+        if (!rows.length) throw new Error('Main history is incomplete');
+        for (const row of rows) {
+          const time = Date.parse(row.timestamp), second = Math.floor(time / 1000);
+          if (seen.has(row.id) || time > previousTime || row.id >= previousId
+            || row.after !== head || !['push', 'pr_merge', 'merge_queue_merge'].includes(row.activity_type))
+            throw new Error('Main history is changed or incomplete');
+          seen.add(row.id); previousTime = time; previousId = row.id;
+          // GitHub activity is second-resolution; a transition in the boundary second is ambiguous.
+          if (second === boundarySecond) throw new Error('Main boundary is ambiguous');
+          if (second < boundarySecond) {
+            if (head !== tip) {
+              const comparison = z.object({status: z.literal('ahead'), base_commit: z.object({sha: routineRevisionSchema}),
+                merge_base_commit: z.object({sha: routineRevisionSchema})})
+                .parse(await this.get(`compare/${head}...${tip}?per_page=1`, 4 * 1024 ** 2, deadline));
+              if (comparison.base_commit.sha !== head || comparison.merge_base_commit.sha !== head)
+                throw new Error('Selected main source is not an ancestor');
+            }
+            if (exact.parse(await this.get('commits/main', 256 * 1024, deadline)).sha !== tip)
+              throw new Error('Main changed during selection');
+            return head;
+          }
+          if (heads.has(row.before)) throw new Error('Main history is cyclic');
+          head = row.before; heads.add(head);
+        }
+        const next = response.link?.split(',').find(value => /;\s*rel="next"/.test(value));
+        const match = next?.match(/^\s*<([^>]+)>;\s*rel="next"\s*$/);
+        if (!match) throw new Error('Main history is incomplete');
+        const url = new URL(match[1]!);
+        cursor = url.searchParams.get('after') ?? undefined;
+        if (url.origin !== 'https://api.github.com' || (url.pathname !== `/repos/${sourceRepository}/activity`
+          && !/^\/repositories\/\d+\/activity$/.test(url.pathname))
+          || url.searchParams.get('ref') !== mainRef || !cursor || cursor.length > 4096 || cursors.has(cursor))
+          throw new Error('Main history cursor is invalid');
+        cursors.add(cursor);
+      }
+      throw new Error('Main history exceeds its bound');
+    } catch {throw new TestRunError(503, 'Routine main history at the occurrence boundary is unavailable; retry the same selection');}
   }
   async inventory(commit: string) {
     routineRevisionSchema.parse(commit);

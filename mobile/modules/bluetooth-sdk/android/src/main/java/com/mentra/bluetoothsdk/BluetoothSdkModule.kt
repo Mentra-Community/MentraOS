@@ -656,8 +656,9 @@ class BluetoothSdkModule : Module() {
             requireSdk().setHotspotState(enabled).values
         }
 
-        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean ->
-            sdk?.setWifiAdbState(enabled)
+        SdkAsyncFunction("setWifiAdbState") { enabled: Boolean, expectedBluetoothMac: String? ->
+            val current = sdk ?: throw BluetoothSdkException("glasses_not_connected", "Bluetooth SDK is unavailable.")
+            current.setWifiAdbState(enabled, expectedBluetoothMac)
         }
 
         SdkAsyncFunction("setSystemTime") { timestampMs: Double ->
