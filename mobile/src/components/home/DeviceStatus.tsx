@@ -214,6 +214,9 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       resetSearching()
       setReconnectDismissed(true)
     } else {
+      // An explicit Connect press supersedes an earlier Cancel, so the card
+      // shows the spinner and Cancel again while the connection is attempted.
+      setReconnectDismissed(false)
       await connectGlasses()
     }
   }
