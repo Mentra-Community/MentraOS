@@ -6,6 +6,7 @@ import type {ReactNode} from "react"
 import {GlassesStatus} from "./DeviceStatus"
 import {useNavigationStore} from "@/stores/navigation"
 import {showAlert} from "@/utils/AlertUtils"
+import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import en from "@/i18n/en"
 import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
@@ -194,6 +195,21 @@ describe("Mentra Live pairing state on Home", () => {
       expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
       expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy()
       expect(screen.queryByText("common:cancel")).toBeNull()
+    })
+
+    it("shows Cancel again when Connect is pressed after a Cancel during pairing mode", async () => {
+      setStatus({state: "pairing_mode", windowId: 4, endsAtMs: Date.now() + 120_000})
+      ;(checkConnectivityRequirementsUI as jest.Mock).mockResolvedValue(true)
+      ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
+      ;(engine.glasses.connectDefault as jest.Mock).mockClear().mockResolvedValue(undefined)
+      const screen = render(<GlassesStatus />)
+      fireEvent.press(screen.getByText("common:cancel"))
+      await waitFor(() => expect(screen.getByLabelText("home:connectGlasses")).toBeTruthy())
+
+      fireEvent.press(screen.getByLabelText("home:connectGlasses"))
+      await waitFor(() => expect(engine.glasses.connectDefault).toHaveBeenCalledTimes(1))
+      expect(screen.getByText("common:cancel")).toBeTruthy()
+      expect(screen.queryByLabelText("home:connectGlasses")).toBeNull()
     })
 
     it("keeps the reconnecting card when pairing mode ends, until the reconnect has had time to start", () => {
