@@ -1,5 +1,6 @@
 import {z} from 'zod'
 import {recorderHostReservationSchema, type RecorderHostReservation} from './recorder-storage.types'
+import {frameworkBindingSchema} from './framework-version.types'
 
 const identity = z.string().min(1).max(240)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
@@ -16,21 +17,29 @@ export type ExclusiveResourceDependency = z.infer<typeof exclusiveResourceDepend
 /** Existing durable operator dispatch receipt, projected only by its current controller. */
 export const localResourceDispatchSchema = z.object({requestId: identity, inputSha256: hash, definitionSha256: hash}).strict()
 export const exclusiveResourceOwnerSchema = z.object({id: identity, kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer'])}).strict()
+export const backendPrerequisiteIntentSchema = z.object({kind: z.literal('backend-connectivity'), jobId: identity,
+  targetInputSha256: hash, resourceId: identity, binding: frameworkBindingSchema}).strict()
 export const exclusiveResourceIntentSchema = z.object({operationId: identity, hostId: identity, laneId: identity,
   controller,
   owner: exclusiveResourceOwnerSchema, inputSha256: hash,
   localDispatch: localResourceDispatchSchema.optional(),
+  prerequisite: backendPrerequisiteIntentSchema.optional(),
   resources: z.array(z.object({id: identity, capabilities: z.array(identity).max(30)}).strict()).min(1).max(9),
 }).strict().superRefine((value, context) => {
   if (new Set(value.resources.map(resource => resource.id)).size !== value.resources.length ||
     value.resources.some(resource => new Set(resource.capabilities).size !== resource.capabilities.length))
     context.addIssue({code: 'custom', message: 'Reservation intent resources and capabilities must be unique'})
+  if (value.prerequisite && (value.owner.kind !== 'boundary-cleanup' || value.localDispatch ||
+    value.inputSha256 !== value.prerequisite.targetInputSha256 || value.resources.length !== 1 ||
+    value.resources[0]!.id !== value.prerequisite.resourceId || value.resources[0]!.capabilities.length !== 1 ||
+    value.resources[0]!.capabilities[0] !== 'backend-connectivity'))
+    context.addIssue({code: 'custom', message: 'Backend prerequisite requires one phone check and its original target input'})
 })
 export type ExclusiveResourceIntent = z.infer<typeof exclusiveResourceIntentSchema>
 /** One immutable candidate on the existing request, including a deliberate empty dependency selection. */
 export const fleetResourceAdmissionSchema = z.object({intent: exclusiveResourceIntentSchema,
   dependencies: z.array(exclusiveResourceDependencySchema).max(30)}).strict().superRefine((value, context) => {
-  if (value.intent.owner.kind !== 'run' || value.intent.operationId !== `run:${value.intent.owner.id}` ||
+  if (value.intent.prerequisite || value.intent.owner.kind !== 'run' || value.intent.operationId !== `run:${value.intent.owner.id}` ||
     new Set(value.dependencies.map(dependency => dependency.resourceId)).size !== value.dependencies.length ||
     new Set(value.dependencies.map(dependency => dependency.authorityHostId)).size > 1)
     context.addIssue({code: 'custom', message: 'Fleet admission requires one original run and canonical resource authority'})
@@ -46,13 +55,16 @@ export const exclusiveHostReservationSchema = z.object({kind: z.literal('exclusi
   controllerIncarnation: identity, controllerGeneration: z.number().int().positive().safe(),
   borrowerSequence: z.number().int().nonnegative().safe(), reservedAt: z.string().datetime(),
   origin: z.object({kind: z.literal('fleet'), fleetInputSha256: hash}).strict().optional(),
-}).strict()
+  prerequisite: backendPrerequisiteIntentSchema.optional(),
+}).strict().refine(value => !value.prerequisite || !value.origin && value.owner.kind === 'boundary-cleanup' &&
+  value.prerequisite.resourceId === value.resourceId && value.prerequisite.targetInputSha256 === value.inputSha256 &&
+  value.authorityHostId === value.borrowerHostId, 'Prerequisite claim requires its original phone resource and host authority')
 export type ExclusiveHostReservation = z.infer<typeof exclusiveHostReservationSchema>
 export const fleetExclusiveReservationSchema = z.object({origin: z.object({kind: z.literal('fleet'), fleetInputSha256: hash}).strict(),
   intent: exclusiveResourceIntentSchema, intentSha256: hash, claims: z.array(exclusiveHostReservationSchema).min(1).max(30),
 }).strict().superRefine((value, context) => {
-  if (value.intent.inputSha256 !== value.origin.fleetInputSha256 || value.intent.owner.kind !== 'run' ||
-    value.intent.operationId !== `run:${value.intent.owner.id}` || value.claims.some(claim => !claim.origin ||
+  if (value.intent.prerequisite || value.intent.inputSha256 !== value.origin.fleetInputSha256 || value.intent.owner.kind !== 'run' ||
+    value.intent.operationId !== `run:${value.intent.owner.id}` || value.claims.some(claim => claim.prerequisite || !claim.origin ||
       claim.origin.fleetInputSha256 !== value.origin.fleetInputSha256 || claim.inputSha256 !== value.origin.fleetInputSha256 ||
       claim.intentSha256 !== value.intentSha256 || claim.operationId !== value.intent.operationId || claim.borrowerHostId !== value.intent.hostId ||
       claim.laneId !== value.intent.laneId || claim.owner.id !== value.intent.owner.id || claim.owner.kind !== value.intent.owner.kind ||
@@ -81,22 +93,28 @@ export type HostResourceReservation = z.infer<typeof hostResourceReservationsSch
 export const isExclusiveHostReservation = (value: HostResourceReservation): value is ExclusiveHostReservation => 'kind' in value
 
 /** Return proof is emitted only by the existing successful local release transaction. */
+const normalLaneReleaseSchema = z.object({eventId: identity, owner: exclusiveResourceOwnerSchema.extend({generation: z.number().int().positive().safe()}),
+  releasedAt: z.string().datetime(),
+  lineage: z.array(exclusiveResourceOwnerSchema.extend({generation: z.number().int().positive().safe()})).min(1).max(100),
+  neverStarted: z.object({requestId: identity, reason: z.literal('cancelled-before-allocation')}).strict().optional(),
+}).strict()
+export const resourceCheckReleaseSchema = z.object({kind: z.literal('resource-check'), operationId: identity,
+  subjectGeneration: z.number().int().nonnegative().safe(), releasedAt: z.string().datetime({offset: true}), eventId: identity}).strict()
 export const exclusiveResourceReturnSchema = z.object({claimId: z.string().uuid(), authorityHostId: identity,
   resourceId: identity, intentSha256: hash, inputSha256: hash, originalOwner: exclusiveResourceOwnerSchema,
-  release: z.object({eventId: identity, owner: exclusiveResourceOwnerSchema.extend({generation: z.number().int().positive().safe()}),
-    releasedAt: z.string().datetime(),
-    lineage: z.array(exclusiveResourceOwnerSchema.extend({generation: z.number().int().positive().safe()})).min(1).max(100),
-    neverStarted: z.object({requestId: identity, reason: z.literal('cancelled-before-allocation')}).strict().optional(),
-  }).strict(),
+  release: z.union([normalLaneReleaseSchema, resourceCheckReleaseSchema]),
   controller: z.object({incarnation: identity, generation: z.number().int().positive().safe(),
     sequence: z.number().int().nonnegative().safe()}).strict(), laneId: identity,
 }).strict()
 export type ExclusiveResourceReturn = z.infer<typeof exclusiveResourceReturnSchema>
+const observedResourceReturnSchema = z.object({claimId: exclusiveResourceReturnSchema.shape.claimId,
+  authorityHostId: identity, resourceId: identity, intentSha256: hash, inputSha256: hash,
+  originalOwner: exclusiveResourceOwnerSchema, release: exclusiveResourceReturnSchema.shape.release, laneId: identity}).strict()
 
 /** Bounded projection of the existing local claim/normal-release journal, not another owner store. */
 export const resourceReservationObservationSchema = z.object({
   claims: z.array(exclusiveHostReservationSchema).max(100),
-  returns: z.array(exclusiveResourceReturnSchema.omit({controller: true})).max(100),
+  returns: z.array(observedResourceReturnSchema).max(100),
   dispatches: z.array(localResourceDispatchSchema).max(100).optional(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.claims.map(claim => claim.id)).size !== value.claims.length ||

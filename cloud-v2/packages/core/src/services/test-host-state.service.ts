@@ -18,6 +18,7 @@ import {
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {permissionObservationsSchema} from "../types/resource-permissions.types"
+import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
 import {TestRunError} from "./test-result-error"
 import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
@@ -30,12 +31,15 @@ const resource = z
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
+    backendConnectivity: backendConnectivityObservationSchema.optional(),
     storage: recorderStorageObservationSchema.optional(),
     idleContract: resourceIdleContractSchema.optional(),
     exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   })
   .strict().refine(value => !value.exclusiveDependencies || value.exclusiveDependencies.every(dependency =>
     value.capabilities?.includes(dependency.capability)), 'Exclusive dependencies must name an offered capability')
+  .refine(value => !value.backendConnectivity || value.kind === 'phone' && value.backendConnectivity.phoneResourceId === value.id &&
+    value.capabilities?.includes('backend-connectivity'), 'Backend observation must identify its installed phone capability')
 export const glassesInventorySchema = z
   .object({
     resourceId: frameworkIdentitySchema,
@@ -115,12 +119,16 @@ function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneS
 }
 const routingHostSchema = z.object({
   hostId: frameworkIdentitySchema,
+  incarnation: frameworkIdentitySchema.optional(),
+  incarnationGeneration: z.number().int().positive().safe().optional(),
   frameworkBinding: frameworkBindingSchema.optional(),
+  resourceLifecycle: resourceLifecycleSchema.optional(),
   lanes: z.array(routingLaneSchema).max(100),
 }).strict().superRefine(validateHostLaneInventory)
 export type RoutingTestHostState = z.infer<typeof routingHostSchema> & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
 const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
