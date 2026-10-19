@@ -170,7 +170,9 @@ struct MentraLivePairingStateMachine {
             break
         }
         if let endedWindowId { values[Self.keyEndedWindowId] = endedWindowId }
-        if let verifiedWindowId { values[Self.keyVerifiedWindowId] = verifiedWindowId }
+        // Armed verification is not persisted, so a window counts as verified only once its
+        // verification has been used. After a restart the next OWNER_CHANGED advert re-arms it.
+        if !verificationArmed, let verifiedWindowId { values[Self.keyVerifiedWindowId] = verifiedWindowId }
         return values
     }
 
