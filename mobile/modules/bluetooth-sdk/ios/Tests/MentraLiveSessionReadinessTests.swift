@@ -143,6 +143,70 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         XCTAssertTrue(sdk.glassesStatus.fullyBooted)
     }
 
+    func testRepeatedGlassesReadyBurstRunsOneTrailingInit() async throws {
+        try await withBootedTransport { _, receive, versionRequests in
+            // Replies to the phone_ready messages the glasses buffered while booting.
+            for _ in 0 ..< 6 {
+                try receive(["type": "glasses_ready", "sid": "booted"])
+            }
+            XCTAssertEqual(versionRequests(), 1)
+
+            try await Task.sleep(nanoseconds: Self.pastRepeatedReadySettleNanoseconds)
+            XCTAssertEqual(versionRequests(), 2)
+            XCTAssertEqual(DeviceStore.shared.store.get("glasses", "fullyBooted") as? Bool, true)
+        }
+    }
+
+    func testCoalescedGlassesReadyInitStandsDownWhenTheSessionEnds() async throws {
+        try await withBootedTransport { transport, receive, versionRequests in
+            try receive(["type": "glasses_ready", "sid": "booted"])
+            transport.cleanup()
+
+            try await Task.sleep(nanoseconds: Self.pastRepeatedReadySettleNanoseconds)
+            XCTAssertEqual(versionRequests(), 1)
+        }
+    }
+
+    private static let pastRepeatedReadySettleNanoseconds =
+        UInt64((MentraLive.repeatedGlassesReadySettleSeconds + 0.5) * 1_000_000_000)
+
+    /// Runs `body` on a transport whose first glasses_ready (sid "booted") already ran the SOC init.
+    private func withBootedTransport(
+        _ body: (
+            SessionReadinessTransport,
+            ([String: Any]) throws -> Void,
+            () -> Int
+        ) async throws -> Void
+    ) async throws {
+        let store = DeviceStore.shared.store
+        let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
+        let previous = DeviceManager.shared.sgc
+        let transport = SessionReadinessTransport()
+        DeviceManager.shared.sgc = transport
+        defer {
+            transport.cleanup()
+            DeviceManager.shared.sgc = previous
+            for (category, values) in saved {
+                for key in store.getCategory(category).keys where values[key] == nil {
+                    store.remove(category, key)
+                }
+                for (key, value) in values {
+                    store.set(category, key, value)
+                }
+            }
+        }
+
+        func receive(_ value: [String: Any]) throws {
+            try transport.processReceivedData(JSONSerialization.data(withJSONObject: value))
+        }
+        func versionRequests() -> Int {
+            transport.commands.filter { $0["type"] as? String == "request_version" }.count
+        }
+        try receive(["type": "glasses_ready", "sid": "booted"])
+        XCTAssertEqual(versionRequests(), 1)
+        try await body(transport, receive, versionRequests)
+    }
+
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {
         let store = DeviceStore.shared.store
         let saved = store.getCategory("glasses")

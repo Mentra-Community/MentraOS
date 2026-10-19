@@ -456,6 +456,9 @@ class MentraLive : SGCManager() {
         // and the per-session cap on automatic retries (see sendWireHandshake).
         private const val WIRE_HANDSHAKE_RETRY_GRACE_MS = 5000L
         private const val WIRE_HANDSHAKE_MAX_ATTEMPTS = 3
+        // Quiet period after the last repeated glasses_ready before the coalesced SOC init runs.
+        // Buffered replies arrive a few hundred ms apart, so one second spans a whole burst.
+        private const val REPEATED_GLASSES_READY_SETTLE_MS = 1000L
         private const val BATTERY_REQUEST_EVERY_N_HEARTBEATS = 10 // Every 10 heartbeats (5 minutes)
         private const val RSSI_READ_INTERVAL_MS = 10000L // 10 seconds
 
@@ -566,6 +569,10 @@ class MentraLive : SGCManager() {
     // the physical connection (never on heartbeat readiness flaps), so a first-seen sid
     // after an upgrade OTA is always detected as a restart.
     private var readinessCompletedThisBleSession = false
+    // `sid` of the last glasses_ready handled on this BLE session (null for pre-sid glasses).
+    // Only meaningful while readinessCompletedThisBleSession is true.
+    private var glassesReadySessionId: String? = null
+    private var repeatedGlassesReadyInitRunnable: Runnable? = null
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -4612,6 +4619,13 @@ class MentraLive : SGCManager() {
                     Bridge.log("LIVE: Ignoring stale glasses_ready during pairing yield")
                     return
                 }
+                val sid = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                // The glasses answer every phone_ready they receive, including the ones the
+                // readiness loop sent while they booted, so one boot can deliver a burst of
+                // glasses_ready for the same process. Every reply still resets the wire epoch
+                // below; only the SOC init is coalesced (scheduleRepeatedGlassesReadyInit).
+                val repeatsReadyGlassesSession =
+                        readinessCompletedThisBleSession && glassesReady && sid == glassesReadySessionId
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
                 pairingYieldAwaitingReclaim = false
                 pairingYieldActive = false
@@ -4633,7 +4647,8 @@ class MentraLive : SGCManager() {
                 // Record the session id BEFORE marking ready: an unsolicited glasses_ready
                 // already runs this full remote-reset flow, so recording (not re-triggering)
                 // is correct here; version_info detection covers the restart case.
-                glassesSessionId = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                glassesSessionId = sid
+                glassesReadySessionId = sid
                 streamControlVersion = json.optInt("streamControlVersion", 0)
                 Bridge.sendTypedMessage(
                         "wifi_protocol_session_ready",
@@ -4645,147 +4660,12 @@ class MentraLive : SGCManager() {
                     "streamControlVersion" to streamControlVersion,
                 ))
 
-                // Set the ready flag to stop any future readiness checks
-                glassesReady = true
-                glassesReadyReceived = true
-                // Match iOS MentraLive.handleGlassesReady: BLE/SOC ready is enough for
-                // fullyBooted + CONNECTED. CTKD Classic bonding continues in the background
-                // for SCO/A2DP and must not gate the pairing success UI (~9s on some phones).
-
-                // Stop the readiness check loop since we got confirmation
-                stopReadinessCheckLoop()
-                advertiseFilePayloadCapabilityToBes()
-
-                // Try to open the L2CAP CoC fast path for file transfers. No-op when the
-                // firmware doesn't support it — GATT notifications remain the default path.
-                try {
-                    openL2capFileChannel()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: openL2capFileChannel threw: " + t)
-                }
-
-                // Send BLE MTU config to glasses so they can adjust file packet sizes.
-            // Use the minimum of negotiated MTU and BES2700's datapath limit (509).
-                val effectiveMtu = Math.min(currentMtu, BES2700_MTU_LIMIT)
-                Bridge.log(
-                        "LIVE: 📦 Sending BLE MTU config: negotiated=" +
-                                currentMtu +
-                                ", BES2700 limit=" +
-                                BES2700_MTU_LIMIT +
-                                ", effective=" +
-                                effectiveMtu
-                )
-                try {
-                    sendBleMtuConfig(effectiveMtu)
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: sendBleMtuConfig threw: " + t)
-                }
-
-                // Now we can perform all SOC-dependent initialization
-                Bridge.log("LIVE: 🔄 Requesting battery and WiFi status from glasses")
-                try {
-                    requestBatteryStatus()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: requestBatteryStatus threw: " + t)
-                }
-                try {
-                    requestWifiStatus()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: requestWifiStatus threw: " + t)
-                }
-
-                // Request version info from ASG client
-                Bridge.log("LIVE: 🔄 Requesting version info from ASG client")
-                try {
-                    val versionRequest = JSONObject()
-                    versionRequest.put("type", "request_version")
-                    sendJson(versionRequest)
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: request_version threw: " + t)
-                }
-
-                Bridge.log("LIVE: 🔄 Sending coreToken to ASG client")
-                try {
-                    sendCoreTokenToAsgClient()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t)
-                }
-
-                // Send stored user email for crash reporting
-                try {
-                    sendStoredUserEmailToAsgClient()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: sendStoredUserEmailToAsgClient threw: " + t)
-                }
-
-                // startDebugVideoCommandLoop();
-
-                // Start the heartbeat mechanism now that glasses are ready
-                try {
-                    startHeartbeat()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: startHeartbeat threw: " + t)
-                }
-
-                // Start the micbeat mechanism now that glasses are ready
-                // startMicBeat();
-
-                // Send user settings to glasses
-                try {
-                    sendUserSettings()
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: sendUserSettings threw: " + t)
-                }
-
-                // Claim RGB LED control authority
-                // DISABLED: MentraLive is not supposed to send this command
-                // sendRgbLedControlAuthority(true);
-
-                // Initialize LC3 audio logging now that glasses are ready
-                try {
-                    initializeLc3Logging()
-                    Bridge.log("LIVE: ✅ LC3 audio logging initialized for device")
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: initializeLc3Logging threw: " + t)
-                }
-
-                // Restore mic state if it was enabled before reconnect
-                try {
-                    if (micIntentEnabled) {
-                        if (BLOCK_AUDIO_DUPLEX &&
-                                        phoneAudioMonitor != null &&
-                                        phoneAudioMonitor!!.isPlaying()
-                        ) {
-                            micSuspendedForAudio = true
-                            Bridge.log(
-                                    "LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending"
-                            )
-                        } else {
-                            micSuspendedForAudio = false
-                            Bridge.log("LIVE: 🎤 Restoring mic state after reconnect")
-                            startMicBeat()
-                        }
-                    }
-                } catch (t: Throwable) {
-                    Bridge.log("LIVE: ⚠️ glasses_ready: mic restore threw: " + t)
-                }
-
-                // Pairing UI / DeviceManager.handleDeviceReady gate on fullyBooted.
-                // Do not wait for CTKD here — iOS already marks ready on glasses_ready alone.
-                endPairingTiming(
-                        "fully_connected",
-                        "via=glasses_ready audioConnected=$audioConnected queueSize=${sendQueue.size}"
-                )
-                DeviceStore.apply("glasses", "fullyBooted", true)
-                updateConnectionState(ConnTypes.CONNECTED)
-                if (!audioConnected) {
-                    Bridge.log(
-                            "LIVE: Audio: CTKD Classic bonding still in progress (pairing not gated)"
-                    )
-                    markPairingTiming(
-                            "waiting_ctkd_bond",
-                            "queueSize=${sendQueue.size}"
-                    )
+                if (repeatsReadyGlassesSession) {
+                    scheduleRepeatedGlassesReadyInit()
+                } else {
+                    repeatedGlassesReadyInitRunnable?.let { handler.removeCallbacks(it) }
+                    repeatedGlassesReadyInitRunnable = null
+                    runGlassesReadyInit()
                 }
             }
             "keep_alive_ack" -> {
@@ -9079,6 +8959,179 @@ class MentraLive : SGCManager() {
     /** Negotiated K900 STRING length endianness for outbound frames to the glasses. */
     private fun k900LengthEndian(): K900LengthCodec.Endian =
             if (peerK900Le) K900LengthCodec.Endian.LE else K900LengthCodec.Endian.BE
+
+    /**
+     * Runs the SOC init once for a burst of repeated glasses_ready from an already initialized
+     * glasses process, after the burst settles. A newer wire epoch (another repeat) or BLE
+     * session supersedes the scheduled run.
+     */
+    private fun scheduleRepeatedGlassesReadyInit() {
+        repeatedGlassesReadyInitRunnable?.let { handler.removeCallbacks(it) }
+        val scheduledWireGeneration = wireSessionGeneration
+        val scheduledBleGeneration = bleSessionGeneration.get()
+        val runnable = Runnable {
+            repeatedGlassesReadyInitRunnable = null
+            if (scheduledWireGeneration == wireSessionGeneration &&
+                            scheduledBleGeneration == bleSessionGeneration.get()
+            ) {
+                runGlassesReadyInit()
+            }
+        }
+        repeatedGlassesReadyInitRunnable = runnable
+        Bridge.log(
+                "LIVE: Repeated glasses_ready for initialized glasses session " +
+                        (glassesReadySessionId ?: "<pre-sid build>") +
+                        " - coalescing SOC init (" +
+                        REPEATED_GLASSES_READY_SETTLE_MS +
+                        "ms settle)"
+        )
+        handler.postDelayed(runnable, REPEATED_GLASSES_READY_SETTLE_MS)
+    }
+
+    private fun runGlassesReadyInit() {
+        // Set the ready flag to stop any future readiness checks
+        glassesReady = true
+        glassesReadyReceived = true
+        // Match iOS MentraLive.handleGlassesReady: BLE/SOC ready is enough for
+        // fullyBooted + CONNECTED. CTKD Classic bonding continues in the background
+        // for SCO/A2DP and must not gate the pairing success UI (~9s on some phones).
+
+        // Stop the readiness check loop since we got confirmation
+        stopReadinessCheckLoop()
+        advertiseFilePayloadCapabilityToBes()
+
+        // Try to open the L2CAP CoC fast path for file transfers. No-op when the
+        // firmware doesn't support it — GATT notifications remain the default path.
+        try {
+            openL2capFileChannel()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: openL2capFileChannel threw: " + t)
+        }
+
+        // Send BLE MTU config to glasses so they can adjust file packet sizes.
+        // Use the minimum of negotiated MTU and BES2700's datapath limit (509).
+        val effectiveMtu = Math.min(currentMtu, BES2700_MTU_LIMIT)
+        Bridge.log(
+                "LIVE: 📦 Sending BLE MTU config: negotiated=" +
+                        currentMtu +
+                        ", BES2700 limit=" +
+                        BES2700_MTU_LIMIT +
+                        ", effective=" +
+                        effectiveMtu
+        )
+        try {
+            sendBleMtuConfig(effectiveMtu)
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: sendBleMtuConfig threw: " + t)
+        }
+
+        // Now we can perform all SOC-dependent initialization
+        Bridge.log("LIVE: 🔄 Requesting battery and WiFi status from glasses")
+        try {
+            requestBatteryStatus()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: requestBatteryStatus threw: " + t)
+        }
+        try {
+            requestWifiStatus()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: requestWifiStatus threw: " + t)
+        }
+
+        // Request version info from ASG client
+        Bridge.log("LIVE: 🔄 Requesting version info from ASG client")
+        try {
+            val versionRequest = JSONObject()
+            versionRequest.put("type", "request_version")
+            sendJson(versionRequest)
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: request_version threw: " + t)
+        }
+
+        Bridge.log("LIVE: 🔄 Sending coreToken to ASG client")
+        try {
+            sendCoreTokenToAsgClient()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t)
+        }
+
+        // Send stored user email for crash reporting
+        try {
+            sendStoredUserEmailToAsgClient()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: sendStoredUserEmailToAsgClient threw: " + t)
+        }
+
+        // startDebugVideoCommandLoop();
+
+        // Start the heartbeat mechanism now that glasses are ready
+        try {
+            startHeartbeat()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: startHeartbeat threw: " + t)
+        }
+
+        // Start the micbeat mechanism now that glasses are ready
+        // startMicBeat();
+
+        // Send user settings to glasses
+        try {
+            sendUserSettings()
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: sendUserSettings threw: " + t)
+        }
+
+        // Claim RGB LED control authority
+        // DISABLED: MentraLive is not supposed to send this command
+        // sendRgbLedControlAuthority(true);
+
+        // Initialize LC3 audio logging now that glasses are ready
+        try {
+            initializeLc3Logging()
+            Bridge.log("LIVE: ✅ LC3 audio logging initialized for device")
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: initializeLc3Logging threw: " + t)
+        }
+
+        // Restore mic state if it was enabled before reconnect
+        try {
+            if (micIntentEnabled) {
+                if (BLOCK_AUDIO_DUPLEX &&
+                                phoneAudioMonitor != null &&
+                                phoneAudioMonitor!!.isPlaying()
+                ) {
+                    micSuspendedForAudio = true
+                    Bridge.log(
+                            "LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending"
+                    )
+                } else {
+                    micSuspendedForAudio = false
+                    Bridge.log("LIVE: 🎤 Restoring mic state after reconnect")
+                    startMicBeat()
+                }
+            }
+        } catch (t: Throwable) {
+            Bridge.log("LIVE: ⚠️ glasses_ready: mic restore threw: " + t)
+        }
+
+        // Pairing UI / DeviceManager.handleDeviceReady gate on fullyBooted.
+        // Do not wait for CTKD here — iOS already marks ready on glasses_ready alone.
+        endPairingTiming(
+                "fully_connected",
+                "via=glasses_ready audioConnected=$audioConnected queueSize=${sendQueue.size}"
+        )
+        DeviceStore.apply("glasses", "fullyBooted", true)
+        updateConnectionState(ConnTypes.CONNECTED)
+        if (!audioConnected) {
+            Bridge.log(
+                    "LIVE: Audio: CTKD Classic bonding still in progress (pairing not gated)"
+            )
+            markPairingTiming(
+                    "waiting_ctkd_bond",
+                    "queueSize=${sendQueue.size}"
+            )
+        }
+    }
 
     /**
      * Parse a {@code wire_caps} object from a version_info/glasses_ready message and update the

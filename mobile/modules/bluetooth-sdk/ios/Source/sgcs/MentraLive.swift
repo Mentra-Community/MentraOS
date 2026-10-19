@@ -1603,6 +1603,13 @@ class MentraLive: NSObject, SGCManager {
     // the physical connection — so a first-seen sid after an upgrade OTA cannot be
     // mistaken for a fresh pairing just because a not-ready heartbeat slipped in first.
     private var readinessCompletedThisBleSession = false
+    /// `sid` of the last glasses_ready handled on this BLE session (nil for pre-sid glasses).
+    /// Only meaningful while readinessCompletedThisBleSession is true.
+    private var glassesReadySessionId: String?
+    private var repeatedGlassesReadyInitWorkItem: DispatchWorkItem?
+    /// Quiet period after the last repeated glasses_ready before the coalesced SOC init runs.
+    /// Buffered replies arrive a few hundred ms apart, so one second spans a whole burst.
+    static let repeatedGlassesReadySettleSeconds: TimeInterval = 1
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -2193,6 +2200,17 @@ class MentraLive: NSObject, SGCManager {
             return commands.removeFirst()
         }
 
+        /// Discards the run of writes from earlier wire-session generations at the head of
+        /// the queue in one pass and dequeues the first current one. Stale writes are never
+        /// sent, so they must not each cost a drain tick: a burst of epoch resets would
+        /// otherwise park every current write behind seconds of dead entries.
+        func dequeue(currentGeneration: Int) -> (command: PendingMessage?, staleIds: [String]) {
+            let firstCurrent = commands.firstIndex { $0.generation == currentGeneration } ?? commands.endIndex
+            let staleIds = commands[..<firstCurrent].map(\.id)
+            commands.removeSubrange(..<firstCurrent)
+            return (commands.isEmpty ? nil : commands.removeFirst(), staleIds)
+        }
+
         func removeAll() {
             commands.removeAll()
         }
@@ -2203,19 +2221,23 @@ class MentraLive: NSObject, SGCManager {
             guard let self else { return }
             while true {
                 let pendingIsNil = await MainActor.run { self.pending == nil }
-                if pendingIsNil {
-                    if let command = await self.commandQueue.dequeue() {
-                        let currentGeneration = await MainActor.run { self.wireSessionGeneration }
-                        if command.generation != currentGeneration {
-                            Bridge.log("LIVE: Dropping stale queued write from a previous session epoch (id: \(command.id))")
-                        } else {
-                            await self.processSendQueue(command)
-                        }
-                    }
+                if pendingIsNil, let command = await self.dequeueCurrentGenerationWrite() {
+                    await self.processSendQueue(command)
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
             }
         }
+    }
+
+    private func dequeueCurrentGenerationWrite() -> PendingMessage? {
+        let next = commandQueue.dequeue(currentGeneration: wireSessionGeneration)
+        if !next.staleIds.isEmpty {
+            Bridge.log(
+                "LIVE: Dropping \(next.staleIds.count) stale queued write(s) from a previous session epoch " +
+                    "(ids: \(next.staleIds.joined(separator: ", ")))"
+            )
+        }
+        return next.command
     }
 
     private func processSendQueue(_ message: PendingMessage) async {
@@ -2802,6 +2824,13 @@ class MentraLive: NSObject, SGCManager {
                 Bridge.log("LIVE: Ignoring stale glasses_ready during pairing yield")
                 return
             }
+            let sid = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            // The glasses answer every phone_ready they receive, including the ones the
+            // readiness loop sent while they booted, so one boot can deliver a burst of
+            // glasses_ready for the same process. Every reply still resets the wire epoch
+            // below; only the SOC init is coalesced (scheduleRepeatedGlassesReadyInit).
+            let repeatsReadyGlassesSession = readinessCompletedThisBleSession && fullyBooted &&
+                sid == glassesReadySessionId
             // glasses_ready is a REMOTE wire-session reset: the glasses ran
             // onTransportReset() before sending it, so their side is back on legacy
             // framing regardless of what this side negotiated earlier. Start a fresh
@@ -2817,7 +2846,8 @@ class MentraLive: NSObject, SGCManager {
             // Record the session id BEFORE marking ready: an unsolicited glasses_ready
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
-            glassesSessionId = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            glassesSessionId = sid
+            glassesReadySessionId = sid
             streamControlVersion = json["streamControlVersion"] as? Int ?? 0
             Bridge.sendTypedMessage(
                 "wifi_protocol_session_ready",
@@ -2828,7 +2858,13 @@ class MentraLive: NSObject, SGCManager {
                 "sid": json["sid"] as? String ?? "",
                 "streamControlVersion": streamControlVersion,
             ])
-            handleGlassesReady()
+            if repeatsReadyGlassesSession {
+                scheduleRepeatedGlassesReadyInit()
+            } else {
+                repeatedGlassesReadyInitWorkItem?.cancel()
+                repeatedGlassesReadyInitWorkItem = nil
+                handleGlassesReady()
+            }
 
         case "battery_status":
             // Percent only (the glasses send it as "percent"; the old "level" read never
@@ -3943,6 +3979,27 @@ class MentraLive: NSObject, SGCManager {
     }
 
     // MARK: - Message Handlers
+
+    /// Runs the SOC init once for a burst of repeated glasses_ready from an already
+    /// initialized glasses process, after the burst settles. It still has to run: each
+    /// reply advanced the wire epoch, which drops the unsent writes of the previous init.
+    /// A newer epoch (another repeat or a BLE disconnect) supersedes the scheduled run.
+    private func scheduleRepeatedGlassesReadyInit() {
+        repeatedGlassesReadyInitWorkItem?.cancel()
+        let scheduledGeneration = wireSessionGeneration
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.repeatedGlassesReadyInitWorkItem = nil
+            guard scheduledGeneration == self.wireSessionGeneration else { return }
+            self.handleGlassesReady()
+        }
+        repeatedGlassesReadyInitWorkItem = work
+        Bridge.log(
+            "LIVE: Repeated glasses_ready for initialized glasses session \(glassesReadySessionId ?? "<pre-sid build>") " +
+                "- coalescing SOC init (\(Self.repeatedGlassesReadySettleSeconds)s settle)"
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.repeatedGlassesReadySettleSeconds, execute: work)
+    }
 
     private func handleGlassesReady() {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
