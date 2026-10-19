@@ -78,6 +78,8 @@ test('contradictory phone provenance refuses its images while independent record
   expect(recordedFailureScreens(run, [row, sibling])).toEqual(desktopOnly);
   const legacy = {command: row.command, state: row.state, phase: row.phase, actionId: row.actionId, error: row.error, desktopAssetIds: ['foreign']};
   expect(recordedFailureScreens(run, [row, legacy])[0]?.desktopImages).toBeUndefined();
+  const earlier = {...failure, message: 'Earlier failure without recorded capture'};
+  expect(recordedFailureScreens({...run, result: {...run.result, failures: [earlier, failure]}}, [row])).toEqual([]);
   expect(recordedFailureScreens({...run, build: {...run.build, archive: {sha256: '8'.repeat(64)}}}, [row])).toEqual(desktopOnly);
 });
 

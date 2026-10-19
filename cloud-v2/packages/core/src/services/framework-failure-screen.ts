@@ -84,7 +84,10 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
       const app = new Set(same.flatMap(ids => [...ids?.app ?? []])), desktop = new Set(same.flatMap(ids => [...ids?.desktop ?? []]));
       const values = new Set(run.result.failures.filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
         .flatMap(failure => [...provenance.get(key(failure.phase, failure.actionId, failure.message)) ?? []]));
-      const recorded: FailureImageProvenance | undefined = values.size === 1 && !values.has('') ? JSON.parse([...values][0]!) : undefined;
+      const first = run.result.failures.find(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)!;
+      const primary = provenance.get(key(first.phase, first.actionId, first.message));
+      const recorded: FailureImageProvenance | undefined = primary?.size === 1 && values.size === 1 && !values.has('')
+        ? JSON.parse([...values][0]!) : undefined;
       // Metadata cannot override conflicting associations from another terminal row.
       const display = recorded && {...recorded};
       if (display?.desktopImages && (desktop.size !== display.desktopImages.length
