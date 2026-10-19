@@ -1603,13 +1603,11 @@ class MentraLive: NSObject, SGCManager {
     // the physical connection — so a first-seen sid after an upgrade OTA cannot be
     // mistaken for a fresh pairing just because a not-ready heartbeat slipped in first.
     private var readinessCompletedThisBleSession = false
-    /// `sid` of the last glasses_ready handled on this BLE session (nil for pre-sid glasses).
-    /// Only meaningful while readinessCompletedThisBleSession is true.
-    private var glassesReadySessionId: String?
-    private var repeatedGlassesReadyInitWorkItem: DispatchWorkItem?
-    /// Quiet period after the last repeated glasses_ready before the coalesced SOC init runs.
-    /// Buffered replies arrive a few hundred ms apart, so one second spans a whole burst.
-    static let repeatedGlassesReadySettleSeconds: TimeInterval = 1
+    /// Readiness exchange the phone is waiting on. Every phone_ready carries it until the
+    /// matching glasses_ready arrives, so retries and the copies the BES buffers while the
+    /// glasses boot are one exchange: the glasses reset their transport once for it and answer
+    /// later copies without resetting. Cleared with the wire epoch.
+    private var pendingReadyId: String?
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -2825,12 +2823,12 @@ class MentraLive: NSObject, SGCManager {
                 return
             }
             let sid = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            // The glasses answer every phone_ready they receive, including the ones the
-            // readiness loop sent while they booted, so one boot can deliver a burst of
-            // glasses_ready for the same process. Every reply still resets the wire epoch
-            // below; only the SOC init is coalesced (scheduleRepeatedGlassesReadyInit).
-            // Not keyed on fullyBooted: stale sr_hrt ready=0 heartbeats can clear it mid-burst.
-            let repeatsReadyGlassesSession = readinessCompletedThisBleSession && sid == glassesReadySessionId
+            if let readyId = (json["readyId"] as? String).flatMap({ $0.isEmpty ? nil : $0 }),
+               isRepeatedGlassesReady(readyId: readyId, sid: sid)
+            {
+                Bridge.log("LIVE: Ignoring repeated glasses_ready for readiness exchange \(readyId) - the glasses did not reset for it")
+                return
+            }
             // glasses_ready is a REMOTE wire-session reset: the glasses ran
             // onTransportReset() before sending it, so their side is back on legacy
             // framing regardless of what this side negotiated earlier. Start a fresh
@@ -2847,7 +2845,6 @@ class MentraLive: NSObject, SGCManager {
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
             glassesSessionId = sid
-            glassesReadySessionId = sid
             streamControlVersion = json["streamControlVersion"] as? Int ?? 0
             Bridge.sendTypedMessage(
                 "wifi_protocol_session_ready",
@@ -2858,13 +2855,7 @@ class MentraLive: NSObject, SGCManager {
                 "sid": json["sid"] as? String ?? "",
                 "streamControlVersion": streamControlVersion,
             ])
-            if repeatsReadyGlassesSession {
-                scheduleRepeatedGlassesReadyInit()
-            } else {
-                repeatedGlassesReadyInitWorkItem?.cancel()
-                repeatedGlassesReadyInitWorkItem = nil
-                handleGlassesReady()
-            }
+            handleGlassesReady()
 
         case "battery_status":
             // Percent only (the glasses send it as "percent"; the old "level" read never
@@ -3424,12 +3415,7 @@ class MentraLive: NSObject, SGCManager {
                     // This prevents re-initialization on every heartbeat after initial connection
                     // The ready flag is reset on disconnect/reconnect, so this won't prevent proper reconnection
                     if !fullyBooted {
-                        let readyMsg: [String: Any] = [
-                            "type": "phone_ready",
-                            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
-                        ]
-                        // Send it through our data channel
-                        sendJson(readyMsg, wakeUp: true)
+                        sendPhoneReady(reason: "SOC ready")
                     }
                 }
             }
@@ -3980,25 +3966,15 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Message Handlers
 
-    /// Runs the SOC init once for a burst of repeated glasses_ready from an already
-    /// initialized glasses process, after the burst settles. It still has to run: each
-    /// reply advanced the wire epoch, which drops the unsent writes of the previous init.
-    /// A newer epoch (another repeat or a BLE disconnect) supersedes the scheduled run.
-    private func scheduleRepeatedGlassesReadyInit() {
-        repeatedGlassesReadyInitWorkItem?.cancel()
-        let scheduledGeneration = wireSessionGeneration
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.repeatedGlassesReadyInitWorkItem = nil
-            guard scheduledGeneration == self.wireSessionGeneration else { return }
-            self.handleGlassesReady()
+    /// A glasses_ready that echoes a readyId answers a phone_ready exchange. Only the answer to
+    /// the exchange the phone is waiting on follows a transport reset; when none is pending,
+    /// another answer from the glasses process this link is already ready with is a repeat. A
+    /// different process (an asg restart) did reset, so its answer is always handled.
+    private func isRepeatedGlassesReady(readyId: String, sid: String?) -> Bool {
+        if let pendingReadyId {
+            return readyId != pendingReadyId
         }
-        repeatedGlassesReadyInitWorkItem = work
-        Bridge.log(
-            "LIVE: Repeated glasses_ready for initialized glasses session \(glassesReadySessionId ?? "<pre-sid build>") " +
-                "- coalescing SOC init (\(Self.repeatedGlassesReadySettleSeconds)s settle)"
-        )
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.repeatedGlassesReadySettleSeconds, execute: work)
+        return readinessCompletedThisBleSession && sid == glassesSessionId
     }
 
     private func handleGlassesReady() {
@@ -5853,12 +5829,11 @@ class MentraLive: NSObject, SGCManager {
             )
             // requestReadyK900()
 
-            let readyMsg: [String: Any] = [
-                "type": "phone_ready",
-                "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
-            ]
-            // Send it through our data channel
-            sendJson(readyMsg, wakeUp: true)
+            // The timer fires on bluetoothQueue; the pending readiness exchange is main-actor state.
+            let check = self.readinessCheckCounter
+            DispatchQueue.main.async { [weak self] in
+                self?.sendPhoneReady(reason: "readiness check #\(check)")
+            }
         }
 
         readinessCheckDispatchTimer!.resume()
@@ -6221,6 +6196,7 @@ extension MentraLive {
         micTuningGeneration = 0
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
+        pendingReadyId = nil
     }
 
     /// ANCS notification IDs live for the BLE link, not the wire epoch. A
@@ -6233,10 +6209,15 @@ extension MentraLive {
 
     /// Sends phone_ready to (re)start the glasses-driven readiness flow.
     private func sendPhoneReady(reason: String) {
-        Bridge.log("LIVE: 📱 Sending phone_ready to glasses (\(reason)) - waiting for glasses_ready response")
+        let readyId = pendingReadyId ?? UUID().uuidString
+        pendingReadyId = readyId
+        Bridge.log(
+            "LIVE: 📱 Sending phone_ready to glasses (\(reason), exchange \(readyId)) - waiting for glasses_ready response"
+        )
         let readyMsg: [String: Any] = [
             "type": "phone_ready",
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+            "readyId": readyId,
         ]
         sendJson(readyMsg, wakeUp: true)
     }
