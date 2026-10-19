@@ -145,8 +145,12 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
 
     func testRepeatedGlassesReadyBurstRunsOneTrailingInit() async throws {
         try await withBootedTransport { _, receive, versionRequests in
-            // Replies to the phone_ready messages the glasses buffered while booting.
-            for _ in 0 ..< 6 {
+            // Replies to the phone_ready messages the glasses buffered while booting, with a
+            // stale not-ready heartbeat from the same dump in the middle of them.
+            for reply in 0 ..< 6 {
+                if reply == 2 {
+                    try receive(["C": "sr_hrt", "B": ["ready": 0]])
+                }
                 try receive(["type": "glasses_ready", "sid": "booted"])
             }
             XCTAssertEqual(versionRequests(), 1)
