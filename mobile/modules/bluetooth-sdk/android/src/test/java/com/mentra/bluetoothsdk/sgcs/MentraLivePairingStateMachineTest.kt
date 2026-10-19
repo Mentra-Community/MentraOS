@@ -266,6 +266,19 @@ class MentraLivePairingStateMachineTest {
     }
 
     @Test
+    fun anArmedVerificationIsReArmedAfterARestart() {
+        val machine = pausedMachine(windowId = 42)
+        machine.onTick(t0 + 150_000L)
+        machine.onAdvertisement(false, ownerChanged = true, generation = 42, nowMs = t0 + 151_000L)
+        assertTrue(machine.verificationArmed)
+        val restored = MentraLivePairingStateMachine()
+        restored.restore(machine.persisted(), device, t0 + 160_000L)
+        assertFalse(restored.verificationArmed)
+        restored.onAdvertisement(false, ownerChanged = true, generation = 42, nowMs = t0 + 161_000L)
+        assertTrue(restored.verificationArmed)
+    }
+
+    @Test
     fun anImplausibleRestoredDeadlineDoesNotPause() {
         val persisted = pausedMachine().persisted().toMutableMap()
         persisted[MentraLivePairingStateMachine.KEY_ENDS_AT_MS] = t0 + 10_000_000L
