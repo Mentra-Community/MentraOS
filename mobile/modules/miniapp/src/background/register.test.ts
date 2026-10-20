@@ -25,22 +25,27 @@ afterEach(() => {
   delete g.__hostError
 })
 
+/** The CONNECT_ACK the fake host sends, echoing the CONNECT's requestId as the Mentra App does. */
+function connectAck(hostFeatures?: Record<string, boolean>, requestId?: string): string {
+  const ack = {type: "miniapp_connect_ack", packageName: "com.test", userId: "", hostFeatures}
+  return JSON.stringify({payload: ack, requestId})
+}
+
 /**
  * Install a fake host that acks CONNECT; returns the payloads it received.
  * `ackConnect` decides per CONNECT whether the host answers it.
  */
 function fakeHost(
   hostFeatures?: Record<string, boolean>,
-  ackConnect: (payload: Record<string, unknown>) => boolean = () => true,
+  ackConnect: (payload: Record<string, unknown>, requestId?: string) => boolean = () => true,
 ) {
   const received: Array<Record<string, unknown>> = []
   g.__dispatch = (_iface, _method, argsJson) => {
     const [raw] = JSON.parse(argsJson) as [string]
     const {payload, requestId} = JSON.parse(raw) as {payload: Record<string, unknown>; requestId?: string}
     received.push(payload)
-    if (payload.type === "miniapp_connect" && ackConnect(payload)) {
-      const ack = {type: "miniapp_connect_ack", packageName: "com.test", userId: "", hostFeatures}
-      queueMicrotask(() => g.__mentraDeliverBridgeRaw?.(JSON.stringify({payload: ack, requestId})))
+    if (payload.type === "miniapp_connect" && ackConnect(payload, requestId)) {
+      queueMicrotask(() => g.__mentraDeliverBridgeRaw?.(connectAck(hostFeatures, requestId)))
     }
     return null
   }
@@ -120,6 +125,78 @@ test("a CONNECT_ACK timeout sends CONNECT again instead of reporting a crash, an
   ])
   expect(received.filter((payload) => payload.type === "miniapp_ready")).toEqual([
     {type: "miniapp_ready", sessionId: "s1"},
+  ])
+})
+
+test("the first CONNECT's late CONNECT_ACK, after the retry completed the handshake, neither emits ready nor sends READY again", async () => {
+  const reported = captureHostErrors()
+  // A host that answers the retried CONNECT, and the first one only after that.
+  let firstConnectId: string | undefined
+  const received = fakeHost({initReady: true}, (_payload, requestId) => {
+    if (firstConnectId !== undefined) return true
+    firstConnectId = requestId
+    return false
+  })
+  let readies = 0
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    registerMiniapp((session) => void session.on("ready", () => readies++), {
+      packageName: "com.test",
+      connectTimeoutMs: 20,
+    })
+    g.__mentraInitCallback?.("s1")
+    await settle(1_400)
+    expect(readies).toBe(1)
+
+    g.__mentraDeliverBridgeRaw?.(connectAck({initReady: true}, firstConnectId))
+    await settle()
+  } finally {
+    console.warn = warn
+  }
+  expect(reported).toEqual([])
+  expect(readies).toBe(1)
+  expect(connects(received)).toHaveLength(2)
+  expect(received.filter((payload) => payload.type === "miniapp_ready")).toEqual([
+    {type: "miniapp_ready", sessionId: "s1"},
+  ])
+})
+
+test("after the bridge drops, the next init's session completes its own handshake and reports READY", async () => {
+  const reported = captureHostErrors()
+  const received = fakeHost({initReady: true})
+  const host = g.__dispatch!
+  const readies: number[] = []
+  const sessions: MiniappSession[] = []
+  registerMiniapp(
+    (session) => {
+      const index = sessions.push(session) - 1
+      readies[index] = 0
+      session.on("ready", () => readies[index]++)
+    },
+    {packageName: "com.test"},
+  )
+  g.__mentraInitCallback?.("s1")
+  await settle()
+  expect(sessions[0].ready).toBe(true)
+
+  // The native bridge throws, which drops the first session's transport.
+  g.__dispatch = () => {
+    throw new Error("native bridge gone")
+  }
+  sessions[0].sendOneShot({type: "miniapp_display", items: []})
+  expect(sessions[0].ready).toBe(false)
+
+  g.__dispatch = host
+  g.__mentraInitCallback?.("s2")
+  await settle()
+  expect(reported).toEqual([])
+  expect(sessions[1].ready).toBe(true)
+  expect(readies).toEqual([1, 1])
+  expect(connects(received).map((payload) => payload.sessionId)).toEqual(["s1", "s2"])
+  expect(received.filter((payload) => payload.type === "miniapp_ready")).toEqual([
+    {type: "miniapp_ready", sessionId: "s1"},
+    {type: "miniapp_ready", sessionId: "s2"},
   ])
 })
 
