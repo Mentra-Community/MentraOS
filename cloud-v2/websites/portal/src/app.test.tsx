@@ -37,7 +37,7 @@ import { parseRoute } from "./lib/routes";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import type { InviteStorage } from "./lib/workspace-invite";
 import { accountBillingPart, accountNav } from "./pages/account-billing";
-import { billingPart } from "./pages/licenses";
+import { billingOffered, billingPart } from "./pages/licenses";
 import { isNoAccess, licensesPartShown, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
 
 // Synthetic data only. The query cache is seeded, so a server render never reaches the network.
@@ -731,6 +731,14 @@ const memberOfAcme = (licenses: LicenseView[] | undefined): Seed => ({
   licenses,
 });
 
+/** Acme as an Admin sees it (an Admin holds `workspace.billing.manage`), with `licenses` as Core lists them. */
+const adminOfAcme = (licenses: LicenseView[] | undefined): Seed => ({
+  ...TWO_WORKSPACES,
+  list: [listItem(ACME, "Acme Field Team", "admin"), listItem(NORTHWIND, "Northwind Pilot", "developer")],
+  details: [detail(ACME, "Acme Field Team", "admin"), detail(NORTHWIND, "Northwind Pilot", "developer")],
+  licenses,
+});
+
 const caps = (role: WorkspaceRole) => ({ capabilities: [...capabilitiesForRole(role)] });
 
 describe("Licenses & Billing in the sidebar", () => {
@@ -800,17 +808,51 @@ describe("the Licenses & Billing page", () => {
     expect(markup.indexOf('aria-label="Licenses"')).toBeLessThan(markup.indexOf('<section aria-label="Billing"'));
   });
 
-  test("with billing, a plain member sees their seats and the module, which decides for itself what they may do", () => {
-    const markup = renderAs(true, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
-    expect(markup).toContain("You hold a seat");
+  test("an Admin with billing sees the licenses and the billing module", () => {
+    const markup = renderAs(true, `/w/${ACME}/licenses`, adminOfAcme([LICENSE]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toContain("Licenses, seats and billing for Acme Field Team.");
+    expect(markup).toContain("Unassign priya@acme.test");
+    expect(markup).toContain(">Assign seat<");
     expect(markup).toContain('<section aria-label="Billing"');
+    expect(markup.indexOf('aria-label="Licenses"')).toBeLessThan(markup.indexOf('<section aria-label="Billing"'));
   });
 
-  test("the module is mounted with the workspace's scope, and only when billing is offered", () => {
-    const part = billingPart(meWith(true), ACME)!;
+  test("a Member with billing on sees their own seats and no billing module", () => {
+    const markup = renderAs(true, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toMatch(/aria-current="page"[^>]*>.*Licenses &amp; Billing/);
+    expect(markup).toContain("Licenses and seats for Acme Field Team.");
+    expect(markup).toContain("You hold a seat");
+    expect(markup).not.toContain("billing for");
+    expect(markup).not.toContain('aria-label="Billing"');
+    expect(markup).not.toContain("Loading Billing");
+    expect(markup).not.toContain("priya@acme.test");
+  });
+
+  test("a Member with billing on and no licenses has no Licenses & Billing item and no page", () => {
+    for (const path of [`/w/${ACME}/settings`, `/w/${ACME}/licenses`]) {
+      const markup = renderAs(true, path, memberOfAcme([]));
+      expect(markup).not.toContain("Licenses &amp; Billing");
+      expect(markup).not.toContain('aria-label="Licenses"');
+      expect(markup).not.toContain('aria-label="Billing"');
+      expect(hrefs(markup).some(href => href.endsWith("/licenses") || href === "/account/billing")).toBe(false);
+    }
+  });
+
+  test("the module is mounted with the workspace's scope, and only for a viewer who is offered billing and manages it", () => {
+    const admin = detail(ACME, "Acme Field Team", "admin");
+    const part = billingPart(meWith(true), ACME, admin)!;
     expect(part.type).toBe(PortalModuleHost);
     expect(part.props).toMatchObject({ module: "billing", me: meWith(true), scope: { kind: "workspace", workspaceId: ACME } });
-    expect(billingPart(meWith(false), ACME)).toBeNull();
+    expect(billingPart(meWith(true), ACME, detail(ACME, "Acme Field Team", "owner"))).not.toBeNull();
+    // Billing off, a role below Admin, or a workspace not yet loaded: nothing.
+    expect(billingPart(meWith(false), ACME, admin)).toBeNull();
+    for (const role of ["member", "developer"] as const) {
+      expect(billingPart(meWith(true), ACME, detail(ACME, "Acme Field Team", role))).toBeNull();
+      expect(billingOffered(meWith(true), detail(ACME, "Acme Field Team", role))).toBe(false);
+    }
+    expect(billingPart(meWith(true), ACME, undefined)).toBeNull();
   });
 
   test("a Private Cloud, with no billing and no licenses, has no Licenses & Billing item and no page", () => {

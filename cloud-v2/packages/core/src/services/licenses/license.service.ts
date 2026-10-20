@@ -366,12 +366,13 @@ export async function listWorkspaceLicenses(
   session: ClientSession | null = null,
 ): Promise<LicenseView[]> {
   if (!isId(workspaceId) || seatsOf === null) return []
-  const seats = await LicenseSeatModel.find(
-    seatsOf === "everyone" ? {workspaceId} : {workspaceId, membershipId: seatsOf},
-  )
-    .sort({assignedAt: 1, membershipId: 1})
-    .session(session)
-    .lean<LicenseSeatRow[]>()
+  // Sorted in process, not by the query: Cosmos DB's MongoDB API rejects a sort on a path with no index
+  // (see `startup.migrations.ts`), and a workspace's seats are few enough to order here.
+  const seats = (
+    await LicenseSeatModel.find(seatsOf === "everyone" ? {workspaceId} : {workspaceId, membershipId: seatsOf})
+      .session(session)
+      .lean<LicenseSeatRow[]>()
+  ).sort(bySeatAssignment)
   const licenseFilter =
     seatsOf === "everyone"
       ? ownerFilter({type: "workspace", workspaceId})!
@@ -385,6 +386,13 @@ export async function listWorkspaceLicenses(
         seats.filter((seat) => seat.licenseId === license._id),
       ),
     )
+}
+
+/** Seats in the order they were assigned, then by membership: the order a workspace's licenses list them in. */
+function bySeatAssignment(left: LicenseSeatRow, right: LicenseSeatRow): number {
+  const assignedDelta = left.assignedAt.getTime() - right.assignedAt.getTime()
+  if (assignedDelta !== 0) return assignedDelta
+  return left.membershipId < right.membershipId ? -1 : left.membershipId > right.membershipId ? 1 : 0
 }
 
 function ownerFilter(owner: LicenseOwner): Record<string, string> | null {

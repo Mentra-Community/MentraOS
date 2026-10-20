@@ -208,5 +208,5 @@ function Owner({ owner }: { owner: AdminLicenseOwner }) {
 /** A date as the admin reads it. UTC, so the paid-through day is the same wherever the admin is. */
 function formatDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { dateStyle: "medium", timeZone: "UTC" });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", { dateStyle: "medium", timeZone: "UTC" });
 }

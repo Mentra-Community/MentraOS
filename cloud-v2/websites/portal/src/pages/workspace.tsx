@@ -4,9 +4,10 @@
  * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
  * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
  * & Billing (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and
- * Licenses & Billing only where there is something to show: the person is offered billing, or the workspace
- * has licenses (a member sees their own seats). A Private Cloud has neither. Every request is still checked
- * by Core. A workspace that does not exist, or that the viewer may not see, is one "not found" page.
+ * Licenses & Billing only where there is something to show: the person manages billing, or the workspace
+ * has licenses (a member sees their own seats, never billing). A Private Cloud has neither. Every request is
+ * still checked by Core. A workspace that does not exist, or that the viewer may not see, is one "not found"
+ * page.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -37,7 +38,7 @@ import { safeLocalStorage, type PortalMe } from "@/lib/api";
 import { navigate, Redirect } from "@/lib/navigation";
 import { portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
 import { forgetWorkspace, rememberWorkspace, workspacePath, type WorkspaceSection } from "@/lib/routes";
-import { LicensesScreen } from "./licenses";
+import { billingOffered, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
 type SectionMeta = {
@@ -45,7 +46,7 @@ type SectionMeta = {
   icon: LucideIcon;
   /** The capability that opens it; null for everyone in the workspace (leaving is in Settings). */
   needs: WorkspaceCapability | null;
-  /** `billing`: the person is offered the billing module, which the page then hosts. */
+  /** `billing`: the person is shown billing (see `billingOffered`), which the page then hosts. */
   description(workspaceName: string, billing: boolean): string;
 };
 
@@ -87,9 +88,9 @@ export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: 
 ];
 
 /**
- * Whether the workspace's Licenses & Billing is offered: the person is offered the billing module, or the
- * workspace has licenses to show them (an Admin's every license, a member's own seats). A Private Cloud has
- * neither, and shows nothing.
+ * Whether the workspace's Licenses & Billing is offered: `billing` (the person is offered the billing module
+ * and holds `workspace.billing.manage`, see `billingOffered`), or the workspace has licenses to show them (an
+ * Admin's every license, a member's own seats). A Private Cloud has neither, and shows nothing.
  */
 export function licensesPartShown(billing: boolean, licenses: readonly LicenseView[] | undefined): boolean {
   return billing || (licenses?.length ?? 0) > 0;
@@ -162,7 +163,8 @@ export function WorkspaceScreen({
   const [inviting, setInviting] = useState(false);
 
   const data = detail.data;
-  const billing = me.modules.billing;
+  // Billing is for whoever manages it (Admins and Owners): a member sees the licenses they hold a seat in, no more.
+  const billing = billingOffered(me, data);
   // A licenses address whose list failed to load still opens the page, which says so and offers to try again,
   // rather than sending the person elsewhere over a dropped connection.
   const licensesFailed = section === "licenses" && licenses.isError && licenses.data === undefined;
@@ -257,7 +259,7 @@ export function WorkspaceScreen({
           />
         </div>
       ) : active === "licenses" ? (
-        <LicensesScreen workspaceId={workspaceId} me={me} />
+        <LicensesScreen workspaceId={workspaceId} me={me} detail={data} />
       ) : (
         <WorkspaceAuditPanel api={api} workspaceId={workspaceId} />
       )}

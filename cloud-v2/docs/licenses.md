@@ -244,6 +244,7 @@ organization's, and not on the feed.
 
 A seat's `reason` is `unassigned`, `member_removed`, `member_left`,
 `account_deleted`, `workspace_deleted` or `license_ended`. Ending a membership
-records its `seat.released` events before the membership's own event, and
-deleting a workspace records its seats', then its licenses', before
+records its `seat.released` events before the membership's own event.
+Deleting a workspace records, license by license, that license's
+`seat.released` events and then its `license.ended`, and all of them before
 `workspace.deleted`.

@@ -18,7 +18,7 @@
 
 import {randomBytes} from "node:crypto"
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
 
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
@@ -32,7 +32,7 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {assignSeat, releaseSeat} from "../packages/core/src/services/licenses/license.service"
+import {assignSeat, listWorkspaceLicenses, releaseSeat} from "../packages/core/src/services/licenses/license.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
@@ -1017,6 +1017,54 @@ describe("the workspace licenses routes", () => {
     )
     expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(2)
     expect((await audit("seat.released")).map((event) => event.after?.reason)).toEqual(["unassigned"])
+  })
+})
+
+// --- Listing a workspace's licenses ----------------------------------------
+
+describe("listing a workspace's licenses", () => {
+  test("seats come back in assignment order, then by membership, and the query sends no sort", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 5})
+    const [first, second] = [ws.developerMembershipId, ws.memberMembershipId]
+    for (const membershipId of [ws.adminMembershipId, first, second, ws.ownerMembershipId]) {
+      await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, membershipId)
+    }
+    // Assigned at times in none of the memberships' id order, two of them at the very same instant.
+    const assignedAt = {
+      [ws.adminMembershipId]: new Date("2026-10-03T00:00:00.000Z"),
+      [first]: new Date("2026-10-01T00:00:00.000Z"),
+      [second]: new Date("2026-10-02T00:00:00.000Z"),
+      [ws.ownerMembershipId]: new Date("2026-10-02T00:00:00.000Z"),
+    }
+    for (const [membershipId, at] of Object.entries(assignedAt)) {
+      await LicenseSeatModel.updateOne({licenseId: license.licenseId, membershipId}, {$set: {assignedAt: at}})
+    }
+    const expected = Object.entries(assignedAt)
+      .sort(([idA, atA], [idB, atB]) => atA.getTime() - atB.getTime() || (idA < idB ? -1 : idA > idB ? 1 : 0))
+      .map(([membershipId]) => membershipId)
+    expect(expected[0]).toBe(first)
+    expect(expected[3]).toBe(ws.adminMembershipId)
+
+    // Cosmos DB's MongoDB API rejects a sort on a path with no index, so the seats' query sends none.
+    const queries: Array<{getOptions(): {sort?: unknown}}> = []
+    const find = LicenseSeatModel.find.bind(LicenseSeatModel)
+    const spy = spyOn(LicenseSeatModel, "find").mockImplementation(((...args: unknown[]) => {
+      const query = (find as (...rest: unknown[]) => {getOptions(): {sort?: unknown}})(...args)
+      queries.push(query)
+      return query
+    }) as never)
+    try {
+      const everyone = await listWorkspaceLicenses(ws.workspaceId, "everyone")
+      expect(everyone).toHaveLength(1)
+      expect(everyone[0]!.seats!.map((seat) => seat.membershipId)).toEqual(expected)
+      const own = await listWorkspaceLicenses(ws.workspaceId, second)
+      expect(own[0]!.seats!.map((seat) => seat.membershipId)).toEqual([second])
+    } finally {
+      spy.mockRestore()
+    }
+    expect(queries).toHaveLength(2)
+    for (const query of queries) expect(query.getOptions().sort).toBeUndefined()
   })
 })
 
