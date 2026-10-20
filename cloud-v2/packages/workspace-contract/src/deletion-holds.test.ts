@@ -3,11 +3,11 @@ import {describeDeletionHold, describeDeletionHolds, isWorkspaceDeletionHold} fr
 import {DELETION_HOLD_REASON_PATTERN, OWNS_MINIAPPS_HOLD_REASON} from "./types"
 
 describe("describeDeletionHold", () => {
-  test("the Store's miniapps hold names how many published miniapps, and where to delete them", () => {
+  test("the Store's miniapps hold names how many miniapps, and where to delete them", () => {
     const store = (count?: number) => describeDeletionHold({service: "store", reason: OWNS_MINIAPPS_HOLD_REASON, count})
-    expect(store(3)).toBe("This workspace still owns 3 published miniapps. Delete them in the Developer Console first.")
-    expect(store(1)).toBe("This workspace still owns 1 published miniapp. Delete it in the Developer Console first.")
-    expect(store()).toBe("This workspace still owns published miniapps. Delete them in the Developer Console first.")
+    expect(store(3)).toBe("This workspace still owns 3 miniapps. Delete them in the Developer Console first.")
+    expect(store(1)).toBe("This workspace still owns 1 miniapp. Delete it in the Developer Console first.")
+    expect(store()).toBe("This workspace still owns miniapps. Delete them in the Developer Console first.")
   })
 
   test("any other hold names the service and its reason in words", () => {
@@ -31,7 +31,7 @@ describe("describeDeletionHold", () => {
       ]),
     ).toBe(
       "The fleet service still needs this workspace (manages devices). Resolve that before deleting it. " +
-        "This workspace still owns 2 published miniapps. Delete them in the Developer Console first.",
+        "This workspace still owns 2 miniapps. Delete them in the Developer Console first.",
     )
   })
 })

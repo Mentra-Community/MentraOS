@@ -28,10 +28,10 @@ import {
   WorkspaceSettingsPanel,
   workspaceDetailQuery,
   workspaceListQuery,
+  type NavGroup,
 } from "@mentra/workspace-ui";
 import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { NavGroup } from "@/components/app-shell";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
 import { navigate, Redirect } from "@/lib/navigation";

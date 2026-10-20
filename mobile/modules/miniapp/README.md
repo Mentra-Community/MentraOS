@@ -67,7 +67,7 @@ function App() {
 
 ```ts
 const session = new MiniappSession(options?)
-await session.connect()       // idempotent; same Promise on repeat calls
+await session.connect()       // same Promise while in flight or connected; a failed attempt can be retried
 session.isConnected()
 session.disconnect()
 ```

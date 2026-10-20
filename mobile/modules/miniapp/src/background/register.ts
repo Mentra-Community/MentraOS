@@ -13,7 +13,9 @@
  *   2. Call the user-supplied handler synchronously so subscriptions
  *      are registered before any host events fan out.
  *   3. Call `session.connect()` so the host receives CONNECT and the
- *      first CONNECT_ACK populates `userId`, `capabilities`, etc.
+ *      first CONNECT_ACK populates `userId`, `capabilities`, etc. A host that
+ *      has not answered within `connectTimeoutMs` gets CONNECT again; that is
+ *      a stalled host, not a miniapp crash.
  *   4. Send READY once the handler's returned promise settles. Hosts that
  *      advertise `hostFeatures.initReady` keep the UI closed until then.
  *
@@ -22,7 +24,7 @@
  * re-evaluated and the handler fires again with a fresh session.
  */
 
-import {MiniappSession, type MiniappSessionOptions} from "../session"
+import {MiniappSession, NotConnectedError, type MiniappSessionOptions} from "../session"
 
 export type TypedMiniappSession<TChannels extends object> = MiniappSession<TChannels>
 
@@ -38,6 +40,18 @@ interface InitGlobals {
    * Optional because tests / pure-Node environments don't have it.
    */
   __hostError?: (payloadJson: string) => void
+  /**
+   * The session from the latest init. Global rather than module state so a
+   * bundle evaluated again in the same context also finds it.
+   */
+  __mentraBackgroundSession?: MiniappSession
+}
+
+/** A later init replaces the session: disconnecting it ends its handshake, so it neither retries nor reports. */
+function releaseBackgroundSession(g: InitGlobals): void {
+  const previous = g.__mentraBackgroundSession
+  g.__mentraBackgroundSession = undefined
+  previous?.disconnect()
 }
 
 /**
@@ -62,8 +76,13 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
   options: MiniappSessionOptions = {},
 ): void {
   const g = globalThis as unknown as InitGlobals
+  releaseBackgroundSession(g)
   g.__mentraInitCallback = (sessionId: string) => {
+    releaseBackgroundSession(g)
     const session = new MiniappSession<TChannels>(options)
+    g.__mentraBackgroundSession = session
+    // Before the handler runs, so its own connect() or waitForReady() shares the retried handshake.
+    session.retryHandshakeOnTimeout()
     // The handler's returned promise defines readiness: the host keeps the UI
     // closed until it settles, so handlers registered after an await still
     // exist before the first UI request arrives.
@@ -95,6 +114,9 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
       },
     )
     connected.catch((err: unknown) => {
+      // Replaced by a later init, or disconnected during the handshake: a
+      // deliberate teardown, not a crash.
+      if (g.__mentraBackgroundSession !== session || err instanceof NotConnectedError) return
       // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] session.connect() rejected:", err)
       // Surface to the host's crash controller as a structured uncaught
