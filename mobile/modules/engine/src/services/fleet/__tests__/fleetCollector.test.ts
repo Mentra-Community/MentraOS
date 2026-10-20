@@ -61,9 +61,13 @@ function sleep(ms: number): void {
 }
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
-mock.module("expo-constants", () => ({
-  default: {nativeAppVersion: "3.4.5", nativeBuildVersion: "345", expoConfig: {version: "3.4.5"}},
-}))
+// expo-constants 55 has no native version or build: only the config's version, which is the family's base version.
+mock.module("expo-constants", () => ({default: {expoConfig: {version: "3.4.0"}}}))
+/** The native application's version and build, as expo-application reads them. A test may change them. */
+function nativeApplication(nativeApplicationVersion: string | null, nativeBuildVersion: string | null): void {
+  mock.module("expo-application", () => ({nativeApplicationVersion, nativeBuildVersion}))
+}
+nativeApplication("3.4.5", "345")
 mock.module("expo-device", () => ({modelName: "Pixel 9"}))
 
 const IDENTITY_CLEARED = {
@@ -126,6 +130,7 @@ function setAppState(state: string, notify = true): void {
 }
 
 const {miniappRunningRegistry} = await import("../../MiniappRunningRegistry")
+const {nativeMiniappExecution} = await import("../../NativeMiniappExecution")
 const {createFleetQueue} = await import("../fleetQueue")
 const {phoneDeviceId} = await import("../fleetIds")
 const {fleetEvents} = await import("../fleetEvents")
@@ -172,8 +177,11 @@ beforeEach(() => {
   clock.mono = 50_000
   timers.clear()
   resetFakeMmkv()
+  fleetEvents.discardUndeliveredLaunches()
+  nativeApplication("3.4.5", "345")
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
+  nativeMiniappExecution.set([])
   Object.assign(reactNative.Platform as object, {OS: "android", Version: 35, constants: {Release: "15"}})
   appStateListener = null
   reactNativeAppState.currentState = "background"
@@ -220,11 +228,15 @@ describe("start", () => {
     expect(checkpoint.payload.sessions.map((s) => s.activity)).toEqual(["engine_active"])
   })
 
-  test("opens the foreground session when the Mentra App is in the foreground", () => {
+  test("opens the foreground session once the Mentra App has been in the foreground for two seconds", () => {
     setAppState("active", false)
     start()
+    advance(2_000)
     collector.flushCheckpoint()
-    expect(checkpoints()[0].payload.sessions.map((s) => s.activity)).toEqual(["engine_active", "app_foreground"])
+    expect(checkpoints()[0].payload.sessions.map((s) => [s.activity, s.elapsedMs])).toEqual([
+      ["engine_active", 2_000],
+      ["app_foreground", 2_000],
+    ])
   })
 
   test("opens a session for glasses already connected and for miniapps already running", () => {
@@ -244,6 +256,18 @@ describe("start", () => {
       product: "Mentra Live",
       serial: "SN-LIVE-1",
     })
+  })
+
+  test("a native built-in executing is a miniapp session like a local miniapp's, closed when it stops", () => {
+    nativeMiniappExecution.set(["com.mentra.camera"])
+    start()
+    advance(30_000)
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(10_000)
+    nativeMiniappExecution.set([])
+    const [closing] = checkpoints()
+    expect(entry(closing, "miniapp_execution", "com.mentra.camera")).toMatchObject({elapsedMs: 40_000, ended: true})
+    expect(entry(closing, "miniapp_execution", "com.mentra.notes")).toMatchObject({elapsedMs: 10_000, ended: false})
   })
 
   test("does not count glasses that are only scanning or connecting", () => {
@@ -318,7 +342,8 @@ describe("checkpoints", () => {
     expect(checkpoints().map((c) => entry(c, "app_foreground")?.elapsedMs)).toEqual([60_000, 120_000])
   })
 
-  test("a checkpoint comes every 60 s while a miniapp is executing", () => {
+  test("a miniapp executing while the Mentra App is in the foreground is checkpointed every 60 s with it", () => {
+    setAppState("active", false)
     start()
     miniappRunningRegistry.add("com.mentra.notes")
     advance(60_000)
@@ -326,6 +351,30 @@ describe("checkpoints", () => {
     expect(checkpoints().map((c) => entry(c, "miniapp_execution", "com.mentra.notes")?.elapsedMs)).toEqual([
       60_000, 120_000,
     ])
+  })
+
+  test("Notify running alone, with no glasses and the Mentra App in the background, checkpoints every 15 minutes", () => {
+    start()
+    nativeMiniappExecution.set(["cloud.augmentos.notify"])
+    advance(15 * 60_000 - 1_000)
+    expect(checkpoints()).toHaveLength(0)
+    advance(1_000)
+    advance(15 * 60_000)
+    // Fewer checkpoints, the same time: each carries the session's exact monotonic elapsed time.
+    expect(checkpoints().map((c) => entry(c, "miniapp_execution", "cloud.augmentos.notify")?.elapsedMs)).toEqual([
+      15 * 60_000,
+      30 * 60_000,
+    ])
+  })
+
+  test("a miniapp executing in the background goes to 60 s checkpoints once glasses connect", () => {
+    start()
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(5 * 60_000)
+    expect(checkpoints()).toHaveLength(0)
+    connectLive()
+    advance(60_000)
+    expect(checkpoints().map((c) => entry(c, "miniapp_execution", "com.mentra.notes")?.elapsedMs)).toEqual([6 * 60_000])
   })
 
   test("a session that ends is checkpointed at once with ended true, and the other sessions carry on", () => {
@@ -358,23 +407,27 @@ describe("checkpoints", () => {
     setAppState("active", false)
     start()
     advance(30_000)
-    setAppState("background") // the foreground session ends: an immediate checkpoint
-    expect(checkpoints()).toHaveLength(1)
-    expect(entry(checkpoints()[0], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: true})
-    advance(14 * 60_000 + 59_000)
-    expect(checkpoints()).toHaveLength(1)
-    advance(1_000)
+    setAppState("background") // checkpointed as it goes to the background, in case the process does not survive
+    advance(5_000) // and ended once the grace is over: an immediate checkpoint
     expect(checkpoints()).toHaveLength(2)
+    expect(entry(checkpoints()[0], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: false})
+    expect(entry(checkpoints()[1], "app_foreground")).toMatchObject({elapsedMs: 30_000, ended: true})
+    advance(14 * 60_000 + 59_000)
+    expect(checkpoints()).toHaveLength(2)
+    advance(1_000)
+    expect(checkpoints()).toHaveLength(3)
   })
 
   test("the foreground session follows the app state", () => {
     start()
     setAppState("active")
     advance(20_000)
-    setAppState("inactive")
+    setAppState("background")
+    advance(10_000)
     setAppState("active")
     advance(10_000)
     setAppState("background")
+    advance(10_000)
     const sessions = checkpoints().flatMap((c) => c.payload.sessions.filter((s) => s.activity === "app_foreground"))
     const ended = sessions.filter((s) => s.ended)
     expect(ended.map((s) => s.elapsedMs)).toEqual([20_000, 10_000])
@@ -425,6 +478,181 @@ describe("checkpoints", () => {
   })
 })
 
+describe("the foreground", () => {
+  /** Every foreground session the checkpoints carried, by ID, as last reported. */
+  function visits(): Checkpoint[] {
+    const byId = new Map<string, Checkpoint>()
+    for (const c of checkpoints()) {
+      for (const s of c.payload.sessions) if (s.activity === "app_foreground") byId.set(s.activitySessionId, s)
+    }
+    return [...byId.values()]
+  }
+
+  test("an app that is active for less than two seconds is no foreground session", () => {
+    start()
+    setAppState("active")
+    advance(1_500)
+    setAppState("background")
+    advance(30 * 60_000)
+    collector.stop("engine_stopped")
+    expect(visits()).toEqual([])
+  })
+
+  test("the flicker of an app starting up is one visit, counted from when it first became active", () => {
+    start()
+    const firstActiveAt = clock.wall
+    for (const [state, ms] of [
+      ["active", 300],
+      ["background", 200],
+      ["active", 400],
+      ["background", 100],
+      ["active", 30_000],
+    ] as const) {
+      setAppState(state)
+      advance(ms)
+    }
+    collector.stop("engine_stopped")
+    expect(visits()).toEqual([expect.objectContaining({startedAt: iso(firstActiveAt), elapsedMs: 31_000, ended: true})])
+  })
+
+  test("a visit that settles is counted from when the app became active, checkpointed every 60 s from then", () => {
+    start()
+    const activeAt = clock.wall
+    setAppState("active")
+    advance(1_999)
+    collector.flushCheckpoint()
+    expect(visits()).toEqual([])
+    advance(1)
+    advance(58_000)
+    const checkpoint = checkpoints().at(-1) as Kind<"usage_checkpoint">
+    expect(checkpoint.observedAt).toBe(iso(activeAt + 60_000))
+    expect(entry(checkpoint, "app_foreground")).toMatchObject({startedAt: iso(activeAt), elapsedMs: 60_000})
+  })
+
+  test("an inactive blip, such as a pull-down or Face ID, does not end the visit", () => {
+    start()
+    setAppState("active")
+    advance(20_000)
+    setAppState("inactive")
+    advance(1_500)
+    setAppState("active")
+    advance(10_000)
+    setAppState("inactive")
+    setAppState("background")
+    advance(10_000)
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 31_500, ended: true})])
+  })
+
+  test("a departure longer than the grace ends the visit when the app left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    advance(4_999)
+    expect(visits().filter((visit) => visit.ended)).toEqual([])
+    advance(1)
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 30_000, ended: true})])
+  })
+
+  test("a checkpoint while the app is away reports the visit only up to when it left", () => {
+    start()
+    setAppState("active")
+    advance(58_000)
+    setAppState("background")
+    advance(3_000) // the 60-second checkpoint falls inside the grace
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 58_000, ended: false})])
+    advance(2_000)
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 58_000, ended: true})])
+  })
+
+  test("coming back after the grace is a new visit", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    advance(6_000)
+    setAppState("active")
+    advance(10_000)
+    collector.stop("engine_stopped")
+    expect(visits().map((visit) => [visit.elapsedMs, visit.ended])).toEqual([
+      [30_000, true],
+      [10_000, true],
+    ])
+  })
+
+  test("coming back late because the process was suspended is a new visit, the first ending when the app left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    // Suspended for 40 s: both clocks ran on, and no timer fired.
+    clock.wall += 40_000
+    clock.mono += 40_000
+    setAppState("active")
+    advance(5_000)
+    collector.stop("engine_stopped")
+    expect(visits().map((visit) => [visit.elapsedMs, visit.ended])).toEqual([
+      [30_000, true],
+      [5_000, true],
+    ])
+  })
+
+  test("a visit cut off by suspension right after the app went to the background keeps its time until it left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("inactive")
+    setAppState("background")
+    // Suspended at once, before the grace is over: both clocks run on and no timer fires.
+    clock.wall += 10 * 60_000
+    clock.mono += 10 * 60_000
+    setAppState("active")
+    expect(visits()[0]).toMatchObject({elapsedMs: 30_000, ended: true})
+    expect(gaps()).toHaveLength(1)
+  })
+
+  test("a visit the process dies in, right after the app went to the background, is already checkpointed", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    // The process is killed now: nothing more is written, and what is queued is what Fleet gets.
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 30_000, ended: false})])
+  })
+
+  test("an inactive blip writes nothing", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    const before = all().length
+    setAppState("inactive")
+    advance(1_000)
+    setAppState("active")
+    expect(all()).toHaveLength(before)
+  })
+
+  test("stopping while the app is away ends the visit when it left", () => {
+    start()
+    setAppState("active")
+    advance(30_000)
+    setAppState("background")
+    advance(2_000)
+    collector.stop("engine_stopped")
+    expect(visits()).toEqual([expect.objectContaining({elapsedMs: 30_000, ended: true})])
+  })
+
+  test("a collector started while the app is active counts the visit from its start, once it settles", () => {
+    setAppState("active", false)
+    start()
+    const startedAt = clock.wall
+    collector.flushCheckpoint()
+    expect(visits()).toEqual([])
+    advance(2_000)
+    collector.flushCheckpoint()
+    expect(visits()).toEqual([expect.objectContaining({startedAt: iso(startedAt), elapsedMs: 2_000})])
+  })
+})
+
 describe("glasses binding in checkpoints", () => {
   test("a serial that arrives after the connection but before the first report is the binding", () => {
     start()
@@ -464,13 +692,13 @@ describe("glasses binding in checkpoints", () => {
   })
 
   test("glasses that connect just as another session ends are not reported before they are identified", () => {
-    setAppState("active", false)
+    miniappRunningRegistry.add("com.a")
     start()
-    // The foreground session ends and the glasses connect in the same moment, with no serial yet.
-    reactNativeAppState.currentState = "background"
+    // The glasses connect, with no serial yet, and a miniapp stops in the same moment.
     connectLive({serialNumber: ""})
+    miniappRunningRegistry.remove("com.a")
     expect(checkpoints().map((c) => c.payload.sessions.map((s) => s.activity))).toEqual([
-      ["engine_active", "app_foreground"],
+      ["engine_active", "miniapp_execution"],
     ])
     glassesStore.setState({serialNumber: "SN-SETTLED"})
     advance(60_000)
@@ -530,9 +758,10 @@ describe("clock changes and suspension", () => {
     expect(closing.observedAt).toBe(observedUntil)
     expect(closing.payload.sessions.map((s) => [s.activity, s.packageName, s.elapsedMs, s.ended])).toEqual([
       ["engine_active", undefined, 120_000, true],
-      ["app_foreground", undefined, 120_000, true],
       ["glasses_connection", undefined, 120_000, true],
       ["miniapp_execution", "com.a", 120_000, true],
+      // Opened once it settled, counted from when the app was active.
+      ["app_foreground", undefined, 120_000, true],
     ])
     expect(closing.payload.sessions.map((s) => s.activitySessionId)).toEqual(firstIds)
 
@@ -796,6 +1025,7 @@ describe("stop", () => {
     collector.stop("engine_stopped")
     const count = all().length
     miniappRunningRegistry.add("com.a")
+    nativeMiniappExecution.set(["com.mentra.camera"])
     connectLive()
     setAppState("active")
     fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
@@ -853,6 +1083,18 @@ describe("snapshots", () => {
       },
     })
     expect(snapshot.deviceBinding).toBeUndefined()
+  })
+
+  test("the app version and build are the native application's", () => {
+    nativeApplication("3.3.0", "929")
+    start()
+    expect(snapshots()[0].payload.phone).toMatchObject({appVersion: "3.3.0", appBuild: "929"})
+  })
+
+  test("a build the native application does not report is unknown, and the version falls back to the config's", () => {
+    nativeApplication(null, null)
+    start()
+    expect(snapshots()[0].payload.phone).toMatchObject({appVersion: "3.4.0", appBuild: "unknown"})
   })
 
   test("on iOS the OS version is the platform version", () => {
@@ -1049,12 +1291,20 @@ describe("snapshots", () => {
 
   test.each([
     ["glasses are connected", () => connectLive()],
-    ["a miniapp is executing", () => miniappRunningRegistry.add("com.mentra.notes")],
+    ["the Mentra App is in the foreground", () => setAppState("active", false)],
   ])("while %s, a snapshot comes every 15 minutes", (_name, activate) => {
     activate()
     start()
     advance(30 * 60_000)
     expect(snapshots()).toHaveLength(3)
+  })
+
+  test("with only miniapps executing in the background, the 15-minute snapshot is skipped while it would say nothing new", () => {
+    miniappRunningRegistry.add("com.mentra.notes")
+    start()
+    advance(2 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints()).toHaveLength(8)
   })
 
   test("with only the engine active, the 15-minute snapshot is skipped while it would say nothing new", () => {
@@ -1085,7 +1335,7 @@ describe("snapshots", () => {
     disconnectLive()
     advance(5_000)
     expect(snapshots()).toHaveLength(2)
-    glassesStore.setState({connection: {state: "connecting"}, deviceModel: "Mentra Live", serialNumber: "SN-LIVE-1"})
+    connectLive()
     advance(5_000)
     expect(snapshots()).toHaveLength(3)
   })
@@ -1138,6 +1388,101 @@ describe("snapshots", () => {
   })
 })
 
+describe("glasses that are away", () => {
+  /**
+   * What a phone does all day while its paired glasses are out of range: it scans for them, tries to connect, gives
+   * up, and tries again, every 30 s. While it tries, the native layer names the glasses it is looking for, and clears
+   * them when it gives up; the last battery reading stays in the store.
+   */
+  function retry(minutes: number): void {
+    const end = clock.mono + minutes * 60_000
+    while (clock.mono < end) {
+      glassesStore.setState({connection: {state: "scanning"}})
+      glassesStore.setState({deviceModel: "Mentra Live", bluetoothName: "MENTRA_LIVE_BLE_1234"})
+      advance(3_000)
+      glassesStore.setState({connection: {state: "connecting"}})
+      advance(26_000)
+      glassesStore.setState({connection: {state: "disconnected"}, ...IDENTITY_CLEARED})
+      advance(1_000)
+    }
+  }
+
+  test("an hour of reconnect attempts is a handful of records, not one for every attempt", () => {
+    connectLive()
+    start()
+    advance(90_000)
+    const leftAt = clock.wall
+    disconnectLive()
+    retry(60)
+    const sinceLeaving = all().filter((record) => Date.parse(record.observedAt) >= leftAt)
+    // The disconnect's snapshot, the checkpoint that ends the connection, and a checkpoint every 15 minutes.
+    expect(sinceLeaving.map((record) => record.kind)).toEqual([
+      "usage_checkpoint",
+      "snapshot",
+      "usage_checkpoint",
+      "usage_checkpoint",
+      "usage_checkpoint",
+      "usage_checkpoint",
+    ])
+  })
+
+  test("a phone that starts with its glasses away writes no snapshot for its attempts", () => {
+    glassesStore.setState({connection: {state: "scanning"}, deviceModel: "Mentra Live"})
+    start()
+    retry(60)
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints()).toHaveLength(4)
+  })
+
+  test("a disconnect followed at once by an attempt is described as a disconnect of the pair that left", () => {
+    connectLive()
+    start()
+    advance(60_000)
+    const leftAt = clock.wall
+    disconnectLive()
+    advance(500)
+    retry(1)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.observedAt).toBe(iso(leftAt))
+    expect(latest.deviceBinding).toEqual({
+      kind: "serial",
+      manufacturer: "Mentra",
+      product: "Mentra Live",
+      serial: "SN-LIVE-1",
+    })
+    expect(latest.payload.glasses?.connection).toEqual({state: "disconnected", observedAt: iso(leftAt)})
+  })
+
+  test("the glasses coming back is a snapshot, and leaving again another", () => {
+    connectLive()
+    start()
+    disconnectLive()
+    retry(10)
+    expect(snapshots()).toHaveLength(2)
+    connectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(3)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.connection.state).toBe("connected")
+    disconnectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(4)
+  })
+
+  test("a link that flaps is still at most one snapshot every two seconds", () => {
+    connectLive()
+    start()
+    for (let flap = 0; flap < 30; flap += 1) {
+      disconnectLive()
+      advance(500)
+      connectLive()
+      advance(500)
+    }
+    advance(5_000)
+    // 35 s of flapping, start included.
+    expect(snapshots().length).toBeLessThanOrEqual(19)
+  })
+})
+
 describe("capabilities", () => {
   test("with glasses connected the phone measures all seven", () => {
     connectLive()
@@ -1157,6 +1502,82 @@ describe("capabilities", () => {
       expect(record.capabilities).not.toContain("glasses_battery")
       expect(record.capabilities).not.toContain("glasses_versions")
     }
+  })
+})
+
+describe("glasses that cannot report a battery", () => {
+  /** A collector for which `model` is a model without battery reporting. */
+  function withoutBattery(model = "Mentra Live"): void {
+    collector = createFleetCollector({
+      queue,
+      now: () => clock.wall,
+      monotonic: () => clock.mono,
+      modelsWithoutBattery: new Set([model]),
+    })
+  }
+
+  test("have an unsupported battery, and no record while they are connected claims glasses_battery", () => {
+    withoutBattery()
+    connectLive({batteryLevel: -1})
+    start()
+    collector.flushCheckpoint()
+    expect(snapshots()[0].payload.glasses?.battery).toEqual({state: "unsupported", observedAt: iso(clock.wall)})
+    const measured = FLEET_CAPABILITIES.filter((capability) => capability !== "glasses_battery").sort()
+    expect(all().map((record) => record.kind)).toEqual(["snapshot", "usage_checkpoint"])
+    for (const record of all()) expect([...record.capabilities].sort()).toEqual(measured)
+  })
+
+  test("a level left in the store is not taken for theirs, and its changes are no reason for a snapshot", () => {
+    withoutBattery()
+    connectLive({batteryLevel: 80, charging: true})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery?.state).toBe("unsupported")
+    glassesStore.setState({batteryLevel: 20, charging: false})
+    advance(5_000)
+    expect(snapshots()).toHaveLength(1)
+  })
+
+  test("stay unsupported once disconnected, which is no reason for a new 15-minute snapshot", () => {
+    withoutBattery()
+    connectLive()
+    start()
+    disconnectLive()
+    advance(5_000)
+    expect(snapshots()).toHaveLength(2)
+    expect(snapshots()[1].payload.glasses?.battery?.state).toBe("unsupported")
+    advance(2 * 60 * 60_000)
+    expect(snapshots()).toHaveLength(2)
+  })
+
+  test("other models are measured as before", () => {
+    withoutBattery("Even Realities G1")
+    connectLive()
+    start()
+    expect(snapshots()[0].payload.glasses?.battery).toMatchObject({state: "measured", level: 80})
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+
+  test("a model that reports a battery but has not yet is unknown, and still claims to measure it", () => {
+    connectLive({batteryLevel: -1})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery?.state).toBe("unknown")
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
+  })
+
+  test.each([
+    "Even Realities G1",
+    "Even Realities G2",
+    "Mentra Live",
+    "Mentra Display",
+    "Mentra Mach1",
+    "Vuzix Z100",
+    "NIMO",
+    "AR99",
+  ])("%s reports its battery: no model the SDK connects today is without one", (model) => {
+    connectLive({deviceModel: model})
+    start()
+    expect(snapshots()[0].payload.glasses?.battery).toMatchObject({state: "measured", level: 80})
+    expect(snapshots()[0].capabilities).toContain("glasses_battery")
   })
 })
 
@@ -1197,10 +1618,27 @@ describe("launches", () => {
     expect(ofKind("miniapp_launch")).toHaveLength(0)
   })
 
-  test("launches are not recorded before start", () => {
-    fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
+  test("launches the engine made before the run could listen are recorded when it starts, when they happened", () => {
+    // A miniapp restored after a process death, while the account was still being resolved.
+    const restoredAt = clock.wall
+    const now = spyOn(Date, "now").mockReturnValue(restoredAt)
+    try {
+      fleetEvents.launchUnlessClaimed({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    } finally {
+      now.mockRestore()
+    }
+    miniappRunningRegistry.add("com.mentra.notes")
+    advance(30_000)
     start()
-    expect(ofKind("miniapp_launch")).toHaveLength(0)
+    const [launch] = ofKind("miniapp_launch")
+    expect(launch.payload).toEqual({packageName: "com.mentra.notes", start: "automatic", outcome: "started"})
+    expect(launch.observedAt).toBe(iso(restoredAt))
+    // After the start snapshot, in the run's own sequence.
+    expect(all().map((record) => record.kind)).toEqual(["snapshot", "miniapp_launch"])
+    // Taken once: a later run does not hear it again.
+    collector.stop("engine_stopped")
+    start(PARTITION, "COLLECTOR-SESSION-2")
+    expect(ofKind("miniapp_launch")).toHaveLength(1)
   })
 })
 
@@ -1316,6 +1754,9 @@ describe("a second pair of the same model", () => {
     disconnectLive()
     connectLive(LIVE_B)
     fleetEvents.photo({operationId: "req-b", stage: "requested"})
+    // B shows no serial: its photo waits until B is identified without one.
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    advance(60_000)
     const [photo] = ofKind("photo_operation")
     expect(photo.deviceBinding).toMatchObject({kind: "provisional", product: "Mentra Live"})
     expect(JSON.stringify(photo)).not.toContain("SN-LIVE-1")
@@ -1326,8 +1767,8 @@ describe("a second pair of the same model", () => {
     connectLive()
     connectLive(LIVE_B)
     fleetEvents.photo({operationId: "req-b", stage: "requested"})
+    advance(65_000)
     expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "provisional"})
-    advance(60_000)
     expect(bindingOf(checkpoints().at(-1) as Kind<"usage_checkpoint">)).toMatchObject({kind: "provisional"})
     // Nor does it get the first pair's versions: B reports none for the MTK and BES.
     expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.firmware).toEqual({apk: "live-9 (900)", os: "13"})
@@ -1340,7 +1781,7 @@ describe("a second pair of the same model", () => {
     disconnectLive()
     advance(5_000)
     connectLive(LIVE_B)
-    advance(5_000)
+    advance(65_000)
     const latest = snapshots().at(-1) as Kind<"snapshot">
     expect(latest.deviceBinding).toMatchObject({kind: "provisional"})
     expect(latest.payload.glasses?.firmware).toEqual({apk: "live-9 (900)", os: "13"})
@@ -1352,10 +1793,10 @@ describe("a second pair of the same model", () => {
     advance(10_000)
     disconnectLive()
     advance(5_000)
+    const connectingAt = clock.wall
     glassesStore.setState({connection: {state: "connecting"}}) // the next pair, not yet identified
     advance(5_000)
-    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
-    expect((snapshots().at(-1) as Kind<"snapshot">).deviceBinding).toBeUndefined()
+    expect(all().filter((record) => Date.parse(record.observedAt) >= connectingAt)).toEqual([])
     fleetEvents.photo({operationId: "req-x", stage: "requested"})
     expect(ofKind("photo_operation")).toHaveLength(0)
     // Connected but not yet identified: still nothing claimed about whose it is.
@@ -1415,6 +1856,171 @@ describe("a second pair of the same model", () => {
     glassesStore.setState({serialNumber: ""}) // the same pair, the serial gone blank mid-connection
     fleetEvents.photo({operationId: "req-s", stage: "requested"})
     expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "SN-ARRIVED"})
+  })
+})
+
+describe("one pair of Mentra Live, connection after connection", () => {
+  /**
+   * A connection as the Bluetooth SDK makes it: it names the glasses "Mentra Live" and learns their Bluetooth name while
+   * connecting, and they are connected before their glasses client answers. Its first version message then names the
+   * hardware variant as the model, and its last brings the glasses' Bluetooth address and, if they have one, their
+   * serial number, the address applied first.
+   */
+  function connectAsTheSdkDoes(pair: {serial: string; address: string; name: string}, beforeVersions?: () => void) {
+    glassesStore.setState({connection: {state: "connecting"}, bluetoothName: pair.name})
+    if (!glassesStore.getState().deviceModel) glassesStore.setState({deviceModel: "Mentra Live"})
+    glassesStore.setState({
+      connection: {state: "connected", fullyBooted: true},
+      appVersion: "",
+      buildNumber: "",
+      mtkFirmwareVersion: "",
+      besFirmwareVersion: "",
+      batteryLevel: 80,
+    })
+    beforeVersions?.()
+    advance(300)
+    glassesStore.setState({deviceModel: "K900", appVersion: "live-2", buildNumber: "200", androidVersion: "11"})
+    advance(100)
+    glassesStore.setState({bluetoothMacAddress: pair.address})
+    if (pair.serial) glassesStore.setState({serialNumber: pair.serial})
+    glassesStore.setState({mtkFirmwareVersion: "mtk-1", besFirmwareVersion: "bes-1"})
+  }
+  /** The link drops: the serial and the address go, the model the glasses gave and the name stay. */
+  function linkLoss() {
+    glassesStore.setState({connection: {state: "disconnected"}, serialNumber: "", bluetoothMacAddress: ""})
+  }
+  const NO_SERIAL = {serial: "", address: "1C:2B:3A:00:00:01", name: "MENTRA_LIVE_BLE_0001"}
+  const WITH_SERIAL = {serial: "ML394037B", address: "1C:2B:3A:00:00:02", name: "MENTRA_LIVE_BLE_0002"}
+
+  /** Every glasses binding any record carries. */
+  function bindings(): string[] {
+    const found = new Set<string>()
+    for (const record of all()) {
+      if (record.kind === "usage_checkpoint") {
+        for (const session of record.payload.sessions) {
+          if (session.deviceBinding) found.add(JSON.stringify(session.deviceBinding))
+        }
+      } else if ((record.kind === "snapshot" || record.kind === "photo_operation") && record.deviceBinding) {
+        found.add(JSON.stringify(record.deviceBinding))
+      }
+    }
+    return [...found]
+  }
+
+  test("glasses without a serial are one device across reconnects, from their first report", () => {
+    miniappRunningRegistry.add("com.a")
+    start()
+    // Something else ends a moment after the glasses connect, before they have said who they are.
+    connectAsTheSdkDoes(NO_SERIAL, () => miniappRunningRegistry.remove("com.a"))
+    advance(90_000)
+    fleetEvents.photo({operationId: "req-1", stage: "requested"})
+    linkLoss()
+    advance(20_000)
+    connectAsTheSdkDoes(NO_SERIAL)
+    advance(90_000)
+    fleetEvents.photo({operationId: "req-2", stage: "requested"})
+    collector.stop("engine_stopped")
+
+    expect(bindings()).toHaveLength(1)
+    expect(JSON.parse(bindings()[0])).toMatchObject({kind: "provisional", product: "Mentra Live"})
+    const sessions = checkpoints()
+      .flatMap((c) => c.payload.sessions)
+      .filter((session) => session.activity === "glasses_connection" && session.ended)
+    expect(sessions).toHaveLength(2)
+  })
+
+  test("the same glasses after the app restarts are still the same device", () => {
+    start()
+    connectAsTheSdkDoes(NO_SERIAL)
+    advance(60_000)
+    collector.stop("engine_stopped")
+    start(PARTITION, "COLLECTOR-SESSION-2")
+    advance(60_000)
+    expect(bindings()).toHaveLength(1)
+  })
+
+  test("glasses with a serial are bound by it from their first report, even one that comes before the serial", () => {
+    miniappRunningRegistry.add("com.a")
+    start()
+    connectAsTheSdkDoes(WITH_SERIAL, () => miniappRunningRegistry.remove("com.a"))
+    advance(90_000)
+    linkLoss()
+    advance(20_000)
+    connectAsTheSdkDoes(WITH_SERIAL)
+    advance(90_000)
+    collector.stop("engine_stopped")
+
+    expect(bindings().map((binding) => JSON.parse(binding))).toEqual([
+      {kind: "serial", manufacturer: "Mentra", product: "Mentra Live", serial: "ML394037B"},
+    ])
+  })
+
+  test("the hardware variant the glasses report is still Mentra Live", () => {
+    start()
+    connectAsTheSdkDoes(WITH_SERIAL)
+    advance(5_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.payload.glasses?.model).toBe("Mentra Live")
+    expect(latest.deviceBinding).toEqual({
+      kind: "serial",
+      manufacturer: "Mentra",
+      product: "Mentra Live",
+      serial: "ML394037B",
+    })
+  })
+
+  test("a photo taken before the glasses have said who they are is recorded against them once they have", () => {
+    start()
+    let requestedAt = 0
+    connectAsTheSdkDoes(WITH_SERIAL, () => {
+      requestedAt = clock.wall
+      fleetEvents.photo({operationId: "req-early", stage: "requested"})
+      expect(ofKind("photo_operation")).toHaveLength(0)
+    })
+    const [photo] = ofKind("photo_operation")
+    expect(photo.observedAt).toBe(iso(requestedAt))
+    expect(photo.deviceBinding).toMatchObject({kind: "serial", serial: "ML394037B"})
+  })
+
+  test("glasses that never show a serial are identified 15 s into the connection", () => {
+    start()
+    connectAsTheSdkDoes(NO_SERIAL, () => fleetEvents.photo({operationId: "req-n", stage: "requested"}))
+    advance(10_000)
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    expect(snapshots().every((snapshot) => snapshot.deviceBinding === undefined)).toBe(true)
+    advance(60_000)
+    expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "provisional", product: "Mentra Live"})
+    expect((snapshots().at(-1) as Kind<"snapshot">).deviceBinding).toMatchObject({kind: "provisional"})
+    expect(entry(checkpoints().at(-1) as Kind<"usage_checkpoint">, "glasses_connection")?.deviceBinding).toMatchObject({
+      kind: "provisional",
+    })
+  })
+
+  test("a link loss keeps the pair that left, though the model and name stay behind", () => {
+    start()
+    connectAsTheSdkDoes(WITH_SERIAL)
+    advance(30_000)
+    linkLoss()
+    fleetEvents.photo({operationId: "req-l", stage: "failed", failedStage: "requested"})
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.payload.glasses?.connection.state).toBe("disconnected")
+    expect(latest.deviceBinding).toMatchObject({kind: "serial", serial: "ML394037B"})
+    expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "ML394037B"})
+  })
+
+  test("another phone binds the same glasses with its own provisional identity", () => {
+    start()
+    connectAsTheSdkDoes(NO_SERIAL)
+    advance(60_000)
+    collector.stop("engine_stopped")
+    const first = bindings()
+    resetFakeMmkv() // another phone: its own store, its own phone ID
+    queue = createFleetQueue(new MemoryFleetStore(), {now: () => clock.wall})
+    collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono})
+    start()
+    advance(60_000)
+    expect(bindings()).toHaveLength(1)
+    expect(bindings()).not.toEqual(first)
   })
 })
 
@@ -1503,9 +2109,11 @@ describe("a disconnect in the order the native layer does it", () => {
     advance(5_000)
     glassesStore.setState({connection: {state: "connecting"}}) // another pair, not yet identified
     advance(5_000)
-    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
     fleetEvents.photo({operationId: "req-n", stage: "requested"})
     expect(ofKind("photo_operation")).toHaveLength(0)
+    glassesStore.setState({connection: {state: "connected", fullyBooted: false}})
+    advance(5_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
   })
 })
 

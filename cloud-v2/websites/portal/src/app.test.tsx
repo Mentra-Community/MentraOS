@@ -615,6 +615,24 @@ describe("invitations as the app finds them", () => {
   });
 });
 
+describe("deleting a workspace a service holds", () => {
+  test("the settings page says why it cannot be deleted, where the delete is, and offers no delete", () => {
+    const held: WorkspaceDetail = {
+      ...detail(ACME, "Acme Field Team", "owner"),
+      deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 2 }],
+    };
+    const markup = render(`/w/${ACME}/settings`, { ...TWO_WORKSPACES, details: [held] });
+    const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
+    expect(section).toContain("This workspace still owns 2 published miniapps. Delete them in the Developer Console first.");
+    expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
+
+    // Without a hold, the page warns what deleting does to the miniapps the workspace still has in the Store.
+    const free = render(`/w/${ACME}/settings`, TWO_WORKSPACES);
+    expect(free).not.toContain("still owns");
+    expect(free).toContain("Miniapps this workspace still has in the Mentra Miniapp Store stay there");
+  });
+});
+
 describe("an Organization Admin is labelled by their own role", () => {
   const memberAdmin: WorkspaceDetail = { ...detail(ACME, "Dev check", "owner"), membership: { membershipId: "wm_x", role: "member" }, organizationAdmin: true };
 

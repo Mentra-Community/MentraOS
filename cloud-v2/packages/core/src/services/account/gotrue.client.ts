@@ -263,18 +263,25 @@ export function isGotrueAdminConfigured(): boolean {
 }
 
 /**
- * The account behind a Supabase user ID, for web sign-in. Null when the account
- * does not exist (404). Unlike `getUserById`, a directory that cannot answer
- * (any other status, a network error or a timeout) throws, so a GoTrue outage
- * is never mistaken for an account without a confirmed email.
+ * The account behind a Supabase user ID, for lookups whose answer is trusted or
+ * kept (web sign-in, the account's verified email). Null when the account does
+ * not exist (404). Unlike `getUserById`, a directory that cannot answer (any
+ * other status, a network error, a timeout or `signal`) throws `AccountError`
+ * 503, so a GoTrue outage is never mistaken for an account without a confirmed
+ * email.
  */
-export async function getAccountForSignIn(userId: string, timeoutMs = 5_000): Promise<GotrueIdentity | null> {
+export async function findAccountById(
+  userId: string,
+  timeoutMs = 5_000,
+  signal?: AbortSignal,
+): Promise<GotrueIdentity | null> {
   let response: { status: number; body: any };
   try {
+    const timeout = AbortSignal.timeout(timeoutMs);
     response = await gotrue(`/admin/users/${encodeURIComponent(userId)}`, {
       method: "GET",
       admin: true,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch (err) {
     if (err instanceof AccountError) throw err;

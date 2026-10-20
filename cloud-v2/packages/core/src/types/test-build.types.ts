@@ -15,6 +15,7 @@ export type TestBuildSource = z.infer<typeof testBuildSourceSchema>;
 export type TestBuildQuery = z.infer<typeof testBuildQuerySchema>;
 export type TestBuildPlatform = z.infer<typeof routinePlatformSchema>;
 export interface TestBuild {
+  diagnostic?: "nimo-resource-v1";
   source: TestBuildSource; platform?: TestBuildPlatform; title: string; headSha: string; buildUrl: string; createdAt: string;
   availability: "available" | "unavailable"; producerStatus?: "pending" | "failed"; reason?: string; release?: string;
   archive?: {name: string; sha256: string; size: number; url: string};
@@ -25,10 +26,12 @@ export interface TestBuild {
 }
 
 /** Published references are resolved by Core, never caller-local filesystem paths. */
-export function selectedBuildInput(build: TestBuild, platform: TestBuildPlatform) {
+export function selectedBuildInput(build: TestBuild, platform: TestBuildPlatform, diagnosticAuthoring = false) {
+  if (build.diagnostic && (!diagnosticAuthoring || platform !== "android" || build.source.channel !== "pr")) throw new Error("Diagnostic APK requires explicit NIMO authoring admission");
   if (!build.archive || !build.receipt) throw new Error("Published build references are incomplete");
   return {
     kind: platform === "ios-on-mac" ? "mac-ci-package" : "android-apk",
+    ...(build.diagnostic ? {diagnostic: build.diagnostic} : {}),
     repository: "Mentra-Community/MentraOS", headSha: build.headSha, channel: build.source.channel,
     ...(build.source.channel === "pr" ? {prNumber: build.source.prNumber} : {}),
     ...(build.release ? {releaseIdentity: build.release} : {}),

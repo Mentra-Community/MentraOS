@@ -1,11 +1,21 @@
 /** The error every `WorkspaceApi` call throws, and how the screens put one into words. */
 
-/** A failed workspace API call. `status` is 0 when the request never reached the server. */
+import {
+  describeDeletionHolds,
+  WORKSPACE_HAS_HOLDS_ERROR,
+  type WorkspaceDeletionHold,
+} from "@mentra/workspace-contract";
+
+/**
+ * A failed workspace API call. `status` is 0 when the request never reached the server. `holds` are what
+ * a 409 `workspace_has_holds` said holds the workspace from deletion; empty for every other failure.
+ */
 export class WorkspaceApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly holds: WorkspaceDeletionHold[] = [],
   ) {
     super(message);
     this.name = "WorkspaceApiError";
@@ -18,6 +28,11 @@ export const WORKSPACE_CHANGED_MESSAGE = "This workspace changed. Review and try
 /** Whether `error` is the 409 `membership_changed` that means the caller acted on a stale view. */
 export function isWorkspaceChangedError(error: unknown): error is WorkspaceApiError {
   return error instanceof WorkspaceApiError && error.status === 409 && error.code === "membership_changed";
+}
+
+/** Whether `error` is the 409 `workspace_has_holds`: a service still needs the workspace, so it cannot be deleted. */
+export function isWorkspaceHeldError(error: unknown): error is WorkspaceApiError {
+  return error instanceof WorkspaceApiError && error.status === 409 && error.code === WORKSPACE_HAS_HOLDS_ERROR;
 }
 
 /** Codes the server sends with no description of their own. */
@@ -35,6 +50,8 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 /** A sentence for the person looking at the screen. Server explanations are kept; codes and stack noise are not. */
 export function errorMessage(error: unknown): string {
   if (isWorkspaceChangedError(error)) return WORKSPACE_CHANGED_MESSAGE;
+  // Holds are put in words here, the same words the settings screen shows before anyone tries.
+  if (isWorkspaceHeldError(error) && error.holds.length > 0) return describeDeletionHolds(error.holds);
   if (error instanceof WorkspaceApiError) {
     if (error.code === "network_error") return "Could not reach the server. Check your connection and try again.";
     const known = CODE_MESSAGES[error.code];

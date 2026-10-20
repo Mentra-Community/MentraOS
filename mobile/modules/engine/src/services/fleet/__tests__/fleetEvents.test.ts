@@ -13,10 +13,11 @@ function subscribe(listener: FleetEventListener): () => void {
 
 afterEach(() => {
   while (unsubscribers.length) unsubscribers.pop()?.()
+  fleetEvents.discardUndeliveredLaunches()
 })
 
 describe("fleetEvents", () => {
-  test("emitting with no reporter running does nothing and does not throw", () => {
+  test("emitting with no reporter running does not throw", () => {
     expect(() => fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})).not.toThrow()
     expect(() => fleetEvents.photo({operationId: "op1", stage: "requested"})).not.toThrow()
   })
@@ -84,5 +85,85 @@ describe("fleetEvents", () => {
     fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
     fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
     expect(second).toHaveBeenCalledTimes(2)
+  })
+
+  describe("launches heard with nothing listening", () => {
+    test("are kept, with the time they happened, until a listener takes them", () => {
+      const now = spyOn(Date, "now").mockReturnValue(1_000)
+      try {
+        fleetEvents.launch({packageName: "com.a", start: "automatic", outcome: "started"})
+        now.mockReturnValue(2_000)
+        fleetEvents.launch({packageName: "com.b", start: "automatic", outcome: "failed"})
+      } finally {
+        now.mockRestore()
+      }
+      expect(fleetEvents.takeUndeliveredLaunches()).toEqual([
+        {event: {packageName: "com.a", start: "automatic", outcome: "started"}, observedAt: 1_000},
+        {event: {packageName: "com.b", start: "automatic", outcome: "failed"}, observedAt: 2_000},
+      ])
+      expect(fleetEvents.takeUndeliveredLaunches()).toEqual([])
+    })
+
+    test("are not kept when a listener hears them, and photo stages never are", () => {
+      subscribe({launch: () => {}})
+      fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
+      unsubscribers.pop()?.()
+      fleetEvents.photo({operationId: "op1", stage: "requested"})
+      expect(fleetEvents.takeUndeliveredLaunches()).toEqual([])
+    })
+
+    test("are at most the latest 32", () => {
+      for (let index = 0; index < 40; index += 1) {
+        fleetEvents.launch({packageName: `com.p${index}`, start: "automatic", outcome: "started"})
+      }
+      const kept = fleetEvents.takeUndeliveredLaunches().map((launch) => launch.event.packageName)
+      expect(kept).toHaveLength(32)
+      expect(kept[0]).toBe("com.p8")
+      expect(kept.at(-1)).toBe("com.p39")
+    })
+
+    test("can be discarded", () => {
+      fleetEvents.launch({packageName: "com.a", start: "automatic", outcome: "started"})
+      fleetEvents.discardUndeliveredLaunches()
+      expect(fleetEvents.takeUndeliveredLaunches()).toEqual([])
+    })
+  })
+
+  describe("a start that reports its own launch", () => {
+    test("keeps a launch the same miniapp makes elsewhere meanwhile from being reported, until it is done", () => {
+      const launch = mock((_event: unknown) => {})
+      subscribe({launch})
+      const release = fleetEvents.claimLaunch("com.a")
+      fleetEvents.launchUnlessClaimed({packageName: "com.a", start: "automatic", outcome: "started"})
+      fleetEvents.launchUnlessClaimed({packageName: "com.b", start: "automatic", outcome: "started"})
+      // Its own report is not held back.
+      fleetEvents.launch({packageName: "com.a", start: "user", outcome: "started"})
+      release()
+      fleetEvents.launchUnlessClaimed({packageName: "com.a", start: "automatic", outcome: "started"})
+      expect(
+        launch.mock.calls.map(([event]) => [
+          (event as {packageName: string}).packageName,
+          (event as {start: string}).start,
+        ]),
+      ).toEqual([
+        ["com.b", "automatic"],
+        ["com.a", "user"],
+        ["com.a", "automatic"],
+      ])
+    })
+
+    test("two starts of one miniapp hold it until both are done, and releasing twice changes nothing", () => {
+      const launch = mock((_event: unknown) => {})
+      subscribe({launch})
+      const first = fleetEvents.claimLaunch("com.a")
+      const second = fleetEvents.claimLaunch("com.a")
+      first()
+      first()
+      fleetEvents.launchUnlessClaimed({packageName: "com.a", start: "automatic", outcome: "started"})
+      expect(launch).not.toHaveBeenCalled()
+      second()
+      fleetEvents.launchUnlessClaimed({packageName: "com.a", start: "automatic", outcome: "started"})
+      expect(launch).toHaveBeenCalledTimes(1)
+    })
   })
 })

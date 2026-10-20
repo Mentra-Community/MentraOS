@@ -84,8 +84,8 @@ export const getModelSpecificTips = (model: string, {includeResetInstructions = 
           body: "Make sure your Mentra Live is fully charged.",
         },
         {
-          title: "Pairing Mode",
-          body: "Check that your Mentra Live isn't already connected to another phone.",
+          title: translate("pairing:livePairingScanTitle"),
+          body: translate("pairing:livePairingScanBody"),
         },
         {
           title: "Restart Glasses",

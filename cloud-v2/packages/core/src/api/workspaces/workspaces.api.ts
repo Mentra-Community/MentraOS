@@ -47,6 +47,7 @@ import {
   listWorkspaceCredentials,
   revokeCredential,
 } from "../../services/workspaces/credential.service"
+import {listDeletionHolds} from "../../services/workspaces/deletion-hold.service"
 import {
   acceptInvitation,
   acceptInvitationById,
@@ -107,6 +108,8 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       membership: await ownerMembership(summary.workspaceId, actor.mentraUserId),
       capabilities: [...capabilitiesForRole("owner")],
       organizationAdmin: actor.isOrganizationAdmin,
+      // Nothing can hold a workspace that did not exist a moment ago.
+      deletionHolds: [],
     }
     return c.json(detail, 201)
   })
@@ -147,7 +150,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   // --- One workspace ---------------------------------------------------------
 
-  app.get("/:workspaceId", requireWorkspaceCapability("workspace.read"), (c) => c.json(workspaceDetail(c)))
+  app.get("/:workspaceId", requireWorkspaceCapability("workspace.read"), async (c) => c.json(await workspaceDetail(c)))
 
   app.patch("/:workspaceId", requireWorkspaceCapability("workspace.settings.manage"), async (c) => {
     const body = await readJsonObject(c)
@@ -157,9 +160,10 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       requiredString(body, "name"),
       expectedRevision(body),
     )
-    return c.json(workspaceDetail(c, summary))
+    return c.json(await workspaceDetail(c, summary))
   })
 
+  // Refused with 409 `workspace_has_holds` (and the holds) while any service holds the workspace.
   app.delete("/:workspaceId", requireWorkspaceCapability("workspace.delete"), async (c) => {
     const body = await readJsonObject(c)
     await deleteWorkspace(userActor(c), c.req.param("workspaceId"), {confirmName: requiredString(body, "confirmName")})
@@ -287,9 +291,10 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
 /**
  * The workspace as the caller sees it: the summary (the one the gate loaded, or a fresh one from a
- * mutation) with the caller's membership and capabilities from the gate's decision.
+ * mutation) with the caller's membership and capabilities from the gate's decision, and what holds it
+ * from deletion, so a screen can say why it cannot be deleted before anyone tries.
  */
-function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): WorkspaceDetail {
+async function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): Promise<WorkspaceDetail> {
   const decision = c.get("workspaceAuthorization")
   const workspace = summary ?? decision?.workspace
   if (!decision?.allowed || !workspace) throw new Error("a workspace route ran without its authorization decision")
@@ -300,6 +305,7 @@ function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): WorkspaceDe
     capabilities: decision.capabilities,
     // The caller's own standing, so a screen can say why they hold more than their membership's role.
     organizationAdmin: principal?.kind === "user" && principal.isOrganizationAdmin,
+    deletionHolds: await listDeletionHolds(workspace.workspaceId),
   }
 }
 

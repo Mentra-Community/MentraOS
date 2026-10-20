@@ -13,7 +13,9 @@
         "glasses_battery",
         "glasses_versions",
         "miniapp_execution",
-        "engine_active"
+        "app_foreground",
+        "engine_active",
+        "photo_operations"
       ],
       "kind": "snapshot",
       "deviceBinding": {
@@ -64,7 +66,9 @@
         "glasses_battery",
         "glasses_versions",
         "miniapp_execution",
-        "engine_active"
+        "app_foreground",
+        "engine_active",
+        "photo_operations"
       ],
       "kind": "miniapp_launch",
       "payload": {
@@ -87,7 +91,9 @@
         "glasses_battery",
         "glasses_versions",
         "miniapp_execution",
-        "engine_active"
+        "app_foreground",
+        "engine_active",
+        "photo_operations"
       ],
       "kind": "usage_checkpoint",
       "payload": {
@@ -128,7 +134,9 @@
         "glasses_battery",
         "glasses_versions",
         "miniapp_execution",
-        "engine_active"
+        "app_foreground",
+        "engine_active",
+        "photo_operations"
       ],
       "kind": "photo_operation",
       "operationId": "op-photo-41c9",
@@ -154,7 +162,9 @@
         "glasses_battery",
         "glasses_versions",
         "miniapp_execution",
-        "engine_active"
+        "app_foreground",
+        "engine_active",
+        "photo_operations"
       ],
       "kind": "photo_operation",
       "operationId": "op-photo-41c9",

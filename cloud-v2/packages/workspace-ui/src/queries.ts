@@ -14,8 +14,9 @@ import {
   type QueryClient,
   type UseMutationOptions,
 } from "@tanstack/react-query";
+import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "./api";
-import { isWorkspaceChangedError, WorkspaceApiError } from "./errors";
+import { isWorkspaceChangedError, isWorkspaceHeldError, WorkspaceApiError } from "./errors";
 
 type ApiScope = Pick<WorkspaceApi, "basePath">;
 
@@ -56,6 +57,19 @@ export const workspaceDetailQuery = (api: WorkspaceApi, workspaceId: string) =>
     queryKey: workspaceKeys.detail(api, workspaceId),
     queryFn: () => api.getWorkspace(workspaceId),
     retry: shouldRetry,
+  });
+
+/**
+ * The workspace detail as the settings screen reads it: the same cache entry, refetched when the window
+ * regains focus while a service holds the workspace from deletion. Hosts turn refetch-on-focus off, but
+ * a hold is cleared elsewhere (the Store clears it once the Developer Console has deleted the miniapps),
+ * so a person coming back to this tab sees Delete offered again without reloading.
+ */
+export const settingsDetailQuery = (api: WorkspaceApi, workspaceId: string) =>
+  queryOptions({
+    ...workspaceDetailQuery(api, workspaceId),
+    refetchOnWindowFocus: (query: { state: { data: WorkspaceDetail | undefined } }) =>
+      (query.state.data?.deletionHolds?.length ?? 0) > 0,
   });
 
 export const membersQuery = (api: WorkspaceApi, workspaceId: string) =>
@@ -119,8 +133,10 @@ export const myInvitationsQuery = (api: WorkspaceApi) =>
  * On success the workspace's data and the workspace list are refetched before the mutation settles, so
  * a screen never offers a second change built on the revision the first one just replaced. On a 409
  * `membership_changed` (someone else changed the workspace first) the same refetch runs and the error
- * still reaches the caller, whose message is `WORKSPACE_CHANGED_MESSAGE`. With `workspaceGone` (deleted
- * or left) the workspace's data is dropped instead, since fetching it again would only fail.
+ * still reaches the caller, whose message is `WORKSPACE_CHANGED_MESSAGE`. A 409 `workspace_has_holds` (a
+ * service placed a hold since the screen loaded) refetches too, so the screen shows what holds the
+ * workspace. With `workspaceGone` (deleted or left) a success drops the workspace's data instead, since
+ * fetching it again would only fail.
  *
  * `gcTime: 0` keeps results out of the shared mutation cache once the screen lets go of them.
  */
@@ -141,7 +157,7 @@ export function workspaceMutationOptions<TVariables, TData>(
       await client.invalidateQueries({ queryKey: workspaceKeys.list(api) });
     },
     onError: async (error) => {
-      if (isWorkspaceChangedError(error)) await refresh();
+      if (isWorkspaceChangedError(error) || isWorkspaceHeldError(error)) await refresh();
     },
   };
 }

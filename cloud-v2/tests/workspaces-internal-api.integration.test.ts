@@ -62,6 +62,7 @@ import {
 } from "../packages/workspace-contract/src/server"
 import {capabilitiesForRole} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 import {
@@ -247,7 +248,7 @@ interface RawOptions {
 }
 
 /** One hand-signed request through the real app. */
-async function raw(method: "GET" | "POST", pathWithQuery: string, options: RawOptions = {}): Promise<Reply> {
+async function raw(method: "GET" | "POST" | "PUT" | "DELETE", pathWithQuery: string, options: RawOptions = {}): Promise<Reply> {
   const service = options.service ?? "store"
   const body = options.rawBody ?? (options.body === undefined ? "" : JSON.stringify(options.body))
   const timestampMs = options.timestampMs ?? Date.now()
@@ -264,8 +265,9 @@ async function raw(method: "GET" | "POST", pathWithQuery: string, options: RawOp
     ...options.headers,
   }
   for (const header of options.omit ?? []) delete headers[SERVICE_HEADERS[header]]
-  if (method === "POST") headers["content-type"] = "application/json"
-  return send(method, pathWithQuery, headers, method === "POST" ? body : undefined)
+  const hasBody = method === "POST" || method === "PUT" || body !== ""
+  if (hasBody) headers["content-type"] = "application/json"
+  return send(method, pathWithQuery, headers, hasBody ? body : undefined)
 }
 
 async function send(method: string, pathWithQuery: string, headers: Record<string, string>, body?: string) {
@@ -1412,6 +1414,295 @@ describe("POST /credentials", () => {
     })
     expect({status: reply.status, body: reply.json}).toEqual({status: 403, body: {error: "forbidden"}})
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
+  })
+})
+
+// --- Deletion holds --------------------------------------------------------
+
+describe("PUT and DELETE /workspaces/:workspaceId/deletion-holds/:service", () => {
+  const OWNS = "owns_miniapps"
+  const holdPath = (workspaceId: string, service = "store") => `${API}/workspaces/${workspaceId}/deletion-holds/${service}`
+  const holdEvents = (workspaceId: string) =>
+    WorkspaceAuditEventModel.find({workspaceId, action: /^workspace\.deletion_hold_/}).sort({seq: 1}).lean()
+  const storedHolds = async (workspaceId: string) =>
+    (await WorkspaceModel.findOne({workspaceId}).lean())?.deletionHolds ?? []
+  /** The next `asOf` for a client call, later than every one before. */
+  const now = () => new Date(nextHoldAsOf())
+  /** The next `asOf` for a raw request body. */
+  const asOf = nextHoldAsOf
+
+  test("the Store holds a workspace, replaces its hold and clears it, through the contract's client", async () => {
+    const {workspaceId} = await newWorkspace()
+
+    expect(await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 3}],
+      ignored: false,
+    })
+    expect(await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 1}],
+      ignored: false,
+    })
+    // Idempotent: the same hold again changes and records nothing.
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})
+    expect(await store().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({workspaceId, holds: [], ignored: false})
+    expect(await store().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({workspaceId, holds: [], ignored: false})
+
+    expect((await holdEvents(workspaceId)).map(event => [event.action, event.actor.service, event.after])).toEqual([
+      ["workspace.deletion_hold_set", "store", {reason: OWNS, count: 3}],
+      ["workspace.deletion_hold_set", "store", {reason: OWNS, count: 1}],
+      ["workspace.deletion_hold_cleared", "store", null],
+    ])
+  })
+
+  test("the answer is exactly {workspaceId, holds, ignored}", async () => {
+    const {workspaceId} = await newWorkspace()
+    const set = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, count: 2, asOf: asOf()}})
+    expect(set.status).toBe(200)
+    expect(set.json).toEqual({workspaceId, holds: [{service: "store", reason: OWNS, count: 2}], ignored: false})
+    const cleared = await raw("DELETE", holdPath(workspaceId), {body: {asOf: asOf()}})
+    expect(cleared.status).toBe(200)
+    expect(cleared.json).toEqual({workspaceId, holds: [], ignored: false})
+  })
+
+  test("a late call, older than one Core applied, is ignored: 200 with the holds Core keeps, and nothing changes", async () => {
+    const {workspaceId} = await newWorkspace()
+    // Computed first, applied last: the call a Store timeout leaves behind.
+    const lateClear = new Date(Date.now() - 120_000)
+    const lateSet = new Date(Date.now() - 60_000)
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: now()})
+
+    expect(await store().clearDeletionHold(workspaceId, {asOf: lateClear})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 2}],
+      ignored: true,
+    })
+    expect(await storedHolds(workspaceId)).toEqual([{service: "store", reason: OWNS, count: 2}])
+
+    // After a newer clear, a late set does not bring the hold back.
+    await store().clearDeletionHold(workspaceId, {asOf: now()})
+    const set = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, count: 5, asOf: lateSet.toISOString()}})
+    expect([set.status, set.json]).toEqual([200, {workspaceId, holds: [], ignored: true}])
+    expect(await storedHolds(workspaceId)).toEqual([])
+
+    expect((await holdEvents(workspaceId)).map(event => event.action)).toEqual([
+      "workspace.deletion_hold_set",
+      "workspace.deletion_hold_cleared",
+    ])
+  })
+
+  test("a newer call is applied; the same call again with the same asOf is answered as applied", async () => {
+    const {workspaceId} = await newWorkspace()
+    const first = now()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: first})
+    const retried = await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: first})
+    expect(retried).toEqual({workspaceId, holds: [{service: "store", reason: OWNS, count: 2}], ignored: false})
+    const conflicting = await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: first})
+    expect(conflicting.ignored).toBe(true)
+
+    expect(await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 3}],
+      ignored: false,
+    })
+  })
+
+  test("a missing, malformed or far-future asOf is 400 invalid_request and writes nothing", async () => {
+    const {workspaceId} = await newWorkspace()
+    const tooLate = new Date(Date.now() + 10 * 60_000)
+    await expectClientError(store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: tooLate}), "bad_request", 400)
+    await expectClientError(store().clearDeletionHold(workspaceId, {asOf: tooLate}), "bad_request", 400)
+    for (const body of [{}, {asOf: "2026-10-14"}, {asOf: "2026-10-14T12:00:00+02:00"}, {asOf: 1760000000000}]) {
+      const set = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, ...body}})
+      const clear = await raw("DELETE", holdPath(workspaceId), {body})
+      expect({body, set: [set.status, set.json?.error], clear: [clear.status, clear.json?.error]}).toEqual({
+        body,
+        set: [400, "invalid_request"],
+        clear: [400, "invalid_request"],
+      })
+    }
+    // A clear with no body at all names no asOf.
+    const empty = await raw("DELETE", holdPath(workspaceId))
+    expect([empty.status, empty.json?.error]).toEqual([400, "invalid_request"])
+    expect(await storedHolds(workspaceId)).toEqual([])
+    expect(await holdEvents(workspaceId)).toEqual([])
+  })
+
+  test("a held workspace is refused deletion, and deletes once the hold is cleared", async () => {
+    const {workspaceId, owner} = await newWorkspace()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 3, asOf: now()})
+
+    const refused = await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"}).catch(err => err)
+    expect({code: refused.code, status: refused.status}).toEqual({code: "workspace_has_holds", status: 409})
+
+    await store().clearDeletionHold(workspaceId, {asOf: now()})
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
+    expect((await getWorkspace(workspaceId))!.status).toBe("deleted")
+  })
+
+  test("Fleet holds a workspace under its own name, beside the Store's", async () => {
+    const {workspaceId} = await newWorkspace()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})
+
+    expect(await fleet().setDeletionHold(workspaceId, {reason: "manages_devices", asOf: now()})).toEqual({
+      workspaceId,
+      holds: [
+        {service: "fleet", reason: "manages_devices"},
+        {service: "store", reason: OWNS, count: 1},
+      ],
+      ignored: false,
+    })
+    // Clearing its own leaves the Store's.
+    expect(await fleet().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({
+      workspaceId,
+      holds: [{service: "store", reason: OWNS, count: 1}],
+      ignored: false,
+    })
+  })
+
+  test("a service may set or clear only its own hold: another service's name is 403 and changes nothing", async () => {
+    const {workspaceId} = await newWorkspace()
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 1, asOf: now()})
+
+    for (const [service, secret, named] of [
+      ["fleet", "fleet-f1", "store"],
+      ["store", "store-s1", "fleet"],
+      ["store", "store-s1", "core"],
+      ["store", "store-s1", "Store"],
+    ] as const) {
+      for (const method of ["PUT", "DELETE"] as const) {
+        const reply = await raw(method, holdPath(workspaceId, named), {
+          service,
+          secret,
+          body: method === "PUT" ? {reason: "manages_devices", asOf: asOf()} : {asOf: asOf()},
+        })
+        expect({service, named, method, status: reply.status, error: reply.json?.error}).toEqual({
+          service,
+          named,
+          method,
+          status: 403,
+          error: "forbidden",
+        })
+      }
+    }
+    expect(await storedHolds(workspaceId)).toEqual([{service: "store", reason: OWNS, count: 1}])
+    expect((await holdEvents(workspaceId)).map(event => event.action)).toEqual(["workspace.deletion_hold_set"])
+  })
+
+  test("only a signed request from a service Core knows reaches it", async () => {
+    const {workspaceId} = await newWorkspace()
+
+    await expectClientError(
+      clientFor("store", {secret: "not-a-store-secret"}).setDeletionHold(workspaceId, {reason: OWNS, asOf: now()}),
+      "service_unauthorized",
+      401,
+    )
+    await expectClientError(
+      clientFor("fleet", {secret: "store-s1"}).clearDeletionHold(workspaceId, {asOf: now()}),
+      "service_unauthorized",
+      401,
+    )
+    // No signature at all: a person's request, or anyone's.
+    for (const method of ["PUT", "DELETE"]) {
+      const unsigned = await send(
+        method,
+        holdPath(workspaceId),
+        {"content-type": "application/json"},
+        JSON.stringify({reason: OWNS, asOf: asOf()}),
+      )
+      expect({method, status: unsigned.status, body: unsigned.json}).toEqual({
+        method,
+        status: 401,
+        body: {error: "service_unauthorized"},
+      })
+    }
+    // A service Core has no secret for, even with a valid Store secret.
+    const unknown = await raw("PUT", holdPath(workspaceId, "billing"), {service: "billing", body: {reason: OWNS, asOf: asOf()}})
+    expect(unknown.status).toBe(401)
+    // A signed PUT replayed as a DELETE does not verify.
+    const body = JSON.stringify({reason: OWNS, asOf: asOf()})
+    const replayed = await send("DELETE", holdPath(workspaceId), signedHeaders("PUT", holdPath(workspaceId), body), body)
+    expect(replayed.status).toBe(401)
+    expect(await storedHolds(workspaceId)).toEqual([])
+  })
+
+  test("a malformed hold is 400 invalid_request and writes nothing", async () => {
+    const {workspaceId} = await newWorkspace()
+    const bad: unknown[] = [
+      {asOf: asOf()},
+      {reason: "", asOf: asOf()},
+      {reason: "Owns Miniapps", asOf: asOf()},
+      {reason: 5, asOf: asOf()},
+      {reason: OWNS, count: 0, asOf: asOf()},
+      {reason: OWNS, count: 2.5, asOf: asOf()},
+      {reason: OWNS, count: "3", asOf: asOf()},
+      [],
+    ]
+    for (const body of bad) {
+      const reply = await raw("PUT", holdPath(workspaceId), {body})
+      expect({body, status: reply.status, error: reply.json?.error}).toEqual({body, status: 400, error: "invalid_request"})
+    }
+    for (const rawBody of ["", "{nope"]) {
+      for (const method of ["PUT", "DELETE"] as const) {
+        const reply = await raw(method, holdPath(workspaceId), {rawBody})
+        expect({rawBody, method, status: reply.status}).toEqual({rawBody, method, status: 400})
+      }
+    }
+    expect(await storedHolds(workspaceId)).toEqual([])
+  })
+
+  test("an unknown workspace is 404 workspace_not_found; a deleted one takes no hold (410) and has none to clear", async () => {
+    const missingSet = await raw("PUT", holdPath("ws_missing"), {body: {reason: OWNS, asOf: asOf()}})
+    const missingClear = await raw("DELETE", holdPath("ws_missing"), {body: {asOf: asOf()}})
+    expect([missingSet.status, missingSet.json?.error]).toEqual([404, "workspace_not_found"])
+    expect([missingClear.status, missingClear.json?.error]).toEqual([404, "workspace_not_found"])
+    await expectClientError(store().setDeletionHold("ws_missing", {reason: OWNS, asOf: now()}), "bad_request", 404)
+
+    const {workspaceId, owner} = await newWorkspace()
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
+    const deleted = await raw("PUT", holdPath(workspaceId), {body: {reason: OWNS, count: 1, asOf: asOf()}})
+    expect([deleted.status, deleted.json?.error]).toEqual([410, "workspace_deleted"])
+    expect(await store().clearDeletionHold(workspaceId, {asOf: now()})).toEqual({workspaceId, holds: [], ignored: false})
+  })
+
+  test("an id that needs escaping in the path is found, and still verifies", async () => {
+    const {workspaceId} = await newWorkspace()
+    await WorkspaceModel.updateOne({workspaceId}, {$set: {workspaceId: "ws odd/id"}})
+    await WorkspaceMembershipModel.updateMany({workspaceId}, {$set: {workspaceId: "ws odd/id"}})
+
+    expect(await store().setDeletionHold("ws odd/id", {reason: OWNS, asOf: now()})).toEqual({
+      workspaceId: "ws odd/id",
+      holds: [{service: "store", reason: OWNS}],
+      ignored: false,
+    })
+  })
+
+  test("setting and clearing a hold are on the change feed as the contract describes them; an ignored call is not", async () => {
+    const {workspaceId} = await newWorkspace()
+    const late = new Date(Date.now() - 120_000)
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 2, asOf: now()})
+    await store().clearDeletionHold(workspaceId, {asOf: now()})
+    await store().setDeletionHold(workspaceId, {reason: OWNS, count: 9, asOf: late})
+
+    const {events} = await fleet().listChanges({})
+    const holds = events.filter(event => event.action.startsWith("workspace.deletion_hold_") && event.workspaceId === workspaceId)
+    expect(holds.map(({action, workspaceId: id, target, before, after}) => ({action, id, target, before, after}))).toEqual([
+      {
+        action: "workspace.deletion_hold_set",
+        id: workspaceId,
+        target: {workspaceId, service: "store"},
+        before: null,
+        after: {reason: OWNS, count: 2},
+      },
+      {
+        action: "workspace.deletion_hold_cleared",
+        id: workspaceId,
+        target: {workspaceId, service: "store"},
+        before: {reason: OWNS, count: 2},
+        after: null,
+      },
+    ])
   })
 })
 

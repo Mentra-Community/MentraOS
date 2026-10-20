@@ -1,0 +1,323 @@
+{
+  "provenance": {
+    "kind": "actual-optimized-supported-Swift-scheduler-prototype-only",
+    "executableSha256": "fe59be7b2c3f5589b8f8dd4b50a5a97863debc04bc07dbb0d3d049072ce82cb2",
+    "dsymSha256": "16eeed1afcc1b6b653f825222cbc763ddc3df3b3590ca49f1ab08ce856e3582d",
+    "uuid": "a7db743e3fa2387a9e6e8ec23d2ac13d",
+    "sourceSha256": "2d2736d0e75eaf33715448ca9bf7a70e24461e8f45e413619febef7362c5c6c9",
+    "limitation": "Real NimoSchedulerWitness compiler identities; no role/module remapping or app/hardware qualification",
+    "compilerReceipt": {
+      "scope": "nonexecuted representative Swift scheduler prototype only",
+      "compiler": "AppleSwift6.3.3",
+      "sdk": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk",
+      "flags": [
+        "-swift-version",
+        "5",
+        "-O",
+        "-g",
+        "-target",
+        "arm64-apple-macos13.0",
+        "-emit-library",
+        "-module-name",
+        "NimoSchedulerWitness"
+      ],
+      "source": "Scheduler.swift",
+      "files": {
+        "Scheduler.swift": "2d2736d0e75eaf33715448ca9bf7a70e24461e8f45e413619febef7362c5c6c9",
+        "Scheduler-original.swift": "1674c5412c0f12d99bddce8177ce1d0cfc5a58c1144cf14a265c4277139e08cc",
+        "libForwardedScheduler.dylib": "fe59be7b2c3f5589b8f8dd4b50a5a97863debc04bc07dbb0d3d049072ce82cb2",
+        "forwarded-otool.txt": "6569f518ca8938d85cfcf3a391f20bc4dc748d9c4cece01e745d94298029f3f4",
+        "forwarded-assembly.txt": "35a5e7bea4eb7a2b1b22cbdf0b08addc76ba948775b8dbbd52f79976b4ac81a6",
+        "forwarded-enqueue.txt": "9dba7df8147fc2052dadcce26109679e863eaebdc23bedeb11897bcf15ea8188"
+      },
+      "originalThreeVariantSnapshot": "Scheduler-original.swift",
+      "observedHelper": "single fixed112-byte stack allocation; no dynamic SP/metadata in registration helper; copied block retained in x22 through dispatch",
+      "qualification": false
+    },
+    "sourceFixture": "nimo-forwarded-scheduler.swift"
+  },
+  "symbols": {
+    "3016": [
+      "_$s20NimoSchedulerWitness16DefaultTransportC5queueACSo012OS_dispatch_F0C_tcfC",
+      "NimoSchedulerWitness.DefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.DefaultTransport"
+    ],
+    "3076": [
+      "_$s20NimoSchedulerWitness16DefaultTransportC5queueACSo012OS_dispatch_F0C_tcfc",
+      "NimoSchedulerWitness.DefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.DefaultTransport"
+    ],
+    "3616": [
+      "_$s20NimoSchedulerWitness16DefaultTransportC5queueACSo012OS_dispatch_F0C_tcfcyyYbcfU_TA",
+      "partial apply forwarder for closure #1 @Sendable () -> () in NimoSchedulerWitness.DefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.DefaultTransport"
+    ],
+    "3628": [
+      "_$sIegh_IeyBh_TR",
+      "reabstraction thunk helper from @escaping @callee_guaranteed @Sendable () -> () to @escaping @callee_unowned @convention(block) @Sendable () -> ()"
+    ],
+    "3672": [
+      "_block_copy_helper",
+      "_block_copy_helper"
+    ],
+    "3692": [
+      "_block_destroy_helper",
+      "_block_destroy_helper"
+    ],
+    "3700": [
+      "_$s8Dispatch0A13WorkItemFlagsVACs10SetAlgebraAAWl",
+      "lazy protocol witness table accessor for type Dispatch.DispatchWorkItemFlags and conformance Dispatch.DispatchWorkItemFlags : Swift.SetAlgebra in Dispatch"
+    ],
+    "3768": [
+      "___swift_instantiateConcreteTypeFromMangledNameV2",
+      "___swift_instantiateConcreteTypeFromMangledNameV2"
+    ],
+    "3848": [
+      "_$sSay8Dispatch0A13WorkItemFlagsVGSayxGSTsWl",
+      "lazy protocol witness table accessor for type [Dispatch.DispatchWorkItemFlags] and conformance [A] : Swift.Sequence in Swift"
+    ],
+    "3928": [
+      "___swift_instantiateConcreteTypeFromMangledNameAbstractV2",
+      "___swift_instantiateConcreteTypeFromMangledNameAbstractV2"
+    ],
+    "4012": [
+      "_$s20NimoSchedulerWitness16DefaultTransportCfd",
+      "NimoSchedulerWitness.DefaultTransport.deinit"
+    ],
+    "4040": [
+      "_$s20NimoSchedulerWitness16DefaultTransportCfD",
+      "NimoSchedulerWitness.DefaultTransport.__deallocating_deinit"
+    ],
+    "4076": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportC5queueACSo012OS_dispatch_G0C_tcfC",
+      "NimoSchedulerWitness.HelperDefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.HelperDefaultTransport"
+    ],
+    "4088": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportC5queueACSo012OS_dispatch_G0C_tcfc",
+      "NimoSchedulerWitness.HelperDefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.HelperDefaultTransport"
+    ],
+    "4140": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LLyyF",
+      "NimoSchedulerWitness.HelperDefaultTransport.enqueueServe() -> ()"
+    ],
+    "4608": [
+      "_$s20NimoSchedulerWitness17ExplicitTransportC5queueACSo012OS_dispatch_F0C_tcfC",
+      "NimoSchedulerWitness.ExplicitTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.ExplicitTransport"
+    ],
+    "4620": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportC5queueACSo012OS_dispatch_G0C_tcfCTm",
+      "merged NimoSchedulerWitness.HelperDefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.HelperDefaultTransport"
+    ],
+    "4712": [
+      "_$s20NimoSchedulerWitness17ExplicitTransportC5queueACSo012OS_dispatch_F0C_tcfc",
+      "NimoSchedulerWitness.ExplicitTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.ExplicitTransport"
+    ],
+    "4764": [
+      "_$s20NimoSchedulerWitness17ExplicitTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LLyyF",
+      "NimoSchedulerWitness.ExplicitTransport.enqueueServe() -> ()"
+    ],
+    "5160": [
+      "_$s20NimoSchedulerWitness18ForwardedTransportC5queueACSo012OS_dispatch_F0C_tcfC",
+      "NimoSchedulerWitness.ForwardedTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.ForwardedTransport"
+    ],
+    "5440": [
+      "_$s20NimoSchedulerWitness18ForwardedTransportC5queueACSo012OS_dispatch_F0C_tcfc",
+      "NimoSchedulerWitness.ForwardedTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.ForwardedTransport"
+    ],
+    "5700": [
+      "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtF",
+      "NimoSchedulerWitness.ForwardedTransport.enqueueServe(qos: Dispatch.DispatchQoS, flags: Dispatch.DispatchWorkItemFlags) -> ()"
+    ],
+    "5924": [
+      "_$s20NimoSchedulerWitness16DefaultTransportCMa",
+      "type metadata accessor for NimoSchedulerWitness.DefaultTransport"
+    ],
+    "5956": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportCMa",
+      "type metadata accessor for NimoSchedulerWitness.HelperDefaultTransport"
+    ],
+    "5988": [
+      "_$s20NimoSchedulerWitness17ExplicitTransportCMa",
+      "type metadata accessor for NimoSchedulerWitness.ExplicitTransport"
+    ],
+    "6020": [
+      "_$s20NimoSchedulerWitness18ForwardedTransportCMa",
+      "type metadata accessor for NimoSchedulerWitness.ForwardedTransport"
+    ],
+    "6052": [
+      "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtFyyYbcfU_TA",
+      "partial apply forwarder for closure #1 @Sendable () -> () in NimoSchedulerWitness.ForwardedTransport.enqueueServe(qos: Dispatch.DispatchQoS, flags: Dispatch.DispatchWorkItemFlags) -> ()"
+    ],
+    "6064": [
+      "_$s20NimoSchedulerWitness16DefaultTransportC5serve33_E05E94E9B413CFA546DA917318CB5131LLyyFTf4d_n",
+      "function signature specialization <Arg[0] = Dead> of NimoSchedulerWitness.DefaultTransport.serve() -> ()"
+    ],
+    "6200": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportC5serve33_E05E94E9B413CFA546DA917318CB5131LLyyFTf4d_n",
+      "function signature specialization <Arg[0] = Dead> of NimoSchedulerWitness.HelperDefaultTransport.serve() -> ()"
+    ],
+    "6336": [
+      "_$s20NimoSchedulerWitness17ExplicitTransportC5serve33_E05E94E9B413CFA546DA917318CB5131LLyyFTf4d_n",
+      "function signature specialization <Arg[0] = Dead> of NimoSchedulerWitness.ExplicitTransport.serve() -> ()"
+    ],
+    "6472": [
+      "_$s20NimoSchedulerWitness18ForwardedTransportC5serve33_E05E94E9B413CFA546DA917318CB5131LLyyFTf4d_n",
+      "function signature specialization <Arg[0] = Dead> of NimoSchedulerWitness.ForwardedTransport.serve() -> ()"
+    ],
+    "6608": [
+      "_$s20NimoSchedulerWitness17ExplicitTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LLyyFyyYbcfU_TA",
+      "partial apply forwarder for closure #1 @Sendable () -> () in NimoSchedulerWitness.ExplicitTransport.enqueueServe() -> ()"
+    ],
+    "6620": [
+      "_$s20NimoSchedulerWitness22HelperDefaultTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LLyyFyyYbcfU_TA",
+      "partial apply forwarder for closure #1 @Sendable () -> () in NimoSchedulerWitness.HelperDefaultTransport.enqueueServe() -> ()"
+    ],
+    "6632": [
+      "_$s20NimoSchedulerWitness16DefaultTransportC5queueACSo012OS_dispatch_F0C_tcfcyyYbcfU_TATm",
+      "merged partial apply forwarder for closure #1 @Sendable () -> () in NimoSchedulerWitness.DefaultTransport.init(queue: __C.OS_dispatch_queue) -> NimoSchedulerWitness.DefaultTransport"
+    ],
+    "6720": [
+      "_block_copy_helper.4",
+      "_block_copy_helper.4"
+    ],
+    "6724": [
+      "_block_copy_helper.10",
+      "_block_copy_helper.10"
+    ],
+    "6728": [
+      "_block_copy_helper.16",
+      "_block_copy_helper.16"
+    ],
+    "6736": [
+      "_block_destroy_helper.5",
+      "_block_destroy_helper.5"
+    ],
+    "6740": [
+      "_block_destroy_helper.11",
+      "_block_destroy_helper.11"
+    ],
+    "6744": [
+      "_block_destroy_helper.17",
+      "_block_destroy_helper.17"
+    ]
+  },
+  "imports": {
+    "6760": "_$s8Dispatch0A13WorkItemFlagsV8rawValueACSu_tcfC",
+    "6772": "_$s8Dispatch0A13WorkItemFlagsVMa",
+    "6784": "_$s8Dispatch0A3QoSV11unspecifiedACvgZ",
+    "6796": "_$s8Dispatch0A3QoSVMa",
+    "6808": "_$sSo17OS_dispatch_queueC8DispatchE5async5group3qos5flags7executeySo0a1_b1_F0CSg_AC0D3QoSVAC0D13WorkItemFlagsVyyXBtF",
+    "6820": "_$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj",
+    "6832": "_$ss5print_9separator10terminatoryypd_S2StF",
+    "6844": "__Block_copy",
+    "6856": "__Block_release",
+    "6868": "_objc_opt_self",
+    "6880": "_objc_release",
+    "6892": "_objc_retain",
+    "6904": "_swift_allocObject",
+    "6916": "_swift_beginAccess",
+    "6928": "_swift_deallocClassInstance",
+    "6940": "_swift_deallocObject",
+    "6952": "_swift_getTypeByMangledNameInContext",
+    "6964": "_swift_getTypeByMangledNameInContextInMetadataState",
+    "6976": "_swift_getWitnessTable",
+    "6988": "_swift_release",
+    "7000": "_swift_retain",
+    "7012": "_swift_weakDestroy",
+    "7024": "_swift_weakInit",
+    "7036": "_swift_weakLoadStrong"
+  },
+  "data_imports": {
+    "16400": "__NSConcreteStackBlock"
+  },
+  "windows": {
+    "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtF": [
+      5700,
+      5924,
+      "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtF:\n1644 sub sp, sp, #0x70\n1648 stp x24, x23, [sp, #0x30]\n164c stp x22, x21, [sp, #0x40]\n1650 stp x20, x19, [sp, #0x50]\n1654 stp x29, x30, [sp, #0x60]\n1658 add x29, sp, #0x60\n165c mov x22, x20\n1660 mov x19, x1\n1664 mov x21, x0\n1668 ldr x20, [x20, #0x10]\n166c adrp x0, 0x4000\n1670 add x0, x0, #0x1d8\n1674 mov w1, #0x18\n1678 mov w2, #0x7\n167c bl 0x1af8 ; _swift_allocObject\n1680 mov x23, x0\n1684 add x0, x0, #0x10\n1688 mov x1, x22\n168c bl 0x1b70 ; _swift_weakInit\n1690 adrp x8, 0x1000\n1694 add x8, x8, #0x7a4\n1698 stp x8, x23, [sp, #0x20]\n169c adrp x8, 0x4000\n16a0 ldr x8, [x8, #0x10]\n16a4 str x8, [sp]\n16a8 adrp x8, 0x1000\n16ac ldr d0, [x8, #0xb90]\n16b0 str d0, [sp, #0x8]\n16b4 adrp x8, 0x0\n16b8 add x8, x8, #0xe2c\n16bc adrp x9, 0x4000\n16c0 add x9, x9, #0x1f0\n16c4 stp x8, x9, [sp, #0x10]\n16c8 mov x0, sp\n16cc bl 0x1abc ; __Block_copy\n16d0 mov x22, x0\n16d4 mov x0, x23\n16d8 bl 0x1b58 ; _swift_retain\n16dc mov x0, #0x0\n16e0 mov x1, x21\n16e4 mov x2, x19\n16e8 mov x3, x22\n16ec bl 0x1a98 ; _$sSo17OS_dispatch_queueC8DispatchE5async5group3qos5flags7executeySo0a1_b1_F0CSg_AC0D3QoSVAC0D13WorkItemFlagsVyyXBtF\n16f0 mov x0, x22\n16f4 bl 0x1ac8 ; __Block_release\n16f8 ldr x19, [sp, #0x28]\n16fc mov x0, x23\n1700 bl 0x1b4c ; _swift_release\n1704 mov x0, x19\n1708 bl 0x1b4c ; _swift_release\n170c ldp x29, x30, [sp, #0x60]\n1710 ldp x20, x19, [sp, #0x50]\n1714 ldp x22, x21, [sp, #0x40]\n1718 ldp x24, x23, [sp, #0x30]\n171c add sp, sp, #0x70\n1720 ret"
+    ],
+    "_block_copy_helper.4": [
+      6720,
+      6724,
+      "_block_copy_helper.4:\n1a40 b 0xe58"
+    ],
+    "_block_copy_helper": [
+      3672,
+      3692,
+      "_block_copy_helper:\ne58 ldr x8, [x1, #0x28]\ne5c ldr q0, [x1, #0x20]\ne60 str q0, [x0, #0x20]\ne64 mov x0, x8\ne68 b 0x1b58 ; _swift_retain"
+    ],
+    "_block_destroy_helper.5": [
+      6736,
+      6740,
+      "_block_destroy_helper.5:\n1a50 b 0xe6c"
+    ],
+    "_block_destroy_helper": [
+      3692,
+      3700,
+      "_block_destroy_helper:\ne6c ldr x0, [x0, #0x28]\ne70 b 0x1b4c ; _swift_release"
+    ],
+    "_$sIegh_IeyBh_TR": [
+      3628,
+      3672,
+      "_$sIegh_IeyBh_TR:\ne2c stp x20, x19, [sp, #-0x20]!\ne30 stp x29, x30, [sp, #0x10]\ne34 add x29, sp, #0x10\ne38 ldp x19, x20, [x0, #0x20]\ne3c mov x0, x20\ne40 bl 0x1b58 ; _swift_retain\ne44 blr x19\ne48 mov x0, x20\ne4c ldp x29, x30, [sp, #0x10]\ne50 ldp x20, x19, [sp], #0x20\ne54 b 0x1b4c ; _swift_release"
+    ],
+    "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtFyyYbcfU_TA": [
+      6052,
+      6064,
+      "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtFyyYbcfU_TA:\n17a4 adrp x0, 0x1000\n17a8 add x0, x0, #0x948\n17ac b 0x19e8"
+    ]
+  },
+  "bodies": {
+    "5700": [
+      5700,
+      5924,
+      "1644 sub sp, sp, #0x70\n1648 stp x24, x23, [sp, #0x30]\n164c stp x22, x21, [sp, #0x40]\n1650 stp x20, x19, [sp, #0x50]\n1654 stp x29, x30, [sp, #0x60]\n1658 add x29, sp, #0x60\n165c mov x22, x20\n1660 mov x19, x1\n1664 mov x21, x0\n1668 ldr x20, [x20, #0x10]\n166c adrp x0, 0x4000\n1670 add x0, x0, #0x1d8\n1674 mov w1, #0x18\n1678 mov w2, #0x7\n167c bl 0x1af8 ; _swift_allocObject\n1680 mov x23, x0\n1684 add x0, x0, #0x10\n1688 mov x1, x22\n168c bl 0x1b70 ; _swift_weakInit\n1690 adrp x8, 0x1000\n1694 add x8, x8, #0x7a4\n1698 stp x8, x23, [sp, #0x20]\n169c adrp x8, 0x4000\n16a0 ldr x8, [x8, #0x10]\n16a4 str x8, [sp]\n16a8 adrp x8, 0x1000\n16ac ldr d0, [x8, #0xb90]\n16b0 str d0, [sp, #0x8]\n16b4 adrp x8, 0x0\n16b8 add x8, x8, #0xe2c\n16bc adrp x9, 0x4000\n16c0 add x9, x9, #0x1f0\n16c4 stp x8, x9, [sp, #0x10]\n16c8 mov x0, sp\n16cc bl 0x1abc ; __Block_copy\n16d0 mov x22, x0\n16d4 mov x0, x23\n16d8 bl 0x1b58 ; _swift_retain\n16dc mov x0, #0x0\n16e0 mov x1, x21\n16e4 mov x2, x19\n16e8 mov x3, x22\n16ec bl 0x1a98 ; _$sSo17OS_dispatch_queueC8DispatchE5async5group3qos5flags7executeySo0a1_b1_F0CSg_AC0D3QoSVAC0D13WorkItemFlagsVyyXBtF\n16f0 mov x0, x22\n16f4 bl 0x1ac8 ; __Block_release\n16f8 ldr x19, [sp, #0x28]\n16fc mov x0, x23\n1700 bl 0x1b4c ; _swift_release\n1704 mov x0, x19\n1708 bl 0x1b4c ; _swift_release\n170c ldp x29, x30, [sp, #0x60]\n1710 ldp x20, x19, [sp, #0x50]\n1714 ldp x22, x21, [sp, #0x40]\n1718 ldp x24, x23, [sp, #0x30]\n171c add sp, sp, #0x70\n1720 ret"
+    ],
+    "6720": [
+      6720,
+      6724,
+      "1a40 b 0xe58"
+    ],
+    "3672": [
+      3672,
+      3692,
+      "e58 ldr x8, [x1, #0x28]\ne5c ldr q0, [x1, #0x20]\ne60 str q0, [x0, #0x20]\ne64 mov x0, x8\ne68 b 0x1b58 ; _swift_retain"
+    ],
+    "6736": [
+      6736,
+      6740,
+      "1a50 b 0xe6c"
+    ],
+    "3692": [
+      3692,
+      3700,
+      "e6c ldr x0, [x0, #0x28]\ne70 b 0x1b4c ; _swift_release"
+    ],
+    "3628": [
+      3628,
+      3672,
+      "e2c stp x20, x19, [sp, #-0x20]!\ne30 stp x29, x30, [sp, #0x10]\ne34 add x29, sp, #0x10\ne38 ldp x19, x20, [x0, #0x20]\ne3c mov x0, x20\ne40 bl 0x1b58 ; _swift_retain\ne44 blr x19\ne48 mov x0, x20\ne4c ldp x29, x30, [sp, #0x10]\ne50 ldp x20, x19, [sp], #0x20\ne54 b 0x1b4c ; _swift_release"
+    ],
+    "6052": [
+      6052,
+      6064,
+      "17a4 adrp x0, 0x1000\n17a8 add x0, x0, #0x948\n17ac b 0x19e8"
+    ]
+  },
+  "reads": {
+    "1b90:8": "0000004200000000",
+    "41f0:40": "00000000000000003000000000000000401a000000001000501a000000001000101d000000001000",
+    "1d10:6": "7638403f3000"
+  },
+  "pointers": {
+    "16896": 6720,
+    "16904": 6736,
+    "16912": 7440
+  },
+  "initial": [
+    "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtF"
+  ],
+  "expected_edges": [
+    [
+      "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtF",
+      "_$s20NimoSchedulerWitness18ForwardedTransportC12enqueueServe33_E05E94E9B413CFA546DA917318CB5131LL3qos5flagsy8Dispatch0Q3QoSV_AH0Q13WorkItemFlagsVtFyyYbcfU_TA"
+    ]
+  ]
+}

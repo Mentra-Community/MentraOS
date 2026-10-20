@@ -56,6 +56,12 @@ describe("Even touchpad reset instructions", () => {
     expect(tips.some((tip) => tip.body.includes("5 times"))).toBe(false)
   })
 
+  it("tells Mentra Live users to press the power button three times", () => {
+    const tips = getModelSpecificTips("Mentra Live")
+    expect(tips).toContainEqual({title: en.pairing.livePairingScanTitle, body: en.pairing.livePairingScanBody})
+    expect(tips.some((tip) => /another phone/i.test(`${tip.title} ${tip.body}`))).toBe(false)
+  })
+
   it.each(["Even Realities G2", "Even Realities R1"])(
     "does not suggest a reset in the normal pairing loader for %s",
     (model) => {

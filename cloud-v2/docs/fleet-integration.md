@@ -240,8 +240,13 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
 
 - A phone's `email` is the account's **verified** email, or null when the
   account has none or it is unverified. It is a display attribute: never use an
-  email as an identity key, key records by `mentraUserId`. Core remembers the
-  answer for a few minutes, so a change reaches Fleet a little late.
+  email as an identity key, key records by `mentraUserId`. Core reads it from
+  its own copy of the account's email, not from the account directory, so
+  reports cost the directory nothing. An email changed in the Mentra App
+  reaches Fleet within five minutes, with the account's next report; one changed
+  in the directory itself (Supabase's console), within a day. A report also
+  carries null when Core could not learn the email in time, so keep the last
+  email you were sent rather than clearing it on a null.
 - A user's `isOrganizationAdmin` is computed from a verified identity email, so
   Fleet may rely on it. Its `email` may be unverified (`emailVerified` says
   whether the identity provider verified it); even a verified email is not an
@@ -434,7 +439,10 @@ const {events, next} = await core.listChanges({after: cursor, limit: 500}) // cu
 The feed (`GET /changes`) answers the `store` and `fleet` services. The routes
 that answer any service ([Store integration](store-integration.md#routes)) answer
 Fleet too. `POST /credentials` and `POST /users/resolve-email` are the Store's
-and answer Fleet `403 {"error":"forbidden"}`.
+and answer Fleet `403 {"error":"forbidden"}`. A deletion hold
+(`PUT`/`DELETE /workspaces/:workspaceId/deletion-holds/:service`,
+[Store integration](store-integration.md#deletion-holds)) answers any service for
+its own name: Fleet may hold a workspace as `fleet`, never as `store`.
 
 ### The change feed
 
@@ -493,6 +501,8 @@ that was offline can catch up:
 | `workspace.renamed` | `{workspaceId}` | `{name}` | `{name}` |
 | `workspace.deleted` | `{workspaceId}` | `{name, status: "active"}` | `{status: "deleted"}` |
 | `workspace.imported` | `{workspaceId}` | null | `{name, created, memberships, invitations, credentials}` (counts) |
+| `workspace.deletion_hold_set` | `{workspaceId, service}` | `{reason, count}` (the service's previous hold), or null | `{reason, count}` |
+| `workspace.deletion_hold_cleared` | `{workspaceId, service}` | `{reason, count}` | null |
 | `membership.added` | `{membershipId, mentraUserId, email}` | `{role: null}` | `{role}` |
 | `membership.role_changed` | `{membershipId, mentraUserId, email}` | `{role}` | `{role}` |
 | `membership.removed` | `{membershipId, mentraUserId, email}` | `{role, status: "active"}` | `{status: "ended", endedReason, revokedCredentialIds, revokedInvitationIds}` |
@@ -517,6 +527,9 @@ Notes:
 - `workspace.deleted` ends every membership of the workspace
   (`endedReason: "workspace_deleted"`), revokes its credentials and invitations,
   and records no per-membership event: treat it as ending them all.
+- `workspace.deletion_hold_*` events say which service holds the workspace from
+  deletion and why; `count` is null when the service gave none. They change no
+  membership, and a workspace is never deleted while held.
 - A role change made by merging a duplicate shows as `membership.merged_duplicate`
   with `resultingRole`; the surviving membership's history has the new role.
 - Credentials revoked because their creator's membership ended are listed in

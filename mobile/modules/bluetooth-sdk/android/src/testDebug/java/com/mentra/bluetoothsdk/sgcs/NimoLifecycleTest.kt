@@ -59,6 +59,17 @@ class NimoLifecycleTest {
   private var listener: String? = null
 
   @Before fun setup() {
+    // Each Robolectric case has a new app/files directory; simulate its fresh process
+    // rather than retaining the preceding test's registered receiver and output root.
+    val collaborator = NimoResourceDiagnostics::class.java
+    collaborator.getDeclaredField("capture").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    collaborator.getDeclaredField("registered").apply { isAccessible = true }.setBoolean(NimoResourceDiagnostics, false)
+    collaborator.getDeclaredField("application").apply { isAccessible = true }.set(NimoResourceDiagnostics, null)
+    for (name in listOf("sessions", "requests")) {
+      val value = collaborator.getDeclaredField(name).apply { isAccessible = true }.get(NimoResourceDiagnostics)
+      if (value is MutableMap<*, *>) value.clear()
+      if (value is MutableSet<*>) value.clear()
+    }
     context = TrackingContext(ApplicationProvider.getApplicationContext())
     Bridge.initialize(context)
     manager = DeviceManager(initializeHardware = false)
@@ -107,6 +118,63 @@ class NimoLifecycleTest {
     manager.cleanup()
     DeviceManager::class.java.getDeclaredField("_instance").apply { isAccessible = true }
       .set(null, previousManager)
+  }
+
+  @Test fun monotonicSnapshotRetainsOriginalAdmissionWhenWallMarkersJumpBothDirections() {
+    val armed = android.os.SystemClock.elapsedRealtime()
+    val nonce = java.util.UUID.randomUUID().toString()
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(25, TimeUnit.MILLISECONDS)
+    val admitted = android.os.SystemClock.elapsedRealtime()
+    nimo.resourceCaptureAdmission(nonce, armed, admitted)
+    setField("resourceSessionStartedElapsedMs", admitted)
+    setField("resourceSessionGeneration", 1L)
+    setField("twsElapsedMs", admitted)
+    setField("handshakeTwsElapsedMs", admitted)
+    setField("timeWriteStartedElapsedMs", admitted)
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(10, TimeUnit.MILLISECONDS)
+    val ack = android.os.SystemClock.elapsedRealtime()
+    setField("timeAckElapsedMs", ack)
+    // Model independent phone epoch jumps: neither direction can rewrite causal time.
+    for (epoch in listOf(1L, 4_000_000_000_000L)) {
+      setField("resourceTwsAt", epoch)
+      setField("resourceHandshakeTwsAt", epoch)
+      setField("resourceTimeWriteStartedAt", epoch)
+      setField("resourceTimeAckAt", epoch)
+      val clock = nimo.resourceSnapshot().getJSONObject("clock")
+      assertEquals("android-elapsed-realtime-v1", clock.getString("kind"))
+      assertEquals(nonce, clock.getString("captureNonce"))
+      assertEquals(armed, clock.getLong("armedElapsedMs"))
+      assertEquals(admitted, clock.getLong("admittedElapsedMs"))
+      assertEquals(ack, clock.getLong("timeAckElapsedMs"))
+      assertTrue(clock.getLong("observedElapsedMs") >= ack)
+    }
+  }
+
+  @Test fun originalReleaseClockAndNonceSurviveLaterStatusAndRepeatedRelease() {
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    setField("resourceSessionGeneration", 1L)
+    setField("resourcePairAddress", "00:11:22:33:44:55")
+    val nonce = java.util.UUID.randomUUID().toString()
+    val received = android.os.SystemClock.elapsedRealtime()
+    var first: JSONObject? = null
+    nimo.releaseResource(1L, { true }, { first = it }, nonce, received)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(300, TimeUnit.MILLISECONDS)
+    val original = requireNotNull(first).getJSONObject("clock")
+    assertEquals(nonce, original.getString("releaseNonce"))
+    assertTrue(original.getLong("releaseStartedElapsedMs") >= received)
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(10, TimeUnit.SECONDS)
+    val status = resourceCommand("status")
+    assertEquals("nimo-monotonic-receipt-v1", status.getString("clockProtocol"))
+    val statusClock = status.getJSONObject("clock")
+    assertTrue(statusClock.getLong("observedElapsedMs") >= statusClock.getLong("requestReceivedElapsedMs"))
+    var repeated: JSONObject? = null
+    nimo.releaseResource(1L, { true }, { repeated = it }, java.util.UUID.randomUUID().toString(), android.os.SystemClock.elapsedRealtime())
+    for (snapshot in listOf(status.getJSONObject("session"), requireNotNull(repeated))) {
+      val clock = snapshot.getJSONObject("clock")
+      assertEquals(nonce, clock.getString("releaseNonce"))
+      assertEquals(original.getLong("releaseStartedElapsedMs"), clock.getLong("releaseStartedElapsedMs"))
+    }
   }
 
   @Test fun offMainDisconnectCompletesOnMainAndInterruptsActiveCapture() {
@@ -188,6 +256,501 @@ class NimoLifecycleTest {
     assertTrue(other.createBond())
   }
 
+  @Test fun resourceStatusIsPassiveAndReleaseRefusesCurrentG2Replacement() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    setField("resourcePairAddress", "00:11:22:33:44:55")
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    NimoResourceDiagnostics.track(nimo)
+    val status = resourceCommand("status")
+    assertEquals(nimo.resourceInstanceId, status.getJSONObject("session").getString("instanceId"))
+    assertTrue(status.getJSONObject("session").getBoolean("managedSessionPresent"))
+    assertEquals(1, writes) // No diagnostic queries or scanner operations.
+    manager.sgc = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    val released = resourceCommand("release")
+    assertEquals("release-refused-replaced-or-unowned-target", released.getString("error"))
+    assertTrue(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
+    assertEquals(com.mentra.bluetoothsdk.utils.DeviceTypes.G2, manager.sgc?.type)
+    assertEquals(true, DeviceStore.get("glasses", "connected"))
+  }
+
+  @Test fun resourceReleaseWaitsForOriginalMicStopMarkerAndPreservesBond() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    setField("resourcePairAddress", "00:11:22:33:44:55")
+    val mic = BluetoothGattCharacteristic(NimoBLE.CHAR_MIC, 8, 16)
+    setField("micChar", mic)
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) { result = it }
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(50, TimeUnit.MILLISECONDS)
+    assertNull("Write completion alone must not stand in for mic stop feedback", result)
+    val gatt = field("gatt") as android.bluetooth.BluetoothGatt
+    mic.value = byteArrayOf(0x52, 0, 0, 0)
+    @Suppress("DEPRECATION")
+    (field("gattCallback") as android.bluetooth.BluetoothGattCallback).onCharacteristicChanged(gatt, mic)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+    val release = requireNotNull(result).getJSONObject("release")
+    assertFalse(release.isNull("micStopWrittenAtEpochMs"))
+    assertFalse(release.isNull("micStopMarkerAtEpochMs"))
+    assertEquals("unknown", release.getString("micSilence"))
+    assertEquals("unknown", release.getString("classicAclState"))
+    assertTrue(release.getBoolean("gattCloseCalled"))
+    assertTrue(requireNotNull(result).getBoolean("localEffectsSettled"))
+    assertRememberedDevice()
+  }
+
+  @Test fun reconnectCannotReplaceOriginalGenerationDuringDelayedReleaseReceipt() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    val originalGatt = field("gatt") as android.bluetooth.BluetoothGatt
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) {
+      result = it
+      // Even reentrant connection requests inside receipt delivery remain fenced.
+      nimo.connectById("replacement-at-completion")
+      assertEquals(ConnTypes.DISCONNECTED, DeviceStore.get("glasses", "connectionState"))
+    }
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertNull(result)
+    assertTrue(nimo.resourceSnapshot().getJSONObject("release").getBoolean("gattCloseCalled"))
+    nimo.connectById("replacement-during-observation-window")
+    assertEquals(ConnTypes.DISCONNECTED, DeviceStore.get("glasses", "connectionState"))
+    assertNull(field("gatt"))
+    // Late feedback from this exact closed bearer is still retained for its receipt.
+    (field("gattCallback") as android.bluetooth.BluetoothGattCallback).onConnectionStateChange(
+      originalGatt, android.bluetooth.BluetoothGatt.GATT_SUCCESS, android.bluetooth.BluetoothProfile.STATE_DISCONNECTED)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(150, TimeUnit.MILLISECONDS)
+    val receipt = requireNotNull(result)
+    assertEquals(1L, receipt.getLong("sessionGeneration"))
+    assertFalse(receipt.getBoolean("managedSessionPresent"))
+    assertTrue(receipt.getJSONObject("release").getBoolean("gattDisconnectCallbackObserved"))
+    assertEquals(0, receipt.getJSONObject("release").getInt("gattDisconnectCallbackStatus"))
+    // The completed receipt is a detached value, not a live view of later session fields.
+    setField("resourceSessionGeneration", 2L)
+    assertEquals(1L, receipt.getLong("sessionGeneration"))
+  }
+
+  @Test fun resourceMissingMicFeedbackLeavesStickyUnknownAfterTimeout() {
+    readyForReset()
+    setField("resourceSessionGeneration", 1L)
+    setField("micChar", BluetoothGattCharacteristic(NimoBLE.CHAR_MIC, 8, 16))
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) { result = it }
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.SECONDS)
+    assertEquals("drain-timeout-native-effects-unknown", requireNotNull(result).getJSONObject("release").getString("result"))
+    assertFalse(nimo.resourceSnapshot().getBoolean("localEffectsSettled"))
+    assertTrue(nimo.resourceSnapshot().getJSONObject("release").isNull("micStopMarkerAtEpochMs"))
+  }
+
+  @Test fun readinessExportsOnlyFreshSameSessionStatusZeroAckAfterWriteStarted() {
+    readyForReset()
+    setField("resourceSessionGeneration", 3L)
+    val state = Nimo::class.java.getDeclaredField("handshakeState")
+    setField("handshakeState", state.type.enumConstants.single { it.toString() == "AWAITING_TWS" })
+    Nimo::class.java.getDeclaredMethod("onTwsState", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(nimo, true)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(10, TimeUnit.MILLISECONDS)
+    respond(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_TIME, 1)
+    assertTrue(nimo.resourceSnapshot().getJSONObject("timeAck").isNull("atEpochMs"))
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(600, TimeUnit.MILLISECONDS)
+    respond(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_TIME, 0)
+    val snapshot = nimo.resourceSnapshot()
+    assertEquals(3L, snapshot.getJSONObject("tws").getLong("sessionGeneration"))
+    assertFalse(snapshot.getJSONObject("tws").isNull("atEpochMs"))
+    assertEquals(0, snapshot.getJSONObject("timeAck").getInt("statusCode"))
+    assertFalse(snapshot.getJSONObject("timeAck").isNull("writeStartedAtEpochMs"))
+    assertEquals("READY", snapshot.getString("handshake"))
+    val causalTws = snapshot.getJSONObject("clock").getLong("handshakeTwsElapsedMs")
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+    Nimo::class.java.getDeclaredMethod("onTwsState", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(nimo, true)
+    val heartbeat = nimo.resourceSnapshot()
+    // Raw phone epochs are diagnostics; event order belongs to phone elapsed time.
+    assertFalse(heartbeat.getJSONObject("tws").isNull("atEpochMs"))
+    assertFalse(heartbeat.getJSONObject("timeAck").isNull("atEpochMs"))
+    val clock = heartbeat.getJSONObject("clock")
+    assertEquals(causalTws, clock.getLong("handshakeTwsElapsedMs"))
+    assertTrue(clock.getLong("twsElapsedMs") > clock.getLong("timeAckElapsedMs"))
+    assertEquals("READY", heartbeat.getString("handshake"))
+  }
+
+  @Test fun callbacksFromPriorGattCannotCreateCurrentReadiness() {
+    readyForReset()
+    val old = field("gatt") as android.bluetooth.BluetoothGatt
+    val other = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:66")
+    setField("gatt", ShadowBluetoothGatt.newInstance(other))
+    val rx = BluetoothGattCharacteristic(NimoBLE.CHAR_RX, 16, 16)
+    rx.value = byteArrayOf(0x52, 0, 0, 0)
+    @Suppress("DEPRECATION")
+    (field("gattCallback") as android.bluetooth.BluetoothGattCallback).onCharacteristicChanged(old, rx)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(nimo.resourceSnapshot().getJSONObject("tws").isNull("atEpochMs"))
+    assertTrue(nimo.resourceSnapshot().getJSONObject("timeAck").isNull("atEpochMs"))
+  }
+
+  @Test fun firmwareFeedbackIsObservedWithinItsOwnSessionAndClearedOnReconnect() {
+    readyForReset()
+    setField("resourceSessionGeneration", 4L)
+    assertTrue(nimo.resourceSnapshot().getJSONObject("firmware").isNull("version"))
+    val response = Nimo::class.java.getDeclaredMethod("handleResponse", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, ByteArray::class.java).apply { isAccessible = true }
+    response.invoke(nimo, NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION, 1, byteArrayOf(1, 2, 3, 4))
+    assertTrue(nimo.resourceSnapshot().getJSONObject("firmware").isNull("atEpochMs"))
+    response.invoke(nimo, NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION_DETAIL, 0, "observed-test-version".toByteArray())
+    val observed = nimo.resourceSnapshot().getJSONObject("firmware")
+    assertEquals("observed-test-version", observed.getString("version"))
+    assertEquals(4L, observed.getLong("sessionGeneration"))
+    assertFalse(observed.isNull("atEpochMs"))
+    // New transport generation clears the evidence independently of the product's UI version cache.
+    setField("gatt", null); setField("isDisconnecting", false)
+    val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
+    Nimo::class.java.getDeclaredMethod("connectBredrTransport", android.bluetooth.BluetoothDevice::class.java).apply { isAccessible = true }.invoke(nimo, device)
+    val fresh = nimo.resourceSnapshot().getJSONObject("firmware")
+    assertEquals(5L, fresh.getLong("sessionGeneration"))
+    assertTrue(fresh.isNull("version")); assertTrue(fresh.isNull("atEpochMs"))
+  }
+
+  @Test fun cancelledUnadmittedCaptureFencesLateConnectWithoutAdoptingManager() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    val armed = captureCommand("arm-capture", nonce, nonce)
+    assertTrue(armed.getJSONObject("session").getJSONObject("capture").isNull("instanceId"))
+    val cancelled = captureCommand("cancel-capture", nonce)
+    assertTrue(cancelled.getJSONObject("session").getJSONObject("capture").getBoolean("cancelled"))
+    manager.sgc = nimo
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertTrue(NimoResourceDiagnostics.allowManagerConnect("G2", "other"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun capturePinsGenerationZeroBeforeEffectsAndRejectsWrongPeerAndReplacement() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
+    val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").readText()
+    assertEquals(nimo.resourceInstanceId, JSONObject(admission).getString("instanceId"))
+    assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:56", true))
+    assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:55", false)) // never create a new bond
+    assertTrue(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertTrue(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    manager.sgc = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertEquals("capture-cancel-refused-replacement", captureCommand("cancel-capture", nonce).getString("error"))
+    assertEquals(admission, File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").readText())
+    assertEquals(com.mentra.bluetoothsdk.utils.DeviceTypes.G2, manager.sgc?.type)
+  }
+
+  @Test fun captureAdmissionPersistenceFailurePreventsAnyConnectAndBecomesStickyFence() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    File(context.filesDir, "nimo-lifecycle/$nonce.admission.tmp").mkdir()
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(File(context.filesDir, "nimo-lifecycle/$nonce.admission.json").exists())
+    val clock = nimo.resourceSnapshot().getJSONObject("clock")
+    assertTrue(clock.isNull("captureNonce")); assertTrue(clock.isNull("admittedElapsedMs"))
+    val capture = captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture")
+    assertTrue(capture.getBoolean("cancelled"))
+    assertTrue(capture.getJSONObject("clock").isNull("admittedElapsedMs"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun preexistingAdmissionIsNeverOverwrittenOrStampedOntoLiveInstance() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    val original = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    original.writeText("preexisting-immutable-evidence")
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertEquals("preexisting-immutable-evidence", original.readText())
+    assertFalse(NimoResourceDiagnostics.allowManagerConnect("NIMO", "Nimo-test"))
+    assertFalse(NimoResourceDiagnostics.beginTransport(nimo, "00:11:22:33:44:55", true))
+    val clock = nimo.resourceSnapshot().getJSONObject("clock")
+    assertTrue(clock.isNull("captureNonce")); assertTrue(clock.isNull("admittedElapsedMs"))
+    assertTrue(captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture").getJSONObject("clock").isNull("admittedElapsedMs"))
+  }
+
+  @Test fun capturedGenerationZeroCancellationDrainsOriginalAndFencesQueuedAdmission() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    assertTrue(NimoResourceDiagnostics.admit(nimo, null, false))
+    val cancelNonce = java.util.UUID.randomUUID().toString()
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", cancelNonce).putExtra("mode", "cancel-capture").putExtra("expectedName", "Nimo-test")
+      .putExtra("expectedAddress", "00:11:22:33:44:55").putExtra("captureNonce", nonce))
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+    val result = JSONObject(File(context.filesDir, "nimo-lifecycle/$cancelNonce.json").readText())
+    val original = result.getJSONObject("session").getJSONObject("originalSession")
+    assertEquals(0L, original.getLong("sessionGeneration"))
+    assertFalse(original.getBoolean("managedSessionPresent"))
+    assertEquals("local-drained-native-readback-required", original.getJSONObject("release").getString("result"))
+    assertFalse(NimoResourceDiagnostics.admit(nimo, "Nimo-test", true))
+    assertFalse(NimoResourceDiagnostics.allowPeer(nimo, "00:11:22:33:44:55", true))
+  }
+
+  @Test fun offMainManagerConnectIsQueuedWholeAndCancellationFencesItBeforeEffects() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val thread = Thread { manager.connectDevice(com.mentra.bluetoothsdk.utils.DeviceTypes.NIMO, "Nimo-test") }
+    thread.start(); awaitMainDispatch(thread)
+    assertTrue(thread.isAlive)
+    assertNull(manager.sgc) // no off-main manager creation or cleanup
+    captureCommand("cancel-capture", nonce)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertNull(manager.sgc) // the already-queued real entry rechecks its immutable fence
+  }
+
+  @Test fun offMainOriginalNimoConnectAdmitsOnMainBeforeAnyPeerTransport() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    manager.sgc = nimo
+    val thread = Thread { nimo.connectById("Nimo-test") }
+    thread.start(); awaitMainDispatch(thread)
+    val admission = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    assertFalse(admission.exists())
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertEquals(nimo.resourceInstanceId, JSONObject(admission.readText()).getString("instanceId"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+    assertFalse(nimo.resourceSnapshot().getBoolean("managedSessionPresent"))
+  }
+
+  @Test fun sdkConnectQueuedBeforeCancelCannotMutateDefaultOrDisconnectReplacementG2() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    // No SDK construction/hardware/analytics is needed: a fenced entry must return
+    // before accessing collaborators. If the early guard regresses this test fails.
+    val sdk = uninitializedSdk()
+    DeviceStore.apply("bluetooth", "default_wearable", "unchanged-default")
+    DeviceStore.apply("bluetooth", "pending_wearable", "unchanged-pending")
+    val thread = Thread { sdk.connect(com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test")) }
+    thread.start(); awaitMainDispatch(thread)
+    captureCommand("cancel-capture", nonce)
+    val replacement = Simulated().apply { type = com.mentra.bluetoothsdk.utils.DeviceTypes.G2 }
+    manager.sgc = replacement
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertSame(replacement, manager.sgc)
+    assertEquals("unchanged-default", DeviceStore.get("bluetooth", "default_wearable"))
+    assertEquals("unchanged-pending", DeviceStore.get("bluetooth", "pending_wearable"))
+    assertEquals(true, DeviceStore.get("glasses", "connected"))
+  }
+
+  @Test fun unarmedOrdinaryDebugEntryKeepsItsOriginalDirectExecution() {
+    val caller = AtomicReference<Thread?>()
+    val queued = AtomicReference<Boolean?>()
+    val thread = Thread {
+      queued.set(NimoResourceDiagnostics.dispatchCapturedEntry { fail("Unarmed debug must not queue") })
+      caller.set(Thread.currentThread())
+    }
+    thread.start(); thread.join(1000)
+    assertFalse(thread.isAlive)
+    assertSame(thread, caller.get())
+    assertEquals(false, queued.get())
+  }
+
+  @Test fun offMainSdkFailureIsDeliveredToCallerWithoutUncaughtMainException() {
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val sdk = uninitializedSdk()
+    DeviceStore.apply("bluetooth", "default_wearable", "")
+    val failure = AtomicReference<Throwable?>()
+    val thread = Thread { try { sdk.connectDefault() } catch (error: Throwable) { failure.set(error) } }
+    thread.start(); awaitMainDispatch(thread)
+    Shadows.shadowOf(Looper.getMainLooper()).idle() // FutureTask captures the error; main must not throw.
+    thread.join(1000); assertFalse(thread.isAlive)
+    assertTrue(failure.get() is com.mentra.bluetoothsdk.BluetoothSdkException)
+    assertEquals("default_device_missing", (failure.get() as com.mentra.bluetoothsdk.BluetoothSdkException).code)
+  }
+
+  @Test fun onlyDiagnosticVariantRequiresArmForNimoAndExistingManagerCannotBeAdopted() {
+    assertFalse(NimoResourceDiagnostics.allowUnarmedWearable("nimoDiagnostic", "NIMO"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("nimoDiagnostic", "G2"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("debug", "NIMO"))
+    assertTrue(NimoResourceDiagnostics.allowUnarmedWearable("release", "NIMO"))
+    manager.sgc = nimo
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    assertEquals("capture-arm-refused-existing-owner", captureCommand("arm-capture", nonce, nonce).getString("error"))
+    assertEquals(0L, nimo.resourceSnapshot().getLong("sessionGeneration"))
+  }
+
+  @Test fun sdkScanThenConnectPreservesOriginalCapturedManagerAndCancelStillDrainsIt() {
+    // Retire the unrelated setup fixture. The real SDK scan must create and admit
+    // its own manager instance; no direct admit or fake manager transition is used.
+    nimo.cleanup()
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    encoderThread.join(1_000)
+    val threadsBeforeScan = Thread.getAllStackTraces().keys
+    manager.sgc = null
+    NimoResourceDiagnostics.start(context)
+    val nonce = java.util.UUID.randomUUID().toString()
+    captureCommand("arm-capture", nonce, nonce)
+    val sdk = uninitializedSdk()
+    for ((name, value) in mapOf("appContext" to context, "deviceManager" to manager,
+      "discoveredDeviceNames" to mutableSetOf<String>())) {
+      com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java.getDeclaredField(name).apply { isAccessible = true }.set(sdk, value)
+    }
+    Shadows.shadowOf(BluetoothAdapter.getDefaultAdapter()).setState(BluetoothAdapter.STATE_ON)
+    sdk.startScan(com.mentra.bluetoothsdk.DeviceModel.NIMO)
+    nimo = manager.sgc as Nimo
+    encoderThread = Thread.getAllStackTraces().keys.single {
+      it.name == "NimoCanvasEncoder" && it !in threadsBeforeScan
+    }
+    val admissionFile = File(context.filesDir, "nimo-lifecycle/$nonce.admission.json")
+    val admission = admissionFile.readText()
+    assertEquals(nimo.resourceInstanceId, JSONObject(admission).getString("instanceId"))
+    assertSame(nimo, manager.sgc)
+    val target = com.mentra.bluetoothsdk.Device(com.mentra.bluetoothsdk.DeviceModel.NIMO, "Nimo-test", "00:11:22:33:44:55")
+    sdk.connect(target, com.mentra.bluetoothsdk.ConnectOptions(saveAsDefault = false))
+    assertSame("SDK cancelExisting and manager connect must retain the scan instance", nimo, manager.sgc)
+    assertTrue(encoderThread.isAlive)
+    assertEquals(admission, admissionFile.readText())
+    val connectedCapture = captureCommand("capture-status", nonce).getJSONObject("session").getJSONObject("capture")
+    assertTrue(connectedCapture.getBoolean("connectStarted"))
+    // A duplicate must be refused before either layer can discard the original.
+    sdk.connect(target, com.mentra.bluetoothsdk.ConnectOptions(saveAsDefault = false))
+    assertSame(nimo, manager.sgc)
+    val cancel = java.util.UUID.randomUUID().toString()
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", cancel).putExtra("mode", "cancel-capture").putExtra("expectedName", "Nimo-test")
+      .putExtra("expectedAddress", "00:11:22:33:44:55").putExtra("captureNonce", nonce))
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+    val result = JSONObject(File(context.filesDir, "nimo-lifecycle/$cancel.json").readText())
+    assertEquals(nimo.resourceInstanceId, result.getJSONObject("session").getJSONObject("originalSession").getString("instanceId"))
+    assertEquals("local-drained-native-readback-required", result.getJSONObject("session").getJSONObject("originalSession").getJSONObject("release").getString("result"))
+  }
+
+  @Test fun ordinaryConnectPermissionRevocationDoesNotEscapePeerGuardsOrGattOpen() {
+    val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
+    Shadows.shadowOf(device).setShouldThrowSecurityExceptions(true)
+    Shadows.shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>())
+      .denyPermissions(android.Manifest.permission.BLUETOOTH_CONNECT)
+    for (name in listOf("connectCompanionGatt", "startBond", "connectBredrTransport")) {
+      Nimo::class.java.getDeclaredMethod(name, android.bluetooth.BluetoothDevice::class.java)
+        .apply { isAccessible = true }.invoke(nimo, device)
+      assertNull(field("gatt"))
+    }
+    assertTrue(nimo.resourceSnapshot().getJSONObject("release").getBoolean("transportFailure"))
+  }
+
+  @Test fun rejectedInitialLaunchDuringReleaseDoesNotInventAnExitAckOrWaitForOne() {
+    for (status in listOf(7, 8)) {
+      readyForReset(); setField("resourceSessionGeneration", 1L); setField("resourceReleased", false)
+      val canvas = field("canvas") as NimoCanvasCoordinator
+      canvas.activate(); canvas.readiness(true)
+      Shadows.shadowOf(Looper.getMainLooper()).idle()
+      assertTrue(canvas.launchPending())
+      var result: JSONObject? = null
+      nimo.releaseResource(1L, { true }) { result = it }
+      canvas.response(1, byteArrayOf(status.toByte()))
+      Shadows.shadowOf(Looper.getMainLooper()).idleFor(200, TimeUnit.MILLISECONDS)
+      val release = requireNotNull(result).getJSONObject("release")
+      assertEquals("local-drained-native-readback-required", release.getString("result"))
+      assertFalse(release.getBoolean("displayExitRequired"))
+      assertTrue(release.isNull("displayExitStatus"))
+      assertEquals("unknown", release.getString("displayVisibleState"))
+    }
+  }
+
+  @Test fun ambiguousLaunchRejectionRetainsExitUnknownAndTimesOut() {
+    readyForReset(); setField("resourceSessionGeneration", 1L)
+    val canvas = field("canvas") as NimoCanvasCoordinator
+    canvas.activate(); canvas.readiness(true)
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    var result: JSONObject? = null
+    nimo.releaseResource(1L, { true }) { result = it }
+    canvas.response(1, byteArrayOf(2))
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.SECONDS)
+    val release = requireNotNull(result).getJSONObject("release")
+    assertEquals("drain-timeout-native-effects-unknown", release.getString("result"))
+    assertTrue(release.getBoolean("displayExitRequired"))
+    assertTrue(release.isNull("displayExitStatus"))
+  }
+
+  @Test fun explicitNewConnectAttemptClearsEarlierMutationEvidenceBeforeItsOwnEffects() {
+    setField("resourceBondMutationRequested", true); setField("resourceFactoryResetRequested", true)
+    val prior = nimo.resourceSnapshot()
+    nimo.connectById("Nimo-test")
+    val current = nimo.resourceSnapshot().getJSONObject("release")
+    assertFalse(current.getBoolean("bondMutationRequested")); assertFalse(current.getBoolean("factoryResetRequested"))
+    assertTrue(prior.getJSONObject("release").getBoolean("bondMutationRequested"))
+  }
+
+  @Test fun transportGenerationResetsOldReleaseObligationsButRetainsCurrentAttemptMutationEvidence() {
+    setField("resourceSessionGeneration", 1L)
+    setField("resourceMicStopRequired", true); setField("resourceExitRequired", true)
+    setField("resourceBondMutationRequested", true); setField("resourceFactoryResetRequested", true)
+    setField("resourceReleased", true)
+    val original = nimo.resourceSnapshot()
+    val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
+    Nimo::class.java.getDeclaredMethod("connectBredrTransport", android.bluetooth.BluetoothDevice::class.java)
+      .apply { isAccessible = true }.invoke(nimo, device)
+    val current = nimo.resourceSnapshot().getJSONObject("release")
+    assertEquals("not-requested", current.getString("result"))
+    assertFalse(current.getBoolean("micStopRequired")); assertFalse(current.getBoolean("displayExitRequired"))
+    assertFalse(field("resourceReleased") as Boolean)
+    assertTrue(current.getBoolean("bondMutationRequested")); assertTrue(current.getBoolean("factoryResetRequested"))
+    assertTrue(original.getJSONObject("release").getBoolean("micStopRequired"))
+  }
+
+  private fun uninitializedSdk(): com.mentra.bluetoothsdk.MentraBluetoothSdk {
+    // JVM fixture only. Reflection avoids Android bootclasspath references to JDK internals.
+    val type = Class.forName("sun.misc.Unsafe")
+    val allocator = type.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+    return type.getMethod("allocateInstance", Class::class.java)
+      .invoke(allocator, com.mentra.bluetoothsdk.MentraBluetoothSdk::class.java) as com.mentra.bluetoothsdk.MentraBluetoothSdk
+  }
+
+  private fun awaitMainDispatch(thread: Thread) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    while (thread.isAlive && thread.state != Thread.State.WAITING && System.nanoTime() < deadline) Thread.yield()
+    assertTrue("SDK caller must wait for its main-queue result", thread.isAlive)
+    assertEquals(Thread.State.WAITING, thread.state)
+  }
+
+  private fun captureCommand(mode: String, captureNonce: String, requestNonce: String = java.util.UUID.randomUUID().toString()): JSONObject {
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", requestNonce).putExtra("mode", mode).putExtra("expectedName", "Nimo-test")
+      .putExtra("expectedAddress", "00:11:22:33:44:55").putExtra("captureNonce", captureNonce))
+    return JSONObject(File(context.filesDir, "nimo-lifecycle/$requestNonce.json").readText())
+  }
+
+  private fun field(name: String): Any? = Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.get(nimo)
+
+  private fun resourceCommand(mode: String): JSONObject {
+    val nonce = java.util.UUID.randomUUID().toString()
+    NimoResourceDiagnostics.execute(android.content.Intent(NimoResourceDiagnostics.ACTION)
+      .putExtra("nonce", nonce).putExtra("mode", mode).putExtra("expectedAddress", "00:11:22:33:44:55")
+      .putExtra("instanceId", nimo.resourceInstanceId).putExtra("sessionGeneration", 1L))
+    val file = File(context.filesDir, "nimo-lifecycle/$nonce.json")
+    return JSONObject(file.readText())
+  }
+
   private fun readyForReset(): MutableList<ByteArray> {
     val frames = mutableListOf<ByteArray>()
     val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
@@ -218,7 +781,7 @@ class NimoLifecycleTest {
     return frames
   }
 
-  private fun setField(name: String, value: Any) {
+  private fun setField(name: String, value: Any?) {
     Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.set(nimo, value)
   }
 

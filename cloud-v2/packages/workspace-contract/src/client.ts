@@ -3,11 +3,14 @@
  * that shares a secret with its Core (the Store, Fleet). Every request is signed over its timestamp, method,
  * path and body hash (`service-signature.ts`); no request names an organization.
  */
+import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
+  DeletionHoldsResponse,
+  DeletionHoldUpdate,
   MembershipCheckEntry,
   PrincipalResponse,
   WorkspaceChangeEvent,
@@ -71,6 +74,27 @@ export interface CoreWorkspaceClient {
    * first use). Null only when Core says no account has it verified (HTTP 404 `user_not_found`).
    */
   resolveEmail(email: string): Promise<string | null>
+  /**
+   * Hold the workspace from deletion for this service, replacing its previous hold: while any service
+   * holds a workspace, Core refuses to delete it (409 `workspace_has_holds`). `reason` is a lowercase
+   * code (`owns_miniapps`); `count`, when given, is a positive whole number of what the reason names.
+   * `asOf` is when the service computed the hold, taken just before reading what it counts and later
+   * than the service's previous `asOf` for the workspace: Core ignores the call (`ignored: true`,
+   * changing nothing) when it has applied a newer one from this service, so a late call never
+   * overwrites a newer hold. A caller that needs the workspace held must find its own hold in the
+   * answer's `holds`, which an ignored call does not promise. Setting the hold the service already has
+   * changes no hold. Resolves to every hold on the workspace afterwards. Core refuses an unknown
+   * workspace (404), a deleted one (410) and an `asOf` more than five minutes ahead of its clock
+   * (400). An invalid `asOf` throws a `RangeError` before anything is sent.
+   */
+  setDeletionHold(workspaceId: string, hold: {reason: string; count?: number; asOf: Date}): Promise<DeletionHoldsResponse>
+  /**
+   * Clear this service's hold, if it has one (clearing nothing changes no hold, on a deleted workspace
+   * too). `asOf` is as for `setDeletionHold`: Core remembers it after the clear, so a set computed
+   * before it and applied late is ignored too. Resolves to the holds left on the workspace. Core
+   * refuses an unknown workspace (404).
+   */
+  clearDeletionHold(workspaceId: string, update: {asOf: Date}): Promise<DeletionHoldsResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -137,9 +161,21 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return workspace
   }
 
+  /** Every hold on a workspace, as `PUT` and `DELETE` on a deletion hold answer it. */
+  function checkHolds(path: string, value: unknown): DeletionHoldsResponse {
+    const raw = checkRecord(path, value, "the deletion holds")
+    if (typeof raw.workspaceId !== "string") throw badResponse(path, "the deletion holds have no workspaceId")
+    if (!Array.isArray(raw.holds) || !raw.holds.every(isWorkspaceDeletionHold)) {
+      throw badResponse(path, "holds is not a list of deletion holds")
+    }
+    // Fail closed on a Core that does not say: one that predates `asOf` would apply a late call.
+    if (typeof raw.ignored !== "boolean") throw badResponse(path, "ignored is not a boolean")
+    return {workspaceId: raw.workspaceId, holds: raw.holds, ignored: raw.ignored}
+  }
+
   /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
   async function call(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     pathWithQuery: string,
     payload?: unknown,
     nullOn?: (status: number, error: string | undefined) => boolean,
@@ -158,7 +194,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         timestampMs,
       }),
     }
-    if (method === "POST") headers["content-type"] = "application/json"
+    if (payload !== undefined) headers["content-type"] = "application/json"
 
     let status: number
     let text: string
@@ -166,7 +202,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       const response = await doFetch(`${baseUrl}${pathWithQuery}`, {
         method,
         headers,
-        body: method === "POST" ? body : undefined,
+        body: payload === undefined ? undefined : body,
         redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
       })
@@ -300,5 +336,24 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       }
       return raw.mentraUserId
     },
+
+    async setDeletionHold(workspaceId, hold) {
+      const path = deletionHoldPath(workspaceId)
+      const asOf = hold.asOf.toISOString()
+      // Only what was given: an absent count is "no count", never a null Core would have to read.
+      const body = hold.count === undefined ? {reason: hold.reason, asOf} : {reason: hold.reason, count: hold.count, asOf}
+      return checkHolds(path, await call("PUT", path, body))
+    },
+
+    async clearDeletionHold(workspaceId, update) {
+      const path = deletionHoldPath(workspaceId)
+      const body: DeletionHoldUpdate = {asOf: update.asOf.toISOString()}
+      return checkHolds(path, await call("DELETE", path, body))
+    },
+  }
+
+  /** This service's own hold on a workspace: the service in the path is always the one that signs. */
+  function deletionHoldPath(workspaceId: string): string {
+    return `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/deletion-holds/${encodeURIComponent(opts.service)}`
   }
 }

@@ -1,5 +1,7 @@
 import {z} from 'zod'
 import {RoutineWorkModel} from '../models/routine-work.model'
+import {TestRequestModel} from '../models/test-request.model'
+import {TestRunModel} from '../models/test-run.model'
 import {testWriteConcern} from '../models/test-write-concern'
 import {
   authoringWorkSchema,
@@ -14,13 +16,13 @@ import {
   type RoutineWorkRequest,
   type RoutineWorkStatus,
 } from '../types/routine-work.types'
-import {frameworkIdentitySchema} from '../types/framework-request.types'
+import {frameworkIdentitySchema, frameworkExecutableBuild, frameworkRequestInputSchema} from '../types/framework-request.types'
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service'
 import {selectedBuildInput} from '../types/test-build.types'
 import {TestHostStateService} from './test-host-state.service'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {routineJobBindInputSchema, portableRequirementsSchema, type RoutineJobBinding, type PortableRequirements, routineJobActionsSchema, routineJobCompletionSchema, type RoutineJobCompletion} from '../types/routine-job.types'
-import {compatibleRoutineLane, routineJobRouting, routineLaneDescriptorRevision} from './routine-job.service'
+import {compatibleStructuralRoutineLane, routineJobRouting, routineLaneDescriptorRevision} from './routine-job.service'
 import {requestInputDigest, TestRequestConflict} from './test-request.service'
 import {TestRunError} from './test-result-error'
 import {permissionContext} from '../types/resource-permissions.types'
@@ -150,6 +152,7 @@ const repository: RoutineWorkRepository = {
   async updateVerification(value, original, previous) {
     const {identity,event}=value
     return await RoutineWorkModel.findOneAndUpdate({workId:event.workId,hostId:event.hostId,inputSha256:event.inputSha256,
+      ...(identity.previousFailure.code==='permission-required'||identity.finalization&&event.state!=='cancelled'?{fleetCancellation:{$exists:false}}:{}),
       status:original,verification:previous??{$exists:false}},{$set:{verification:{identity,status:event,
         receipts:[...(previous?.receipts??[]),{eventId:event.eventId,sequence:event.sequence,sha256:requestInputDigest(event)}]}}},
       {new:true,writeConcern:testWriteConcern}).lean() as unknown as RoutineWorkDelivery|null
@@ -185,12 +188,20 @@ function terminalOutcome(event: RoutineWorkStatus) {
 export class RoutineWorkService {
   constructor(
     private readonly rows: RoutineWorkRepository = repository,
-    private readonly builds: Pick<TestBuildGateway, 'resolve'> = new GithubTestBuildGateway(),
+    private readonly builds: Pick<TestBuildGateway, 'resolve' | 'resolveNimoDiagnostic'> = new GithubTestBuildGateway(),
     private readonly hosts: Pick<TestHostStateService, 'get'> & Partial<Pick<TestHostStateService, 'list'>> = new TestHostStateService(),
     private readonly notifications: Pick<RoutineWorkNotification, 'publish'> = new RoutineWorkNotification(),
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway(),
     private readonly now: () => number = Date.now,
     private readonly actionsTransport: RoutineJobActions | null = rows === repository ? new GithubRoutineJobActions() : null,
+    private readonly candidateWasRegistered: (requestId:string)=>Promise<boolean> = async requestId=>Boolean(await
+      TestRequestModel.exists({requestId}).read('primary').readConcern('majority')),
+    private readonly passedCandidate: (requestId:string)=>Promise<{request:unknown;run:unknown}|null> = async requestId=>{
+      const request=await TestRequestModel.findOne({requestId}).read('primary').readConcern('majority').lean()
+      if(!request)return null
+      const run=await TestRunModel.findOne({requestId,runId:request.runId}).read('primary').readConcern('majority').lean()
+      return run?{request,run}:null
+    },
   ) {}
   private sameRequest(row: RoutineWorkDelivery, input: RoutineWorkRequest) {
     if (row.requestSha256 !== requestInputDigest(input) || row.inputSha256 !== requestInputDigest(row.work) || row.fleetSelection && row.fleetInputSha256 !== requestInputDigest({selection: row.fleetSelection, deadline: row.fleetDeadline!.toISOString()}))
@@ -229,7 +240,7 @@ export class RoutineWorkService {
     try {
       const platform = input.requirements.platform === 'mac' ? 'ios-on-mac' : 'android'
       const [build, revision] = await Promise.all([
-        this.builds.resolve(input.buildSource, platform),
+        input.diagnostic ? (this.builds.resolveNimoDiagnostic ? this.builds.resolveNimoDiagnostic(input.buildSource) : Promise.reject(new TestRunError(409, 'NIMO diagnostic build admission is unavailable'))) : this.builds.resolve(input.buildSource, platform),
         this.sources.resolve(input.source.revision),
       ])
       if (
@@ -237,14 +248,14 @@ export class RoutineWorkService {
         build.availability !== 'available' ||
         !build.archive ||
         !build.receipt ||
-        build.headSha !== input.origin.headSha
+        build.headSha !== input.origin.headSha || build.diagnostic !== input.diagnostic
       )
         throw new TestRunError(409, 'The exact originating PR build is not published')
-      const {buildSource: _, deadline: _deadline, ...fields} = input
+      const {buildSource: _, deadline: _deadline, diagnostic: _diagnostic, ...fields} = input
       const work = portableAuthoringWorkSchema.parse({
         ...fields, source: {...fields.source, revision},
         build: {
-          ...selectedBuildInput(build, platform),
+          ...selectedBuildInput(build, platform, Boolean(input.diagnostic)),
           ...(build.manifest ? {manifest: build.manifest, manifestSha256: build.manifestSha256} : {}),
         },
       })
@@ -354,7 +365,8 @@ export class RoutineWorkService {
     const row = await this.inspect(jobId)
     if (!row.fleetSelection || !row.fleetDeadline || !row.fleetInputSha256) throw new TestRunError(404, 'Authoring fleet job was not found')
     const requirements = this.requirements(row.fleetSelection)
-    const routing = routineJobRouting(requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetSelection.target, row.fleetSelection.build)
+    // Authoring prepares the selected local input before its backend qualification can exist.
+    const routing = routineJobRouting(requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetSelection.target, row.fleetSelection.build, true)
     return {jobId, kind: 'author' as const, inputSha256: row.fleetInputSha256, deadline: row.fleetDeadline.toISOString(),
       ...routing,
       ...(row.fleetSelection.target ? {target: row.fleetSelection.target} : {}), state: row.fleetBinding ? row.status?.state ?? 'bound' : row.fleetCancellation ? 'terminal' : 'awaiting-runner',
@@ -371,7 +383,7 @@ export class RoutineWorkService {
     if (!host || host.hostId !== hostId || !Number.isFinite(Date.parse(host.receivedAt)) || this.now() - Date.parse(host.receivedAt) > 120_000
       || !lane || lane.state !== 'idle' || lane.dispatchMode !== 'automatic' || lane.descriptorRevision !== input.descriptorRevision
       || routineLaneDescriptorRevision(lane) !== input.descriptorRevision || target?.hostId && target.hostId !== hostId
-      || target?.laneId && target.laneId !== input.laneId || !compatibleRoutineLane(this.requirements(row.fleetSelection), lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now())))
+      || target?.laneId && target.laneId !== input.laneId || !compatibleStructuralRoutineLane(this.requirements(row.fleetSelection), lane, permissionContext(host.frameworkBinding, row.fleetSelection.build, this.now())))
       throw new TestRequestConflict('Selected host has no current accepting compatible authoring lane descriptor')
     const binding: RoutineJobBinding = {jobId, requestId: jobId, hostId, laneId: input.laneId,
       descriptorRevision: input.descriptorRevision, actionsJobId: input.actionsJobId, actionsRunId: input.actionsRunId, boundAt: new Date(this.now()).toISOString()}
@@ -505,25 +517,69 @@ export class RoutineWorkService {
     const parsed=routineWorkVerificationSchema.safeParse(value)
     if(!parsed.success||parsed.data.event.hostId!==hostId)throw new TestRunError(400,'Invalid recording verification event')
     const {identity,event}=parsed.data,row=await this.inspect(event.workId),original=row.status
+    const admission=identity.previousFailure.code==='permission-required'?identity.admission:undefined,finalization=identity.finalization
     if(!original||original.state!=='failed'||!original.details.attemptId||row.hostId!==hostId||
       row.inputSha256!==event.inputSha256||!row.acceptance||event.details.acceptedAt!==row.acceptance.acceptedAt||
       requestInputDigest(event.details.work)!==row.inputSha256||event.details.attemptId!==original.details.attemptId||
       identity.failureEventId!==original.eventId||identity.failureSha256!==requestInputDigest(original)||
       identity.previousFailure.reason!==original.details.details.reason||
-      !['verifying','passed','failed'].includes(event.state)||event.sequence<=original.sequence||
+      !(admission?['awaiting-installation','verifying','passed','failed','cancelled']:finalization?['verifying','passed','failed','cancelled']:['verifying','passed','failed']).includes(event.state)||event.sequence<=original.sequence||
       Date.parse(identity.acceptedAt)<Date.parse(original.details.events.at(-1)?.at??original.details.acceptedAt))
       throw new TestRequestConflict('Recording verification differs from its original failed attempt')
     for(const key of ['sourceRevision','requestId','prUrl','review'] as const)
-      if(!original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
+      if(key==='requestId'&&admission ? event.details.details.requestId!==admission.requestId ||
+        original.details.details.requestId!==undefined&&original.details.details.requestId!==admission.requestId :
+        !original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
         throw new TestRequestConflict('Recording verification changed its original source, request or review')
     const decision=event.details.events.find(item=>item.eventId===identity.decisionId)
-    if(!row.verification&&(!decision||decision.state!=='verifying'||decision.sequence!==original.sequence+1||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
+    if(admission&&!row.verification&&(Date.parse(identity.acceptedAt)>this.now()||!decision||Date.parse(decision.at)>this.now()))
+      throw new TestRequestConflict('Pre-admission retry decision cannot begin in the future')
+    if(admission&&(row.fleetCancellation||original.details.details.completion||
+      !row.verification&&await this.candidateWasRegistered(admission.requestId)))
+      throw new TestRequestConflict('Pre-admission retry requires the original unregistered candidate and uncancelled work')
+    if(!row.verification&&(!decision||decision.state!==(admission?'awaiting-installation':'verifying')||(admission?decision.sequence<=original.sequence:decision.sequence!==original.sequence+1)||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
       throw new TestRequestConflict('Recording verification lacks its original ordered retry decision')
     const previous=row.verification
     if(previous&&requestInputDigest(previous.identity)!==requestInputDigest(identity))
       throw new TestRequestConflict('Recording verification changed its original retry identity')
     const digest=requestInputDigest(event),saved=previous?.receipts.find(receipt=>receipt.eventId===event.eventId)
     if(saved){if(saved.sequence!==event.sequence||saved.sha256!==digest)throw new TestRequestConflict('Recording verification changed its original event');return event}
+    if(finalization){
+      const acceptedDeadline=row.fleetDeadline?.getTime()??Date.parse(row.acceptance.acceptedAt)+24*3600_000
+      if(Date.parse(finalization.originalDeadline)>acceptedDeadline||Date.parse(identity.deadline)>acceptedDeadline||
+        Date.parse(identity.acceptedAt)>this.now()||this.now()>Date.parse(identity.deadline)&&event.state!=='cancelled'||
+        row.fleetCancellation&&event.state!=='cancelled')
+        throw new TestRequestConflict('Finalization retry cannot renew expired or cancelled work')
+      if(finalization.requestId!==original.details.details.requestId||finalization.sourceRevision!==original.details.details.sourceRevision||
+        original.details.details.completion)
+        throw new TestRequestConflict('Finalization retry differs from its original source completion failure')
+      const candidate=await this.passedCandidate(finalization.requestId)
+      const request=candidate?.request as {requestId?:string;runId?:string;hostId?:string;state?:string;terminalStatus?:string;inputSha256?:string;input?:unknown}|undefined
+      const run=candidate?.run as {runId?:string;requestId?:string;hostId?:string;routineId?:string;definitionRevision?:string;outcome?:string;
+        uploadsComplete?:boolean;recordedPassingExample?:boolean;recordingAssetId?:string;build?:unknown;verification?:unknown}|undefined
+      const selected=frameworkRequestInputSchema.safeParse(request?.input),input=selected.success?selected.data:undefined
+      if(!request||!run||!input||request.requestId!==finalization.requestId||request.hostId!==hostId||request.state!=='terminal'||
+        request.terminalStatus!=='pass'||request.inputSha256!==finalization.runInputSha256||
+        requestInputDigest(input)!==finalization.runInputSha256||request.runId!==run.runId||
+        input.routineId!==row.work.routineId||input.definitionRevision!==finalization.sourceRevision||
+        input.laneId!==row.work.target?.laneId||input.verification?.workId!==row.workId||input.verification.attemptId!==original.details.attemptId||
+        input.verification.sourceRevision!==finalization.sourceRevision||
+        requestInputDigest(input.build)!==requestInputDigest(frameworkExecutableBuild(row.work.build,input.glassesModel))||
+        requestInputDigest(run.build)!==requestInputDigest(input.build)||requestInputDigest(run.verification)!==requestInputDigest(input.verification)||
+        run.requestId!==finalization.requestId||run.hostId!==hostId||run.routineId!==row.work.routineId||
+        run.definitionRevision!==finalization.sourceRevision||run.outcome!=='pass'||!run.uploadsComplete||!run.recordedPassingExample||!run.recordingAssetId)
+        throw new TestRequestConflict('Finalization retry requires its independent published passing candidate')
+      if(event.state==='passed'&&new URL(event.details.details.resultUrl!).searchParams.get('testRun')!==run.runId)
+        throw new TestRequestConflict('Finalization result link differs from its original passing candidate')
+      // Independent candidate reads may yield. The original terminal outcome remains
+      // unchanged, and cancellation must also fence the atomic receipt write below.
+      const current=await this.inspect(event.workId)
+      if(requestInputDigest(current.status)!==requestInputDigest(original)||
+        requestInputDigest(current.verification??null)!==requestInputDigest(previous??null)||
+        requestInputDigest(current.work)!==row.inputSha256||current.inputSha256!==row.inputSha256||current.hostId!==hostId||
+        event.state!=='cancelled'&&(current.fleetCancellation||this.now()>Date.parse(identity.deadline)))
+        throw new TestRequestConflict('Finalization retry changed authority during candidate verification')
+    }
     if((previous?.receipts.length??0)>=100)throw new TestRequestConflict('Recording verification reached its bounded event allowance')
     if(previous&&(event.sequence<=previous.status.sequence||terminalState(previous.status.state)&&
       requestInputDigest(terminalOutcome(event))!==requestInputDigest(terminalOutcome(previous.status))))

@@ -127,7 +127,7 @@ describe("MentraLiveOtaFlow", () => {
                   apps: {"com.mentra.asg_client": {versionCode: 301010001, versionName: "3.1.1"}},
                   bes_firmware: {version: "26.9.4.1", url: "https://ota.example/bes.bin"},
                 },
-        }) as Response,
+        } as Response),
     )
     beginOtaAutoChain("legacy-mtk", false, {fromVersion: "37.0", toVersion: "37.0", releaseVersion: null})
     const onFinished = jest.fn()
@@ -318,13 +318,13 @@ describe("MentraLiveOtaFlow", () => {
   })
 
   it.each([null, "wifi", "hotspot"] as const)(
-    "renders the engine's known transport %s when adopting device progress",
+    "omits the transport header for %s when adopting device progress",
     async (transport) => {
       await ota.installSession.finish()
       useGlassesStore.getState().setGlassesInfo({
         connection: {state: "connected", fullyBooted: true},
         buildNumber: "39",
-        hotspotOtaVersion: 1,
+        hotspotOtaVersion: transport === "hotspot" ? 1 : 0,
         wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
       })
       if (transport) {
@@ -364,9 +364,11 @@ describe("MentraLiveOtaFlow", () => {
           onOpenWifiSetup={jest.fn()}
         />,
       )
-      expect(screen.getByText(transport === "hotspot" ? "Transferring update to glasses…" : "Downloading…")).toBeDefined()
-      expect(Boolean(screen.queryByTestId("ota.transport.wifi"))).toBe(transport === "wifi")
-      expect(Boolean(screen.queryByTestId("ota.transport.hotspot"))).toBe(transport === "hotspot")
+      expect(
+        screen.getByText(transport === "hotspot" ? "Transferring update to glasses…" : "Downloading…"),
+      ).toBeDefined()
+      expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
+      expect(screen.queryByTestId("ota.transport.hotspot")).toBeNull()
       screen.unmount()
     },
   )

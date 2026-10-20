@@ -2,6 +2,7 @@ import {engine} from "@mentra/engine"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import {showAlert} from "@/utils/AlertUtils"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
 /** Explicit cancellation discards only unfinished pairing, then leaves its route stack. */
 export async function cancelPendingPairing(): Promise<boolean> {
@@ -11,6 +12,29 @@ export async function cancelPendingPairing(): Promise<boolean> {
     return true
   } catch (error) {
     console.warn("Failed to cancel unfinished pairing:", error)
+    showAlert(translate("pairing:errorTitle"), translate("pairing:cancelFailed"))
+    return false
+  }
+}
+
+/**
+ * Cancels pairing from Pair Audio. By then the selected glasses are usually already paired, so
+ * cancelling unpairs them (the glasses forget this phone too): backing out cannot skip audio setup.
+ * An attempt that never paired the selected glasses is only abandoned, and a different, earlier
+ * pairing is never unpaired.
+ */
+export async function cancelPairingFromPairAudio(selectedDeviceName: string): Promise<boolean> {
+  try {
+    const identity = engine.pairing.identity()
+    if (identity.kind === "paired" && identity.name === selectedDeviceName) {
+      await unpairSavedGlasses()
+    } else {
+      await engine.pairing.abandonAttempt({clearPendingSelection: true})
+    }
+    useNavigationStore.getState().clearHistoryAndGoHome()
+    return true
+  } catch (error) {
+    console.warn("Failed to cancel pairing from Pair Audio:", error)
     showAlert(translate("pairing:errorTitle"), translate("pairing:cancelFailed"))
     return false
   }

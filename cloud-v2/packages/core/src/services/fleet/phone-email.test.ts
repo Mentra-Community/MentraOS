@@ -1,16 +1,16 @@
 import type {Logger} from "@mentra/cloud-shared"
 import {afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test} from "bun:test"
-import * as trustedEmail from "../account/trusted-email.service"
+import * as accountEmails from "../account/account-email.service"
 import {PHONE_EMAIL_CACHE_MAX, phoneEmail, resetPhoneEmailCache} from "./phone-email"
 
 const MINUTE = 60_000
 
-let lookup: ReturnType<typeof spyOn<typeof trustedEmail, "trustedAccountEmail">>
+let lookup: ReturnType<typeof spyOn<typeof accountEmails, "accountEmail">>
 
 beforeEach(() => {
   resetPhoneEmailCache()
   setSystemTime(new Date("2026-10-13T12:00:00Z"))
-  lookup = spyOn(trustedEmail, "trustedAccountEmail").mockResolvedValue("person@example.test")
+  lookup = spyOn(accountEmails, "accountEmail").mockResolvedValue("person@example.test")
 })
 
 afterEach(() => {
@@ -61,6 +61,18 @@ describe("the phone principal's email", () => {
     setSystemTime(new Date(Date.now() + 30_001))
     expect(await phoneEmail("mu_a")).toBe("person@example.test")
     expect(lookup).toHaveBeenCalledTimes(2)
+  })
+
+  test("reports from one person that arrive together share one lookup", async () => {
+    let answer: ((email: string | null) => void) | undefined
+    lookup.mockImplementation(() => new Promise<string | null>(resolve => (answer = resolve)))
+
+    const replies = Array.from({length: 5}, () => phoneEmail("mu_a"))
+    while (!answer) await Bun.sleep(1)
+    answer("person@example.test")
+
+    expect(await Promise.all(replies)).toEqual(Array(5).fill("person@example.test"))
+    expect(lookup).toHaveBeenCalledTimes(1)
   })
 
   test("a lookup that does not answer by the deadline is cancelled and is null", async () => {

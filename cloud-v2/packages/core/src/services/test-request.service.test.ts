@@ -158,7 +158,7 @@ test("local acceptance retains exact enrolled resource capabilities and one orig
   const first = await service.registerLocal(input, receipt, "mini");
   expect(first).toMatchObject({state: "accepted", input, inputSha256: receipt.inputSha256, hostReceipt: receipt});
   expect(first.catalogEligible).toBe(false);
-  expect(authorized).toEqual([{verification: input.verification, hostId: "mini", input}]);
+  expect(authorized).toEqual([{verification: input.verification, hostId: "mini", input: {...input,requestId:receipt.requestId}}]);
   expect((await service.queued("mini", undefined, 10)).requests).toEqual([]);
   expect(await service.registerLocal(structuredClone(input), receipt, "mini")).toEqual(first);
   expect(authorized).toHaveLength(1);

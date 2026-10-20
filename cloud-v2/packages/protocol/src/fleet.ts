@@ -197,7 +197,15 @@ export const FleetRecordSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
   z.object({...base, kind: z.literal("coverage_gap"), payload: FleetCoverageGapPayloadSchema}).strict(),
-])
+]).superRefine((value, ctx) => {
+  // A snapshot's glasses belong to the pair its binding names, so the two come together.
+  if (value.kind === "snapshot" && (value.payload.glasses !== undefined) !== (value.deviceBinding !== undefined))
+    ctx.addIssue({
+      code: "custom",
+      path: ["deviceBinding"],
+      message: "deviceBinding is required for, and only for, a snapshot that includes glasses",
+    })
+})
 export type FleetRecord = z.infer<typeof FleetRecordSchema>
 export type FleetDeviceBinding = z.infer<typeof FleetDeviceBindingSchema>
 

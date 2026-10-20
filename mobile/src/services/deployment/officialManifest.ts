@@ -3,6 +3,7 @@ import Constants from "expo-constants"
 import {APP_STORE_REVIEW_URL, APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 
 import {packagedOtaPin} from "./packagedOtaPin"
+import {backendTarget} from "../../../scripts/backend-target.cjs"
 import type {ConsumerDeployment, DeploymentManifest} from "./types"
 
 /** Embedded defaults. Expo inlines these environment reads into each build. */
@@ -12,7 +13,7 @@ export function createOfficialManifest(): DeploymentManifest {
     deploymentId: "mentra-official",
     displayName: "Mentra",
     services: {
-      coreUrl: process.env.EXPO_PUBLIC_CLOUD_CORE_URL?.trim() || "https://core.dev.us-west-2.mentraglass.com",
+      coreUrl: backendTarget(process.env.EXPO_PUBLIC_CLOUD_CORE_URL),
       runtimeUrl: process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL?.trim() || "https://runtime.dev.us-west-2.mentraglass.com",
     },
     auth: {mode: "mentra-account"},

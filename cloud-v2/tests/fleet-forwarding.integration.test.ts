@@ -31,6 +31,8 @@ import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefault
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {AccountCodeModel} from "../packages/core/src/models/account-code.model"
+import {AccountEmailModel} from "../packages/core/src/models/account-email.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {RevokedJtiModel} from "../packages/core/src/models/revoked-jti.model"
@@ -41,6 +43,8 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
+import {ACCOUNT_EMAIL_MAX_AGE_MS} from "../packages/core/src/services/account/account-email.service"
+import {otc} from "../packages/core/src/services/account/account.service"
 import {resetPhoneEmailCache} from "../packages/core/src/services/fleet/phone-email"
 import {createSession} from "../packages/core/src/services/session.service"
 import {createPortalSession, SESSION_ROTATE_AFTER_MS} from "../packages/core/src/services/signin/browser-session.service"
@@ -72,6 +76,8 @@ const SECRET = "fleet-forwarding-integration-secret"
 
 const MODELS = [
   AccessCredentialModel,
+  AccountCodeModel,
+  AccountEmailModel,
   BrowserSessionModel,
   RefreshTokenModel,
   RevokedJtiModel,
@@ -445,6 +451,72 @@ describe("a phone", () => {
     for (let i = 0; i < 3; i++) expect((await fromPhone(phone, "POST", "/report", {body: "{}"})).status).toBe(200)
 
     expect(idp.userLookups).toEqual([phone.sub])
+  })
+
+  test("an hour of reports from one account asks the account directory once, whichever Core process takes them", async () => {
+    const phone = await phoneSession("hourly")
+    idp.userLookups.length = 0
+
+    // An engine-only phone reports every 15 minutes and a phone in use every 5, so each report in an hour can reach a
+    // Core process that has not seen the account within its five minutes: another replica, or one that restarted.
+    for (let report = 0; report < 12; report++) {
+      resetPhoneEmailCache()
+      const reply = await fromPhone(phone, "POST", "/report", {body: "{}"})
+      expect(reply.status).toBe(200)
+      expect((reply.json as Echo).principal).toMatchObject({kind: "phone", email: "hourly@phone.example.test"})
+    }
+
+    expect(idp.userLookups).toEqual([phone.sub])
+  })
+
+  test("an email changed in the Mentra App reaches Fleet with the account's next report, after one directory lookup", async () => {
+    const phone = await phoneSession("renamed")
+    expect(((await fromPhone(phone, "POST", "/report", {body: "{}"})).json as Echo).principal).toMatchObject({
+      email: "renamed@phone.example.test",
+    })
+    // The code the Mentra App's change-email screen sends to the new address.
+    const code = await otc.issueEmailCode({
+      purpose: "email_change",
+      subject: phone.sub,
+      ttlSec: 60,
+      payload: {newEmail: "new-address@phone.example.test"},
+    })
+
+    const confirmed = await send("POST", "/api/account/email/change/confirm", {
+      headers: {authorization: `Bearer ${phone.token}`, "content-type": "application/json"},
+      body: JSON.stringify({code}),
+    })
+    expect(confirmed.status).toBe(204)
+
+    // Every Core process reads Core's copy again within five minutes; this is that moment.
+    resetPhoneEmailCache()
+    idp.userLookups.length = 0
+    const reply = await fromPhone(phone, "POST", "/report", {body: "{}"})
+
+    expect((reply.json as Echo).principal).toMatchObject({kind: "phone", email: "new-address@phone.example.test"})
+    // The change marked Core's copy for a check, so the address comes from the directory itself, once.
+    expect(idp.userLookups).toEqual([phone.sub])
+    resetPhoneEmailCache()
+    expect(((await fromPhone(phone, "POST", "/report", {body: "{}"})).json as Echo).principal).toMatchObject({
+      email: "new-address@phone.example.test",
+    })
+    expect(idp.userLookups).toEqual([phone.sub])
+  })
+
+  test("an account directory that is down when Core's copy is due for a check still lets the email through", async () => {
+    const phone = await phoneSession("copy-kept")
+    await fromPhone(phone, "POST", "/report", {body: "{}"})
+    await AccountEmailModel.updateOne(
+      {mentraUserId: phone.mentraUserId},
+      {$set: {checkedAt: new Date(Date.now() - ACCOUNT_EMAIL_MAX_AGE_MS)}},
+    )
+    resetPhoneEmailCache()
+    idp.outage = true
+
+    const reply = await fromPhone(phone, "POST", "/report", {body: "{}"})
+
+    expect(reply.status).toBe(200)
+    expect((reply.json as Echo).principal).toMatchObject({kind: "phone", email: "copy-kept@phone.example.test"})
   })
 
   test("an account directory that is down costs the email, not the report", async () => {

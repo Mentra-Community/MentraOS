@@ -195,6 +195,12 @@ class BuiltInMiniappCatalog {
     }
   }
 
+  /**
+   * The built-in miniapps. `nativeExecution` says when Fleet counts one as running: Gallery and Mirror while they
+   * are open, Notify whenever it runs. Settings, Feedback and the Miniapp Developer loader declare none: they are
+   * the Mentra App's own screens and tools that happen to sit in the Home grid, not miniapps, so Fleet reports
+   * neither their launches nor their time. (A miniapp the loader runs is a local miniapp, counted as itself.)
+   */
   private buildOfflineApps(): ClientApp[] {
     const apps: ClientApp[] = [
       {
@@ -202,6 +208,7 @@ class BuiltInMiniappCatalog {
         name: translate("miniApps:gallery"),
         type: "standard",
         offline: true,
+        nativeExecution: "open",
         logoUrl: require("@assets/applet-icons/gallery.png"),
         webviewUrl: "",
         permissions: [],
@@ -236,6 +243,7 @@ class BuiltInMiniappCatalog {
         packageName: mirrorPackageName,
         name: translate("miniApps:mirror"),
         offlineRoute: "/miniapps/mirror/mirror",
+        nativeExecution: "open",
         webviewUrl: "",
         healthy: true,
         hidden: false,
@@ -278,6 +286,8 @@ class BuiltInMiniappCatalog {
         // other running standard miniapp).
         type: "background",
         offline: true,
+        // It forwards phone notifications to the glasses for as long as it runs, with or without its screen.
+        nativeExecution: "running",
         logoUrl: require("@assets/applet-icons/notification.png"),
         webviewUrl: "",
         healthy: true,

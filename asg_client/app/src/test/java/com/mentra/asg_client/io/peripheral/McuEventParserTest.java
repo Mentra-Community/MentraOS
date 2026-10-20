@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
+import com.mentra.asg_client.io.peripheral.events.MtkPingEvent;
 import com.mentra.asg_client.io.peripheral.events.PairingModeExitEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
 import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
@@ -161,6 +162,46 @@ public class McuEventParserTest {
                         cmd("hm_pairexit", new JSONObject().put("reason", "idle_timeout")));
         assertThat(event).isInstanceOf(PairingModeExitEvent.class);
         assertThat(((PairingModeExitEvent) event).getReason()).isEqualTo("idle_timeout");
+    }
+
+    @Test
+    public void hmPairexit_paired_carriesReason() throws Exception {
+        assertPairExitReason(new JSONObject().put("reason", "paired"), "paired");
+    }
+
+    @Test
+    public void hmPairexit_cancelled_carriesReason() throws Exception {
+        assertPairExitReason(new JSONObject().put("reason", "cancelled"), "cancelled");
+    }
+
+    @Test
+    public void hmPairexit_timeout_carriesReason() throws Exception {
+        assertPairExitReason(new JSONObject().put("reason", "timeout"), "timeout");
+    }
+
+    @Test
+    public void hmPairexit_missingReason_isUnknown() throws Exception {
+        assertPairExitReason(new JSONObject(), "unknown");
+        assertPairExitReason(new JSONObject().put("reason", ""), "unknown");
+        assertPairExitReason(new JSONObject().put("reason", JSONObject.NULL), "unknown");
+    }
+
+    @Test
+    public void hmPairexit_missingBody_isUnknown() throws Exception {
+        McuEvent event = McuEventParser.parse(cmd("hm_pairexit"));
+        assertThat(event).isInstanceOf(PairingModeExitEvent.class);
+        assertThat(((PairingModeExitEvent) event).getReason()).isEqualTo("unknown");
+    }
+
+    private static void assertPairExitReason(JSONObject body, String expected) throws Exception {
+        McuEvent event = McuEventParser.parse(cmd("hm_pairexit", body));
+        assertThat(event).isInstanceOf(PairingModeExitEvent.class);
+        assertThat(((PairingModeExitEvent) event).getReason()).isEqualTo(expected);
+    }
+
+    @Test
+    public void hmMtkping_mapsToMtkPingEvent() throws Exception {
+        assertThat(McuEventParser.parse(cmd("hm_mtkping"))).isInstanceOf(MtkPingEvent.class);
     }
 
     @Test

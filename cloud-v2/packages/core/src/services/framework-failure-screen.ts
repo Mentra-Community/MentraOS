@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {FrameworkFailureScreen, RecordedFrameworkRun} from '../types/framework-run.types';
+import {hasFailureImageProvenance, recordedFailureImageProvenance, type FailureImageProvenance} from './framework-failure-image-provenance';
 
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024 ** 2;
 type Asset = RecordedFrameworkRun['assets'][number];
@@ -18,6 +19,7 @@ const image = (asset: Asset) => asset.kind === 'screenshot' && ['image/png', 'im
 export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: unknown): FrameworkFailureScreen[] {
   const key = (phase: string, actionId: string, message: string) => JSON.stringify([phase, actionId, message]);
   const associations = new Map<string, Record<Source, Set<string>>>();
+  const provenance = new Map<string, Set<string>>();
   const add = (phase: string, actionId: string, message: string, assetId: string, source: Source = 'app') => {
     const identity = key(phase, actionId, message);
     const ids = associations.get(identity) ?? {app: new Set<string>(), desktop: new Set<string>()};
@@ -34,8 +36,24 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
     if (!row) continue;
     const message = object(row.error)?.message;
     if (run.platform === 'android' && row.command === 'failure' && row.state === 'error' && typeof row.phase === 'string' &&
-      typeof row.actionId === 'string' && typeof message === 'string' && typeof row.screenshotAssetId === 'string')
-      add(row.phase, row.actionId, message, row.screenshotAssetId);
+      typeof row.actionId === 'string' && typeof message === 'string') {
+      const explicit = hasFailureImageProvenance(row), recorded = explicit ? recordedFailureImageProvenance(run, row) : undefined;
+      if (explicit) {
+        const identity = key(row.phase, row.actionId, message), values = provenance.get(identity) ?? new Set<string>();
+        values.add(recorded ? JSON.stringify(recorded) : ''); provenance.set(identity, values);
+      }
+      if (typeof row.screenshotAssetId === 'string')
+        add(row.phase, row.actionId, message, !explicit || recorded?.currentPhoneImage?.source === 'original-app' ? row.screenshotAssetId : '');
+      // The Android producer records up to four desktop images on this same
+      // terminal row, independently of phone capture. Multiple displays remain
+      // evidence, but the single-image viewer cannot choose between them.
+      if (row.desktopAssetIds !== undefined) {
+        const ids = row.desktopAssetIds;
+        if (Array.isArray(ids) && ids.length > 0 && ids.length <= 4 && ids.every(id => typeof id === 'string'))
+          for (const id of ids) add(row.phase, row.actionId, message, id, 'desktop');
+        else add(row.phase, row.actionId, message, '', 'desktop');
+      }
+    }
     if (run.platform !== 'ios-on-mac' || row.privateEvidence) continue;
     // Only the execution boundary associates a terminal failure. A retained
     // nested reporter row may have been caught before more app interaction.
@@ -64,9 +82,22 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
       const same = run.result.failures.filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
         .map(failure => associations.get(key(failure.phase, failure.actionId, failure.message)));
       const app = new Set(same.flatMap(ids => [...ids?.app ?? []])), desktop = new Set(same.flatMap(ids => [...ids?.desktop ?? []]));
-      return {phase: screen.phase, actionId: screen.actionId, ...(screen.assetId && resolve(app) === screen.assetId ? {assetId: screen.assetId} : {}),
+      const values = new Set(run.result.failures.filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
+        .flatMap(failure => [...provenance.get(key(failure.phase, failure.actionId, failure.message)) ?? []]));
+      const first = run.result.failures.find(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)!;
+      const primary = provenance.get(key(first.phase, first.actionId, first.message));
+      const recorded: FailureImageProvenance | undefined = primary?.size === 1 && values.size === 1 && !values.has('')
+        ? JSON.parse([...values][0]!) : undefined;
+      // Metadata cannot override conflicting associations from another terminal row.
+      const display = recorded && {...recorded};
+      if (display?.desktopImages && (desktop.size !== display.desktopImages.length
+        || display.desktopImages.some(item => !desktop.has(item.assetId)))) delete display.desktopImages;
+      if (display?.currentPhoneImage && (display.currentPhoneImage.source === 'original-app'
+        ? resolve(app) !== display.currentPhoneImage.assetId : app.size > 0)) delete display.currentPhoneImage;
+      return {phase: screen.phase, actionId: screen.actionId, ...display,
+        ...(screen.assetId && resolve(app) === screen.assetId && (!values.size || recorded?.currentPhoneImage?.source === 'original-app') ? {assetId: screen.assetId} : {}),
         ...(screen.desktopAssetId && resolve(desktop) === screen.desktopAssetId ? {desktopAssetId: screen.desktopAssetId} : {})};
-    }).filter(screen => screen.assetId || screen.desktopAssetId);
+    }).filter(screen => screen.assetId || screen.desktopAssetId || screen.phoneProcessWitness || screen.precedingAppImage || screen.currentPhoneImage || screen.desktopImages);
 }
 
 export function failureDiagnosticAssets(run: RecordedFrameworkRun): Asset[] {

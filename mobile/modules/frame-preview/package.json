@@ -15,7 +15,7 @@
   "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/frame-preview#readme",
   "private": true,
   "dependencies": {
-    "@mentra/glasses-media": "3.3.0"
+    "@mentra/glasses-media": "3.4.0"
   },
   "peerDependencies": {
     "expo": "*",

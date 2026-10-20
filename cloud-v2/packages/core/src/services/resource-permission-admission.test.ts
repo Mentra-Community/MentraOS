@@ -28,12 +28,12 @@ function fixture() {
     definitionSha256: hash, routineSource: testRoutineSource(revision), definition: {id: 'camera-check', minimumRoutineApiVersion: 1,
       title: 'Camera', purpose: 'Verify camera', platforms: ['ios-on-mac'], entry: 'sign-in', account: 'none', requirements: [], fixtures: [],
       resourceRequirements: [{kind: 'app', capabilities: [], permissions: [{permission: 'camera', recipient: 'app'}]}, {kind: 'recorder', capabilities: []}],
-      execution: {resourceKinds: ['app', 'recorder']}, steps: [{id: 'camera', instruction: 'Open camera', expected: 'Camera visible'}],
+      execution: {resourceKinds: ['app', 'recorder'], policy:{estimatedOutputBytes:1024**3}}, steps: [{id: 'camera', instruction: 'Open camera', expected: 'Camera visible'}],
       source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision, path: 'routines/camera-check/routine.ts'}}});
   const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'current', incarnationGeneration: 1, sequence: 1,
     observedAt: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), frameworkBinding: binding,
     lanes: [{id: 'mac', platform: 'ios-on-mac', dispatchMode: 'automatic', state: 'idle', resources: [
-      {id: 'app', kind: 'app', permissionObservations: [structuredClone(observed)]}, {id: 'recorder', kind: 'recorder'}]}]};
+      {id: 'app', kind: 'app', permissionObservations: [structuredClone(observed)]}, {id: 'recorder', kind: 'recorder', storage:{poolId:'mini:disk:1',observedAt:new Date(now).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}]}]};
   const selection = portableRoutineSelectionSchema.parse({requestId: 'camera-request', routineId: definition.routineId, platform: definition.platform,
     routineRevision: revision, source: build.source, build: selectedBuildInput(build, definition.platform)});
   const row: StoredRoutineJob = {requestId: selection.requestId, state: 'awaiting-runner', fleetSelection: selection,
@@ -93,7 +93,7 @@ test('routing, queue and final direct admission share the same exact observation
   expect(f.row).toEqual(frozen);
   f.definition.definition.resourceRequirements[0]!.permissions = undefined;
   const playback = routinePortableRequirements(f.definition);
-  expect(compatibleRoutineLane(playback, f.lane)).toBe(true);
+  expect(compatibleRoutineLane(playback, f.lane, undefined, now)).toBe(true);
   expect(routineJobRouting(playback, [f.host], now).waitingReason).toBeUndefined();
   expect(routineAdmissionInput(f.definition, build, {hostId: 'mini', laneId: 'mac'}, f.host, now).routineId).toBe('camera-check');
 });

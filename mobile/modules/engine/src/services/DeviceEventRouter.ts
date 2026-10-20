@@ -140,6 +140,23 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
+  // Mentra Live pairing state is owned by the Bluetooth SDK (`normal`, `pairing_mode`,
+  // `pairing_rejected`). The engine only mirrors it into the glasses store so the app renders
+  // from one source: the pairing-mode popup, and the Pair Again card.
+  subs.push(
+    BluetoothSdk.addListener("pairing_state_changed", (event) => {
+      useGlassesStore.getState().setGlassesInfo({pairingState: event.state})
+    }),
+  )
+
+  // Whether the user has to do anything for glasses audio is decided by the Bluetooth SDK. The
+  // engine mirrors it; the pairing flow and Home render Pair Audio from it.
+  subs.push(
+    BluetoothSdk.addListener("audio_setup_changed", (event) => {
+      useGlassesStore.getState().setGlassesInfo({audioSetup: event.state})
+    }),
+  )
+
   // --- coordinators (owns()-gated) ---
 
   // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout).

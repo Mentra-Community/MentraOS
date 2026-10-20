@@ -6,5 +6,5 @@ const native = () => require("expo-modules-core").requireNativeModule("MentraGla
 export const glassesHotspot = Object.freeze({
   join: (id, ssid, password, gateway, purpose = "outgoing-client") =>
     native().joinLocalHotspot(id, ssid, password, gateway ?? null, purpose),
-  leave: (id) => native().leaveLocalHotspot(id),
+  leave: (id, waitForInternet = false) => native().leaveLocalHotspot(id, waitForInternet),
 })

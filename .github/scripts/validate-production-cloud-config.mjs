@@ -28,9 +28,12 @@ export function parseEnvironmentFile(contents) {
   return values
 }
 
+// The release scans the frozen source, which has no installed dependencies.
+// Skipping node_modules gives the same keys from a checkout after `bun install`.
 function filesUnder(directory) {
   const files = []
   for (const entry of readdirSync(directory)) {
+    if (entry === "node_modules") continue
     const file = path.join(directory, entry)
     const stat = statSync(file)
     if (stat.isDirectory()) files.push(...filesUnder(file))

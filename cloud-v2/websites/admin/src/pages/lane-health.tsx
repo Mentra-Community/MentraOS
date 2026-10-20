@@ -1,3 +1,4 @@
+import {ReservableStatusBadge} from '../components/reservable-status';
 import {useClock} from '../lib/use-clock';
 import {LaneControls} from './lane-controls'
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
@@ -21,7 +22,6 @@ const states: Record<string, {label: string; style: string}> = {
   "out-of-service": {label: "Out of service", style: "bg-red-50 text-red-700"},
   "offline": {label: "Offline", style: "bg-[#f0f2ef] text-[#59655e]"},
 }
-const unknown = {label: "Unknown", style: "bg-[#f0f2ef] text-[#59655e]"}
 const modes: Record<string, string> = {automatic: "Automatic", authoring: "Authoring", paused: "Paused"}
 const time = (value: string) => new Date(value).toLocaleString()
 
@@ -50,7 +50,6 @@ export function LaneHealthHost({
       ) : (
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {host.lanes.map((lane) => {
-            const state = fresh ? (states[lane.state] ?? unknown) : unknown
             return (
               <article key={lane.id} className="rounded-xl border border-[#e0e4de] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -63,7 +62,7 @@ export function LaneHealthHost({
                       laneDisplayLabel(host.hostId, lane)
                     )}
                   </h4>
-                  <span className={`rounded-md px-2 py-1 text-xs font-semibold ${state.style}`}>{state.label}</span>
+                  <ReservableStatusBadge status={lane.state} current={fresh} />
                 </div>
                 <p className="mt-2 text-xs text-[#5d6068]">Lane: <span className="font-mono">{lane.id}</span></p>
                 <p className="mt-2 text-sm text-[#5d6068]">
@@ -74,6 +73,9 @@ export function LaneHealthHost({
                     Last reported state: {states[lane.state]?.label ?? "Unknown"}. Current lane status is unknown.
                   </p>
                 )}
+                {lane.reservedBy !== undefined && <p className="mt-2 break-all text-sm text-[#5d6068]">
+                  {fresh ? 'Reserved by' : 'Last reported reserved by'}: {lane.reservedBy ?? 'User not recorded'}
+                </p>}
                 {lane.activity ? <div className="mt-2 text-sm text-[#5d6068]">
                   <p>{fresh ? 'Current owner' : 'Last reported owner'}: {lane.activity.owner.kind === 'run' ? 'Routine run'
                     : lane.activity.owner.kind === 'authoring' ? 'Authoring reservation'
@@ -87,7 +89,7 @@ export function LaneHealthHost({
                   <p className="text-xs">Generation {lane.activity.generation}</p>
                 </div> : ['running', 'reserved', 'in-repair'].includes(lane.state)
                   ? <p className="mt-2 text-xs text-[#747780]">{fresh ? 'Owner not reported.' : 'Last reported owner unavailable.'}</p> : null}
-                {controls && <LaneControls hostId={host.hostId} laneId={lane.id} mode={lane.dispatchMode} fresh={fresh} />}
+                {controls && <LaneControls hostId={host.hostId} laneId={lane.id} mode={lane.dispatchMode} fresh={fresh} lane={lane} />}
                 {linkHistory && (
                   <a
                     className="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline"

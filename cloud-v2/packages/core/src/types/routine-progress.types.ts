@@ -45,3 +45,9 @@ export interface RoutineLiveProgress {
   title: string
   steps: Array<{id: string; instruction: string}>
 }
+
+/** An accepted request blocked before execution is distinct from running progress. */
+export const routineQueuedBlockSchema = z.object({requestId: frameworkIdentitySchema, requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  acceptedAt: z.string().datetime({offset: true}), observedAt: z.string().datetime({offset: true}),
+  code: z.literal('storage-capacity'), reason: z.string().min(1).max(2000)}).strict()
+export type RoutineQueuedBlock = z.infer<typeof routineQueuedBlockSchema>

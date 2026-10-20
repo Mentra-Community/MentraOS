@@ -15,6 +15,7 @@
 import CrustModule from "@mentra/crust"
 
 import devServerBridge from "./DevServerBridge"
+import {fleetEvents} from "./fleet/fleetEvents"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import {miniappLauncher} from "./MiniappLauncher"
 import {MentraJSCrashController} from "./MentraJSCrashController"
@@ -54,6 +55,17 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
         hostTrustedSystem: resolved.hostTrustedSystem,
         projectRunning,
       })
+      // A miniapp running as user activity starts again from the new bundle: an automatic launch to Fleet.
+      if (projectRunning) {
+        const manifest = resolved.installedManifest
+        fleetEvents.launchUnlessClaimed({
+          packageName,
+          ...(manifest?.name ? {miniappName: manifest.name} : {}),
+          ...(manifest?.version ? {versionName: manifest.version} : {}),
+          start: "automatic",
+          outcome: ok ? "started" : "failed",
+        })
+      }
       if (!ok) {
         console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
         return

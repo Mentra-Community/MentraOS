@@ -11,6 +11,7 @@
  */
 
 import {useMemo} from "react"
+import {AppState} from "react-native"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import {create} from "zustand"
 
@@ -26,6 +27,7 @@ import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
 import {isMiniappAvailable} from "../runtime/bootstrap"
 import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
@@ -311,7 +313,11 @@ interface LaunchAttempt {
  * is returned as the launch gave it. Only a start that got past every gate is a launch: `started` when it succeeded,
  * `failed` when the spawn or start itself failed. A refusal (another miniapp is loading, incompatible glasses, a
  * missing speech model, an update in progress, a package that is not available) and re-opening a miniapp that is
- * already running start nothing and are not reported. Fleet's `launch` never throws.
+ * already running start nothing and are not reported. Nor is opening one of the Mentra App's own screens (a native
+ * built-in that declares no `nativeExecution`), which is not a miniapp to Fleet. Fleet's `launch` never throws.
+ *
+ * From the moment it begins, the start claims the miniapp (`fleetEvents.claimLaunch`): the spawn it causes, which the
+ * launcher reports for every other path, and the Compositor's own call to the launcher are this launch, not more.
  */
 function reportingLaunches(
   launch: (app: ClientApp, opts: StartOptions | undefined, attempt: LaunchAttempt) => Promise<boolean>,
@@ -319,10 +325,12 @@ function reportingLaunches(
   return async (clientApp, opts) => {
     let attempted = false
     let started = false
+    const claim: {release?: () => void} = {}
     try {
       started = await launch(clientApp, opts, {
         begin: () => {
           attempted = true
+          claim.release ??= fleetEvents.claimLaunch(clientApp.packageName)
         },
       })
       return started
@@ -336,6 +344,7 @@ function reportingLaunches(
           outcome: started ? "started" : "failed",
         })
       }
+      claim.release?.()
     }
   }
 }
@@ -477,8 +486,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return true
     }
 
-    // Past every gate: from here on this is a launch, reported to Fleet as started or failed.
-    attempt.begin()
+    // Past every gate: from here on this is a launch, reported to Fleet as started or failed. A native built-in that
+    // declares no execution is the Mentra App's own interface (Settings, Feedback), not a miniapp, and is not reported.
+    if (app.local || app.nativeExecution) attempt.begin()
 
     // Foreground-only-one rule: stop other running standard apps.
     if (app.type === "standard") {
@@ -680,6 +690,64 @@ miniappRunningRegistry.subscribe(() => {
     useAppStatusStore.setState({apps: updated})
   }
 })
+
+/**
+ * The miniapp the user can see: the foregrounded one, while the Mentra App itself is in the foreground. The store
+ * keeps a miniapp foregrounded when the app goes to the background or the phone locks; it is not visible then.
+ */
+export function visibleMiniappPackage(
+  state: Pick<AppStatusState, "foregroundedPackage"> = useAppStatusStore.getState(),
+): string | null {
+  return AppState.currentState === "active" ? state.foregroundedPackage : null
+}
+
+// Native built-ins have no JS context, so they never enter miniappRunningRegistry. Which of them is executing is
+// derived here, from the store every open, minimize and stop goes through, and from the app state: one that executes
+// while open (Gallery) only while it is running and visible, one that executes while running (Notify) whenever it
+// runs. A running flag alone is not execution for the first kind: it outlives a minimize, and even a restart.
+function executingNativeMiniapps(state: AppStatusState): string[] {
+  const visible = visibleMiniappPackage(state)
+  const executing: string[] = []
+  for (const app of state.apps) {
+    if (app.local || !app.running) continue
+    if (app.nativeExecution === "running" || (app.nativeExecution === "open" && app.packageName === visible)) {
+      executing.push(app.packageName)
+    }
+  }
+  return executing
+}
+/** The built-ins that execute while they run (Notify) that were executing at the last publish. */
+let executingWhileRunning: ReadonlySet<string> = new Set()
+
+/**
+ * A built-in that executes while it runs, and starts running without the store's `start`, was restored: its running
+ * flag was read back after a process death. That is an automatic launch. A `start` claims, and reports, its own.
+ */
+function reportRestoredBuiltIns(state: AppStatusState, executing: readonly string[]): void {
+  const now = new Set<string>()
+  for (const app of state.apps) {
+    if (app.local || app.nativeExecution !== "running" || !executing.includes(app.packageName)) continue
+    now.add(app.packageName)
+    if (executingWhileRunning.has(app.packageName)) continue
+    fleetEvents.launchUnlessClaimed({
+      packageName: app.packageName,
+      miniappName: app.name,
+      versionName: app.version,
+      start: "automatic",
+      outcome: "started",
+    })
+  }
+  executingWhileRunning = now
+}
+
+const publishNativeExecution = () => {
+  const state = useAppStatusStore.getState()
+  const executing = executingNativeMiniapps(state)
+  reportRestoredBuiltIns(state, executing)
+  nativeMiniappExecution.set(executing)
+}
+useAppStatusStore.subscribe(publishNativeExecution)
+AppState.addEventListener("change", publishNativeExecution)
 
 // The display-manager's core (foreground) slot is DERIVED state: always the
 // currently-running standard app, no matter HOW it came to run — user tap

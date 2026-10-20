@@ -1,0 +1,1116 @@
+{
+  "symbols": {
+    "4312": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwup",
+      "destructiveProjectEnumData value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "4316": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV12microsecondss6UInt64Vvg",
+      "MentraBluetoothSDK.NimoMacProcessBirth.microseconds.getter : Swift.UInt64"
+    ],
+    "4324": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSQAASQ2eeoiySbx_xtFZTW",
+      "protocol witness for static Swift.Equatable.== infix(A, A) -> Swift.Bool in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Equatable in MentraBluetoothSDK"
+    ],
+    "4344": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH9hashValueSivgTW",
+      "protocol witness for Swift.Hashable.hashValue.getter : Swift.Int in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "4348": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH4hash4intoys6HasherVz_tFTW",
+      "protocol witness for Swift.Hashable.hash(into: inout Swift.Hasher) -> () in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "4388": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH13_rawHashValue4seedS2i_tFTW",
+      "protocol witness for Swift.Hashable._rawHashValue(seed: Swift.Int) -> Swift.Int in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "4392": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP11stringValueSSvgTW",
+      "protocol witness for Swift.CodingKey.stringValue.getter : Swift.String in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "4460": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP11stringValuexSgSS_tcfCTW",
+      "protocol witness for Swift.CodingKey.init(stringValue: Swift.String) -> A? in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "4680": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP8intValueSiSgvgTW",
+      "protocol witness for Swift.CodingKey.intValue.getter : Swift.Int? in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "4692": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP8intValuexSgSi_tcfCTW",
+      "protocol witness for Swift.CodingKey.init(intValue: Swift.Int) -> A? in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "4704": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs28CustomDebugStringConvertibleAAsAGP16debugDescriptionSSvgTW",
+      "protocol witness for Swift.CustomDebugStringConvertible.debugDescription.getter : Swift.String in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomDebugStringConvertible in MentraBluetoothSDK"
+    ],
+    "4744": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs23CustomStringConvertibleAAsAGP11descriptionSSvgTW",
+      "protocol witness for Swift.CustomStringConvertible.description.getter : Swift.String in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomStringConvertible in MentraBluetoothSDK"
+    ],
+    "4784": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV23__derived_struct_equalsySbAC_ACtFZ",
+      "static MentraBluetoothSDK.NimoMacProcessBirth.__derived_struct_equals(MentraBluetoothSDK.NimoMacProcessBirth, MentraBluetoothSDK.NimoMacProcessBirth) -> Swift.Bool"
+    ],
+    "4800": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV6encode2toys7Encoder_p_tKF",
+      "MentraBluetoothSDK.NimoMacProcessBirth.encode(to: Swift.Encoder) throws -> ()"
+    ],
+    "5108": [
+      "___swift_instantiateConcreteTypeFromMangledNameV2",
+      "___swift_instantiateConcreteTypeFromMangledNameV2"
+    ],
+    "5188": [
+      "___swift_project_boxed_opaque_existential_1",
+      "___swift_project_boxed_opaque_existential_1"
+    ],
+    "5224": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFs0H3KeyAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "5288": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV4fromACs7Decoder_p_tKcfC",
+      "MentraBluetoothSDK.NimoMacProcessBirth.init(from: Swift.Decoder) throws -> MentraBluetoothSDK.NimoMacProcessBirth"
+    ],
+    "5308": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVSeAASe4fromxs7Decoder_p_tKcfCTW",
+      "protocol witness for Swift.Decodable.init(from: Swift.Decoder) throws -> A in conformance MentraBluetoothSDK.NimoMacProcessBirth : Swift.Decodable in MentraBluetoothSDK"
+    ],
+    "5348": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVSEAASE6encode2toys7Encoder_p_tKFTW",
+      "protocol witness for Swift.Encodable.encode(to: Swift.Encoder) throws -> () in conformance MentraBluetoothSDK.NimoMacProcessBirth : Swift.Encodable in MentraBluetoothSDK"
+    ],
+    "5372": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVSQAASQ2eeoiySbx_xtFZTW",
+      "protocol witness for static Swift.Equatable.== infix(A, A) -> Swift.Bool in conformance MentraBluetoothSDK.NimoMacProcessBirth : Swift.Equatable in MentraBluetoothSDK"
+    ],
+    "5396": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV7versionSivg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.version.getter : Swift.Int"
+    ],
+    "5404": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV8ownerPids5Int32Vvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.ownerPid.getter : Swift.Int32"
+    ],
+    "5412": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV15ownerAuditTokenSSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.ownerAuditToken.getter : Swift.String"
+    ],
+    "5456": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10ownerBirthAA0de7ProcessI0Vvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.ownerBirth.getter : MentraBluetoothSDK.NimoMacProcessBirth"
+    ],
+    "5464": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10planSha256SSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.planSha256.getter : Swift.String"
+    ],
+    "5508": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV11grantSha256SSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.grantSha256.getter : Swift.String"
+    ],
+    "5552": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV14bootstrapNonceSSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.bootstrapNonce.getter : Swift.String"
+    ],
+    "5596": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV19appExecutableSha256SSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.appExecutableSha256.getter : Swift.String"
+    ],
+    "5640": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV11appBundleIdSSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.appBundleId.getter : Swift.String"
+    ],
+    "5684": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLO11stringValueSSvg",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D).stringValue.getter : Swift.String"
+    ],
+    "6020": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH9hashValueSivgTWTm",
+      "merged protocol witness for Swift.Hashable.hashValue.getter : Swift.Int in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "6088": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH13_rawHashValue4seedS2i_tFTWTm",
+      "merged protocol witness for Swift.Hashable._rawHashValue(seed: Swift.Int) -> Swift.Int in conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "6152": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP11stringValueSSvgTW",
+      "protocol witness for Swift.CodingKey.stringValue.getter : Swift.String in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "6160": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP11stringValuexSgSS_tcfCTW",
+      "protocol witness for Swift.CodingKey.init(stringValue: Swift.String) -> A? in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "6200": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAsAGP8intValuexSgSi_tcfCTW",
+      "protocol witness for Swift.CodingKey.init(intValue: Swift.Int) -> A? in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "6212": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs28CustomDebugStringConvertibleAAsAGP16debugDescriptionSSvgTW",
+      "protocol witness for Swift.CustomDebugStringConvertible.debugDescription.getter : Swift.String in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomDebugStringConvertible in MentraBluetoothSDK"
+    ],
+    "6252": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs23CustomStringConvertibleAAsAGP11descriptionSSvgTW",
+      "protocol witness for Swift.CustomStringConvertible.description.getter : Swift.String in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomStringConvertible in MentraBluetoothSDK"
+    ],
+    "6292": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV6encode2toys7Encoder_p_tKF",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.encode(to: Swift.Encoder) throws -> ()"
+    ],
+    "6872": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVSeAASe4fromxs7Decoder_p_tKcfCTW",
+      "protocol witness for Swift.Decodable.init(from: Swift.Decoder) throws -> A in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration : Swift.Decodable in MentraBluetoothSDK"
+    ],
+    "6952": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV7version8ownerPid0I10AuditToken0I5Birth10planSha25605grantO014bootstrapNonce013appExecutableO00S8BundleIdACSi_s5Int32VSSAA0de7ProcessM0VS5StcfC",
+      "MentraBluetoothSDK.NimoMacFixtureConfiguration.init(version: Swift.Int, ownerPid: Swift.Int32, ownerAuditToken: Swift.String, ownerBirth: MentraBluetoothSDK.NimoMacProcessBirth, planSha256: Swift.String, grantSha256: Swift.String, bootstrapNonce: Swift.String, appExecutableSha256: Swift.String, appBundleId: Swift.String) -> MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "7000": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVSEAASE6encode2toys7Encoder_p_tKFTW",
+      "protocol witness for Swift.Encodable.encode(to: Swift.Encoder) throws -> () in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration : Swift.Encodable in MentraBluetoothSDK"
+    ],
+    "7020": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC13configurationAA0dE20FixtureConfigurationVvg",
+      "MentraBluetoothSDK.NimoMacResourceTransport.configuration.getter : MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "7032": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5queue33_773440369502A451042A3B7EF2A1D29DLLSo012OS_dispatch_H0Cvpfi",
+      "variable initialization expression of MentraBluetoothSDK.NimoMacResourceTransport.(queue in _773440369502A451042A3B7EF2A1D29D) : __C.OS_dispatch_queue"
+    ],
+    "7492": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfC",
+      "MentraBluetoothSDK.NimoMacResourceTransport.init(process: MentraBluetoothSDK.NimoResourceProcess) throws -> MentraBluetoothSDK.NimoMacResourceTransport"
+    ],
+    "7592": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfc",
+      "MentraBluetoothSDK.NimoMacResourceTransport.init(process: MentraBluetoothSDK.NimoResourceProcess) throws -> MentraBluetoothSDK.NimoMacResourceTransport"
+    ],
+    "13456": [
+      "_$s18MentraBluetoothSDK14transportError33_773440369502A451042A3B7EF2A1D29DLLys0E0_pSSF",
+      "MentraBluetoothSDK.transportError(Swift.String) -> Swift.Error"
+    ],
+    "13788": [
+      "_$sShyShyxGqd__nc7ElementQyd__RszSTRd__lufCSS_SD4KeysVySSyp_GTt0g5",
+      "generic specialization <Swift.String, [Swift.String : Any].Keys> of Swift.Set.init<A where A == A1.Element, A1: Swift.Sequence>(__owned A1) -> Swift.Set<A>"
+    ],
+    "14096": [
+      "_$sSh2eeoiySbShyxG_ABtFZSS_Tt1g5",
+      "generic specialization <Swift.String> of static Swift.Set.== infix(Swift.Set<A>, Swift.Set<A>) -> Swift.Bool"
+    ],
+    "14528": [
+      "_$sSTsE3mapySayqd__Gqd__7ElementQzqd_0_YKXEqd_0_YKs5ErrorRd_0_r0_lF9CryptoKit12SHA256DigestV_SSs5NeverOTg594$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfcSSs5UInt8VXEfU0_Tf1cn_n",
+      "function signature specialization <Arg[0] = [Closure Propagated : $s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfcSSs5UInt8VXEfU0_, Argument Types : []> of generic specialization <CryptoKit.SHA256Digest, Swift.String, Swift.Never> of (extension in Swift):Swift.Sequence.map<A, B where B1: Swift.Error>((A.Element) throws(B1) -> A1) throws(B1) -> [A1]"
+    ],
+    "15360": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF",
+      "MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "22680": [
+      "_$sIegh_IeyBh_TR",
+      "reabstraction thunk helper from @escaping @callee_guaranteed @Sendable () -> () to @escaping @callee_unowned @convention(block) @Sendable () -> ()"
+    ],
+    "22724": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC13sameDirectory33_773440369502A451042A3B7EF2A1D29DLLSbyF",
+      "MentraBluetoothSDK.NimoMacResourceTransport.sameDirectory() -> Swift.Bool"
+    ],
+    "23036": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7persist_5nonce4kindy10Foundation4DataV_S2StKF",
+      "MentraBluetoothSDK.NimoMacResourceTransport.persist(_: Foundation.Data, nonce: Swift.String, kind: Swift.String) throws -> ()"
+    ],
+    "24688": [
+      "_$sSTsSQ7ElementRpzrlE8containsySbABF10Foundation4DataV_Tg5",
+      "generic specialization <Foundation.Data> of (extension in Swift):Swift.Sequence< where A.Element: Swift.Equatable>.contains(A.Element) -> Swift.Bool"
+    ],
+    "24988": [
+      "_$sSTsSQ7ElementRpzrlE8containsySbABFSaySSG_Tg5",
+      "generic specialization <[Swift.String]> of (extension in Swift):Swift.Sequence< where A.Element: Swift.Equatable>.contains(A.Element) -> Swift.Bool"
+    ],
+    "25096": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7persist_5nonce4kindy10Foundation4DataV_S2StKFySWKXEfU_",
+      "closure #1 (Swift.UnsafeRawBufferPointer) throws -> () in MentraBluetoothSDK.NimoMacResourceTransport.persist(_: Foundation.Data, nonce: Swift.String, kind: Swift.String) throws -> ()"
+    ],
+    "25256": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC11peerAllowed33_773440369502A451042A3B7EF2A1D29DLLySbs5Int32VF",
+      "MentraBluetoothSDK.NimoMacResourceTransport.peerAllowed(Swift.Int32) -> Swift.Bool"
+    ],
+    "25608": [
+      "_$s18MentraBluetoothSDK17nimoAuditTokenHex33_773440369502A451042A3B7EF2A1D29DLLySSSo13audit_token_taF",
+      "MentraBluetoothSDK.nimoAuditTokenHex(__C.audit_token_t) -> Swift.String"
+    ],
+    "26088": [
+      "_$sSKsE4last7ElementQzSgvg10Foundation4DataV_Tg5",
+      "generic specialization <Foundation.Data> of (extension in Swift):Swift.BidirectionalCollection.last.getter : A.Element?"
+    ],
+    "26240": [
+      "_$sSlsE8dropLasty11SubSequenceQzSiF10Foundation4DataV_Tg5",
+      "generic specialization <Foundation.Data> of (extension in Swift):Swift.Collection.dropLast(Swift.Int) -> A.SubSequence"
+    ],
+    "26652": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5hello33_773440369502A451042A3B7EF2A1D29DLLSDySSypGyF",
+      "MentraBluetoothSDK.NimoMacResourceTransport.hello() -> [Swift.String : Any]"
+    ],
+    "27792": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_",
+      "closure #1 () async -> () in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "27904": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY0_",
+      "(1) suspend resume partial function for closure #1 () async -> () in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "28008": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TQ1_",
+      "(2) await resume partial function for closure #1 () async -> () in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "28136": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY2_",
+      "(3) suspend resume partial function for closure #1 () async -> () in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "28224": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY3_",
+      "(4) suspend resume partial function for closure #1 () async -> () in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "28312": [
+      "_$sScTss5NeverORs_rlE8priority9operationScTyxABGScPSg_xyYaYAcntcfCyt_Tt1g5",
+      "generic specialization <()> of (extension in Swift):Swift.Task< where B == Swift.Never>.init(priority: Swift.TaskPriority?, operation: __owned @isolated(any) () async -> A) -> Swift.Task<A, Swift.Never>"
+    ],
+    "28724": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC4send33_773440369502A451042A3B7EF2A1D29DLLyy10Foundation4DataV_s5Int32VtFySWXEfU_",
+      "closure #1 (Swift.UnsafeRawBufferPointer) -> () in MentraBluetoothSDK.NimoMacResourceTransport.send(Foundation.Data, Swift.Int32) -> ()"
+    ],
+    "28828": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportCfd",
+      "MentraBluetoothSDK.NimoMacResourceTransport.deinit"
+    ],
+    "28904": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportCfD",
+      "MentraBluetoothSDK.NimoMacResourceTransport.__deallocating_deinit"
+    ],
+    "28936": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CfD",
+      "__deallocating_deinit in Box #1 in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "28976": [
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5",
+      "generic specialization <()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)"
+    ],
+    "29076": [
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TQ0_",
+      "(1) await resume partial function for generic specialization <()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)"
+    ],
+    "29140": [
+      "_$ss22__RawDictionaryStorageC4findys10_HashTableV6BucketV6bucket_Sb5foundtxSHRzlFSS_Tg5",
+      "generic specialization <Swift.String> of Swift.__RawDictionaryStorage.find<A where A: Swift.Hashable>(A) -> (bucket: Swift._HashTable.Bucket, found: Swift.Bool)"
+    ],
+    "29240": [
+      "_$sSa6append10contentsOfyqd__n_t7ElementQyd__RszSTRd__lFs5UInt8V_SayAFGTg5",
+      "generic specialization <Swift.UInt8, [Swift.UInt8]> of Swift.Array.append<A where A == A1.Element, A1: Swift.Sequence>(contentsOf: __owned A1) -> ()"
+    ],
+    "29468": [
+      "_$ss12_ArrayBufferV20_consumeAndCreateNew14bufferIsUnique15minimumCapacity13growForAppendAByxGSb_SiSbtFs5UInt8V_Tg5",
+      "generic specialization <Swift.UInt8> of Swift._ArrayBuffer._consumeAndCreateNew(bufferIsUnique: Swift.Bool, minimumCapacity: Swift.Int, growForAppend: Swift.Bool) -> Swift._ArrayBuffer<A>"
+    ],
+    "29708": [
+      "_$sSh8_VariantV6insertySb8inserted_x17memberAfterInserttxnFSS_Tg5",
+      "generic specialization <Swift.String> of Swift.Set._Variant.insert(__owned A) -> (inserted: Swift.Bool, memberAfterInsert: A)"
+    ],
+    "30032": [
+      "_$ss10_NativeSetV9insertNew_2at8isUniqueyxn_s10_HashTableV6BucketVSbtFSS_Tg5",
+      "generic specialization <Swift.String> of Swift._NativeSet.insertNew(_: __owned A, at: Swift._HashTable.Bucket, isUnique: Swift.Bool) -> ()"
+    ],
+    "30388": [
+      "_$ss10_NativeSetV13copyAndResize8capacityySi_tFSS_Tg5",
+      "generic specialization <Swift.String> of Swift._NativeSet.copyAndResize(capacity: Swift.Int) -> ()"
+    ],
+    "30940": [
+      "_$ss10_NativeSetV4copyyyFSS_Tg5",
+      "generic specialization <Swift.String> of Swift._NativeSet.copy() -> ()"
+    ],
+    "31288": [
+      "_$ss10_NativeSetV6resize8capacityySi_tFSS_Tg5",
+      "generic specialization <Swift.String> of Swift._NativeSet.resize(capacity: Swift.Int) -> ()"
+    ],
+    "31900": [
+      "_$ss22__RawDictionaryStorageC4find_9hashValues10_HashTableV6BucketV6bucket_Sb5foundtx_SitSHRzlFSS_Tg5",
+      "generic specialization <Swift.String> of Swift.__RawDictionaryStorage.find<A where A: Swift.Hashable>(_: A, hashValue: Swift.Int) -> (bucket: Swift._HashTable.Bucket, found: Swift.Bool)"
+    ],
+    "32072": [
+      "_$ss15ContiguousArrayV16_createNewBuffer14bufferIsUnique15minimumCapacity13growForAppendySb_SiSbtFSS_Tg5",
+      "generic specialization <Swift.String> of Swift.ContiguousArray._createNewBuffer(bufferIsUnique: Swift.Bool, minimumCapacity: Swift.Int, growForAppend: Swift.Bool) -> ()"
+    ],
+    "32100": [
+      "_$ss22_ContiguousArrayBufferV20_consumeAndCreateNew14bufferIsUnique15minimumCapacity13growForAppendAByxGSb_SiSbtFSS_Tg5",
+      "generic specialization <Swift.String> of Swift._ContiguousArrayBuffer._consumeAndCreateNew(bufferIsUnique: Swift.Bool, minimumCapacity: Swift.Int, growForAppend: Swift.Bool) -> Swift._ContiguousArrayBuffer<A>"
+    ],
+    "32364": [
+      "_$s10Foundation4DataVyACxcSTRzs5UInt8V7ElementRtzlufcAC15_RepresentationOSWXEfU_",
+      "closure #1 (Swift.UnsafeRawBufferPointer) -> Foundation.Data._Representation in Foundation.Data.init<A where A: Swift.Sequence, A.Element == Swift.UInt8>(A) -> Foundation.Data"
+    ],
+    "32504": [
+      "_$s10Foundation4DataV15_RepresentationO15withUnsafeBytesyxxSWKXEKlFyt_Tg5063$s9CryptoKit12HashFunctionPAAE6update4datayqd___t10Foundation12B70ProtocolRd__lFy7Regions_7ElementQYd__XEfU_ySWXEfU_AA6SHA256V_AF0H0VTg50H3Kit0X0VTf1ncn_n",
+      "function signature specialization <Arg[1] = [Closure Propagated : $s9CryptoKit12HashFunctionPAAE6update4datayqd___t10Foundation12DataProtocolRd__lFy7Regions_7ElementQYd__XEfU_ySWXEfU_AA6SHA256V_AF0H0VTg5, Argument Types : [CryptoKit.SHA256]> of generic specialization <()> of Foundation.Data._Representation.withUnsafeBytes<A>((Swift.UnsafeRawBufferPointer) throws -> A) throws -> A"
+    ],
+    "32932": [
+      "_$s10Foundation13__DataStorageC15withUnsafeBytes2in5applyxSnySiG_xSWKXEtKlFyt_Tg5063$s9CryptoKit12HashFunctionPAAE6update4datayqd___t10Foundation12B70ProtocolRd__lFy7Regions_7ElementQYd__XEfU_ySWXEfU_AA6SHA256V_AF0H0VTg50J3Kit0Z0VTf1nncn_n",
+      "function signature specialization <Arg[2] = [Closure Propagated : $s9CryptoKit12HashFunctionPAAE6update4datayqd___t10Foundation12DataProtocolRd__lFy7Regions_7ElementQYd__XEfU_ySWXEfU_AA6SHA256V_AF0H0VTg5, Argument Types : [CryptoKit.SHA256]> of generic specialization <()> of Foundation.__DataStorage.withUnsafeBytes<A>(in: Swift.Range<Swift.Int>, apply: (Swift.UnsafeRawBufferPointer) throws -> A) throws -> A"
+    ],
+    "33128": [
+      "_$ss32_copyCollectionToContiguousArrayys0dE0Vy7ElementQzGxSlRzlFSS8UTF8ViewV_Tgq5",
+      "generic specialization <serialized, Swift.String.UTF8View> of Swift._copyCollectionToContiguousArray<A where A: Swift.Collection>(A) -> Swift.ContiguousArray<A.Element>"
+    ],
+    "33288": [
+      "_$ss22_ContiguousArrayBufferV19_uninitializedCount15minimumCapacityAByxGSi_SitcfCs5UInt8V_Tt1gq5",
+      "generic specialization <serialized, Swift.UInt8> of Swift._ContiguousArrayBuffer.init(_uninitializedCount: Swift.Int, minimumCapacity: Swift.Int) -> Swift._ContiguousArrayBuffer<A>"
+    ],
+    "33400": [
+      "_$sSksSx5IndexRpzSnyABG7IndicesRtzSiAA_6StrideRTzrlE8distance4from2toSiAB_ABtF10Foundation4DataV_Tgq5",
+      "generic specialization <serialized, Foundation.Data> of (extension in Swift):Swift.RandomAccessCollection< where A.Index: Swift.Strideable, A.Indices == Swift.Range<A.Index>, A.Index.Stride == Swift.Int>.distance(from: A.Index, to: A.Index) -> Swift.Int"
+    ],
+    "33580": [
+      "_$sSksSx5IndexRpzSnyABG7IndicesRtzSiAA_6StrideRTzrlE5index_8offsetByA2B_SitF10Foundation4DataV_Tgq5",
+      "generic specialization <serialized, Foundation.Data> of (extension in Swift):Swift.RandomAccessCollection< where A.Index: Swift.Strideable, A.Indices == Swift.Range<A.Index>, A.Index.Stride == Swift.Int>.index(_: A.Index, offsetBy: Swift.Int) -> A.Index"
+    ],
+    "33680": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV4fromACs7Decoder_p_tKcfCTf4nd_n",
+      "function signature specialization <Arg[1] = Dead> of MentraBluetoothSDK.NimoMacProcessBirth.init(from: Swift.Decoder) throws -> MentraBluetoothSDK.NimoMacProcessBirth"
+    ],
+    "34020": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFs0H3KeyAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "34084": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVACSEAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacProcessBirth and conformance MentraBluetoothSDK.NimoMacProcessBirth : Swift.Encodable in MentraBluetoothSDK"
+    ],
+    "34148": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLO11stringValueAFSgSS_tcfCTf4nd_n",
+      "function signature specialization <Arg[1] = Dead> of MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D).init(stringValue: Swift.String) -> MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)?"
+    ],
+    "34928": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV4fromACs7Decoder_p_tKcfCTf4nd_n",
+      "function signature specialization <Arg[1] = Dead> of MentraBluetoothSDK.NimoMacFixtureConfiguration.init(from: Swift.Decoder) throws -> MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "35980": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVWOc",
+      "outlined init with copy of MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "35996": [
+      "_$sSo17OS_dispatch_queueCMa",
+      "type metadata accessor for __C.OS_dispatch_queue"
+    ],
+    "36064": [
+      "___swift_instantiateConcreteTypeFromMangledNameAbstractV2",
+      "___swift_instantiateConcreteTypeFromMangledNameAbstractV2"
+    ],
+    "36148": [
+      "_$s10Foundation4DataVSgWOe",
+      "outlined consume of Foundation.Data?"
+    ],
+    "36168": [
+      "_$s10Foundation4DataV15_RepresentationOWOe",
+      "outlined consume of Foundation.Data._Representation"
+    ],
+    "36232": [
+      "_$sShyShyxGqd__nc7ElementQyd__RszSTRd__lufCSS_SaySSGTt0g5Tf4g_n",
+      "function signature specialization <Arg[0] = Owned To Guaranteed> of generic specialization <Swift.String, [Swift.String]> of Swift.Set.init<A where A == A1.Element, A1: Swift.Sequence>(__owned A1) -> Swift.Set<A>"
+    ],
+    "36380": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVACSeAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacFixtureConfiguration and conformance MentraBluetoothSDK.NimoMacFixtureConfiguration : Swift.Decodable in MentraBluetoothSDK"
+    ],
+    "36444": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVWOh",
+      "outlined destroy of MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "36480": [
+      "_$sS2SSysWl",
+      "lazy protocol witness table accessor for type Swift.String and conformance Swift.String : Swift.StringProtocol in Swift"
+    ],
+    "36544": [
+      "_$s10Foundation4DataV15_RepresentationOWOy",
+      "outlined copy of Foundation.Data._Representation"
+    ],
+    "36608": [
+      "_$sSlsE6prefixy11SubSequenceQzSiFSS_Tg5Tf4ng_n",
+      "function signature specialization <Arg[1] = Owned To Guaranteed> of generic specialization <Swift.String> of (extension in Swift):Swift.Collection.prefix(Swift.Int) -> A.SubSequence"
+    ],
+    "36748": [
+      "_$sS2sSTsWl",
+      "lazy protocol witness table accessor for type Swift.Substring and conformance Swift.Substring : Swift.Sequence in Swift"
+    ],
+    "36848": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfcyyYbcfU3_TA",
+      "partial apply forwarder for closure #5 @Sendable () -> () in MentraBluetoothSDK.NimoMacResourceTransport.init(process: MentraBluetoothSDK.NimoResourceProcess) throws -> MentraBluetoothSDK.NimoMacResourceTransport"
+    ],
+    "36928": [
+      "_block_copy_helper",
+      "_block_copy_helper"
+    ],
+    "36948": [
+      "_block_destroy_helper",
+      "_block_destroy_helper"
+    ],
+    "36956": [
+      "_$sypWOc",
+      "outlined init with copy of Any"
+    ],
+    "37016": [
+      "___swift_memcpy16_8",
+      "___swift_memcpy16_8"
+    ],
+    "37028": [
+      "___swift_noop_void_return",
+      "___swift_noop_void_return"
+    ],
+    "37032": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVwet",
+      "getEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacProcessBirth"
+    ],
+    "37064": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVwst",
+      "storeEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacProcessBirth"
+    ],
+    "37104": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoMacProcessBirth"
+    ],
+    "37120": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwCP",
+      "initializeBufferWithCopyOfBuffer value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "37164": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwxx",
+      "destroy value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "37236": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwcp",
+      "initializeWithCopy value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "37400": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwca",
+      "assignWithCopy value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "37668": [
+      "___swift_memcpy128_8",
+      "___swift_memcpy128_8"
+    ],
+    "37704": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwta",
+      "assignWithTake value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "37860": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwet",
+      "getEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "37932": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVwst",
+      "storeEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "38028": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationVMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoMacFixtureConfiguration"
+    ],
+    "38044": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportCMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoMacResourceTransport"
+    ],
+    "38076": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CMa",
+      "type metadata accessor for Box #1 in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "38108": [
+      "___swift_memcpy1_1",
+      "___swift_memcpy1_1"
+    ],
+    "38120": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwet",
+      "getEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38264": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwst",
+      "storeEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38440": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38456": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwet",
+      "getEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38600": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwst",
+      "storeEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38776": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwug",
+      "getEnumTag value witness for MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38784": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwui",
+      "destructiveInjectEnumTag value witness for MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38792": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "38808": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASQWb",
+      "base witness table accessor for Swift.Equatable in MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "38812": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFSQAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Equatable in MentraBluetoothSDK"
+    ],
+    "38876": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASQWb",
+      "base witness table accessor for Swift.Equatable in MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "38880": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFSQAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Equatable in MentraBluetoothSDK"
+    ],
+    "38944": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAs28CustomDebugStringConvertiblePWb",
+      "base witness table accessor for Swift.CustomDebugStringConvertible in MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "38948": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFs28CustomDebugStringConvertibleAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomDebugStringConvertible in MentraBluetoothSDK"
+    ],
+    "39012": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAs23CustomStringConvertiblePWb",
+      "base witness table accessor for Swift.CustomStringConvertible in MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "39016": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFs23CustomStringConvertibleAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomStringConvertible in MentraBluetoothSDK"
+    ],
+    "39080": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAs28CustomDebugStringConvertiblePWb",
+      "base witness table accessor for Swift.CustomDebugStringConvertible in MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "39084": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFs28CustomDebugStringConvertibleAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomDebugStringConvertible in MentraBluetoothSDK"
+    ],
+    "39148": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOs0H3KeyAAs23CustomStringConvertiblePWb",
+      "base witness table accessor for Swift.CustomStringConvertible in MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CodingKey in MentraBluetoothSDK"
+    ],
+    "39152": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOAFs23CustomStringConvertibleAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) and conformance MentraBluetoothSDK.NimoMacProcessBirth.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.CustomStringConvertible in MentraBluetoothSDK"
+    ],
+    "39216": [
+      "_$ss6ResultOy10Foundation4DataVs5Error_pGSgWOe",
+      "outlined consume of Swift.Result<Foundation.Data, Swift.Error>?"
+    ],
+    "39236": [
+      "_$ss6ResultOy10Foundation4DataVs5Error_pGWOe",
+      "outlined consume of Swift.Result<Foundation.Data, Swift.Error>"
+    ],
+    "39292": [
+      "___swift_destroy_boxed_opaque_existential_1",
+      "___swift_destroy_boxed_opaque_existential_1"
+    ],
+    "39324": [
+      "_$sSD17dictionaryLiteralSDyxq_Gx_q_td_tcfCSS_ypTt0g5Tf4g_n",
+      "function signature specialization <Arg[0] = Owned To Guaranteed> of generic specialization <Swift.String, Any> of Swift.Dictionary.init(dictionaryLiteral: (A, B)...) -> [A : B]"
+    ],
+    "39592": [
+      "_$s10Foundation4DataV06InlineB0VyAESWcfCTf4nd_n",
+      "function signature specialization <Arg[1] = Dead> of Foundation.Data.InlineData.init(Swift.UnsafeRawBufferPointer) -> Foundation.Data.InlineData"
+    ],
+    "39772": [
+      "_$s10Foundation4DataV11InlineSliceVyAESWcfCTf4nd_n",
+      "function signature specialization <Arg[1] = Dead> of Foundation.Data.InlineSlice.init(Swift.UnsafeRawBufferPointer) -> Foundation.Data.InlineSlice"
+    ],
+    "39872": [
+      "_$s10Foundation4DataV10LargeSliceVyAESWcfCTf4nd_n",
+      "function signature specialization <Arg[1] = Dead> of Foundation.Data.LargeSlice.init(Swift.UnsafeRawBufferPointer) -> Foundation.Data.LargeSlice"
+    ],
+    "39988": [
+      "_$sSD17dictionaryLiteralSDyxq_Gx_q_td_tcfCSS_s6UInt64VTt0g5Tf4g_n",
+      "function signature specialization <Arg[0] = Owned To Guaranteed> of generic specialization <Swift.String, Swift.UInt64> of Swift.Dictionary.init(dictionaryLiteral: (A, B)...) -> [A : B]"
+    ],
+    "40232": [
+      "_$s10Foundation4DataVyACxcSTRzs5UInt8V7ElementRtzlufCSayAEG_Tt0g5Tf4g_n",
+      "function signature specialization <Arg[0] = Owned To Guaranteed> of generic specialization <[Swift.UInt8]> of Foundation.Data.init<A where A: Swift.Sequence, A.Element == Swift.UInt8>(A) -> Foundation.Data"
+    ],
+    "40412": [
+      "_$sSD17dictionaryLiteralSDyxq_Gx_q_td_tcfCSS_SSTt0g5Tf4g_n",
+      "function signature specialization <Arg[0] = Owned To Guaranteed> of generic specialization <Swift.String, Swift.String> of Swift.Dictionary.init(dictionaryLiteral: (A, B)...) -> [A : B]"
+    ],
+    "40744": [
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TA",
+      "partial apply forwarder for closure #1 () async -> () in MentraBluetoothSDK.NimoMacResourceTransport.serve() -> ()"
+    ],
+    "40844": [
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TATQ0_",
+      "(1) await resume partial function for partial apply forwarder for generic specialization <()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)"
+    ],
+    "40904": [
+      "_$ss6ResultOy10Foundation4DataVs5Error_pGWOy",
+      "outlined copy of Swift.Result<Foundation.Data, Swift.Error>"
+    ],
+    "40924": [
+      "_$sSS_yptWOc",
+      "outlined init with copy of (Swift.String, Any)"
+    ],
+    "41004": [
+      "_$sypWOb",
+      "outlined init with take of Any"
+    ],
+    "41020": [
+      "_$sScPSgWOb",
+      "outlined init with take of Swift.TaskPriority?"
+    ],
+    "41100": [
+      "_$sypSgWOhTm",
+      "merged outlined destroy of Any?"
+    ],
+    "41200": [
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TA",
+      "partial apply forwarder for generic specialization <()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)"
+    ],
+    "41312": [
+      "_$sSaySo17OS_dispatch_queueC8DispatchE10AttributesVGSayxGSTsWlTm",
+      "merged lazy protocol witness table accessor for type [(extension in Dispatch):__C.OS_dispatch_queue.Attributes] and conformance [A] : Swift.Sequence in Swift"
+    ],
+    "41380": [
+      "_$sSo17OS_dispatch_queueC8DispatchE10AttributesVAEs10SetAlgebraACWlTm",
+      "merged lazy protocol witness table accessor for type (extension in Dispatch):__C.OS_dispatch_queue.Attributes and conformance (extension in Dispatch):__C.OS_dispatch_queue.Attributes : Swift.SetAlgebra in Dispatch"
+    ],
+    "41444": [
+      "_$sSD8IteratorV8_VariantOySSyp__GWOe",
+      "outlined consume of [Swift.String : Any].Iterator._Variant"
+    ],
+    "41452": [
+      "_$s18MentraBluetoothSDK19NimoMacProcessBirthVACSeAAWl",
+      "lazy protocol witness table accessor for type MentraBluetoothSDK.NimoMacProcessBirth and conformance MentraBluetoothSDK.NimoMacProcessBirth : Swift.Decodable in MentraBluetoothSDK"
+    ],
+    "41516": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwug",
+      "getEnumTag value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "41520": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSQAASQ2eeoiySbx_xtFZTW",
+      "protocol witness for static Swift.Equatable.== infix(A, A) -> Swift.Bool in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Equatable in MentraBluetoothSDK"
+    ],
+    "41524": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH13_rawHashValue4seedS2i_tFTW",
+      "protocol witness for Swift.Hashable._rawHashValue(seed: Swift.Int) -> Swift.Int in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "41528": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOwui",
+      "destructiveInjectEnumTag value witness for MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D)"
+    ],
+    "41532": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH4hash4intoys6HasherVz_tFTW",
+      "protocol witness for Swift.Hashable.hash(into: inout Swift.Hasher) -> () in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "41536": [
+      "_$s18MentraBluetoothSDK27NimoMacFixtureConfigurationV10CodingKeys33_773440369502A451042A3B7EF2A1D29DLLOSHAASH9hashValueSivgTW",
+      "protocol witness for Swift.Hashable.hashValue.getter : Swift.Int in conformance MentraBluetoothSDK.NimoMacFixtureConfiguration.(CodingKeys in _773440369502A451042A3B7EF2A1D29D) : Swift.Hashable in MentraBluetoothSDK"
+    ],
+    "41540": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessV10instanceIdSSvg",
+      "MentraBluetoothSDK.NimoResourceProcess.instanceId.getter : Swift.String"
+    ],
+    "41588": [
+      "_$s18MentraBluetoothSDK17NimoResourceClockO3nows6UInt64VyFZ",
+      "static MentraBluetoothSDK.NimoResourceClock.now() -> Swift.UInt64"
+    ],
+    "41736": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureC6shared_WZ",
+      "one-time initialization function for shared"
+    ],
+    "41776": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureCACycfC",
+      "MentraBluetoothSDK.NimoResourceFixture.init() -> MentraBluetoothSDK.NimoResourceFixture"
+    ],
+    "41792": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureC6sharedACvau",
+      "MentraBluetoothSDK.NimoResourceFixture.shared.unsafeMutableAddressor : MentraBluetoothSDK.NimoResourceFixture"
+    ],
+    "41856": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureC6sharedACvgZ",
+      "static MentraBluetoothSDK.NimoResourceFixture.shared.getter : MentraBluetoothSDK.NimoResourceFixture"
+    ],
+    "41872": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureC7executey10Foundation4DataVAGYaKF",
+      "MentraBluetoothSDK.NimoResourceFixture.execute(Foundation.Data) async throws -> Foundation.Data"
+    ],
+    "41980": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureC7executey10Foundation4DataVAGYaKFTY0_",
+      "(1) suspend resume partial function for MentraBluetoothSDK.NimoResourceFixture.execute(Foundation.Data) async throws -> Foundation.Data"
+    ],
+    "42052": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureCfd",
+      "MentraBluetoothSDK.NimoResourceFixture.deinit"
+    ],
+    "42060": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureCfD",
+      "MentraBluetoothSDK.NimoResourceFixture.__deallocating_deinit"
+    ],
+    "42076": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwCP",
+      "initializeBufferWithCopyOfBuffer value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42080": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwxx",
+      "destroy value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42088": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwCPTm",
+      "merged initializeBufferWithCopyOfBuffer value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42140": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwca",
+      "assignWithCopy value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42212": [
+      "___swift_memcpy24_8",
+      "___swift_memcpy24_8"
+    ],
+    "42232": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwta",
+      "assignWithTake value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42288": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwet",
+      "getEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42360": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwst",
+      "storeEnumTagSinglePayload value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42424": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoResourceProcess"
+    ],
+    "42440": [
+      "_$s18MentraBluetoothSDK17NimoResourceClockOMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoResourceClock"
+    ],
+    "42456": [
+      "_$s18MentraBluetoothSDK19NimoResourceFixtureCMa",
+      "type metadata accessor for MentraBluetoothSDK.NimoResourceFixture"
+    ],
+    "42488": [
+      "_$s18MentraBluetoothSDK19NimoResourceProcessVwcp",
+      "initializeWithCopy value witness for MentraBluetoothSDK.NimoResourceProcess"
+    ]
+  },
+  "imports": {
+    "42492": "_$s10Foundation11JSONDecoderC6decode_4fromxxm_AA4DataVtKSeRzlFTj",
+    "42504": "_$s10Foundation11JSONDecoderCACycfc",
+    "42516": "_$s10Foundation11JSONDecoderCMa",
+    "42528": "_$s10Foundation13__DataStorageC5bytes6lengthACSVSg_Sitcfc",
+    "42540": "_$s10Foundation13__DataStorageC6_bytesSvSgvg",
+    "42552": "_$s10Foundation13__DataStorageC7_lengthSivg",
+    "42564": "_$s10Foundation13__DataStorageC7_offsetSivg",
+    "42576": "_$s10Foundation13__DataStorageCMa",
+    "42588": "_$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF",
+    "42600": "_$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ",
+    "42612": "_$s10Foundation3URLVMa",
+    "42624": "_$s10Foundation4DataV10contentsOf7optionsAcA3URLVh_So20NSDataReadingOptionsVtKcfC",
+    "42636": "_$s10Foundation4DataV14RangeReferenceCMa",
+    "42648": "_$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF",
+    "42660": "_$s10Foundation4DataV15_RepresentationOyACSnySiGcig",
+    "42672": "_$s10Foundation4DataV15_RepresentationOys5UInt8VSicig",
+    "42684": "_$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF",
+    "42696": "_$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ",
+    "42708": "_$s10Foundation4DataV8IteratorVMa",
+    "42720": "_$s10Foundation4DataV8IteratorV_2atAeC_SitcfC",
+    "42732": "_$s10Foundation4UUIDV10uuidStringACSgSSh_tcfC",
+    "42744": "_$s10Foundation4UUIDV10uuidStringSSvg",
+    "42756": "_$s10Foundation4UUIDVMa",
+    "42768": "_$s10Foundation6LocaleVMa",
+    "42780": "_$s6Darwin4openys5Int32VSPys4Int8VG_ADtF",
+    "42792": "_$s6Darwin5errnos5Int32Vvg",
+    "42804": "_$s6Darwin5fcntlys5Int32VAD_A2DtF",
+    "42816": "_$s6Darwin5fcntlys5Int32VAD_ADtF",
+    "42828": "_$s6Darwin6S_IFMTs6UInt16Vvg",
+    "42840": "_$s6Darwin6openatys5Int32VAD_SPys4Int8VGADs6UInt16VtF",
+    "42852": "_$s6Darwin7S_IFDIRs6UInt16Vvg",
+    "42864": "_$s8Dispatch0A13WorkItemFlagsVMa",
+    "42876": "_$s8Dispatch0A3QoSV11unspecifiedACvgZ",
+    "42888": "_$s8Dispatch0A3QoSVMa",
+    "42900": "_$s8Dispatch0A4TimeV17uptimeNanosecondss6UInt64Vvg",
+    "42912": "_$s8Dispatch0A4TimeV3nowACyFZ",
+    "42924": "_$s8Dispatch0A4TimeVMa",
+    "42936": "_$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj",
+    "42948": "_$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj",
+    "42960": "_$s9CryptoKit12HashFunctionPxycfCTj",
+    "42972": "_$s9CryptoKit12SHA256DigestVMa",
+    "42984": "_$s9CryptoKit6SHA256VMa",
+    "42996": "_$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
+    "43008": "_$sSD10FoundationE36_unconditionallyBridgeFromObjectiveCySDyxq_GSo12NSDictionaryCSgFZ",
+    "43020": "_$sSKsSS7ElementRtzrlE6joined9separatorS2S_tF",
+    "43032": "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF",
+    "43044": "_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ",
+    "43056": "_$sSS10FoundationE4data5using20allowLossyConversionAA4DataVSgSSAAE8EncodingV_SbtF",
+    "43068": "_$sSS10FoundationE6format_S2Sh_s7CVarArg_pdtcfC",
+    "43080": "_$sSS10FoundationE8EncodingV4utf8ACvgZ",
+    "43092": "_$sSS10FoundationE8EncodingVMa",
+    "43104": "_$sSS10lowercasedSSyF",
+    "43116": "_$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg",
+    "43128": "_$sSS14_fromSubstringySSSshFZ",
+    "43140": "_$sSS4hash4intoys6HasherVz_tF",
+    "43152": "_$sSS5index_8offsetBy07limitedC0SS5IndexVSgAE_SiAEtF",
+    "43164": "_$sSS6append10contentsOfyx_tSTRzSJ7ElementRtzlF",
+    "43176": "_$sSS6appendyySSF",
+    "43188": "_$sSS8UTF8ViewV13_foreignCountSiyF",
+    "43200": "_$sSSySsSnySS5IndexVGcig",
+    "43212": "_$sST12makeIterator0B0QzyFTj",
+    "43224": "_$sST19underestimatedCountSivgTj",
+    "43236": "_$sSa28_allocateBufferUninitialized15minimumCapacitys06_ArrayB0VyxGSi_tFZ",
+    "43248": "_$sScA15unownedExecutorScevgTj",
+    "43260": "_$sScM6sharedScMvgZ",
+    "43272": "_$sScMMa",
+    "43284": "_$sScP8rawValues5UInt8Vvg",
+    "43296": "_$sScPMa",
+    "43308": "_$sSh15minimumCapacityShyxGSi_tcfC",
+    "43320": "_$sSo17OS_dispatch_queueC8DispatchE10AttributesVMa",
+    "43332": "_$sSo17OS_dispatch_queueC8DispatchE20AutoreleaseFrequencyOMa",
+    "43344": "_$sSo17OS_dispatch_queueC8DispatchE5async5group3qos5flags7executeySo0a1_b1_F0CSg_AC0D3QoSVAC0D13WorkItemFlagsVyyXBtF",
+    "43356": "_$sSo17OS_dispatch_queueC8DispatchE5label3qos10attributes20autoreleaseFrequency6targetABSS_AC0D3QoSVAbCE10AttributesVAbCE011AutoreleaseI0OABSgtcfC",
+    "43368": "_$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF",
+    "43380": "_$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
+    "43392": "_$sSt4next7ElementQzSgyFTj",
+    "43404": "_$sSy10FoundationE20replacingOccurrences2of4with7options5rangeSSqd___qd_0_So22NSStringCompareOptionsVSnySS5IndexVGSgtSyRd__SyRd_0_r0_lF",
+    "43416": "_$sSy10FoundationE5range2of7optionsAB6localeSnySS5IndexVGSgqd___So22NSStringCompareOptionsVAiA6LocaleVSgtSyRd__lF",
+    "43428": "_$ss018_bridgeAnyObjectToB0yypyXlSgF",
+    "43440": "_$ss042_stdlib_isOSVersionAtLeastOrVariantVersiondE0yBi1_Bw_BwBwBwBwBwtF",
+    "43452": "_$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj",
+    "43464": "_$ss11_SetStorageC4copy8originalAByxGs05__RawaB0C_tFZ",
+    "43476": "_$ss11_SetStorageC6resize8original8capacity4moveAByxGs05__RawaB0C_SiSbtFZ",
+    "43488": "_$ss11_StringGutsV8copyUTF84intoSiSgSrys5UInt8VG_tF",
+    "43500": "_$ss18_DictionaryStorageC8allocate8capacityAByxq_GSi_tFZ",
+    "43512": "_$ss22KeyedDecodingContainerV6decode_6forKeyS2Sm_xtKF",
+    "43524": "_$ss22KeyedDecodingContainerV6decode_6forKeyS2im_xtKF",
+    "43536": "_$ss22KeyedDecodingContainerV6decode_6forKeyqd__qd__m_xtKSeRd__lF",
+    "43548": "_$ss22KeyedDecodingContainerV6decode_6forKeys5Int32VAFm_xtKF",
+    "43560": "_$ss22KeyedDecodingContainerV6decode_6forKeys6UInt64VAFm_xtKF",
+    "43572": "_$ss22KeyedEncodingContainerV6encode_6forKeyySS_xtKF",
+    "43584": "_$ss22KeyedEncodingContainerV6encode_6forKeyySi_xtKF",
+    "43596": "_$ss22KeyedEncodingContainerV6encode_6forKeyyqd___xtKSERd__lF",
+    "43608": "_$ss22KeyedEncodingContainerV6encode_6forKeyys5Int32V_xtKF",
+    "43620": "_$ss22KeyedEncodingContainerV6encode_6forKeyys6UInt64V_xtKF",
+    "43632": "_$ss27_stringCompareWithSmolCheck__9expectingSbs11_StringGutsV_ADs01_G16ComparisonResultOtF",
+    "43644": "_$ss50ELEMENT_TYPE_OF_SET_VIOLATES_HASHABLE_REQUIREMENTSys5NeverOypXpF",
+    "43656": "_$ss5ErrorP10FoundationE20localizedDescriptionSSvg",
+    "43668": "_$ss6HasherV5_seedABSi_tcfC",
+    "43680": "_$ss6HasherV8_combineyySuF",
+    "43692": "_$ss6HasherV9_finalizeSiyF",
+    "43704": "_$ss7DecoderP9container7keyedBys22KeyedDecodingContainerVyqd__Gqd__m_tKs9CodingKeyRd__lFTj",
+    "43716": "_$ss7EncoderP9container7keyedBys22KeyedEncodingContainerVyqd__Gqd__m_ts9CodingKeyRd__lFTj",
+    "43728": "_$ss9CodingKeyPsE11descriptionSSvg",
+    "43740": "_$ss9CodingKeyPsE16debugDescriptionSSvg",
+    "43752": "_NSHomeDirectory",
+    "43764": "__Block_copy",
+    "43776": "__Block_release",
+    "43788": "___stack_chk_fail",
+    "43800": "_accept",
+    "43812": "_bind",
+    "43824": "_bzero",
+    "43836": "_chmod",
+    "43848": "_close",
+    "43860": "_dispatch_semaphore_create",
+    "43872": "_fstat",
+    "43884": "_fsync",
+    "43896": "_geteuid",
+    "43908": "_getpeereid",
+    "43920": "_getsockopt",
+    "43932": "_linkat",
+    "43944": "_listen",
+    "43956": "_lstat",
+    "43968": "_malloc_size",
+    "43980": "_memcpy",
+    "43992": "_memmove",
+    "44004": "_mkdir",
+    "44016": "_objc_allocWithZone",
+    "44028": "_objc_opt_self",
+    "44040": "_objc_release",
+    "44052": "_objc_retain",
+    "44064": "_objc_retainAutoreleasedReturnValue",
+    "44076": "_read",
+    "44088": "_setsockopt",
+    "44100": "_socket",
+    "44112": "_swift_allocObject",
+    "44124": "_swift_arrayDestroy",
+    "44136": "_swift_arrayInitWithCopy",
+    "44148": "_swift_beginAccess",
+    "44160": "_swift_bridgeObjectRelease",
+    "44172": "_swift_bridgeObjectRelease_n",
+    "44184": "_swift_bridgeObjectRetain",
+    "44196": "_swift_deallocClassInstance",
+    "44208": "_swift_deallocObject",
+    "44220": "_swift_deallocPartialClassInstance",
+    "44232": "_swift_dynamicCast",
+    "44244": "_swift_errorRelease",
+    "44256": "_swift_errorRetain",
+    "44268": "_swift_getErrorValue",
+    "44280": "_swift_getObjCClassMetadata",
+    "44292": "_swift_getObjectType",
+    "44304": "_swift_getTypeByMangledNameInContext2",
+    "44316": "_swift_getTypeByMangledNameInContextInMetadataState2",
+    "44328": "_swift_getWitnessTable",
+    "44340": "_swift_initStackObject",
+    "44352": "_swift_initStaticObject",
+    "44364": "_swift_isUniquelyReferenced_nonNull_native",
+    "44376": "_swift_once",
+    "44388": "_swift_release",
+    "44400": "_swift_retain",
+    "44412": "_swift_setDeallocating",
+    "44424": "_swift_task_alloc",
+    "44436": "_swift_task_create",
+    "44448": "_swift_task_dealloc",
+    "44460": "_swift_task_switch",
+    "44472": "_swift_unknownObjectRelease",
+    "44484": "_swift_unknownObjectRetain",
+    "44496": "_swift_weakDestroy",
+    "44508": "_swift_weakInit",
+    "44520": "_swift_weakLoadStrong",
+    "44532": "_swift_willThrow",
+    "44544": "_swift_willThrowTypedImpl",
+    "44556": "_task_info",
+    "44568": "_unlinkat",
+    "44580": "_write"
+  },
+  "windows": {
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfC": [
+      7492,
+      7592,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfC:\n1d44 str x24, [sp, #-0x40]!\n1d48 stp x23, x22, [sp, #0x10]\n1d4c stp x20, x19, [sp, #0x20]\n1d50 stp x29, x30, [sp, #0x30]\n1d54 add x29, sp, #0x30\n1d58 mov x19, x21\n1d5c mov x22, x2\n1d60 mov x23, x1\n1d64 mov x24, x0\n1d68 mov x0, x20\n1d6c mov w1, #0x110\n1d70 mov w2, #0x7\n1d74 bl 0xac50 ; _swift_allocObject\n1d78 mov x20, x0\n1d7c mov x0, x24\n1d80 mov x1, x23\n1d84 mov x2, x22\n1d88 mov x21, x19\n1d8c bl 0x1da8\n1d90 mov x0, x20\n1d94 ldp x29, x30, [sp, #0x30]\n1d98 ldp x20, x19, [sp, #0x20]\n1d9c ldp x23, x22, [sp, #0x10]\n1da0 ldr x24, [sp], #0x40\n1da4 ret"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfc": [
+      7592,
+      13456,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfc:\n1da8 str x28, [sp, #-0x60]!\n1dac stp x27, x26, [sp, #0x10]\n1db0 stp x25, x24, [sp, #0x20]\n1db4 stp x23, x22, [sp, #0x30]\n1db8 stp x20, x19, [sp, #0x40]\n1dbc stp x29, x30, [sp, #0x50]\n1dc0 add x29, sp, #0x50\n1dc4 sub sp, sp, #0x2f0\n1dc8 mov x19, sp\n1dcc str x21, [x19, #0x98]\n1dd0 str x20, [x19, #0xf0]\n1dd4 str x2, [x19, #0xe0]\n1dd8 str x1, [x19, #0x30]\n1ddc str w0, [x19, #0x94]\n1de0 adrp x8, 0x10000\n1de4 ldr x8, [x8, #0x38]\n1de8 ldr x8, [x8]\n1dec stur x8, [x29, #-0x68]\n1df0 ldr x8, [x20]\n1df4 str x8, [x19, #0xe8]\n1df8 mov x0, #0x0\n1dfc bl 0xa770 ; _$s8Dispatch0A13WorkItemFlagsVMa\n1e00 ldur x8, [x0, #-0x8]\n1e04 stp x8, x0, [x19, #0x20]\n1e08 ldr x8, [x8, #0x40]\n1e0c mov x9, x8\n1e10 adrp x16, 0x10000\n1e14 ldr x16, [x16, #0x28]\n1e18 blr x16\n1e1c mov x9, sp\n1e20 add x8, x8, #0xf\n1e24 and x8, x8, #0xfffffffffffffff0\n1e28 sub x8, x9, x8\n1e2c str x8, [x19, #0x18]\n1e30 mov sp, x8\n1e34 mov x0, #0x0\n1e38 bl 0xa7e8 ; _$s9CryptoKit6SHA256VMa\n1e3c str x0, [x19, #0x50]\n1e40 ldur x8, [x0, #-0x8]\n1e44 str x8, [x19, #0x40]\n1e48 ldr x8, [x8, #0x40]\n1e4c mov x9, x8\n1e50 adrp x16, 0x10000\n1e54 ldr x16, [x16, #0x28]\n1e58 blr x16\n1e5c mov x9, sp\n1e60 add x8, x8, #0xf\n1e64 and x8, x8, #0xfffffffffffffff0\n1e68 sub x8, x9, x8\n1e6c str x8, [x19, #0x38]\n1e70 mov sp, x8\n1e74 mov x0, #0x0\n1e78 bl 0xa7dc ; _$s9CryptoKit12SHA256DigestVMa\n1e7c str x0, [x19, #0x58]\n1e80 ldur x8, [x0, #-0x8]\n1e84 str x8, [x19, #0x48]\n1e88 ldr x8, [x8, #0x40]\n1e8c mov x9, x8\n1e90 adrp x16, 0x10000\n1e94 ldr x16, [x16, #0x28]\n1e98 blr x16\n1e9c mov x9, sp\n1ea0 add x8, x8, #0xf\n1ea4 and x8, x8, #0xfffffffffffffff0\n1ea8 sub x8, x9, x8\n1eac str x8, [x19, #0x60]\n1eb0 mov sp, x8\n1eb4 mov x0, #0x0\n1eb8 bl 0xa674 ; _$s10Foundation3URLVMa\n1ebc str x0, [x19, #0x80]\n1ec0 ldur x8, [x0, #-0x8]\n1ec4 str x8, [x19, #0x70]\n1ec8 ldr x8, [x8, #0x40]\n1ecc mov x9, x8\n1ed0 adrp x16, 0x10000\n1ed4 ldr x16, [x16, #0x28]\n1ed8 blr x16\n1edc mov x9, sp\n1ee0 add x10, x8, #0xf\n1ee4 and x12, x10, #0xfffffffffffffff0\n1ee8 sub x9, x9, x12\n1eec str x9, [x19, #0x68]\n1ef0 mov sp, x9\n1ef4 mov x9, x8\n1ef8 adrp x16, 0x10000\n1efc ldr x16, [x16, #0x28]\n1f00 blr x16\n1f04 mov x8, sp\n1f08 sub x8, x8, x12\n1f0c str x8, [x19, #0x78]\n1f10 mov sp, x8\n1f14 adrp x0, 0x14000\n1f18 add x0, x0, #0x3b8\n1f1c adrp x1, 0xa000\n1f20 add x1, x1, #0xfa8\n1f24 bl 0x13f4\n1f28 ldur x8, [x0, #-0x8]\n1f2c ldr x9, [x8, #0x40]\n1f30 add x8, x9, #0xf\n1f34 and x8, x8, #0xfffffffffffffff0\n1f38 adrp x16, 0x10000\n1f3c ldr x16, [x16, #0x28]\n1f40 blr x16\n1f44 mov x9, sp\n1f48 sub x8, x9, x8\n1f4c str x8, [x19, #0xa0]\n1f50 mov sp, x8\n1f54 adrp x0, 0x14000\n1f58 add x0, x0, #0x3c0\n1f5c adrp x1, 0xa000\n1f60 add x1, x1, #0xfb0\n1f64 bl 0x13f4\n1f68 ldur x8, [x0, #-0x8]\n1f6c ldr x9, [x8, #0x40]\n1f70 add x8, x9, #0xf\n1f74 and x8, x8, #0xfffffffffffffff0\n1f78 adrp x16, 0x10000\n1f7c ldr x16, [x16, #0x28]\n1f80 blr x16\n1f84 mov x9, sp\n1f88 sub x8, x9, x8\n1f8c str x8, [x19, #0x88]\n1f90 mov sp, x8\n1f94 mov x0, #0x0\n1f98 bl 0xa854 ; _$sSS10FoundationE8EncodingVMa\n1f9c ldur x8, [x0, #-0x8]\n1fa0 stp x8, x0, [x19, #0xb0]\n1fa4 ldr x8, [x8, #0x40]\n1fa8 mov x9, x8\n1fac adrp x16, 0x10000\n1fb0 ldr x16, [x16, #0x28]\n1fb4 blr x16\n1fb8 mov x9, sp\n1fbc add x8, x8, #0xf\n1fc0 and x8, x8, #0xfffffffffffffff0\n1fc4 sub x8, x9, x8\n1fc8 str x8, [x19, #0xa8]\n1fcc mov sp, x8\n1fd0 mov x0, #0x0\n1fd4 bl 0xa944 ; _$sSo17OS_dispatch_queueC8DispatchE20AutoreleaseFrequencyOMa\n1fd8 ldur x8, [x0, #-0x8]\n1fdc stp x8, x0, [x19, #0xd0]\n1fe0 ldr x8, [x8, #0x40]\n1fe4 mov x9, x8\n1fe8 adrp x16, 0x10000\n1fec ldr x16, [x16, #0x28]\n1ff0 blr x16\n1ff4 mov x9, sp\n1ff8 add x8, x8, #0xf\n1ffc and x8, x8, #0xfffffffffffffff0\n2000 sub x27, x9, x8\n2004 mov sp, x27\n2008 mov x0, #0x0\n200c bl 0xa938 ; _$sSo17OS_dispatch_queueC8DispatchE10AttributesVMa\n2010 mov x20, x0\n2014 adrp x28, 0x10000\n2018 ldr x28, [x28, #0x698]\n201c ldur x8, [x0, #-0x8]\n2020 ldr x8, [x8, #0x40]\n2024 mov x9, x8\n2028 adrp x16, 0x10000\n202c ldr x16, [x16, #0x28]\n2030 blr x16\n2034 mov x9, sp\n2038 add x8, x8, #0xf\n203c and x8, x8, #0xfffffffffffffff0\n2040 sub x22, x9, x8\n2044 mov sp, x22\n2048 mov x0, #0x0\n204c bl 0xa788 ; _$s8Dispatch0A3QoSVMa\n2050 ldur x8, [x0, #-0x8]\n2054 stp x8, x0, [x19, #0x8]\n2058 ldr x8, [x8, #0x40]\n205c mov x9, x8\n2060 adrp x16, 0x10000\n2064 ldr x16, [x16, #0x28]\n2068 blr x16\n206c mov x9, sp\n2070 add x8, x8, #0xf\n2074 and x8, x8, #0xfffffffffffffff0\n2078 sub x26, x9, x8\n207c mov sp, x26\n2080 mov x0, #0x0\n2084 bl 0x8c9c\n2088 adrp x8, 0xb000\n208c add x8, x8, #0x740\n2090 sub x8, x8, #0x20\n2094 stp x8, x0, [x19, #0xc0]\n2098 mov x8, x26\n209c bl 0xa77c ; _$s8Dispatch0A3QoSV11unspecifiedACvgZ\n20a0 adrp x8, 0x10000\n20a4 ldr x8, [x8, #0x510]\n20a8 stur x8, [x29, #-0x100]\n20ac adrp x0, 0x14000\n20b0 add x0, x0, #0x3a0\n20b4 adrp x2, 0x10000\n20b8 ldr x2, [x2, #0x6a8]\n20bc mov x1, x28\n20c0 bl 0xa1a4\n20c4 mov x28, x0\n20c8 adrp x24, 0x14000\n20cc add x24, x24, #0x3a8\n20d0 adrp x25, 0xa000\n20d4 add x25, x25, #0xfa0\n20d8 mov x0, x24\n20dc mov x1, x25\n20e0 bl 0x13f4\n20e4 mov x23, x0\n20e8 adrp x0, 0x14000\n20ec add x0, x0, #0x3b0\n20f0 adrp x3, 0x10000\n20f4 ldr x3, [x3, #0x380]\n20f8 mov x1, x24\n20fc mov x2, x25\n2100 bl 0xa160\n2104 mov x2, x0\n2108 sub x0, x29, #0x100\n210c mov x8, x22\n2110 mov x1, x23\n2114 mov x3, x20\n2118 mov x4, x28\n211c mov x28, #0x13\n2120 movk x28, #0xd000, lsl #48\n2124 bl 0xa9bc ; _$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj\n2128 adrp x8, 0x10000\n212c ldr x8, [x8, #0x6b0]\n2130 ldr w1, [x8]\n2134 ldp x8, x2, [x19, #0xd0]\n2138 ldr x8, [x8, #0x68]\n213c mov x0, x27\n2140 blr x8\n2144 add x0, x28, #0x6\n2148 ldp x8, x20, [x19, #0xc0]\n214c orr x1, x8, #0x8000000000000000\n2150 str x26, [x19, #0xd8]\n2154 mov x2, x26\n2158 mov x3, x22\n215c mov x4, x27\n2160 ldr x27, [x19, #0xf0]\n2164 mov x5, #0x0\n2168 bl 0xa95c ; _$sSo17OS_dispatch_queueC8DispatchE5label3qos10attributes20autoreleaseFrequency6targetABSS_AC0D3QoSVAbCE10AttributesVAbCE011AutoreleaseI0OABSgtcfC\n216c str x0, [x27, #0x108]\n2170 adrp x8, 0x10000\n2174 ldr x0, [x8, #0x2c0]\n2178 bl 0xabfc ; _objc_opt_self\n217c bl 0xaf20\n2180 mov x29, x29\n2184 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n2188 mov x20, x0\n218c bl 0xaea0\n2190 mov x29, x29\n2194 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n2198 mov x23, x0\n219c mov x0, x20\n21a0 bl 0xac08 ; _objc_release\n21a4 adrp x1, 0x10000\n21a8 ldr x1, [x1, #0x340]\n21ac adrp x3, 0x10000\n21b0 ldr x3, [x3, #0x348]\n21b4 mov x0, x23\n21b8 mov x2, x1\n21bc bl 0xa800 ; _$sSD10FoundationE36_unconditionallyBridgeFromObjectiveCySDyxq_GSo12NSDictionaryCSgFZ\n21c0 mov x22, x0\n21c4 mov x0, x23\n21c8 bl 0xac08 ; _objc_release\n21cc ldr x8, [x22, #0x10]\n21d0 cbz x8, 0x2288\n21d4 ldr x26, [x19, #0xe0]\n21d8 adrp x8, 0xb000\n21dc add x8, x8, #0x760\n21e0 sub x21, x8, #0x20\n21e4 mov x0, x22\n21e8 bl 0xac98 ; _swift_bridgeObjectRetain\n21ec add x0, x28, #0xb\n21f0 orr x1, x21, #0x8000000000000000\n21f4 mov x20, x22\n21f8 bl 0x71d4\n21fc tbz w1, #0x0, 0x229c\n2200 ldr x8, [x22, #0x38]\n2204 add x8, x8, x0, lsl #4\n2208 ldp x23, x20, [x8]\n220c mov x0, x20\n2210 bl 0xac98 ; _swift_bridgeObjectRetain\n2214 mov x0, x22\n2218 mov w1, #0x2\n221c bl 0xac8c ; _swift_bridgeObjectRelease_n\n2220 tbnz x20, #0x3c, 0x27b0\n2224 tbnz x20, #0x3d, 0x2234\n2228 and x0, x23, #0xffffffffffff\n222c cmp x0, #0x1, lsl #12\n2230 b.gt 0x27c4\n2234 ldr x22, [x19, #0xa8]\n2238 mov x8, x22\n223c bl 0xa848 ; _$sSS10FoundationE8EncodingV4utf8ACvgZ\n2240 mov x0, x22\n2244 mov w1, #0x0\n2248 mov x2, x23\n224c mov x3, x20\n2250 bl 0xa830 ; _$sSS10FoundationE4data5using20allowLossyConversionAA4DataVSgSSAAE8EncodingV_SbtF\n2254 mov x25, x0\n2258 mov x23, x1\n225c mov x0, x20\n2260 bl 0xac80 ; _swift_bridgeObjectRelease\n2264 ldp x8, x1, [x19, #0xb0]\n2268 ldr x8, [x8, #0x8]\n226c mov x0, x22\n2270 blr x8\n2274 lsr x8, x23, #60\n2278 cmp x8, #0xf\n227c b.lo 0x2330\n2280 mov x0, x26\n2284 b 0x2294\n2288 ldr x0, [x19, #0xe0]\n228c bl 0xac80 ; _swift_bridgeObjectRelease\n2290 mov x0, x22\n2294 bl 0xac80 ; _swift_bridgeObjectRelease\n2298 b 0x22b0\n229c mov x0, x26\n22a0 bl 0xac80 ; _swift_bridgeObjectRelease\n22a4 mov x0, x22\n22a8 mov w1, #0x2\n22ac bl 0xac8c ; _swift_bridgeObjectRelease_n\n22b0 adrp x8, 0xb000\n22b4 add x8, x8, #0x780\n22b8 sub x8, x8, #0x20\n22bc sub x0, x28, #0x2\n22c0 orr x1, x8, #0x8000000000000000\n22c4 bl 0x3490\n22c8 mov x24, x0\n22cc mov x21, x0\n22d0 bl 0xadf4 ; _swift_willThrow\n22d4 ldr x0, [x27, #0x108]\n22d8 bl 0xac08 ; _objc_release\n22dc mov x0, x27\n22e0 ldr x1, [x19, #0xe8]\n22e4 mov w2, #0x110\n22e8 mov w3, #0x7\n22ec bl 0xacbc ; _swift_deallocPartialClassInstance\n22f0 ldur x8, [x29, #-0x68]\n22f4 adrp x9, 0x10000\n22f8 ldr x9, [x9, #0x38]\n22fc ldr x9, [x9]\n2300 cmp x9, x8\n2304 b.ne 0x31e4\n2308 mov x0, x27\n230c mov x21, x24\n2310 sub sp, x29, #0x50\n2314 ldp x29, x30, [sp, #0x50]\n2318 ldp x20, x19, [sp, #0x40]\n231c ldp x23, x22, [sp, #0x30]\n2320 ldp x25, x24, [sp, #0x20]\n2324 ldp x27, x26, [sp, #0x10]\n2328 ldr x28, [sp], #0x60\n232c ret\n2330 adrp x8, 0x10000\n2334 ldr x0, [x8, #0x2b8]\n2338 bl 0xabfc ; _objc_opt_self\n233c mov x20, x0\n2340 mov x0, x25\n2344 mov x1, x23\n2348 bl 0xa6bc ; _$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF\n234c mov x22, x0\n2350 stur xzr, [x29, #-0x100]\n2354 sub x4, x29, #0x100\n2358 mov x0, x20\n235c mov x2, x22\n2360 mov x3, #0x0\n2364 bl 0xae40\n2368 mov x29, x29\n236c bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n2370 mov x20, x0\n2374 mov x0, x22\n2378 bl 0xac08 ; _objc_release\n237c ldur x0, [x29, #-0x100]\n2380 cbz x20, 0x2490\n2384 bl 0xac14 ; _objc_retain\n2388 sub x8, x29, #0x100\n238c mov x0, x20\n2390 bl 0xa9a4 ; _$ss018_bridgeAnyObjectToB0yypyXlSgF\n2394 mov x0, x20\n2398 bl 0xadb8 ; _swift_unknownObjectRelease\n239c adrp x0, 0x14000\n23a0 add x0, x0, #0x3c8\n23a4 adrp x1, 0xa000\n23a8 add x1, x1, #0xfb8\n23ac bl 0x13f4\n23b0 mov x24, x0\n23b4 adrp x8, 0x10000\n23b8 ldr x8, [x8, #0x500]\n23bc add x0, x19, #0x1c0\n23c0 sub x1, x29, #0x100\n23c4 add x2, x8, #0x8\n23c8 mov x3, x24\n23cc mov w4, #0x6\n23d0 bl 0xacc8 ; _swift_dynamicCast\n23d4 tbz w0, #0x0, 0x24d0\n23d8 stp x25, x23, [x19, #0xc8]\n23dc ldr x20, [x19, #0x1c0]\n23e0 mov x0, x20\n23e4 bl 0xac98 ; _swift_bridgeObjectRetain\n23e8 bl 0x35dc\n23ec mov x22, x0\n23f0 adrp x23, 0x10000\n23f4 add x23, x23, #0x738\n23f8 mov x0, x23\n23fc bl 0x8d88\n2400 mov x25, x0\n2404 adrp x2, 0x10000\n2408 ldr x2, [x2, #0x340]\n240c add x0, x23, #0x20\n2410 mov w1, #0x9\n2414 bl 0xac5c ; _swift_arrayDestroy\n2418 mov x0, x22\n241c mov x1, x25\n2420 bl 0x3710\n2424 mov x23, x0\n2428 mov x0, x22\n242c bl 0xac80 ; _swift_bridgeObjectRelease\n2430 mov x0, x25\n2434 bl 0xac80 ; _swift_bridgeObjectRelease\n2438 tbz w23, #0x0, 0x24e4\n243c add x22, x19, #0x130\n2440 ldr x8, [x20, #0x10]\n2444 ldr x25, [x19, #0xd0]\n2448 cbz x8, 0x2508\n244c mov x0, x20\n2450 bl 0xac98 ; _swift_bridgeObjectRetain\n2454 mov x0, #0x776f\n2458 movk x0, #0x656e, lsl #16\n245c movk x0, #0x4272, lsl #32\n2460 movk x0, #0x7269, lsl #48\n2464 mov x1, #0x6874\n2468 movk x1, #0xea00, lsl #48\n246c bl 0x71d4\n2470 tbz w1, #0x0, 0x2500\n2474 ldr x8, [x20, #0x38]\n2478 add x0, x8, x0, lsl #5\n247c sub x1, x29, #0x100\n2480 bl 0x905c\n2484 mov x0, x20\n2488 bl 0xac80 ; _swift_bridgeObjectRelease\n248c b 0x2510\n2490 mov x20, x0\n2494 bl 0xac14 ; _objc_retain\n2498 mov x22, x0\n249c mov x0, x26\n24a0 bl 0xac80 ; _swift_bridgeObjectRelease\n24a4 mov x0, x20\n24a8 bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n24ac mov x24, x0\n24b0 mov x0, x22\n24b4 bl 0xac08 ; _objc_release\n24b8 mov x21, x24\n24bc bl 0xadf4 ; _swift_willThrow\n24c0 mov x0, x25\n24c4 mov x1, x23\n24c8 bl 0x8d34\n24cc b 0x22d4\n24d0 mov x0, x25\n24d4 mov x1, x23\n24d8 bl 0x8d34\n24dc mov x0, x26\n24e0 b 0x2294\n24e4 mov x0, x26\n24e8 bl 0xac80 ; _swift_bridgeObjectRelease\n24ec mov x0, x20\n24f0 bl 0xac80 ; _swift_bridgeObjectRelease\n24f4 ldp x0, x1, [x19, #0xc8]\n24f8 bl 0x8d34\n24fc b 0x22b0\n2500 mov x0, x20\n2504 bl 0xac80 ; _swift_bridgeObjectRelease\n2508 movi.2d v0, #0000000000000000\n250c stp q0, q0, [x22, #0x110]\n2510 mov x22, x26\n2514 mov x0, x20\n2518 bl 0xac80 ; _swift_bridgeObjectRelease\n251c ldur x8, [x29, #-0xe8]\n2520 cbz x8, 0x2614\n2524 add x0, x19, #0x1c0\n2528 sub x1, x29, #0x100\n252c adrp x8, 0x10000\n2530 ldr x8, [x8, #0x500]\n2534 add x2, x8, #0x8\n2538 mov x3, x24\n253c mov w4, #0x6\n2540 bl 0xacc8 ; _swift_dynamicCast\n2544 tbz w0, #0x0, 0x2644\n2548 ldr x0, [x19, #0x1c0]\n254c bl 0x35dc\n2550 mov x20, x0\n2554 adrp x22, 0x10000\n2558 add x22, x22, #0x7e8\n255c mov x0, x22\n2560 bl 0x8d88\n2564 mov x23, x0\n2568 adrp x2, 0x10000\n256c ldr x2, [x2, #0x340]\n2570 add x0, x22, #0x20\n2574 mov w1, #0x2\n2578 bl 0xac5c ; _swift_arrayDestroy\n257c mov x0, x20\n2580 mov x1, x23\n2584 bl 0x3710\n2588 mov x22, x0\n258c mov x0, x20\n2590 bl 0xac80 ; _swift_bridgeObjectRelease\n2594 mov x0, x23\n2598 bl 0xac80 ; _swift_bridgeObjectRelease\n259c tbz w22, #0x0, 0x2654\n25a0 mov x0, #0x0\n25a4 bl 0xa614 ; _$s10Foundation11JSONDecoderCMa\n25a8 ldr w1, [x0, #0x30]\n25ac ldrh w2, [x0, #0x34]\n25b0 bl 0xac50 ; _swift_allocObject\n25b4 mov x20, x0\n25b8 bl 0xa608 ; _$s10Foundation11JSONDecoderCACycfc\n25bc mov x20, x0\n25c0 bl 0x8e1c\n25c4 mov x4, x0\n25c8 adrp x0, 0x10000\n25cc add x0, x0, #0x9e8\n25d0 add x8, x19, #0x1c0\n25d4 ldr x22, [x19, #0xc8]\n25d8 mov x1, x22\n25dc mov x2, x25\n25e0 mov x3, x0\n25e4 ldr x21, [x19, #0x98]\n25e8 bl 0xa5fc ; _$s10Foundation11JSONDecoderC6decode_4fromxxm_AA4DataVtKSeRzlFTj\n25ec mov x24, x21\n25f0 cbz x21, 0x266c\n25f4 mov x0, x22\n25f8 mov x1, x25\n25fc bl 0x8d34\n2600 mov x0, x26\n2604 bl 0xac80 ; _swift_bridgeObjectRelease\n2608 mov x0, x20\n260c bl 0xad64 ; _swift_release\n2610 b 0x22d4\n2614 ldr x0, [x19, #0xc8]\n2618 mov x1, x25\n261c bl 0x8d34\n2620 mov x0, x22\n2624 bl 0xac80 ; _swift_bridgeObjectRelease\n2628 adrp x1, 0x14000\n262c add x1, x1, #0x3d0\n2630 adrp x2, 0xa000\n2634 add x2, x2, #0xfc0\n2638 sub x0, x29, #0x100\n263c bl 0xa08c\n2640 b 0x22b0\n2644 ldr x0, [x19, #0xc8]\n2648 mov x1, x25\n264c bl 0x8d34\n2650 b 0x2290\n2654 mov x0, x26\n2658 bl 0xac80 ; _swift_bridgeObjectRelease\n265c ldr x0, [x19, #0xc8]\n2660 mov x1, x25\n2664 bl 0x8d34\n2668 b 0x22b0\n266c mov x0, x20\n2670 bl 0xad64 ; _swift_release\n2674 ldr x9, [x19, #0x1c0]\n2678 ldr x21, [x19, #0x210]\n267c ldr x20, [x19, #0x218]\n2680 mov x11, x27\n2684 str x9, [x11, #0x10]!\n2688 ldr w8, [x19, #0x1c8]\n268c ldr w10, [x19, #0x20c]\n2690 str w8, [x11, #0x8]\n2694 add x12, x19, #0x130\n2698 ldur q0, [x12, #0xac]\n269c stur q0, [x11, #0x1c]\n26a0 ldur q0, [x12, #0xbc]\n26a4 stur q0, [x11, #0x2c]\n26a8 ldur q0, [x12, #0xcc]\n26ac stur q0, [x11, #0x3c]\n26b0 str w10, [x11, #0x4c]\n26b4 ldur q0, [x12, #0x9c]\n26b8 stur q0, [x11, #0xc]\n26bc stp x21, x20, [x11, #0x50]\n26c0 ldp q1, q0, [x12, #0xf0]\n26c4 stp q1, q0, [x11, #0x60]\n26c8 str x11, [x19, #0xb0]\n26cc cmp x9, #0x1\n26d0 b.ne 0x2af8\n26d4 cmp w8, #0x2\n26d8 b.lt 0x2af8\n26dc ldr w9, [x19, #0x94]\n26e0 cmp w8, w9\n26e4 b.eq 0x2af8\n26e8 mov x0, x20\n26ec bl 0xac98 ; _swift_bridgeObjectRetain\n26f0 ldr x28, [x19, #0x88]\n26f4 mov x8, x28\n26f8 mov x0, x21\n26fc mov x1, x20\n2700 bl 0xa6ec ; _$s10Foundation4UUIDV10uuidStringACSgSSh_tcfC\n2704 mov x0, x20\n2708 bl 0xac80 ; _swift_bridgeObjectRelease\n270c mov x0, #0x0\n2710 bl 0xa704 ; _$s10Foundation4UUIDVMa\n2714 mov x22, x0\n2718 ldur x25, [x0, #-0x8]\n271c ldr x8, [x25, #0x30]\n2720 mov x0, x28\n2724 mov w1, #0x1\n2728 mov x2, x22\n272c blr x8\n2730 cmp w0, #0x1\n2734 b.ne 0x2754\n2738 adrp x1, 0x14000\n273c add x1, x1, #0x3c0\n2740 adrp x2, 0xa000\n2744 add x2, x2, #0xfb0\n2748 mov x0, x28\n274c bl 0xa08c\n2750 b 0x2af8\n2754 mov x20, x28\n2758 bl 0xa6f8 ; _$s10Foundation4UUIDV10uuidStringSSvg\n275c mov x20, x0\n2760 mov x23, x1\n2764 ldr x8, [x25, #0x8]\n2768 mov x0, x28\n276c mov x1, x22\n2770 blr x8\n2774 mov x0, x20\n2778 mov x1, x23\n277c bl 0xa860 ; _$sSS10lowercasedSSyF\n2780 mov x22, x0\n2784 mov x20, x1\n2788 mov x0, x23\n278c bl 0xac80 ; _swift_bridgeObjectRelease\n2790 ldp x2, x3, [x27, #0x60]\n2794 cmp x22, x2\n2798 b.ne 0x27d4\n279c cmp x20, x3\n27a0 b.ne 0x27d4\n27a4 mov x0, x20\n27a8 bl 0xac80 ; _swift_bridgeObjectRelease\n27ac b 0x27f4\n27b0 mov x0, x23\n27b4 mov x1, x20\n27b8 bl 0xa8b4 ; _$sSS8UTF8ViewV13_foreignCountSiyF\n27bc cmp x0, #0x1, lsl #12\n27c0 b.le 0x2234\n27c4 mov x0, x26\n27c8 bl 0xac80 ; _swift_bridgeObjectRelease\n27cc mov x0, x20\n27d0 b 0x2294\n27d4 mov x0, x22\n27d8 mov x1, x20\n27dc mov w4, #0x0\n27e0 bl 0xaa70 ; _$ss27_stringCompareWithSmolCheck__9expectingSbs11_StringGutsV_ADs01_G16ComparisonResultOtF\n27e4 mov x22, x0\n27e8 mov x0, x20\n27ec bl 0xac80 ; _swift_bridgeObjectRelease\n27f0 tbz w22, #0x0, 0x2af8\n27f4 adrp x0, 0x14000\n27f8 add x0, x0, #0x3e0\n27fc adrp x1, 0xa000\n2800 add x1, x1, #0xfc8\n2804 bl 0x13f4\n2808 mov w1, #0x60\n280c mov w2, #0x7\n2810 bl 0xac50 ; _swift_allocObject\n2814 mov x9, x0\n2818 ldp x8, x25, [x27, #0x40]\n281c str x8, [x9, #0x20]!\n2820 str x9, [x19, #0xa8]\n2824 ldp x8, x22, [x27, #0x50]\n2828 stp x25, x8, [x0, #0x28]\n282c ldp x8, x23, [x27, #0x70]\n2830 stp x22, x8, [x0, #0x38]\n2834 ldp x8, x20, [x27, #0x20]\n2838 stp x23, x8, [x0, #0x48]\n283c str x0, [x19, #0xc0]\n2840 str x20, [x0, #0x58]\n2844 mov x0, #0x0\n2848 bl 0xa710 ; _$s10Foundation6LocaleVMa\n284c mov x28, x0\n2850 ldur x8, [x0, #-0x8]\n2854 ldr x8, [x8, #0x38]\n2858 str x8, [x19, #0xb8]\n285c mov x0, x25\n2860 bl 0xac98 ; _swift_bridgeObjectRetain\n2864 mov x0, x22\n2868 bl 0xac98 ; _swift_bridgeObjectRetain\n286c mov x0, x23\n2870 bl 0xac98 ; _swift_bridgeObjectRetain\n2874 mov x0, x20\n2878 bl 0xac98 ; _swift_bridgeObjectRetain\n287c mov x8, #0x0\n2880 adrp x22, 0x10000\n2884 ldr x22, [x22, #0x340]\n2888 add x27, x8, #0x10\n288c cmp x27, #0x50\n2890 b.eq 0x2990\n2894 ldr x9, [x19, #0xc0]\n2898 add x8, x9, x8\n289c ldp x8, x23, [x8, #0x20]\n28a0 stp x8, x23, [x29, #-0x100]\n28a4 mov x8, #0x5b5e\n28a8 movk x8, #0x2d30, lsl #16\n28ac movk x8, #0x6139, lsl #32\n28b0 movk x8, #0x662d, lsl #48\n28b4 str x8, [x19, #0x130]\n28b8 mov x8, #0x7b5d\n28bc movk x8, #0x3436, lsl #16\n28c0 movk x8, #0x247d, lsl #32\n28c4 movk x8, #0xee00, lsl #48\n28c8 str x8, [x19, #0x138]\n28cc ldr x25, [x19, #0xa0]\n28d0 mov x0, x25\n28d4 mov w1, #0x1\n28d8 mov w2, #0x1\n28dc mov x3, x28\n28e0 ldr x8, [x19, #0xb8]\n28e4 blr x8\n28e8 bl 0x8e80\n28ec mov x21, x0\n28f0 mov x0, x23\n28f4 bl 0xac98 ; _swift_bridgeObjectRetain\n28f8 stp x21, x21, [sp, #-0x10]!\n28fc add x0, x19, #0x130\n2900 sub x20, x29, #0x100\n2904 mov w1, #0x400\n2908 mov x2, #0x0\n290c mov x3, #0x0\n2910 mov w4, #0x1\n2914 mov x5, x25\n2918 mov x6, x22\n291c mov x7, x22\n2920 bl 0xa998 ; _$sSy10FoundationE5range2of7optionsAB6localeSnySS5IndexVGSgqd___So22NSStringCompareOptionsVAiA6LocaleVSgtSyRd__lF\n2924 add sp, sp, #0x10\n2928 and w20, w2, #0xff\n292c mov x0, x25\n2930 adrp x1, 0x14000\n2934 add x1, x1, #0x3b8\n2938 adrp x2, 0xa000\n293c add x2, x2, #0xfa8\n2940 bl 0xa08c\n2944 mov x0, x23\n2948 bl 0xac80 ; _swift_bridgeObjectRelease\n294c mov x8, x27\n2950 cmp w20, #0x1\n2954 b.ne 0x2888\n2958 ldr x20, [x19, #0xc0]\n295c mov x0, x20\n2960 bl 0xad7c ; _swift_setDeallocating\n2964 adrp x2, 0x10000\n2968 ldr x2, [x2, #0x340]\n296c ldr x0, [x19, #0xa8]\n2970 mov w1, #0x4\n2974 bl 0xac5c ; _swift_arrayDestroy\n2978 mov x0, x20\n297c mov w1, #0x20\n2980 mov w2, #0x7\n2984 bl 0xaca4 ; _swift_deallocClassInstance\n2988 ldr x27, [x19, #0xf0]\n298c b 0x2af8\n2990 ldr x20, [x19, #0xc0]\n2994 mov x0, x20\n2998 bl 0xad7c ; _swift_setDeallocating\n299c adrp x2, 0x10000\n29a0 ldr x2, [x2, #0x340]\n29a4 ldr x0, [x19, #0xa8]\n29a8 mov w1, #0x4\n29ac bl 0xac5c ; _swift_arrayDestroy\n29b0 mov x0, x20\n29b4 mov w1, #0x20\n29b8 mov w2, #0x7\n29bc bl 0xaca4 ; _swift_deallocClassInstance\n29c0 adrp x8, 0x10000\n29c4 ldr x0, [x8, #0x2a8]\n29c8 bl 0xabfc ; _objc_opt_self\n29cc mov x20, x0\n29d0 bl 0xaf00\n29d4 mov x29, x29\n29d8 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n29dc mov x22, x0\n29e0 bl 0xae60\n29e4 mov x29, x29\n29e8 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n29ec mov x25, x0\n29f0 mov x0, x22\n29f4 bl 0xac08 ; _objc_release\n29f8 ldr x27, [x19, #0xf0]\n29fc cbz x25, 0x2af8\n2a00 mov x0, x25\n2a04 bl 0xa824 ; _$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ\n2a08 mov x23, x0\n2a0c mov x22, x1\n2a10 mov x0, x25\n2a14 bl 0xac08 ; _objc_release\n2a18 ldp x2, x3, [x27, #0x80]\n2a1c cmp x23, x2\n2a20 ccmp x22, x3, #0x0, eq\n2a24 b.eq 0x2a4c\n2a28 mov x0, x23\n2a2c mov x1, x22\n2a30 mov w4, #0x0\n2a34 bl 0xaa70 ; _$ss27_stringCompareWithSmolCheck__9expectingSbs11_StringGutsV_ADs01_G16ComparisonResultOtF\n2a38 mov x23, x0\n2a3c mov x0, x22\n2a40 bl 0xac80 ; _swift_bridgeObjectRelease\n2a44 tbz w23, #0x0, 0x2af8\n2a48 b 0x2a54\n2a4c mov x0, x22\n2a50 bl 0xac80 ; _swift_bridgeObjectRelease\n2a54 mov x0, x20\n2a58 bl 0xaf00\n2a5c mov x29, x29\n2a60 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n2a64 mov x22, x0\n2a68 bl 0xaec0\n2a6c mov x29, x29\n2a70 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n2a74 mov x20, x0\n2a78 mov x0, x22\n2a7c bl 0xac08 ; _objc_release\n2a80 cbz x20, 0x2af8\n2a84 ldr x22, [x19, #0x68]\n2a88 mov x8, x22\n2a8c mov x0, x20\n2a90 bl 0xa668 ; _$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ\n2a94 mov x0, x20\n2a98 bl 0xac08 ; _objc_release\n2a9c ldp x8, x20, [x19, #0x70]\n2aa0 ldr x8, [x8, #0x20]\n2aa4 mov x0, x20\n2aa8 mov x1, x22\n2aac ldr x2, [x19, #0x80]\n2ab0 blr x8\n2ab4 mov x0, x20\n2ab8 mov w1, #0x1\n2abc mov x21, x24\n2ac0 bl 0xa680 ; _$s10Foundation4DataV10contentsOf7optionsAcA3URLVh_So20NSDataReadingOptionsVtKcfC\n2ac4 stp x0, x1, [x19, #0xb8]\n2ac8 mov x24, x21\n2acc cbz x21, 0x2b40\n2ad0 ldp x8, x0, [x19, #0x70]\n2ad4 ldr x8, [x8, #0x8]\n2ad8 ldr x1, [x19, #0x80]\n2adc blr x8\n2ae0 ldp x0, x1, [x19, #0xc8]\n2ae4 bl 0x8d34\n2ae8 mov x0, x26\n2aec bl 0xac80 ; _swift_bridgeObjectRelease\n2af0 ldr x27, [x19, #0xf0]\n2af4 b 0x2b34\n2af8 mov x0, x26\n2afc bl 0xac80 ; _swift_bridgeObjectRelease\n2b00 adrp x8, 0xb000\n2b04 add x8, x8, #0x7c0\n2b08 sub x8, x8, #0x20\n2b0c mov x9, #0x13\n2b10 movk x9, #0xd000, lsl #48\n2b14 add x0, x9, #0x8\n2b18 orr x1, x8, #0x8000000000000000\n2b1c bl 0x3490\n2b20 mov x24, x0\n2b24 mov x21, x0\n2b28 bl 0xadf4 ; _swift_willThrow\n2b2c ldp x0, x1, [x19, #0xc8]\n2b30 bl 0x8d34\n2b34 ldr x0, [x19, #0xb0]\n2b38 bl 0x8e5c\n2b3c b 0x22d4\n2b40 ldr x8, [x19, #0xc0]\n2b44 lsr x8, x8, #62\n2b48 cmp w8, #0x1\n2b4c b.gt 0x2b6c\n2b50 cbz w8, 0x2b90\n2b54 ldr x9, [x19, #0xb8]\n2b58 lsr x8, x9, #32\n2b5c subs w8, w8, w9\n2b60 b.vs 0x32a0\n2b64 sxtw x8, w8\n2b68 b 0x2b84\n2b6c cmp w8, #0x2\n2b70 b.ne 0x2b90\n2b74 ldr x9, [x19, #0xb8]\n2b78 ldp x9, x8, [x9, #0x10]\n2b7c subs x8, x8, x9\n2b80 b.vs 0x32a4\n2b84 mov w9, #0x10000000\n2b88 cmp x8, x9\n2b8c b.gt 0x2f44\n2b90 adrp x0, 0x14000\n2b94 add x0, x0, #0x3f0\n2b98 adrp x1, 0x10000\n2b9c ldr x1, [x1, #0x138]\n2ba0 adrp x2, 0x10000\n2ba4 ldr x2, [x2, #0x130]\n2ba8 bl 0xa1a4\n2bac mov x22, x0\n2bb0 ldr x27, [x19, #0x38]\n2bb4 mov x8, x27\n2bb8 ldr x25, [x19, #0x50]\n2bbc mov x20, x25\n2bc0 mov x0, x25\n2bc4 mov x1, x22\n2bc8 bl 0xa7d0 ; _$s9CryptoKit12HashFunctionPxycfCTj\n2bcc ldp x28, x20, [x19, #0xb8]\n2bd0 mov x0, x28\n2bd4 mov x1, x20\n2bd8 bl 0x8ec0\n2bdc mov x0, x28\n2be0 mov x1, x20\n2be4 mov x2, x27\n2be8 mov x21, x24\n2bec bl 0x7ef8\n2bf0 mov x23, x21\n2bf4 mov x0, x28\n2bf8 mov x1, x20\n2bfc bl 0x8d48\n2c00 ldr x24, [x19, #0x60]\n2c04 mov x8, x24\n2c08 mov x20, x27\n2c0c mov x0, x25\n2c10 mov x1, x22\n2c14 bl 0xa7c4 ; _$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj\n2c18 ldr x8, [x19, #0x40]\n2c1c ldr x8, [x8, #0x8]\n2c20 mov x0, x27\n2c24 mov x1, x25\n2c28 blr x8\n2c2c mov x0, x24\n2c30 mov x21, x23\n2c34 bl 0x38c0\n2c38 cbnz x21, 0x345c\n2c3c mov x22, x0\n2c40 mov x24, x21\n2c44 ldr x8, [x19, #0x48]\n2c48 ldr x8, [x8, #0x8]\n2c4c ldp x1, x0, [x19, #0x58]\n2c50 blr x8\n2c54 stur x22, [x29, #-0x100]\n2c58 adrp x20, 0x14000\n2c5c add x20, x20, #0x3f8\n2c60 adrp x23, 0xa000\n2c64 add x23, x23, #0xfd0\n2c68 mov x0, x20\n2c6c mov x1, x23\n2c70 bl 0x13f4\n2c74 mov x25, x0\n2c78 adrp x0, 0x14000\n2c7c add x0, x0, #0x400\n2c80 adrp x3, 0x10000\n2c84 ldr x3, [x3, #0x378]\n2c88 mov x1, x20\n2c8c mov x2, x23\n2c90 bl 0xa160\n2c94 mov x3, x0\n2c98 sub x20, x29, #0x100\n2c9c mov x0, #0x0\n2ca0 mov x1, #-0x2000000000000000\n2ca4 mov x2, x25\n2ca8 bl 0xa80c ; _$sSKsSS7ElementRtzrlE6joined9separatorS2S_tF\n2cac mov x20, x0\n2cb0 mov x23, x1\n2cb4 mov x0, x22\n2cb8 bl 0xac80 ; _swift_bridgeObjectRelease\n2cbc ldr x8, [x19, #0xf0]\n2cc0 stp x20, x23, [x8, #0xf8]\n2cc4 ldp x2, x3, [x8, #0x70]\n2cc8 cmp x20, x2\n2ccc b.ne 0x2cd8\n2cd0 cmp x23, x3\n2cd4 b.eq 0x2cec\n2cd8 mov x0, x20\n2cdc mov x1, x23\n2ce0 mov w4, #0x0\n2ce4 bl 0xaa70 ; _$ss27_stringCompareWithSmolCheck__9expectingSbs11_StringGutsV_ADs01_G16ComparisonResultOtF\n2ce8 tbz w0, #0x0, 0x2f9c\n2cec ldr x8, [x19, #0xf0]\n2cf0 ldr w9, [x19, #0x94]\n2cf4 str w9, [x8, #0x90]\n2cf8 ldr x9, [x19, #0x30]\n2cfc stp x9, x26, [x8, #0x98]\n2d00 movi.2d v0, #0000000000000000\n2d04 add x8, x19, #0x130\n2d08 stp q0, q0, [x8, #0x70]\n2d0c mov w8, #0x8\n2d10 str w8, [x19, #0x19c]\n2d14 adrp x8, 0x10000\n2d18 ldr x8, [x8, #0xb0]\n2d1c ldr w0, [x8]\n2d20 add x2, x19, #0x1a0\n2d24 add x3, x19, #0x19c\n2d28 mov w1, #0xf\n2d2c bl 0xae0c ; _task_info\n2d30 cmp w0, #0x0\n2d34 ldr w8, [x19, #0x19c]\n2d38 ccmp w8, #0x8, #0x0, eq\n2d3c cset w26, eq\n2d40 b.ne 0x2ec8\n2d44 ldp x0, x1, [x19, #0x1a0]\n2d48 ldp x2, x3, [x19, #0x1b0]\n2d4c bl 0x6408\n2d50 ldr x27, [x19, #0xf0]\n2d54 stp x0, x1, [x27, #0xe8]\n2d58 bl 0xaae8 ; _NSHomeDirectory\n2d5c mov x29, x29\n2d60 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n2d64 mov x20, x0\n2d68 bl 0xa824 ; _$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ\n2d6c mov x22, x0\n2d70 mov x23, x1\n2d74 mov x0, x20\n2d78 bl 0xac08 ; _objc_release\n2d7c stp x22, x23, [x29, #-0x100]\n2d80 mov x0, x23\n2d84 bl 0xac98 ; _swift_bridgeObjectRetain\n2d88 mov x0, #0x742f\n2d8c movk x0, #0x706d, lsl #16\n2d90 movk x0, #0x6e2f, lsl #32\n2d94 movk x0, #0x2d72, lsl #48\n2d98 sub x20, x29, #0x100\n2d9c mov x1, #-0x1800000000000000\n2da0 bl 0xa8a8 ; _$sSS6appendyySSF\n2da4 mov x0, x23\n2da8 bl 0xac80 ; _swift_bridgeObjectRelease\n2dac ldp x9, x8, [x29, #-0x100]\n2db0 str x9, [x19, #0xe0]\n2db4 str x8, [x19, #0xa8]\n2db8 ldp x8, x9, [x27, #0x60]\n2dbc stp x8, x9, [x29, #-0x100]\n2dc0 mov w8, #0x2d\n2dc4 mov x9, #-0x1f00000000000000\n2dc8 stp x8, x9, [x19, #0x130]\n2dcc mov x8, #-0x2000000000000000\n2dd0 stp xzr, x8, [x19, #0x100]\n2dd4 bl 0x8e80\n2dd8 mov x8, x0\n2ddc sub sp, sp, #0x20\n2de0 stp x0, x0, [sp, #0x10]\n2de4 add x0, x19, #0x130\n2de8 add x1, x19, #0x100\n2dec str x8, [sp, #0x8]\n2df0 adrp x6, 0x10000\n2df4 ldr x6, [x6, #0x340]\n2df8 str x6, [sp]\n2dfc mov x2, #0x0\n2e00 mov x3, #0x0\n2e04 mov x4, #0x0\n2e08 mov w5, #0x1\n2e0c mov x7, x6\n2e10 bl 0xa98c ; _$sSy10FoundationE20replacingOccurrences2of4with7options5rangeSSqd___qd_0_So22NSStringCompareOptionsVSnySS5IndexVGSgtSyRd__SyRd_0_r0_lF\n2e14 add sp, sp, #0x20\n2e18 mov x2, x0\n2e1c mov x20, x1\n2e20 mov w0, #0x10\n2e24 mov x1, x2\n2e28 mov x2, x20\n2e2c bl 0x8f00\n2e30 mov x22, x0\n2e34 mov x23, x1\n2e38 mov x25, x2\n2e3c mov x28, x3\n2e40 mov x0, x20\n2e44 bl 0xac80 ; _swift_bridgeObjectRelease\n2e48 ldr x9, [x19, #0xe0]\n2e4c ldr x8, [x19, #0xa8]\n2e50 stp x9, x8, [x19, #0x130]\n2e54 stp x22, x23, [x29, #-0x100]\n2e58 stp x25, x28, [x29, #-0xf0]\n2e5c bl 0x8f8c\n2e60 mov x2, x0\n2e64 adrp x1, 0x10000\n2e68 ldr x1, [x1, #0x398]\n2e6c sub x0, x29, #0x100\n2e70 add x20, x19, #0x130\n2e74 bl 0xa89c ; _$sSS6append10contentsOfyx_tSTRzSJ7ElementRtzlF\n2e78 mov x0, x28\n2e7c bl 0xac80 ; _swift_bridgeObjectRelease\n2e80 ldp x0, x1, [x19, #0x130]\n2e84 stp x0, x1, [x27, #0xa8]\n2e88 bl 0xa86c ; _$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg\n2e8c mov x20, x0\n2e90 add x0, x0, #0x20\n2e94 mov w1, #0x1c0\n2e98 bl 0xabe4 ; _mkdir\n2e9c mov x22, x0\n2ea0 mov x0, x20\n2ea4 bl 0xad64 ; _swift_release\n2ea8 cbz w22, 0x3004\n2eac adrp x8, 0xb000\n2eb0 add x8, x8, #0x840\n2eb4 sub x8, x8, #0x20\n2eb8 mov x9, #0x13\n2ebc movk x9, #0xd000, lsl #48\n2ec0 add x0, x9, #0x14\n2ec4 b 0x2ee0\n2ec8 adrp x8, 0xb000\n2ecc add x8, x8, #0x820\n2ed0 sub x8, x8, #0x20\n2ed4 mov x9, #0x13\n2ed8 movk x9, #0xd000, lsl #48\n2edc add x0, x9, #0xc\n2ee0 orr x1, x8, #0x8000000000000000\n2ee4 bl 0x3490\n2ee8 mov x24, x0\n2eec mov x21, x0\n2ef0 bl 0xadf4 ; _swift_willThrow\n2ef4 ldp x0, x1, [x19, #0xc8]\n2ef8 bl 0x8d34\n2efc ldp x0, x1, [x19, #0xb8]\n2f00 bl 0x8d48\n2f04 ldp x8, x0, [x19, #0x70]\n2f08 ldr x8, [x8, #0x8]\n2f0c ldr x1, [x19, #0x80]\n2f10 blr x8\n2f14 ldr x0, [x19, #0xb0]\n2f18 bl 0x8e5c\n2f1c ldr x8, [x19, #0xf0]\n2f20 ldr x0, [x8, #0xa0]\n2f24 bl 0xac80 ; _swift_bridgeObjectRelease\n2f28 cbz w26, 0x2ff4\n2f2c ldr x20, [x19, #0xf0]\n2f30 ldr x0, [x20, #0xb0]\n2f34 bl 0xac80 ; _swift_bridgeObjectRelease\n2f38 ldr x0, [x20, #0xf0]\n2f3c bl 0xac80 ; _swift_bridgeObjectRelease\n2f40 b 0x2ff4\n2f44 mov x0, x26\n2f48 bl 0xac80 ; _swift_bridgeObjectRelease\n2f4c adrp x8, 0xb000\n2f50 add x8, x8, #0x7e0\n2f54 sub x8, x8, #0x20\n2f58 mov x9, #0x13\n2f5c movk x9, #0xd000, lsl #48\n2f60 sub x0, x9, #0x2\n2f64 orr x1, x8, #0x8000000000000000\n2f68 bl 0x3490\n2f6c mov x24, x0\n2f70 mov x21, x0\n2f74 bl 0xadf4 ; _swift_willThrow\n2f78 ldp x0, x1, [x19, #0xc8]\n2f7c bl 0x8d34\n2f80 ldp x0, x1, [x19, #0xb8]\n2f84 bl 0x8d48\n2f88 ldp x8, x0, [x19, #0x70]\n2f8c ldr x8, [x8, #0x8]\n2f90 ldr x1, [x19, #0x80]\n2f94 blr x8\n2f98 b 0x2af0\n2f9c mov x0, x26\n2fa0 bl 0xac80 ; _swift_bridgeObjectRelease\n2fa4 adrp x8, 0xb000\n2fa8 add x8, x8, #0x800\n2fac sub x8, x8, #0x20\n2fb0 orr x1, x8, #0x8000000000000000\n2fb4 mov x0, #0x13\n2fb8 movk x0, #0xd000, lsl #48\n2fbc bl 0x3490\n2fc0 mov x24, x0\n2fc4 mov x21, x0\n2fc8 bl 0xadf4 ; _swift_willThrow\n2fcc ldp x0, x1, [x19, #0xc8]\n2fd0 bl 0x8d34\n2fd4 ldp x0, x1, [x19, #0xb8]\n2fd8 bl 0x8d48\n2fdc ldp x8, x0, [x19, #0x70]\n2fe0 ldr x8, [x8, #0x8]\n2fe4 ldr x1, [x19, #0x80]\n2fe8 blr x8\n2fec ldr x0, [x19, #0xb0]\n2ff0 bl 0x8e5c\n2ff4 ldr x27, [x19, #0xf0]\n2ff8 ldr x0, [x27, #0x100]\n2ffc bl 0xac80 ; _swift_bridgeObjectRelease\n3000 b 0x22d4\n3004 ldr x23, [x19, #0xf0]\n3008 ldp x0, x1, [x23, #0xa8]\n300c bl 0xa86c ; _$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg\n3010 mov x22, x0\n3014 add x0, x0, #0x20\n3018 mov w1, #0x100\n301c movk w1, #0x110, lsl #16\n3020 bl 0xa71c ; _$s6Darwin4openys5Int32VSPys4Int8VG_ADtF\n3024 mov x20, x0\n3028 mov x0, x22\n302c bl 0xad64 ; _swift_release\n3030 str w20, [x23, #0xb8]\n3034 tbnz w20, #0x1f, 0x3204\n3038 movi.2d v0, #0000000000000000\n303c add x8, x19, #0x130\n3040 stp q0, q0, [x8, #0x180]\n3044 stp q0, q0, [x8, #0x160]\n3048 stp q0, q0, [x8, #0x140]\n304c stp q0, q0, [x8, #0x120]\n3050 str q0, [x8, #0x110]\n3054 sub x1, x29, #0x100\n3058 mov x0, x20\n305c bl 0xab60 ; _fstat\n3060 cbnz w0, 0x31e8\n3064 ldur w20, [x29, #-0xf0]\n3068 bl 0xab78 ; _geteuid\n306c cmp w20, w0\n3070 b.ne 0x31e8\n3074 ldurh w8, [x29, #-0xfc]\n3078 and w8, w8, #0x1ff\n307c cmp w8, #0x1c0\n3080 b.ne 0x31e8\n3084 ldur w8, [x29, #-0x100]\n3088 tbnz w8, #0x1f, 0x3458\n308c ldur x9, [x29, #-0xf8]\n3090 ldr x22, [x19, #0xf0]\n3094 stp x8, x9, [x22, #0xc0]\n3098 ldp x8, x0, [x22, #0xa8]\n309c stp x8, x0, [x19, #0x130]\n30a0 bl 0xac98 ; _swift_bridgeObjectRetain\n30a4 add x23, x19, #0x130\n30a8 add x20, x19, #0x130\n30ac mov w0, #0x732f\n30b0 mov x1, #-0x1e00000000000000\n30b4 bl 0xa8a8 ; _$sSS6appendyySSF\n30b8 ldp x8, x9, [x19, #0x130]\n30bc stp x8, x9, [x22, #0xd8]\n30c0 mov w20, #0x1\n30c4 mov w0, #0x1\n30c8 mov w1, #0x1\n30cc mov w2, #0x0\n30d0 bl 0xac44 ; _socket\n30d4 str w0, [x22, #0xd0]\n30d8 tbnz w0, #0x1f, 0x3220\n30dc add x8, x19, #0x130\n30e0 stur xzr, [x8, #0x62]\n30e4 movi.2d v0, #0000000000000000\n30e8 stur q0, [x8, #0x52]\n30ec add x8, x19, #0x73\n30f0 stur q0, [x8, #0xff]\n30f4 add x8, x19, #0x63\n30f8 stur q0, [x8, #0xff]\n30fc add x8, x19, #0x53\n3100 stur q0, [x8, #0xff]\n3104 add x8, x19, #0x43\n3108 stur q0, [x8, #0xff]\n310c add x8, x19, #0x33\n3110 stur q0, [x8, #0xff]\n3114 strb w20, [x19, #0x131]\n3118 ldr x8, [x19, #0xf0]\n311c ldp x21, x20, [x8, #0xd8]\n3120 mov x0, x20\n3124 bl 0xac98 ; _swift_bridgeObjectRetain\n3128 mov x0, x21\n312c mov x1, x20\n3130 bl 0x8168\n3134 mov x22, x0\n3138 mov x0, x20\n313c bl 0xac80 ; _swift_bridgeObjectRelease\n3140 str x22, [x19, #0x100]\n3144 adrp x0, 0x10000\n3148 add x0, x0, #0x828\n314c add x20, x19, #0x100\n3150 bl 0x7238\n3154 ldr x20, [x19, #0x100]\n3158 ldr x2, [x20, #0x10]\n315c cmp x2, #0x68\n3160 b.hi 0x323c\n3164 add x0, x23, #0x2\n3168 add x1, x20, #0x20\n316c bl 0xabd8 ; _memmove\n3170 mov x0, x20\n3174 bl 0xac80 ; _swift_bridgeObjectRelease\n3178 mov w8, #0x6a\n317c strb w8, [x19, #0x130]\n3180 ldr x8, [x19, #0xf0]\n3184 ldr w0, [x8, #0xd0]\n3188 add x1, x19, #0x130\n318c mov w2, #0x6a\n3190 bl 0xab24 ; _bind\n3194 cbnz w0, 0x31d8\n3198 ldr x8, [x19, #0xf0]\n319c ldp x0, x1, [x8, #0xd8]\n31a0 bl 0xa86c ; _$sSS11utf8CStrings15ContiguousArrayVys4Int8VGvg\n31a4 mov x20, x0\n31a8 add x0, x0, #0x20\n31ac mov w1, #0x180\n31b0 bl 0xab3c ; _chmod\n31b4 mov x22, x0\n31b8 mov x0, x20\n31bc bl 0xad64 ; _swift_release\n31c0 cbnz w22, 0x31d8\n31c4 ldr x8, [x19, #0xf0]\n31c8 ldr w0, [x8, #0xd0]\n31cc mov w1, #0x4\n31d0 bl 0xaba8 ; _listen\n31d4 cbz w0, 0x32a8\n31d8 adrp x8, 0xb000\n31dc add x8, x8, #0x8f0\n31e0 b 0x3228\n31e4 bl 0xab0c ; ___stack_chk_fail\n31e8 adrp x8, 0xb000\n31ec add x8, x8, #0x890\n31f0 sub x8, x8, #0x20\n31f4 mov x9, #0x13\n31f8 movk x9, #0xd000, lsl #48\n31fc add x0, x9, #0xa\n3200 b 0x2ee0\n3204 adrp x8, 0xb000\n3208 add x8, x8, #0x870\n320c sub x8, x8, #0x20\n3210 mov x9, #0x13\n3214 movk x9, #0xd000, lsl #48\n3218 add x0, x9, #0x3\n321c b 0x2ee0\n3220 adrp x8, 0xb000\n3224 add x8, x8, #0x8b0\n3228 sub x8, x8, #0x20\n322c orr x1, x8, #0x8000000000000000\n3230 mov x0, #0x13\n3234 movk x0, #0xd000, lsl #48\n3238 b 0x3260\n323c mov x0, x20\n3240 bl 0xac80 ; _swift_bridgeObjectRelease\n3244 adrp x8, 0xb000\n3248 add x8, x8, #0x8d0\n324c sub x8, x8, #0x20\n3250 mov x9, #0x13\n3254 movk x9, #0xd000, lsl #48\n3258 add x0, x9, #0x7\n325c orr x1, x8, #0x8000000000000000\n3260 bl 0x3490\n3264 mov x24, x0\n3268 mov x21, x0\n326c bl 0xadf4 ; _swift_willThrow\n3270 ldp x0, x1, [x19, #0xc8]\n3274 bl 0x8d34\n3278 ldp x0, x1, [x19, #0xb8]\n327c bl 0x8d48\n3280 ldp x8, x0, [x19, #0x70]\n3284 ldr x8, [x8, #0x8]\n3288 ldr x1, [x19, #0x80]\n328c blr x8\n3290 ldr x27, [x19, #0xf0]\n3294 mov x0, x27\n3298 bl 0xad64 ; _swift_release\n329c b 0x22f0\n32a0 brk #0x1\n32a4 brk #0x1\n32a8 ldr x27, [x19, #0xf0]\n32ac ldr w0, [x27, #0xd0]\n32b0 mov w1, #0x1\n32b4 bl 0xa740 ; _$s6Darwin5fcntlys5Int32VAD_ADtF\n32b8 ldr w8, [x27, #0xd0]\n32bc orr w2, w0, #0x1\n32c0 mov x0, x8\n32c4 mov w1, #0x2\n32c8 bl 0xa734 ; _$s6Darwin5fcntlys5Int32VAD_A2DtF\n32cc ldr x8, [x27, #0x108]\n32d0 str x8, [x19, #0xe8]\n32d4 adrp x0, 0x10000\n32d8 add x0, x0, #0x860\n32dc mov w1, #0x18\n32e0 mov w2, #0x7\n32e4 bl 0xac50 ; _swift_allocObject\n32e8 mov x26, x0\n32ec add x0, x0, #0x10\n32f0 mov x1, x27\n32f4 bl 0xaddc ; _swift_weakInit\n32f8 adrp x8, 0x8000\n32fc add x8, x8, #0xff0\n3300 stp x8, x26, [x19, #0x120]\n3304 adrp x8, 0x10000\n3308 ldr x8, [x8, #0x20]\n330c str x8, [x19, #0x100]\n3310 adrp x8, 0xa000\n3314 ldr d0, [x8, #0xf40]\n3318 str d0, [x19, #0x108]\n331c adrp x8, 0x5000\n3320 add x8, x8, #0x898\n3324 adrp x9, 0x10000\n3328 add x9, x9, #0x878\n332c stp x8, x9, [x19, #0x110]\n3330 add x0, x19, #0x100\n3334 bl 0xaaf4 ; __Block_copy\n3338 str x0, [x19, #0xe0]\n333c mov x0, x26\n3340 bl 0xad70 ; _swift_retain\n3344 ldr x25, [x19, #0xd8]\n3348 mov x8, x25\n334c bl 0xa77c ; _$s8Dispatch0A3QoSV11unspecifiedACvgZ\n3350 adrp x8, 0x10000\n3354 ldr x8, [x8, #0x510]\n3358 str x8, [x19, #0xf8]\n335c adrp x0, 0x14000\n3360 add x0, x0, #0x410\n3364 adrp x1, 0x10000\n3368 ldr x1, [x1, #0x658]\n336c adrp x2, 0x10000\n3370 ldr x2, [x2, #0x668]\n3374 bl 0xa1a4\n3378 mov x23, x0\n337c adrp x20, 0x14000\n3380 add x20, x20, #0x418\n3384 adrp x28, 0xa000\n3388 add x28, x28, #0xfd8\n338c mov x0, x20\n3390 mov x1, x28\n3394 bl 0x13f4\n3398 mov x22, x0\n339c adrp x0, 0x14000\n33a0 add x0, x0, #0x420\n33a4 adrp x3, 0x10000\n33a8 ldr x3, [x3, #0x380]\n33ac mov x1, x20\n33b0 mov x2, x28\n33b4 bl 0xa160\n33b8 mov x2, x0\n33bc add x0, x19, #0xf8\n33c0 ldr x28, [x19, #0x18]\n33c4 mov x8, x28\n33c8 mov x1, x22\n33cc ldr x22, [x19, #0x28]\n33d0 mov x20, x22\n33d4 mov x3, x22\n33d8 mov x4, x23\n33dc bl 0xa9bc ; _$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj\n33e0 mov x0, #0x0\n33e4 mov x1, x25\n33e8 mov x2, x28\n33ec ldp x23, x20, [x19, #0xe0]\n33f0 mov x3, x23\n33f4 bl 0xa950 ; _$sSo17OS_dispatch_queueC8DispatchE5async5group3qos5flags7executeySo0a1_b1_F0CSg_AC0D3QoSVAC0D13WorkItemFlagsVyyXBtF\n33f8 ldp x0, x1, [x19, #0xc8]\n33fc bl 0x8d34\n3400 mov x0, x23\n3404 bl 0xab00 ; __Block_release\n3408 ldp x0, x1, [x19, #0xb8]\n340c bl 0x8d48\n3410 ldr x8, [x19, #0x20]\n3414 ldr x8, [x8, #0x8]\n3418 mov x0, x28\n341c mov x1, x22\n3420 blr x8\n3424 ldp x8, x1, [x19, #0x8]\n3428 ldr x8, [x8, #0x8]\n342c mov x0, x25\n3430 blr x8\n3434 ldp x8, x0, [x19, #0x70]\n3438 ldr x8, [x8, #0x8]\n343c ldr x1, [x19, #0x80]\n3440 blr x8\n3444 ldr x20, [x19, #0x128]\n3448 mov x0, x26\n344c bl 0xad64 ; _swift_release\n3450 mov x0, x20\n3454 b 0x3298\n3458 brk #0x1\n345c mov x0, x26\n3460 bl 0xac80 ; _swift_bridgeObjectRelease\n3464 ldr x0, [x19, #0xb0]\n3468 bl 0x8e5c\n346c ldr x20, [x19, #0xf0]\n3470 ldr x0, [x20, #0x108]\n3474 bl 0xac08 ; _objc_release\n3478 mov x0, x20\n347c ldr x1, [x19, #0xe8]\n3480 mov w2, #0x110\n3484 mov w3, #0x7\n3488 bl 0xacbc ; _swift_deallocPartialClassInstance\n348c brk #0x1"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF": [
+      15360,
+      22680,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF:\n3c00 stp x28, x27, [sp, #-0x60]!\n3c04 stp x26, x25, [sp, #0x10]\n3c08 stp x24, x23, [sp, #0x20]\n3c0c stp x22, x21, [sp, #0x30]\n3c10 stp x20, x19, [sp, #0x40]\n3c14 stp x29, x30, [sp, #0x50]\n3c18 add x29, sp, #0x50\n3c1c sub sp, sp, #0x170\n3c20 mov x19, x20\n3c24 sub x8, x29, #0x78\n3c28 stur xzr, [x8, #-0x100]\n3c2c adrp x8, 0x10000\n3c30 ldr x8, [x8, #0x38]\n3c34 ldr x8, [x8]\n3c38 adrp x9, 0xb000\n3c3c add x9, x9, #0x9c0\n3c40 stur x8, [x29, #-0x60]\n3c44 sub x8, x9, #0x20\n3c48 sub x9, x29, #0xa0\n3c4c stur x8, [x9, #-0x100]\n3c50 ldr w22, [x20, #0xd0]\n3c54 adrp x8, 0xb000\n3c58 add x8, x8, #0x9a0\n3c5c sub x8, x8, #0x20\n3c60 sub x9, x29, #0x98\n3c64 stur x8, [x9, #-0x100]\n3c68 mov w28, #0x4\n3c6c mov w27, #0x20\n3c70 mov w25, #0x1\n3c74 adrp x8, 0xa000\n3c78 ldr q0, [x8, #0xf60]\n3c7c sub x8, x29, #0x70\n3c80 stur q0, [x8, #-0x100]\n3c84 adrp x24, 0x10000\n3c88 ldr x24, [x24, #0x4a0]\n3c8c adrp x8, 0xa000\n3c90 ldr q0, [x8, #0xf50]\n3c94 sub x8, x29, #0x90\n3c98 stur q0, [x8, #-0x100]\n3c9c b 0x3cbc\n3ca0 mov w27, #0x20\n3ca4 sub x8, x29, #0x48\n3ca8 ldur x0, [x8, #-0x100]\n3cac mov x1, x23\n3cb0 bl 0x8d48\n3cb4 mov x0, x26\n3cb8 bl 0xab48 ; _close\n3cbc mov x0, x22\n3cc0 mov x1, #0x0\n3cc4 mov x2, #0x0\n3cc8 bl 0xab18 ; _accept\n3ccc tbnz w0, #0x1f, 0x3da8\n3cd0 mov x26, x0\n3cd4 stur wzr, [x29, #-0x100]\n3cd8 stur w28, [x29, #-0x70]\n3cdc stur wzr, [x29, #-0xf0]\n3ce0 sub x8, x29, #0x40\n3ce4 stur wzr, [x8, #-0x100]\n3ce8 movi.2d v0, #0000000000000000\n3cec stp q0, q0, [x29, #-0xa0]\n3cf0 sub x8, x29, #0x4\n3cf4 stur w27, [x8, #-0x100]\n3cf8 sub x3, x29, #0x100\n3cfc sub x4, x29, #0x70\n3d00 mov w1, #0x0\n3d04 mov w2, #0x2\n3d08 bl 0xab90 ; _getsockopt\n3d0c cbnz w0, 0x3cb4\n3d10 ldur w8, [x29, #-0x70]\n3d14 cmp w8, #0x4\n3d18 b.ne 0x3cb4\n3d1c ldur w8, [x29, #-0x100]\n3d20 ldr w9, [x19, #0x18]\n3d24 cmp w8, w9\n3d28 b.ne 0x3cb4\n3d2c sub x1, x29, #0xf0\n3d30 sub x2, x29, #0x140\n3d34 mov x0, x26\n3d38 bl 0xab84 ; _getpeereid\n3d3c cbnz w0, 0x3cb4\n3d40 ldur w20, [x29, #-0xf0]\n3d44 bl 0xab78 ; _geteuid\n3d48 cmp w20, w0\n3d4c b.ne 0x3cb4\n3d50 sub x3, x29, #0xa0\n3d54 sub x4, x29, #0x104\n3d58 mov x0, x26\n3d5c mov w1, #0x0\n3d60 mov w2, #0x6\n3d64 bl 0xab90 ; _getsockopt\n3d68 cbnz w0, 0x3cb4\n3d6c sub x8, x29, #0x4\n3d70 ldur w8, [x8, #-0x100]\n3d74 cmp w8, #0x20\n3d78 b.ne 0x3cb4\n3d7c ldp x0, x1, [x29, #-0xa0]\n3d80 ldp x2, x3, [x29, #-0x90]\n3d84 bl 0x6408\n3d88 ldp x2, x3, [x19, #0x20]\n3d8c cmp x0, x2\n3d90 b.ne 0x3db8\n3d94 cmp x1, x3\n3d98 b.ne 0x3db8\n3d9c mov x0, x1\n3da0 bl 0xac80 ; _swift_bridgeObjectRelease\n3da4 b 0x3dd4\n3da8 bl 0xa728 ; _$s6Darwin5errnos5Int32Vvg\n3dac cmp w0, #0x4\n3db0 b.eq 0x3cbc\n3db4 b 0x57f4\n3db8 mov x20, x1\n3dbc mov w4, #0x0\n3dc0 bl 0xaa70 ; _$ss27_stringCompareWithSmolCheck__9expectingSbs11_StringGutsV_ADs01_G16ComparisonResultOtF\n3dc4 mov x21, x0\n3dc8 mov x0, x20\n3dcc bl 0xac80 ; _swift_bridgeObjectRelease\n3dd0 tbz w21, #0x0, 0x3cb4\n3dd4 mov x20, x19\n3dd8 bl 0x58c4\n3ddc tbz w0, #0x0, 0x3cb4\n3de0 mov w8, #0x5\n3de4 stur x8, [x29, #-0x100]\n3de8 stur wzr, [x29, #-0xf8]\n3dec sub x3, x29, #0x100\n3df0 mov x0, x26\n3df4 mov w1, #0xffff\n3df8 mov w2, #0x1006\n3dfc mov w4, #0x10\n3e00 bl 0xac38 ; _setsockopt\n3e04 sub x3, x29, #0x100\n3e08 mov x0, x26\n3e0c mov w1, #0xffff\n3e10 mov w2, #0x1005\n3e14 mov w4, #0x10\n3e18 bl 0xac38 ; _setsockopt\n3e1c sub x8, x29, #0x4\n3e20 stur w25, [x8, #-0x100]\n3e24 sub x3, x29, #0x104\n3e28 mov x0, x26\n3e2c mov w1, #0xffff\n3e30 mov w2, #0x1022\n3e34 mov w4, #0x4\n3e38 bl 0xac38 ; _setsockopt\n3e3c sub x8, x29, #0x70\n3e40 ldur q0, [x8, #-0x100]\n3e44 stur q0, [x29, #-0x70]\n3e48 bl 0xa274\n3e4c mov w8, #0x1388\n3e50 adds x20, x0, x8\n3e54 b.hs 0x5830\n3e58 sub x8, x29, #0x48\n3e5c stur xzr, [x8, #-0x100]\n3e60 mov x23, #-0x4000000000000000\n3e64 sub x8, x29, #0xa8\n3e68 stur x20, [x8, #-0x100]\n3e6c lsr x8, x23, #62\n3e70 cmp w8, #0x1\n3e74 b.gt 0x3e98\n3e78 cbz w8, 0x3ebc\n3e7c sub x8, x29, #0x48\n3e80 ldur x9, [x8, #-0x100]\n3e84 lsr x8, x9, #32\n3e88 subs w8, w8, w9\n3e8c b.vs 0x5838\n3e90 sxtw x8, w8\n3e94 b 0x3eb4\n3e98 cmp w8, #0x2\n3e9c b.ne 0x3ebc\n3ea0 sub x8, x29, #0x48\n3ea4 ldur x9, [x8, #-0x100]\n3ea8 ldp x9, x8, [x9, #0x10]\n3eac subs x8, x8, x9\n3eb0 b.vs 0x5834\n3eb4 cmp x8, #0x4, lsl #12\n3eb8 b.gt 0x3ca4\n3ebc bl 0xa274\n3ec0 cmp x0, x20\n3ec4 b.hs 0x3ca4\n3ec8 mov w0, #0x400\n3ecc mov x1, x24\n3ed0 bl 0xa8e4 ; _$sSa28_allocateBufferUninitialized15minimumCapacitys06_ArrayB0VyxGSi_tFZ\n3ed4 mov x21, x0\n3ed8 mov w8, #0x400\n3edc str x8, [x0, #0x10]\n3ee0 add x20, x0, #0x20\n3ee4 mov x0, x20\n3ee8 mov w1, #0x400\n3eec bl 0xab30 ; _bzero\n3ef0 mov x0, x26\n3ef4 mov x1, x20\n3ef8 mov w2, #0x400\n3efc bl 0xac2c ; _read\n3f00 cmp x0, #0x0\n3f04 b.le 0x43cc\n3f08 ldr x8, [x21, #0x10]\n3f0c cmp x8, x0\n3f10 csel x8, x8, x0, lo\n3f14 orr x24, x25, x8, lsl #1\n3f18 adrp x25, 0x14000\n3f1c add x25, x25, #0x5b8\n3f20 mov x0, x25\n3f24 adrp x27, 0xb000\n3f28 add x27, x27, #0x3b8\n3f2c mov x1, x27\n3f30 bl 0x13f4\n3f34 mov x23, x0\n3f38 stur x0, [x29, #-0x88]\n3f3c adrp x0, 0x14000\n3f40 add x0, x0, #0x5c0\n3f44 mov x1, x25\n3f48 mov x2, x27\n3f4c adrp x3, 0x10000\n3f50 ldr x3, [x3, #0x288]\n3f54 bl 0xa160\n3f58 stur x0, [x29, #-0x80]\n3f5c adrp x0, 0x10000\n3f60 add x0, x0, #0xbc8\n3f64 mov w1, #0x30\n3f68 mov w2, #0x7\n3f6c bl 0xac50 ; _swift_allocObject\n3f70 stur x0, [x29, #-0xa0]\n3f74 stp x21, x20, [x0, #0x10]\n3f78 stp xzr, x24, [x0, #0x20]\n3f7c sub x0, x29, #0xa0\n3f80 mov x1, x23\n3f84 bl 0x1444\n3f88 ldp x8, x9, [x0, #0x10]\n3f8c lsr x9, x9, #1\n3f90 subs x20, x9, x8\n3f94 b.vs 0x582c\n3f98 ldr x9, [x0, #0x8]\n3f9c add x23, x9, x8\n3fa0 mov x0, x21\n3fa4 bl 0xac98 ; _swift_bridgeObjectRetain\n3fa8 add x1, x23, x20\n3fac sub x20, x29, #0x70\n3fb0 mov x0, x23\n3fb4 bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n3fb8 sub x0, x29, #0xa0\n3fbc bl 0x997c\n3fc0 ldp x8, x25, [x29, #-0x70]\n3fc4 sub x9, x29, #0x48\n3fc8 stur x8, [x9, #-0x100]\n3fcc mov x0, #0x0\n3fd0 bl 0xa6d4 ; _$s10Foundation4DataV8IteratorVMa\n3fd4 mov x23, x0\n3fd8 mov x12, sp\n3fdc ldur x13, [x0, #-0x8]\n3fe0 ldr x8, [x13, #0x40]\n3fe4 mov x9, x8\n3fe8 adrp x16, 0x10000\n3fec ldr x16, [x16, #0x28]\n3ff0 blr x16\n3ff4 mov x9, sp\n3ff8 add x8, x8, #0xf\n3ffc and x8, x8, #0xfffffffffffffff0\n4000 sub x20, x9, x8\n4004 mov sp, x20\n4008 mov x24, #0x0\n400c sub x8, x29, #0x50\n4010 stur x25, [x8, #-0x100]\n4014 lsr x27, x25, #62\n4018 cmp w27, #0x1\n401c sub x8, x29, #0x58\n4020 stur x12, [x8, #-0x100]\n4024 sub x8, x29, #0x60\n4028 stur x13, [x8, #-0x100]\n402c mov x25, x19\n4030 b.gt 0x4048\n4034 cbz w27, 0x405c\n4038 sub x8, x29, #0x48\n403c ldur x8, [x8, #-0x100]\n4040 sxtw x24, w8\n4044 b 0x405c\n4048 cmp w27, #0x2\n404c b.ne 0x405c\n4050 sub x8, x29, #0x48\n4054 ldur x8, [x8, #-0x100]\n4058 ldr x24, [x8, #0x10]\n405c sub x8, x29, #0x48\n4060 ldur x19, [x8, #-0x100]\n4064 mov x0, x19\n4068 sub x8, x29, #0x50\n406c ldur x28, [x8, #-0x100]\n4070 mov x1, x28\n4074 bl 0x8ec0\n4078 mov x8, x20\n407c mov x0, x19\n4080 mov x1, x28\n4084 mov x2, x24\n4088 bl 0xa6e0 ; _$s10Foundation4DataV8IteratorV_2atAeC_SitcfC\n408c adrp x0, 0x14000\n4090 add x0, x0, #0x5c8\n4094 adrp x1, 0x10000\n4098 ldr x1, [x1, #0x1d0]\n409c adrp x2, 0x10000\n40a0 ldr x2, [x2, #0x1d8]\n40a4 bl 0xa1a4\n40a8 mov x24, x0\n40ac mov x19, x25\n40b0 sub x8, x29, #0x58\n40b4 ldur x25, [x8, #-0x100]\n40b8 sub x8, x29, #0x60\n40bc ldur x28, [x8, #-0x100]\n40c0 sub x8, x29, #0xa0\n40c4 mov x0, x23\n40c8 mov x1, x24\n40cc bl 0xa980 ; _$sSt4next7ElementQzSgyFTj\n40d0 ldurb w8, [x29, #-0x9f]\n40d4 cmp w8, #0x1\n40d8 b.eq 0x40ec\n40dc ldurb w8, [x29, #-0xa0]\n40e0 cmp w8, #0xa\n40e4 b.ne 0x40c0\n40e8 b 0x4130\n40ec ldr x8, [x28, #0x8]\n40f0 mov x0, x20\n40f4 mov x1, x23\n40f8 blr x8\n40fc mov x0, x21\n4100 bl 0xac80 ; _swift_bridgeObjectRelease\n4104 mov sp, x25\n4108 mov w28, #0x4\n410c mov w27, #0x20\n4110 mov w25, #0x1\n4114 adrp x24, 0x10000\n4118 ldr x24, [x24, #0x4a0]\n411c sub x8, x29, #0x50\n4120 ldur x23, [x8, #-0x100]\n4124 sub x8, x29, #0xa8\n4128 ldur x20, [x8, #-0x100]\n412c b 0x3e6c\n4130 ldr x8, [x28, #0x8]\n4134 mov x0, x20\n4138 mov x1, x23\n413c blr x8\n4140 mov x0, x21\n4144 bl 0xac80 ; _swift_bridgeObjectRelease\n4148 mov sp, x25\n414c cmp w27, #0x1\n4150 b.gt 0x418c\n4154 mov w28, #0x4\n4158 mov w25, #0x1\n415c adrp x24, 0x10000\n4160 ldr x24, [x24, #0x4a0]\n4164 sub x8, x29, #0x50\n4168 ldur x23, [x8, #-0x100]\n416c cbz w27, 0x41c8\n4170 sub x8, x29, #0x48\n4174 ldur x9, [x8, #-0x100]\n4178 lsr x8, x9, #32\n417c subs w8, w8, w9\n4180 b.vs 0x5840\n4184 sxtw x8, w8\n4188 b 0x41c0\n418c cmp w27, #0x2\n4190 mov w28, #0x4\n4194 mov w25, #0x1\n4198 adrp x24, 0x10000\n419c ldr x24, [x24, #0x4a0]\n41a0 sub x8, x29, #0x50\n41a4 ldur x23, [x8, #-0x100]\n41a8 b.ne 0x41c8\n41ac sub x8, x29, #0x48\n41b0 ldur x9, [x8, #-0x100]\n41b4 ldp x9, x8, [x9, #0x10]\n41b8 subs x8, x8, x9\n41bc b.vs 0x583c\n41c0 cmp x8, #0x4, lsl #12\n41c4 b.gt 0x3ca0\n41c8 sub x8, x29, #0x48\n41cc ldur x0, [x8, #-0x100]\n41d0 mov x1, x23\n41d4 bl 0x65e8\n41d8 and w8, w0, #0xff00\n41dc cmp w8, #0x100\n41e0 b.eq 0x3ca0\n41e4 and w8, w0, #0xff\n41e8 cmp w8, #0xa\n41ec mov w27, #0x20\n41f0 b.ne 0x3ca4\n41f4 sub x8, x29, #0x58\n41f8 stur x19, [x8, #-0x100]\n41fc sub x8, x29, #0x48\n4200 ldur x19, [x8, #-0x100]\n4204 mov x0, x19\n4208 mov x1, x23\n420c bl 0x8ec0\n4210 sub x8, x29, #0xa0\n4214 mov w0, #0x1\n4218 mov x1, x19\n421c mov x2, x23\n4220 bl 0x6680\n4224 ldp x20, x21, [x29, #-0xa0]\n4228 mov w0, #0xa\n422c mov x1, x20\n4230 mov x2, x21\n4234 bl 0x6070\n4238 mov x23, x0\n423c mov x0, x20\n4240 mov x1, x21\n4244 bl 0x8d48\n4248 tbz w23, #0x0, 0x4258\n424c sub x8, x29, #0x58\n4250 ldur x19, [x8, #-0x100]\n4254 b 0x43c0\n4258 mov x0, x26\n425c sub x8, x29, #0x58\n4260 ldur x19, [x8, #-0x100]\n4264 mov x20, x19\n4268 bl 0x62a8\n426c tbz w0, #0x0, 0x43c0\n4270 adrp x8, 0x10000\n4274 ldr x0, [x8, #0x2b8]\n4278 bl 0xabfc ; _objc_opt_self\n427c mov x20, x0\n4280 sub x8, x29, #0x48\n4284 ldur x0, [x8, #-0x100]\n4288 sub x8, x29, #0x50\n428c ldur x1, [x8, #-0x100]\n4290 bl 0xa6bc ; _$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF\n4294 mov x21, x0\n4298 stur xzr, [x29, #-0xa0]\n429c sub x4, x29, #0xa0\n42a0 sub x8, x29, #0x60\n42a4 stur x20, [x8, #-0x100]\n42a8 mov x0, x20\n42ac mov x2, x21\n42b0 mov x3, #0x0\n42b4 bl 0xae40\n42b8 mov x29, x29\n42bc bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n42c0 mov x20, x0\n42c4 mov x0, x21\n42c8 bl 0xac08 ; _objc_release\n42cc ldur x0, [x29, #-0xa0]\n42d0 cbz x20, 0x43d8\n42d4 bl 0xac14 ; _objc_retain\n42d8 sub x8, x29, #0xa0\n42dc mov x0, x20\n42e0 bl 0xa9a4 ; _$ss018_bridgeAnyObjectToB0yypyXlSgF\n42e4 mov x0, x20\n42e8 bl 0xadb8 ; _swift_unknownObjectRelease\n42ec adrp x0, 0x14000\n42f0 add x0, x0, #0x3c8\n42f4 adrp x1, 0xa000\n42f8 add x1, x1, #0xfb8\n42fc bl 0x13f4\n4300 mov x21, x0\n4304 sub x0, x29, #0xf0\n4308 sub x1, x29, #0xa0\n430c adrp x25, 0x10000\n4310 ldr x25, [x25, #0x500]\n4314 add x2, x25, #0x8\n4318 mov x3, x21\n431c mov w4, #0x6\n4320 bl 0xacc8 ; _swift_dynamicCast\n4324 tbz w0, #0x0, 0x4424\n4328 ldur x20, [x29, #-0xf0]\n432c ldr x8, [x20, #0x10]\n4330 cbz x8, 0x4408\n4334 mov x0, x20\n4338 bl 0xac98 ; _swift_bridgeObjectRetain\n433c mov x0, #0x6f62\n4340 movk x0, #0x746f, lsl #16\n4344 movk x0, #0x7473, lsl #32\n4348 movk x0, #0x6172, lsl #48\n434c mov x1, #0x4e70\n4350 movk x1, #0x6e6f, lsl #16\n4354 movk x1, #0x6563, lsl #32\n4358 movk x1, #0xee00, lsl #48\n435c bl 0x71d4\n4360 tbz w1, #0x0, 0x4400\n4364 ldr x8, [x20, #0x38]\n4368 add x0, x8, x0, lsl #5\n436c sub x1, x29, #0xa0\n4370 bl 0x905c\n4374 mov x0, x20\n4378 bl 0xac80 ; _swift_bridgeObjectRelease\n437c sub x0, x29, #0xf0\n4380 sub x1, x29, #0xa0\n4384 add x2, x25, #0x8\n4388 adrp x3, 0x10000\n438c ldr x3, [x3, #0x340]\n4390 mov w4, #0x6\n4394 bl 0xacc8 ; _swift_dynamicCast\n4398 tbz w0, #0x0, 0x4408\n439c ldp x0, x23, [x29, #-0xf0]\n43a0 ldp x2, x3, [x19, #0x60]\n43a4 cmp x0, x2\n43a8 b.ne 0x4b4c\n43ac cmp x23, x3\n43b0 b.ne 0x4b4c\n43b4 mov x0, x23\n43b8 bl 0xac80 ; _swift_bridgeObjectRelease\n43bc b 0x4b68\n43c0 sub x8, x29, #0x50\n43c4 ldur x23, [x8, #-0x100]\n43c8 b 0x3ca4\n43cc mov x0, x21\n43d0 bl 0xac80 ; _swift_bridgeObjectRelease\n43d4 b 0x3ca4\n43d8 mov x20, x0\n43dc bl 0xac14 ; _objc_retain\n43e0 mov x21, x0\n43e4 mov x0, x20\n43e8 bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n43ec mov x25, x0\n43f0 mov x0, x21\n43f4 bl 0xac08 ; _objc_release\n43f8 mov x21, x25\n43fc b 0x444c\n4400 mov x0, x20\n4404 bl 0xac80 ; _swift_bridgeObjectRelease\n4408 ldr x21, [x19, #0x68]\n440c mov x0, x21\n4410 bl 0xac98 ; _swift_bridgeObjectRetain\n4414 mov x0, x20\n4418 bl 0xac80 ; _swift_bridgeObjectRelease\n441c mov x0, x21\n4420 bl 0xac80 ; _swift_bridgeObjectRelease\n4424 mov x8, #0x10\n4428 movk x8, #0xd000, lsl #48\n442c mov w9, #0xd\n4430 orr x0, x8, x9\n4434 sub x8, x29, #0x98\n4438 ldur x8, [x8, #-0x100]\n443c orr x1, x8, #0x8000000000000000\n4440 bl 0x3490\n4444 mov x25, x0\n4448 mov x21, x0\n444c bl 0xadf4 ; _swift_willThrow\n4450 sub x8, x29, #0x78\n4454 stur xzr, [x8, #-0x100]\n4458 sub x8, x29, #0x58\n445c stur x25, [x8, #-0x100]\n4460 sub x1, x29, #0x118\n4464 sub x2, x29, #0x130\n4468 mov x0, x25\n446c bl 0xacec ; _swift_getErrorValue\n4470 sub x8, x29, #0x30\n4474 ldur x20, [x8, #-0x100]\n4478 sub x8, x29, #0x28\n447c ldur x0, [x8, #-0x100]\n4480 sub x8, x29, #0x20\n4484 ldur x1, [x8, #-0x100]\n4488 bl 0xaa88 ; _$ss5ErrorP10FoundationE20localizedDescriptionSSvg\n448c mov x2, x0\n4490 mov x20, x1\n4494 mov w0, #0xa0\n4498 mov x1, x2\n449c mov x2, x20\n44a0 bl 0x8f00\n44a4 mov x21, x0\n44a8 mov x23, x1\n44ac mov x24, x2\n44b0 mov x25, x3\n44b4 mov x0, x20\n44b8 bl 0xac80 ; _swift_bridgeObjectRelease\n44bc mov x0, x21\n44c0 mov x1, x23\n44c4 mov x2, x24\n44c8 mov x3, x25\n44cc bl 0xa878 ; _$sSS14_fromSubstringySSSshFZ\n44d0 mov x20, x0\n44d4 mov x21, x1\n44d8 mov x0, x25\n44dc bl 0xac80 ; _swift_bridgeObjectRelease\n44e0 adrp x0, 0x14000\n44e4 add x0, x0, #0x5d0\n44e8 adrp x1, 0xb000\n44ec add x1, x1, #0x3c0\n44f0 bl 0x13f4\n44f4 sub x1, x29, #0xe0\n44f8 bl 0xad34 ; _swift_initStackObject\n44fc mov x23, x0\n4500 sub x8, x29, #0x90\n4504 ldur q0, [x8, #-0x100]\n4508 str q0, [x0, #0x10]\n450c mov x24, x0\n4510 mov x8, #0x7265\n4514 movk x8, #0x6f72, lsl #16\n4518 movk x8, #0x72, lsl #32\n451c str x8, [x24, #0x20]!\n4520 mov x8, #-0x1b00000000000000\n4524 stp x8, x20, [x0, #0x28]\n4528 str x21, [x0, #0x38]\n452c bl 0x9ddc\n4530 mov x20, x0\n4534 mov x0, x23\n4538 bl 0xad7c ; _swift_setDeallocating\n453c mov x0, x24\n4540 adrp x1, 0x14000\n4544 add x1, x1, #0x5d8\n4548 adrp x2, 0xb000\n454c add x2, x2, #0x3c8\n4550 bl 0xa08c\n4554 mov x0, x20\n4558 adrp x1, 0x10000\n455c ldr x1, [x1, #0x340]\n4560 mov x2, x1\n4564 adrp x3, 0x10000\n4568 ldr x3, [x3, #0x348]\n456c bl 0xa7f4 ; _$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF\n4570 mov x21, x0\n4574 mov x0, x20\n4578 bl 0xac80 ; _swift_bridgeObjectRelease\n457c stur xzr, [x29, #-0xa0]\n4580 sub x4, x29, #0xa0\n4584 sub x8, x29, #0x60\n4588 ldur x0, [x8, #-0x100]\n458c mov x2, x21\n4590 mov w3, #0x2\n4594 bl 0xae80\n4598 mov x29, x29\n459c bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n45a0 mov x20, x0\n45a4 mov x0, x21\n45a8 bl 0xac08 ; _objc_release\n45ac ldur x0, [x29, #-0xa0]\n45b0 bl 0xac14 ; _objc_retain\n45b4 cbz x20, 0x4708\n45b8 mov x0, x20\n45bc bl 0xa6c8 ; _$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ\n45c0 mov x25, x0\n45c4 mov x24, x1\n45c8 mov x0, x20\n45cc bl 0xac08 ; _objc_release\n45d0 adrp x0, 0x10000\n45d4 add x0, x0, #0xbe0\n45d8 bl 0x9d28\n45dc mov x23, x0\n45e0 mov x21, x1\n45e4 sub x8, x29, #0xa8\n45e8 stur x25, [x8, #-0x100]\n45ec stp x25, x24, [x29, #-0xf0]\n45f0 sub x8, x29, #0x60\n45f4 stur x24, [x8, #-0x100]\n45f8 adrp x1, 0x10000\n45fc ldr x1, [x1, #0x1f8]\n4600 stur x1, [x29, #-0x88]\n4604 adrp x8, 0x10000\n4608 ldr x8, [x8, #0x1e8]\n460c stur x8, [x29, #-0x80]\n4610 stp x0, x21, [x29, #-0xa0]\n4614 sub x0, x29, #0xa0\n4618 bl 0x1444\n461c ldp x8, x25, [x0]\n4620 lsr x9, x25, #62\n4624 cmp w9, #0x1\n4628 adrp x24, 0x10000\n462c ldr x24, [x24, #0x4a0]\n4630 b.gt 0x4748\n4634 cbnz w9, 0x47c0\n4638 lsr x9, x8, #8\n463c sub x10, x29, #0x40\n4640 sturb w8, [x10, #-0x100]\n4644 lsr x10, x8, #16\n4648 lsr x11, x8, #24\n464c sub x12, x29, #0x3f\n4650 sturb w9, [x12, #-0x100]\n4654 sub x9, x29, #0x3e\n4658 sturb w10, [x9, #-0x100]\n465c lsr x9, x8, #32\n4660 lsr x10, x8, #40\n4664 sub x12, x29, #0x3d\n4668 sturb w11, [x12, #-0x100]\n466c sub x11, x29, #0x3c\n4670 sturb w9, [x11, #-0x100]\n4674 lsr x9, x8, #48\n4678 lsr x8, x8, #56\n467c sub x11, x29, #0x3b\n4680 sturb w10, [x11, #-0x100]\n4684 sub x10, x29, #0x3a\n4688 sturb w9, [x10, #-0x100]\n468c lsr x9, x25, #8\n4690 lsr x10, x25, #16\n4694 sub x11, x29, #0x39\n4698 sturb w8, [x11, #-0x100]\n469c sub x8, x29, #0x38\n46a0 sturb w25, [x8, #-0x100]\n46a4 lsr x8, x25, #24\n46a8 lsr x11, x25, #32\n46ac sub x12, x29, #0x37\n46b0 sturb w9, [x12, #-0x100]\n46b4 sub x9, x29, #0x36\n46b8 sturb w10, [x9, #-0x100]\n46bc lsr x9, x25, #40\n46c0 lsr x10, x25, #48\n46c4 sub x12, x29, #0x35\n46c8 sturb w8, [x12, #-0x100]\n46cc sub x8, x29, #0x34\n46d0 sturb w11, [x8, #-0x100]\n46d4 sub x8, x29, #0x33\n46d8 sturb w9, [x8, #-0x100]\n46dc sub x8, x29, #0x140\n46e0 add x21, x8, w10, uxtb\n46e4 sub x8, x29, #0xa8\n46e8 ldur x0, [x8, #-0x100]\n46ec sub x8, x29, #0x60\n46f0 ldur x1, [x8, #-0x100]\n46f4 bl 0x8ec0\n46f8 sub x0, x29, #0x140\n46fc sub x20, x29, #0xf0\n4700 mov x1, x21\n4704 b 0x486c\n4708 mov x20, x0\n470c bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n4710 mov x23, x0\n4714 mov x0, x20\n4718 bl 0xac08 ; _objc_release\n471c mov x21, x23\n4720 bl 0xadf4 ; _swift_willThrow\n4724 sub x8, x29, #0x58\n4728 ldur x0, [x8, #-0x100]\n472c bl 0xacd4 ; _swift_errorRelease\n4730 mov x0, x23\n4734 bl 0xacd4 ; _swift_errorRelease\n4738 sub x8, x29, #0x78\n473c stur xzr, [x8, #-0x100]\n4740 mov w25, #0x1\n4744 b 0x4ae8\n4748 cmp w9, #0x2\n474c b.ne 0x483c\n4750 ldp x27, x28, [x8, #0x10]\n4754 sub x8, x29, #0xa8\n4758 ldur x0, [x8, #-0x100]\n475c sub x8, x29, #0x60\n4760 ldur x1, [x8, #-0x100]\n4764 bl 0x8ec0\n4768 mov x0, x23\n476c mov x1, x21\n4770 bl 0x8ec0\n4774 and x20, x25, #0x3fffffffffffffff\n4778 bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n477c mov x24, x0\n4780 cbz x0, 0x4798\n4784 and x20, x25, #0x3fffffffffffffff\n4788 bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n478c subs x8, x27, x0\n4790 b.vs 0x585c\n4794 add x24, x8, x24\n4798 subs x27, x28, x27\n479c b.vs 0x5850\n47a0 and x20, x25, #0x3fffffffffffffff\n47a4 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n47a8 mov w28, #0x4\n47ac cbz x24, 0x4894\n47b0 cmp x0, x27\n47b4 csel x8, x0, x27, lt\n47b8 add x1, x8, x24\n47bc b 0x4898\n47c0 sxtw x28, w8\n47c4 asr x8, x8, #32\n47c8 subs x27, x8, x28\n47cc b.lt 0x584c\n47d0 sub x8, x29, #0xa8\n47d4 ldur x0, [x8, #-0x100]\n47d8 sub x8, x29, #0x60\n47dc ldur x1, [x8, #-0x100]\n47e0 bl 0x8ec0\n47e4 mov x0, x23\n47e8 mov x1, x21\n47ec bl 0x8ec0\n47f0 and x20, x25, #0x3fffffffffffffff\n47f4 bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n47f8 cbz x0, 0x4878\n47fc mov x24, x0\n4800 and x20, x25, #0x3fffffffffffffff\n4804 bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n4808 subs x8, x28, x0\n480c b.vs 0x5860\n4810 add x24, x8, x24\n4814 and x20, x25, #0x3fffffffffffffff\n4818 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n481c mov x8, x0\n4820 mov x0, x24\n4824 mov w28, #0x4\n4828 cbz x24, 0x48c4\n482c cmp x8, x27\n4830 csel x8, x8, x27, lt\n4834 add x1, x8, x0\n4838 b 0x48c8\n483c sub x8, x29, #0x3a\n4840 stur xzr, [x8, #-0x100]\n4844 sub x8, x29, #0x40\n4848 stur xzr, [x8, #-0x100]\n484c sub x8, x29, #0xa8\n4850 ldur x0, [x8, #-0x100]\n4854 sub x8, x29, #0x60\n4858 ldur x1, [x8, #-0x100]\n485c bl 0x8ec0\n4860 sub x0, x29, #0x140\n4864 sub x1, x29, #0x140\n4868 sub x20, x29, #0xf0\n486c bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n4870 mov w25, #0x1\n4874 b 0x48ec\n4878 and x20, x25, #0x3fffffffffffffff\n487c bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n4880 mov x0, #0x0\n4884 mov x1, #0x0\n4888 mov w28, #0x4\n488c mov w25, #0x1\n4890 b 0x48d4\n4894 mov x1, #0x0\n4898 mov w27, #0x20\n489c mov w25, #0x1\n48a0 sub x20, x29, #0xf0\n48a4 mov x0, x24\n48a8 bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n48ac mov x0, x23\n48b0 mov x1, x21\n48b4 bl 0x8d48\n48b8 adrp x24, 0x10000\n48bc ldr x24, [x24, #0x4a0]\n48c0 b 0x48ec\n48c4 mov x1, #0x0\n48c8 mov w25, #0x1\n48cc adrp x24, 0x10000\n48d0 ldr x24, [x24, #0x4a0]\n48d4 sub x20, x29, #0xf0\n48d8 bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n48dc mov x0, x23\n48e0 mov x1, x21\n48e4 bl 0x8d48\n48e8 mov w27, #0x20\n48ec sub x0, x29, #0xa0\n48f0 bl 0x997c\n48f4 ldp x23, x21, [x29, #-0xf0]\n48f8 lsr x8, x21, #62\n48fc cmp w8, #0x1\n4900 b.gt 0x49ac\n4904 cbnz w8, 0x4a04\n4908 mov x20, #0x0\n490c sturb w23, [x29, #-0xa0]\n4910 lsr x8, x23, #8\n4914 sturb w8, [x29, #-0x9f]\n4918 lsr x8, x23, #16\n491c sturb w8, [x29, #-0x9e]\n4920 lsr x8, x23, #24\n4924 sturb w8, [x29, #-0x9d]\n4928 lsr x8, x23, #32\n492c sturb w8, [x29, #-0x9c]\n4930 lsr x8, x23, #40\n4934 sturb w8, [x29, #-0x9b]\n4938 lsr x8, x23, #48\n493c sturb w8, [x29, #-0x9a]\n4940 lsr x8, x23, #56\n4944 sturb w8, [x29, #-0x99]\n4948 lsr x8, x21, #8\n494c sturb w21, [x29, #-0x98]\n4950 lsr x9, x21, #16\n4954 sturb w8, [x29, #-0x97]\n4958 lsr x8, x21, #24\n495c sturb w9, [x29, #-0x96]\n4960 lsr x9, x21, #32\n4964 sturb w8, [x29, #-0x95]\n4968 lsr x8, x21, #40\n496c sturb w9, [x29, #-0x94]\n4970 ubfx x24, x21, #48, #8\n4974 sturb w8, [x29, #-0x93]\n4978 cmp x20, x24\n497c b.ge 0x4abc\n4980 subs x2, x24, x20\n4984 b.vs 0x5844\n4988 sub x8, x29, #0xa0\n498c add x1, x8, x20\n4990 mov x0, x26\n4994 bl 0xae24 ; _write\n4998 cmp x0, #0x1\n499c b.lt 0x4abc\n49a0 adds x20, x20, x0\n49a4 b.vc 0x4978\n49a8 b 0x5848\n49ac cmp w8, #0x2\n49b0 b.ne 0x4a60\n49b4 ldp x25, x27, [x23, #0x10]\n49b8 and x20, x21, #0x3fffffffffffffff\n49bc bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n49c0 mov x24, x0\n49c4 cbz x0, 0x49dc\n49c8 and x20, x21, #0x3fffffffffffffff\n49cc bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n49d0 subs x8, x25, x0\n49d4 b.vs 0x5864\n49d8 add x24, x8, x24\n49dc subs x25, x27, x25\n49e0 b.vs 0x5858\n49e4 and x20, x21, #0x3fffffffffffffff\n49e8 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n49ec mov w27, #0x20\n49f0 cbz x24, 0x4aa8\n49f4 cmp x0, x25\n49f8 csel x8, x0, x25, lt\n49fc add x1, x8, x24\n4a00 b 0x4aac\n4a04 sxtw x27, w23\n4a08 asr x8, x23, #32\n4a0c subs x25, x8, x27\n4a10 b.lt 0x5854\n4a14 and x20, x21, #0x3fffffffffffffff\n4a18 bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n4a1c cbz x0, 0x4a90\n4a20 mov x24, x0\n4a24 and x20, x21, #0x3fffffffffffffff\n4a28 bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n4a2c subs x8, x27, x0\n4a30 b.vs 0x5868\n4a34 add x24, x8, x24\n4a38 and x20, x21, #0x3fffffffffffffff\n4a3c bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n4a40 mov x8, x0\n4a44 mov x0, x24\n4a48 mov w27, #0x20\n4a4c cbz x24, 0x4b04\n4a50 cmp x8, x25\n4a54 csel x8, x8, x25, lt\n4a58 add x1, x8, x0\n4a5c b 0x4b08\n4a60 mov x0, x23\n4a64 mov x1, x21\n4a68 bl 0x8d48\n4a6c sub x8, x29, #0x58\n4a70 ldur x0, [x8, #-0x100]\n4a74 bl 0xacd4 ; _swift_errorRelease\n4a78 sub x8, x29, #0xa8\n4a7c ldur x0, [x8, #-0x100]\n4a80 sub x8, x29, #0x60\n4a84 ldur x1, [x8, #-0x100]\n4a88 bl 0x8d48\n4a8c b 0x4af0\n4a90 and x20, x21, #0x3fffffffffffffff\n4a94 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n4a98 mov x0, #0x0\n4a9c mov x1, #0x0\n4aa0 mov w27, #0x20\n4aa4 b 0x4b10\n4aa8 mov x1, #0x0\n4aac mov w25, #0x1\n4ab0 mov x0, x24\n4ab4 mov x2, x26\n4ab8 bl 0x7034\n4abc mov x0, x23\n4ac0 mov x1, x21\n4ac4 bl 0x8d48\n4ac8 sub x8, x29, #0x58\n4acc ldur x0, [x8, #-0x100]\n4ad0 bl 0xacd4 ; _swift_errorRelease\n4ad4 sub x8, x29, #0xa8\n4ad8 ldur x0, [x8, #-0x100]\n4adc sub x8, x29, #0x60\n4ae0 ldur x1, [x8, #-0x100]\n4ae4 bl 0x8d48\n4ae8 adrp x24, 0x10000\n4aec ldr x24, [x24, #0x4a0]\n4af0 sub x8, x29, #0x48\n4af4 ldur x0, [x8, #-0x100]\n4af8 sub x8, x29, #0x50\n4afc ldur x1, [x8, #-0x100]\n4b00 b 0x3cb0\n4b04 mov x1, #0x0\n4b08 adrp x24, 0x10000\n4b0c ldr x24, [x24, #0x4a0]\n4b10 mov x2, x26\n4b14 bl 0x7034\n4b18 mov x0, x23\n4b1c mov x1, x21\n4b20 bl 0x8d48\n4b24 sub x8, x29, #0x58\n4b28 ldur x0, [x8, #-0x100]\n4b2c bl 0xacd4 ; _swift_errorRelease\n4b30 sub x8, x29, #0xa8\n4b34 ldur x0, [x8, #-0x100]\n4b38 sub x8, x29, #0x60\n4b3c ldur x1, [x8, #-0x100]\n4b40 bl 0x8d48\n4b44 mov w25, #0x1\n4b48 b 0x4af0\n4b4c mov x1, x23\n4b50 mov w4, #0x0\n4b54 bl 0xaa70 ; _$ss27_stringCompareWithSmolCheck__9expectingSbs11_StringGutsV_ADs01_G16ComparisonResultOtF\n4b58 mov x24, x0\n4b5c mov x0, x23\n4b60 bl 0xac80 ; _swift_bridgeObjectRelease\n4b64 tbz w24, #0x0, 0x4cd4\n4b68 mov x0, x20\n4b6c bl 0xac98 ; _swift_bridgeObjectRetain\n4b70 bl 0x35dc\n4b74 mov x23, x0\n4b78 adrp x0, 0x10000\n4b7c add x0, x0, #0xc08\n4b80 bl 0x8d88\n4b84 mov x24, x0\n4b88 adrp x8, 0x10000\n4b8c add x8, x8, #0xc08\n4b90 add x0, x8, #0x20\n4b94 mov w1, #0x2\n4b98 adrp x2, 0x10000\n4b9c ldr x2, [x2, #0x340]\n4ba0 bl 0xac5c ; _swift_arrayDestroy\n4ba4 mov x0, x23\n4ba8 mov x1, x24\n4bac bl 0x3710\n4bb0 sub x8, x29, #0xa8\n4bb4 stur w0, [x8, #-0x100]\n4bb8 mov x0, x23\n4bbc bl 0xac80 ; _swift_bridgeObjectRelease\n4bc0 mov x0, x24\n4bc4 bl 0xac80 ; _swift_bridgeObjectRelease\n4bc8 sub x8, x29, #0xa8\n4bcc ldur w8, [x8, #-0x100]\n4bd0 tbz w8, #0x0, 0x4ce4\n4bd4 ldr x8, [x20, #0x10]\n4bd8 cbz x8, 0x4ce4\n4bdc mov x0, x20\n4be0 bl 0xac98 ; _swift_bridgeObjectRetain\n4be4 mov x0, #0x6568\n4be8 movk x0, #0x6c6c, lsl #16\n4bec movk x0, #0x6f, lsl #32\n4bf0 mov x1, #-0x1b00000000000000\n4bf4 bl 0x71d4\n4bf8 tbz w1, #0x0, 0x4cdc\n4bfc ldr x8, [x20, #0x38]\n4c00 add x0, x8, x0, lsl #5\n4c04 sub x1, x29, #0xa0\n4c08 bl 0x905c\n4c0c mov x0, x20\n4c10 bl 0xac80 ; _swift_bridgeObjectRelease\n4c14 sub x0, x29, #0xf0\n4c18 sub x1, x29, #0xa0\n4c1c add x2, x25, #0x8\n4c20 adrp x3, 0x10000\n4c24 ldr x3, [x3, #0x388]\n4c28 mov w4, #0x6\n4c2c bl 0xacc8 ; _swift_dynamicCast\n4c30 tbz w0, #0x0, 0x4ce4\n4c34 ldurb w8, [x29, #-0xf0]\n4c38 cmp w8, #0x1\n4c3c b.ne 0x4ce4\n4c40 mov x0, x20\n4c44 bl 0xac80 ; _swift_bridgeObjectRelease\n4c48 mov x20, x19\n4c4c bl 0x681c\n4c50 mov x20, x0\n4c54 add x2, x25, #0x8\n4c58 adrp x1, 0x10000\n4c5c ldr x1, [x1, #0x340]\n4c60 adrp x3, 0x10000\n4c64 ldr x3, [x3, #0x348]\n4c68 bl 0xa7f4 ; _$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF\n4c6c mov x21, x0\n4c70 mov x0, x20\n4c74 bl 0xac80 ; _swift_bridgeObjectRelease\n4c78 stur xzr, [x29, #-0xa0]\n4c7c sub x4, x29, #0xa0\n4c80 sub x8, x29, #0x60\n4c84 ldur x0, [x8, #-0x100]\n4c88 mov x2, x21\n4c8c mov w3, #0x2\n4c90 bl 0xae80\n4c94 mov x29, x29\n4c98 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n4c9c mov x20, x0\n4ca0 mov x0, x21\n4ca4 bl 0xac08 ; _objc_release\n4ca8 ldur x0, [x29, #-0xa0]\n4cac bl 0xac14 ; _objc_retain\n4cb0 cbz x20, 0x5444\n4cb4 mov x0, x20\n4cb8 bl 0xa6c8 ; _$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ\n4cbc sub x8, x29, #0x60\n4cc0 stur x0, [x8, #-0x100]\n4cc4 mov x19, x1\n4cc8 mov x0, x20\n4ccc bl 0xac08 ; _objc_release\n4cd0 b 0x52c4\n4cd4 mov x0, x20\n4cd8 b 0x4420\n4cdc mov x0, x20\n4ce0 bl 0xac80 ; _swift_bridgeObjectRelease\n4ce4 mov x0, x20\n4ce8 bl 0xac98 ; _swift_bridgeObjectRetain\n4cec bl 0x35dc\n4cf0 mov x23, x0\n4cf4 adrp x0, 0x10000\n4cf8 add x0, x0, #0xc48\n4cfc bl 0x8d88\n4d00 mov x24, x0\n4d04 adrp x8, 0x10000\n4d08 add x8, x8, #0xc48\n4d0c add x0, x8, #0x20\n4d10 mov w1, #0x2\n4d14 adrp x2, 0x10000\n4d18 ldr x2, [x2, #0x340]\n4d1c bl 0xac5c ; _swift_arrayDestroy\n4d20 mov x0, x23\n4d24 mov x1, x24\n4d28 bl 0x3710\n4d2c sub x8, x29, #0xa8\n4d30 stur w0, [x8, #-0x100]\n4d34 mov x0, x23\n4d38 bl 0xac80 ; _swift_bridgeObjectRelease\n4d3c mov x0, x24\n4d40 bl 0xac80 ; _swift_bridgeObjectRelease\n4d44 sub x8, x29, #0xa8\n4d48 ldur w8, [x8, #-0x100]\n4d4c tbz w8, #0x0, 0x4d98\n4d50 ldr x8, [x20, #0x10]\n4d54 cbz x8, 0x4dac\n4d58 mov x0, x20\n4d5c bl 0xac98 ; _swift_bridgeObjectRetain\n4d60 mov x0, #0x6572\n4d64 movk x0, #0x7571, lsl #16\n4d68 movk x0, #0x7365, lsl #32\n4d6c movk x0, #0x74, lsl #48\n4d70 mov x1, #-0x1900000000000000\n4d74 bl 0x71d4\n4d78 tbz w1, #0x0, 0x4da4\n4d7c ldr x8, [x20, #0x38]\n4d80 add x0, x8, x0, lsl #5\n4d84 sub x1, x29, #0xa0\n4d88 bl 0x905c\n4d8c mov x0, x20\n4d90 bl 0xac80 ; _swift_bridgeObjectRelease\n4d94 b 0x4db4\n4d98 mov x0, x20\n4d9c bl 0xac80 ; _swift_bridgeObjectRelease\n4da0 b 0x5084\n4da4 mov x0, x20\n4da8 bl 0xac80 ; _swift_bridgeObjectRelease\n4dac movi.2d v0, #0000000000000000\n4db0 stp q0, q0, [x29, #-0xa0]\n4db4 mov x0, x20\n4db8 bl 0xac80 ; _swift_bridgeObjectRelease\n4dbc ldur x8, [x29, #-0x88]\n4dc0 cbz x8, 0x506c\n4dc4 sub x0, x29, #0xf0\n4dc8 sub x1, x29, #0xa0\n4dcc add x2, x25, #0x8\n4dd0 mov x3, x21\n4dd4 mov w4, #0x6\n4dd8 bl 0xacc8 ; _swift_dynamicCast\n4ddc tbz w0, #0x0, 0x5084\n4de0 ldur x20, [x29, #-0xf0]\n4de4 add x2, x25, #0x8\n4de8 mov x0, x20\n4dec adrp x1, 0x10000\n4df0 ldr x1, [x1, #0x340]\n4df4 adrp x3, 0x10000\n4df8 ldr x3, [x3, #0x348]\n4dfc bl 0xa7f4 ; _$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF\n4e00 mov x21, x0\n4e04 mov x0, x20\n4e08 bl 0xac80 ; _swift_bridgeObjectRelease\n4e0c stur xzr, [x29, #-0xa0]\n4e10 sub x4, x29, #0xa0\n4e14 sub x8, x29, #0x60\n4e18 ldur x0, [x8, #-0x100]\n4e1c mov x2, x21\n4e20 mov w3, #0x2\n4e24 bl 0xae80\n4e28 mov x29, x29\n4e2c bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n4e30 mov x20, x0\n4e34 mov x0, x21\n4e38 bl 0xac08 ; _objc_release\n4e3c ldur x0, [x29, #-0xa0]\n4e40 bl 0xac14 ; _objc_retain\n4e44 cbz x20, 0x50e4\n4e48 mov x0, x20\n4e4c bl 0xa6c8 ; _$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ\n4e50 mov x23, x0\n4e54 mov x21, x1\n4e58 sub x8, x29, #0xa8\n4e5c stur x1, [x8, #-0x100]\n4e60 mov x0, x20\n4e64 bl 0xac08 ; _objc_release\n4e68 mov x0, #0x0\n4e6c bl 0xab54 ; _dispatch_semaphore_create\n4e70 sub x8, x29, #0xb0\n4e74 stur x0, [x8, #-0x100]\n4e78 bl 0x94bc\n4e7c mov w1, #0x21\n4e80 mov w2, #0x7\n4e84 bl 0xac50 ; _swift_allocObject\n4e88 mov x25, x0\n4e8c stp xzr, xzr, [x0, #0x10]\n4e90 mov w8, #0xff\n4e94 strb w8, [x0, #0x20]\n4e98 adrp x0, 0x14000\n4e9c add x0, x0, #0x5e0\n4ea0 adrp x1, 0xb000\n4ea4 add x1, x1, #0x3d0\n4ea8 bl 0x13f4\n4eac mov x8, sp\n4eb0 sub x9, x29, #0xb8\n4eb4 stur x8, [x9, #-0x100]\n4eb8 ldur x8, [x0, #-0x8]\n4ebc ldr x9, [x8, #0x40]\n4ec0 add x8, x9, #0xf\n4ec4 and x8, x8, #0xfffffffffffffff0\n4ec8 adrp x16, 0x10000\n4ecc ldr x16, [x16, #0x28]\n4ed0 blr x16\n4ed4 mov x9, sp\n4ed8 sub x24, x9, x8\n4edc mov sp, x24\n4ee0 mov x0, #0x0\n4ee4 bl 0xa920 ; _$sScPMa\n4ee8 mov x3, x0\n4eec ldur x8, [x0, #-0x8]\n4ef0 ldr x8, [x8, #0x38]\n4ef4 mov x0, x24\n4ef8 mov w1, #0x1\n4efc mov w2, #0x1\n4f00 blr x8\n4f04 mov x0, #0x0\n4f08 bl 0xa908 ; _$sScMMa\n4f0c mov x20, x0\n4f10 mov x0, x25\n4f14 bl 0xad70 ; _swift_retain\n4f18 mov x0, x23\n4f1c mov x1, x21\n4f20 bl 0x8ec0\n4f24 sub x8, x29, #0xb0\n4f28 ldur x0, [x8, #-0x100]\n4f2c bl 0xac14 ; _objc_retain\n4f30 mov x21, x0\n4f34 bl 0xa8fc ; _$sScM6sharedScMvgZ\n4f38 mov x20, x0\n4f3c adrp x0, 0x10000\n4f40 add x0, x0, #0xc98\n4f44 mov w1, #0x40\n4f48 mov w2, #0x7\n4f4c bl 0xac50 ; _swift_allocObject\n4f50 mov x2, x0\n4f54 str x20, [x0, #0x10]\n4f58 adrp x8, 0x10000\n4f5c ldr x8, [x8, #0x6f8]\n4f60 stp x8, x25, [x0, #0x18]\n4f64 sub x8, x29, #0xb0\n4f68 stur x23, [x8, #-0x100]\n4f6c sub x8, x29, #0xa8\n4f70 ldur x8, [x8, #-0x100]\n4f74 stp x23, x8, [x0, #0x28]\n4f78 str x21, [x0, #0x38]\n4f7c mov x0, x24\n4f80 adrp x1, 0xb000\n4f84 add x1, x1, #0x3e0\n4f88 bl 0x6e98\n4f8c bl 0xad64 ; _swift_release\n4f90 sub x8, x29, #0xb8\n4f94 ldur x8, [x8, #-0x100]\n4f98 mov sp, x8\n4f9c mov x20, x21\n4fa0 bl 0xa968 ; _$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF\n4fa4 mov x0, x26\n4fa8 mov x20, x19\n4fac bl 0x62a8\n4fb0 tbz w0, #0x0, 0x509c\n4fb4 ldrb w23, [x25, #0x20]\n4fb8 cmp w23, #0xff\n4fbc b.eq 0x509c\n4fc0 mov x28, x21\n4fc4 mov x8, x25\n4fc8 ldr x25, [x25, #0x10]\n4fcc sub x9, x29, #0xb8\n4fd0 stur x8, [x9, #-0x100]\n4fd4 ldr x27, [x8, #0x18]\n4fd8 cmp w23, #0x1\n4fdc b.ne 0x50f8\n4fe0 stur x25, [x29, #-0xa0]\n4fe4 mov w0, #0xf\n4fe8 mov x1, #0x0\n4fec mov x2, #0x0\n4ff0 mov w3, #0x12\n4ff4 mov x4, #0x0\n4ff8 mov x5, #0x0\n4ffc bl 0xa9b0 ; _$ss042_stdlib_isOSVersionAtLeastOrVariantVersiondE0yBi1_Bw_BwBwBwBwBwtF\n5000 mov x20, x0\n5004 mov x0, x25\n5008 mov x1, x27\n500c mov w2, #0x1\n5010 bl 0x9fc8\n5014 tbz w20, #0x0, 0x5040\n5018 adrp x0, 0x14000\n501c add x0, x0, #0x5e8\n5020 adrp x1, 0xb000\n5024 add x1, x1, #0x3e8\n5028 bl 0x13f4\n502c mov x1, x0\n5030 sub x0, x29, #0xa0\n5034 adrp x2, 0x10000\n5038 ldr x2, [x2, #0x480]\n503c bl 0xae00 ; _swift_willThrowTypedImpl\n5040 mov x0, x28\n5044 bl 0xac08 ; _objc_release\n5048 sub x8, x29, #0xb0\n504c ldur x0, [x8, #-0x100]\n5050 sub x8, x29, #0xa8\n5054 ldur x1, [x8, #-0x100]\n5058 bl 0x8d48\n505c sub x8, x29, #0xb8\n5060 ldur x0, [x8, #-0x100]\n5064 bl 0xad64 ; _swift_release\n5068 b 0x5624\n506c sub x0, x29, #0xa0\n5070 adrp x1, 0x14000\n5074 add x1, x1, #0x3d0\n5078 adrp x2, 0xa000\n507c add x2, x2, #0xfc0\n5080 bl 0xa08c\n5084 sub x8, x29, #0xa0\n5088 ldur x8, [x8, #-0x100]\n508c orr x1, x8, #0x8000000000000000\n5090 mov x0, #0x10\n5094 movk x0, #0xd000, lsl #48\n5098 b 0x4440\n509c sub x8, x29, #0xb0\n50a0 ldur x0, [x8, #-0x100]\n50a4 sub x8, x29, #0xa8\n50a8 ldur x1, [x8, #-0x100]\n50ac bl 0x8d48\n50b0 mov x0, x21\n50b4 bl 0xac08 ; _objc_release\n50b8 mov x0, x25\n50bc bl 0xad64 ; _swift_release\n50c0 sub x8, x29, #0x48\n50c4 ldur x0, [x8, #-0x100]\n50c8 sub x8, x29, #0x50\n50cc ldur x1, [x8, #-0x100]\n50d0 bl 0x8d48\n50d4 mov w25, #0x1\n50d8 adrp x24, 0x10000\n50dc ldr x24, [x24, #0x4a0]\n50e0 b 0x3cb4\n50e4 mov x20, x0\n50e8 bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n50ec mov x25, x0\n50f0 mov x0, x20\n50f4 b 0x43f4\n50f8 adrp x0, 0x14000\n50fc add x0, x0, #0x5f0\n5100 adrp x1, 0xb000\n5104 add x1, x1, #0x3f0\n5108 bl 0x13f4\n510c mov w1, #0x50\n5110 mov w2, #0x7\n5114 bl 0xac50 ; _swift_allocObject\n5118 mov x20, x0\n511c sub x8, x29, #0x90\n5120 ldur q0, [x8, #-0x100]\n5124 str q0, [x0, #0x10]\n5128 mov x9, x0\n512c mov x8, #0x6572\n5130 movk x8, #0x6563, lsl #16\n5134 movk x8, #0x7069, lsl #32\n5138 movk x8, #0x74, lsl #48\n513c str x8, [x9, #0x20]!\n5140 sub x8, x29, #0xc0\n5144 stur x9, [x8, #-0x100]\n5148 mov x8, #-0x1900000000000000\n514c str x8, [x0, #0x28]\n5150 mov x0, x25\n5154 mov x1, x27\n5158 mov x2, x23\n515c bl 0x9fc8\n5160 mov x0, x25\n5164 mov x1, x27\n5168 bl 0xa6bc ; _$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF\n516c mov x24, x0\n5170 stur xzr, [x29, #-0xa0]\n5174 sub x4, x29, #0xa0\n5178 sub x8, x29, #0x60\n517c ldur x0, [x8, #-0x100]\n5180 mov x2, x24\n5184 mov x3, #0x0\n5188 bl 0xae40\n518c mov x29, x29\n5190 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n5194 mov x21, x0\n5198 mov x0, x24\n519c bl 0xac08 ; _objc_release\n51a0 ldur x24, [x29, #-0xa0]\n51a4 cbz x21, 0x550c\n51a8 mov x0, x24\n51ac bl 0xac14 ; _objc_retain\n51b0 add x8, x20, #0x30\n51b4 mov x0, x21\n51b8 bl 0xa9a4 ; _$ss018_bridgeAnyObjectToB0yypyXlSgF\n51bc mov x0, x21\n51c0 bl 0xadb8 ; _swift_unknownObjectRelease\n51c4 mov x0, x20\n51c8 bl 0x999c\n51cc mov x21, x0\n51d0 mov x0, x20\n51d4 bl 0xad7c ; _swift_setDeallocating\n51d8 sub x8, x29, #0xc0\n51dc ldur x0, [x8, #-0x100]\n51e0 adrp x1, 0x14000\n51e4 add x1, x1, #0x5f8\n51e8 adrp x2, 0xb000\n51ec add x2, x2, #0x3f8\n51f0 bl 0xa08c\n51f4 mov x0, x20\n51f8 mov w1, #0x20\n51fc mov w2, #0x7\n5200 bl 0xaca4 ; _swift_deallocClassInstance\n5204 adrp x8, 0x10000\n5208 ldr x8, [x8, #0x500]\n520c add x2, x8, #0x8\n5210 mov x0, x21\n5214 adrp x1, 0x10000\n5218 ldr x1, [x1, #0x340]\n521c adrp x3, 0x10000\n5220 ldr x3, [x3, #0x348]\n5224 bl 0xa7f4 ; _$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF\n5228 mov x24, x0\n522c mov x0, x21\n5230 bl 0xac80 ; _swift_bridgeObjectRelease\n5234 stur xzr, [x29, #-0xa0]\n5238 sub x4, x29, #0xa0\n523c sub x8, x29, #0x60\n5240 ldur x0, [x8, #-0x100]\n5244 mov x2, x24\n5248 mov w3, #0x2\n524c bl 0xae80\n5250 mov x29, x29\n5254 bl 0xac20 ; _objc_retainAutoreleasedReturnValue\n5258 mov x20, x0\n525c mov x0, x24\n5260 bl 0xac08 ; _objc_release\n5264 ldur x0, [x29, #-0xa0]\n5268 bl 0xac14 ; _objc_retain\n526c cbz x20, 0x55c4\n5270 mov x0, x20\n5274 bl 0xa6c8 ; _$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ\n5278 sub x8, x29, #0x60\n527c stur x0, [x8, #-0x100]\n5280 mov x19, x1\n5284 sub x8, x29, #0xb0\n5288 ldur x0, [x8, #-0x100]\n528c sub x8, x29, #0xa8\n5290 ldur x1, [x8, #-0x100]\n5294 bl 0x8d48\n5298 mov x0, x28\n529c bl 0xac08 ; _objc_release\n52a0 mov x0, x25\n52a4 mov x1, x27\n52a8 mov x2, x23\n52ac bl 0x9930\n52b0 mov x0, x20\n52b4 bl 0xac08 ; _objc_release\n52b8 sub x8, x29, #0xb8\n52bc ldur x0, [x8, #-0x100]\n52c0 bl 0xad64 ; _swift_release\n52c4 adrp x0, 0x10000\n52c8 add x0, x0, #0xcb0\n52cc bl 0x9d28\n52d0 mov x23, x0\n52d4 mov x21, x1\n52d8 sub x8, x29, #0x60\n52dc ldur x8, [x8, #-0x100]\n52e0 stp x8, x19, [x29, #-0xf0]\n52e4 adrp x1, 0x10000\n52e8 ldr x1, [x1, #0x1f8]\n52ec stur x1, [x29, #-0x88]\n52f0 adrp x8, 0x10000\n52f4 ldr x8, [x8, #0x1e8]\n52f8 stur x8, [x29, #-0x80]\n52fc stp x0, x21, [x29, #-0xa0]\n5300 sub x0, x29, #0xa0\n5304 bl 0x1444\n5308 ldp x8, x25, [x0]\n530c lsr x9, x25, #62\n5310 cmp w9, #0x1\n5314 b.gt 0x53ec\n5318 cbnz w9, 0x546c\n531c lsr x9, x8, #8\n5320 sub x10, x29, #0x40\n5324 sturb w8, [x10, #-0x100]\n5328 lsr x10, x8, #16\n532c lsr x11, x8, #24\n5330 sub x12, x29, #0x3f\n5334 sturb w9, [x12, #-0x100]\n5338 sub x9, x29, #0x3e\n533c sturb w10, [x9, #-0x100]\n5340 lsr x9, x8, #32\n5344 lsr x10, x8, #40\n5348 sub x12, x29, #0x3d\n534c sturb w11, [x12, #-0x100]\n5350 sub x11, x29, #0x3c\n5354 sturb w9, [x11, #-0x100]\n5358 lsr x9, x8, #48\n535c lsr x8, x8, #56\n5360 sub x11, x29, #0x3b\n5364 sturb w10, [x11, #-0x100]\n5368 sub x10, x29, #0x3a\n536c sturb w9, [x10, #-0x100]\n5370 lsr x9, x25, #8\n5374 lsr x10, x25, #16\n5378 sub x11, x29, #0x39\n537c sturb w8, [x11, #-0x100]\n5380 sub x8, x29, #0x38\n5384 sturb w25, [x8, #-0x100]\n5388 lsr x8, x25, #24\n538c lsr x11, x25, #32\n5390 sub x12, x29, #0x37\n5394 sturb w9, [x12, #-0x100]\n5398 sub x9, x29, #0x36\n539c sturb w10, [x9, #-0x100]\n53a0 lsr x9, x25, #40\n53a4 lsr x10, x25, #48\n53a8 sub x12, x29, #0x35\n53ac sturb w8, [x12, #-0x100]\n53b0 sub x8, x29, #0x34\n53b4 sturb w11, [x8, #-0x100]\n53b8 sub x8, x29, #0x33\n53bc sturb w9, [x8, #-0x100]\n53c0 sub x8, x29, #0x140\n53c4 add x21, x8, w10, uxtb\n53c8 sub x8, x29, #0x60\n53cc ldur x0, [x8, #-0x100]\n53d0 mov x1, x19\n53d4 bl 0x8ec0\n53d8 sub x0, x29, #0x140\n53dc sub x20, x29, #0xf0\n53e0 mov x1, x21\n53e4 bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n53e8 b 0x5658\n53ec cmp w9, #0x2\n53f0 b.ne 0x54d8\n53f4 ldp x27, x28, [x8, #0x10]\n53f8 sub x8, x29, #0x60\n53fc ldur x0, [x8, #-0x100]\n5400 mov x1, x19\n5404 bl 0x8ec0\n5408 mov x0, x23\n540c mov x1, x21\n5410 bl 0x8ec0\n5414 and x20, x25, #0x3fffffffffffffff\n5418 bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n541c mov x24, x0\n5420 cbz x0, 0x5438\n5424 and x20, x25, #0x3fffffffffffffff\n5428 bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n542c subs x8, x27, x0\n5430 b.vs 0x5888\n5434 add x24, x8, x24\n5438 subs x27, x28, x27\n543c b.vc 0x54bc\n5440 b 0x5878\n5444 mov x21, x0\n5448 bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n544c mov x25, x0\n5450 mov x0, x21\n5454 bl 0xac08 ; _objc_release\n5458 mov x21, x25\n545c bl 0xadf4 ; _swift_willThrow\n5460 sub x8, x29, #0x78\n5464 stur xzr, [x8, #-0x100]\n5468 b 0x5628\n546c sxtw x28, w8\n5470 asr x8, x8, #32\n5474 subs x27, x8, x28\n5478 b.lt 0x587c\n547c sub x8, x29, #0x60\n5480 ldur x0, [x8, #-0x100]\n5484 mov x1, x19\n5488 bl 0x8ec0\n548c mov x0, x23\n5490 mov x1, x21\n5494 bl 0x8ec0\n5498 and x20, x25, #0x3fffffffffffffff\n549c bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n54a0 mov x24, x0\n54a4 and x20, x25, #0x3fffffffffffffff\n54a8 cbz x0, 0x5638\n54ac bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n54b0 subs x8, x28, x0\n54b4 b.vs 0x588c\n54b8 add x24, x8, x24\n54bc and x20, x25, #0x3fffffffffffffff\n54c0 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n54c4 cbz x24, 0x563c\n54c8 cmp x0, x27\n54cc csel x8, x0, x27, lt\n54d0 add x1, x8, x24\n54d4 b 0x5640\n54d8 sub x8, x29, #0x3a\n54dc stur xzr, [x8, #-0x100]\n54e0 sub x8, x29, #0x40\n54e4 stur xzr, [x8, #-0x100]\n54e8 sub x8, x29, #0x60\n54ec ldur x0, [x8, #-0x100]\n54f0 mov x1, x19\n54f4 bl 0x8ec0\n54f8 sub x0, x29, #0x140\n54fc sub x1, x29, #0x140\n5500 sub x20, x29, #0xf0\n5504 bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n5508 b 0x5658\n550c mov x0, x24\n5510 bl 0xac14 ; _objc_retain\n5514 mov x21, x0\n5518 mov x0, x24\n551c bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n5520 mov x19, x0\n5524 mov x0, x21\n5528 bl 0xac08 ; _objc_release\n552c mov x21, x19\n5530 bl 0xadf4 ; _swift_willThrow\n5534 mov x0, x25\n5538 mov x1, x27\n553c mov x2, x23\n5540 bl 0x9930\n5544 mov x0, x28\n5548 bl 0xac08 ; _objc_release\n554c sub x8, x29, #0xb0\n5550 ldur x0, [x8, #-0x100]\n5554 sub x8, x29, #0xa8\n5558 ldur x1, [x8, #-0x100]\n555c bl 0x8d48\n5560 sub x8, x29, #0xb8\n5564 ldur x0, [x8, #-0x100]\n5568 bl 0xad64 ; _swift_release\n556c ldr x0, [x20, #0x28]\n5570 bl 0xac80 ; _swift_bridgeObjectRelease\n5574 mov x0, x20\n5578 bl 0xad7c ; _swift_setDeallocating\n557c adrp x0, 0x14000\n5580 add x0, x0, #0x5f8\n5584 adrp x1, 0xb000\n5588 add x1, x1, #0x3f8\n558c bl 0x13f4\n5590 mov x2, x0\n5594 sub x8, x29, #0xc0\n5598 ldur x0, [x8, #-0x100]\n559c mov x1, #0x0\n55a0 bl 0xac5c ; _swift_arrayDestroy\n55a4 mov x0, x20\n55a8 mov w1, #0x20\n55ac mov w2, #0x7\n55b0 bl 0xaca4 ; _swift_deallocClassInstance\n55b4 sub x8, x29, #0x78\n55b8 stur xzr, [x8, #-0x100]\n55bc mov x25, x19\n55c0 b 0x5624\n55c4 mov x21, x0\n55c8 bl 0xa65c ; _$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF\n55cc mov x20, x0\n55d0 mov x0, x21\n55d4 bl 0xac08 ; _objc_release\n55d8 mov x21, x20\n55dc bl 0xadf4 ; _swift_willThrow\n55e0 sub x8, x29, #0xb0\n55e4 ldur x0, [x8, #-0x100]\n55e8 sub x8, x29, #0xa8\n55ec ldur x1, [x8, #-0x100]\n55f0 bl 0x8d48\n55f4 mov x0, x28\n55f8 bl 0xac08 ; _objc_release\n55fc mov x0, x25\n5600 mov x1, x27\n5604 mov x2, x23\n5608 bl 0x9930\n560c sub x8, x29, #0xb8\n5610 ldur x0, [x8, #-0x100]\n5614 bl 0xad64 ; _swift_release\n5618 sub x8, x29, #0x78\n561c stur xzr, [x8, #-0x100]\n5620 mov x25, x20\n5624 mov w28, #0x4\n5628 mov w27, #0x20\n562c sub x8, x29, #0x58\n5630 ldur x19, [x8, #-0x100]\n5634 b 0x4458\n5638 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n563c mov x1, #0x0\n5640 sub x20, x29, #0xf0\n5644 mov x0, x24\n5648 bl 0xa698 ; _$s10Foundation4DataV15_RepresentationO6append10contentsOfySW_tF\n564c mov x0, x23\n5650 mov x1, x21\n5654 bl 0x8d48\n5658 sub x0, x29, #0xa0\n565c bl 0x997c\n5660 ldp x27, x21, [x29, #-0xf0]\n5664 lsr x8, x21, #62\n5668 cmp w8, #0x1\n566c b.gt 0x5718\n5670 cbnz w8, 0x5754\n5674 mov x20, #0x0\n5678 sturb w27, [x29, #-0xa0]\n567c lsr x8, x27, #8\n5680 sturb w8, [x29, #-0x9f]\n5684 lsr x8, x27, #16\n5688 sturb w8, [x29, #-0x9e]\n568c lsr x8, x27, #24\n5690 sturb w8, [x29, #-0x9d]\n5694 lsr x8, x27, #32\n5698 sturb w8, [x29, #-0x9c]\n569c lsr x8, x27, #40\n56a0 sturb w8, [x29, #-0x9b]\n56a4 lsr x8, x27, #48\n56a8 sturb w8, [x29, #-0x9a]\n56ac lsr x8, x27, #56\n56b0 sturb w8, [x29, #-0x99]\n56b4 lsr x8, x21, #8\n56b8 sturb w21, [x29, #-0x98]\n56bc lsr x9, x21, #16\n56c0 sturb w8, [x29, #-0x97]\n56c4 lsr x8, x21, #24\n56c8 sturb w9, [x29, #-0x96]\n56cc lsr x9, x21, #32\n56d0 sturb w8, [x29, #-0x95]\n56d4 lsr x8, x21, #40\n56d8 sturb w9, [x29, #-0x94]\n56dc ubfx x23, x21, #48, #8\n56e0 sturb w8, [x29, #-0x93]\n56e4 cmp x20, x23\n56e8 b.ge 0x57b8\n56ec subs x2, x23, x20\n56f0 b.vs 0x5870\n56f4 sub x8, x29, #0xa0\n56f8 add x1, x8, x20\n56fc mov x0, x26\n5700 bl 0xae24 ; _write\n5704 cmp x0, #0x1\n5708 b.lt 0x57b8\n570c adds x20, x20, x0\n5710 b.vc 0x56e4\n5714 b 0x5874\n5718 cmp w8, #0x2\n571c b.ne 0x57b8\n5720 ldp x24, x25, [x27, #0x10]\n5724 and x20, x21, #0x3fffffffffffffff\n5728 bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n572c mov x23, x0\n5730 cbz x0, 0x5748\n5734 and x20, x21, #0x3fffffffffffffff\n5738 bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n573c subs x8, x24, x0\n5740 b.vs 0x5890\n5744 add x23, x8, x23\n5748 subs x24, x25, x24\n574c b.vc 0x5788\n5750 b 0x5880\n5754 sxtw x25, w27\n5758 asr x8, x27, #32\n575c subs x24, x8, x25\n5760 b.lt 0x5884\n5764 and x20, x21, #0x3fffffffffffffff\n5768 bl 0xa62c ; _$s10Foundation13__DataStorageC6_bytesSvSgvg\n576c mov x23, x0\n5770 and x20, x21, #0x3fffffffffffffff\n5774 cbz x0, 0x57a4\n5778 bl 0xa644 ; _$s10Foundation13__DataStorageC7_offsetSivg\n577c subs x8, x25, x0\n5780 b.vs 0x5894\n5784 add x23, x8, x23\n5788 and x20, x21, #0x3fffffffffffffff\n578c bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n5790 cbz x23, 0x57a8\n5794 cmp x0, x24\n5798 csel x8, x0, x24, lt\n579c add x1, x8, x23\n57a0 b 0x57ac\n57a4 bl 0xa638 ; _$s10Foundation13__DataStorageC7_lengthSivg\n57a8 mov x1, #0x0\n57ac mov x0, x23\n57b0 mov x2, x26\n57b4 bl 0x7034\n57b8 mov x0, x27\n57bc mov x1, x21\n57c0 bl 0x8d48\n57c4 sub x8, x29, #0x60\n57c8 ldur x0, [x8, #-0x100]\n57cc mov x1, x19\n57d0 bl 0x8d48\n57d4 mov w28, #0x4\n57d8 mov w27, #0x20\n57dc mov w25, #0x1\n57e0 adrp x24, 0x10000\n57e4 ldr x24, [x24, #0x4a0]\n57e8 sub x8, x29, #0x58\n57ec ldur x19, [x8, #-0x100]\n57f0 b 0x4af0\n57f4 ldur x8, [x29, #-0x60]\n57f8 adrp x9, 0x10000\n57fc ldr x9, [x9, #0x38]\n5800 ldr x9, [x9]\n5804 cmp x9, x8\n5808 b.ne 0x586c\n580c sub sp, x29, #0x50\n5810 ldp x29, x30, [sp, #0x50]\n5814 ldp x20, x19, [sp, #0x40]\n5818 ldp x22, x21, [sp, #0x30]\n581c ldp x24, x23, [sp, #0x20]\n5820 ldp x26, x25, [sp, #0x10]\n5824 ldp x28, x27, [sp], #0x60\n5828 ret\n582c brk #0x1\n5830 brk #0x1\n5834 brk #0x1\n5838 brk #0x1\n583c brk #0x1\n5840 brk #0x1\n5844 brk #0x1\n5848 brk #0x1\n584c brk #0x1\n5850 brk #0x1\n5854 brk #0x1\n5858 brk #0x1\n585c brk #0x1\n5860 brk #0x1\n5864 brk #0x1\n5868 brk #0x1\n586c bl 0xab0c ; ___stack_chk_fail\n5870 brk #0x1\n5874 brk #0x1\n5878 brk #0x1\n587c brk #0x1\n5880 brk #0x1\n5884 brk #0x1\n5888 brk #0x1\n588c brk #0x1\n5890 brk #0x1\n5894 brk #0x1"
+    ],
+    "_$sIegh_IeyBh_TR": [
+      22680,
+      22724,
+      "_$sIegh_IeyBh_TR:\n5898 stp x20, x19, [sp, #-0x20]!\n589c stp x29, x30, [sp, #0x10]\n58a0 add x29, sp, #0x10\n58a4 ldp x19, x20, [x0, #0x20]\n58a8 mov x0, x20\n58ac bl 0xad70 ; _swift_retain\n58b0 blr x19\n58b4 mov x0, x20\n58b8 ldp x29, x30, [sp, #0x10]\n58bc ldp x20, x19, [sp], #0x20\n58c0 b 0xad64 ; _swift_release"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_": [
+      27792,
+      27904,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_:\n6c90 orr x29, x29, #0x1000000000000000\n6c94 str x19, [sp, #-0x20]!\n6c98 stp x29, x30, [sp, #0x10]\n6c9c str x22, [sp, #0x8]\n6ca0 add x29, sp, #0x10\n6ca4 stp x5, x6, [x22, #0x20]\n6ca8 stp x3, x4, [x22, #0x10]\n6cac mov x0, #0x0\n6cb0 bl 0xa908 ; _$sScMMa\n6cb4 mov x19, x0\n6cb8 mov x20, x0\n6cbc bl 0xa8fc ; _$sScM6sharedScMvgZ\n6cc0 str x0, [x22, #0x30]\n6cc4 adrp x1, 0x10000\n6cc8 ldr x1, [x1, #0x6f8]\n6ccc mov x20, x0\n6cd0 mov x0, x19\n6cd4 bl 0xa8f0 ; _$sScA15unownedExecutorScevgTj\n6cd8 mov x8, x0\n6cdc mov x2, x1\n6ce0 stp x0, x1, [x22, #0x38]\n6ce4 adrp x0, 0x6000\n6ce8 add x0, x0, #0xd00\n6cec mov x1, x8\n6cf0 ldp x29, x30, [sp, #0x10]\n6cf4 ldr x19, [sp], #0x20\n6cf8 and x29, x29, #0xefffffffffffffff\n6cfc b 0xadac ; _swift_task_switch"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY0_": [
+      27904,
+      28008,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY0_:\n6d00 orr x29, x29, #0x1000000000000000\n6d04 str x19, [sp, #-0x20]!\n6d08 stp x29, x30, [sp, #0x10]\n6d0c str x22, [sp, #0x8]\n6d10 add x29, sp, #0x10\n6d14 bl 0xa340\n6d18 ldr x20, [x0]\n6d1c str x20, [x22, #0x48]\n6d20 adrp x8, 0xb000\n6d24 add x8, x8, #0x480\n6d28 ldr w19, [x8, #0x4]\n6d2c mov x0, x20\n6d30 bl 0xad70 ; _swift_retain\n6d34 mov x0, x19\n6d38 bl 0xad88 ; _swift_task_alloc\n6d3c str x0, [x22, #0x50]\n6d40 adrp x8, 0x6000\n6d44 add x8, x8, #0xd68\n6d48 stp x22, x8, [x0]\n6d4c ldp x8, x1, [x22, #0x18]\n6d50 mov x22, x0\n6d54 mov x0, x8\n6d58 ldp x29, x30, [sp, #0x10]\n6d5c ldr x19, [sp], #0x20\n6d60 and x29, x29, #0xefffffffffffffff\n6d64 b 0xa390"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TQ1_": [
+      28008,
+      28136,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TQ1_:\n6d68 orr x29, x29, #0x1000000000000000\n6d6c sub sp, sp, #0x40\n6d70 stp x24, x23, [sp, #0x8]\n6d74 stp x21, x19, [sp, #0x18]\n6d78 stp x29, x30, [sp, #0x30]\n6d7c str x22, [sp, #0x28]\n6d80 add x29, sp, #0x30\n6d84 mov x19, x1\n6d88 mov x21, x0\n6d8c ldr x24, [x22]\n6d90 stur x24, [x29, #-0x8]\n6d94 ldp x23, x0, [x24, #0x48]\n6d98 ldr x22, [x22]\n6d9c str x20, [x24, #0x58]\n6da0 bl 0xada0 ; _swift_task_dealloc\n6da4 mov x0, x23\n6da8 bl 0xad64 ; _swift_release\n6dac cbz x20, 0x6dc0\n6db0 ldp x1, x2, [x24, #0x38]\n6db4 adrp x0, 0x6000\n6db8 add x0, x0, #0xe40\n6dbc b 0x6dd0\n6dc0 stp x19, x21, [x24, #0x60]\n6dc4 ldp x1, x2, [x24, #0x38]\n6dc8 adrp x0, 0x6000\n6dcc add x0, x0, #0xde8\n6dd0 ldp x29, x30, [sp, #0x30]\n6dd4 ldp x21, x19, [sp, #0x18]\n6dd8 ldp x24, x23, [sp, #0x8]\n6ddc and x29, x29, #0xefffffffffffffff\n6de0 add sp, sp, #0x40\n6de4 b 0xadac ; _swift_task_switch"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY2_": [
+      28136,
+      28224,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY2_:\n6de8 orr x29, x29, #0x1000000000000000\n6dec sub sp, sp, #0x20\n6df0 stp x29, x30, [sp, #0x10]\n6df4 str x22, [sp, #0x8]\n6df8 add x29, sp, #0x10\n6dfc ldr x0, [x22, #0x30]\n6e00 bl 0xad64 ; _swift_release\n6e04 ldr x20, [x22, #0x28]\n6e08 ldr x8, [x22, #0x10]\n6e0c ldp x0, x1, [x8, #0x10]\n6e10 ldr q0, [x22, #0x60]\n6e14 ext.16b v0, v0, v0, #0x8\n6e18 str q0, [x8, #0x10]\n6e1c ldrb w2, [x8, #0x20]\n6e20 strb wzr, [x8, #0x20]\n6e24 bl 0x9930\n6e28 bl 0xa974 ; _$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF\n6e2c ldr x0, [x22, #0x8]\n6e30 ldp x29, x30, [sp, #0x10]\n6e34 and x29, x29, #0xefffffffffffffff\n6e38 add sp, sp, #0x20\n6e3c br x0"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY3_": [
+      28224,
+      28312,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TY3_:\n6e40 orr x29, x29, #0x1000000000000000\n6e44 str x19, [sp, #-0x20]!\n6e48 stp x29, x30, [sp, #0x10]\n6e4c str x22, [sp, #0x8]\n6e50 add x29, sp, #0x10\n6e54 ldr x19, [x22, #0x58]\n6e58 ldr x0, [x22, #0x30]\n6e5c bl 0xad64 ; _swift_release\n6e60 ldr x20, [x22, #0x28]\n6e64 ldr x8, [x22, #0x10]\n6e68 ldp x0, x1, [x8, #0x10]\n6e6c stp x19, xzr, [x8, #0x10]\n6e70 ldrb w2, [x8, #0x20]\n6e74 mov w9, #0x1\n6e78 strb w9, [x8, #0x20]\n6e7c bl 0x9930\n6e80 bl 0xa974 ; _$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF\n6e84 ldr x0, [x22, #0x8]\n6e88 ldp x29, x30, [sp, #0x10]\n6e8c ldr x19, [sp], #0x20\n6e90 and x29, x29, #0xefffffffffffffff\n6e94 br x0"
+    ],
+    "_$sScTss5NeverORs_rlE8priority9operationScTyxABGScPSg_xyYaYAcntcfCyt_Tt1g5": [
+      28312,
+      28724,
+      "_$sScTss5NeverORs_rlE8priority9operationScTyxABGScPSg_xyYaYAcntcfCyt_Tt1g5:\n6e98 stp x26, x25, [sp, #-0x50]!\n6e9c stp x24, x23, [sp, #0x10]\n6ea0 stp x22, x21, [sp, #0x20]\n6ea4 stp x20, x19, [sp, #0x30]\n6ea8 stp x29, x30, [sp, #0x40]\n6eac add x29, sp, #0x40\n6eb0 sub sp, sp, #0x20\n6eb4 mov x19, x2\n6eb8 mov x21, x1\n6ebc mov x22, x0\n6ec0 adrp x0, 0x14000\n6ec4 add x0, x0, #0x5e0\n6ec8 adrp x1, 0xb000\n6ecc add x1, x1, #0x3d0\n6ed0 bl 0x13f4\n6ed4 ldur x8, [x0, #-0x8]\n6ed8 ldr x9, [x8, #0x40]\n6edc add x8, x9, #0xf\n6ee0 and x8, x8, #0xfffffffffffffff0\n6ee4 adrp x16, 0x10000\n6ee8 ldr x16, [x16, #0x28]\n6eec blr x16\n6ef0 mov x9, sp\n6ef4 sub x20, x9, x8\n6ef8 mov sp, x20\n6efc mov x0, x22\n6f00 mov x1, x20\n6f04 bl 0xa03c\n6f08 mov x0, #0x0\n6f0c bl 0xa920 ; _$sScPMa\n6f10 mov x22, x0\n6f14 ldur x24, [x0, #-0x8]\n6f18 ldr x8, [x24, #0x30]\n6f1c mov x0, x20\n6f20 mov w1, #0x1\n6f24 mov x2, x22\n6f28 blr x8\n6f2c cmp w0, #0x1\n6f30 b.ne 0x6f94\n6f34 adrp x1, 0x14000\n6f38 add x1, x1, #0x5e0\n6f3c adrp x2, 0xb000\n6f40 add x2, x2, #0x3d0\n6f44 mov x0, x20\n6f48 bl 0xa08c\n6f4c mov w22, #0x1c00\n6f50 ldr x24, [x19, #0x10]\n6f54 cbz x24, 0x6fbc\n6f58 ldr x23, [x19, #0x18]\n6f5c mov x0, x24\n6f60 bl 0xad04 ; _swift_getObjectType\n6f64 mov x25, x0\n6f68 mov x0, x24\n6f6c bl 0xadc4 ; _swift_unknownObjectRetain\n6f70 mov x20, x24\n6f74 mov x0, x25\n6f78 mov x1, x23\n6f7c bl 0xa8f0 ; _$sScA15unownedExecutorScevgTj\n6f80 mov x20, x0\n6f84 mov x23, x1\n6f88 mov x0, x24\n6f8c bl 0xadb8 ; _swift_unknownObjectRelease\n6f90 b 0x6fc4\n6f94 bl 0xa914 ; _$sScP8rawValues5UInt8Vvg\n6f98 mov x23, x0\n6f9c ldr x8, [x24, #0x8]\n6fa0 mov x0, x20\n6fa4 mov x1, x22\n6fa8 blr x8\n6fac mov w22, #0x1c00\n6fb0 bfxil x22, x23, #0, #8\n6fb4 ldr x24, [x19, #0x10]\n6fb8 cbnz x24, 0x6f58\n6fbc mov x20, #0x0\n6fc0 mov x23, #0x0\n6fc4 adrp x0, 0x10000\n6fc8 add x0, x0, #0xce8\n6fcc mov w1, #0x20\n6fd0 mov w2, #0x7\n6fd4 bl 0xac50 ; _swift_allocObject\n6fd8 mov x4, x0\n6fdc stp x21, x19, [x0, #0x10]\n6fe0 orr x8, x23, x20\n6fe4 cbz x8, 0x6ff8\n6fe8 stp xzr, xzr, [x29, #-0x60]\n6fec sub x1, x29, #0x60\n6ff0 stp x20, x23, [x29, #-0x50]\n6ff4 b 0x6ffc\n6ff8 mov x1, #0x0\n6ffc adrp x8, 0x10000\n7000 ldr x8, [x8, #0x508]\n7004 adrp x3, 0xb000\n7008 add x3, x3, #0x438\n700c add x2, x8, #0x8\n7010 mov x0, x22\n7014 bl 0xad94 ; _swift_task_create\n7018 sub sp, x29, #0x40\n701c ldp x29, x30, [sp, #0x40]\n7020 ldp x20, x19, [sp, #0x30]\n7024 ldp x22, x21, [sp, #0x20]\n7028 ldp x24, x23, [sp, #0x10]\n702c ldp x26, x25, [sp], #0x50\n7030 ret"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CfD": [
+      28936,
+      28976,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CfD:\n7108 stp x29, x30, [sp, #-0x10]!\n710c mov x29, sp\n7110 ldp x0, x1, [x20, #0x10]\n7114 ldrb w2, [x20, #0x20]\n7118 bl 0x9930\n711c mov x0, x20\n7120 mov w1, #0x21\n7124 mov w2, #0x7\n7128 ldp x29, x30, [sp], #0x10\n712c b 0xaca4 ; _swift_deallocClassInstance"
+    ],
+    "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5": [
+      28976,
+      29076,
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5:\n7130 orr x29, x29, #0x1000000000000000\n7134 sub sp, sp, #0x30\n7138 str x19, [sp, #0x10]\n713c stp x29, x30, [sp, #0x20]\n7140 str x22, [sp, #0x18]\n7144 add x29, sp, #0x20\n7148 mov x20, x2\n714c mov x19, x0\n7150 ldp w8, w0, [x1]\n7154 sxtw x8, w8\n7158 add x1, x8, x1\n715c str x1, [sp, #0x8]\n7160 bl 0xad88 ; _swift_task_alloc\n7164 mov x8, x0\n7168 str x0, [x22, #0x10]\n716c adrp x9, 0x7000\n7170 add x9, x9, #0x194\n7174 stp x22, x9, [x0]\n7178 mov x0, x19\n717c mov x22, x8\n7180 ldp x1, x19, [sp, #0x8]\n7184 ldp x29, x30, [sp, #0x20]\n7188 and x29, x29, #0xefffffffffffffff\n718c add sp, sp, #0x30\n7190 br x1"
+    ],
+    "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TQ0_": [
+      29076,
+      29140,
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TQ0_:\n7194 orr x29, x29, #0x1000000000000000\n7198 sub sp, sp, #0x20\n719c stp x29, x30, [sp, #0x10]\n71a0 str x22, [sp, #0x8]\n71a4 add x29, sp, #0x10\n71a8 ldr x8, [x22]\n71ac stur x8, [x29, #-0x8]\n71b0 ldr x0, [x8, #0x10]\n71b4 ldr x22, [x22]\n71b8 bl 0xada0 ; _swift_task_dealloc\n71bc ldr x0, [x22, #0x8]\n71c0 mov x20, #0x0\n71c4 ldp x29, x30, [sp, #0x10]\n71c8 and x29, x29, #0xefffffffffffffff\n71cc add sp, sp, #0x20\n71d0 br x0"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfcyyYbcfU3_TA": [
+      36848,
+      36928,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfcyyYbcfU3_TA:\n8ff0 sub sp, sp, #0x40\n8ff4 stp x20, x19, [sp, #0x20]\n8ff8 stp x29, x30, [sp, #0x30]\n8ffc add x29, sp, #0x30\n9000 add x0, x20, #0x10\n9004 add x1, sp, #0x8\n9008 mov x2, #0x0\n900c mov x3, #0x0\n9010 bl 0xac74 ; _swift_beginAccess\n9014 add x0, x20, #0x10\n9018 bl 0xade8 ; _swift_weakLoadStrong\n901c cbz x0, 0x9030\n9020 mov x20, x0\n9024 bl 0x3c00\n9028 mov x0, x20\n902c bl 0xad64 ; _swift_release\n9030 ldp x29, x30, [sp, #0x30]\n9034 ldp x20, x19, [sp, #0x20]\n9038 add sp, sp, #0x40\n903c ret"
+    ],
+    "_block_copy_helper": [
+      36928,
+      36948,
+      "_block_copy_helper:\n9040 ldr x8, [x1, #0x28]\n9044 ldr q0, [x1, #0x20]\n9048 str q0, [x0, #0x20]\n904c mov x0, x8\n9050 b 0xad70 ; _swift_retain"
+    ],
+    "_block_destroy_helper": [
+      36948,
+      36956,
+      "_block_destroy_helper:\n9054 ldr x0, [x0, #0x28]\n9058 b 0xad64 ; _swift_release"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CMa": [
+      38076,
+      38108,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF3BoxL_CMa:\n94bc stp x29, x30, [sp, #-0x10]!\n94c0 mov x29, sp\n94c4 adrp x0, 0x14000\n94c8 add x0, x0, #0x558\n94cc bl 0xabfc ; _objc_opt_self\n94d0 mov x1, #0x0\n94d4 ldp x29, x30, [sp], #0x10\n94d8 ret"
+    ],
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TA": [
+      40744,
+      40844,
+      "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyFyyYacfU_TA:\n9f28 orr x29, x29, #0x1000000000000000\n9f2c str x23, [sp, #-0x30]!\n9f30 stp x21, x19, [sp, #0x8]\n9f34 stp x29, x30, [sp, #0x20]\n9f38 str x22, [sp, #0x18]\n9f3c add x29, sp, #0x20\n9f40 ldp x19, x21, [x20, #0x20]\n9f44 ldp x23, x20, [x20, #0x30]\n9f48 adrp x8, 0xb000\n9f4c ldr w0, [x8, #0x3dc]\n9f50 bl 0xad88 ; _swift_task_alloc\n9f54 str x0, [x22, #0x10]\n9f58 adrp x8, 0x9000\n9f5c add x8, x8, #0xf8c\n9f60 stp x22, x8, [x0]\n9f64 mov x22, x0\n9f68 mov x3, x19\n9f6c mov x4, x21\n9f70 mov x5, x23\n9f74 mov x6, x20\n9f78 ldp x29, x30, [sp, #0x20]\n9f7c ldp x21, x19, [sp, #0x8]\n9f80 ldr x23, [sp], #0x30\n9f84 and x29, x29, #0xefffffffffffffff\n9f88 b 0x6c90"
+    ],
+    "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TATQ0_": [
+      40844,
+      40904,
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TATQ0_:\n9f8c orr x29, x29, #0x1000000000000000\n9f90 sub sp, sp, #0x20\n9f94 stp x29, x30, [sp, #0x10]\n9f98 str x22, [sp, #0x8]\n9f9c add x29, sp, #0x10\n9fa0 ldr x8, [x22]\n9fa4 stur x8, [x29, #-0x8]\n9fa8 ldr x0, [x8, #0x10]\n9fac ldr x22, [x22]\n9fb0 bl 0xada0 ; _swift_task_dealloc\n9fb4 ldr x0, [x22, #0x8]\n9fb8 ldp x29, x30, [sp, #0x10]\n9fbc and x29, x29, #0xefffffffffffffff\n9fc0 add sp, sp, #0x20\n9fc4 br x0"
+    ],
+    "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TA": [
+      41200,
+      41312,
+      "_$sxIeAgHr_xs5Error_pIegHrzo_s8SendableRzs5NeverORs_r0_lTRyt_Tg5TA:\na0f0 orr x29, x29, #0x1000000000000000\na0f4 str x23, [sp, #-0x30]!\na0f8 stp x21, x19, [sp, #0x8]\na0fc stp x29, x30, [sp, #0x20]\na100 str x22, [sp, #0x18]\na104 add x29, sp, #0x20\na108 mov x19, x0\na10c ldp x21, x20, [x20, #0x10]\na110 adrp x23, 0xb000\na114 add x23, x23, #0x430\na118 ldr w0, [x23, #0x4]\na11c bl 0xad88 ; _swift_task_alloc\na120 mov x8, x0\na124 str x0, [x22, #0x10]\na128 adrp x9, 0x9000\na12c add x9, x9, #0xf8c\na130 stp x22, x9, [x0]\na134 ldrsw x9, [x23]\na138 add x3, x9, x23\na13c mov x0, x19\na140 mov x22, x8\na144 mov x1, x21\na148 mov x2, x20\na14c ldp x29, x30, [sp, #0x20]\na150 ldp x21, x19, [sp, #0x8]\na154 ldr x23, [sp], #0x30\na158 and x29, x29, #0xefffffffffffffff\na15c br x3"
+    ]
+  },
+  "bytes": {
+    "46048": "48ebffff20000000",
+    "46136": "b8ecffff20000000",
+    "46128": "00bdffff20000000",
+    "44864": "0000004200000000",
+    "67704": "0000000000000000300000000000000040900000000010005490000000001000c4ba000000001000",
+    "47812": "7638403f3000"
+  },
+  "data_imports": {
+    "65568": "__NSConcreteStackBlock"
+  },
+  "rebases": {
+    "67720": 36928,
+    "67728": 36948,
+    "67736": 47812
+  },
+  "initial": [
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfC",
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC7processAcA0dF7ProcessV_tKcfc",
+    "_$s18MentraBluetoothSDK24NimoMacResourceTransportC5serve33_773440369502A451042A3B7EF2A1D29DLLyyF"
+  ],
+  "provenance": {
+    "kind": "existing-no-effect-compiler-witness-not-app-qualification",
+    "binaryPath": "/tmp/nimo-mac-proof-witness/libPeer.dylib",
+    "dwarfPath": "/tmp/nimo-mac-proof-witness/libPeer.dSYM/Contents/Resources/DWARF/libPeer.dylib",
+    "binarySha256": "7bcc883725d2b7cc94911e4b559afb82b82b9b9f6cf4a1eb2f9b561689c10325",
+    "dwarfSha256": "dee901f7194d717708530c0ac76269f3e1a9a7ba08dca673b439479560699549",
+    "extractor": "xcrun nm -anU <dwarf>; xcrun swift-demangle --compact (stdin); xcrun llvm-objdump --macho --indirect-symbols <binary>; xcrun llvm-objdump --disassemble --arch=arm64 --no-show-raw-insn --start-address=<exactentry> --stop-address=<nextentry> <binary>",
+    "normalization": "nimo_symbol_sections.normalize_window; only exact import-table annotations retained; descriptor bytes read from actual file-backed Mach-O segments",
+    "scope": "Native transport compiled previously with Foundation and no-effect fixture/process/clock collaborators; fixture is not a shipped archive/capability or hardware evidence.",
+    "headerEvidence": "Actual delivered descriptor40 bytes, flags8 bytes, block signature6 bytes; xcrun dyld_info -fixups exact slots10888/10890/10898 resolved to9040/9054/bac4. Chained pointer bits are retained raw and never masked into addresses.",
+    "dataImportEvidence": "Actual llvm-objdump --macho --indirect-symbols DATA_CONST,__got slot0x10020 __NSConcreteStackBlock, separate from code stub imports."
+  }
+}

@@ -95,9 +95,23 @@ jobs:
           [[ "$actual" == "${{ inputs.source_commit }}" ]]
           echo "tag=$actual" >> "$GITHUB_OUTPUT"
 
+      - name: Render shared policy from the exact release source
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: >-
+          bun release-tooling/.github/scripts/render-cloud-v2-config.mjs
+          --source-root .
+          --environment "${{ inputs.deployment_environment }}"
+          > cloud-v2-rendered-config.json
+
       - name: Setup Porter CLI
-        if: inputs.dry_run != true
         uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Validate rendered Porter configuration
+        working-directory: cloud-v2
+        run: |
+          config="${{ steps.target.outputs.porter_config }}"
+          porter apply validate -f "${config#cloud-v2/}"
 
       - name: Validate Cloud V2 source and Porter configuration
         if: inputs.dry_run
@@ -110,9 +124,7 @@ jobs:
           bun run typecheck
           config="${{ steps.target.outputs.porter_config }}"
           config="${config#cloud-v2/}"
-          [[ -s "$config" ]]
-          grep --fixed-strings --line-regexp "version: v2" "$config"
-          grep --fixed-strings --line-regexp "name: $PORTER_APP_NAME" "$config"
+          [[ -s "$config" && -s "${config%.yaml}.overrides.yaml" ]]
 
       - name: Deploy exact Cloud V2 source through Porter
         if: inputs.dry_run != true
@@ -133,9 +145,14 @@ jobs:
           # Porter's CLI tags the image from GITHUB_SHA when it runs inside
           # Actions, which is the dispatching commit rather than the frozen
           # source on a workflow_dispatch from main; the explicit flag wins.
+          # All environments carry the same frozen-source Runtime policy.
+          config="${config#cloud-v2/}"
+          overrides="${config%.yaml}.overrides.yaml"
+          [[ -s "$config" && -s "$overrides" ]]
           porter apply \
             -w \
-            -f "${config#cloud-v2/}" \
+            -f "$config" \
+            --helm-overrides-file "$overrides" \
             -x "${{ steps.target.outputs.porter_target }}" \
             --tag "$PORTER_TAG" \
             --cluster "$PORTER_CLUSTER" \
@@ -175,7 +192,7 @@ jobs:
           )
           jq -s . cloud-v2-checks.ndjson > cloud-v2-checks.json
 
-      - name: Read back the running deployment
+      - name: Require settled deployment and Runtime disruption policy
         if: inputs.dry_run != true
         env:
           PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
@@ -184,11 +201,38 @@ jobs:
           PORTER_HOST: https://dashboard.porter.run
           PORTER_PROJECT: ${{ steps.target.outputs.porter_project }}
           PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
-        run: >-
-          porter kubectl -- get pods
-          -l "porter.run/app-name=$PORTER_APP_NAME"
-          -o json
-          > cloud-v2-pods.json
+        run: |
+          set -euo pipefail
+          # Read every service and the PDB together on each bounded attempt.
+          # A pre-settlement Pod snapshot must never become release evidence.
+          for attempt in {1..12}; do
+            porter kubectl -- get pods \
+              -l "porter.run/app-name=$PORTER_APP_NAME" -o json \
+              > cloud-v2-pods.json
+            porter kubectl -- get deployments,poddisruptionbudgets \
+              -l "porter.run/app-name=$PORTER_APP_NAME" -o json \
+              > cloud-v2-runtime-policy-objects.json
+            if node release-tooling/.github/scripts/verify-runtime-deployment-policy.mjs \
+              --environment "${{ inputs.deployment_environment }}" \
+              --replicas "$(jq -er .runtimeReplicas cloud-v2-rendered-config.json)" \
+              --observations cloud-v2-runtime-policy-objects.json \
+              --output cloud-v2-runtime-policy-proof.json && \
+              node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs create \
+                --plan release-input/plan/release-plan.json \
+                --environment "${{ inputs.deployment_environment }}" \
+                --source-commit "${{ inputs.source_commit }}" \
+                --requested-tag "${{ steps.source.outputs.tag }}" \
+                --status deployed \
+                --pods cloud-v2-pods.json \
+                --checks cloud-v2-checks.json \
+                --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+                --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+                --output cloud-v2-deployment.json; then
+              break
+            fi
+            [[ "$attempt" -lt 12 ]] || exit 1
+            sleep 5
+          done
 
       - name: Record validation-only evidence
         if: inputs.dry_run
@@ -203,21 +247,6 @@ jobs:
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --output cloud-v2-deployment.json
 
-      - name: Record observed deployment evidence
-        if: inputs.dry_run != true
-        run: >-
-          node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs create
-          --plan release-input/plan/release-plan.json
-          --environment "${{ inputs.deployment_environment }}"
-          --source-commit "${{ inputs.source_commit }}"
-          --requested-tag "${{ steps.source.outputs.tag }}"
-          --status deployed
-          --pods cloud-v2-pods.json
-          --checks cloud-v2-checks.json
-          --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-          --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --output cloud-v2-deployment.json
-
       - name: Name result artifact
         id: artifact
         run: |
@@ -228,7 +257,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.name }}
-          path: cloud-v2-deployment.json
+          path: |
+            cloud-v2-deployment.json
+            cloud-v2-rendered-config.json
+            cloud-v2-runtime-policy-proof.json
+            ${{ steps.target.outputs.porter_config }}
+            cloud-v2/porter.${{ inputs.deployment_environment }}.overrides.yaml
           if-no-files-found: error
           retention-days: 90
 

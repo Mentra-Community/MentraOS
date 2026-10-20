@@ -47,7 +47,7 @@ test("standalone diagnostics use only read commands against the fixed Core resou
 set -euo pipefail
 echo "$*" >> "$COMMANDS"
 case "$*" in
-  *"--name ca-mentra-ent-ref-core "*"--resource-group rg-mentra-enterprise-reference "*) ;;
+  *"--name ca-mentra-ent-demo-dev-core "*"--resource-group rg-mentra-enterprise-demo-dev "*) ;;
   *) exit 99 ;;
 esac
 case "$*" in

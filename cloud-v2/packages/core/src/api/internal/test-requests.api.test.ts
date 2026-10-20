@@ -1,3 +1,4 @@
+import {testFrameworkBinding} from "../../testing/framework-fixtures";
 import {expect, test} from "bun:test";
 import {createTestRequestsApi} from "./test-requests.api";
 import {TestRequestConflict, TestRequestService, type HostAcceptance} from "../../services/test-request.service";
@@ -5,6 +6,20 @@ import {TestRequestConflict, TestRequestService, type HostAcceptance} from "../.
 const token = "synthetic-controller-credential-" + "x".repeat(32);
 const headers = {authorization: `Bearer ${token}`, "content-type": "application/json"};
 const digest = "a".repeat(64);
+test('preparation minimum is opt-in, authenticated and clears when withheld requests are withdrawn', async () => {
+  let minimum: number | null = 1085; const calls: string[] = [];
+  class Service extends TestRequestService {
+    override async queued() {return {requests: [], preparations: [], dispatchCompletions: [], nextCursor: null};}
+    override async preparationFrameworkMinimum(hostId: string) {calls.push(hostId); return minimum;}
+  }
+  const api = createTestRequestsApi(new Service(), () => JSON.stringify({mini: token}));
+  expect(await (await api.request('/', {headers})).json()).not.toHaveProperty('minimumFrameworkVersion'); expect(calls).toEqual([]);
+  expect(await (await api.request('/?preparationFrameworkMinimum=1&hostId=other', {headers})).json()).toMatchObject({minimumFrameworkVersion: 1085});
+  expect(calls).toEqual(['mini']); minimum = null;
+  expect(await (await api.request('/?preparationFrameworkMinimum=1', {headers})).json()).toMatchObject({minimumFrameworkVersion: null});
+  expect((await api.request('/?preparationFrameworkMinimum=2', {headers})).status).toBe(400);
+  expect((await api.request('/?preparationFrameworkMinimum=1')).status).toBe(401);
+});
 
 test("delivery scopes queue and acceptance to authenticated controller", async () => {
   const calls: unknown[] = [];
@@ -85,4 +100,17 @@ test("cancellation delivery scopes the host and acknowledges the exact cooperati
   expect(await response.json()).toEqual({cancellation});
   expect((await api.request("/r2/cancel-ack", {method: "POST", headers, body: JSON.stringify(cancellation)})).status).toBe(400);
   expect((await api.request("/r1/cancel-ack", {method: "POST", headers, body: JSON.stringify({...cancellation, hostId: "other"})})).status).toBe(409);
+});
+
+test('owned qualification read is host-authenticated, exact, bounded and explicitly acknowledged',async()=>{
+ const calls:unknown[]=[];
+ class Service extends TestRequestService {override async queued(){return {requests:[],preparations:[],dispatchCompletions:[],nextCursor:null};}}
+ const owned={jobId:'original',laneId:'mac',inputSha256:digest,ownerId:'passive-owner',generation:4,binding:testFrameworkBinding(),controller:{incarnation:'reporter',generation:1}};
+ const api=createTestRequestsApi(new Service(),()=>JSON.stringify({mini:token}),undefined,undefined,{async qualificationTargets(host,value){calls.push({host,value});return[];}});
+ const query=new URLSearchParams({qualificationTargets:'1',ownedQualification:JSON.stringify(owned)});
+ const result=await api.request(`/?${query}`,{headers});expect(result.status).toBe(200);expect(await result.json()).toMatchObject({ownedQualification:owned,qualificationTargets:[]});
+ expect(calls).toEqual([{host:'mini',value:owned}]);
+ expect((await api.request(`/?${query}`,{headers:{}})).status).toBe(401);
+ expect((await api.request('/?ownedQualification='+encodeURIComponent(JSON.stringify(owned)),{headers})).status).toBe(400);
+ expect((await api.request('/?qualificationTargets=1&ownedQualification='+encodeURIComponent(JSON.stringify({...owned,hostId:'other'})),{headers})).status).toBe(400);
 });

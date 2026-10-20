@@ -14,7 +14,6 @@ jest.mock("@/contexts/ThemeContext", () => ({useAppTheme: () => ({themed: jest.f
 jest.mock("@/services/deployment", () => ({deploymentStore: {getActive: () => ({kind: "consumer"})}}))
 jest.mock("@/services/deployment/glassesPolicy", () => ({isGlassesModelAllowedByDeployment: () => true}))
 jest.mock("@/utils/pairing/preparePairingScan", () => ({preparePairingScan: jest.fn()}))
-jest.mock("@/utils/pairing/securePairingFeature", () => ({isMentraLiveSecurePairingEnabled: () => false}))
 jest.mock("@/utils/getGlassesImage", () => ({getAr99DisplayName: jest.fn(), getAr99ImageSource: jest.fn()}))
 jest.mock("@/constants/appConfig", () => ({CDN_BASE_URL: ""}))
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))

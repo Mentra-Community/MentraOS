@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics
 import com.mentra.bluetoothsdk.streaming.StreamSessionState
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
@@ -364,6 +366,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startScan(model: DeviceModel) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { startScan(model) }) return
+        if (!NimoResourceDiagnostics.allowManagerConnect(model.deviceType)) return
         if (model != DeviceModel.SIMULATED) {
             requireBluetoothReady("scan for glasses")
         }
@@ -470,11 +474,13 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connect(device: Device, options: ConnectOptions = ConnectOptions()) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connect(device, options) }) return
+        if (!NimoResourceDiagnostics.allowManagerConnect(device.model.deviceType, device.name)) return
         if (device.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
         val isController = ControllerTypes.ALL.contains(device.model.deviceType)
-        if (options.cancelExistingConnectionAttempt) {
+        if (options.cancelExistingConnectionAttempt && !NimoResourceDiagnostics.preserveCapturedScan(device.model.deviceType, device.name)) {
             if (isController) {
                 deviceManager.disconnectController()
             } else {
@@ -511,16 +517,18 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connectDefault(options: ConnectOptions = ConnectOptions()) {
+        if (NimoResourceDiagnostics.dispatchCapturedEntry { connectDefault(options) }) return
         val defaultDevice =
             currentDefaultDevice()
                 ?: throw BluetoothSdkException(
                     "default_device_missing",
                     "Set a default glasses device before calling connectDefault.",
                 )
+        if (!NimoResourceDiagnostics.allowManagerConnect(defaultDevice.model.deviceType, defaultDevice.name)) return
         if (defaultDevice.model != DeviceModel.SIMULATED) {
             requireBluetoothReady("connect to glasses")
         }
-        if (options.cancelExistingConnectionAttempt) {
+        if (options.cancelExistingConnectionAttempt && !NimoResourceDiagnostics.preserveCapturedScan(defaultDevice.model.deviceType, defaultDevice.name)) {
             cancelConnectionAttempt()
         }
         deviceManager.connectDefault()
@@ -638,6 +646,14 @@ class MentraBluetoothSdk private constructor(
             setting = "gallery_server",
             updateStore = {},
             send = { requestId -> deviceManager.sendGalleryServerEnabled(requestId, enabled) },
+        )
+
+    /** Disable a stock action while retaining touch events. Reset by BES on BLE disconnect. */
+    suspend fun setTouchGestureDefaultBehaviorEnabled(gesture: TouchGesture, enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "touch_gesture_default",
+            updateStore = {},
+            send = { requestId -> deviceManager.sendTouchGestureDefaultBehaviorEnabled(requestId, gesture, enabled) },
         )
 
     suspend fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent =
@@ -1111,8 +1127,9 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun setWifiAdbState(enabled: Boolean) {
-        deviceManager.setWifiAdbState(enabled)
+    @JvmOverloads
+    fun setWifiAdbState(enabled: Boolean, expectedBluetoothMac: String? = null) {
+        deviceManager.setWifiAdbState(enabled, expectedBluetoothMac)
     }
 
     fun setSystemTime(timestampMs: Long) {
@@ -2094,6 +2111,7 @@ class MentraBluetoothSdk private constructor(
                         BluetoothError(
                             code = "pair_failure",
                             message = data["error"] as? String ?: data.toString(),
+                            failureCode = data["code"] as? String,
                         )
                     )
                 }

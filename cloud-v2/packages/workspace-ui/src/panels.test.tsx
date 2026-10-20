@@ -26,7 +26,7 @@ import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
 import { WorkspacePicker } from "./components/workspace-picker";
-import { DeleteSection, LeaveSection, WorkspaceSettingsPanel } from "./components/settings-panel";
+import { deleteRefusalToShow, DeleteSection, LeaveSection, WorkspaceSettingsPanel } from "./components/settings-panel";
 import { invitationPreviewQuery } from "./queries";
 import {
   AUDIT_EVENTS,
@@ -473,6 +473,73 @@ describe("settings panel", () => {
       <DeleteSection workspaceName={WORKSPACE_NAME} busy={false} error={new WorkspaceApiError(403, "forbidden", "forbidden")} onDelete={() => {}} />,
     );
     expect(deleted).toMatch(/Delete workspace<\/button><\/form><p role="alert"[^>]*>You do not have permission to do that.<\/p><\/section>$/);
+  });
+
+  test("a workspace a service holds says why it cannot be deleted, where the delete is, and offers no delete", () => {
+    const { api } = offlineApi();
+    const held = { ...detailFor("owner"), deletionHolds: [{ service: "store", reason: "owns_miniapps", count: 3 }] };
+    const markup = renderSeeded(
+      api,
+      { detail: held },
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} deleteNotice="Host notice about deleting." />,
+    );
+    const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
+    expect(section).toContain(
+      "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+    );
+    // The reason names the confirmation field and the button, both disabled; the host's notice about what
+    // deleting does waits until deleting is possible.
+    const reasonId = /<p id="([^"]+)"[^>]*>This workspace still owns/.exec(section)?.[1];
+    expect(reasonId).toBeTruthy();
+    expect(section).toMatch(new RegExp(`<input[^>]*aria-describedby="${reasonId}"[^>]*disabled=""`));
+    expect(section).toMatch(new RegExp(`<button[^>]*aria-describedby="${reasonId}"[^>]*disabled=""[^>]*>Delete workspace</button>`));
+    expect(section).not.toContain("Host notice about deleting.");
+    // Once the miniapps are gone, the person checks again here rather than reloading the page.
+    expect(section).toMatch(/<button[^>]*>Check again<\/button>/);
+
+    // An organization admin sees the same: holds bind everyone.
+    const admin = renderSeeded(
+      api,
+      { detail: { ...organizationAdminDetail(), deletionHolds: held.deletionHolds } },
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+    expect(admin).toContain("This workspace still owns 3 published miniapps.");
+
+    // Without holds (or from a server that predates them) nothing is said and the form works as before.
+    for (const detail of [{ ...detailFor("owner"), deletionHolds: [] }, detailFor("owner")]) {
+      const free = renderSeeded(api, { detail }, <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />);
+      expect(free).not.toContain("still owns");
+      expect(free).not.toContain("Check again");
+      expect(free).not.toMatch(/<input[^>]*aria-labelledby="[^"]+"[^>]*disabled=""/);
+    }
+  });
+
+  test("a delete refused because a service holds the workspace says why in words", () => {
+    const refused = new WorkspaceApiError(409, "workspace_has_holds", "workspace_has_holds", [
+      { service: "store", reason: "owns_miniapps", count: 1 },
+    ]);
+    const markup = renderToStaticMarkup(
+      <DeleteSection workspaceName={WORKSPACE_NAME} busy={false} error={refused} onDelete={() => {}} />,
+    );
+    expect(markup).toContain(
+      'role="alert"',
+    );
+    expect(markup).toContain("This workspace still owns 1 published miniapp. Delete it in the Developer Console first.");
+  });
+
+  test("a refusal for holds stops showing once a later look-up of the workspace has replaced it", () => {
+    const held = new WorkspaceApiError(409, "workspace_has_holds", "held", [{ service: "store", reason: "owns_miniapps", count: 1 }]);
+    const submittedAt = 1_000;
+    // While the workspace is held, the note says it; the refusal would only repeat it.
+    expect(deleteRefusalToShow(held, { held: true, submittedAt, detailUpdatedAt: 2_000 })).toBeNull();
+    // Looked up again after the refusal (Check again, focus) and no longer held: the refusal is stale.
+    expect(deleteRefusalToShow(held, { held: false, submittedAt, detailUpdatedAt: 2_000 })).toBeNull();
+    // Not looked up since (the refetch failed): the refusal is the only word on why.
+    expect(deleteRefusalToShow(held, { held: false, submittedAt, detailUpdatedAt: 500 })).toBe(held);
+    // Every other refusal stays until the next attempt.
+    const forbidden = new WorkspaceApiError(403, "forbidden", "forbidden");
+    expect(deleteRefusalToShow(forbidden, { held: false, submittedAt, detailUpdatedAt: 2_000 })).toBe(forbidden);
+    expect(deleteRefusalToShow(null, { held: false, submittedAt: 0, detailUpdatedAt: 0 })).toBeNull();
   });
 
   test("every field has an accessible name: the name field and the delete confirmation", () => {

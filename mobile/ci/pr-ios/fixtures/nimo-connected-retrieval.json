@@ -1,0 +1,181 @@
+{
+  "scope": "Optimized representative fixed-service expression only; not complete app or hardware qualification",
+  "source": "import Foundation\nimport CoreBluetooth\n\nfinal class Discovery {\n    @inline(never)\n    func retrieve(_ central: CBCentralManager) -> [CBPeripheral] {\n        central.retrieveConnectedPeripherals(withServices: [CBUUID(string: \"00007033-0000-1000-8000-00805F9B34FB\")])\n    }\n}\n",
+  "command": "xcrun swiftc -O -emit-library -module-name DiscoveryProof -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk Discovery.swift -o libDiscovery.dylib",
+  "executableSha256": "f3c1b94c2b4ad6b2c0c95af904522c5eda875cd0e2387c221b70454d768046ed",
+  "body": "retrieve:\ndc8 stp x24, x23, [sp, #-0x40]!\ndcc stp x22, x21, [sp, #0x10]\ndd0 stp x20, x19, [sp, #0x20]\ndd4 stp x29, x30, [sp, #0x30]\ndd8 add x29, sp, #0x30\nddc mov x19, x0\nde0 adrp x0, 0x8000\nde4 add x0, x0, #0xa0\nde8 adrp x1, 0x1000\ndec add x1, x1, #0xb0\ndf0 bl 0xef4\ndf4 mov w1, #0x28\ndf8 mov w2, #0x7\ndfc bl 0x1014 ; _swift_allocObject\ne00 mov x20, x0\ne04 adrp x8, 0x1000\ne08 ldr q0, [x8, #0xa0]\ne0c str q0, [x0, #0x10]\ne10 adrp x8, 0x1000\ne14 add x8, x8, #0xf0\ne18 sub x8, x8, #0x20\ne1c orr x1, x8, #0x8000000000000000\ne20 mov x0, #0x24\ne24 movk x0, #0xd000, lsl #48\ne28 bl 0xfcc ; _$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF\ne2c mov x21, x0\ne30 adrp x22, 0x4000\ne34 add x22, x22, #0x8\ne38 ldr x0, [x22]\ne3c bl 0xff0 ; _objc_opt_self\ne40 mov x2, x21\ne44 bl 0x1060\ne48 mov x29, x29\ne4c bl 0x1008 ; _objc_retainAutoreleasedReturnValue\ne50 mov x23, x0\ne54 mov x0, x21\ne58 bl 0xffc ; _objc_release\ne5c str x23, [x20, #0x20]\ne60 adrp x1, 0x8000\ne64 add x1, x1, #0xa8\ne68 mov x0, #0x0\ne6c mov x2, x22\ne70 bl 0xf44\ne74 mov x1, x0\ne78 mov x0, x20\ne7c bl 0xfd8 ; _$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF\ne80 mov x21, x0\ne84 mov x0, x20\ne88 bl 0x1044 ; _swift_release\ne8c mov x0, x19\ne90 mov x2, x21\ne94 bl 0x1080\ne98 mov x29, x29\ne9c bl 0x1008 ; _objc_retainAutoreleasedReturnValue\nea0 mov x19, x0\nea4 mov x0, x21\nea8 bl 0xffc ; _objc_release\neac adrp x1, 0x8000\neb0 add x1, x1, #0xb0\neb4 adrp x2, 0x4000\neb8 add x2, x2, #0x0\nebc mov x0, #0x0\nec0 bl 0xf44\nec4 mov x1, x0\nec8 mov x0, x19\necc bl 0xfe4 ; _$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ\ned0 mov x20, x0\ned4 mov x0, x19\ned8 bl 0xffc ; _objc_release\nedc mov x0, x20\nee0 ldp x29, x30, [sp, #0x30]\nee4 ldp x20, x19, [sp, #0x20]\nee8 ldp x22, x21, [sp, #0x10]\neec ldp x24, x23, [sp], #0x40\nef0 ret",
+  "reads": {
+    "10a0:16": "01000000000000000300000000000000",
+    "10f0:37": "30303030373033332d303030302d313030302d383030302d30303830354639423334464200",
+    "1060:32": "210000f0214840f9100000f0101640f900021fd6200020d4200020d4200020d4",
+    "119c:16": "5555494457697468537472696e673a00",
+    "1080:32": "210000f0214c40f9100000f0101640f900021fd6200020d4200020d4200020d4",
+    "11ac:16": "7265747269657665436f6e6e65637465",
+    "11ac:42": "7265747269657665436f6e6e65637465645065726970686572616c735769746853657276696365733a00"
+  },
+  "imports": {
+    "0xfcc": "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF",
+    "0xfd8": "_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF",
+    "0xfe4": "_$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ",
+    "0xff0": "_objc_opt_self",
+    "0xffc": "_objc_release",
+    "0x1008": "_objc_retainAutoreleasedReturnValue",
+    "0x1014": "_swift_allocObject",
+    "0x1020": "_swift_deallocClassInstance",
+    "0x102c": "_swift_getObjCClassMetadata",
+    "0x1038": "_swift_getTypeByMangledNameInContext2",
+    "0x1044": "_swift_release",
+    "0x4000": "_OBJC_CLASS_$_CBPeripheral",
+    "0x4008": "_OBJC_CLASS_$_CBUUID",
+    "0x4010": "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF",
+    "0x4018": "_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF",
+    "0x4020": "_$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ",
+    "0x4028": "_objc_msgSend",
+    "0x4030": "_objc_opt_self",
+    "0x4038": "_objc_release",
+    "0x4040": "_objc_retainAutoreleasedReturnValue",
+    "0x4048": "_$ss23_ContiguousArrayStorageCMn",
+    "0x4050": "_swift_allocObject",
+    "0x4058": "_swift_deallocClassInstance",
+    "0x4060": "_swift_getObjCClassMetadata",
+    "0x4068": "_swift_getTypeByMangledNameInContext2",
+    "0x4070": "_swift_release"
+  },
+  "pointers": {
+    "0x40f0": 33016,
+    "0x8018": 4384,
+    "0x8060": 4384,
+    "0x8090": 4508,
+    "0x8098": 4524,
+    "0x80d8": 32768,
+    "0x80e8": 3980,
+    "0x80f8": 32952,
+    "0x8118": 32842,
+    "0x8138": 4428,
+    "0x8148": 3996
+  },
+  "sections": {
+    "__TEXT,__text": [
+      3528,
+      4044,
+      3528,
+      2147484672
+    ],
+    "__TEXT,__stubs": [
+      4044,
+      4176,
+      4044,
+      2147484680
+    ],
+    "__TEXT,__objc_stubs": [
+      4192,
+      4256,
+      4192,
+      2147484672
+    ],
+    "__TEXT,__const": [
+      4256,
+      4308,
+      4256,
+      0
+    ],
+    "__TEXT,__swift5_typeref": [
+      4308,
+      4326,
+      4308,
+      0
+    ],
+    "__TEXT,__cstring": [
+      4336,
+      4373,
+      4336,
+      2
+    ],
+    "__TEXT,__objc_classname": [
+      4384,
+      4415,
+      4384,
+      2
+    ],
+    "__TEXT,__constg_swiftt": [
+      4416,
+      4488,
+      4416,
+      0
+    ],
+    "__TEXT,__swift5_fieldmd": [
+      4488,
+      4504,
+      4488,
+      0
+    ],
+    "__TEXT,__swift5_types": [
+      4504,
+      4508,
+      4504,
+      0
+    ],
+    "__TEXT,__objc_methname": [
+      4508,
+      4566,
+      4508,
+      2
+    ],
+    "__TEXT,__unwind_info": [
+      4568,
+      4664,
+      4568,
+      0
+    ],
+    "__DATA_CONST,__got": [
+      16384,
+      16504,
+      16384,
+      6
+    ],
+    "__DATA_CONST,__const": [
+      16504,
+      16624,
+      16504,
+      0
+    ],
+    "__DATA_CONST,__objc_classlist": [
+      16624,
+      16632,
+      16624,
+      268435456
+    ],
+    "__DATA_CONST,__objc_imageinfo": [
+      16632,
+      16640,
+      16632,
+      0
+    ],
+    "__DATA,__objc_const": [
+      32768,
+      32912,
+      32768,
+      0
+    ],
+    "__DATA,__objc_selrefs": [
+      32912,
+      32928,
+      32912,
+      268435461
+    ],
+    "__DATA,__data": [
+      32928,
+      33104,
+      32928,
+      0
+    ]
+  },
+  "metadataCalls": [
+    3828,
+    3908
+  ],
+  "compiler": "Apple Swift 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)",
+  "compilerDefaultTarget": "arm64-apple-macosx26.0",
+  "sdkPath": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk",
+  "sourceSha256": "47f1d58bebe55fcaf7b969a5709ea5c7574d362755bd42663d6a7710c555b91f"
+}

@@ -803,7 +803,7 @@ No response.
 
 ### Spoken pairing code
 
-Mentra Live pairing mode speaks one serialized I2S WAV containing “Connect to your Mentra Live in the app. Your code is:” and the 4-character code. BES requests the whole phrase with `hm_spkcode` immediately and every 30 seconds. `hm_pairexit` plays “Pairing mode ended.” once when the firmware closes the pairing window.
+Mentra Live pairing mode speaks one serialized I2S WAV containing “Connect to your Mentra Live in the app. Your code is:” and the 4-character code. BES requests the whole phrase with `hm_spkcode` once when pairing starts, and again on a later three-press. It does not repeat on a timer. `hm_pairexit` plays “Pairing mode ended.” once when the firmware closes the pairing window. BES does not send `hm_pairexit` for a successful pair when “Connected” is the next prompt.
 
 Inbound K900 command from BES:
 
