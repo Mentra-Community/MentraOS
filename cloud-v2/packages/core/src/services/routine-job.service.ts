@@ -142,13 +142,20 @@ export const routineJobRepository: RoutineJobRepository = {
     if (!row.fleetCandidatePreparation || !value.settlement ||
       requestInputDigest((({settlement: _, ...v}) => v)(value)) !== requestInputDigest(row.fleetCandidatePreparation)) return null;
     // Settlement can finish after cancellation/deadline; it releases only this pending probe, never starts another one.
-    return await TestRequestModel.collection.findOneAndUpdate({requestId: row.requestId, fleetInputSha256: row.fleetInputSha256,
+    const filter = {requestId: row.requestId, fleetInputSha256: row.fleetInputSha256,
       fleetCandidatePreparation: row.fleetCandidatePreparation, fleetCandidatePreparations: row.fleetCandidatePreparations ?? {$exists: false},
       fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}, hostId: {$exists: false}},
-      {$unset: {fleetCandidatePreparation: ''}, $set: {fleetCandidatePreparations: [...row.fleetCandidatePreparations ?? [], value], updatedAt: now,
-        ...(value.settlement.outcome === 'qualified' && row.state === 'awaiting-runner' && !row.fleetCancellation && row.fleetDeadline > now
-          ? {fleetCandidateSelection: {hostId: value.hostId, laneId: value.laneId, targetInputSha256: value.targetInputSha256}} : {})}},
-      {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null;
+      update = {$unset: {fleetCandidatePreparation: ''}, $set: {fleetCandidatePreparations: [...row.fleetCandidatePreparations ?? [], value], updatedAt: now}},
+      options = {returnDocument: 'after' as const, writeConcern: testWriteConcern, timeoutMS: 5000};
+    if (value.settlement.outcome !== 'qualified') return await TestRequestModel.collection.findOneAndUpdate(filter, update, options) as unknown as StoredRoutineJob | null;
+    // Current request state, not a prior read, decides whether this positive may select a phone.
+    const selected = await TestRequestModel.collection.findOneAndUpdate({...filter, state: 'awaiting-runner',
+      fleetCancellation: {$exists: false}, hostCancellation: {$exists: false}, preparationCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+      {...update, $set: {...update.$set, fleetCandidateSelection: {hostId: value.hostId, laneId: value.laneId, targetInputSha256: value.targetInputSha256}}}, options);
+    if (selected) return selected as unknown as StoredRoutineJob;
+    return await TestRequestModel.collection.findOneAndUpdate({...filter, $or: [{state: {$ne: 'awaiting-runner'}},
+      {fleetCancellation: {$exists: true}}, {hostCancellation: {$exists: true}}, {preparationCancellation: {$exists: true}}, {fleetDeadline: {$lte: now}}]},
+      update, options) as unknown as StoredRoutineJob | null;
   },
   async selectedLanes(hostIds) {
     // Staged candidates can exist before the byte claim is acknowledged. Read only
