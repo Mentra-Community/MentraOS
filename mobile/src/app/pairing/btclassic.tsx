@@ -9,7 +9,8 @@ import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHist
 import {engine} from "@mentra/engine"
 import type {Device} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {cancelPendingPairing, routePairingKickoffFailure} from "@/utils/PairingUtils"
+import {showAlert} from "@/utils/AlertUtils"
+import {cancelPairingFromPairAudio, routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -80,12 +81,21 @@ export default function BtClassicPairingScreen() {
     goBack()
   }
 
-  const handleCancelPairing = async () => {
-    if (cancellingPairing.current) return
+  const confirmCancelPairing = async () => {
+    if (cancellingPairing.current || !device) return
     cancellingPairing.current = true
-    if (!(await cancelPendingPairing())) {
+    if (!(await cancelPairingFromPairAudio(device.name))) {
       cancellingPairing.current = false
     }
+  }
+
+  // Audio setup cannot be skipped: leaving Pair Audio cancels the pairing and unpairs the glasses.
+  const handleCancelPairing = () => {
+    if (cancellingPairing.current) return
+    showAlert(translate("pairing:cancelPairingConfirmTitle"), translate("pairing:cancelPairingConfirmMessage"), [
+      {text: translate("pairing:keepPairing"), style: "cancel"},
+      {text: translate("pairing:cancelPairing"), style: "destructive", onPress: () => void confirmCancelPairing()},
+    ])
   }
 
   const handleOpenSettings = async () => {

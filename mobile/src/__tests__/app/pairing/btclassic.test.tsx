@@ -204,7 +204,62 @@ describe("btclassic pairing screen", () => {
     expect(replace).not.toHaveBeenCalled()
   })
 
-  it("cancels the unfinished selection before returning Home and ignores late Classic readiness", async () => {
+  /** Presses the back arrow and returns the confirmation's buttons. */
+  const pressCancelArrow = (screen: ReturnType<typeof render>) => {
+    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    const call = (showAlert as jest.Mock).mock.calls.find(([title]) => title === "pairing:cancelPairingConfirmTitle")
+    expect(call).toBeTruthy()
+    return call![2] as {text: string; style?: string; onPress?: () => void}[]
+  }
+  const confirmCancel = async (screen: ReturnType<typeof render>) => {
+    const buttons = pressCancelArrow(screen)
+    const cancel = buttons.find((button) => button.style === "destructive")
+    expect(cancel?.text).toBe("pairing:cancelPairing")
+    await act(async () => cancel!.onPress!())
+  }
+  const pairSelectedGlasses = async (name = device.name) => {
+    await useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Mentra Live", false)
+    await useSettingsStore.getState().setSetting(SETTINGS.device_name.key, name, false)
+  }
+
+  it("asks before cancelling, and Keep pairing changes nothing", () => {
+    const screen = render(<BtClassicPairingScreen />)
+    expect(screen.queryByText("pairing:cancelPairing")).toBeNull()
+
+    const buttons = pressCancelArrow(screen)
+    const keep = buttons.find((button) => button.style === "cancel")
+    expect(keep?.text).toBe("pairing:keepPairing")
+    keep?.onPress?.()
+
+    expect(engine.glasses.unpair).not.toHaveBeenCalled()
+    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
+  })
+
+  it("unpairs the selected glasses when the attempt already paired them, then returns Home", async () => {
+    await pairSelectedGlasses()
+    const screen = render(<BtClassicPairingScreen />)
+
+    await confirmCancel(screen)
+
+    expect(engine.glasses.unpair).toHaveBeenCalledTimes(1)
+    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1)
+    expect(pushPrevious).not.toHaveBeenCalled()
+  })
+
+  it("never unpairs a different, earlier pairing", async () => {
+    await pairSelectedGlasses("MENTRA_LIVE_BLE_OLD")
+    const screen = render(<BtClassicPairingScreen />)
+
+    await confirmCancel(screen)
+
+    expect(engine.glasses.unpair).not.toHaveBeenCalled()
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
+    expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1)
+  })
+
+  it("abandons an attempt that never paired, and ignores late audio readiness while cancelling", async () => {
     let finishCleanup!: () => void
     ;(engine.pairing.abandonAttempt as jest.Mock).mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -213,31 +268,35 @@ describe("btclassic pairing screen", () => {
     )
     const screen = render(<BtClassicPairingScreen />)
 
-    expect(screen.queryByText("pairing:cancelPairing")).toBeNull()
-    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    const buttons = pressCancelArrow(screen)
+    act(() => buttons.find((button) => button.style === "destructive")!.onPress!())
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
     expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
     act(() => useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "connected"}}))
     expect(pushPrevious).not.toHaveBeenCalled()
+    // A second press while cancelling does nothing.
     fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
 
     await act(async () => finishCleanup())
     expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1)
+    expect(engine.glasses.unpair).not.toHaveBeenCalled()
     expect(engine.glasses.connect).not.toHaveBeenCalled()
     expect(engine.glasses.connectDefault).not.toHaveBeenCalled()
   })
 
   it("retains the screen and permits retry when cancellation fails", async () => {
-    ;(engine.pairing.abandonAttempt as jest.Mock).mockRejectedValueOnce(new Error("cleanup failed"))
+    await pairSelectedGlasses()
+    ;(engine.glasses.unpair as jest.Mock).mockRejectedValueOnce(new Error("unpair failed"))
     const screen = render(<BtClassicPairingScreen />)
-    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+
+    await confirmCancel(screen)
     await waitFor(() => expect(showAlert).toHaveBeenCalledWith("pairing:errorTitle", "pairing:cancelFailed"))
     expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
 
-    fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
+    await confirmCancel(screen)
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalledTimes(1))
-    expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(2)
+    expect(engine.glasses.unpair).toHaveBeenCalledTimes(2)
   })
 
   it("does not offer unfinished-pairing cancellation in a paired audio recovery flow", () => {

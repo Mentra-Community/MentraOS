@@ -85,7 +85,7 @@ Old Mentra Apps never send `phone_hello`, so they never receive the message. `pa
 ## Mentra App
 
 - **Loading screen.** Remove the `pairing_info` listener, the 5 s `pairing_info` timer, `autoAudio` and the 8 s timer. Once the target is ready: `connected` or `not_applicable` shows success; `needs_user` opens Pair Audio; `connecting` keeps the spinner. Pair failures (including `ios_forget_pairing`) are unchanged.
-- **Pair Audio.** Continues on its own when `audioSetup` becomes `connected`. There is no option to skip audio setup.
+- **Pair Audio.** Continues on its own when `audioSetup` becomes `connected`. There is no option to skip audio setup. The back arrow ("Cancel pairing") asks first ("Cancel pairing?" / "Your glasses will be unpaired from this phone." / Keep pairing, Cancel pairing), then unpairs the selected glasses through the SDK's `unpair` (the glasses forget this phone too) and returns Home. An attempt that never paired the selected glasses is only abandoned, and a different, earlier pairing is never unpaired. On iPhone the next pair of those glasses goes through "Forget the old pairing".
 - **Home.** On Mentra Live, `needs_user` shows the existing "Glasses audio disconnected" prompt (Ignore / Connect), and any other state dismisses it. The app-side 10 s grace is deleted.
 - `mobile/src/utils/pairing/pairAudio.ts` keeps only the route constant.
 
@@ -119,13 +119,10 @@ Old Mentra Apps never send `phone_hello`, so they never receive the message. `pa
   - iPhone pair on old firmware through Pair Audio to Home and an OTA.
   - Android pair on old firmware to an OTA.
   - Rolled-back unit on iPhone and Android.
-  - iPhone without a Classic bond on old firmware (left Pair Audio through its back arrow), OTA to secure BES: the glasses may boot unowned and open pairing, and the saved-glasses path can wait up to 150 s, longer than the 120 s BES restart timeout. If that reproduces, the SDK skips the pairing-mode pause for the saved glasses while an OTA restart is pending.
+  - iPhone without a Classic bond on old firmware (app restarted on Pair Audio, then Ignore on Home), OTA to secure BES: the glasses may boot unowned and open pairing, and the saved-glasses path can wait up to 150 s, longer than the 120 s BES restart timeout. If that reproduces, the SDK skips the pairing-mode pause for the saved glasses while an OTA restart is pending.
 
 ## Decisions
 
 - No option to skip audio setup in the pairing flow.
 - The `AVAudioSession` probe stays for firmware that does not send `classic_link` and is not used once it does.
-
-## Open question
-
-The Pair Audio back arrow ("Cancel pairing") returns Home with the glasses paired, which skips audio setup. Making it a real cancel calls the SDK's `forget`, which also sends `unpair` to the glasses; on iPhone the old Bluetooth pairing then has to be forgotten in Settings before the next pair.
+- Leaving Pair Audio cancels the pairing and unpairs the glasses after a confirmation.
