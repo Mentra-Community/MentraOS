@@ -4,7 +4,7 @@ import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BarChart3, BookOpen, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Users, X } from "lucide-react";
+import { AlertCircle, BarChart3, BookOpen, Bug, FileText, FlaskConical, History, KeyRound, RefreshCcw, ShieldCheck, Ticket, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import mentraLogo from "./assets/mentra-logo.svg";
 import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
 import { FleetPage, fleetHomeLocation, fleetLocation, normalizeFleetPath, readFleetPath } from "./pages/fleet";
+import { LicensesPage } from "./pages/licenses";
 import { OperatorKeysPage } from "./pages/operator-keys";
 import { WorkspacesPage } from "./pages/workspaces";
 import { loginHref, signOutOfAdminPortal } from "./lib/session";
@@ -106,6 +107,7 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
   { key: "system-health", label: "System health", icon: ShieldCheck },
   { key: "workspaces", label: "Workspaces", icon: Users },
+  { key: "licenses", label: "Licenses", icon: Ticket },
   { key: "operator-keys", label: "Operator keys", icon: KeyRound },
   { key: "audit", label: "Audit log", icon: History },
 ];
@@ -273,6 +275,7 @@ function AdminPage() {
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
     workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
+    licenses: { title: "Licenses", body: "Every license in this organization, workspace and personal: who holds it, its seats and what it is paid through." },
     "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
     audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile lookups." },
   };
@@ -339,6 +342,7 @@ function AdminPage() {
         />
       ) : null}
       {active === "workspaces" ? <WorkspacesPage /> : null}
+      {active === "licenses" ? <LicensesPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}
       {active === "audit" ? <AuditPage /> : null}
       <div className={["test-runs", "routine-catalog", "system-health"].includes(active) ? "testing-workspace" : undefined}>

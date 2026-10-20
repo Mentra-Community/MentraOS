@@ -18,6 +18,9 @@ export const WORKSPACE_CAPABILITIES = [
   "fleet.read",
   "fleet.devices.manage",
   "miniapps.assign",
+  "workspace.licenses.read",
+  "workspace.licenses.assign",
+  "workspace.billing.manage",
 ] as const
 export type WorkspaceCapability = (typeof WORKSPACE_CAPABILITIES)[number]
 
@@ -29,10 +32,11 @@ export const ORGANIZATION_CAPABILITIES = [
   "organization.testing.read",
   "organization.testing.manage",
   "organization.fleet.administer",
+  "organization.licenses.read",
 ] as const
 export type OrganizationCapability = (typeof ORGANIZATION_CAPABILITIES)[number]
 
-/** Scopes an operator key may carry; never workspace administration or Fleet administration. */
+/** Scopes an operator key may carry; never workspace administration, Fleet administration or licenses. */
 export const OPERATOR_KEY_SCOPES: readonly OrganizationCapability[] = [
   "organization.incidents.read",
   "organization.supportProfiles.read",
@@ -53,6 +57,9 @@ const ROLE_ADDITIONS: Record<WorkspaceRole, readonly WorkspaceCapability[]> = {
     "fleet.read",
     "fleet.devices.manage",
     "miniapps.assign",
+    "workspace.licenses.read",
+    "workspace.licenses.assign",
+    "workspace.billing.manage",
   ],
   owner: ["workspace.roles.managePrivileged", "workspace.delete"],
 }

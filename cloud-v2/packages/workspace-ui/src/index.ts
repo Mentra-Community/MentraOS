@@ -20,6 +20,7 @@ export {
 } from "./errors";
 export {
   invitationPreviewQuery,
+  licensesQuery,
   myInvitationsQuery,
   workspaceDetailQuery,
   workspaceKeys,
@@ -46,6 +47,7 @@ export {
   WorkspaceInviteDialog,
   WorkspacePendingInvitationsPanel,
 } from "./components/invitations-panel";
+export { productLabel, WorkspaceLicensesPanel } from "./components/licenses-panel";
 export { WorkspaceMembersPanel } from "./components/members-panel";
 export { WorkspacePicker } from "./components/workspace-picker";
 export { WorkspaceSettingsPanel } from "./components/settings-panel";

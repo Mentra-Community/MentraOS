@@ -20,7 +20,9 @@
  * at the same time end with exactly one owner.
  *
  * Memberships are never deleted: ending one keeps the row as history, and a
- * later re-join is a new row with a new `membershipId`. Every write that starts
+ * later re-join is a new row with a new `membershipId`. Ending one releases the
+ * license seats it holds in the same transaction (`license.service`), so a
+ * rejoined member has none. Every write that starts
  * a membership or changes its role appends the role to its `roleHistory` in the
  * same update, stamped with the workspace revision that write produced.
  *
@@ -53,6 +55,7 @@ import {
 } from "../../models/workspace-membership.model"
 import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
+import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} from "../licenses/license.service"
 import {isDeletedAccountId} from "../user.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {workspaceCreationPolicy} from "./organization"
@@ -285,7 +288,8 @@ export async function renameWorkspace(
 
 /**
  * Delete a workspace after confirming its name. Deleting ends every membership,
- * revokes every credential and pending invitation, bumps the authorization
+ * revokes every credential and pending invitation, ends the workspace's licenses
+ * and releases their seats (`endLicensesForOwner`), bumps the authorization
  * revision, and keeps the workspace row (`status: "deleted"`) so audit history
  * stays resolvable and its id is never reused. It records `workspace.deleted`.
  *
@@ -312,6 +316,7 @@ export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {
     )
     await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
     await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
+    await endLicensesForOwner(session, {type: "workspace", workspaceId}, "workspace_deleted", actor)
     await recordWorkspaceEvent(session, {
       workspaceId,
       action: "workspace.deleted",
@@ -508,8 +513,8 @@ export async function recoverOwnership(
 // --- Helpers ---------------------------------------------------------------
 // The exported ones (`isId`, `isWorkspaceRole`, `validateName`, `loadActiveWorkspace`, `actingRole`,
 // `requireMembershipManager`, `bumpRevision`, `touchWorkspace`, `endMembership`, `auditActor`) are shared
-// with `invitation.service`, `credential.service` and `account-deletion.service`, which follow the same
-// mutation shape. `deletionHoldsOf` is shared with `deletion-hold.service`.
+// with `invitation.service`, `credential.service`, `account-deletion.service` and `license.service`, which
+// follow the same mutation shape. `deletionHoldsOf` is shared with `deletion-hold.service`.
 
 /**
  * The workspace's deletion holds in the contract's shape, sorted by service (`count` only where the
@@ -690,9 +695,11 @@ export async function touchWorkspace(session: ClientSession, workspaceId: string
 
 /**
  * End a membership, revoke the credentials it created and the invitations it
- * sent, and record the audit event. The caller has already bumped the
- * workspace's revision in the same transaction. Ending closes the membership's
- * last `roleHistory` entry at `endedAt`, so nothing is appended to it.
+ * sent, release the license seats it holds (`seat.released`, reason
+ * `member_removed`, `member_left` or `account_deleted`), and record the audit
+ * event. The caller has already bumped the workspace's revision in the same
+ * transaction. Ending closes the membership's last `roleHistory` entry at
+ * `endedAt`, so nothing is appended to it.
  */
 export async function endMembership(
   session: ClientSession,
@@ -747,6 +754,9 @@ export async function endMembership(
       {session},
     )
   }
+
+  // A seat belongs to this membership: it ends with it, and a later membership of the same person starts with none.
+  await releaseSeatsForMembership(session, membership, seatReleaseReasonFor(reason), actor)
 
   await recordWorkspaceEvent(session, {
     workspaceId: workspace.workspaceId,

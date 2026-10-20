@@ -1,13 +1,13 @@
 /**
  * Signing and verifying the principal Core attaches to a request it forwards to the Fleet
- * integration. Core signs with {@link signForwardedPrincipal}; the receiver verifies with
+ * integration or to a portal module. Core signs with {@link signForwardedPrincipal}; the receiver verifies with
  * {@link verifyForwardedPrincipal}, which checks the service signature and the principal signature
  * against the same timestamp and secret before it decodes the principal.
  */
 import {createHmac, timingSafeEqual} from "node:crypto"
 import {ORGANIZATION_CAPABILITIES, type OrganizationCapability} from "./capabilities"
 import {SERVICE_HEADERS, verifyServiceRequest} from "./service-signature"
-import {FORWARDED_PRINCIPAL_HEADERS, FORWARDING_SERVICE, type FleetScope, type ForwardedPrincipal} from "./types"
+import {FORWARDED_PRINCIPAL_HEADERS, FORWARDING_SERVICE, type ForwardedPrincipal, type ForwardedScope} from "./types"
 
 const isBlank = (secret: string) => secret.trim().length === 0
 
@@ -32,7 +32,7 @@ export function signForwardedPrincipal(input: {secret: string; timestampMs: numb
 
 export interface ForwardedRequest {
   method: string
-  /** The URL path and query exactly as received; Core signs the path it sent, any Fleet path prefix included. */
+  /** The URL path and query exactly as received; Core signs the path it sent, any path prefix of the service's URL included. */
   pathWithQuery: string
   /** The body text exactly as received; `""` when there is none. */
   body: string
@@ -54,8 +54,8 @@ export interface VerifyForwardedPrincipalOptions {
  * the principal decodes to one of the {@link ForwardedPrincipal} shapes. Empty or whitespace-only
  * secrets are ignored.
  *
- * Which kinds a route accepts is the caller's decision: `/v1/client` serves phones and `/v1/admin`
- * users.
+ * Which kinds a route accepts is the caller's decision: Fleet's `/v1/client` serves phones, and its
+ * `/v1/admin` and a portal module's `/v1/portal` users.
  */
 export function verifyForwardedPrincipal(
   request: ForwardedRequest,
@@ -131,7 +131,7 @@ export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | nu
       const emailVerified = own(value, "emailVerified")
       const isOrganizationAdmin = own(value, "isOrganizationAdmin")
       const organizationCapabilities = parseOrganizationCapabilities(own(value, "organizationCapabilities"))
-      const scope = parseFleetScope(own(value, "scope"))
+      const scope = parseForwardedScope(own(value, "scope"))
       if (
         !isId(mentraUserId) ||
         !isNullableString(email) ||
@@ -149,11 +149,13 @@ export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | nu
   }
 }
 
-function parseFleetScope(value: unknown): FleetScope | null {
+function parseForwardedScope(value: unknown): ForwardedScope | null {
   if (!isRecord(value)) return null
   switch (own(value, "kind")) {
     case "organization":
       return {kind: "organization"}
+    case "person":
+      return {kind: "person"}
     case "workspace": {
       const workspaceId = own(value, "workspaceId")
       return isId(workspaceId) ? {kind: "workspace", workspaceId} : null

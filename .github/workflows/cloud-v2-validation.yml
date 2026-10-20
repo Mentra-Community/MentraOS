@@ -12,6 +12,7 @@ on:
       - ".dockerignore"
       - ".github/workflows/cloud-v2-validation.yml"
       - ".github/scripts/no-workos.test.mjs"
+      - ".github/scripts/no-stripe.test.mjs"
   workflow_dispatch:
 
 concurrency:
@@ -67,6 +68,9 @@ jobs:
       - name: Keep WorkOS out of Cloud V2
         run: node --test .github/scripts/no-workos.test.mjs
 
+      - name: Keep Stripe out of Cloud V2
+        run: node --test .github/scripts/no-stripe.test.mjs
+
       - name: Classify every Cloud V2 setting in the production release contract
         run: node --test .github/scripts/validate-production-cloud-config.test.mjs
 
@@ -110,7 +114,8 @@ jobs:
             websites/admin/src/components/signed-out.test.tsx \
             websites/admin/src/pages/workspaces.test.tsx \
             websites/admin/src/pages/operator-keys.test.tsx \
-            websites/admin/src/pages/fleet.test.tsx
+            websites/admin/src/pages/fleet.test.tsx \
+            websites/admin/src/pages/licenses.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -210,8 +215,12 @@ jobs:
             tests/workspaces-internal-api.integration.test.ts \
             tests/workspace-change-feed.integration.test.ts \
             tests/fleet-forwarding.integration.test.ts \
+            tests/portal-modules.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
             tests/account-deletion.integration.test.ts \
+            tests/licenses.integration.test.ts \
+            tests/license-features.integration.test.ts \
+            tests/admin-licenses.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
             tests/legacy-identity-claim.integration.test.ts \
             tests/legacy-miniapp-registry.integration.test.ts

@@ -226,7 +226,7 @@ export const USER_DELETED_ACTION = "user.deleted"
 // --- Forwarded principals (Core -> Fleet) ----------------------------------
 
 /**
- * The headers Core adds to a request it forwards to the Fleet integration, beyond the service
+ * The headers Core adds to a request it forwards to the Fleet integration or to a portal module, beyond the service
  * signature headers (`SERVICE_HEADERS`, with `x-mentra-service: core`). `principal` is the caller as
  * base64url JSON ({@link ForwardedPrincipal}); `principalSignature` is a base64url HMAC-SHA256,
  * keyed with the same secret as the service signature, over `<timestamp>\n<principal header>`.
@@ -241,14 +241,21 @@ export const FORWARDED_PRINCIPAL_HEADERS = {
 export const FORWARDING_SERVICE = "core"
 
 /**
- * What a signed-in person's Fleet request covers, decided by Core: the whole organization, or one
- * workspace (a team).
+ * What a signed-in person's forwarded request covers, decided by Core: the whole organization, one
+ * workspace (a team), or the person's own account.
  */
-export type FleetScope = {kind: "organization"} | {kind: "workspace"; workspaceId: string}
+export type ForwardedScope =
+  | {kind: "organization"}
+  | {kind: "workspace"; workspaceId: string}
+  | {kind: "person"}
+
+/** The scope under its first name, when Fleet was the only service Core forwarded to. */
+export type FleetScope = ForwardedScope
 
 /**
- * Who a forwarded request is from. Only people reach Fleet: `/v1/client` only ever receives `phone`
- * principals and `/v1/admin` only `user` principals.
+ * Who a forwarded request is from. Only people reach a service Core forwards to: Fleet's `/v1/client` only
+ * ever receives `phone` principals, and Fleet's `/v1/admin` and a portal module's `/v1/portal` only `user`
+ * principals.
  *
  * - `phone`: a signed-in phone session. `email` is the account's verified email, or null; it is a
  *   display attribute and never an identity key.
@@ -265,7 +272,7 @@ export type ForwardedPrincipal =
       emailVerified: boolean
       isOrganizationAdmin: boolean
       organizationCapabilities: OrganizationCapability[]
-      scope: FleetScope
+      scope: ForwardedScope
     }
 
 /**

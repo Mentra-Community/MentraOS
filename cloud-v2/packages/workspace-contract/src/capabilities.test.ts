@@ -43,6 +43,9 @@ describe("capabilitiesForRole", () => {
       "fleet.read",
       "fleet.devices.manage",
       "miniapps.assign",
+      "workspace.licenses.read",
+      "workspace.licenses.assign",
+      "workspace.billing.manage",
     ]
     const owner: WorkspaceCapability[] = [...admin, "workspace.roles.managePrivileged", "workspace.delete"]
     const expected: Record<WorkspaceRole, WorkspaceCapability[]> = {member, developer, admin, owner}
@@ -93,5 +96,21 @@ describe("operator key scopes", () => {
   test("organization.fleet.administer is an organization capability and not an operator key scope", () => {
     expect(ORGANIZATION_CAPABILITIES).toContain("organization.fleet.administer")
     expect(OPERATOR_KEY_SCOPES).not.toContain("organization.fleet.administer")
+  })
+
+  test("organization.licenses.read is an organization capability and not an operator key scope", () => {
+    expect(ORGANIZATION_CAPABILITIES).toContain("organization.licenses.read")
+    expect(OPERATOR_KEY_SCOPES).not.toContain("organization.licenses.read")
+  })
+})
+
+describe("license capabilities", () => {
+  test("Admins and Owners read licenses, assign seats and manage billing; Members and Developers do none of it", () => {
+    for (const capability of ["workspace.licenses.read", "workspace.licenses.assign", "workspace.billing.manage"] as const) {
+      expect({capability, member: capabilitiesForRole("member").has(capability)}).toEqual({capability, member: false})
+      expect({capability, developer: capabilitiesForRole("developer").has(capability)}).toEqual({capability, developer: false})
+      expect({capability, admin: capabilitiesForRole("admin").has(capability)}).toEqual({capability, admin: true})
+      expect({capability, owner: capabilitiesForRole("owner").has(capability)}).toEqual({capability, owner: true})
+    }
   })
 })

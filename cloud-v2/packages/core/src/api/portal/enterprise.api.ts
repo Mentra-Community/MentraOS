@@ -7,9 +7,11 @@
  * Core credentials get 403 and the admin portal's cookie authenticates nothing
  * here.
  *
- *  - `/me`: who is signed in, their enterprise org, and whether they may create a workspace;
+ *  - `/me`: who is signed in, their enterprise org, whether they may create a workspace, and which
+ *    portal modules to offer them (`modules`);
  *  - `/workspaces/*`: the workspace API (`workspaces.api.ts`), the same handlers
  *    `/api/workspaces` and `/api/admin/workspaces` serve;
+ *  - `/billing/*`: the billing portal module, forwarded to the Mentra Miniapp Store (`portal-modules.api.ts`);
  *  - `/org`, `/trusted-issuers`: enterprise orgs and their trusted issuers, owned
  *    by Core users (`mentraUserId`) and kept separate from workspaces.
  */
@@ -23,10 +25,12 @@ import {
 } from "../../services/enterprise/enterprise.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
+import { portalModuleAvailability } from "../../services/portal-modules/portal-modules";
 import { organizationView } from "../../services/workspaces/authorization.service";
 import { requireUserPrincipal, userPrincipal } from "../middleware/principal.middleware";
 import { createPortalAuthApi } from "../signin/portal-auth.api";
 import { createWorkspacesApi } from "../workspaces/workspaces.api";
+import { portalModuleApi } from "./portal-modules.api";
 
 const app = new Hono<AppEnv>();
 const enterprise = new EnterpriseService();
@@ -57,6 +61,7 @@ app.get("/health", c => c.json({ status: "ok", service: "cloud-core-portal" }));
 app.route("/auth", createPortalAuthApi("portal"));
 app.use("*", requireUserPrincipal("portal"));
 app.route("/workspaces", createWorkspacesApi());
+app.route("/billing", portalModuleApi("billing"));
 app.get("/me", getMe);
 app.get("/org", getOrg);
 app.put("/org", putOrg);
@@ -74,6 +79,8 @@ async function getMe(c: AppContext) {
     workspaceCreation: organizationView(userPrincipal(c)).workspaceCreation,
     onboardingRequired: org === null,
     org,
+    // Which portal modules this person is offered: installed, usable, and visible to them.
+    modules: portalModuleAvailability(userPrincipal(c)),
   });
 }
 

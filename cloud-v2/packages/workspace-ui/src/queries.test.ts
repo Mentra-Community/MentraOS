@@ -72,6 +72,34 @@ describe("workspaceMutationOptions", () => {
     expect(stale(client, workspaceKeys.detail(api, WORKSPACE_ID))).toBe(true);
   });
 
+  test("a license that changed under the caller (every seat taken, or gone) is read again, and the error still reaches them", async () => {
+    for (const changed of [
+      new WorkspaceApiError(409, "no_seats_available", "every seat of this license is assigned"),
+      new WorkspaceApiError(404, "license_not_found", "license not found"),
+    ]) {
+      const { api, client } = seeded();
+      client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), []);
+      const observer = new MutationObserver(
+        client,
+        workspaceMutationOptions(client, api, WORKSPACE_ID, async () => {
+          throw changed;
+        }),
+      );
+      expect(await observer.mutate(undefined).catch((e: unknown) => e)).toBe(changed);
+      expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    }
+  });
+
+  test("a success marks the workspace's licenses stale too, and another workspace's alone are left", async () => {
+    const { api, client } = seeded();
+    client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), []);
+    client.setQueryData(workspaceKeys.licenses(api, OTHER_ID), []);
+    const observer = new MutationObserver(client, workspaceMutationOptions(client, api, WORKSPACE_ID, async () => "done"));
+    await observer.mutate(undefined);
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    expect(stale(client, workspaceKeys.licenses(api, OTHER_ID))).toBe(false);
+  });
+
   test("any other failure leaves the cache alone", async () => {
     const { api, client } = seeded();
     for (const failure of [

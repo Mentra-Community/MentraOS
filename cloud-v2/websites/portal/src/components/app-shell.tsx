@@ -28,8 +28,12 @@ type AppShellProps = {
   switcher: ReactNode;
   nav: readonly NavGroup[];
   activeKey: string | null;
+  /** The sidebar navigation's name for assistive technology: "Workspace" for a workspace's sections, "Account" for the person's. */
+  navLabel?: string;
   /** Links to other Mentra sites, above the account footer. Each opens in a new tab. */
   links?: readonly NavItem[];
+  /** Pages of the person's own account that the account menu offers above Sign out ("Billing"). */
+  accountItems?: readonly NavItem[];
   /** The page header. Without a title there is no header (a full-page message), only the mobile menu bar. */
   title?: string;
   description?: string;
@@ -50,7 +54,9 @@ export function AppShell({
   switcher,
   nav,
   activeKey,
+  navLabel = "Workspace",
   links = [],
+  accountItems = [],
   title,
   description,
   headerAction,
@@ -115,7 +121,7 @@ export function AppShell({
         </div>
 
         <nav
-          aria-label="Workspace"
+          aria-label={navLabel}
           className="mt-5 flex-1 space-y-6 overflow-y-auto px-3 pb-4"
           onClick={event => closeOnNavigation(event, () => setMobileSidebarOpen(false))}
         >
@@ -167,7 +173,7 @@ export function AppShell({
           </ul>
         ) : null}
 
-        <AccountFooter userEmail={userEmail} onSignOut={onSignOut} signingOut={signingOut} />
+        <AccountFooter userEmail={userEmail} items={accountItems} onSignOut={onSignOut} signingOut={signingOut} />
       </aside>
 
       <div className="h-dvh overflow-y-auto overflow-x-hidden overscroll-contain md:pl-[264px]">
@@ -199,8 +205,24 @@ function closeOnNavigation(event: React.MouseEvent, close: () => void) {
   if (event.target instanceof Element && event.target.closest("a[href]")) close();
 }
 
-function AccountFooter({ userEmail, onSignOut, signingOut }: { userEmail: string; onSignOut?: () => void; signingOut?: boolean }) {
-  const [open, setOpen] = useState(false);
+/**
+ * The account at the bottom of the sidebar: who is signed in, and a menu with the person's own pages
+ * (`items`, such as Billing) above Sign out. `defaultOpen` opens the menu, for a render with no clicks.
+ */
+export function AccountFooter({
+  userEmail,
+  items = [],
+  onSignOut,
+  signingOut,
+  defaultOpen = false,
+}: {
+  userEmail: string;
+  items?: readonly NavItem[];
+  onSignOut?: () => void;
+  signingOut?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(ref, open, close);
@@ -209,6 +231,20 @@ function AccountFooter({ userEmail, onSignOut, signingOut }: { userEmail: string
     <div ref={ref} className="relative shrink-0 border-t px-4 py-3">
       {open ? (
         <div className="rounded-menu bg-popover shadow-menu absolute right-3 bottom-[66px] left-3 z-40 overflow-hidden border p-1.5">
+          {items.map(item => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.key}
+                href={item.href}
+                className="hover:bg-hover flex h-10 w-full items-center gap-3 rounded-full px-3.5 text-left text-[15px] font-semibold"
+                onClick={close}
+              >
+                <Icon className="size-4" />
+                {item.label}
+              </Link>
+            );
+          })}
           <button
             type="button"
             className="hover:bg-hover flex h-10 w-full items-center gap-3 rounded-full px-3.5 text-left text-[15px] font-semibold disabled:opacity-45"

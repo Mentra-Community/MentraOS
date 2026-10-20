@@ -18,7 +18,7 @@ Roles are cumulative: each holds everything the one before it holds.
 | --- | --- | --- | --- | --- |
 | `workspace.read`, `miniapps.access` | Yes | Yes | Yes | Yes |
 | `miniapps.publish`, `miniapps.credentials.create` | | Yes | Yes | Yes |
-| `workspace.members.read`, `workspace.members.manage`, `workspace.settings.manage`, `workspace.audit.read`, `workspace.credentials.revoke`, `fleet.read`, `fleet.devices.manage`, `miniapps.assign` | | | Yes | Yes |
+| `workspace.members.read`, `workspace.members.manage`, `workspace.settings.manage`, `workspace.audit.read`, `workspace.credentials.revoke`, `fleet.read`, `fleet.devices.manage`, `miniapps.assign`, `workspace.licenses.read`, `workspace.licenses.assign`, `workspace.billing.manage` | | | Yes | Yes |
 | `workspace.roles.managePrivileged`, `workspace.delete` | | | | Yes |
 
 - Admins invite, remove and change Members and Developers. Only Owners grant,
@@ -31,16 +31,19 @@ Roles are cumulative: each holds everything the one before it holds.
   `409 membership_changed`.
 - Membership rows are never deleted. Leaving or removal ends the membership and
   keeps it as history, with every role it held; rejoining starts a new one.
+- Every member sees the license seats they hold; Admins and Owners see every
+  license and assign its seats ([Licenses and seats](licenses.md)). Ending a
+  membership frees its seats, and deleting a workspace ends its licenses.
 
 **Organization Admins** are the people whose verified email is on
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.testing.read`,
-`organization.testing.manage`, `organization.fleet.administer`) and act as Owner
-in every workspace, which is how they recover a workspace whose Owners are gone.
-Recovery names an existing account; a deleted account is refused
-(`404 user_not_found`).
+`organization.testing.manage`, `organization.fleet.administer`,
+`organization.licenses.read`) and act as Owner in every workspace, which is how
+they recover a workspace whose Owners are gone. Recovery names an existing
+account; a deleted account is refused (`404 user_not_found`).
 
 ## The workspace portal
 
@@ -151,12 +154,14 @@ session authenticates only its own routes:
 | Route group | Who | Authenticates with |
 | --- | --- | --- |
 | `/api/portal/workspaces/*` | The workspace portal | Its session, or a bearer |
+| `/api/portal/billing/*` | The workspace portal | Its session, or a bearer; forwarded to the billing module ([Portal modules](portal-modules.md)) |
 | `/api/admin/workspaces/*`, `/api/admin/organization/*` | The admin portal | Its session, or a bearer |
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
 Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
-(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`) are for people; a key
+(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
+its seats, [Licenses and seats](licenses.md#seats)) are for people; a key
 gets 403. A workspace's detail says whether the caller is an Organization Admin
 (`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
 invitations, `target.name` for keys. Each checks
@@ -178,7 +183,12 @@ to write). `/api/admin/me` answers any caller with its capabilities and whether
 Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
 to the optional Fleet service for a person holding `organization.fleet.administer`
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
-The Store calls Core through a signed service API ([Store integration](store-integration.md)).
+The Store calls Core through a signed service API ([Store integration](store-integration.md)),
+and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
+`/api/portal/billing/*` forwards the workspace portal's Licenses & Billing requests
+to that module for a signed-in person, with the workspace or the person's own
+account as the scope Core decides ([Portal modules](portal-modules.md)).
+`/api/portal/me` says whether to offer it (`modules.billing`).
 
 ## Configuration
 
@@ -190,6 +200,7 @@ The Store calls Core through a signed service API ([Store integration](store-int
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
 | `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets by service (`store`, `fleet`), `{"store": ["<newest>", "<older>"], "fleet": ["<newest>"]}`. Unset: every service call is refused. |
 | `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
+| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Outside `CLOUD_CORE_ENVIRONMENT=prod` it is visible to Organization Admins only. See [Portal modules](portal-modules.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they
