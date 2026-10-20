@@ -88,10 +88,14 @@ class MentraLiveGlassesReadyBurstTest {
         assertEquals(2, inits())
     }
 
-    /** Runs `body` on a fresh MentraLive, counting SOC inits (one version request each). */
+    /**
+     * Runs `body` on a fresh MentraLive with a live link, counting SOC inits (one version
+     * request each). glasses_ready is only accepted on a live link.
+     */
     private fun withLive(body: (MentraLive, () -> Int) -> Unit) {
         Bridge.initialize(ApplicationProvider.getApplicationContext())
         val live = MentraLive()
+        MentraLive::class.java.getDeclaredField("isConnected").apply { isAccessible = true }.set(live, true)
         var inits = 0
         val sink = Bridge.addEventSink { type, event ->
             if (type == "log" && event["message"].toString().contains("Requesting version info from ASG client")) {
