@@ -118,6 +118,35 @@ test('canonical authority reader retains the existing lifecycle cursor with its 
  try{expect(await resourceReservationRepository.get(authority)).toEqual(host);expect(projection).toMatchObject({resourceLifecycleCursor:1,'snapshot.resourceLifecycle':1,laneControls:1,sequence:1,receivedAt:1})}finally{TestHostStateModel.findOne=original}
 });
 
+for(const order of ['grant-first','cancel-first'] as const)test(`waiting cancellation and granted generation reconcile one original in ${order} receipt order`,async()=>{
+ const core=hosts().get(authority)!;let records:ResourceControlRecord[]=[];
+ const repository:LaneControlRepository={get:async()=>({hostId:authority,laneControlVersion:0,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControls:structuredClone(records)}),replace:async(_id,_v,next)=>{records=structuredClone(next) as ResourceControlRecord[];return true}};
+ const service=new LaneControlsService(repository,()=>now,{detail:async()=>({generatedAt:at,subject:subject(),coverage:'canonical current'})}),input=(action:'reserve'|'release')=>({operationId:randomUUID(),hostId:authority,subject:{resourceId:id,subjectGeneration:7},expiresAt:now+120000,action,...(action==='reserve'?{purpose:'Original reservation'}:{reservation:{id:'waiting-original',generation:0}})});
+ const reserve=input('reserve');await service.submit(reserve,'alice');
+ const reservation=(state:'waiting'|'granted'|'released',generation:number)=>({id:'waiting-original',resourceId:id,generation,state,purpose:'Original reservation',requestedAt:at});
+ const ack=(command:ReturnType<typeof input>,state:'waiting'|'granted'|'released',generation:number)=>({operationId:command.operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(records.find(row=>row.command.operationId===command.operationId)!.command),completedAt:at,result:{status:'accepted' as const,reservation:reservation(state,generation)}});
+ const waiting=ack(reserve,'waiting',0);await service.exchange(authority,{schemaVersion:1,resourceControls:true,receipts:[waiting]});
+ const release=input('release');await service.submit(release,'alice');const granted=ack(reserve,'granted',9),returned=ack(release,'released',0);
+ await expect(service.exchange(authority,{schemaVersion:1,resourceControls:true,receipts:[ack(release,'released',9)]})).rejects.toThrow('requested action');
+ for(const receipt of order==='grant-first'?[granted,returned]:[returned,granted])await service.exchange(authority,{schemaVersion:1,resourceControls:true,receipts:[receipt]});
+ await service.exchange(authority,{schemaVersion:1,resourceControls:true,receipts:[waiting,granted]});
+ const controls=(await service.listResource(id,'alice')).controls;
+ expect(controls).toHaveLength(2);expect(controls.every(row=>row.receipt?.result.status==='accepted'&&row.receipt.result.reservation?.state==='released')).toBe(true);
+ core.laneControls=records;const rows=hosts();rows.set(authority,core);
+ const claim=new ResourceReservationsService({get:async host=>structuredClone(rows.get(host)??null),replace:async()=>true},()=>now);
+ expect((await claim.acquire(intent,'air')).status).toBe('reserved');
+ await service.submit(input('reserve'),'alice');expect(records).toHaveLength(3);
+});
+
+test('nonzero generation collisions remain unknown instead of reconciling another reservation',async()=>{
+ const core=hosts().get(authority)!,operator=createHash('sha256').update('admin-lane:alice').digest('hex'),make=(state:'granted'|'released',generation:number)=>{
+  const command={operationId:randomUUID(),hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:operator,expiresAt:now+120000,action:'reserve' as const,purpose:'Original reserve'};
+  return {command,receipt:{operationId:command.operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted' as const,reservation:{id:'same-original',resourceId:id,generation,state,purpose:command.purpose,requestedAt:at}}}};
+ };
+ const service=new LaneControlsService({get:async()=>({hostId:authority,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControls:[make('granted',9),make('released',10)]}),replace:async()=>{throw Error('No writes')}},()=>now,{detail:async()=>({generatedAt:at,subject:subject(),coverage:'current'})});
+ await expect(service.listResource(id,'alice')).rejects.toThrow('generation or terminal decision');
+});
+
 test('resource authority CAS includes manual control version so a concurrent operator intent wins before a new claim',async()=>{
  const host=hosts().get(authority)!,find=TestHostStateModel.findOneAndUpdate;let filter:unknown;
  const query={select(){return query},setOptions(){return query},lean:async()=>null};

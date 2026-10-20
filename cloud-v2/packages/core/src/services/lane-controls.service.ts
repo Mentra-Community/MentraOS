@@ -7,7 +7,7 @@ import {laneControlInputSchema, laneControlRecordSchema, laneControlReceiptSchem
   type LaneControlInput, type LaneControlView, type LaneControlRecord, type LaneControlsView,
   type ResourceControlInput, type ResourceControlRecord, type ResourceControlView, type ResourceControlsView} from '../types/lane-control.types'
 import {resourceLifecycleSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
-import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
+import {manualWithdrawalNeedsRestoration, resourceReservationIdentity, advanceResourceReservation} from '../types/resource-control-authority'
 import {ResourceLifecycleService} from './resource-lifecycle.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -307,21 +307,28 @@ function reconcileReservations(records: LaneControlRecord[]): LaneControlRecord[
 
 function currentResourceReservation(records: ResourceControlRecord[]) {
   const latest = new Map<string, NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
-  const rank = {waiting: 0, granted: 1, returning: 2, released: 3, cancelled: 3}
   for (const row of records) {
     const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
     const key=value&&reservationAuthorityKey(row,value);
-    if (value && key && (!latest.has(key) || rank[value.state] >= rank[latest.get(key)!.state])) latest.set(key, value)
+    if (value && key) {
+      const previous=latest.get(key),next=previous?advanceResourceReservation(previous,value):value;
+      if(!next)throw new TestRunError(409,'Resource reservation observations changed their original generation or terminal decision');
+      latest.set(key,next);
+    }
   }
   return [...latest.values()].find(value => ['waiting', 'granted', 'returning'].includes(value.state))
 }
 function reconcileControls(records: ControlRecord[]): ControlRecord[] {
-  const lanes = reconcileReservations(records.filter(isLane)), rank = {waiting: 0, granted: 1, returning: 2, released: 3, cancelled: 3},
+  const lanes = reconcileReservations(records.filter(isLane)),
     latest = new Map<string, NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
   for (const row of records.filter(isResource)) {
     const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
     const key=value&&reservationAuthorityKey(row,value);
-    if (value && key && (!latest.has(key) || rank[value.state] >= rank[latest.get(key)!.state])) latest.set(key, value)
+    if (value && key) {
+      const previous=latest.get(key),next=previous?advanceResourceReservation(previous,value):value;
+      if(!next)throw new TestRunError(409,'Resource reservation observations changed their original generation or terminal decision');
+      latest.set(key,next);
+    }
   }
   return records.map(row => {
     if (isLane(row)) return lanes.find(value => value.command.operationId === row.command.operationId)!
@@ -350,14 +357,13 @@ function reconcileResourceReceipt(row: ResourceControlRecord, receipt: NonNullab
     return prior
   }
   if (result.reservation) {
-    const old = prior.result.reservation, rank = {waiting: 0, granted: 1, returning: 2, released: 3, cancelled: 3}
+    const old = prior.result.reservation
     if (!old || old.id !== result.reservation.id || old.resourceId !== result.reservation.resourceId ||
-      old.purpose !== result.reservation.purpose || old.requestedAt !== result.reservation.requestedAt ||
-      old.generation !== 0 && old.generation !== result.reservation.generation)
+      old.purpose !== result.reservation.purpose || old.requestedAt !== result.reservation.requestedAt)
       throw new TestRunError(409, 'Resource reservation identity changed')
-    if (rank[result.reservation.state] < rank[old.state]) return prior
-    if (rank[old.state] === 3 && result.reservation.state !== old.state) throw new TestRunError(409, 'Terminal resource reservation changed')
-    return receipt
+    const next=advanceResourceReservation(old,result.reservation);
+    if(!next)throw new TestRunError(409,'Resource reservation generation or terminal decision changed');
+    return next===old?prior:receipt
   }
   if (result.check) {
     const old = prior.result.check
@@ -372,9 +378,8 @@ function reconcileResourceReceipt(row: ResourceControlRecord, receipt: NonNullab
 
 /** Reservation IDs are scoped to the original operator and lane-or-resource authority. */
 function reservationAuthorityKey(row: ControlRecord, reservation: {id:string;generation:number;purpose:string;requestedAt:string}) {
-  return requestInputDigest({hostId:row.command.hostId,operatorId:row.command.operatorId,
-    subject:isResource(row)?{resourceId:row.command.subject.resourceId}:{laneId:row.command.laneId},
-    id:reservation.id,generation:reservation.generation,purpose:reservation.purpose,requestedAt:reservation.requestedAt});
+  return resourceReservationIdentity({hostId:row.command.hostId,operatorId:row.command.operatorId,
+    subject:isResource(row)?{resourceId:row.command.subject.resourceId}:{laneId:row.command.laneId}}, reservation);
 }
 /** Admission reserves one delivery slot for every reservation that still needs its eventual return command. */
 function pendingReturnSlots(records: ControlRecord[]) {

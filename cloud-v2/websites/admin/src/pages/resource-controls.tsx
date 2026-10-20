@@ -6,25 +6,29 @@ import {useClock} from '../lib/use-clock'
 import type {ResourceControlInput, ResourceControlView, ResourceControlsView} from '../../../../packages/core/src/types/lane-control.types'
 import {resourceControlInputSchema} from '../../../../packages/core/src/types/lane-control.types'
 import type {ResourceLifecycleSubject} from '../../../../packages/core/src/types/resource-lifecycle.types'
+import {advanceResourceReservation, resourceReservationIdentity} from '../../../../packages/core/src/types/resource-control-authority'
 
 type Reservation = NonNullable<Extract<NonNullable<ResourceControlView['receipt']>['result'], {status: 'accepted'}>['reservation']>
 const activeStates = new Set(['waiting', 'granted', 'returning'])
-const rank = {waiting: 0, granted: 1, returning: 2, released: 3, cancelled: 3}
 export function resourceControlState(rows: ResourceControlView[], resourceId: string, hostId: string) {
   const controls = rows.filter(row => row.subject.resourceId === resourceId && row.hostId === hostId)
   const latest = new Map<string, Reservation>()
+  let conflicting: ResourceControlView | undefined
   for (const row of controls) {
     const receipt = row.receipt
     const valid = receipt?.hostId === hostId && receipt.operationId === row.operationId &&
       receipt.subject.resourceId === resourceId && receipt.subject.subjectGeneration === row.subject.subjectGeneration
     const reservation = valid && receipt?.result.status === 'accepted' ? receipt.result.reservation : undefined
-    if (reservation?.resourceId === resourceId && (!latest.has(reservation.id) || rank[reservation.state] >= rank[latest.get(reservation.id)!.state]))
-      latest.set(reservation.id, reservation)
+    if (reservation?.resourceId === resourceId) {
+      const key=resourceReservationIdentity({hostId,subject:{resourceId}},reservation),previous=latest.get(key),
+        next=previous?advanceResourceReservation(previous,reservation):reservation
+      if(next)latest.set(key,next);else conflicting=row
+    }
   }
   const validReceipt = (row: ResourceControlView) => row.receipt?.hostId === hostId && row.receipt.operationId === row.operationId &&
     row.receipt.subject.resourceId === resourceId && row.receipt.subject.subjectGeneration === row.subject.subjectGeneration
   const last = controls.filter(validReceipt).at(-1)?.receipt?.result
-  return {pending: controls.find(row => !validReceipt(row)),
+  return {pending: conflicting ?? controls.find(row => !validReceipt(row)),
     reservation: [...latest.values()].find(row => activeStates.has(row.state)),
     failure: last?.status === 'refused' ? last.reason : undefined,
     result: last}

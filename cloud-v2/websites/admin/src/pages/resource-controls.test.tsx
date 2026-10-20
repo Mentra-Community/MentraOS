@@ -39,6 +39,16 @@ test('out-of-order delivery cannot revive a returned operator reservation', () =
   expect(resourceControlState([control('released'), control('granted'), control('waiting')], 'shared-pair', 'air3').reservation).toBeUndefined()
   expect(resourceControlState([control('returning'), control('granted')], 'shared-pair', 'air3').reservation?.state).toBe('returning')
 })
+test('waiting zero generation and delayed grant remain one returned original while foreign nonzero generation stays blocked',()=>{
+ const waiting=control('waiting'),grant=control('granted'),returned=control('released')
+ if(waiting.receipt!.result.status==='accepted')waiting.receipt!.result.reservation!.generation=0
+ if(returned.receipt!.result.status==='accepted')returned.receipt!.result.reservation!.generation=0
+ for(const rows of [[waiting,grant,returned],[returned,grant,waiting]])expect(resourceControlState(rows,'shared-pair','air3').reservation).toBeUndefined()
+ const foreign=control('released');if(foreign.receipt!.result.status==='accepted')foreign.receipt!.result.reservation!.generation=9
+ const state=resourceControlState([grant,foreign],'shared-pair','air3');expect(state.pending).toBeDefined();expect(state.reservation?.state).toBe('granted')
+ const other=control('released');if(other.receipt!.result.status==='accepted')other.receipt!.result.reservation!.purpose='Different original purpose'
+ expect(resourceControlState([grant,other],'shared-pair','air3').reservation?.state).toBe('granted')
+})
 test('an accepted HTTP delivery record without a controller receipt remains pending', () => {
   const pending = {...control('waiting')}; delete pending.receipt
   expect(resourceControlState([pending], 'shared-pair', 'air3').pending?.operationId).toBe('waiting')
