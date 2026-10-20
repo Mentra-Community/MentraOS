@@ -53,11 +53,38 @@ test('exact existing dependency claim remains recoverable after new grants are w
  expect(await f.service.acquire(intent,'air')).toEqual(first);expect(f.writes()).toBe(1);
 });
 
+for(const state of ['unacknowledged','waiting','granted','returning','intended','active','unknown'] as const)test(`capability rollback retains original ${state} resource control and refuses a conflicting claim`,async()=>{
+ const f=fixture(),host=f.rows.get(authority)!,operationId=randomUUID(),reservation=['waiting','granted','returning'].includes(state);
+ host.snapshot.laneControls={schemaVersion:1,receipts:[]};
+ const command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'c'.repeat(64),expiresAt:now-1,
+  action:reservation?'reserve' as const:'check' as const,...(reservation?{purpose:'Original operator reservation'}:{})};
+ const result=reservation?{status:'accepted' as const,reservation:{id:'original',resourceId:id,generation:8,state:state as 'waiting'|'granted'|'returning',purpose:'Original operator reservation',requestedAt:at}}
+  :{status:'accepted' as const,check:{operationId,resourceId:id,generation:7,state:state as 'intended'|'active'|'unknown'}};
+ host.laneControls=[{command,...(state==='unacknowledged'?{}:{receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result}})}];
+ expect((await f.service.acquire(intent,'air')).status).toBe('waiting');expect(f.writes()).toBe(0);
+ expect(host.resourceReservations).toEqual([]);expect((host.laneControls as ResourceControlRecord[])[0]!.command.operationId).toBe(operationId);
+});
+
+for(const state of ['released','cancelled','settled','refused'] as const)test(`capability rollback preserves ${state} history without blocking unrelated new custody`,async()=>{
+ const f=fixture(),host=f.rows.get(authority)!,operationId=randomUUID(),reservation=state==='released'||state==='cancelled';host.snapshot.laneControls={schemaVersion:1,receipts:[]};
+ const command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'c'.repeat(64),expiresAt:now-1,
+  action:reservation?'reserve' as const:'check' as const,...(reservation?{purpose:'Original operator reservation'}:{})};
+ const result=state==='refused'?{status:'refused' as const,code:'not-supported',reason:'The installed controller refused the original'}:reservation?
+  {status:'accepted' as const,reservation:{id:'original',resourceId:id,generation:8,state:state as 'released'|'cancelled',purpose:'Original operator reservation',requestedAt:at}}:
+  {status:'accepted' as const,check:{operationId,resourceId:id,generation:7,state:'settled' as const}};
+ host.laneControls=[{command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result}}];
+ expect((await f.service.acquire(intent,'air')).status).toBe('reserved');expect(f.writes()).toBe(1);expect(host.laneControls).toHaveLength(1);
+});
+
 test('resource authority CAS includes manual control version so a concurrent operator intent wins before a new claim',async()=>{
  const host=hosts().get(authority)!,find=TestHostStateModel.findOneAndUpdate;let filter:unknown;
  const query={select(){return query},setOptions(){return query},lean:async()=>null};
  TestHostStateModel.findOneAndUpdate=mock((value:unknown)=>{filter=value;return query}) as never;
- try{expect(await resourceReservationRepository.replace(host,[])).toBe(false);expect(filter).toMatchObject({laneControlVersion:0,resourceReservationVersion:0,sequence:1,incarnation:'mini-one'})}finally{TestHostStateModel.findOneAndUpdate=find}
+ try{
+  for(const enabled of [true,false]){host.snapshot.laneControls={schemaVersion:1,receipts:[],...(enabled?{resourceControls:true as const}:{})};
+   expect(await resourceReservationRepository.replace(host,[])).toBe(false);expect(filter).toMatchObject({laneControlVersion:0,resourceReservationVersion:0,sequence:1,incarnation:'mini-one'});}
+  delete host.laneControlVersion;expect(await resourceReservationRepository.replace(host,[])).toBe(false);expect(filter).toMatchObject({laneControlVersion:{$exists:false}});
+ }finally{TestHostStateModel.findOneAndUpdate=find}
 });
 
 test('new resource delivery CAS binds the same raw-claim version and exact authenticated observation, while ACK exchange remains recoverable',async()=>{
@@ -82,6 +109,6 @@ test('claim committed between canonical validation and delivery CAS prevents a n
  const resources={detail:async()=>{detailReads++;return {generatedAt:at,subject:h.resourceReservationVersion===1?{...subject(),supportedActions:[],owner:{id:'retained',kind:'run' as const,hostId:authority,generation:null,laneId:'mac'}}:subject(),coverage:'same authoritative envelope'}}};
  const service=new LaneControlsService(repository,()=>now,resources),input={operationId:randomUUID(),hostId:authority,subject:{resourceId:id,subjectGeneration:7},expiresAt:now+120000,action:'check' as const};
  // A concurrent claim is authoritative even if local status has not advanced; retain it until a new canonical read.
- 
+
  await expect(service.submit(input,'alice')).rejects.toThrow('support');expect(records).toEqual([]);expect(replaceCalls).toBe(1);expect(detailReads).toBe(2);expect(h.resourceReservationVersion).toBe(1);
 });

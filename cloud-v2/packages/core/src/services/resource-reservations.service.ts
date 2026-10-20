@@ -29,17 +29,20 @@ export type ResourceReservationHost = {hostId: string; incarnation: string; inca
   laneControlVersion?: number; laneControls?: unknown}
 /** Installed resource controls and new fleet claims contend on the same authority row. */
 function dependencyAvailable(host: ResourceReservationHost, dependency: ExclusiveResourceDependency, now: number) {
+  // Capability loss withdraws new controls; it cannot erase an original operator's
+  // reservation/check. The retained exchange remains authority after rollback.
+  const records=z.array(z.union([laneControlRecordSchema,resourceControlRecordSchema])).max(100).parse(host.laneControls??[]);
+  if (records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId &&
+    (!row.receipt || row.receipt.result.status==='accepted' &&
+      (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
+        'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state!=='settled')))) return false;
   if (host.snapshot.laneControls?.resourceControls !== true) return true;
   if (!fresh(host,now)) return false;
   const subject=host.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===dependency.resourceId),at=Date.parse(subject?.observedAt??'');
   if (!subject?.current || subject.subject.authorityHostId!==host.hostId || subject.status!=='idle' || subject.owner ||
     subject.idle.outcome!=='passed' || subject.idle.acceptedCheck?.subjectGeneration!==subject.generation ||
     subject.idle.qualifiedScope.kind==='unqualified' || !Number.isFinite(at) || at>now || now-at>120_000) return false;
-  const records=z.array(z.union([laneControlRecordSchema,resourceControlRecordSchema])).max(100).parse(host.laneControls??[]);
-  return !records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId &&
-    (!row.receipt || row.receipt.result.status==='accepted' &&
-      (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
-        'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state!=='settled')));
+  return true;
 }
 function dependencyEnrolled(host: ResourceReservationHost, dependency: ExclusiveResourceDependency) {
   return dependency.authorityHostId===host.hostId && (host.snapshot.resources?.some(resource=>resource.id===dependency.resourceId &&
@@ -115,7 +118,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
   async replace(host, claims) {
     const row = await TestHostStateModel.findOneAndUpdate({hostId: host.hostId, incarnation: host.incarnation,
       incarnationGeneration: host.incarnationGeneration, sequence: host.sequence,
-      ...(host.snapshot.laneControls?.resourceControls===true?{laneControlVersion:host.laneControlVersion??{$exists:false}}:{}),
+      laneControlVersion:host.laneControlVersion??{$exists:false},
       resourceReservationVersion: host.resourceReservationVersion ?? {$exists: false}},
       {$set: {resourceReservations: claims}, $inc: {resourceReservationVersion: 1}},
       {new: true, writeConcern: testWriteConcern}).select({hostId: 1}).setOptions({timeoutMS: 5000}).lean()
