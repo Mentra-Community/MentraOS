@@ -29,6 +29,11 @@ import {permissionContext} from '../types/resource-permissions.types'
 import {RoutineWorkNotification} from './routine-work-notification'
 import {GithubRoutineJobActions, type RoutineJobActions, routineActionsRetry, type RoutineActionsDispatch, cancelRoutineActions, type RoutineActionsCancellation} from './routine-job-actions.service'
 
+interface RoutineWorkVerificationRecord {
+  identity: RoutineWorkVerification['identity']
+  status: RoutineWorkStatus
+  receipts: Array<{eventId: string; sequence: number; sha256: string}>
+}
 export interface RoutineWorkDelivery {
   workId: string
   requestSha256: string
@@ -47,7 +52,7 @@ export interface RoutineWorkDelivery {
   dispatchCompletion?: RoutineJobCompletion
   createdAt?: Date
   acceptance?: z.infer<typeof routineWorkAcceptanceSchema>
-  verification?: {identity: RoutineWorkVerification['identity']; status: RoutineWorkStatus; receipts: Array<{eventId:string;sequence:number;sha256:string}>}
+  verification?: RoutineWorkVerificationRecord & {reconciliation?: RoutineWorkVerificationRecord}
   status?: RoutineWorkStatus
   statusReceipts?: Array<{eventId: string; sequence: number; sha256: string}>
   reporting?: import('./routine-work-reporting').RoutineWorkReporting
@@ -58,7 +63,7 @@ export interface RoutineWorkRepository {
   queued(hostId: string, after: {createdAt: Date; workId: string} | null, limit: number): Promise<RoutineWorkDelivery[]>
   accept(receipt: z.infer<typeof routineWorkAcceptanceSchema>): Promise<RoutineWorkDelivery | null>
   updateStatus(event: RoutineWorkStatus, previous?: RoutineWorkStatus): Promise<RoutineWorkDelivery | null>
-  updateVerification?(event: RoutineWorkVerification, original: RoutineWorkStatus, previous?: RoutineWorkDelivery['verification']): Promise<RoutineWorkDelivery | null>
+  updateVerification?(event: RoutineWorkVerification, original: RoutineWorkStatus, previous?: RoutineWorkDelivery['verification'], authority?: RoutineWorkDelivery): Promise<RoutineWorkDelivery | null>
   bind?(workId: string, inputSha256: string, binding: RoutineJobBinding, work: AuthoringWork, now: Date): Promise<RoutineWorkDelivery | null>
   pending?(limit: number, now: Date): Promise<RoutineWorkDelivery[]>
   dispatchCompletions?(hostId: string, limit: number): Promise<RoutineWorkDelivery[]>
@@ -149,12 +154,16 @@ const repository: RoutineWorkRepository = {
       {new: true, writeConcern: testWriteConcern},
     ).lean()) as RoutineWorkDelivery | null
   },
-  async updateVerification(value, original, previous) {
-    const {identity,event}=value
+  async updateVerification(value, original, previous, authority) {
+    const {identity,event}=value,active=identity.reconciliation?previous?.reconciliation:previous
+    const record={identity,status:event,receipts:[...(active?.receipts??[]),
+      {eventId:event.eventId,sequence:event.sequence,sha256:requestInputDigest(event)}]}
     return await RoutineWorkModel.findOneAndUpdate({workId:event.workId,hostId:event.hostId,inputSha256:event.inputSha256,
       ...(identity.previousFailure.code==='permission-required'||identity.finalization&&event.state!=='cancelled'?{fleetCancellation:{$exists:false}}:{}),
-      status:original,verification:previous??{$exists:false}},{$set:{verification:{identity,status:event,
-        receipts:[...(previous?.receipts??[]),{eventId:event.eventId,sequence:event.sequence,sha256:requestInputDigest(event)}]}}},
+      ...(identity.reconciliation?{acceptance:authority!.acceptance,work:authority!.work,
+        fleetDeadline:authority!.fleetDeadline??{$exists:false},fleetInputSha256:authority!.fleetInputSha256??{$exists:false}}:{}),
+      ...(identity.reconciliation&&event.state!=='cancelled'?{$expr:{$lte:['$$NOW',{$literal:new Date(identity.deadline)}]}}:{}),
+      status:original,verification:previous??{$exists:false}},{$set:identity.reconciliation?{'verification.reconciliation':record}:{verification:record}},
       {new:true,writeConcern:testWriteConcern}).lean() as unknown as RoutineWorkDelivery|null
   },
   async updateStatus(event, previous) {
@@ -180,6 +189,12 @@ const repository: RoutineWorkRepository = {
 }
 
 const terminalState = (state?: string) => ['passed', 'failed', 'cancelled'].includes(state ?? '')
+// These are the two persisted public causes emitted by AuthoringJobs.transition.
+// Older failed receipts have no public code field and must remain byte-identical.
+const finalizationDetailLimitReasons = new Set([
+  'Job details exceed the bounded allowance',
+  'Accumulated job details exceed the bounded allowance',
+])
 function terminalOutcome(event: RoutineWorkStatus) {
   const {progress: _, ...details} = event.details.details
   return {state: event.state, attemptId: event.details.attemptId ?? null, details}
@@ -516,16 +531,28 @@ export class RoutineWorkService {
   async verifyRecording(value: unknown, hostId: string) {
     const parsed=routineWorkVerificationSchema.safeParse(value)
     if(!parsed.success||parsed.data.event.hostId!==hostId)throw new TestRunError(400,'Invalid recording verification event')
-    const {identity,event}=parsed.data,row=await this.inspect(event.workId),original=row.status
-    const admission=identity.previousFailure.code==='permission-required'?identity.admission:undefined,finalization=identity.finalization
+    const {identity,event}=parsed.data,row=await this.inspect(event.workId),original=row.status,previous=row.verification
+    const admission=identity.previousFailure.code==='permission-required'?identity.admission:undefined,finalization=identity.finalization,
+      reconciliation=identity.reconciliation,active=reconciliation?previous?.reconciliation:previous
     if(!original||original.state!=='failed'||!original.details.attemptId||row.hostId!==hostId||
       row.inputSha256!==event.inputSha256||!row.acceptance||event.details.acceptedAt!==row.acceptance.acceptedAt||
       requestInputDigest(event.details.work)!==row.inputSha256||event.details.attemptId!==original.details.attemptId||
       identity.failureEventId!==original.eventId||identity.failureSha256!==requestInputDigest(original)||
-      identity.previousFailure.reason!==original.details.details.reason||
+      identity.previousFailure.reason!==(reconciliation?previous?.status.details.details.reason:original.details.details.reason)||
       !(admission?['awaiting-installation','verifying','passed','failed','cancelled']:finalization?['verifying','passed','failed','cancelled']:['verifying','passed','failed']).includes(event.state)||event.sequence<=original.sequence||
       Date.parse(identity.acceptedAt)<Date.parse(original.details.events.at(-1)?.at??original.details.acceptedAt))
       throw new TestRequestConflict('Recording verification differs from its original failed attempt')
+    if(reconciliation&&(!previous||previous.identity.reconciliation||!previous.identity.finalization||
+      !['completion-operation-failed','workspace-generated-unaccounted'].includes(previous.identity.previousFailure.code)||
+      previous.status.state!=='failed'||!finalizationDetailLimitReasons.has(previous.status.details.details.reason??'')||
+      reconciliation.parentIdentitySha256!==requestInputDigest(previous.identity)||
+      reconciliation.parentFailureEventId!==previous.status.eventId||reconciliation.parentFailureSequence!==previous.status.sequence||
+      reconciliation.parentFailureSha256!==requestInputDigest(previous.status)||
+      !previous.receipts.some(receipt=>receipt.eventId===previous.status.eventId&&receipt.sequence===previous.status.sequence&&receipt.sha256===reconciliation.parentFailureSha256)||
+      previous.identity.failureEventId!==original.eventId||previous.identity.failureSha256!==requestInputDigest(original)||
+      requestInputDigest(finalization)!==requestInputDigest(previous.identity.finalization)||
+      Date.parse(identity.acceptedAt)<Date.parse(previous.status.details.events.at(-1)?.at??previous.identity.acceptedAt)))
+      throw new TestRequestConflict('Finalization reconciliation differs from its acknowledged failed predecessor')
     for(const key of ['sourceRevision','requestId','prUrl','review'] as const)
       if(key==='requestId'&&admission ? event.details.details.requestId!==admission.requestId ||
         original.details.details.requestId!==undefined&&original.details.details.requestId!==admission.requestId :
@@ -537,13 +564,19 @@ export class RoutineWorkService {
     if(admission&&(row.fleetCancellation||original.details.details.completion||
       !row.verification&&await this.candidateWasRegistered(admission.requestId)))
       throw new TestRequestConflict('Pre-admission retry requires the original unregistered candidate and uncancelled work')
-    if(!row.verification&&(!decision||decision.state!==(admission?'awaiting-installation':'verifying')||(admission?decision.sequence<=original.sequence:decision.sequence!==original.sequence+1)||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
+    if(!active&&(!decision||decision.state!==(admission?'awaiting-installation':'verifying')||(admission?decision.sequence<=original.sequence:decision.sequence!==(reconciliation?previous!.status.sequence:original.sequence)+1)||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
       throw new TestRequestConflict('Recording verification lacks its original ordered retry decision')
-    const previous=row.verification
-    if(previous&&requestInputDigest(previous.identity)!==requestInputDigest(identity))
+    if(reconciliation&&!active&&(!decision||event.eventId!==identity.decisionId||event.sequence!==decision.sequence||event.state!=='verifying'||
+      Date.parse(decision.at)>this.now()))
+      throw new TestRequestConflict('Finalization reconciliation must first acknowledge its one ordered decision')
+    if(active&&requestInputDigest(active.identity)!==requestInputDigest(identity))
       throw new TestRequestConflict('Recording verification changed its original retry identity')
-    const digest=requestInputDigest(event),saved=previous?.receipts.find(receipt=>receipt.eventId===event.eventId)
+    const digest=requestInputDigest(event),saved=active?.receipts.find(receipt=>receipt.eventId===event.eventId)
     if(saved){if(saved.sequence!==event.sequence||saved.sha256!==digest)throw new TestRequestConflict('Recording verification changed its original event');return event}
+    if(!reconciliation&&previous?.reconciliation)
+      throw new TestRequestConflict('Finalization reconciliation preserves its sealed parent verification')
+    if(reconciliation&&previous!.receipts.some(receipt=>receipt.eventId===event.eventId))
+      throw new TestRequestConflict('Finalization reconciliation cannot reuse its parent event identity')
     if(finalization){
       const acceptedDeadline=row.fleetDeadline?.getTime()??Date.parse(row.acceptance.acceptedAt)+24*3600_000
       if(Date.parse(finalization.originalDeadline)>acceptedDeadline||Date.parse(identity.deadline)>acceptedDeadline||
@@ -577,21 +610,27 @@ export class RoutineWorkService {
       if(requestInputDigest(current.status)!==requestInputDigest(original)||
         requestInputDigest(current.verification??null)!==requestInputDigest(previous??null)||
         requestInputDigest(current.work)!==row.inputSha256||current.inputSha256!==row.inputSha256||current.hostId!==hostId||
+        requestInputDigest(current.acceptance)!==requestInputDigest(row.acceptance)||
+        (current.fleetDeadline?.getTime()??Date.parse(current.acceptance!.acceptedAt)+24*3600_000)<Date.parse(identity.deadline)||
         event.state!=='cancelled'&&(current.fleetCancellation||this.now()>Date.parse(identity.deadline)))
         throw new TestRequestConflict('Finalization retry changed authority during candidate verification')
     }
-    if((previous?.receipts.length??0)>=100)throw new TestRequestConflict('Recording verification reached its bounded event allowance')
-    if(previous&&(event.sequence<=previous.status.sequence||terminalState(previous.status.state)&&
-      requestInputDigest(terminalOutcome(event))!==requestInputDigest(terminalOutcome(previous.status))))
+    if((previous?.receipts.length??0)+(previous?.reconciliation?.receipts.length??0)>=100)
+      throw new TestRequestConflict('Recording verification reached its bounded event allowance')
+    if(active&&(event.sequence<=active.status.sequence||terminalState(active.status.state)&&
+      requestInputDigest(terminalOutcome(event))!==requestInputDigest(terminalOutcome(active.status))))
       throw new TestRequestConflict('Recording verification cannot replace its terminal result')
     const lifecycle=event.details.events.find(item=>item.eventId===event.eventId&&item.sequence===event.sequence&&item.state===event.state)
     if(!lifecycle||Date.parse(lifecycle.at)<Date.parse(identity.acceptedAt)||Date.parse(lifecycle.at)>Date.parse(identity.deadline))
       throw new TestRequestConflict('Recording verification event is outside its original retry window')
     // A later delivery may reconcile an already recorded event, never renew the original retry window.
     if(!this.rows.updateVerification)throw new TestRunError(503,'Recording verification persistence is unavailable')
-    const updated=await this.rows.updateVerification(parsed.data,original,previous)??await this.inspect(event.workId)
-    const receipt=updated.verification?.receipts.find(item=>item.eventId===event.eventId)
-    if(!receipt||receipt.sha256!==digest||receipt.sequence!==event.sequence)throw new TestRequestConflict('Recording verification raced or changed its original event')
+    const updated=await this.rows.updateVerification(parsed.data,original,previous,row)??await this.inspect(event.workId)
+    const recorded=reconciliation?updated.verification?.reconciliation:updated.verification,
+      receipt=recorded?.receipts.find(item=>item.eventId===event.eventId)
+    if(!recorded||requestInputDigest(recorded.identity)!==requestInputDigest(identity)||
+      !receipt||receipt.sha256!==digest||receipt.sequence!==event.sequence)
+      throw new TestRequestConflict('Recording verification raced or changed its original event')
     return event
   }
   async status(value: unknown, hostId: string) {
