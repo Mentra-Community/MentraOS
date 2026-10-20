@@ -78,6 +78,14 @@ function qualified() {
     check: {operationId: 'probe', resultSha256: hash, readersSha256: hash, closedAt: timestamp},
     releasedGeneration: 2, appRouteVerified: false})
 }
+function unqualified() {
+  const value = qualified(), targetInputSha256 = 'c'.repeat(64)
+  value.outcome = 'unqualified'
+  value.qualification = {jobId: 'previous-original', targetInputSha256, inputSha256: hash,
+    preparing: {dispatchIntentSha256: hash, fleetInputSha256: hash, bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}}
+  value.check.operationId = `backend-prerequisite:${targetInputSha256}`
+  return value
+}
 
 async function executableFixture() {
   const f = fixture(); f.original.fleetDeadline = new Date(now + 300_000)
@@ -421,9 +429,116 @@ async function portableFixture() {
     duplicate() {const claim = current.host.resourceReservations as HostResourceReservation[]; duplicates = [{...claim[0]!, id: '05e28570-91a8-486e-aecb-c1d7b7874e79', hostId: 'other'} as HostResourceReservation]},
     pause(kind: 'probe' | 'run') {pausedKind = kind; pausePromise = new Promise(resolve => {pauseResume = resolve})
       return {entered: new Promise<void>(resolve => {pauseEntered = resolve}), resume() {pauseResume()}}},
-    async reserve(hostId = 'mini', laneId = 'android', id = 'original') {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(now))},
+    async reserve(hostId = 'mini', laneId = 'android', id = 'original', at = now) {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(at))},
     restore() {for (const mock of [reserveClock, clock, requestGet, hostGet, originalGet, claimedHosts, recorderClaims, requestRead, requestList, hostRead, hostWrite, replace, requestWrite]) mock.mockRestore()}}
 }
+test('fresh settled negative refuses repeated new original admissions before any custody write', async () => {
+  const f = await portableFixture()
+  try {
+    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = unqualified()
+    for (let i = 0; i < 10; i++) {
+      const id = `scheduled-original-${i}`; f.addRequest(id)
+      expect(await f.reserve('mini', 'android', id)).toBeNull()
+      expect(f.requests.get(id)!.fleetResourceAdmission).toBeUndefined()
+      expect(f.requests.get(id)!.fleetResourceReservation).toBeUndefined()
+    }
+    expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
+    const offline = f.addRequest('offline-original', true)
+    expect(await f.reserve('mini', 'android', offline.requestId)).not.toBeNull()
+  } finally {f.restore()}
+})
+test('new preparation selects a healthy alternative while preserving an already selected original', async () => {
+  const observed = host(), other = structuredClone(observed), negative = unqualified()
+  observed.lanes[0]!.resources[0]!.backendConnectivity = negative
+  other.hostId = 'other'; other.lanes[0]!.id = 'other-android'
+  other.resourceLifecycle!.subjects[0]!.subject.authorityHostId = 'other'
+  const original = job(), choices: string[] = []
+  const rows: RoutineJobRepository = {async get() {return structuredClone(original)},
+    async insert() {throw Error('No insert')}, async prepare() {throw Error('No prepare')}, async bind() {throw Error('No bind')}, async cancel() {throw Error('No cancel')},
+    async reserveResources(id, digest, hostId, laneId) {choices.push(hostId); return {...structuredClone(original), fleetResourceReservation: {
+      id: 'd7f3b61c-083b-44d6-8b4e-29b088424e97', requestId: id, fleetInputSha256: digest, hostId, laneId,
+      poolId: 'mini:disk', minimumAvailableBytes: 2147483648, reservedAt: timestamp}}}, async recorderClaims() {return []}}
+  const service = new RoutineJobService(rows, undefined, undefined, undefined,
+    {async get(id) {return structuredClone(id === 'mini' ? observed : other)}, async list() {return [structuredClone(observed), structuredClone(other)]}},
+    undefined, undefined, () => now)
+  for (let i = 0; i < 10; i++) {
+    original.requestId = `next-${i}`
+    expect(await service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'other', laneId: 'other-android'}})
+  }
+  expect(choices).toEqual(Array(10).fill('other'))
+  original.fleetResourceReservation = {id: 'd7f3b61c-083b-44d6-8b4e-29b088424e97', requestId: original.requestId,
+    fleetInputSha256: original.fleetInputSha256!, hostId: 'mini', laneId: 'android', poolId: 'mini:disk', minimumAvailableBytes: 2147483648, reservedAt: timestamp}
+  expect(await service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}})
+  expect(choices.at(-1)).toBe('mini')
+  const bound = fixture(); bound.observed.lanes[0]!.resources[0]!.backendConnectivity = negative
+  expect((await bound.service.qualificationTargets('mini'))[0]!.jobId).toBe('original')
+})
+test('the original negative expires after 120 seconds without renewing its timestamp or creating an earlier claim', async () => {
+  const f = await portableFixture()
+  try {
+    const value = unqualified(), original = f.current.request, observedAt = new Date(now - 120_000).toISOString()
+    value.observedAt = value.check.closedAt = observedAt
+    original.fleetDeadline = new Date(now + 300_000); original.fleetInputSha256 = routineJobInputDigest(original)
+    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = value
+    expect(await f.reserve()).toBeNull(); expect(f.events).toEqual([])
+    const later = now + 1
+    expect(await f.reserve('mini', 'android', 'original', later)).not.toBeNull()
+    expect(value.observedAt).toBe(observedAt); expect(value.check.closedAt).toBe(observedAt)
+    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+  } finally {f.restore()}
+})
+test('a late negative cannot move or erase the original provisional claim after a lost reply', async () => {
+  const f = await portableFixture()
+  try {
+    f.loseHost(); await expect(f.reserve()).rejects.toThrow('Host CAS answer lost')
+    const claim = structuredClone((f.current.host.resourceReservations as RecorderHostReservation[])[0]!)
+    f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = unqualified()
+    expect((await f.reserve())?.fleetResourceReservation).toEqual(claim)
+    expect(f.current.host.resourceReservations).toEqual([claim])
+    expect(f.events).toEqual(['host-claim', 'request-stage', 'request-receipt'])
+  } finally {f.restore()}
+})
+test('a negative reported after lane preference still refuses the authoritative new claim', async () => {
+  const f = await portableFixture()
+  try {
+    const before = {...structuredClone(f.current.host.snapshot), receivedAt: timestamp}
+    const rows: RoutineJobRepository = {...routineJobRepository,
+      async get(id) {return structuredClone(f.requests.get(id) ?? null)}, async recorderClaims() {return []},
+      async selectedLanes() {return []}, async reserveResources(id, _digest, hostId, laneId) {
+        f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = unqualified()
+        return f.reserve(hostId, laneId, id)
+      }}
+    const service = new RoutineJobService(rows, undefined, undefined, undefined,
+      {async get() {return structuredClone(before)}, async list() {return [structuredClone(before)]}}, undefined, undefined, () => now)
+    expect(await service.preparation('original')).toMatchObject({state: 'awaiting-runner'})
+    expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
+    expect(f.current.request.fleetResourceAdmission).toBeUndefined()
+  } finally {f.restore()}
+})
+test.each(['stale', 'future', 'binding', 'incarnation', 'controller-generation', 'phone-generation', 'not-current', 'owned', 'apk', 'receipt', 'unknown', 'qualified', 'boot', 'operation'])(
+  'a %s negative cannot suppress a new original prerequisite', async kind => {
+    const f = await portableFixture()
+    try {
+      const value = unqualified(), subject = f.current.host.snapshot.resourceLifecycle!.subjects[0]!
+      f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = value
+      if (kind === 'stale') value.observedAt = value.check.closedAt = new Date(now - 120_001).toISOString()
+      if (kind === 'future') value.observedAt = value.check.closedAt = new Date(now + 1).toISOString()
+      if (kind === 'binding') value.binding = {...value.binding, revision: 'e'.repeat(40)}
+      if (kind === 'incarnation') value.controller.incarnation = 'other'
+      if (kind === 'controller-generation') value.controller.generation++
+      if (kind === 'phone-generation') subject.generation++
+      if (kind === 'not-current') subject.current = false
+      if (kind === 'owned') subject.owner = {id: 'other', kind: 'boundary-cleanup', generation: 2, hostId: 'mini', laneId: 'android'}
+      if (kind === 'apk') value.app.archiveSha256 = 'd'.repeat(64)
+      if (kind === 'receipt') value.app.receiptSha256 = 'd'.repeat(64)
+      if (kind === 'unknown') value.outcome = 'unknown'
+      if (kind === 'qualified') value.outcome = 'qualified'
+      if (kind === 'boot') value.bootId = null
+      if (kind === 'operation') value.check.operationId = 'foreign'
+      expect(await f.reserve()).not.toBeNull()
+    } finally {f.restore()}
+  }
+)
 test('portable backend admission retains the byte claim before staging and refuses a stale probe CAS', async () => {
   const f = await portableFixture()
   try {

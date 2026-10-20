@@ -56,16 +56,30 @@ const sameIdentity = (left: object, right: object) => {
   return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right))
 }
 
-/** Fresh capability health is independent from physical idle and repair qualification. */
-export function backendConnectivityObservationMatches(observation: BackendConnectivityObservation | undefined, resourceId: string,
+function currentBackendConnectivityObservation(observation: BackendConnectivityObservation | undefined, resourceId: string,
   context: {now: number; binding: FrameworkBinding; app?: z.infer<typeof permissionBuildSchema>; backend?: BackendConnectivityContext}) {
   const parsed = backendConnectivityObservationSchema.safeParse(observation)
-  if (!parsed.success || !context.app || !context.backend) return false
+  if (!parsed.success || !context.app || !context.backend) return undefined
   const value = parsed.data, at = Date.parse(value.observedAt), closed = Date.parse(value.check.closedAt)
-  return value.outcome === 'qualified' && value.phoneResourceId === resourceId &&
+  const current = value.phoneResourceId === resourceId &&
     at <= context.now && context.now - at <= BACKEND_CONNECTIVITY_MAX_AGE_MS && closed >= at && closed <= context.now &&
     context.binding.routineApiVersion >= BACKEND_CONNECTIVITY_ROUTINE_API_VERSION && sameIdentity(value.binding, context.binding) &&
     sameIdentity(value.app, context.app) && value.controller.incarnation === context.backend.incarnation &&
     value.controller.generation === context.backend.generation && context.backend.resourceGenerations.some(resource =>
       resource.resourceId === resourceId && resource.current && resource.unowned && resource.generation === value.releasedGeneration)
+  return current ? value : undefined
+}
+
+/** Fresh capability health is independent from physical idle and repair qualification. */
+export function backendConnectivityObservationMatches(observation: BackendConnectivityObservation | undefined, resourceId: string,
+  context: Parameters<typeof currentBackendConnectivityObservation>[2]) {
+  return currentBackendConnectivityObservation(observation, resourceId, context)?.outcome === 'qualified'
+}
+
+/** A settled negative can defer a new preparation, never authorize execution or move retained work. */
+export function backendConnectivityObservationRefusesPreparation(observation: BackendConnectivityObservation | undefined, resourceId: string,
+  context: Parameters<typeof currentBackendConnectivityObservation>[2]) {
+  const value = currentBackendConnectivityObservation(observation, resourceId, context)
+  return value?.outcome === 'unqualified' && value.bootId !== null && Boolean(value.qualification) &&
+    value.check.operationId === `backend-prerequisite:${value.qualification?.targetInputSha256}`
 }
