@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Shared React workspace screens (picker, members, invitations, credentials, settings, audit) for the workspace portal, the admin portal and the Developer Console.",
+  "description": "Shared React workspace screens (picker, members, invitations, credentials, settings, audit), and the workspace portal's shell and controls, for the workspace portal, the admin portal and the Developer Console.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",

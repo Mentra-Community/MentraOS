@@ -22,8 +22,8 @@ import {
 } from "@mentra/workspace-ui";
 import { ArrowLeft, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
-import { CenteredLayout } from "@/components/centered-layout";
 import { PendingInvitationCard } from "@/components/pending-invitation";
+import { PortalCenteredLayout } from "@/components/portal-shell";
 import { safeLocalStorage } from "@/lib/api";
 import type { PendingInvitation } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
@@ -90,7 +90,7 @@ export function WelcomeScreen() {
 
   if (list.data === undefined) {
     return (
-      <CenteredLayout>
+      <PortalCenteredLayout>
         <Heading title="Welcome to Mentra" />
         {list.isError ? (
           <p role="alert" className="rounded-notice bg-error text-error-foreground mt-8 px-4 py-3 text-center text-sm">
@@ -104,12 +104,12 @@ export function WelcomeScreen() {
             <Spinner /> Loading your workspaces
           </div>
         )}
-      </CenteredLayout>
+      </PortalCenteredLayout>
     );
   }
 
   return (
-    <CenteredLayout>
+    <PortalCenteredLayout>
       <Heading title="Welcome to Mentra">
         {acceptable.length > 0
           ? acceptable.length === 1
@@ -123,7 +123,7 @@ export function WelcomeScreen() {
           <CreateFirstWorkspace />
         </div>
       ) : null}
-    </CenteredLayout>
+    </PortalCenteredLayout>
   );
 }
 
@@ -136,7 +136,7 @@ export function InvitationScreen() {
 
   if (link.status === "gone") {
     return (
-      <CenteredLayout>
+      <PortalCenteredLayout>
         <section aria-label="Invitation no longer valid" className="bg-card rounded-card border p-6 text-center sm:p-8">
           <h1 className="text-2xl leading-tight font-semibold">Invitation no longer valid</h1>
           <p className="text-muted-foreground mx-auto mt-2 max-w-[420px]">{GONE_EXPLANATION}</p>
@@ -153,13 +153,13 @@ export function InvitationScreen() {
             )}
           </div>
         </section>
-      </CenteredLayout>
+      </PortalCenteredLayout>
     );
   }
 
   if (link.status === "unavailable") {
     return (
-      <CenteredLayout>
+      <PortalCenteredLayout>
         <Heading title="You're invited" />
         <div className="mt-8">
           <InvitationAcceptCard
@@ -175,7 +175,7 @@ export function InvitationScreen() {
           />
         </div>
         {home ? <BackHome name={home.name} workspaceId={home.workspaceId} /> : null}
-      </CenteredLayout>
+      </PortalCenteredLayout>
     );
   }
 
@@ -186,7 +186,7 @@ export function InvitationScreen() {
     forOtherAccount: isInvitationForOtherAccount(link.preview, portal.accountEmail),
   };
   return (
-    <CenteredLayout>
+    <PortalCenteredLayout>
       {invitation.forOtherAccount ? (
         <Heading title="Switch accounts to accept">This invitation was sent to a different email address.</Heading>
       ) : firstRun ? (
@@ -196,7 +196,7 @@ export function InvitationScreen() {
       )}
       <InvitationList invitations={[invitation]} />
       {home ? <BackHome name={home.name} workspaceId={home.workspaceId} /> : null}
-    </CenteredLayout>
+    </PortalCenteredLayout>
   );
 }
 
