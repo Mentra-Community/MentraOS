@@ -43,6 +43,7 @@ export interface RoutineJobRepository {
   preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   selectedLanes?(hostIds: string[]): Promise<SelectedRoutineLane[]>;
   recorderClaims?(jobId: string): Promise<RecorderHostReservation[]>;
+  checkpointBackendRecorder?(row: StoredRoutineJob, claim: RecorderHostReservation, now: Date): Promise<StoredRoutineJob | null>;
   reconcileBackendRecorderCancellation?(jobId: string, now: Date): Promise<void>;
   reserveResources?(jobId: string, inputSha256: string, hostId: string, laneId: string, now: Date,
     onWaiting?: (reason: string, exclusiveBlocker?: boolean) => void): Promise<StoredRoutineJob | null>;
@@ -68,6 +69,44 @@ export const routineJobRepository: RoutineJobRepository = {
   async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async recorderClaims(requestId) {return resourceReservationRepository.recorderClaims!(requestId);},
+  async checkpointBackendRecorder(row, value, now) {
+    const parsed=recorderHostReservationSchema.safeParse(value),claim=parsed.success?parsed.data:undefined,
+      previous=claim&&candidateRenewal(row,claim.hostId,claim.laneId);
+    if (!claim || !previous || !candidateReturnMatches(previous,previous.returnReceipt) ||
+      !candidateRequestCurrent({...row,fleetCandidateSelection:undefined,fleetCandidatePreparation:previous},previous,now.getTime()) ||
+      !requiresBackendConnectivity(row) ||
+      row.state!=='awaiting-runner' || row.fleetCancellation || row.fleetDeadline<=now || row.fleetCandidatePreparation ||
+      row.fleetResourceReservation || row.fleetResourceAdmission || row.fleetExclusiveReservation || row.fleetBinding || row.hostId ||
+      row.inputSha256 || row.dispatchIntent || row.hostReceipt || row.runId || row.dispatchCompletion || row.fleetExclusiveExecutionBinding || !row.fleetPreparation ||
+      claim.requestId!==row.requestId || claim.fleetInputSha256!==row.fleetInputSha256 || routineJobInputDigest(row)!==row.fleetInputSha256 ||
+      requestInputDigest(row.fleetSelection)!==row.fleetSelectionSha256 || Date.parse(claim.reservedAt)<Date.parse((previous.returnReceipt as {release:{releasedAt:string}}).release.releasedAt) ||
+      Date.parse(claim.reservedAt)>now.getTime()) return null;
+    const originals=await this.recorderClaims!(row.requestId),host=await resourceReservationRepository.get(claim.hostId),
+      lane=host?.snapshot.lanes.find(value=>value.id===claim.laneId),phone=host?.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===previous.target.purpose?.resourceId),
+      offer=lane?.resources.find(value=>value.kind==='recorder')?.storage,
+      required=recorderCapacityRequirements(row.fleetPreparation).resources.find(value=>value.kind==='recorder')?.storage;
+    if (originals.length!==1 || requestInputDigest(originals[0])!==requestInputDigest(claim) || !host ||
+      [host.receivedAt.getTime(),Date.parse(host.snapshot.observedAt)].some(at=>!Number.isFinite(at)||at>now.getTime()||now.getTime()-at>120_000) ||
+      host.incarnation!==previous.candidate.controller.incarnation || host.incarnationGeneration!==previous.candidate.controller.generation ||
+      requestInputDigest(host.snapshot.frameworkBinding)!==requestInputDigest(previous.target.acceptedBinding) ||
+      lane?.state!=='idle' || lane.dispatchMode!=='automatic' || lane.activity || !phone?.current || phone.owner!==null ||
+      phone.subject.authorityHostId!==host.hostId || !offer || !required || offer.poolId!==claim.poolId ||
+      required.minimumAvailableBytes!==claim.minimumAvailableBytes || !Number.isFinite(Date.parse(offer.observedAt)) ||
+      Date.parse(offer.observedAt)>now.getTime() || now.getTime()-Date.parse(offer.observedAt)>120_000 ||
+      offer.reservations.some(value=>value.requestId===row.requestId) ||
+      host.snapshot.resourceReservations?.claims.some(value=>value.owner.id===row.requestId)) return null;
+    const authority=hostResourceReservationsSchema.parse(host.resourceReservations??[]);
+    if (!authority.some(value=>requestInputDigest(value)===requestInputDigest(claim)) || authority.some(value=>isExclusiveHostReservation(value)
+      ? value.borrowerHostId===claim.hostId&&value.laneId===claim.laneId : value.hostId===claim.hostId&&value.laneId===claim.laneId&&value.id!==claim.id)) return null;
+    // This receipt preserves a host-CAS winner as cleanup custody. It grants no run admission and needs no fresh phone health.
+    return await TestRequestModel.collection.findOneAndUpdate({requestId:row.requestId,fleetInputSha256:row.fleetInputSha256,
+      fleetSelectionSha256:row.fleetSelectionSha256,fleetCandidatePreparations:row.fleetCandidatePreparations,
+      fleetCandidateSelection:row.fleetCandidateSelection,state:'awaiting-runner',fleetDeadline:{$gt:now},fleetCancellation:{$exists:false},
+      fleetCandidatePreparation:{$exists:false},fleetResourceReservation:{$exists:false},fleetResourceAdmission:{$exists:false},
+      fleetExclusiveReservation:{$exists:false},fleetBinding:{$exists:false},hostId:{$exists:false},input:{$exists:false},inputSha256:{$exists:false},
+      dispatchIntent:{$exists:false},hostReceipt:{$exists:false},runId:{$exists:false},dispatchCompletion:{$exists:false},fleetExclusiveExecutionBinding:{$exists:false}},
+      {$set:{fleetResourceReservation:claim}},{returnDocument:'after',writeConcern:testWriteConcern,timeoutMS:5000}) as unknown as StoredRoutineJob|null;
+  },
   async reconcileBackendRecorderCancellation(requestId, now) {
     const original = await this.get(requestId);
     if (!original || original.fleetSelection?.platform !== 'android' || !original.fleetCancellation || original.state !== 'terminal' ||
@@ -1269,7 +1308,13 @@ export class RoutineJobService {
       (row.fleetResourceAdmission.intent.hostId !== claim.hostId || row.fleetResourceAdmission.intent.laneId !== claim.laneId)))
       return {...routineJobRouting(requirements, hosts, this.now(), row.fleetTarget, row.fleetSelection.build),
         waitingReason: RESOURCE_ADMISSION_WAIT};
-    const retained = row.fleetResourceReservation, admitted = row.fleetResourceAdmission, provisional = originals[0];
+    const provisional = originals[0];
+    if (provisional && !row.fleetResourceReservation && !row.fleetResourceAdmission && requiresBackendConnectivity(row)) {
+      const checkpoint=await this.rows.checkpointBackendRecorder?.(row,provisional,new Date(this.now()));
+      if (!checkpoint) return {...routineJobRouting(requirements,hosts,this.now(),provisional,row.fleetSelection.build,true),waitingReason:RESOURCE_ADMISSION_WAIT};
+      row=checkpoint;
+    }
+    const retained = row.fleetResourceReservation, admitted = row.fleetResourceAdmission;
     const candidateSelection = row.fleetCandidateSelection;
     const target = candidateSelection ?? (retained ? {hostId: retained.hostId, laneId: retained.laneId} : admitted
       ? {hostId: admitted.intent.hostId, laneId: admitted.intent.laneId} : provisional

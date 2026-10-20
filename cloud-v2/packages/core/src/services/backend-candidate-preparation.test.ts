@@ -9,6 +9,9 @@ import {hostStateSchema, type ReceivedTestHostState} from './test-host-state.ser
 import {TestRequestModel} from '../models/test-request.model'
 import {type ResourceReservationHost, ResourceReservationsService, resourceReservationRepository} from './resource-reservations.service'
 import {mock} from 'bun:test'
+import {TestHostStateModel} from '../models/test-host-state.model'
+import {hostResourceReservationsSchema,isExclusiveHostReservation} from '../types/resource-reservations.types'
+import type {RecorderHostReservation} from '../types/recorder-storage.types'
 
 const initialNow = Date.parse('2026-10-20T12:00:00Z'), hash = (c: string) => c.repeat(64)
 function fixture() {
@@ -268,3 +271,52 @@ for(const condition of ['valid','missing-membership','future-subject','owned-sub
   expect(f.row.fleetCandidatePreparation!.provisionalReturn!.exclusive).toEqual(pending.provisionalReturn!.exclusive);expect(candidateRequestCurrent(f.row,f.row.fleetCandidatePreparation,f.now)).toBe(false);expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCancellation).toBeDefined()}
  finally{routineJobRepository.get=get;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;TestRequestModel.collection.findOneAndUpdate=write}
 })
+
+test('lost recorder host-CAS reply is recovered as cleanup custody after health expires, returned once, then falls back',async()=>{
+ const f=await returnedFixture(),currentRow=():StoredRoutineJob=>f.row;delete f.row.fleetResourceReservation;
+ const host=repositoryEnvelope(f);host.resourceReservations=[];
+ const requestRead=TestRequestModel.collection.findOne,requestWrite=TestRequestModel.collection.findOneAndUpdate,
+   hostRead=TestHostStateModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,
+   claims=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,replace=resourceReservationRepository.replace,
+   get=routineJobRepository.get;
+ let claimWrites=0,returnWrites=0,checkpointLoss=true;
+ const originals=()=>hostResourceReservationsSchema.parse(host.resourceReservations??[]).filter((value):value is RecorderHostReservation=>!isExclusiveHostReservation(value));
+ resourceReservationRepository.recorderClaims=async()=>structuredClone(originals());resourceReservationRepository.get=async()=>structuredClone(host);
+ routineJobRepository.get=async()=>structuredClone(f.row);
+ TestRequestModel.collection.findOne=mock(async()=>structuredClone(f.row)) as never;
+ TestHostStateModel.collection.findOne=mock(async()=>structuredClone(host)) as never;
+ TestHostStateModel.collection.findOneAndUpdate=mock(async(_filter:any,update:any)=>{claimWrites++;host.resourceReservations=structuredClone(update.$set.resourceReservations);throw Error('Committed recorder reply lost')}) as never;
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{
+   if(update.$set.fleetResourceReservation){expect(filter).toMatchObject({fleetCandidatePreparation:{$exists:false},fleetResourceAdmission:{$exists:false},fleetResourceReservation:{$exists:false},fleetCandidateSelection:f.row.fleetCandidateSelection});
+    f.row={...f.row,...update.$set};if(checkpointLoss){checkpointLoss=false;throw Error('Committed cleanup checkpoint reply lost')}return structuredClone(f.row)}
+   expect(filter.fleetCandidatePreparation).toEqual(f.row.fleetCandidatePreparation);for(const key of Object.keys(update.$unset??{}))delete (f.row as any)[key];f.row={...f.row,...update.$set};return structuredClone(f.row)
+ }) as never;
+ f.rows.recorderClaims=async()=>structuredClone(originals());f.rows.checkpointBackendRecorder=(row,claim,now)=>routineJobRepository.checkpointBackendRecorder!(row,claim,now);
+ f.rows.releaseCandidateProvisional=(row,now)=>routineJobRepository.releaseCandidateProvisional!(row,now);
+ resourceReservationRepository.replace=async(_host,values)=>{returnWrites++;host.resourceReservations=structuredClone(values);return true};
+ try{
+  await expect(routineJobRepository.reserveResources!('job-one',f.row.fleetInputSha256!,'air1','android',new Date(f.now))).rejects.toThrow('Committed recorder reply lost');
+  expect(claimWrites).toBe(1);expect(originals()).toHaveLength(1);expect(f.row.fleetResourceReservation).toBeUndefined();const claim=structuredClone(originals()[0]!);
+  f.hosts[0]!.authorityReservations=[claim];f.advance(120001);host.receivedAt=new Date(f.now);host.snapshot.observedAt=new Date(f.now).toISOString();host.snapshot.lanes[0]!.resources.find(value=>value.kind==='recorder')!.storage!.observedAt=host.snapshot.observedAt;
+  await expect(f.service.preparation('job-one')).rejects.toThrow('Committed cleanup checkpoint reply lost');expect(currentRow().fleetResourceReservation).toEqual(claim);expect(returnWrites).toBe(0);expect(f.row.fleetBinding).toBeUndefined();
+  await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation!.provisionalReturn!.recorder).toEqual(claim);expect(candidateRequestCurrent(f.row,f.row.fleetCandidatePreparation,f.now)).toBe(false);
+  await f.service.preparation('job-one');expect(returnWrites).toBe(1);expect(originals()).toEqual([]);expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.row.fleetCandidatePreparation!.provisionalReturn!.releasedAt).toBeDefined();
+  f.hosts[0]!.authorityReservations=[];f.settle('unqualified');await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2');expect(f.row.fleetBinding).toBeUndefined();expect(claimWrites).toBe(1);
+  f.settle('qualified');await f.service.preparation('job-one');expect(currentRow().fleetResourceReservation?.hostId).toBe('air2');expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
+ }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
+  resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;routineJobRepository.get=get}
+});
+
+for(const gap of ['foreign','multiple','owned-phone','local-consumer','stale-storage','replacement','cancelled','changed-selection'] as const)test(`orphan recorder checkpoint refuses ${gap} without adoption or a new grant`,async()=>{
+ const f=await returnedFixture(),claim=structuredClone(f.row.fleetResourceReservation!),host=repositoryEnvelope(f);delete f.row.fleetResourceReservation;
+ const list=[claim];if(gap==='foreign')list[0]!.fleetInputSha256=hash('f');if(gap==='multiple')list.push({...claim,id:'4ebdc74d-05ad-4c14-8d81-cb232ba43f2c'});
+ if(gap==='owned-phone')host.snapshot.resourceLifecycle!.subjects[0]!.owner={id:'foreign',kind:'run',hostId:'air1',laneId:'android',generation:1};
+ if(gap==='local-consumer')host.snapshot.lanes[0]!.resources.find(value=>value.kind==='recorder')!.storage!.reservations=[{requestId:'job-one',inputSha256:hash('c'),remainingOutputBytes:1}];
+ if(gap==='stale-storage')host.snapshot.lanes[0]!.resources.find(value=>value.kind==='recorder')!.storage!.observedAt=new Date(f.now-120001).toISOString();
+ if(gap==='replacement')host.incarnation='changed';if(gap==='cancelled')f.row.fleetCancellation={requestedAt:new Date(f.now).toISOString(),reason:'cancelled'};
+ if(gap==='changed-selection')f.row.fleetCandidateSelection!.targetInputSha256=hash('f');
+ const claims=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,write=TestRequestModel.collection.findOneAndUpdate;let writes=0;
+ resourceReservationRepository.recorderClaims=async()=>structuredClone(list);resourceReservationRepository.get=async()=>structuredClone(host);TestRequestModel.collection.findOneAndUpdate=mock(async()=>{writes++;return null}) as never;
+ try{expect(await routineJobRepository.checkpointBackendRecorder!(f.row,claim,new Date(f.now))).toBeNull();expect(writes).toBe(0);expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.row.fleetBinding).toBeUndefined()}
+ finally{resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.get=read;TestRequestModel.collection.findOneAndUpdate=write}
+});
