@@ -19,7 +19,7 @@ export const portalWorkspaceApi = createWorkspaceApi({ basePath: "/api/portal/wo
  * workspace, the page still states the rule.
  */
 export const STORE_DELETE_NOTICE =
-  "A workspace that owns miniapps in the Mentra Miniapp Store can't be deleted. Delete or move its miniapps first.";
+  "A workspace that owns miniapps in the Mentra Miniapp Store can't be deleted. Delete its miniapps first.";
 
 /** The query that holds who is signed in (`GET /api/portal/me`). While it fails, the portal shows the sign-in page. */
 export const PORTAL_ME_KEY = ["portal-me"] as const;

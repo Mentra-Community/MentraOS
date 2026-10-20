@@ -68,7 +68,7 @@ describe("the Workspaces page", () => {
       { details: [owner] },
     );
     expect(markup).toContain(
-      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete or move its miniapps first.",
+      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete its miniapps first.",
     );
     // Nothing is left behind any more, so there is no word of miniapps staying in the Store.
     expect(markup).not.toContain("stay there");

@@ -625,7 +625,7 @@ describe("deleting a workspace a service holds", () => {
     const free = render(`/w/${ACME}/settings`, TWO_WORKSPACES);
     expect(free).not.toContain("still owns");
     expect(free).toContain(
-      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete or move its miniapps first.",
+      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete its miniapps first.",
     );
     expect(free).not.toContain("stay there");
   });

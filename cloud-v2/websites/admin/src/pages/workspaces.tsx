@@ -39,7 +39,7 @@ const ALL_WORKSPACES_PAGE_SIZE = 50;
  * workspace, the page still states the rule.
  */
 export const STORE_DELETE_NOTICE =
-  "A workspace that owns miniapps in the Mentra Miniapp Store can't be deleted. Delete or move its miniapps first.";
+  "A workspace that owns miniapps in the Mentra Miniapp Store can't be deleted. Delete its miniapps first.";
 
 type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";
 const TABS: ReadonlyArray<readonly [TabKey, string]> = [

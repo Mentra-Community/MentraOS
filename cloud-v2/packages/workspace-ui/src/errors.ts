@@ -54,7 +54,7 @@ const CODE_MESSAGES: Record<string, string> = {
   workspace_not_found: "This workspace no longer exists or you no longer have access to it.",
   temporarily_unavailable: "Sign-in is temporarily unavailable. Try again in a moment.",
   server_error: "The server ran into a problem. Try again.",
-  workspace_has_miniapps: "Move or delete this workspace's miniapps before deleting it.",
+  workspace_has_miniapps: "Delete this workspace's miniapps before deleting the workspace.",
 };
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
