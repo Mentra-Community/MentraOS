@@ -14,6 +14,14 @@ These endpoints use `TEST_RUN_INGEST_TOKEN_DEV`. Core's `NIGHTLY_ROUTINE_LANES` 
 
 The final receipt supplies the expected members, individual status and publication completeness, aggregate verdict and recorded-results URL. The scheduler retains it as an Actions artifact and posts the verdict to `#nightly-builds` using the existing build-notification bot. Only the original scheduler attempt may send a post; reruns reconcile Core without replaying an uncertain Slack send. Inspect the retained send intent and acknowledgement before manually reconciling a notification.
 
+Unsuccessful member rows include `(machine=<machine>, lane=<lane>, resources=<a>, <b>, <c>)`.
+Assigned context comes from the original validated binding and prepared member input,
+including canonical exclusive dependency IDs. A never-bound member shows
+`machine=unassigned`, its requested platform as the lane, and resource kinds from
+its original digest-checked preparation. Missing or corrupt provenance shows
+`unknown`; a validated binding still names its machine and lane when prepared
+resources are unavailable. The sender never substitutes current fleet state or a later rerun.
+
 ## Slack destination
 
 The scheduler uses the existing GitHub environment `build-notifications`, which supplies:

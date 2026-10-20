@@ -17,6 +17,7 @@ import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
+import {laneControlRecordSchema, resourceControlRecordSchema} from '../types/lane-control.types'
 
 /** A phone check and ordinary preparation must not queue conflicting owners on one physical Android lane. */
 export function requiresSerializedAndroidPreparation(lane: TestHostState['lanes'][number]) {
@@ -24,7 +25,27 @@ export function requiresSerializedAndroidPreparation(lane: TestHostState['lanes'
     resource.capabilities?.includes('backend-connectivity'))
 }
 export type ResourceReservationHost = {hostId: string; incarnation: string; incarnationGeneration: number; sequence: number;
-  receivedAt: Date; snapshot: TestHostState; resourceReservationVersion?: number; resourceReservations?: unknown}
+  receivedAt: Date; snapshot: TestHostState; resourceReservationVersion?: number; resourceReservations?: unknown;
+  laneControlVersion?: number; laneControls?: unknown}
+/** Installed resource controls and new fleet claims contend on the same authority row. */
+function dependencyAvailable(host: ResourceReservationHost, dependency: ExclusiveResourceDependency, now: number) {
+  if (host.snapshot.laneControls?.resourceControls !== true) return true;
+  if (!fresh(host,now)) return false;
+  const subject=host.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===dependency.resourceId),at=Date.parse(subject?.observedAt??'');
+  if (!subject?.current || subject.subject.authorityHostId!==host.hostId || subject.status!=='idle' || subject.owner ||
+    subject.idle.outcome!=='passed' || subject.idle.acceptedCheck?.subjectGeneration!==subject.generation ||
+    subject.idle.qualifiedScope.kind==='unqualified' || !Number.isFinite(at) || at>now || now-at>120_000) return false;
+  const records=z.array(z.union([laneControlRecordSchema,resourceControlRecordSchema])).max(100).parse(host.laneControls??[]);
+  return !records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId &&
+    (!row.receipt || row.receipt.result.status==='accepted' &&
+      (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
+        'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state!=='settled')));
+}
+function dependencyEnrolled(host: ResourceReservationHost, dependency: ExclusiveResourceDependency) {
+  return dependency.authorityHostId===host.hostId && (host.snapshot.resources?.some(resource=>resource.id===dependency.resourceId &&
+    resource.capabilities?.includes(dependency.capability)) || host.snapshot.lanes.some(lane=>lane.resources.some(resource=>
+      resource.exclusiveDependencies?.some(value=>value.resourceId===dependency.resourceId && value.authorityHostId===host.hostId))));
+}
 export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId: string; owner: ExclusiveHostReservation['owner']}
 export interface ResourceReservationRepository {
   get(hostId: string): Promise<ResourceReservationHost | null>
@@ -83,10 +104,10 @@ function localBackendIntentMatches(host: ResourceReservationHost, intent: Exclus
 export const resourceReservationRepository: ResourceReservationRepository = {
   async get(hostId) {
     return await TestHostStateModel.findOne({hostId}).select({hostId: 1, incarnation: 1, incarnationGeneration: 1,
-      sequence: 1, receivedAt: 1, 'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
+      sequence: 1, receivedAt: 1, laneControlVersion: 1, laneControls: 1, 'snapshot.laneControls': 1, 'snapshot.hostId': 1, 'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1,
       'snapshot.sequence': 1, 'snapshot.observedAt': 1, 'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
-      'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resourceReservations': 1,
+      'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resources': 1, 'snapshot.resourceReservations': 1,
       'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
       'snapshot.resourceLifecycle': 1, resourceReservationVersion: 1, resourceReservations: 1})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as ResourceReservationHost | null
@@ -94,6 +115,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
   async replace(host, claims) {
     const row = await TestHostStateModel.findOneAndUpdate({hostId: host.hostId, incarnation: host.incarnation,
       incarnationGeneration: host.incarnationGeneration, sequence: host.sequence,
+      ...(host.snapshot.laneControls?.resourceControls===true?{laneControlVersion:host.laneControlVersion??{$exists:false}}:{}),
       resourceReservationVersion: host.resourceReservationVersion ?? {$exists: false}},
       {$set: {resourceReservations: claims}, $inc: {resourceReservationVersion: 1}},
       {new: true, writeConcern: testWriteConcern}).select({hostId: 1}).setOptions({timeoutMS: 5000}).lean()
@@ -233,8 +255,7 @@ export class ResourceReservationsService {
         current.inputSha256 || current.state !== 'awaiting-runner' || current.fleetDeadline.getTime() <= this.now() ||
         !isDeepStrictEqual(current.fleetResourceAdmission, admission)) return null
       const authority = await this.host(selected[0]!.authorityHostId)
-      if (!fresh(authority, this.now()) || selected.some(dependency => !authority.snapshot.lanes.some(value => value.resources.some(resource =>
-        resource.exclusiveDependencies?.some(enrolled => enrolled.resourceId === dependency.resourceId && enrolled.authorityHostId === authority.hostId))))) return null
+      if (!fresh(authority, this.now()) || selected.some(dependency => !dependencyEnrolled(authority,dependency))) return null
       const claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),
         existing = claims.filter(isExclusiveHostReservation).filter(claim => selected.some(value => value.resourceId === claim.resourceId))
       if (retained.length && (existing.length !== retained.length || retained.some(claim =>
@@ -258,6 +279,7 @@ export class ResourceReservationsService {
         const receipt = fleetExclusiveReservationSchema.parse({origin, intent: originalIntent, intentSha256, claims: existing})
         return row.fleetExclusiveReservation && !isDeepStrictEqual(row.fleetExclusiveReservation, receipt) ? null : receipt
       }
+      if(selected.some(dependency=>!dependencyAvailable(authority,dependency,this.now()))) return null;
       if (claims.length + selected.length > 1000) return null
       const intentSha256 = requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation,
         generation: intent.controller.generation}, origin, dependencies: selected}),
@@ -327,8 +349,7 @@ export class ResourceReservationsService {
     if (!selected.length) return {status: 'reserved' as const, intentSha256, claims: []}
     for (let attempt = 0; attempt < 3; attempt++) {
       const authority = await this.host(selected[0]!.authorityHostId)
-      if (selected.some(dependency => !authority.snapshot.lanes.some(lane => lane.resources.some(resource =>
-        resource.exclusiveDependencies?.some(value => value.resourceId === dependency.resourceId && value.authorityHostId === authority.hostId)))))
+      if (selected.some(dependency => !dependencyEnrolled(authority,dependency)))
         throw new TestRunError(409, 'Selected authority has not enrolled this canonical resource dependency')
       const claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),
         current = claims.filter(isExclusiveHostReservation).filter(claim => selected.some(value => value.resourceId === claim.resourceId)),
@@ -337,6 +358,8 @@ export class ResourceReservationsService {
         blocked: {resourceId: blocked.resourceId, hostId: blocked.borrowerHostId, laneId: blocked.laneId, owner: blocked.owner}}
       const missing = selected.filter(dependency => !current.some(claim => claim.resourceId === dependency.resourceId))
       if (!missing.length) return {status: 'reserved' as const, intentSha256, claims: current}
+      if(missing.some(dependency=>!dependencyAvailable(authority,dependency,this.now())))
+        return {status:'waiting' as const,intentSha256,claims:[],blocked:undefined};
       if (claims.length + missing.length > 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
       const next: ExclusiveHostReservation[] = missing.map(dependency => ({kind: 'exclusive', id: randomUUID(),
         resourceId: dependency.resourceId, authorityHostId: authority.hostId, borrowerHostId: hostId, laneId: intent.laneId,
@@ -400,8 +423,7 @@ export class ResourceReservationsService {
       throw new TestRunError(409, 'Original exclusive claim observation requires its unchanged canonical authority')
     const authority = await this.host(selected[0]!.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
       .filter(isExclusiveHostReservation).filter(claim => selected.some(dependency => dependency.resourceId === claim.resourceId))
-    const matches = selected.every(dependency => authority.snapshot.lanes.some(lane => lane.resources.some(resource =>
-      resource.exclusiveDependencies?.some(value => value.resourceId === dependency.resourceId && value.authorityHostId === authority.hostId)))) &&
+    const matches = selected.every(dependency => dependencyEnrolled(authority,dependency)) &&
       claims.length === selected.length && claims.every(claim => claim.authorityHostId === authority.hostId && claim.intentSha256 === intentSha256 &&
       claim.borrowerHostId === hostId && claim.laneId === intent.laneId && claim.operationId === intent.operationId &&
       claim.inputSha256 === intent.inputSha256 && isDeepStrictEqual(claim.owner, intent.owner) &&
@@ -432,8 +454,7 @@ export class ResourceReservationsService {
       selected.length !== reservation.claims.length || selected.some(dependency => !reservation.claims.some(claim =>
         claim.resourceId === dependency.resourceId && claim.authorityHostId === dependency.authorityHostId))) return unknown
     const authority = await this.host(selected[0]!.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
-    const enrolled = selected.every(dependency => authority.snapshot.lanes.some(lane => lane.resources.some(resource =>
-      resource.exclusiveDependencies?.some(value => value.resourceId === dependency.resourceId && value.authorityHostId === authority.hostId))))
+    const enrolled = selected.every(dependency => dependencyEnrolled(authority,dependency))
     return enrolled && reservation.claims.every(claim => claims.some(value => isDeepStrictEqual(value, claim))) ?
       {status: 'reserved' as const, intentSha256: reservation.intentSha256, claims: reservation.claims} : unknown
   }
