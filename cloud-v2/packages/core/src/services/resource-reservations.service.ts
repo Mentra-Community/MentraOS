@@ -233,7 +233,7 @@ export class ResourceReservationsService {
       row.hostId || row.inputSha256 || row.input || row.fleetDeadline.getTime() <= this.now()) return null
     if (row.fleetResourceAdmission && (row.fleetResourceAdmission.intent.hostId !== hostId || row.fleetResourceAdmission.intent.laneId !== laneId)) return null
     const borrower = await this.host(hostId), lane = borrower.snapshot.lanes.find(value => value.id === laneId)
-    if (requiresBackendConnectivity(row) && !row.fleetResourceAdmission && !qualifiedCandidate(row, borrower.snapshot, laneId, this.now())) return null
+    if (requiresBackendConnectivity(row) && !row.fleetResourceAdmission && !qualifiedCandidate(row, borrower.snapshot, laneId, this.now(), borrower.receivedAt)) return null
     if (!fresh(borrower, this.now()) ||
       !lane || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic') return null
     if (hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(claim => isExclusiveHostReservation(claim) &&

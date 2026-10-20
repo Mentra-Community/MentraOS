@@ -377,13 +377,13 @@ export class TestRequestService {
       const {qualifiedCandidate} = await import('./backend-candidate-preparation');
       const candidateSource = row as unknown as import('../types/routine-job.types').StoredRoutineJob,
         candidateHost = candidateSource.fleetCandidatePreparations ? await this.backendHosts?.get(hostId) : undefined,
-        candidate = candidateHost && qualifiedCandidate(candidateSource, candidateHost, frozen.laneId, this.now());
+        candidate = candidateHost && qualifiedCandidate(candidateSource, candidateHost, frozen.laneId, this.now(), candidateHost.receivedAt);
       if (candidate) {
         if (!candidate || requestInputDigest(candidate.target.proposedInput) !== digest || candidateSource.fleetCandidatePreparation ||
           !candidateSource.fleetPreparation || candidateSource.fleetDeadline.getTime() <= this.now())
           throw new TestRunError(409, 'Prepared executable requires the exact returned pre-binding phone candidate');
         const current = await this.preparation(requestId, hostId, intentSha256), currentHost = await this.backendHosts?.get(hostId);
-        if (!currentHost || !qualifiedCandidate(current as unknown as import('../types/routine-job.types').StoredRoutineJob, currentHost, frozen.laneId, this.now()) ||
+        if (!currentHost || !qualifiedCandidate(current as unknown as import('../types/routine-job.types').StoredRoutineJob, currentHost, frozen.laneId, this.now(), currentHost.receivedAt) ||
           requestInputDigest((current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCandidatePreparations) !== requestInputDigest(candidateSource.fleetCandidatePreparations) ||
           (current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCancellation ||
           (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationCancellation ||

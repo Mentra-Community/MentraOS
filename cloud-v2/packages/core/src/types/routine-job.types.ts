@@ -5,6 +5,8 @@ import {publishedRoutineDefinitionSchema, routineResourceRequirementSchema, rout
   glassesModelSchema, routineIdentitySchema} from './routine-definition.types';
 import {routineDispatchSelectionSchema, routinePreparedBuildSchema, routineRevisionSchema} from './routine-dispatch.types';
 import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema, backendCandidatePrerequisiteSchema, backendConnectivityTargetSchema, candidatePrerequisiteSettlementSchema, backendPrerequisiteOrigin} from './backend-connectivity.types';
+import {recorderHostReservationSchema} from './recorder-storage.types';
+import {fleetResourceAdmissionSchema, fleetExclusiveReservationSchema} from './resource-reservations.types';
 
 const canonicalTarget = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalTarget) :
   value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
@@ -70,6 +72,8 @@ export const routineQualificationTargetSchema = z.object({jobId: frameworkIdenti
 export const fleetCandidatePreparationSchema = z.object({candidate: backendCandidatePrerequisiteSchema, hostId: frameworkIdentitySchema,
   laneId: frameworkIdentitySchema, target: routineQualificationTargetSchema, targetInputSha256: jobHashSchema,
   backendTarget: backendConnectivityTargetSchema.optional(),
+  provisionalReturn: z.object({recorder: recorderHostReservationSchema, admission: fleetResourceAdmissionSchema.optional(),
+    exclusive: fleetExclusiveReservationSchema.optional(), releasedAt: z.string().datetime({offset: true}).optional()}).strict().optional(),
   claimReceipt: z.unknown().optional(), returnReceipt: z.unknown().optional(), settlement: candidatePrerequisiteSettlementSchema.optional(),
 }).strict()
 export type FleetCandidatePreparation = z.infer<typeof fleetCandidatePreparationSchema>

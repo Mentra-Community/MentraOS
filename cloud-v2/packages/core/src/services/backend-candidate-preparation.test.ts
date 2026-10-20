@@ -1,13 +1,13 @@
 import {expect, test} from 'bun:test'
-import {RoutineJobService, routineJobInputDigest, routineJobRepository, recorderCapacityRequirements, compatibleStructuralRoutineLane, routineLaneContext} from './routine-job.service'
+import {RoutineJobService, routineJobInputDigest, routineJobRepository, recorderCapacityRequirements, compatibleStructuralRoutineLane, routineLaneContext, routineLaneDescriptorRevision} from './routine-job.service'
 import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, candidatePrerequisiteRequestMatches, candidateReturnMatches, candidateRenewal} from './backend-candidate-preparation'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
-import {requestInputDigest} from './test-request.service'
+import {requestInputDigest, TestRequestService, type TestRequestRepository} from './test-request.service'
 import type {RoutineJobRepository} from './routine-job.service'
 import type {StoredRoutineJob, FleetCandidatePreparation} from '../types/routine-job.types'
-import type {ReceivedTestHostState} from './test-host-state.service'
+import {hostStateSchema, type ReceivedTestHostState} from './test-host-state.service'
 import {TestRequestModel} from '../models/test-request.model'
-import {ResourceReservationsService, resourceReservationRepository} from './resource-reservations.service'
+import {type ResourceReservationHost, ResourceReservationsService, resourceReservationRepository} from './resource-reservations.service'
 import {mock} from 'bun:test'
 
 const initialNow = Date.parse('2026-10-20T12:00:00Z'), hash = (c: string) => c.repeat(64)
@@ -24,7 +24,7 @@ function fixture() {
     fleetDeadline:new Date(now+300_000),createdAt:new Date(now)} as unknown as StoredRoutineJob
   row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row)
   const hosts = ['air1','air2'].map(hostId => ({hostId,incarnation:`${hostId}-one`,incarnationGeneration:1,sequence:1,
-    observedAt:new Date(now).toISOString(),receivedAt:new Date(now).toISOString(),frameworkBinding:{...testFrameworkBinding(),version:1200,routineApiVersion:69},
+    observedAt:new Date(now).toISOString(),receivedAt:new Date(now).toISOString(),frameworkBinding:{...testFrameworkBinding(),version:1200,routineApiVersion:70},
     resourceReservations:{claims:[],returns:[],candidatePrerequisites:[]},authorityReservations:[],lanes:[{id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
       {id:`${hostId}:phone`,kind:'phone',capabilities:['backend-connectivity']},{id:`${hostId}:app`,kind:'app'},
       {id:`${hostId}:recorder`,kind:'recorder',storage:{poolId:`${hostId}:disk`,observedAt:new Date(now).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}},
@@ -163,4 +163,76 @@ test('cancellation winning after a positive read permits only cleanup settlement
   expect(calls[1]!.filter.$or).toContainEqual({fleetCancellation:{$exists:true}});expect(calls[1]!.update.$set.fleetCandidateSelection).toBeUndefined();
   expect(calls[1]!.update.$set.fleetCandidatePreparations).toEqual([{...pending,settlement}])
  }finally{TestRequestModel.collection.findOneAndUpdate=find}
+})
+
+/** Production repositories keep authenticated receive time outside the worker snapshot. */
+function repositoryEnvelope(f: ReturnType<typeof fixture>): ResourceReservationHost {
+ const h=structuredClone(f.hosts[0]!),{receivedAt,authorityReservations,...snapshot}=h,subject=snapshot.resourceLifecycle!.subjects[0]!;
+ snapshot.frameworkAcceptedAt=h.observedAt;snapshot.frameworkProcess={pid:123,startedAt:h.observedAt};
+ snapshot.resourceLifecycle!.subjects=[{...subject,status:'idle',observedAt:h.observedAt,receivedAt:null,reason:null,
+   idle:{contractVersion:'phone-baseline',outcome:'passed',checkedAt:h.observedAt,acceptedCheck:{operationId:'baseline',subjectGeneration:subject.generation,resultSha256:hash('a'),acceptedAt:h.observedAt},qualifiedScope:{kind:'same-controller',controllerId:h.hostId},evidenceRefs:[]},
+   repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'phone',capabilities:['backend-connectivity'],memberships:[{hostId:h.hostId,laneId:'android'}],dependencies:[],placement:'installed'}}];
+ return {hostId:h.hostId,incarnation:h.incarnation!,incarnationGeneration:h.incarnationGeneration!,sequence:h.sequence!,receivedAt:new Date(receivedAt),snapshot:hostStateSchema.parse(snapshot),resourceReservations:[structuredClone(f.row.fleetResourceReservation!)]};
+}
+async function returnedFixture() {
+ const f=fixture();await f.service.preparation('job-one');f.settle('qualified');await f.service.preparation('job-one');
+ f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(r=>r.kind==='recorder')!.storage!.minimumAvailableBytes;
+ return f;
+}
+test('actual resource admission consumes authenticated repository receive time, not snapshot metadata',async()=>{
+ const f=await returnedFixture(),host=repositoryEnvelope(f),claim=f.row.fleetResourceReservation!;let stages=0;
+ expect('receivedAt' in host.snapshot).toBe(false);
+ const service=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},async recorderClaims(){return [structuredClone(claim)]},
+   async stageBackend(_id,_digest,admission){stages++;f.row.fleetResourceAdmission=structuredClone(admission);return structuredClone(f.row)},async claimedHosts(){return []},async replace(){throw Error('No exclusive dependency expected')}} ,()=>f.now);
+ expect(await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android')).toBeUndefined();expect(stages).toBe(1);
+ expect(qualifiedCandidate(f.row,host.snapshot,'android',f.now,host.receivedAt)).toBeDefined();
+ for(const received of [new Date(f.now-120001),new Date(f.now+1),new Date(NaN)])expect(qualifiedCandidate(f.row,host.snapshot,'android',f.now,received)).toBeUndefined();
+})
+test('expiry after provisional claims stays unbound through exact return, negative renewal and a ready alternate',async()=>{
+ const f=await returnedFixture(),original=structuredClone(f.row.fleetCandidatePreparations![0]!),claim=structuredClone(f.row.fleetResourceReservation!);
+ const host=repositoryEnvelope(f);f.hosts[0]!.authorityReservations=[claim];f.advance(120001);host.receivedAt=new Date(f.now);host.snapshot.observedAt=new Date(f.now).toISOString();host.snapshot.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=host.snapshot.observedAt;
+ await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
+ expect(pending?.provisionalReturn?.recorder).toEqual(claim);expect(candidateRequestCurrent(f.row,pending,f.now)).toBe(false);expect(f.row.fleetBinding).toBeUndefined();expect(f.writes).toBe(2);
+ const get=routineJobRepository.get,read=resourceReservationRepository.get,replace=resourceReservationRepository.replace,write=TestRequestModel.collection.findOneAndUpdate;let removals=0,loss=true;
+ routineJobRepository.get=async()=>structuredClone(f.row);resourceReservationRepository.get=async()=>structuredClone(host);
+ resourceReservationRepository.replace=async(_host,claims)=>{removals++;host.resourceReservations=structuredClone(claims);if(loss){loss=false;throw Error('Original claim return response lost')}return true};
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{expect(filter.fleetCandidatePreparation).toEqual(pending);for(const key of Object.keys(update.$unset??{}))delete (f.row as any)[key];f.row={...f.row,...update.$set};return structuredClone(f.row)}) as any;
+ try {
+  await expect(routineJobRepository.releaseCandidateProvisional!(f.row,new Date(f.now))).rejects.toThrow('return response lost');expect(f.row.fleetCandidatePreparation).toEqual(pending);expect(f.row.fleetResourceReservation).toEqual(claim);
+  expect(await routineJobRepository.releaseCandidateProvisional!(f.row,new Date(f.now))).toMatchObject({fleetCandidatePreparation:{provisionalReturn:{releasedAt:new Date(f.now).toISOString()}}});expect(removals).toBe(1);expect(f.row.fleetResourceReservation).toBeUndefined();
+ }finally{routineJobRepository.get=get;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;TestRequestModel.collection.findOneAndUpdate=write}
+ f.hosts[0]!.authorityReservations=[];expect(candidateRequestCurrent(f.row,f.row.fleetCandidatePreparation,f.now)).toBe(true);
+ f.settle('unqualified');await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2');expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCandidatePreparations![0]).toEqual(original);
+ f.settle('qualified');await f.service.preparation('job-one');expect(f.row.fleetResourceReservation?.hostId).toBe('air2');expect(f.row.fleetCandidateSelection?.hostId).toBe('air2');expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
+})
+for(const condition of ['local-consumer','foreign-byte','stale-storage','replacement','invalid-received','invalid-observed'] as const)test(`provisional return retains all authority when ${condition} appears`,async()=>{
+ const f=await returnedFixture(),host=repositoryEnvelope(f);f.hosts[0]!.authorityReservations=[f.row.fleetResourceReservation!];f.advance(120001);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);
+ host.receivedAt=new Date(f.now);host.snapshot.observedAt=new Date(f.now).toISOString();host.snapshot.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=host.snapshot.observedAt;
+ if(condition==='local-consumer')host.snapshot.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.reservations=[{requestId:'job-one',inputSha256:hash('c'),remainingOutputBytes:1024}];
+ if(condition==='foreign-byte')host.resourceReservations=[{...f.row.fleetResourceReservation!,id:'44d4ae24-3b1a-4131-8ef4-ae4ded2c269b'}];if(condition==='stale-storage')host.snapshot.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(f.now-120001).toISOString();if(condition==='replacement')host.incarnation='different';
+ if(condition==='invalid-received')host.receivedAt=new Date(NaN);if(condition==='invalid-observed')host.snapshot.observedAt='not-a-timestamp';
+ const get=routineJobRepository.get,read=resourceReservationRepository.get,replace=resourceReservationRepository.replace;let writes=0;routineJobRepository.get=async()=>structuredClone(f.row);resourceReservationRepository.get=async()=>structuredClone(host);resourceReservationRepository.replace=async()=>{writes++;return true};
+ try{expect(await routineJobRepository.releaseCandidateProvisional!(f.row,new Date(f.now))).toBeNull();expect(writes).toBe(0);expect(f.row.fleetCandidatePreparation).toEqual(pending);expect(f.row.fleetBinding).toBeUndefined()}
+ finally{routineJobRepository.get=get;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace}
+})
+for(const condition of ['valid','missing-membership','future-subject','owned-subject'] as const)test(`provisional dependency return checks ${condition} before clearing its original receipt`,async()=>{
+ const f=await returnedFixture(),claim=structuredClone(f.row.fleetResourceReservation!),dependency={resourceId:'shared-account',authorityHostId:'air2',capability:'google-authentication'};
+ const intent={operationId:'run:job-one',hostId:'air1',laneId:'android',inputSha256:f.row.fleetInputSha256!,owner:{kind:'run' as const,id:'job-one'},controller:{incarnation:'air1-one',generation:1,sequence:1},resources:[{id:'fixtures',capabilities:['google-authentication']}]},origin={kind:'fleet' as const,fleetInputSha256:f.row.fleetInputSha256!},digest=requestInputDigest({...intent,controller:{incarnation:'air1-one',generation:1},origin,dependencies:[dependency]});
+ const exclusive={kind:'exclusive' as const,id:'fe8b194f-5f52-4f24-8731-a5b5eaf14e83',authorityHostId:'air2',borrowerHostId:'air1',laneId:'android',resourceId:'shared-account',operationId:intent.operationId,inputSha256:f.row.fleetInputSha256!,intentSha256:digest,owner:intent.owner,origin,controllerIncarnation:'air1-one',controllerGeneration:1,borrowerSequence:1,reservedAt:new Date(f.now).toISOString()};
+ f.row.fleetResourceAdmission={intent,dependencies:[dependency]};f.row.fleetExclusiveReservation={intent,origin,intentSha256:digest,claims:[exclusive]};f.hosts[0]!.authorityReservations=[claim,exclusive];
+ f.advance(120001);await f.service.preparation('job-one');const pending=structuredClone(f.row.fleetCandidatePreparation!);expect(pending.provisionalReturn?.exclusive?.claims).toEqual([exclusive]);
+ const borrower=repositoryEnvelope(f);borrower.resourceReservations=[claim];borrower.receivedAt=new Date(f.now);borrower.snapshot.observedAt=new Date(f.now).toISOString();borrower.snapshot.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=borrower.snapshot.observedAt;
+ const authority:ResourceReservationHost={...structuredClone(borrower),hostId:'air2',incarnation:'air2-one',resourceReservations:[exclusive],snapshot:{...structuredClone(borrower.snapshot),hostId:'air2',incarnation:'air2-one',lanes:[{id:'account',platform:'ios-on-mac',dispatchMode:'automatic',state:'idle',resources:[{id:'shared-account',kind:'fixture-data',capabilities:['google-authentication']}]}],resourceLifecycle:{schemaVersion:1,history:[],subjects:[{...structuredClone(borrower.snapshot.resourceLifecycle!.subjects[0]!),subject:{kind:'resource',id:'shared-account',authorityHostId:'air2'},observedAt:new Date(f.now).toISOString()}]}}};
+ if(condition==='missing-membership')authority.snapshot.lanes[0]!.resources=[];
+ if(condition==='future-subject')authority.snapshot.resourceLifecycle!.subjects[0]!.observedAt=new Date(f.now+1).toISOString();
+ if(condition==='owned-subject')authority.snapshot.resourceLifecycle!.subjects[0]!.owner={kind:'run',id:'other-run',hostId:'air2',laneId:'account',generation:1};
+ const get=routineJobRepository.get,read=resourceReservationRepository.get,replace=resourceReservationRepository.replace,write=TestRequestModel.collection.findOneAndUpdate;const removed:string[]=[];
+ routineJobRepository.get=async()=>structuredClone(f.row);resourceReservationRepository.get=async id=>structuredClone(id==='air1'?borrower:authority);
+ resourceReservationRepository.replace=async(host,claims)=>{removed.push(host.hostId);(host.hostId==='air1'?borrower:authority).resourceReservations=structuredClone(claims);if(removed.length===1)f.row.fleetCancellation={requestedAt:new Date(f.now).toISOString(),reason:'Cancelled during original return'};return true};
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{expect(filter.fleetCancellation).toEqual(f.row.fleetCancellation);for(const key of Object.keys(update.$unset))delete (f.row as any)[key];f.row={...f.row,...update.$set};return structuredClone(f.row)}) as any;
+ try{const result=await routineJobRepository.releaseCandidateProvisional!(f.row,new Date(f.now));
+  if(condition==='valid'){expect(result).toBeDefined();expect(removed).toEqual(['air1','air2']);expect(authority.resourceReservations).toEqual([])}
+  else{expect(result).toBeNull();expect(removed).toEqual(['air1']);expect(authority.resourceReservations).toEqual([exclusive]);expect(f.row.fleetCandidatePreparation!.provisionalReturn!.releasedAt).toBeUndefined()}
+  expect(f.row.fleetCandidatePreparation!.provisionalReturn!.exclusive).toEqual(pending.provisionalReturn!.exclusive);expect(candidateRequestCurrent(f.row,f.row.fleetCandidatePreparation,f.now)).toBe(false);expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCancellation).toBeDefined()}
+ finally{routineJobRepository.get=get;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;TestRequestModel.collection.findOneAndUpdate=write}
 })

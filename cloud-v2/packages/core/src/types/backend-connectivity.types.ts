@@ -54,7 +54,7 @@ export const backendConnectivityObservationSchema = z.object({schemaVersion: z.l
 export type BackendConnectivityObservation = z.infer<typeof backendConnectivityObservationSchema>
 export const BACKEND_CONNECTIVITY_MAX_AGE_MS = 120_000
 export const BACKEND_CONNECTIVITY_ROUTINE_API_VERSION = 61
-export const BACKEND_CANDIDATE_ROUTINE_API_VERSION = 69
+export const BACKEND_CANDIDATE_ROUTINE_API_VERSION = 70
 export type BackendConnectivityContext = {hostId: string; incarnation: string; generation: number;
   resourceGenerations: {resourceId: string; generation: number; current: boolean; unowned: boolean}[]}
 

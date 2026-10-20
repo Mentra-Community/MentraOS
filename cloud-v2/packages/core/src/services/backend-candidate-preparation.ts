@@ -11,8 +11,10 @@ export function candidateRenewal(row: StoredRoutineJob, hostId: string, laneId: 
   const previous = row.fleetCandidatePreparations?.at(-1), selected = row.fleetCandidateSelection
   return previous?.settlement?.outcome === 'qualified' && previous.hostId === hostId && previous.laneId === laneId &&
     selected?.hostId === hostId && selected.laneId === laneId && selected.targetInputSha256 === previous.targetInputSha256 &&
-    !row.fleetCandidatePreparation && !row.fleetBinding && !row.fleetResourceAdmission && !row.fleetResourceReservation &&
-    !row.fleetExclusiveReservation && previous.claimReceipt && previous.returnReceipt ? previous : undefined
+    !row.fleetCandidatePreparation && !row.fleetBinding && !row.hostId && !row.dispatchIntent && !row.inputSha256 && !row.hostReceipt &&
+    (!row.fleetResourceReservation || row.fleetResourceReservation.hostId === hostId && row.fleetResourceReservation.laneId === laneId) &&
+    (!row.fleetResourceAdmission || row.fleetResourceAdmission.intent?.hostId === hostId && row.fleetResourceAdmission.intent.laneId === laneId) &&
+    previous.claimReceipt && previous.returnReceipt ? previous : undefined
 }
 
 export function candidateReturnMatches(pending: FleetCandidatePreparation, value: unknown) {
@@ -33,10 +35,14 @@ export function candidateReturnMatches(pending: FleetCandidatePreparation, value
 }
 
 /** Pending preparation is request custody, before recorder/dependency/run admission. */
-export function candidateRequestCurrent(row: StoredRoutineJob | null, pending: FleetCandidatePreparation | undefined, now: number) {
+export function candidateRequestCurrent(row: StoredRoutineJob | null, pending: FleetCandidatePreparation | undefined, now: number, returningProvisional = false) {
+  const provisional = pending?.provisionalReturn, returning = returningProvisional && provisional && !provisional.releasedAt &&
+    isDeepStrictEqual(row?.fleetResourceReservation, provisional.recorder) && isDeepStrictEqual(row?.fleetResourceAdmission, provisional.admission) &&
+    isDeepStrictEqual(row?.fleetExclusiveReservation, provisional.exclusive)
   if (!row || !pending || !fleetCandidatePreparationSchema.safeParse(pending).success || row.state !== 'awaiting-runner' ||
     row.fleetBinding || row.hostId || row.inputSha256 || row.hostReceipt || row.runId || row.dispatchCompletion ||
-    row.fleetCandidateSelection || row.fleetResourceAdmission || row.fleetResourceReservation || row.fleetExclusiveReservation || row.fleetCancellation ||
+    row.fleetCandidateSelection || !returning && (row.fleetResourceAdmission || row.fleetResourceReservation || row.fleetExclusiveReservation) || row.fleetCancellation ||
+    pending.provisionalReturn && !pending.provisionalReturn.releasedAt && !returning ||
     row.hostCancellation || row.preparationCancellation || row.hostRejection || row.preparationRejection ||
     !row.fleetPreparation || row.fleetDeadline.getTime() <= now ||
     pending.candidate.fleetInputSha256 !== row.fleetInputSha256 || pending.candidate.selectionSha256 !== row.fleetSelectionSha256 ||
@@ -96,15 +102,24 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
     Date.parse(health.observedAt) > now || now - Date.parse(health.observedAt) > 120_000 || Date.parse(health.check.closedAt) > now) return undefined
   return receipt
 }
-/** Completed positive is a same-job, same-APK prerequisite, not permission to run by itself. */
-export function qualifiedCandidate(row: StoredRoutineJob, host: TestHostState, laneId: string, now: number) {
-  const received = Date.parse((host as TestHostState & {receivedAt?: string}).receivedAt ?? ''), observed = Date.parse(host.observedAt)
-  if (row.fleetCandidatePreparation || !Number.isFinite(received) || received > now || now - received > 120_000 ||
-    observed > now || now - observed > 120_000 || !host.frameworkBinding || host.frameworkBinding.routineApiVersion < BACKEND_CANDIDATE_ROUTINE_API_VERSION) return undefined
+/** Retained positive identity is necessary but never sufficient for current admission. */
+function returnedCandidate(row: StoredRoutineJob, host: TestHostState, laneId: string) {
+  if (row.fleetCandidatePreparation || !host.frameworkBinding || host.frameworkBinding.routineApiVersion < BACKEND_CANDIDATE_ROUTINE_API_VERSION) return undefined
   const pending = row.fleetCandidatePreparations?.at(-1)
   if (!pending?.settlement || pending.settlement.outcome !== 'qualified' || pending.hostId !== host.hostId || pending.laneId !== laneId ||
     !candidateReturnMatches(pending, pending.returnReceipt) || row.fleetCandidateSelection?.hostId !== host.hostId ||
-    row.fleetCandidateSelection.laneId !== laneId || row.fleetCandidateSelection.targetInputSha256 !== pending.targetInputSha256) return undefined
+    row.fleetCandidateSelection.laneId !== laneId || row.fleetCandidateSelection.targetInputSha256 !== pending.targetInputSha256 ||
+    pending.candidate.fleetInputSha256 !== row.fleetInputSha256 || pending.candidate.selectionSha256 !== row.fleetSelectionSha256 ||
+    pending.candidate.controller.incarnation !== host.incarnation || pending.candidate.controller.generation !== host.incarnationGeneration ||
+    !isDeepStrictEqual(host.frameworkBinding, pending.target.acceptedBinding)) return undefined
+  return pending
+}
+/** Authenticated receive time belongs to the repository envelope, never to the worker snapshot. */
+export function qualifiedCandidate(row: StoredRoutineJob, host: TestHostState, laneId: string, now: number, receivedAt: string | Date) {
+  const received = receivedAt instanceof Date ? receivedAt.getTime() : Date.parse(receivedAt), observed = Date.parse(host.observedAt),
+    pending = returnedCandidate(row, host, laneId)
+  if (!pending || !Number.isFinite(received) || received > now || now - received > 120_000 ||
+    !Number.isFinite(observed) || observed > now || now - observed > 120_000) return undefined
   const phone = host.lanes.find(lane => lane.id === laneId)?.resources.find(value => value.id === pending.target.purpose!.resourceId),
     health = phone?.backendConnectivity
   if (!health || !isDeepStrictEqual(health.qualification?.candidate, pending.candidate) ||
