@@ -311,18 +311,22 @@ export const routineWorkVerificationIdentitySchema = z.object({
   decisionId: frameworkIdentitySchema, inputSha256: workHashSchema,
   acceptedAt: z.string().datetime({offset:true}), deadline: z.string().datetime({offset:true}),
   failureEventId: frameworkIdentitySchema, failureSha256: workHashSchema,
-  previousFailure: z.object({code:z.enum(['recording-response','permission-required','completion-operation-failed','workspace-generated-unaccounted']),reason:publicText}).strict(),
+  previousFailure: z.object({code:z.enum(['recording-response','permission-required','completion-operation-failed','workspace-generated-unaccounted','authoring-detail-limit']),reason:publicText}).strict(),
   admission: z.object({requestId:frameworkIdentitySchema,originalAdmissionExpiresAt:z.number().int().positive()}).strict().optional(),
   finalization: z.object({requestId:frameworkIdentitySchema,sourceRevision:sha,runInputSha256:workHashSchema,operationId:frameworkIdentitySchema,
     originalDeadline:z.string().datetime({offset:true}),completionSha256:workHashSchema,cacheProofSha256:workHashSchema,
     candidateSha256:workHashSchema,recordingSha256:workHashSchema,restorationSha256:workHashSchema}).strict().optional(),
+  reconciliation: z.object({parentIdentitySha256:workHashSchema,parentFailureEventId:frameworkIdentitySchema,
+    parentFailureSequence:z.number().int().positive().safe(),parentFailureSha256:workHashSchema}).strict().optional(),
 }).strict().refine(value => Date.parse(value.deadline)>Date.parse(value.acceptedAt) &&
   Date.parse(value.deadline)-Date.parse(value.acceptedAt)<=30*60*1000,'Verification retry requires its bounded original window')
   .refine(value=>value.previousFailure.code==='permission-required' ? Boolean(value.admission&&
     /^local:([0-9]{13}):([A-Za-z0-9_-]{1,120})$/.exec(value.admission.requestId)?.[1]===String(value.admission.originalAdmissionExpiresAt)) :
     value.admission===undefined,'Pre-admission retry requires its original finite local request identity')
-  .refine(value=>['completion-operation-failed','workspace-generated-unaccounted'].includes(value.previousFailure.code)
+  .refine(value=>['completion-operation-failed','workspace-generated-unaccounted','authoring-detail-limit'].includes(value.previousFailure.code)
     ? Boolean(value.finalization&&!value.admission&&Date.parse(value.deadline)<=Date.parse(value.finalization.originalDeadline))
     : value.finalization===undefined,'Finalization retry requires the original passed candidate and cannot extend its deadline')
+  .refine(value=>value.previousFailure.code==='authoring-detail-limit' ? Boolean(value.reconciliation&&value.finalization&&!value.admission)
+    : value.reconciliation===undefined,'Finalization reconciliation requires its one exact failed predecessor')
 export const routineWorkVerificationSchema = z.object({identity:routineWorkVerificationIdentitySchema,event:routineWorkStatusSchema}).strict()
 export type RoutineWorkVerification = z.infer<typeof routineWorkVerificationSchema>
