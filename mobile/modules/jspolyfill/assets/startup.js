@@ -571,38 +571,48 @@
       return parts.join("");
     }
     if (typeof g.TextEncoder !== "function") {
+      const codePointAt = (str, i) => {
+        const code = str.charCodeAt(i);
+        if (code >= 55296 && code <= 56319 && i + 1 < str.length) {
+          const next = str.charCodeAt(i + 1);
+          if (next >= 56320 && next <= 57343) return (code - 55296 << 10) + (next - 56320) + 65536;
+        }
+        return code;
+      };
       class TextEncoderPolyfill {
         constructor() {
           this.encoding = "utf-8";
         }
         encode(input) {
           const str = input ?? "";
-          const out = [];
+          let length = 0;
           for (let i = 0; i < str.length; i++) {
-            let code = str.charCodeAt(i);
-            if (code >= 55296 && code <= 56319 && i + 1 < str.length) {
-              const next = str.charCodeAt(i + 1);
-              if (next >= 56320 && next <= 57343) {
-                code = (code - 55296 << 10) + (next - 56320) + 65536;
-                i++;
-              }
-            }
+            const code = codePointAt(str, i);
+            if (code > 65535) i++;
+            length += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+          }
+          const out = new Uint8Array(length);
+          let at = 0;
+          for (let i = 0; i < str.length; i++) {
+            const code = codePointAt(str, i);
+            if (code > 65535) i++;
             if (code < 128) {
-              out.push(code);
+              out[at++] = code;
             } else if (code < 2048) {
-              out.push(192 | code >> 6, 128 | code & 63);
+              out[at++] = 192 | code >> 6;
+              out[at++] = 128 | code & 63;
             } else if (code < 65536) {
-              out.push(224 | code >> 12, 128 | code >> 6 & 63, 128 | code & 63);
+              out[at++] = 224 | code >> 12;
+              out[at++] = 128 | code >> 6 & 63;
+              out[at++] = 128 | code & 63;
             } else {
-              out.push(
-                240 | code >> 18,
-                128 | code >> 12 & 63,
-                128 | code >> 6 & 63,
-                128 | code & 63
-              );
+              out[at++] = 240 | code >> 18;
+              out[at++] = 128 | code >> 12 & 63;
+              out[at++] = 128 | code >> 6 & 63;
+              out[at++] = 128 | code & 63;
             }
           }
-          return new Uint8Array(out);
+          return out;
         }
       }
       ;
