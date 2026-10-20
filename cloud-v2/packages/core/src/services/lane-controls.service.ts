@@ -56,6 +56,32 @@ const activeCheck = (row: ControlRecord) => 'subject' in row.command && row.rece
 const delivered = (row: ControlRecord) => row.receipt !== undefined
 const isLane = (row: ControlRecord): row is LaneControlRecord => 'laneId' in row.command
 const isResource = (row: ControlRecord): row is ResourceControlRecord => 'subject' in row.command
+/** An operator withdrawal remains durable until its later authentic baseline restores this subject. */
+function retainedRestriction(row:ControlRecord,host:LaneControlHost,now:number) {
+  if(!isResource(row)||row.command.action!=='mark-out-of-service'||row.receipt?.result.status!=='accepted'||!row.receipt.result.resource)return false;
+  const values=resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle),marked=row.receipt.result.resource,
+    subject=values.success?values.data.subjects.find(value=>value.subject.id===marked.resourceId&&value.subject.authorityHostId===host.hostId):undefined,
+    observed=Date.parse(subject?.observedAt??''),accepted=Date.parse(subject?.idle.acceptedCheck?.acceptedAt??'');
+  return !subject?.current||subject.status!=='idle'||subject.owner!==null||subject.generation<=marked.generation||subject.idle.outcome!=='passed'||
+    subject.idle.acceptedCheck?.subjectGeneration!==subject.generation||subject.idle.qualifiedScope.kind==='unqualified'||
+    !fresh(host,now)||!Number.isFinite(observed)||observed>now||now-observed>120000||!Number.isFinite(accepted)||
+    accepted<Date.parse(row.receipt.completedAt)||accepted>now;
+}
+/** A manual withdrawal needs one available slot for its explicit restoration check. */
+function pendingRestorationSlot(records:ControlRecord[],host:LaneControlHost,now:number) {
+  const restrictions=records.filter(isResource).filter(row=>row.command.action==='mark-out-of-service'&&
+    (!delivered(row)||retainedRestriction(row,host,now)));
+  if(!restrictions.length)return 0;
+  const lifecycle=resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle);
+  return records.some(row=>isResource(row)&&row.command.action==='check'&&(!delivered(row)||activeCheck(row))&&
+    restrictions.some(marker=>{
+      const markedGeneration=marker.receipt?.result.status==='accepted'?marker.receipt.result.resource?.generation:undefined;
+      const currentGeneration=lifecycle.success?lifecycle.data.subjects.find(value=>value.subject.id===marker.command.subject.resourceId)?.generation:undefined;
+      return row.command.hostId===marker.command.hostId&&row.command.subject.resourceId===marker.command.subject.resourceId&&
+        row.command.subject.subjectGeneration===currentGeneration&&
+        row.command.subject.subjectGeneration>=(markedGeneration??marker.command.subject.subjectGeneration);
+    }))?0:1;
+}
 const view = (row: LaneControlRecord) => ({operationId: row.command.operationId, hostId: row.command.hostId,
   laneId: row.command.laneId, action: row.command.action, expiresAt: row.command.expiresAt,
   ...(row.receipt ? {receipt: row.receipt} : {})})
@@ -141,9 +167,9 @@ export class LaneControlsService {
         reservation.id !== input.reservation!.id || reservation.generation !== input.reservation!.generation))
         throw new TestRunError(409, 'Release requires your current waiting or granted resource reservation')
       const row = resourceControlRecordSchema.parse({command: {...input, operatorId}, ...(operatorLabel && input.action === 'reserve' ? {operatorLabel} : {})}),
-        unresolved = records.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row)),
-        returnSlots = pendingReturnSlots([...records, row]), space = Math.max(0, 99 - unresolved.length - returnSlots),
-        recent = space ? records.filter(row => delivered(row) && !activeReservation(row) && !activeCheck(row)).slice(-space) : [],
+        unresolved = records.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row) || retainedRestriction(row,host,this.now())),
+        returnSlots = pendingReturnSlots([...records, row])+pendingRestorationSlot([...records,row],host,this.now()), space = Math.max(0, 99 - unresolved.length - returnSlots),
+        recent = space ? records.filter(row => !unresolved.includes(row)).slice(-space) : [],
         retained = records.filter(row => unresolved.includes(row) || recent.includes(row));
       if (retained.length + 1 + returnSlots > 100) throw new TestRunError(409, 'Resource controls are busy; active reservations retain space for return')
       return {records: [...retained, row], result: resourceView(row), resourceAuthority:true}
@@ -185,10 +211,10 @@ export class LaneControlsService {
         throw new TestRunError(409, 'Resume scheduling before reserving this lane')
       const row = laneControlRecordSchema.parse({command: {...input, operatorId},
         ...(input.action === 'reserve' && operatorLabel ? {operatorLabel} : {})})
-      const returnSlots = pendingReturnSlots([...records, row])
-      const unresolved = records.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row))
+      const returnSlots = pendingReturnSlots([...records, row])+pendingRestorationSlot([...records,row],host,this.now())
+      const unresolved = records.filter(row => !delivered(row) || activeReservation(row) || activeCheck(row) || retainedRestriction(row,host,this.now()))
       const remaining = Math.max(0, 99 - unresolved.length - returnSlots)
-      const recent = remaining ? records.filter(row => delivered(row) && !activeReservation(row) && !activeCheck(row)).slice(-remaining) : []
+      const recent = remaining ? records.filter(row => !unresolved.includes(row)).slice(-remaining) : []
       const retained = records.filter(row => unresolved.includes(row) || recent.includes(row))
       if (retained.length + 1 + returnSlots > 100) throw new TestRunError(409, 'Lane controls are busy; current reservations retain space for release')
       if (retained.filter(isLane).some(row => row.command.laneId === input.laneId && !delivered(row)))
@@ -287,7 +313,8 @@ function currentResourceReservation(records: ResourceControlRecord[]) {
   const rank = {waiting: 0, granted: 1, returning: 2, released: 3, cancelled: 3}
   for (const row of records) {
     const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
-    if (value && (!latest.has(value.id) || rank[value.state] >= rank[latest.get(value.id)!.state])) latest.set(value.id, value)
+    const key=value&&reservationAuthorityKey(row,value);
+    if (value && key && (!latest.has(key) || rank[value.state] >= rank[latest.get(key)!.state])) latest.set(key, value)
   }
   return [...latest.values()].find(value => ['waiting', 'granted', 'returning'].includes(value.state))
 }
@@ -296,13 +323,14 @@ function reconcileControls(records: ControlRecord[]): ControlRecord[] {
     latest = new Map<string, NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
   for (const row of records.filter(isResource)) {
     const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
-    if (value && (!latest.has(value.id) || rank[value.state] >= rank[latest.get(value.id)!.state])) latest.set(value.id, value)
+    const key=value&&reservationAuthorityKey(row,value);
+    if (value && key && (!latest.has(key) || rank[value.state] >= rank[latest.get(key)!.state])) latest.set(key, value)
   }
   return records.map(row => {
     if (isLane(row)) return lanes.find(value => value.command.operationId === row.command.operationId)!
     const reservation = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
     return reservation && row.receipt?.result.status === 'accepted' ? {...row,
-      receipt: {...row.receipt, result: {...row.receipt.result, reservation: latest.get(reservation.id)!}}} : row
+      receipt: {...row.receipt, result: {...row.receipt.result, reservation: latest.get(reservationAuthorityKey(row,reservation))!}}} : row
   })
 }
 function reconcileResourceReceipt(row: ResourceControlRecord, receipt: NonNullable<ResourceControlRecord['receipt']>) {
@@ -345,13 +373,24 @@ function reconcileResourceReceipt(row: ResourceControlRecord, receipt: NonNullab
   return prior
 }
 
+/** Reservation IDs are scoped to the original operator and lane-or-resource authority. */
+function reservationAuthorityKey(row: ControlRecord, reservation: {id:string;generation:number;purpose:string;requestedAt:string}) {
+  return requestInputDigest({hostId:row.command.hostId,operatorId:row.command.operatorId,
+    subject:isResource(row)?{resourceId:row.command.subject.resourceId}:{laneId:row.command.laneId},
+    id:reservation.id,generation:reservation.generation,purpose:reservation.purpose,requestedAt:reservation.requestedAt});
+}
 /** Admission reserves one delivery slot for every reservation that still needs its eventual return command. */
 function pendingReturnSlots(records: ControlRecord[]) {
   return records.filter(row => row.command.action === 'reserve' && (!row.receipt ||
     row.receipt.result.status === 'accepted' && row.receipt.result.reservation && ['waiting', 'granted'].includes(row.receipt.result.reservation.state)))
     .filter(row => {
-      const id = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation?.id : undefined
-      return !id || !records.some(other => other.command.action === 'release' && other.command.reservation?.id === id &&
-        (!other.receipt || other.receipt.result.status === 'accepted'))
+      const reservation = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
+      return !reservation || !records.some(other => other.command.action === 'release' &&
+        other.command.hostId===row.command.hostId && other.command.operatorId===row.command.operatorId &&
+        (isResource(row)?isResource(other)&&other.command.subject.resourceId===row.command.subject.resourceId:
+          isLane(other)&&other.command.laneId===row.command.laneId) &&
+        other.command.reservation?.id===reservation.id && other.command.reservation.generation===reservation.generation &&
+        (!other.receipt || other.receipt.result.status === 'accepted' && other.receipt.result.reservation &&
+          reservationAuthorityKey(other,other.receipt.result.reservation)===reservationAuthorityKey(row,reservation)))
     }).length
 }

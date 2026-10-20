@@ -1,4 +1,5 @@
 import {expect,test,mock} from 'bun:test'
+import {createHash} from 'node:crypto'
 import {randomUUID} from 'node:crypto'
 import {hostStateSchema} from './test-host-state.service'
 import {ResourceLifecycleService} from './resource-lifecycle.service'
@@ -76,6 +77,21 @@ for(const state of ['released','cancelled','settled','refused'] as const)test(`c
  expect((await f.service.acquire(intent,'air')).status).toBe('reserved');expect(f.writes()).toBe(1);expect(host.laneControls).toHaveLength(1);
 });
 
+for(const baseline of ['out-of-service','missing','unknown','fresh-restored'] as const)test(`an accepted manual marker cannot regain allocation after rollback with ${baseline} baseline`,async()=>{
+ const f=fixture(),host=f.rows.get(authority)!,operationId=randomUUID();host.snapshot.laneControls={schemaVersion:1,receipts:[]};
+ const command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'c'.repeat(64),expiresAt:now-1,action:'mark-out-of-service' as const,reason:'Operator withdrew this resource'};
+ host.laneControls=[{command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,
+  result:{status:'accepted',resource:{resourceId:id,generation:8,status:'out-of-service'}}}}];
+ const value=host.snapshot.resourceLifecycle!.subjects[0]!;
+ if(baseline==='missing')host.snapshot.resourceLifecycle!.subjects=[];
+ if(baseline==='out-of-service')value.status='out-of-service';
+ if(baseline==='unknown'){value.status='unknown';value.idle.outcome='unknown'}
+ // Only an independently accepted fresh baseline can make the later subject idle.
+ if(baseline==='fresh-restored'){value.generation=9;value.idle.acceptedCheck!.subjectGeneration=9}
+ const result=await f.service.acquire(intent,'air');expect(result.status).toBe(baseline==='fresh-restored'?'reserved':'waiting');expect(f.writes()).toBe(baseline==='fresh-restored'?1:0);
+ expect(host.laneControls).toHaveLength(1);
+});
+
 test('resource authority CAS includes manual control version so a concurrent operator intent wins before a new claim',async()=>{
  const host=hosts().get(authority)!,find=TestHostStateModel.findOneAndUpdate;let filter:unknown;
  const query={select(){return query},setOptions(){return query},lean:async()=>null};
@@ -111,4 +127,95 @@ test('claim committed between canonical validation and delivery CAS prevents a n
  // A concurrent claim is authoritative even if local status has not advanced; retain it until a new canonical read.
 
  await expect(service.submit(input,'alice')).rejects.toThrow('support');expect(records).toEqual([]);expect(replaceCalls).toBe(1);expect(detailReads).toBe(2);expect(h.resourceReservationVersion).toBe(1);
+});
+
+for(const collision of ['lane','resource','operator','generation','exact'] as const)test(`return capacity matches full reservation authority rather than a colliding ${collision} ID`,async()=>{
+ const core=hosts().get(authority)!;let records:any[]=[];const operator='a'.repeat(64),operationId=randomUUID(),reservation={id:'shared-id',resourceId:'original-resource',generation:8,state:'granted' as const,purpose:'Original reserve',requestedAt:at};
+ const command={operationId,hostId:authority,subject:{resourceId:'original-resource',subjectGeneration:7},operatorId:operator,expiresAt:now+120000,action:'reserve' as const,purpose:reservation.purpose};
+ records.push({command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted',reservation}}});
+ records.push({command:{operationId:randomUUID(),hostId:authority,operatorId:collision==='operator'?'b'.repeat(64):operator,expiresAt:now+120000,action:'release',
+  ...(collision==='lane'?{laneId:'original-resource'}:{subject:{resourceId:collision==='resource'?'other-resource':'original-resource',subjectGeneration:8}}),reservation:{id:'shared-id',generation:collision==='generation'?9:8}}});
+ records.push(...Array.from({length:97},(_,i)=>({command:{operationId:randomUUID(),hostId:authority,laneId:`lane-${i}`,operatorId:operator,expiresAt:now+120000,action:'pause'}})));
+ const before=structuredClone(records);let writes=0;
+ const repository:LaneControlRepository={get:async()=>({hostId:authority,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControlVersion:0,laneControls:structuredClone(records)}),replace:async(_id,_v,next)=>{writes++;records=structuredClone(next);return true}};
+ const resources={detail:async()=>({generatedAt:at,subject:subject(),coverage:'canonical current'})},service=new LaneControlsService(repository,()=>now,resources),input={operationId:randomUUID(),hostId:authority,subject:{resourceId:id,subjectGeneration:7},expiresAt:now+120000,action:'check' as const};
+ if(collision==='exact'){await service.submit(input,'alice');expect(records).toHaveLength(100);expect(writes).toBe(1)}
+ else{await expect(service.submit(input,'alice')).rejects.toThrow('retain space for return');expect(writes).toBe(0);expect(records).toEqual(before)}
+});
+
+test('terminal receipt for a colliding resource reservation ID does not erase another subject owner',async()=>{
+ const core=hosts().get(authority)!;const operator=createHash('sha256').update('admin-lane:alice').digest('hex'),make=(resourceId:string,state:'granted'|'released')=>{
+  const command={operationId:randomUUID(),hostId:authority,subject:{resourceId,subjectGeneration:7},operatorId:operator,expiresAt:now+120000,action:'reserve' as const,purpose:'Original reserve'};
+  return {command,receipt:{operationId:command.operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted' as const,reservation:{id:'same-id',resourceId,generation:8,state,purpose:command.purpose,requestedAt:at}}}};
+ };
+ const records=[make('first','granted'),make('second','released')];
+ // Existing read-only reconciliation must preserve both distinct subject identities.
+ const detail={detail:async()=>({generatedAt:at,subject:{...subject(),subject:{...subject().subject,id:'first'}},coverage:'current'})};
+ const first=new LaneControlsService({get:async()=>({hostId:authority,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControls:records}),replace:async()=>{throw Error('No writes')}},()=>now,detail);
+ const view=await first.listResource('first','alice');expect(view.controls).toHaveLength(1);
+ expect(view.controls[0]!.receipt!.result).toMatchObject({reservation:{resourceId:'first',state:'granted'}});
+});
+
+for(const restored of [false,true])test(`unrelated history churn ${restored?'may trim an authoritatively restored':'retains the unresolved'} manual withdrawal`,async()=>{
+ const core=hosts().get(authority)!,operationId=randomUUID(),command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'a'.repeat(64),expiresAt:now+120000,action:'mark-out-of-service' as const,reason:'Operator withdrew'};
+ let records:any[]=[{command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted',resource:{resourceId:id,generation:8,status:'out-of-service'}}}},
+  ...Array.from({length:99},(_,i)=>({command:{operationId:randomUUID(),hostId:authority,laneId:`lane-${i}`,operatorId:'a'.repeat(64),expiresAt:now+120000,action:'pause'}}))];
+ const value=core.snapshot.resourceLifecycle!.subjects[0]!;value.generation=restored?9:8;value.status=restored?'idle':'out-of-service';value.idle.acceptedCheck!.subjectGeneration=value.generation;
+ core.snapshot.lanes=Array.from({length:100},(_,i)=>({id:`lane-${i}`,platform:'ios-on-mac',state:'idle',dispatchMode:'automatic',resources:[]}));
+ let writes=0;const service=new LaneControlsService({get:async()=>({hostId:authority,laneControlVersion:0,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControls:structuredClone(records)}),replace:async(_id,_version,next)=>{writes++;records=structuredClone(next);return true}},()=>now);
+ const input={operationId:randomUUID(),hostId:authority,laneId:'lane-99',expiresAt:now+120000,action:'pause' as const};
+ if(restored){await service.submit(input,'alice');expect(writes).toBe(1);expect(records).toHaveLength(100);expect(records.some(row=>row.command.operationId===operationId)).toBe(false)}
+ else{await expect(service.submit(input,'alice')).rejects.toThrow('retain space');expect(writes).toBe(0);expect(records.some(row=>row.command.operationId===operationId)).toBe(true)}
+});
+
+for(const state of ['out-of-service','unknown','failed','owned','stale','unqualified'] as const)test(`a retired marker and capability loss do not bypass the existing ${state} lifecycle`,async()=>{
+ const f=fixture(),core=f.rows.get(authority)!,operationId=randomUUID(),command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'a'.repeat(64),expiresAt:now+120000,action:'mark-out-of-service' as const,reason:'Operator withdrew'};
+ let records:any[]=[{command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted',resource:{resourceId:id,generation:8,status:'out-of-service'}}}},
+  ...Array.from({length:99},(_,i)=>({command:{operationId:randomUUID(),hostId:authority,laneId:`lane-${i}`,operatorId:'a'.repeat(64),expiresAt:now+120000,action:'pause'}}))];
+ const value=core.snapshot.resourceLifecycle!.subjects[0]!;value.generation=9;value.idle.acceptedCheck!.subjectGeneration=9;
+ core.snapshot.lanes=Array.from({length:100},(_,i)=>({id:`lane-${i}`,platform:'ios-on-mac',state:'idle',dispatchMode:'automatic',resources:[]}));
+ const service=new LaneControlsService({get:async()=>({hostId:authority,laneControlVersion:0,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControls:structuredClone(records)}),replace:async(_id,_version,next)=>{records=structuredClone(next);return true}},()=>now);
+ // A genuinely restored marker may leave bounded delivery history.
+ await service.submit({operationId:randomUUID(),hostId:authority,laneId:'lane-99',expiresAt:now+120000,action:'pause'},'alice');
+ expect(records.some(row=>row.command.operationId===operationId)).toBe(false);core.laneControls=records;
+ core.snapshot.laneControls={schemaVersion:1,receipts:[]};
+ if(state==='out-of-service')value.status='out-of-service';
+ if(state==='unknown'){value.status='unknown';value.idle.outcome='unknown'}
+ if(state==='failed'){value.status='unknown';value.idle.outcome='failed'}
+ if(state==='owned'){value.status='active';value.owner={id:'original-owner',hostId:authority,kind:'run',generation:10,laneId:'mac'}}
+ if(state==='stale')value.observedAt=new Date(now-120001).toISOString();
+ if(state==='unqualified'){value.status='unknown';value.idle.qualifiedScope={kind:'unqualified'}}
+ expect((await f.service.acquire(intent,'air')).status).toBe('waiting');expect(f.writes()).toBe(0);expect(core.resourceReservations).toEqual([]);
+});
+
+test('legacy fallback is limited to an authority with no lifecycle subject or retained controls',async()=>{
+ const f=fixture(),core=f.rows.get(authority)!;core.snapshot.laneControls={schemaVersion:1,receipts:[]};core.snapshot.resourceLifecycle!.subjects=[];
+ expect((await f.service.acquire(intent,'air')).status).toBe('reserved');expect(f.writes()).toBe(1);
+});
+
+for(const count of [99,100])test(`${count} retained manual withdrawals preserve restoration capacity without evicting another marker`,async()=>{
+ const core=hosts().get(authority)!;const operator=createHash('sha256').update('admin-lane:alice').digest('hex');
+ core.snapshot.resources=Array.from({length:count},(_,i)=>({id:`manual-${i}`,kind:'fixture-data',capabilities:[capability]}));
+ core.snapshot.resourceLifecycle!.subjects=Array.from({length:count},(_,i)=>({...subject(),subject:{kind:'resource' as const,id:`manual-${i}`,authorityHostId:authority},generation:8,status:'out-of-service' as const}));
+ let records:any[]=Array.from({length:count},(_,i)=>{
+  const command={operationId:randomUUID(),hostId:authority,subject:{resourceId:`manual-${i}`,subjectGeneration:7},operatorId:operator,expiresAt:now+120000,action:'mark-out-of-service',reason:'Operator withdrew'};
+  return {command,receipt:{operationId:command.operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted',resource:{resourceId:`manual-${i}`,generation:8,status:'out-of-service'}}}};
+ });
+ const before=structuredClone(records);let writes=0;
+ const service=new LaneControlsService({get:async()=>({hostId:authority,laneControlVersion:0,receivedAt:core.receivedAt,observedAt:new Date(now),snapshot:core.snapshot,laneControls:structuredClone(records)}),replace:async(_id,_version,next)=>{writes++;records=structuredClone(next);return true}},()=>now,
+  {detail:async(resourceId:string)=>({generatedAt:at,subject:core.snapshot.resourceLifecycle!.subjects.find(value=>value.subject.id===resourceId)!,coverage:'canonical current'})});
+ const input={operationId:randomUUID(),hostId:authority,subject:{resourceId:'manual-0',subjectGeneration:8},expiresAt:now+120000,action:'check' as const};
+ if(count===100){await expect(service.submit(input,'alice')).rejects.toThrow('retain space');expect(writes).toBe(0);expect(records).toEqual(before);return}
+ // Admission reserves the last slot instead of accepting another restriction.
+ core.snapshot.resources.push({id:'manual-new',kind:'fixture-data',capabilities:[capability]});core.snapshot.resourceLifecycle!.subjects.push({...subject(),subject:{kind:'resource',id:'manual-new',authorityHostId:authority}});
+ await expect(service.submit({...input,operationId:randomUUID(),subject:{resourceId:'manual-new',subjectGeneration:7},action:'mark-out-of-service',reason:'Another withdrawal'},'alice')).rejects.toThrow('retain space');
+ expect(writes).toBe(0);expect(records).toEqual(before);
+ await service.submit(input,'alice');expect(writes).toBe(1);expect(records).toHaveLength(100);expect(records.slice(0,99)).toEqual(before);
+ const check=records.at(-1)!;
+ await service.exchange(authority,{schemaVersion:1,resourceControls:true,receipts:[{operationId:input.operationId,hostId:authority,subject:input.subject,inputSha256:requestInputDigest(check.command),completedAt:at,result:{status:'accepted',check:{operationId:input.operationId,resourceId:'manual-0',generation:8,state:'settled'}}}]});
+ // A passed installed baseline retires only that original marker, making the same bounded slot reusable.
+ const restored=core.snapshot.resourceLifecycle!.subjects[0]!;restored.status='idle';restored.generation=9;restored.idle.acceptedCheck!.subjectGeneration=9;
+ await service.submit({...input,operationId:randomUUID(),subject:{resourceId:'manual-1',subjectGeneration:8}},'alice');
+ expect(records).toHaveLength(100);expect(records.some(row=>row.command.operationId===before[0]!.command.operationId)).toBe(false);
+ expect(records.filter(row=>row.command.action==='mark-out-of-service')).toHaveLength(98);
 });

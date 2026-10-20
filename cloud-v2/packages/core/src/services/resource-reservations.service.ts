@@ -36,9 +36,14 @@ function dependencyAvailable(host: ResourceReservationHost, dependency: Exclusiv
     (!row.receipt || row.receipt.result.status==='accepted' &&
       (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
         'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state!=='settled')))) return false;
-  if (host.snapshot.laneControls?.resourceControls !== true) return true;
+  const subject=host.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===dependency.resourceId);
+  // A formerly controlled subject cannot revert to legacy permissive readiness
+  // after rollback or bounded history trimming. Any published lifecycle subject
+  // remains subject to its current baseline, even after its control row retires.
+  if (host.snapshot.laneControls?.resourceControls !== true &&
+    !subject && !records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId)) return true;
   if (!fresh(host,now)) return false;
-  const subject=host.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===dependency.resourceId),at=Date.parse(subject?.observedAt??'');
+  const at=Date.parse(subject?.observedAt??'');
   if (!subject?.current || subject.subject.authorityHostId!==host.hostId || subject.status!=='idle' || subject.owner ||
     subject.idle.outcome!=='passed' || subject.idle.acceptedCheck?.subjectGeneration!==subject.generation ||
     subject.idle.qualifiedScope.kind==='unqualified' || !Number.isFinite(at) || at>now || now-at>120_000) return false;
