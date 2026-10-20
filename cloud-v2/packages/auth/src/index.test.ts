@@ -62,6 +62,13 @@ const serverB = Bun.serve({
   },
 });
 
+// Four more Cores, each with its own key under the same `kid`: the hosted prod,
+// staging and dev environments, and the Core of a Private Cloud.
+const prodCore = await startCore();
+const stagingCore = await startCore();
+const devCore = await startCore();
+const privateCore = await startCore();
+
 // A guaranteed-unreachable endpoint (port 1) used to prove that a successful or
 // claim-rejected verification never fetches later endpoints in the list.
 const UNREACHABLE_JWKS_URL = "http://127.0.0.1:1/.well-known/jwks.json";
@@ -69,6 +76,7 @@ const UNREACHABLE_JWKS_URL = "http://127.0.0.1:1/.well-known/jwks.json";
 afterAll(() => {
   server.stop(true);
   serverB.stop(true);
+  for (const core of [prodCore, stagingCore, devCore, privateCore]) core.server.stop(true);
 });
 
 describe("@mentra/auth miniapp auth", () => {
@@ -313,6 +321,221 @@ describe("token type and key pinning", () => {
     await expect(auth.verifyToken(token)).resolves.toMatchObject({ mentraUserId: "user_b" });
   });
 });
+
+describe("miniapp token features", () => {
+  // The key sets a backend shared across environments trusts by default.
+  const hostedUrls = [prodCore.jwksUrl, stagingCore.jwksUrl, devCore.jwksUrl];
+  const FEATURES = ["call.unlimited", "notes.pro"];
+
+  test.each([
+    ["prod", prodCore],
+    ["staging", stagingCore],
+    ["dev", devCore],
+  ] as const)("keeps the features of a %s token and answers hasFeature", async (_name, core) => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: hostedUrls });
+
+    const verified = await auth.verifyToken(await mintCoreToken(core, { features: FEATURES }));
+
+    expect(verified.features).toEqual(FEATURES);
+    expect(verified.hasFeature("call.unlimited")).toBe(true);
+    expect(verified.hasFeature("notes.pro")).toBe(true);
+    expect(verified.hasFeature("call.other")).toBe(false);
+    expect(verified.hasFeature("CALL.UNLIMITED")).toBe(false);
+    expect(verified.hasFeature("call")).toBe(false);
+  });
+
+  test("a backend configured by MENTRA_AUTH_JWKS_URLS honors the features of every listed Core", async () => {
+    await withEnv({ MENTRA_AUTH_JWKS_URLS: hostedUrls.join(",") }, async () => {
+      const auth = createMentraAuth({ packageName: TEST_PACKAGE });
+      for (const core of [prodCore, stagingCore, devCore]) {
+        const verified = await auth.verifyToken(await mintCoreToken(core, { features: FEATURES }));
+        expect(verified.hasFeature("call.unlimited")).toBe(true);
+      }
+      await expect(
+        auth.verifyToken(await mintCoreToken(privateCore, { features: FEATURES })),
+      ).rejects.toBeInstanceOf(MentraAuthError);
+    });
+  });
+
+  test("a Private Cloud backend honors its own Core's features and refuses a hosted Core's token", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: privateCore.jwksUrl });
+
+    const own = await auth.verifyToken(await mintCoreToken(privateCore, { features: FEATURES }));
+    expect(own.features).toEqual(FEATURES);
+    expect(own.hasFeature("call.unlimited")).toBe(true);
+
+    for (const hosted of [prodCore, stagingCore, devCore]) {
+      await expect(
+        auth.verifyToken(await mintCoreToken(hosted, { features: FEATURES })),
+      ).rejects.toBeInstanceOf(MentraAuthError);
+    }
+  });
+
+  test("a Private Cloud backend configured by MENTRA_AUTH_JWKS_URL honors only that Core", async () => {
+    await withEnv({ MENTRA_AUTH_JWKS_URL: privateCore.jwksUrl }, async () => {
+      const auth = createMentraAuth({ packageName: TEST_PACKAGE });
+
+      const own = await auth.verifyToken(await mintCoreToken(privateCore, { features: FEATURES }));
+      expect(own.hasFeature("call.unlimited")).toBe(true);
+      await expect(
+        auth.verifyToken(await mintCoreToken(prodCore, { features: FEATURES })),
+      ).rejects.toBeInstanceOf(MentraAuthError);
+    });
+  });
+
+  test("a backend that trusts the hosted key sets refuses a Private Cloud Core's token", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: hostedUrls });
+
+    await expect(
+      auth.verifyToken(await mintCoreToken(privateCore, { features: FEATURES })),
+    ).rejects.toBeInstanceOf(MentraAuthError);
+  });
+
+  test.each([
+    ["no claim", undefined],
+    ["an empty list", []],
+    ["a string", "call.unlimited"],
+    ["an object", { "call.unlimited": true }],
+    ["null", null],
+    ["a number", 1],
+    ["only non-string entries", [1, null, {}]],
+    ["a mix of string and non-string entries", ["call.unlimited", 1]],
+  ] as const)("a token with %s yields no features", async (_name, claim) => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: hostedUrls });
+
+    const verified = await auth.verifyToken(await mintCoreToken(prodCore, { features: claim }));
+
+    expect(verified.features).toEqual([]);
+    expect(verified.hasFeature("call.unlimited")).toBe(false);
+  });
+
+  test("hasFeature answers from the verified claim, however the caller uses the result", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: hostedUrls });
+    const verified = await auth.verifyToken(await mintCoreToken(prodCore, { features: FEATURES }));
+
+    const { hasFeature } = verified;
+    expect(hasFeature("call.unlimited")).toBe(true);
+
+    verified.features.push("call.premium");
+    verified.features.length = 0;
+    expect(verified.hasFeature("call.unlimited")).toBe(true);
+    expect(verified.hasFeature("call.premium")).toBe(false);
+    expect(verified.claims.features).toEqual(FEATURES);
+  });
+
+  test("the hono middleware exposes hasFeature on the context variable", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: hostedUrls });
+    const token = await mintCoreToken(devCore, { features: FEATURES });
+    const values = new Map<string, unknown>();
+
+    await auth.hono()(
+      {
+        req: { header: () => `Bearer ${token}` },
+        set: (key, value) => values.set(key, value),
+        json: (body, status = 200) => Response.json(body, { status }),
+      },
+      async () => {},
+    );
+
+    const session = values.get("mentraAuth") as { hasFeature(feature: string): boolean };
+    expect(session.hasFeature("call.unlimited")).toBe(true);
+    expect(session.hasFeature("call.other")).toBe(false);
+  });
+
+  test("features do not change what verification returns or accepts", async () => {
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: hostedUrls });
+
+    const verified = await auth.verifyToken(await mintCoreToken(stagingCore, { features: FEATURES }));
+    expect(verified).toMatchObject({
+      mentraUserId: "user_core",
+      tenantId: "test-oem",
+      packageName: TEST_PACKAGE,
+      tokenId: "token_core",
+    });
+    expect(verified.expiresAt).toBeNumber();
+    expect(verified.issuedAt).toBeNumber();
+    expect(verified.email).toBeUndefined();
+
+    // A token that carries features is still refused for any other reason.
+    await expect(
+      auth.verifyToken(await mintCoreToken(prodCore, { features: FEATURES, audience: "com.other.app" })),
+    ).rejects.toBeInstanceOf(MentraAuthError);
+    await expect(
+      auth.verifyToken(await mintCoreToken(prodCore, { features: FEATURES, kid: "mentra-oidc-1" })),
+    ).rejects.toThrow("unexpected key ID");
+    await expect(
+      auth.verifyToken(await mintCoreToken(prodCore, { features: FEATURES, issuer: "someone-else" })),
+    ).rejects.toBeInstanceOf(MentraAuthError);
+    await expect(
+      auth.verifyToken(
+        await mintCoreToken(prodCore, { features: FEATURES, expirationTime: Math.floor(Date.now() / 1000) - 600 }),
+      ),
+    ).rejects.toThrow("miniapp token rejected");
+  });
+});
+
+interface TestCore {
+  server: ReturnType<typeof Bun.serve>;
+  jwksUrl: string;
+  privatePem: string;
+}
+
+/** A local Core: its own Ed25519 key, published at /.well-known/jwks.json as `mentra-miniapp-1`. */
+async function startCore(): Promise<TestCore> {
+  const pair = crypto.generateKeyPairSync("ed25519");
+  const pem = pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const publicJwk = await jose.exportJWK(
+    await jose.importSPKI(pair.publicKey.export({ type: "spki", format: "pem" }).toString(), "EdDSA", {
+      extractable: true,
+    }),
+  );
+  const keys = { keys: [{ ...publicJwk, alg: "EdDSA", use: "sig", kid: "mentra-miniapp-1" }] };
+  const coreServer = Bun.serve({
+    port: 0,
+    fetch(request) {
+      return new URL(request.url).pathname === "/.well-known/jwks.json"
+        ? Response.json(keys)
+        : new Response("not found", { status: 404 });
+    },
+  });
+  return { server: coreServer, jwksUrl: `${coreServer.url.origin}/.well-known/jwks.json`, privatePem: pem };
+}
+
+/** Mint a miniapp token as `core` would, optionally carrying a `features` claim of any shape. */
+async function mintCoreToken(
+  core: TestCore,
+  opts: { features?: unknown; audience?: string; kid?: string; issuer?: string; expirationTime?: string | number } = {},
+): Promise<string> {
+  const privateKey = await jose.importPKCS8(core.privatePem, "EdDSA");
+  return new jose.SignJWT({
+    tenantId: "test-oem",
+    ...(opts.features === undefined ? {} : { features: opts.features }),
+  } as jose.JWTPayload)
+    .setProtectedHeader({ alg: "EdDSA", kid: opts.kid ?? "mentra-miniapp-1" })
+    .setIssuer(opts.issuer ?? TEST_ISSUER)
+    .setAudience(opts.audience ?? TEST_PACKAGE)
+    .setSubject("user_core")
+    .setJti("token_core")
+    .setIssuedAt()
+    .setExpirationTime(opts.expirationTime ?? "1h")
+    .sign(privateKey);
+}
+
+/** Run `fn` with these environment variables set, restoring the previous values after. */
+async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const names = ["MENTRA_AUTH_JWKS_URL", "MENTRA_AUTH_JWKS_URLS"];
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  Object.assign(process.env, vars);
+  try {
+    await fn();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
 
 async function mintMiniappToken(
   audience: string,

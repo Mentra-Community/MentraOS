@@ -58,6 +58,11 @@ class FakeAuth {
     return tokenFor(this.issueAs === undefined ? this.account : this.issueAs)
   })
 
+  readonly getMiniappToken = mock(async (_packageName: string, _opts?: {minTtlMs?: number; fresh?: boolean}) => ({
+    token: "miniapp-token",
+    expiresAt: 1_900_000_000,
+  }))
+
   /** Local credentials go at once (the stored one included); the revocation that follows may be held or fail. */
   readonly clearSession = mock(async (): Promise<void> => {
     this.cleared = true
@@ -299,6 +304,26 @@ describe("the Core session", () => {
     cloudClientService.init()
     await settle()
     expect(await cloudClientService.resolveCoreSession()).toEqual({coreUrl: CORE_X, mentraUserId: null})
+  })
+})
+
+describe("a miniapp auth token", () => {
+  test("is requested from the client with the caller's options, a fresh mint included", async () => {
+    cloudClientService.init()
+    await settle()
+    const {getMiniappToken} = latest().auth
+
+    await cloudClientService.getMiniappAuthToken("com.mentra.call")
+    await cloudClientService.getMiniappAuthToken("com.mentra.call", {minTtlMs: 60_000})
+    const token = await cloudClientService.getMiniappAuthToken("com.mentra.call", {fresh: true})
+
+    expect(getMiniappToken.mock.calls).toEqual([
+      ["com.mentra.call", undefined],
+      ["com.mentra.call", {minTtlMs: 60_000}],
+      ["com.mentra.call", {fresh: true}],
+    ])
+    // Seconds from Core become the milliseconds the runtime schedules by.
+    expect(token).toEqual({mentraUserId: A, tenantId: "tenant", token: "miniapp-token", expiresAt: 1_900_000_000_000})
   })
 })
 
