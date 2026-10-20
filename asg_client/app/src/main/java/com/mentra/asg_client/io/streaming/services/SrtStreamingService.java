@@ -52,6 +52,7 @@ import io.github.thibaultbee.streampack.data.AudioConfig;
 import io.github.thibaultbee.streampack.data.VideoConfig;
 import io.github.thibaultbee.streampack.error.StreamPackError;
 import io.github.thibaultbee.streampack.internal.muxers.ts.data.TsServiceInfo;
+import io.github.thibaultbee.streampack.ext.srt.data.SrtConnectionDescriptor;
 import io.github.thibaultbee.streampack.ext.srt.streamers.CameraSrtLiveStreamer;
 import io.github.thibaultbee.streampack.listeners.OnConnectionListener;
 import io.github.thibaultbee.streampack.listeners.OnErrorListener;
@@ -596,6 +597,14 @@ public class SrtStreamingService extends Service {
         return;
       }
 
+      String urlError = srtUrlError(mSrtUrl);
+      if (urlError != null) {
+        Log.e(TAG, urlError);
+        if (sStatusCallback != null) sStatusCallback.onStreamError(urlError, mCurrentStreamId);
+        StreamingReporting.reportUrlValidationFailure(SrtStreamingService.this, "redacted", urlError);
+        return;
+      }
+
       mStreamState = StreamState.STARTING;
     }
 
@@ -679,6 +688,22 @@ public class SrtStreamingService extends Service {
       if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
       StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
       scheduleReconnect("start_exception");
+    }
+  }
+
+  /**
+   * Why the publisher's own SRT URL parser rejects {@code url}, or null when it accepts it. The
+   * publisher parses the URL only after the camera and encoder start, and a rejected URL fails the
+   * same way on every reconnect attempt, so it must fail the start before any of that. The reason
+   * omits the URL, whose query can carry the stream passphrase.
+   */
+  static String srtUrlError(String url) {
+    try {
+      SrtConnectionDescriptor.Companion.fromUrl(url);
+      return null;
+    } catch (Exception e) {
+      String reason = e.getMessage() != null ? e.getMessage().replace(url, "<srt url>") : e.toString();
+      return "Invalid SRT URL: " + reason;
     }
   }
 
