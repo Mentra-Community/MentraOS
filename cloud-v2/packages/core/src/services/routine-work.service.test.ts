@@ -21,7 +21,7 @@ class RoutineWorkService extends ActualRoutineWorkService {
   override async submit(value:unknown):Promise<RoutineWorkDelivery & {hostId:string;work:AuthoringWork}> {return await super.submit(value) as RoutineWorkDelivery & {hostId:string;work:AuthoringWork};}
 }
 
-const input = routineWorkRequestSchema.parse({
+export const input = routineWorkRequestSchema.parse({
   schemaVersion: 1,
   workId: 'work:one',
   kind: 'edit',
@@ -207,7 +207,7 @@ test('author routing uses an accepting alternate model and refreshes labels with
   expect((await service.inspect(row.workId)).fleetSelection).toEqual(frozen)
   expect((await service.inspect(row.workId)).fleetInputSha256).toBe(first.inputSha256)
 })
-function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean} = {}) {
+export function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean; now?:()=>number; passedCandidate?:(id:string)=>Promise<{request:unknown;run:unknown}|null>; beforeVerificationWrite?:(row:RoutineWorkDelivery)=>void} = {}) {
   const rows = new Map<string, RoutineWorkDelivery>()
   let resolves = 0,
     notifications = 0
@@ -241,7 +241,8 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
     },
     async updateVerification(value, original, previous) {
       const row=rows.get(value.event.workId)
-      if(!row||requestInputDigest(row.status)!==requestInputDigest(original)||requestInputDigest(row.verification??null)!==requestInputDigest(previous??null))return null
+      if(row)options.beforeVerificationWrite?.(row)
+      if(!row||(value.identity.previousFailure.code==='permission-required'||value.identity.finalization&&value.event.state!=='cancelled')&&row.fleetCancellation||requestInputDigest(row.status)!==requestInputDigest(original)||requestInputDigest(row.verification??null)!==requestInputDigest(previous??null))return null
       row.verification={identity:structuredClone(value.identity),status:structuredClone(value.event),receipts:[...(previous?.receipts??[]),
         {eventId:value.event.eventId,sequence:value.event.sequence,sha256:requestInputDigest(value.event)}]}
       return structuredClone(row)
@@ -312,6 +313,7 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
         if (options.notificationFailure) throw new Error('Unavailable')
       },
     },
+    undefined, options.now, null, undefined, options.passedCandidate,
   )
   return {
     service,
