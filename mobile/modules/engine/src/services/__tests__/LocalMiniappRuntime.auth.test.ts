@@ -478,7 +478,7 @@ describe("a mint that fails when the miniapp connects", () => {
     expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
   })
 
-  test("the reconnect redrive with no cached token mints, as before", async () => {
+  test("the reconnect redrive with no cached token mints", async () => {
     const f = fixture()
     f.plan(fails("Core is down"))
     await f.connect()

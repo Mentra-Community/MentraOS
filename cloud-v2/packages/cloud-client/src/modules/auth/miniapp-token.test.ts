@@ -88,10 +88,15 @@ function harness(opts: {auto?: boolean} = {}) {
     baseUrl: "https://core.example.test",
     fetch: transport,
   })
+  // The cache and the mint chain are private; a logged-out client throws before they are read, so the only way to
+  // see that nothing was stored or left behind is to look at them directly.
+  const internals = auth as unknown as {miniappCache: Map<string, unknown>; miniappMints: Map<string, unknown>}
   return {
     auth,
     posts,
     maxInFlight: () => maxInFlight,
+    cachedPackages: () => [...internals.miniappCache.keys()],
+    mintsInFlight: () => internals.miniappMints.size,
     answer: (post: Post, token: string) => post.respond({token, expiresAt: mintedAt()}),
   }
 }
@@ -317,6 +322,25 @@ describe("a fresh miniapp token request", () => {
     t.answer(t.posts[0], "late")
 
     expect(await pending).toBeInstanceOf(AuthExpiredError)
-    await expect(t.auth.getMiniappToken(PACKAGE)).rejects.toBeInstanceOf(AuthExpiredError)
+    expect(t.cachedPackages()).toEqual([])
+    expect(t.mintsInFlight()).toBe(0)
+  })
+
+  test("a follow-up queued across logout rejects without sending a request and caches nothing", async () => {
+    const t = harness()
+    const older = t.auth.getMiniappToken(PACKAGE, {fresh: true}).catch((error) => error)
+    await settle()
+    const queued = t.auth.getMiniappToken(PACKAGE, {fresh: true}).catch((error) => error)
+    await settle()
+    expect(t.posts).toHaveLength(1)
+
+    await t.auth.clearSession()
+    t.answer(t.posts[0], "late")
+
+    expect(await older).toBeInstanceOf(AuthExpiredError)
+    expect(await queued).toBeInstanceOf(AuthExpiredError)
+    expect(t.posts).toHaveLength(1)
+    expect(t.cachedPackages()).toEqual([])
+    expect(t.mintsInFlight()).toBe(0)
   })
 })

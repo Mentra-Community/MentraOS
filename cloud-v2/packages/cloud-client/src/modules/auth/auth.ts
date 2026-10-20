@@ -139,13 +139,13 @@ interface MiniappTokenEntry {
 }
 
 /**
- * One miniapp mint. `requestSent` turns true just before the request to Core
+ * One miniapp mint. `requestSent()` turns true just before the request to Core
  * leaves. Until then a caller who needs a token minted from now on can still
  * share it, because Core has not yet read anything on its behalf.
  */
 interface MiniappMint {
   promise: Promise<MiniappTokenEntry>
-  requestSent: boolean
+  requestSent: () => boolean
 }
 
 interface RuntimeTokenResponse {
@@ -408,30 +408,32 @@ export class Auth implements AuthModule {
   private mintMiniappToken(packageName: string, generation: number, fresh: boolean): Promise<MiniappTokenEntry> {
     const key = `${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`
     const newest = this.miniappMints.get(key)
-    if (newest && (!fresh || !newest.requestSent)) return newest.promise
+    if (newest && (!fresh || !newest.requestSent())) return newest.promise
 
-    const mint = {requestSent: false} as MiniappMint
-    this.miniappMints.set(key, mint)
-    mint.promise = (async () => {
-      try {
-        if (newest) await newest.promise.catch(() => undefined)
-        const accessToken = await this.getCoreToken()
-        const http = this.requireCoreHttp()
-        mint.requestSent = true
-        // A dev build of a package is that package: the request names it and
-        // nothing else. The phone has already applied the installed signer rule.
-        const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, {packageName}, {bearer: accessToken})
+    let requestSent = false
+    const promise = (async () => {
+      if (newest) await newest.promise.catch(() => undefined)
+      const accessToken = await this.getCoreToken()
+      const http = this.requireCoreHttp()
+      requestSent = true
+      // A dev build of a package is that package: the request names it and
+      // nothing else. The phone has already applied the installed signer rule.
+      const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, {packageName}, {bearer: accessToken})
 
-        this.assertSessionActive(generation)
-        const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}
-        this.miniappCache.set(packageName, entry)
-        this.logger.debug("minted miniapp token", {packageName})
-        return entry
-      } finally {
-        if (this.miniappMints.get(key) === mint) this.miniappMints.delete(key)
-      }
+      this.assertSessionActive(generation)
+      const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}
+      this.miniappCache.set(packageName, entry)
+      this.logger.debug("minted miniapp token", {packageName})
+      return entry
     })()
-    return mint.promise
+    const mint: MiniappMint = {promise, requestSent: () => requestSent}
+    this.miniappMints.set(key, mint)
+    // A later mint that replaced this one as the newest stays registered.
+    const release = () => {
+      if (this.miniappMints.get(key) === mint) this.miniappMints.delete(key)
+    }
+    void promise.then(release, release)
+    return promise
   }
 
   /**

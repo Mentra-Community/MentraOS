@@ -1800,12 +1800,11 @@ class LocalMiniappRuntime {
    * Deliver the miniapp's FIRST auth token, retrying until it lands. Called from
    * {@link handleConnect} when the initial mint didn't resolve in the CONNECT_ACK
    * window. `inFlight` lets attempt 0 reuse the mint the handshake already
-   * started (avoids a redundant duplicate request). That first request is fresh
-   * (see {@link handleConnect}). If it failed, later attempts take the default,
-   * cache-first path: during a Core outage a still-valid cached token reaches the
-   * miniapp at once, as it did before opens asked for fresh tokens, and with no
-   * cached token the default path mints, so the backoff is unchanged. The
-   * foreground edge and the scheduled refresh stay fresh and pick up anything
+   * started (avoids a redundant duplicate request); that request is fresh (see
+   * {@link handleConnect}). Later attempts take the default, cache-first path: a
+   * still-valid cached token reaches the miniapp at once while Core is
+   * unreachable, and with no usable cached token the default path mints. The
+   * foreground edge and the scheduled refresh are fresh and pick up anything
    * newer.
    *
    * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
