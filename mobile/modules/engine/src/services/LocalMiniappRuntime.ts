@@ -206,6 +206,13 @@ interface ConnectedMiniapp {
    * on-reconnect re-drive so we stop hammering once auth has landed.
    */
   authDelivered: boolean
+  /**
+   * Identifies the CONNECT handshake whose token this app is waiting for or holding (0 before its first
+   * CONNECT). Every token request records the value it started under and applies its answer only while the
+   * app still has it, so a slow answer for an earlier CONNECT or a replaced instance cannot mark the
+   * current handshake delivered, deliver a stale token or re-arm its timers.
+   */
+  authSession: number
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /** Live PCM output stream this app has open (speaker.createStream), if any. */
@@ -658,6 +665,7 @@ class LocalMiniappRuntime {
 
   private speechRuns = new Map<string, SpeechRun>()
   private runtimeSeq = 0
+  private authSessionSeq = 0
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
   // secret. Both issuer and verifier are the same process, so the
@@ -981,6 +989,7 @@ class LocalMiniappRuntime {
       authRefreshTimerId: null,
       authRetryTimerId: null,
       authDelivered: false,
+      authSession: 0,
       speakerState: "idle",
       requestedLocationRate: null,
       runtimeId: `rt-${++this.runtimeSeq}`,
@@ -1681,6 +1690,7 @@ class LocalMiniappRuntime {
     // retry timer can't fire against this new connection and so the retry loop
     // below re-arms from scratch.
     existing.authDelivered = false
+    existing.authSession = ++this.authSessionSeq
     this.clearMiniappAuthDeliveryRetry(packageName)
     // A connect is an open, so the token is minted now rather than taken from the cache: it must carry
     // whatever the user has acquired since the last one. If this mint fails, the retries in
@@ -1753,14 +1763,24 @@ class LocalMiniappRuntime {
     packageName: string,
     opts?: {minTtlMs?: number; fresh?: boolean},
   ): Promise<MiniappAuthToken | null> {
+    const session = this.connectedApps.get(packageName)?.authSession
     const auth = await this.requestMiniappAuth(packageName, opts)
     if (!auth) return null
+    // The miniapp that asked may have reconnected or been replaced while the mint was out; its successor
+    // gets its own token.
+    if (!this.currentAuthApp(packageName, session)) return auth
     this.scheduleMiniappAuthRefresh(packageName, auth)
     this.sendToMiniapp(packageName, {
       type: MiniappResponseType.AUTH_UPDATE,
       auth,
     })
     return auth
+  }
+
+  /** The app registered under `packageName`, if it is still in the auth session a token request started under. */
+  private currentAuthApp(packageName: string, session: number | undefined): ConnectedMiniapp | undefined {
+    const app = this.connectedApps.get(packageName)
+    return app && app.authSession === session ? app : undefined
   }
 
   private authRefreshOptions(payload: Record<string, unknown>): {minTtlMs?: number} | undefined {
@@ -1810,8 +1830,9 @@ class LocalMiniappRuntime {
    * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
    * — permanent, so we do NOT retry. A REJECTION means a transient failure
    * (typically the cloud client isn't connection-ready yet) — retry with backoff.
-   * Either way we bail if the app has since disconnected or already got a token
-   * (e.g. via {@link redriveMiniappAuthDelivery} on cloud-connect).
+   * Either way we bail if the app has since disconnected, reconnected (a later CONNECT
+   * delivers its own token; see {@link ConnectedMiniapp.authSession}) or already got a
+   * token (e.g. via {@link redriveMiniappAuthDelivery} on cloud-connect).
    */
   private deliverInitialMiniappAuth(
     packageName: string,
@@ -1820,10 +1841,11 @@ class LocalMiniappRuntime {
   ): void {
     const app = this.connectedApps.get(packageName)
     if (!app || app.authDelivered) return
+    const session = app.authSession
     const mint = inFlight ?? this.requestMiniappAuth(packageName)
     void mint
       .then((auth) => {
-        const current = this.connectedApps.get(packageName)
+        const current = this.currentAuthApp(packageName, session)
         if (!current || current.authDelivered) return
         if (!auth) return // no auth hook — permanent, don't spin
         current.authDelivered = true
@@ -1837,7 +1859,8 @@ class LocalMiniappRuntime {
             (err as Error)?.message ?? err
           }`,
         )
-        this.scheduleInitialMiniappAuthRetry(packageName, attempt)
+        // A later CONNECT (or a replacement) owns its own delivery and retries.
+        if (this.currentAuthApp(packageName, session)) this.scheduleInitialMiniappAuthRetry(packageName, attempt)
       })
   }
 

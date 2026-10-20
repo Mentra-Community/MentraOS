@@ -14,6 +14,7 @@ const methods = [
   "handleConnect",
   "requestMiniappAuth",
   "refreshMiniappAuth",
+  "currentAuthApp",
   "scheduleMiniappAuthRefresh",
   "clearMiniappAuthRefresh",
   "deliverInitialMiniappAuth",
@@ -146,6 +147,7 @@ function fixture() {
   host.connectedApps = new Map()
   host.handshookApps = new Set()
   host.visiblePackage = null
+  host.authSessionSeq = 0
   host.currentVisiblePackage = () => visible
   host.sendToMiniapp = (_packageName: string, message: {type: string; auth?: Token}) => sent.push(message)
   host.sendVisibilityChange = (packageName: string, state: string) => visibility.push([packageName, state])
@@ -164,6 +166,7 @@ function fixture() {
       authRefreshTimerId: null,
       authRetryTimerId: null,
       authDelivered: false,
+      authSession: 0,
     })
   }
 
@@ -200,6 +203,11 @@ function fixture() {
       host.handleConnect(CALL, {}, "req-1")
       await flush()
     },
+    /** The same WebView sends CONNECT again without being respawned. */
+    async connectAgain() {
+      host.handleConnect(CALL, {}, "req-2")
+      await flush()
+    },
     /** The cloud client (re)connects: apps still missing their first token retry at once. */
     async redrive() {
       host.redriveMiniappAuthDelivery()
@@ -219,6 +227,18 @@ const fails =
   (message: string): Plan =>
   () =>
     Promise.reject(new Error(message))
+
+/** A token request the test answers itself, when and as it likes. */
+function pending() {
+  let resolve!: (token: Token) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<Token>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  const plan: Plan = () => promise
+  return {plan, resolve, reject}
+}
 
 describe("a miniapp that connects", () => {
   test("is handed a token minted now, not a cached one", async () => {
@@ -487,5 +507,99 @@ describe("a mint that fails when the miniapp connects", () => {
 
     expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, undefined])
     expect(f.delivered()).toEqual(["token-1"])
+  })
+})
+
+describe("a miniapp that connects again while an earlier token request is out", () => {
+  // The purchase happens between the two opens: request A was made before it and request B after it.
+  const before = (f: ReturnType<typeof fixture>): Token => ({token: "before-purchase", expiresAt: f.now() + HOUR_MS})
+  const after = (f: ReturnType<typeof fixture>): Token => ({
+    token: "after-purchase",
+    expiresAt: f.now() + HOUR_MS + 10 * 60_000,
+  })
+
+  test("a replaced miniapp gets the token minted for its own open, not the older answer", async () => {
+    const f = fixture()
+    const a = pending()
+    const b = pending()
+    f.plan(a.plan, b.plan)
+    await f.connect()
+    await f.connect()
+
+    a.resolve(before(f))
+    await flush()
+    b.resolve(after(f))
+    await flush()
+
+    expect(f.delivered()).toEqual(["after-purchase"])
+    expect(f.armed()).toEqual([HOUR_MS + 10 * 60_000 - HEADROOM_MS])
+  })
+
+  test("the same WebView sending CONNECT again gets the token minted for its second open", async () => {
+    const f = fixture()
+    const a = pending()
+    const b = pending()
+    f.plan(a.plan, b.plan)
+    await f.connect()
+    await f.connectAgain()
+
+    a.resolve(before(f))
+    await flush()
+    b.resolve(after(f))
+    await flush()
+
+    expect(f.delivered()).toEqual(["after-purchase"])
+    expect(f.armed()).toEqual([HOUR_MS + 10 * 60_000 - HEADROOM_MS])
+  })
+
+  test("the older answer arriving last changes nothing", async () => {
+    const f = fixture()
+    const a = pending()
+    const b = pending()
+    f.plan(a.plan, b.plan)
+    await f.connect()
+    await f.connect()
+
+    b.resolve(after(f))
+    await flush()
+    a.resolve(before(f))
+    await flush()
+
+    expect(f.delivered()).toEqual(["after-purchase"])
+    expect(f.armed()).toEqual([HOUR_MS + 10 * 60_000 - HEADROOM_MS])
+  })
+
+  test("an older request that fails starts no retry for the later open", async () => {
+    const f = fixture()
+    const a = pending()
+    const b = pending()
+    f.plan(a.plan, b.plan)
+    await f.connect()
+    await f.connectAgain()
+
+    a.reject(new Error("offline"))
+    await flush()
+    expect(f.armed()).toEqual([])
+
+    b.resolve(after(f))
+    await flush()
+    expect(f.requests).toHaveLength(2)
+    expect(f.delivered()).toEqual(["after-purchase"])
+  })
+
+  test("a foreground refresh that is still out when the miniapp is replaced is not handed to the new one", async () => {
+    const f = fixture()
+    await f.connect()
+    const stale = pending()
+    f.plan(stale.plan)
+    await f.show(CALL)
+
+    await f.connect()
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    stale.resolve(before(f))
+    await flush()
+
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
   })
 })
