@@ -368,6 +368,15 @@ export class ResourceReservationsService {
       const newer = input.controller.generation > intent.controller.generation ||
         input.controller.generation === intent.controller.generation && input.controller.sequence > intent.controller.sequence,
         subject = borrower.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === intent.prerequisite!.resourceId)
+      // A still-owned original check can reconcile a pre-CAS report race through
+      // this same intent. Existing claim recovery above wins first; released or
+      // replaced checks cannot enter the guarded acquisition transaction.
+      if (input.controller.generation === intent.controller.generation && input.controller.incarnation === intent.controller.incarnation &&
+        subject?.current && subject.status === 'checking' && subject.owner?.kind === 'boundary-cleanup' &&
+        subject.owner.id === intent.owner.id && subject.owner.laneId === intent.laneId) {
+        const recovered = await this.acquireBackendPrerequisite(intent, hostId)
+        return recovered.status === 'reserved' ? recovered : unknown
+      }
       if (!newer || !subject?.current || subject.generation <= 0 || subject.owner !== null || subject.subject.authorityHostId !== hostId ||
         borrower.snapshot.frameworkBinding?.routineApiVersion === undefined || borrower.snapshot.frameworkBinding.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
         !borrower.snapshot.lanes.some(lane => lane.id === intent.laneId && lane.platform === 'android' && lane.resources.some(resource =>
@@ -487,17 +496,21 @@ export class ResourceReservationsService {
       claim.controllerIncarnation === intent.controller.incarnation && claim.controllerGeneration === intent.controller.generation &&
       claim.borrowerSequence === intent.controller.sequence
   }
-  private async backendTargetCurrent(host: ResourceReservationHost, intent: ExclusiveResourceIntent) {
+  private async backendTargetCurrent(host: ResourceReservationHost, intent: ExclusiveResourceIntent,
+    originalCheck?: {generation: number; owner: unknown}) {
     const purpose = intent.prerequisite!, lane = host.snapshot.lanes.find(value => value.id === intent.laneId),
       subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === purpose.resourceId)
     if (!fresh(host, this.now()) || host.incarnation !== intent.controller.incarnation ||
-      host.incarnationGeneration !== intent.controller.generation || host.sequence !== intent.controller.sequence ||
+      host.incarnationGeneration !== intent.controller.generation || host.sequence < intent.controller.sequence ||
       !isDeepStrictEqual(host.snapshot.frameworkBinding, purpose.binding) || purpose.binding.routineApiVersion < BACKEND_CONNECTIVITY_ROUTINE_API_VERSION ||
       !lane || lane.platform !== 'android' || lane.state !== 'idle' || lane.activity || !purpose.local && lane.dispatchMode !== 'automatic' ||
       !lane.resources.some(resource => resource.id === purpose.resourceId && resource.kind === 'phone' &&
         resource.capabilities?.includes('backend-connectivity')) || !subject?.current || subject.subject.authorityHostId !== host.hostId ||
       subject.status !== 'checking' || subject.owner?.kind !== 'boundary-cleanup' || subject.owner.id !== intent.owner.id ||
+      originalCheck && (subject.generation !== originalCheck.generation || !isDeepStrictEqual(subject.owner, originalCheck.owner)) ||
       subject.owner.generation === null || subject.owner.generation === undefined || subject.owner.laneId !== intent.laneId ||
+      host.snapshot.resourceLifecycle?.history.some(value => value.resourceId === purpose.resourceId &&
+        value.checkOperationId === intent.operationId && value.event === 'resource-check-released') ||
       intent.owner.id !== `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: purpose.resourceId})}`)
       return false
     const targets = await this.qualificationTargets(host.hostId, {jobId: purpose.jobId, laneId: intent.laneId,
@@ -516,9 +529,16 @@ export class ResourceReservationsService {
   }
   private async acquireBackendPrerequisite(intent: ExclusiveResourceIntent, hostId: string) {
     const intentSha256 = this.backendIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
+    let originalCheck: {generation: number; owner: unknown} | undefined
     for (let attempt = 0; attempt < 3; attempt++) {
-      const host = await this.host(hostId)
-      if (!await this.backendTargetCurrent(host, intent)) return unknown
+      const host = await this.host(hostId), subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === intent.prerequisite!.resourceId)
+      if (!subject) return unknown
+      originalCheck ??= {generation: subject.generation, owner: subject.owner}
+      if (subject.generation !== originalCheck.generation || !isDeepStrictEqual(subject.owner, originalCheck.owner)) return unknown
+      // The durable intent freezes identity, not the heartbeat sequence used by
+      // this transaction. Revalidate a newer same-controller report in full;
+      // the existing host CAS still uses that exact observed sequence/version.
+      if (!await this.backendTargetCurrent(host, intent, originalCheck)) continue
       const selected = await this.rows.request?.(intent.prerequisite!.jobId)
       if (intent.prerequisite!.local ? Boolean(selected) || !localBackendIntentMatches(host, intent, this.now()) :
         !backendPrerequisiteRequestMatches(selected ?? null, intent, this.now())) return unknown
@@ -536,7 +556,7 @@ export class ResourceReservationsService {
       }
       if (current) {
         const after = await this.host(hostId)
-        return await this.backendTargetCurrent(after, intent) && hostResourceReservationsSchema.parse(after.resourceReservations ?? [])
+        return await this.backendTargetCurrent(after, intent, originalCheck) && hostResourceReservationsSchema.parse(after.resourceReservations ?? [])
           .some(value => isDeepStrictEqual(value, current)) ? {status: 'reserved' as const, intentSha256, claims: [current]} : unknown
       }
       if (claims.length >= 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
@@ -549,11 +569,11 @@ export class ResourceReservationsService {
       if (!await this.rows.replaceBackend(host, [...claims, claim], intent, new Date(this.now()))) continue
       // Lost or cancelled target settlement retains the committed original claim. No native reader is authorized by an uncertain answer.
       const after = await this.host(hostId)
-      if (!await this.backendTargetCurrent(after, intent) || !hostResourceReservationsSchema.parse(after.resourceReservations ?? [])
+      if (!await this.backendTargetCurrent(after, intent, originalCheck) || !hostResourceReservationsSchema.parse(after.resourceReservations ?? [])
         .some(value => isDeepStrictEqual(value, claim))) return unknown
       return {status: 'reserved' as const, intentSha256, claims: [claim]}
     }
-    throw new TestRunError(409, 'Resource authority changed; observe the unchanged prerequisite intent')
+    return unknown
   }
   private async giveBackBackendPrerequisite(returned: z.infer<typeof exclusiveResourceReturnSchema>, borrower: ResourceReservationHost, hostId: string) {
     if (!('kind' in returned.release)) throw new TestRunError(409, 'Resource check release is unavailable')
