@@ -213,6 +213,12 @@ interface ConnectedMiniapp {
    * current handshake delivered, deliver a stale token or re-arm its timers.
    */
   authSession: number
+  /**
+   * True while a request for the token this CONNECT is waiting for is out. The reconnect re-drive leaves such an
+   * app alone: a cache-first request now would deliver the cached token and the fresh one still on its way would
+   * then be discarded.
+   */
+  authRequestPending: boolean
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /** Live PCM output stream this app has open (speaker.createStream), if any. */
@@ -990,6 +996,7 @@ class LocalMiniappRuntime {
       authRetryTimerId: null,
       authDelivered: false,
       authSession: 0,
+      authRequestPending: false,
       speakerState: "idle",
       requestedLocationRate: null,
       runtimeId: `rt-${++this.runtimeSeq}`,
@@ -1795,15 +1802,34 @@ class LocalMiniappRuntime {
     this.clearMiniappAuthRefresh(packageName)
 
     const refreshAt = auth.expiresAt - MINIAPP_AUTH_REFRESH_HEADROOM_MS
-    const delay = Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now())
+    this.armMiniappAuthRefresh(packageName, Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now()), 0)
+  }
+
+  /**
+   * Arm the refresh timer. A refresh that fails (Core or the network is down at that moment) arms it again with the
+   * same backoff as the first token's delivery, until a new token lands, the miniapp reconnects or it stops; the
+   * miniapp must not be left holding a token that runs out.
+   */
+  private armMiniappAuthRefresh(packageName: string, delay: number, attempt: number): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    const session = app.authSession
     app.authRefreshTimerId = BgTimer.setTimeout(() => {
-      const current = this.connectedApps.get(packageName)
+      const current = this.currentAuthApp(packageName, session)
       if (!current) return
       current.authRefreshTimerId = null
       // Fresh: the cached token is the one being replaced and has no more than the headroom left, so asking
       // for it again would hand the miniapp the same token and re-arm this timer for the minimum delay.
       void this.refreshMiniappAuth(packageName, {fresh: true}).catch((err) => {
         console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${packageName}: ${(err as Error)?.message ?? err}`)
+        // Nothing else (a foreground refresh, a miniapp request) has armed the timer in the meantime.
+        const stillCurrent = this.currentAuthApp(packageName, session)
+        if (!stillCurrent || stillCurrent.authRefreshTimerId !== null) return
+        this.armMiniappAuthRefresh(
+          packageName,
+          Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt),
+          attempt + 1,
+        )
       })
     }, delay)
   }
@@ -1842,11 +1868,14 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app || app.authDelivered) return
     const session = app.authSession
+    app.authRequestPending = true
     const mint = inFlight ?? this.requestMiniappAuth(packageName)
     void mint
       .then((auth) => {
         const current = this.currentAuthApp(packageName, session)
-        if (!current || current.authDelivered) return
+        if (!current) return
+        current.authRequestPending = false
+        if (current.authDelivered) return
         if (!auth) return // no auth hook — permanent, don't spin
         current.authDelivered = true
         this.clearMiniappAuthDeliveryRetry(packageName)
@@ -1860,7 +1889,10 @@ class LocalMiniappRuntime {
           }`,
         )
         // A later CONNECT (or a replacement) owns its own delivery and retries.
-        if (this.currentAuthApp(packageName, session)) this.scheduleInitialMiniappAuthRetry(packageName, attempt)
+        const current = this.currentAuthApp(packageName, session)
+        if (!current) return
+        current.authRequestPending = false
+        this.scheduleInitialMiniappAuthRetry(packageName, attempt)
       })
   }
 
@@ -1893,7 +1925,7 @@ class LocalMiniappRuntime {
    */
   private redriveMiniappAuthDelivery(): void {
     for (const [packageName, app] of this.connectedApps) {
-      if (app.authDelivered) continue
+      if (app.authDelivered || app.authRequestPending) continue
       // Only apps that finished their CONNECT handshake are in the mint-retry
       // state; skip anything still mid-handshake (handleConnect owns that).
       if (!this.handshookApps.has(packageName)) continue

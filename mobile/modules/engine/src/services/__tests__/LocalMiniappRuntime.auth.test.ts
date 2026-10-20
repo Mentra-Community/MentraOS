@@ -16,6 +16,7 @@ const methods = [
   "refreshMiniappAuth",
   "currentAuthApp",
   "scheduleMiniappAuthRefresh",
+  "armMiniappAuthRefresh",
   "clearMiniappAuthRefresh",
   "deliverInitialMiniappAuth",
   "scheduleInitialMiniappAuthRetry",
@@ -92,6 +93,7 @@ function fixture() {
   let cached: Token | null = null
   const requests: Request[] = []
   const plans: Plan[] = []
+  let coreDown = false
   const mint = (): Token => {
     cached = {token: `token-${++minted}`, expiresAt: now + HOUR_MS}
     return cached
@@ -103,6 +105,7 @@ function fixture() {
       requests.push(request)
       const plan = plans.shift()
       if (plan) return plan(request)
+      if (coreDown) return Promise.reject(new Error("Core is down"))
       if (!opts?.fresh && cached && cached.expiresAt - CACHE_MARGIN_MS > now) return Promise.resolve(cached)
       return Promise.resolve(mint())
     },
@@ -167,6 +170,7 @@ function fixture() {
       authRetryTimerId: null,
       authDelivered: false,
       authSession: 0,
+      authRequestPending: false,
     })
   }
 
@@ -196,6 +200,10 @@ function fixture() {
     /** Timers still armed, with the delay each was armed for. */
     armed: () => [...timers.values()].map((timer) => timer.delay),
     plan: (...next: Plan[]) => plans.push(...next),
+    /** Every request without a plan of its own fails while Core is down. */
+    setCoreDown: (down: boolean) => {
+      coreDown = down
+    },
     advance,
     /** The miniapp's WebView connects. */
     async connect() {
@@ -306,6 +314,68 @@ describe("the scheduled refresh before expiry", () => {
 
     expect(f.warnings.some((warning) => warning.includes("auth refresh failed"))).toBe(true)
     expect(f.delivered()).toEqual(["token-1"])
+  })
+
+  test("a failed refresh is tried again with the existing backoff until a new token lands", async () => {
+    const f = fixture()
+    await f.connect()
+    f.plan(fails("offline"), fails("offline"), fails("offline"))
+
+    await f.advance(HOUR_MS - HEADROOM_MS)
+    expect(f.armed()).toEqual([RETRY_BASE_MS])
+    await f.advance(RETRY_BASE_MS)
+    expect(f.armed()).toEqual([RETRY_BASE_MS * 2])
+    await f.advance(RETRY_BASE_MS * 2)
+    expect(f.armed()).toEqual([RETRY_BASE_MS * 4])
+    await f.advance(RETRY_BASE_MS * 4)
+
+    // Every attempt asks for a new token: the cached one is the token being replaced.
+    expect(f.requests.map((request) => request.opts?.fresh)).toEqual([true, true, true, true, true])
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
+  })
+
+  test("backs off no further than the cap", async () => {
+    const f = fixture()
+    await f.connect()
+    f.plan(...Array.from({length: 7}, () => fails("offline")))
+
+    await f.advance(HOUR_MS - HEADROOM_MS)
+    const delays: number[] = []
+    for (let i = 0; i < 6; i++) {
+      delays.push(...f.armed())
+      await f.advance(f.armed()[0])
+    }
+
+    expect(delays).toEqual([1_000, 2_000, 4_000, 8_000, RETRY_MAX_MS, RETRY_MAX_MS])
+  })
+
+  test("a retry waiting to run gives way to a token that arrives first", async () => {
+    const f = fixture()
+    await f.connect()
+    f.plan(fails("offline"))
+    await f.advance(HOUR_MS - HEADROOM_MS)
+    expect(f.armed()).toEqual([RETRY_BASE_MS])
+
+    await f.show(CALL)
+
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
+  })
+
+  test("a refresh that fails after the miniapp was replaced starts no retry for the new one", async () => {
+    const f = fixture()
+    await f.connect()
+    const stale = pending()
+    f.plan(stale.plan)
+    await f.advance(HOUR_MS - HEADROOM_MS)
+
+    await f.connect()
+    stale.reject(new Error("offline"))
+    await flush()
+
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
   })
 })
 
@@ -470,12 +540,14 @@ describe("a mint that fails when the miniapp connects", () => {
   test("with a cached token that is about to expire, the retry mints", async () => {
     const f = fixture()
     await f.connect()
-    // The scheduled refresh failed, so the cached token ran down into the cloud client's expiry margin, where the
-    // default path no longer serves it.
-    f.plan(fails("Core is down"), fails("Core is down"))
+    // Every refresh failed, so the cached token ran down into the cloud client's expiry margin, where the default
+    // path no longer serves it.
+    f.setCoreDown(true)
     await f.advance(HOUR_MS - CACHE_MARGIN_MS / 2)
     expect(f.delivered()).toEqual(["token-1"])
 
+    f.plan(fails("Core is down"))
+    f.setCoreDown(false)
     await f.connect()
     await f.advance(RETRY_BASE_MS)
 
@@ -585,6 +657,37 @@ describe("a miniapp that connects again while an earlier token request is out", 
     await flush()
     expect(f.requests).toHaveLength(2)
     expect(f.delivered()).toEqual(["after-purchase"])
+  })
+
+  test("a reconnect redrive leaves the open alone while its fresh request is still out", async () => {
+    const f = fixture()
+    await f.connect()
+    const fresh = pending()
+    f.plan(fresh.plan)
+    await f.connect()
+
+    await f.redrive()
+    expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, {fresh: true}])
+
+    fresh.resolve(after(f))
+    await flush()
+    expect(f.delivered()).toEqual(["token-1", "after-purchase"])
+  })
+
+  test("a reconnect redrive still takes over once that request has failed", async () => {
+    const f = fixture()
+    await f.connect()
+    const fresh = pending()
+    f.plan(fresh.plan)
+    await f.connect()
+    fresh.reject(new Error("not ready"))
+    await flush()
+    expect(f.armed()).toEqual([RETRY_BASE_MS])
+
+    await f.redrive()
+
+    expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, {fresh: true}, undefined])
+    expect(f.delivered()).toEqual(["token-1", "token-1"])
   })
 
   test("a foreground refresh that is still out when the miniapp is replaced is not handed to the new one", async () => {
