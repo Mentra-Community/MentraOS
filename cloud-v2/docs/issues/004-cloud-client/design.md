@@ -430,6 +430,8 @@ at miniapp launch, when the miniapp returns to the foreground, and when its sche
 refresh before expiry falls due. If the launch mint fails, the runtime retries through
 the default path with backoff, so a still-valid cached token serves the miniapp while
 Core is unreachable; the foreground and scheduled mints then pick up anything newer.
+A scheduled refresh that fails is retried with the same backoff until a new token
+arrives.
 
 **`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `tenantId` are
 base64 JSON inside them. `identity` reads them straight off the active token path.
