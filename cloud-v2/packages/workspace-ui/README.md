@@ -158,7 +158,17 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
       brandTitle="Developer Console"
       brandSubtitle="MentraOS"
       linkComponent={ShellLink}
-      switcher={<WorkspaceSwitcher current={active} workspaces={mine} invitations={[]} canCreate createNotice={null} onCreate={create} />}
+      switcher={
+        <WorkspaceSwitcher
+          current={active}
+          workspaces={mine}
+          invitations={[]}
+          canCreate
+          createNotice={null}
+          onCreate={create}
+          linkComponent={ShellLink}
+        />
+      }
       nav={[{key: "main", items: [{key: "apps", label: "Miniapps", icon: Boxes, href: "/apps"}]}]}
       active={item => item.href !== undefined && pathname.startsWith(item.href)}
       accountItems={[{key: "billing", label: "Billing", icon: CreditCard, href: "/billing"}]}
@@ -178,8 +188,8 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
   that open a new tab.
 - **The link component** gets an anchor's props with `href` (`ShellLinkProps`). It must
   render an `<a>` with them and call the given `onClick` before it navigates: the account
-  menu closes itself in that `onClick`. Without one, items are plain anchors
-  (`PlainLink`), so a click is a full page load.
+  menu closes itself in that `onClick`. Pass it to `AppShell` and to `WorkspaceSwitcher`;
+  without one, items are plain anchors (`PlainLink`), so a click is a full page load.
 - **The host says what is open.** `active(item)` marks the item `aria-current="page"` and
   fills it. Without it, nothing is marked.
 - **Navigating closes the drawer and the menus.** A click on a link in the sidebar closes

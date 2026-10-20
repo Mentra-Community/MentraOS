@@ -32,5 +32,7 @@ export type ShellIcon = ComponentType<{ className?: string }>;
  * workspace menu.
  */
 export function isNavigationClick(target: EventTarget | null, selector = "a[href]"): boolean {
-  return target instanceof Element && target.closest(`${selector}, [data-navigates]`) !== null;
+  // Duck-typed rather than `instanceof Element`, which needs a DOM global: the check runs only on a click.
+  const element = target as Partial<Pick<Element, "closest">> | null;
+  return typeof element?.closest === "function" && element.closest(`${selector}, [data-navigates]`) !== null;
 }

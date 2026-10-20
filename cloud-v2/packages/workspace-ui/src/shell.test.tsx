@@ -6,7 +6,7 @@ import { Badge } from "./components/common";
 import { AccountFooter, AppShell, type NavGroup, type NavItem } from "./shell/app-shell";
 import { BrandPage, MentraLogo } from "./shell/brand";
 import { CenteredLayout } from "./shell/centered-layout";
-import type { ShellLinkProps } from "./shell/link";
+import { isNavigationClick, type ShellLinkProps } from "./shell/link";
 import { SWITCHER_ITEM_CLASS, WorkspaceSwitcher, type SwitcherWorkspace } from "./shell/workspace-switcher";
 import { Textarea } from "./ui/textarea";
 
@@ -341,5 +341,24 @@ describe("badges and the textarea", () => {
     }
     expect(markup).toContain('name="notes"');
     expect(markup).not.toMatch(/#[0-9a-f]{3,8}/i);
+  });
+});
+
+describe("what closes the drawer and the switcher's menu", () => {
+  /** A click target inside an element matching one of `matches` (a CSS selector each). */
+  const inside = (...matches: string[]) =>
+    ({ closest: (selector: string) => (selector.split(", ").some(part => matches.includes(part)) ? {} : null) }) as unknown as EventTarget;
+
+  test("a click inside a link, or inside a control marked data-navigates, navigates", () => {
+    expect(isNavigationClick(inside("a[href]"))).toBe(true);
+    expect(isNavigationClick(inside("[data-navigates]"))).toBe(true);
+    expect(isNavigationClick(inside('a[role="menuitem"]'), 'a[role="menuitem"]')).toBe(true);
+  });
+
+  test("any other click does not, nor does a target that is not an element", () => {
+    expect(isNavigationClick(inside("button"))).toBe(false);
+    expect(isNavigationClick(inside("a[href]"), 'a[role="menuitem"]')).toBe(false);
+    expect(isNavigationClick(null)).toBe(false);
+    expect(isNavigationClick({} as EventTarget)).toBe(false);
   });
 });
