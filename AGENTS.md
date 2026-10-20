@@ -10,9 +10,9 @@ MentraOS is an open source operating system, app store, and development framewor
 - Mobile app: `mobile` (React Native with native modules)
 - Android logic: `android_core`
 - iOS native module: `mobile/ios`
-- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, console, and portal)
+- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, and portal)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
+- Websites: `cloud-v2/websites/` (admin portal, workspace portal, sign-in site). The Mentra Miniapp Store and Developer Console live in the separate Mentra Miniapp Store service.
 
 ### Established iOS behavior
 
@@ -40,9 +40,8 @@ Consult module-specific AGENTS.md when working within that module.
 Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 First-party miniapps and their backends also live in `miniapps/`. All of those
-miniapps are part of this repository's source scope. For example,
-`com.mentra.merge` is owned by this monorepo: its client is in
-`miniapps/merge/miniapp/` and its backend is in `miniapps/merge/backend/`.
+miniapps are part of this repository's source scope, for example
+`com.mentra.captions` in `miniapps/captions/`.
 Package identifiers can be found in `miniapps/**/miniapp.json`; the surrounding
 component directories contain backend and deployment files. A separate backend
 hostname does not imply a separate repository or third-party ownership.
@@ -81,7 +80,7 @@ validates the public Maven artifact dependency shape.
 - Dev: `bun run dev`
 - Type check: `bun run typecheck`
 - Test: `bun run test`
-- Web portals: `bun run dev:console`, `bun run dev:admin`, or `bun run dev:portal`
+- Web portals: `bun run dev:admin` or `bun run dev:portal`
 
 ## Prerequisites
 
@@ -221,6 +220,7 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
 - [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
 - [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+- [Merge Miniapp](https://github.com/Mentra-Community/Merge-Miniapp) (`com.mentra.merge`)
 
 If a MentraOS PR also requires changes to one of the external miniapps above, or
 you are otherwise asked to change one of those miniapps:
@@ -244,7 +244,7 @@ Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports 
 
 1. Get the report id (from Slack, the admin console, or the user)
 2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an operator key with the incident read scope (`mak_...`, created in the admin portal under Operator keys). An older admin key (`msk_...`) whose `api-key@<keyId>.local` address is on `CLOUD_CORE_ADMIN_EMAILS` works as an operator key too
 4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
 What you get:
@@ -258,7 +258,7 @@ Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--li
 Example:
 
 ```bash
-export MENTRA_ADMIN_TOKEN=msk_your-admin-key
+export MENTRA_ADMIN_TOKEN=mak_your-operator-key
 ./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
 

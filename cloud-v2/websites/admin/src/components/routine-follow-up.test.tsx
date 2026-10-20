@@ -30,7 +30,7 @@ test('summary separates recorded stage, no owner and expired execution from veri
   const value = row(); value.execution = {owner: 'stopped-agent', generation: 1, state: 'expired'}
   const html = renderToStaticMarkup(<FollowUpSummary row={value}/>)
   expect(html).toContain('Fixing'); expect(html).toContain('Unassigned'); expect(html).toContain('Agent expired')
-  expect(html).toContain('Inclusion in a tested build is unverified'); expect(html).toContain('Review approved')
+  expect(html).not.toContain('Inclusion in a tested build is unverified'); expect(html).toContain('Review approved')
   expect(html).toContain('href="/?report=rep_EVIDENCE"'); expect(html).toContain('href="/?testRun=original-run"')
   const complete = row(); complete.stage = 'verified'; complete.classification = 'undetermined'; complete.occurrences.forEach(value => {value.closure = {kind: 'closed', reason: 'Could not reproduce', at: now, actor: 'operator:person'}})
   expect(renderToStaticMarkup(<FollowUpSummary row={complete}/>)).toContain('>Closed</span>')

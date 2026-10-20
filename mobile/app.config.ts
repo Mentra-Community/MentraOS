@@ -2,6 +2,7 @@ import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
+import {backendTarget} from "./scripts/backend-target.cjs"
 
 const familyBaseVersion = require("../package.json").version as string
 
@@ -86,17 +87,28 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   }
 
   const buildNumber = getBuildNumber()
+  const coreUrl = backendTarget(process.env.EXPO_PUBLIC_CLOUD_CORE_URL)
+  // Generated target metadata cannot be inherited from a previous Expo config.
+  const {mentraBackendTarget: _previousBackendTarget, ...originalExtra} = config.extra ?? {}
+  const packagedExtra = {
+    ...originalExtra,
+    mentraBackendTarget: {schemaVersion: 1, coreUrl},
+  }
 
   return {
     ...config,
+    extra: packagedExtra,
     ...(process.env.MENTRA_PR_MOBILE_FINGERPRINT
       ? {
           extra: {
-            ...config.extra,
+            ...packagedExtra,
             mentraPrBuild: {
               schemaVersion: 1,
               mobileFingerprint: process.env.MENTRA_PR_MOBILE_FINGERPRINT,
-              mobileSourceCommit: process.env.GITHUB_SHA,
+              // Explicit PR builds check out a merge revision while GITHUB_SHA
+              // still names the trusted workflow ref. Both PR producers supply
+              // the actual compilation revision separately.
+              mobileSourceCommit: process.env.MENTRA_PR_BUILD_SHA,
               // Expo's config serializer transforms nested nulls; keep the
               // unconfigured intermediate explicit until CI packages its pin.
               otaManifestUrl: "",

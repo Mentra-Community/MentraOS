@@ -18,6 +18,22 @@ import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
+import {Check, Circle, Loader2} from 'lucide-react';
+import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table';
+import {useClock} from '../lib/use-clock';
+
+const PROGRESS_FRESH_FOR_MS = 60_000;
+const PROGRESS_PHASES = {preparation: 'Preparing software', 'framework-setup': 'Framework setup', 'routine-setup': 'Routine setup',
+  test: 'Running test', 'routine-teardown': 'Routine cleanup', 'framework-teardown': 'Framework cleanup', publication: 'Publishing evidence'};
+
+export function requestLiveStatus(request: FrameworkRequestDisplay, now = Date.now(), responseReceivedAt = now) {
+  const live = request.live;
+  if (!live) return null;
+  const age = live.observationAgeMs + Math.max(0, now - responseReceivedAt);
+  const stale = age > PROGRESS_FRESH_FOR_MS;
+  return {stale, phase: PROGRESS_PHASES[live.progress.phase],
+    elapsed: elapsedDuration(Math.max(0, Date.parse(live.progress.observedAt) - Date.parse(live.progress.startedAt)) + (stale ? 0 : age))};
+}
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
@@ -182,11 +198,38 @@ export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | 
   return data?.uploadsComplete === false || (data?.incidentReportPending && now - observedAt < CANCELLED_REQUEST_OBSERVATION_MS) ? 5000 : false;
 }
 
-function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
+function RequestCard({request, responseReceivedAt, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; responseReceivedAt: number; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
   const status = request.terminalStatus ?? request.state;
+  const now = useClock(), live = request.live, progress = live?.progress, activity = requestLiveStatus(request, now, responseReceivedAt);
   return <section className={PANEL} aria-label="Routine request">
     <a className={TESTING_LINK} href="/?testRuns=1">All test runs</a>
-    <h2 className="mt-4 text-xl font-semibold">{request.routineId}: {status === "not-run" ? "Did not run" : status}</h2>
+    <div className="mt-4 flex flex-wrap items-center gap-3"><h2 className="text-xl font-semibold">{live?.title ?? request.routineId}: {status === "not-run" ? "Did not run" : live ? activity?.stale ? 'Last observed' : 'In progress' : status}</h2>
+      {live && <HistoryStatus outcome={activity?.stale ? 'progress unavailable' : 'running'} />}</div>
+    {progress && activity && <div className="mt-4 space-y-3" aria-label="Live routine progress">
+      <div role="status" className="flex flex-wrap items-center gap-2 text-sm">
+        {!activity.stale && <Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />}
+        <span>{activity.phase}{activity.stale && ' · Last observed'}</span>
+        <span className="text-[#656d76]">{progress.completedSteps}/{progress.totalSteps} steps completed · {activity.elapsed}</span>
+        <time className="text-xs text-[#656d76]" dateTime={live!.receivedAt}>Received {new Date(live!.receivedAt).toLocaleTimeString()}</time>
+      </div>
+      {!!live?.steps.length && <div className="max-h-80 overflow-y-auto rounded-md border border-[#d0d7de]"><Table>
+        <TableHeader><TableRow><TableHead className="w-24">Status</TableHead><TableHead>Test step</TableHead></TableRow></TableHeader>
+        <TableBody>{live.steps.map((step, index) => {
+          const completed = index < progress.completedSteps, current = progress.currentStep?.index === index;
+          const label = completed ? 'Completed' : current ? activity.stale ? 'Last observed' : 'Running' : 'Pending';
+          const Icon = completed ? Check : current && !activity.stale ? Loader2 : Circle;
+          return <TableRow key={step.id} className={current ? 'bg-[#f6f8fa]' : undefined} aria-current={current ? 'step' : undefined}>
+            <TableCell className="text-xs text-[#656d76]"><span className="inline-flex items-center gap-1.5"><Icon aria-hidden="true" className={`size-3.5 ${current && !activity.stale ? 'animate-spin motion-reduce:animate-none' : ''}`} />{label}</span></TableCell>
+            <TableCell><span className="mr-2 text-[#656d76]">{index + 1}.</span>{step.instruction}</TableCell>
+          </TableRow>;
+        })}</TableBody>
+      </Table></div>}
+    </div>}
+    {request.waiting && <div role="status" className="mt-3 rounded-md border border-[#d0d7de] p-3 text-sm">
+      <strong>Waiting to start:</strong> {request.waiting.reason}
+      <span className="ml-2 text-[#656d76]">Observed {new Date(request.waiting.observedAt).toLocaleString()}. No test steps have started.</span>
+    </div>}
+    {request.liveUnavailable && <p role="status" className="mt-3 text-sm text-[#656d76]">Live progress is temporarily unavailable. The request remains accepted and refreshes automatically.</p>}
     <p className="mt-2 text-sm">Request <code>{request.requestId}</code></p>
     <p className="mt-2"><BuildIdentity build={request.build} label="Requested build" /></p>
     <p className="mt-2">Computer: {request.hostId} · Lane: {request.laneId} · {request.platform}</p>
@@ -198,7 +241,7 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
     {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
     {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {!request.inputSha256 ? "Cancelled before execution." : request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
-    <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}
+    <p className="mt-3 text-sm text-[#68746d]">{live ? 'Final result and evidence are pending.' : 'No routine result has been published.'}{request.state !== "terminal" && " This request refreshes automatically."}
       {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
     <TestingButton className="mt-3" disabled={refreshing} onClick={onRefresh}>Refresh request</TestingButton>
   </section>;
@@ -233,11 +276,33 @@ export function stepRecordingPlayback(run: RecordedFrameworkRun, step: RecordedF
 }
 
 export function selectedFailureScreen(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined, actionId: string | undefined,
-  phase: FrameworkFailureScreen['phase'], source: 'app' | 'desktop' = 'app') {
+  phase: FrameworkFailureScreen['phase'], source: 'app' | 'desktop' | 'preceding' | 'system' = 'app') {
   const failure = run.result.failures.find(failure => failure.actionId === actionId && failure.phase === phase);
   const screen = failure && screens?.find(screen => screen.phase === failure.phase && screen.actionId === failure.actionId);
-  return screen && run.assets.find(asset => asset.id === (source === 'app' ? screen.assetId : screen.desktopAssetId) && asset.kind === 'screenshot' &&
+  return screen && run.assets.find(asset => asset.id === (source === 'app' ? screen.assetId : source === 'desktop' ? screen.desktopAssetId
+    : source === 'preceding' ? screen.precedingAppImage?.assetId : screen.currentPhoneImage?.source === 'system' ? screen.currentPhoneImage.assetId : undefined) && asset.kind === 'screenshot' &&
     ['image/png', 'image/jpeg'].includes(asset.mimeType));
+}
+
+export function selectedFailureProvenance(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined,
+  actionId: string | undefined, phase: FrameworkFailureScreen['phase']) {
+  return run.result.failures.some(failure => failure.phase === phase && failure.actionId === actionId)
+    ? screens?.find(screen => screen.phase === phase && screen.actionId === actionId) : undefined;
+}
+
+const imageIntervalLabel = (image: {captureStartedAt: string; captureFinishedAt: string} | undefined) => image
+  ? `Captured between ${new Date(image.captureStartedAt).toLocaleString()} and ${new Date(image.captureFinishedAt).toLocaleString()}.` : undefined;
+
+function FailureScreenshot({label, actionId, href, interval}: {label: string; actionId?: string; href: string;
+  interval?: {captureStartedAt: string; captureFinishedAt: string}}) {
+  const [failed, setFailed] = useState(false);
+  return <figure className="min-w-0">
+    <figcaption className="mb-2 text-sm font-medium">{label}</figcaption>
+    {interval && <p className="mb-2 text-sm text-[#747780]">{imageIntervalLabel(interval)}</p>}
+    {failed ? <p role="alert">{label} screenshot could not load.</p> : <img src={href} alt={`${label}: ${actionId}`}
+      onError={() => setFailed(true)} className="mx-auto block h-[var(--recording-height)] w-full rounded-lg bg-black object-contain" />}
+    <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={href}>Open {label.toLowerCase()} screenshot</a>
+  </figure>;
 }
 
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
@@ -247,7 +312,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const pendingPlayback = useRef<ReturnType<typeof stepRecordingPlayback>>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
-  const [mediaView, setMediaView] = useState<'failure' | 'desktop' | 'recording'>(stepId ? 'recording' : 'failure');
+  const [mediaView, setMediaView] = useState<'failure' | 'desktop' | 'preceding' | 'system' | 'recording'>(stepId ? 'recording' : 'failure');
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
   const [stepSearch, setStepSearch] = useState("");
@@ -306,7 +371,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     const request = result.data.request;
     return <div className="space-y-5">
       {result.error && <p role="alert">Request could not refresh: {result.error.message}</p>}
-      <RequestCard request={request} observing={frameworkRunRefetchInterval(result.data, observedAt) !== false}
+      <RequestCard request={request} responseReceivedAt={result.dataUpdatedAt} observing={frameworkRunRefetchInterval(result.data, observedAt) !== false}
         refreshing={result.isFetching} onRefresh={() => {setObservation({runId, startedAt: request.terminalStatus === "cancelled" ? Date.now() : null}); void result.refetch();}} />
     </div>;
   }
@@ -333,16 +398,35 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const hasRecording = uploadsComplete && run.assets.some(asset => asset.id === recordingAsset && asset.kind === "recording");
   const selectedScreen = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test') : undefined;
   const selectedDesktop = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test', 'desktop') : undefined;
-  const selectedFailure = !!selectedScreen || !!selectedDesktop;
+  const selectedProvenance = uploadsComplete ? selectedFailureProvenance(run, failureScreens, activeStep, 'test') : undefined;
+  const selectedFailure = !!selectedScreen || !!selectedDesktop || !!selectedProvenance;
   const failureScreen = selectedFailure ? selectedScreen : (uploadsComplete && failureSummary
     ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase) : undefined);
   const desktopScreen = selectedFailure ? selectedDesktop : (uploadsComplete && failureSummary
     ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase, 'desktop') : undefined);
   const failureScreenAction = selectedFailure ? activeStep : failureSummary?.actionId;
-  const displayedScreen = mediaView === 'desktop' ? desktopScreen : failureScreen ?? desktopScreen;
-  const showFailureScreen = !!displayedScreen && mediaView !== 'recording';
-  const screenLabel = displayedScreen === desktopScreen ? 'Desktop screenshot' : 'Failure screenshot';
-  const hasMedia = hasRecording || !!failureScreen || !!desktopScreen;
+  const provenance = selectedFailure ? selectedProvenance : uploadsComplete && failureSummary
+    ? selectedFailureProvenance(run, failureScreens, failureSummary.actionId, failureSummary.phase) : undefined;
+  const imagePhase = selectedFailure ? 'test' : failureSummary?.phase;
+  const precedingScreen = uploadsComplete && imagePhase ? selectedFailureScreen(run, failureScreens, failureScreenAction, imagePhase, 'preceding') : undefined;
+  const systemScreen = uploadsComplete && imagePhase ? selectedFailureScreen(run, failureScreens, failureScreenAction, imagePhase, 'system') : undefined;
+  const desktopImages = provenance?.desktopImages?.flatMap(image => {
+    const asset = run.assets.find(asset => asset.id === image.assetId && asset.kind === 'screenshot'
+      && ['image/png', 'image/jpeg'].includes(asset.mimeType));
+    return asset ? [{asset, image}] : [];
+  }) ?? [];
+  const showDesktopGallery = desktopImages.length > 1 && mediaView !== 'recording'
+    && (mediaView === 'desktop' || !failureScreen && !systemScreen && !precedingScreen);
+  const displayedScreen = mediaView === 'desktop' ? desktopScreen : mediaView === 'preceding' ? precedingScreen
+    : mediaView === 'system' ? systemScreen : failureScreen ?? systemScreen ?? precedingScreen ?? desktopScreen;
+  const showFailureScreen = (!!displayedScreen || showDesktopGallery) && mediaView !== 'recording';
+  const showMacScreens = run.platform === 'ios-on-mac' && showFailureScreen;
+  const screenLabel = displayedScreen === desktopScreen ? 'Desktop screenshot' : displayedScreen === precedingScreen ? 'App before failure'
+    : displayedScreen === systemScreen ? 'Phone after failure' : 'Failure screenshot';
+  const displayedInterval = displayedScreen === precedingScreen ? provenance?.precedingAppImage
+    : displayedScreen === systemScreen || displayedScreen === failureScreen ? provenance?.currentPhoneImage
+      : provenance?.desktopImages?.find(image => image.assetId === displayedScreen?.id);
+  const hasMedia = hasRecording || !!failureScreen || !!desktopScreen || !!precedingScreen || !!systemScreen || desktopImages.length > 0;
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
     .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
@@ -382,17 +466,27 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         </dl>
       </details>
       {evidenceStatus === "failed" && <p role="alert" className="mt-3 text-sm text-[#cf222e]">Evidence failed; the execution verdict is unchanged.</p>}
+      {provenance?.phoneProcessWitness && provenance.phoneProcessWitness.state !== 'same' && <p className="mt-3 text-sm">
+        {provenance.phoneProcessWitness.state === 'replaced' ? 'The original app stopped and another app process was observed.'
+          : provenance.phoneProcessWitness.state === 'ceased' ? 'The original app was no longer running when failure evidence was collected.'
+            : 'The original app state could not be confirmed when failure evidence was collected.'}
+        {precedingScreen && ' The last masked app image before failure is preserved separately.'}
+      </p>}
       {!uploadsComplete && <p role="status" className="mt-3 text-sm text-[#747780]">Evidence upload pending.</p>}
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
       actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
-    <div className={hasMedia ? "grid gap-5 lg:h-[calc(var(--recording-height)+8rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
+    <div className={hasMedia ? `grid gap-5 ${showMacScreens ? 'lg:h-[calc(var(--recording-height)+10rem)]' : 'lg:h-[calc(var(--recording-height)+8rem)]'} lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]` : "space-y-5"}>
     {hasMedia && <section aria-label="Run evidence viewer" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">{showFailureScreen ? screenLabel : 'Recording'}</h3>
-        {(failureScreen || desktopScreen) && <div className="flex flex-wrap gap-2">
-          {failureScreen && <TestingButton disabled={showFailureScreen && displayedScreen === failureScreen} onClick={() => {video.current?.pause(); setMediaView('failure'); setImageError(false);}}>Failure screenshot</TestingButton>}
-          {desktopScreen && <TestingButton disabled={showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>Desktop screenshot</TestingButton>}
+        <h3 className="font-semibold">{showDesktopGallery ? 'Desktop screenshots' : showMacScreens ? 'Failure screenshots' : showFailureScreen ? screenLabel : 'Recording'}</h3>
+        {(failureScreen || desktopScreen || precedingScreen || systemScreen || desktopImages.length > 0) && <div className="flex flex-wrap gap-2">
+          {run.platform === 'ios-on-mac' ? <TestingButton disabled={showFailureScreen} onClick={() => {video.current?.pause(); setMediaView('failure');}}>Failure screenshots</TestingButton> : <>
+            {failureScreen && <TestingButton disabled={showFailureScreen && displayedScreen === failureScreen} onClick={() => {video.current?.pause(); setMediaView('failure'); setImageError(false);}}>Failure screenshot</TestingButton>}
+            {precedingScreen && <TestingButton disabled={showFailureScreen && displayedScreen === precedingScreen} onClick={() => {video.current?.pause(); setMediaView('preceding'); setImageError(false);}}>App before failure</TestingButton>}
+            {systemScreen && <TestingButton disabled={showFailureScreen && displayedScreen === systemScreen} onClick={() => {video.current?.pause(); setMediaView('system'); setImageError(false);}}>Phone after failure</TestingButton>}
+            {(desktopScreen || desktopImages.length > 0) && <TestingButton disabled={showDesktopGallery || showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>{desktopImages.length > 1 ? 'Desktop screenshots' : 'Desktop screenshot'}</TestingButton>}
+          </>}
           {hasRecording && <TestingButton disabled={!showFailureScreen} onClick={() => {
             const step = run.result.steps.find(step => step.id === activeStep);
             if (step) seekStep(step, true);
@@ -401,8 +495,16 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         </div>}
       </div>
       <div className="mt-3 lg:min-h-0 lg:flex-1">
-      {showFailureScreen ? <>
-        {imageError ? <p role="alert">Failure screenshot could not load.</p> : <img src={assetHref(displayedScreen!.id)}
+      {showDesktopGallery ? <div className="grid gap-3">
+        {desktopImages.map(({asset, image}) => <FailureScreenshot key={asset.id} label={`Desktop display ${image.displayId}`}
+          actionId={failureScreenAction} href={assetHref(asset.id)} interval={image} />)}
+      </div> : showMacScreens ? <div className={`grid gap-3 ${failureScreen && desktopScreen ? 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]' : ''}`}>
+        {failureScreen && <FailureScreenshot key={failureScreen.id} label="App" actionId={failureScreenAction} href={assetHref(failureScreen.id)} />}
+        {desktopScreen && <FailureScreenshot key={desktopScreen.id} label="Desktop" actionId={failureScreenAction} href={assetHref(desktopScreen.id)} />}
+      </div> : showFailureScreen ? <>
+        {displayedInterval && <p className="mb-2 text-sm text-[#747780]">{imageIntervalLabel(displayedInterval)}
+          {displayedScreen === precedingScreen && ' This image precedes the failure; it does not show the failure state.'}</p>}
+        {imageError ? <p role="alert">{screenLabel} could not load.</p> : <img src={assetHref(displayedScreen!.id)}
           alt={`${screenLabel}: ${failureScreenAction}`} onError={() => setImageError(true)}
           className="mx-auto block h-[var(--recording-height)] w-full max-w-[60rem] rounded-lg bg-black object-contain" />}
         <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={assetHref(displayedScreen!.id)}>Open {screenLabel.toLowerCase()}</a>

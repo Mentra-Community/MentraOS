@@ -40,6 +40,7 @@ import {
 } from "../packages/core/scripts/migrate-store-developer-orgs"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
@@ -62,6 +63,7 @@ const TARGET_MODELS = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  WorkspaceAuditCounterModel,
 ] as unknown as Array<typeof WorkspaceModel>
 
 const SOURCE_COLLECTIONS = [
@@ -504,6 +506,7 @@ describe("dry run", () => {
       duplicateMemberships: [{orgId: ORG_BETA, userId: U.betaAdmin}],
       targetCompared: false,
       skippedWorkspaces: [],
+      workspaceProfiles: [],
       revokedCredentials: [],
       removedMemberships: [],
       demotedMemberships: [],
@@ -521,6 +524,7 @@ describe("dry run", () => {
       WorkspaceInvitation: 0,
       AccessCredential: 0,
       WorkspaceAuditEvent: 0,
+      WorkspaceAuditCounter: 0,
     })
     expect(await snapshotSource()).toEqual(sourceBefore)
   })
@@ -1448,6 +1452,95 @@ describe("re-running apply carries access removals made in the Store", () => {
   })
 })
 
+describe("publishing profiles of workspaces made in Core", () => {
+  // Once the Store serves from Core it keeps each workspace's publishing profile in `developer_orgs`
+  // under the workspace id, with no owner and no legacy rows.
+  const CORE_WORKSPACE = "ws_01J8Z3COREWORKSPACE0000000A"
+  const ORG_EMPTY = "dorg_01J8Z3EMPTY0000000000000E1"
+  const profile = (orgId: string, prefix: string, name: string) => ({
+    orgId,
+    packagePrefix: prefix,
+    packagePrefixStatus: "unverified",
+    displayName: name,
+    createdAt: at("2026-10-01T10:00:00.000Z"),
+    updatedAt: at("2026-10-01T10:00:00.000Z"),
+  })
+
+  test("are listed in workspaceProfiles and left out of everything else; the workspace is untouched", async () => {
+    await WorkspaceModel.create({
+      workspaceId: CORE_WORKSPACE,
+      name: "Made in Core",
+      status: "active",
+      authorizationRevision: 3,
+      createdByMentraUserId: "mu_core_owner",
+    })
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_01J8Z3COREOWNER000000000A",
+        workspaceId: CORE_WORKSPACE,
+        mentraUserId: "mu_core_owner",
+        role: "owner",
+        status: "active",
+        startedAt: NOW,
+      }),
+    )
+    await sourceDb().collection("developer_orgs").insertOne(profile(CORE_WORKSPACE, "com.madeincore", "Made in Core"))
+    const before = await snapshotTarget()
+    const logs: string[] = []
+
+    const dry = await withReadOnlyTarget(target => run({target, log: message => logs.push(message)}))
+    const report = await run({apply: true})
+
+    for (const result of [dry, report]) {
+      expect(result.workspaceProfiles).toEqual([CORE_WORKSPACE])
+      expect(result.counts.orgs).toBe(4)
+      expect(result.ownerlessOrgs).toEqual([ORG_GAMMA])
+      expect(result.skippedWorkspaces).toEqual([])
+    }
+    expect(logs.some(line => line.includes("publishing profiles of workspaces made in Core"))).toBe(true)
+    const after = await snapshotTarget()
+    const coreRows = (snapshot: typeof before) =>
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(snapshot).map(([name, rows]) => [
+            name,
+            (rows as Array<Record<string, unknown>>).filter(row => row.workspaceId === CORE_WORKSPACE),
+          ]),
+        ),
+      )
+    expect(coreRows(after)).toEqual(coreRows(before))
+    expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: CORE_WORKSPACE})).toBe(0)
+  })
+
+  test("without the target a profile cannot be told apart, and an org the import created stays an org", async () => {
+    // A legacy org with no owner and nothing in it: imported as an empty owner-less workspace.
+    await sourceDb()
+      .collection("developer_orgs")
+      .insertOne({...profile(ORG_EMPTY, "com.emptyorg", "Empty Org"), ownerUserId: null})
+    const first = await run({apply: true})
+    expect(first.workspaceProfiles).toEqual([])
+    expect(first.ownerlessOrgs).toEqual([ORG_EMPTY, ORG_GAMMA].sort())
+    expect(await WorkspaceModel.countDocuments({workspaceId: ORG_EMPTY})).toBe(1)
+
+    // Re-runs still report it: the import created that workspace.
+    const again = await withReadOnlyTarget(target => run({target}))
+    expect(again.workspaceProfiles).toEqual([])
+    expect(again.ownerlessOrgs).toEqual([ORG_EMPTY, ORG_GAMMA].sort())
+
+    // A profile of a workspace made in Core is only recognised with the target.
+    await WorkspaceModel.create({
+      workspaceId: CORE_WORKSPACE,
+      name: "Made in Core",
+      status: "active",
+      authorizationRevision: 0,
+      createdByMentraUserId: "mu_core_owner",
+    })
+    await sourceDb().collection("developer_orgs").insertOne(profile(CORE_WORKSPACE, "com.madeincore", "Made in Core"))
+    expect((await run()).workspaceProfiles).toEqual([])
+    expect((await withReadOnlyTarget(target => run({target}))).workspaceProfiles).toEqual([CORE_WORKSPACE])
+  })
+})
+
 // --- Keys that are not imported ------------------------------------------
 
 describe("keys that are not imported", () => {
@@ -2045,6 +2138,7 @@ describe("command line", () => {
       WorkspaceInvitation: 0,
       AccessCredential: 0,
       WorkspaceAuditEvent: 0,
+      WorkspaceAuditCounter: 0,
     })
     // Progress goes to stderr; stdout is the report alone, and it never carries a hash.
     for (const key of SOURCE_KEYS) expect(result.stdout).not.toContain(key.hash)
@@ -2093,6 +2187,7 @@ describe("command line", () => {
       expect(await collections()).toEqual(
         [
           "access_credentials",
+          "workspace_audit_counters",
           "workspace_audit_events",
           "workspace_invitations",
           "workspace_memberships",

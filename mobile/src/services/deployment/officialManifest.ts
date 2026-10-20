@@ -3,6 +3,7 @@ import Constants from "expo-constants"
 import {APP_STORE_REVIEW_URL, APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 
 import {packagedOtaPin} from "./packagedOtaPin"
+import {backendTarget} from "../../../scripts/backend-target.cjs"
 import type {ConsumerDeployment, DeploymentManifest} from "./types"
 
 /** Embedded defaults. Expo inlines these environment reads into each build. */
@@ -12,7 +13,7 @@ export function createOfficialManifest(): DeploymentManifest {
     deploymentId: "mentra-official",
     displayName: "Mentra",
     services: {
-      coreUrl: process.env.EXPO_PUBLIC_CLOUD_CORE_URL?.trim() || "https://core.dev.us-west-2.mentraglass.com",
+      coreUrl: backendTarget(process.env.EXPO_PUBLIC_CLOUD_CORE_URL),
       runtimeUrl: process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL?.trim() || "https://runtime.dev.us-west-2.mentraglass.com",
     },
     auth: {mode: "mentra-account"},
@@ -46,7 +47,7 @@ export function createOfficialManifest(): DeploymentManifest {
       supportUrl: null,
     },
     systemMiniapps: {approvedPackageNamesOverride: null},
-    miniapps: {managed: [], configuration: {}},
+    miniapps: {managed: [], configuration: officialMiniappConfiguration()},
     glasses: {allowedModelsOverride: null},
     features: {
       runtimeRealtimeSession: true,
@@ -58,6 +59,15 @@ export function createOfficialManifest(): DeploymentManifest {
     },
     telemetry: true,
   }
+}
+
+/**
+ * The Store miniapp's `storeUrl`: this build environment's Store, passed through unread. Without it the
+ * Store miniapp uses the production Store.
+ */
+function officialMiniappConfiguration(): DeploymentManifest["miniapps"]["configuration"] {
+  const storeUrl = process.env.EXPO_PUBLIC_STORE_URL?.trim()
+  return storeUrl ? {"com.mentra.store": {storeUrl}} : {}
 }
 
 export function createConsumerDeployment(): ConsumerDeployment {

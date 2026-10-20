@@ -7,6 +7,7 @@
  */
 import {Platform, Linking, PermissionsAndroid, type Permission as AndroidPermission} from "react-native"
 import {check, request, PERMISSIONS, RESULTS, type Permission} from "react-native-permissions"
+import CrustModule, {type AppPermissionReceipt, type AppPermissionSnapshot} from "@mentra/crust"
 
 import appRegistry from "../services/AppRegistry"
 import type {AppletPermission} from "../types"
@@ -114,6 +115,24 @@ function androidPerms(feature: string): AndroidPermission[] {
 }
 
 export const permissions = {
+  /** Passive iOS app status, including global Location Services. Missing native
+   * implementations are unavailable; they never count as affirmative grants. */
+  async status(): Promise<AppPermissionSnapshot> {
+    if (Platform.OS !== "ios" || typeof CrustModule.getPermissionStatus !== "function") {
+      throw new Error("Native app permission status is unavailable on this app build")
+    }
+    return CrustModule.getPermissionStatus(null)
+  },
+
+  /** Publish a fresh correlated observation without opening UI or requesting
+   * consent. The native app owns the fixed cache path and observation identity. */
+  async writeStatusReceipt(requestId: string): Promise<AppPermissionReceipt> {
+    if (Platform.OS !== "ios" || typeof CrustModule.getPermissionStatus !== "function") {
+      throw new Error("Native app permission status receipt is unavailable on this app build")
+    }
+    return CrustModule.getPermissionStatus(requestId)
+  },
+
   /** Is the given feature's OS permission currently granted? */
   async check(feature: string): Promise<boolean> {
     if (Platform.OS === "android") {

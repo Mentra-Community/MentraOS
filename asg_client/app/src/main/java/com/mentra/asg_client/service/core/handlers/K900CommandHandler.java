@@ -57,6 +57,17 @@ public class K900CommandHandler {
             String command = json.optString("C", "");
             JSONObject bData = json.optJSONObject("B");
             Log.d(TAG, "📦 Received K900 command: " + command);
+            if ("hm_pairlog".equals(command) || "hm_pairexit".equals(command) || "hm_spkcode".equals(command)) {
+                JSONObject logData = bData;
+                // hm_spkcode carries the 4-char secure pairing code (B.code). It must never reach
+                // logcat at INFO or above (release-hygiene invariant NEW-9), so redact the code
+                // field on a copy before dumping — never mutate bData, which McuEventParser reads.
+                if ("hm_spkcode".equals(command) && bData != null && bData.has("code")) {
+                    logData = new JSONObject(bData.toString());
+                    logData.put("code", "<redacted>");
+                }
+                Log.i("PAIRFLOW", command + " " + (logData != null ? logData.toString() : "{}"));
+            }
 
             // sr_log is consumed here directly: packets are reassembled into the BES log session
             // owned by the outgoing mh_logs request flow (requestBesLogs*), which lives in this
@@ -163,8 +174,9 @@ public class K900CommandHandler {
      *     ServerConfigUtil (only used when {@code relayFirmwareJson} is null)
      * @param relayFirmwareJson if non-null, assembled BES logs are passed to this consumer as
      *     glasses_firmware JSON instead of HTTP upload
+     * @return the exact started capture session, or null if no capture started
      */
-    public void requestBesLogs(
+    public BesLogManager requestBesLogs(
             String incidentId,
             Context context,
             IConfigurationManager configManager,
@@ -177,7 +189,7 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-            return;
+            return null;
         }
 
         if (!serviceManager.getBluetoothManager().isConnected()) {
@@ -185,14 +197,15 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
-            return;
+            return null;
         }
 
         // Replace any stale session from a previous request
-        mBesLogSession =
+        BesLogManager session =
                 (relayFirmwareJson != null)
                         ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
                         : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
+        mBesLogSession = session;
 
         try {
             JSONObject k900Command = new JSONObject();
@@ -211,7 +224,8 @@ public class K900CommandHandler {
 
             if (sent) {
                 Log.i(TAG, "✅ mh_logs sent — starting BES log collection timeouts");
-                mBesLogSession.startTimeouts();
+                session.startTimeouts();
+                return session;
             } else {
                 Log.e(TAG, "❌ Failed to send mh_logs");
                 mBesLogSession = null;
@@ -226,6 +240,7 @@ public class K900CommandHandler {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
         }
+        return null;
     }
 
     public boolean requestBesLogsForTrace(

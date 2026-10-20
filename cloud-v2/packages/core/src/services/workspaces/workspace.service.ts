@@ -32,9 +32,11 @@
 import {
   canChangeRole,
   capabilitiesForRole,
+  describeDeletionHolds,
   roleAtLeast,
   WORKSPACE_ROLES,
   type PrincipalResponse,
+  type WorkspaceDeletionHold,
   type WorkspaceRole,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract"
@@ -49,7 +51,7 @@ import {
   type WorkspaceMembershipEndedReason,
   type WorkspaceMembershipRow,
 } from "../../models/workspace-membership.model"
-import {LegacyBrowserIdentityModel} from "../../models/legacy-browser-identity.model"
+import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
@@ -136,16 +138,13 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
 }
 
 /**
- * Which of `workosUserIds` a person can still take up memberships for: their legacy identity is not
- * claimed yet, or is claimed by an account that is not deleted (it takes up what waits at its next
- * sign-in). Without an identity, or claimed by a deleted account, nobody ever will.
+ * Which of `legacyUserIds` (the Store's former user ids that imported memberships wait under) a person
+ * can still take up memberships for: their legacy identity is not claimed yet, or is claimed by an
+ * account that is not deleted (it takes up what waits at its next sign-in). Without an identity, or
+ * claimed by a deleted account, nobody ever will.
  */
-export async function claimableWorkosUserIds(workosUserIds: string[], session?: ClientSession): Promise<Set<string>> {
-  if (workosUserIds.length === 0) return new Set()
-  const identities = await LegacyBrowserIdentityModel.find({workosUserId: {$in: workosUserIds}})
-    .select({_id: 0, workosUserId: 1, claimedBy: 1})
-    .session(session ?? null)
-    .lean<Array<{workosUserId: string; claimedBy?: string | null}>>()
+export async function claimableLegacyUserIds(legacyUserIds: string[], session?: ClientSession): Promise<Set<string>> {
+  const identities = await legacyIdentityClaims(legacyUserIds, session)
   const claimants = identities.flatMap(identity => (isId(identity.claimedBy) ? [identity.claimedBy] : []))
   const deleted = new Set(
     claimants.length
@@ -160,7 +159,7 @@ export async function claimableWorkosUserIds(workosUserIds: string[], session?: 
   return new Set(
     identities
       .filter(identity => !isId(identity.claimedBy) || !deleted.has(identity.claimedBy))
-      .map(identity => identity.workosUserId),
+      .map(identity => identity.legacyUserId),
   )
 }
 
@@ -168,9 +167,9 @@ export async function claimableWorkosUserIds(workosUserIds: string[], session?: 
  * The workspace's active owners who can still act: a deleted account's owner membership never
  * counts (its deletion ends it, and Core finishes an interrupted deletion itself), so the last-owner
  * guard cannot rest on an owner nobody can sign in as. An imported owner membership still waiting
- * for its person counts while it can still be taken up (`claimableWorkosUserIds`); otherwise (no
- * identity was exported, it was removed because WorkOS stopped verifying the address, or the account
- * that claimed it is deleted) nobody ever will, so it does not count.
+ * for its person counts while it can still be taken up (`claimableLegacyUserIds`); otherwise (no
+ * identity was exported, the export removed it because the address is no longer verified, or the
+ * account that claimed it is deleted) nobody ever will, so it does not count.
  */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
   const owners = await WorkspaceMembershipModel.find({workspaceId, role: "owner", status: "active"})
@@ -186,8 +185,8 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
         session ?? null,
       )
     : 0
-  const claimable = await claimableWorkosUserIds(waitingFor, session)
-  return userIds.length - deleted + waitingFor.filter(workosUserId => claimable.has(workosUserId)).length
+  const claimable = await claimableLegacyUserIds(waitingFor, session)
+  return userIds.length - deleted + waitingFor.filter(legacyUserId => claimable.has(legacyUserId)).length
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -290,11 +289,16 @@ export async function renameWorkspace(
  * revision, and keeps the workspace row (`status: "deleted"`) so audit history
  * stays resolvable and its id is never reused. It records `workspace.deleted`.
  *
- * Core asks no other service first. Services that keep records owned by a
- * workspace decide what happens to them: the Store refuses a Developer Console
- * delete while the workspace publishes miniapps, and holds the miniapps of a
- * workspace deleted elsewhere until a Store operator assigns them to another
- * workspace.
+ * Only an owner (an Organization Admin, the system) may, and not while any
+ * service holds the workspace (`deletion-hold.service`): that is 409
+ * `workspace_has_holds`, whoever asks, with the holds in the error's details and
+ * what they mean in its message. The holds are checked after who may delete
+ * (someone who may not learns nothing about them) and before the typed name.
+ *
+ * Core asks no other service at delete time: a service that needs a workspace
+ * kept holds it beforehand. The Store holds a workspace while it owns published
+ * miniapps. Whatever else a service keeps for a deleted workspace is that
+ * service's to handle; it learns of the deletion from the change feed.
  */
 export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {confirmName: string}): Promise<void> {
   await withTransaction(async session => {
@@ -328,6 +332,10 @@ async function assertCanDelete(
   const workspace = await loadActiveWorkspace(session, workspaceId)
   const role = await actingRole(session, actor, workspaceId)
   if (role !== "owner") fail("forbidden", "only a workspace owner or an organization admin can delete a workspace")
+  // A hold set concurrently writes this same document, so the delete's write conflicts with it and the
+  // retried transaction sees the hold here.
+  const holds = deletionHoldsOf(workspace)
+  if (holds.length > 0) fail("workspace_has_holds", describeDeletionHolds(holds), {holds})
   if (confirmName !== workspace.name) fail("invalid_request", "confirmName does not match the workspace name")
   return workspace
 }
@@ -501,7 +509,22 @@ export async function recoverOwnership(
 // The exported ones (`isId`, `isWorkspaceRole`, `validateName`, `loadActiveWorkspace`, `actingRole`,
 // `requireMembershipManager`, `bumpRevision`, `touchWorkspace`, `endMembership`, `auditActor`) are shared
 // with `invitation.service`, `credential.service` and `account-deletion.service`, which follow the same
-// mutation shape.
+// mutation shape. `deletionHoldsOf` is shared with `deletion-hold.service`.
+
+/**
+ * The workspace's deletion holds in the contract's shape, sorted by service (`count` only where the
+ * service gave one). A workspace written before holds existed has none.
+ */
+export function deletionHoldsOf(row: Pick<WorkspaceRow, "deletionHolds">): WorkspaceDeletionHold[] {
+  const stored = (row.deletionHolds ?? []) as Array<{service: string; reason: string; count?: number | null}>
+  return stored
+    .map(hold => ({
+      service: hold.service,
+      reason: hold.reason,
+      ...(typeof hold.count === "number" ? {count: hold.count} : {}),
+    }))
+    .sort((a, b) => (a.service < b.service ? -1 : a.service > b.service ? 1 : 0))
+}
 
 function toSummary(
   row: Pick<WorkspaceRow, "workspaceId" | "name" | "status" | "authorizationRevision">,
@@ -622,7 +645,7 @@ async function assertNotLastOwner(session: ClientSession, workspaceId: string, o
   // An imported owner nobody can claim is no owner either (`countActiveOwners`).
   if (!isId(owner.mentraUserId)) {
     const waitingFor = isId(owner.pendingWorkosUserId) ? [owner.pendingWorkosUserId] : []
-    if ((await claimableWorkosUserIds(waitingFor, session)).size === 0) return
+    if ((await claimableLegacyUserIds(waitingFor, session)).size === 0) return
   }
   if ((await countActiveOwners(workspaceId, session)) <= 1) {
     fail("last_owner", "a workspace must keep at least one owner")

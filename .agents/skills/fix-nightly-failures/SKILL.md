@@ -60,7 +60,11 @@ causal group and supporting evidence, existing fix/job, PR/head/review, next act
 and verification result. Read the framework result and setup/teardown journal,
 the failure screenshot or recording, and the incident's relevant phone, glasses,
 firmware and cloud logs. Accessibility trees complement the screen; they do not
-replace it. Record missing evidence explicitly.
+replace it. Record missing evidence explicitly. For a permission or preflight stall,
+first inspect both app and full-desktop failure captures using
+[investigate-routine-failure's permission guidance](../investigate-routine-failure/SKILL.md#inspect-permission-stalls-before-another-attempt).
+Name an observed human-only dialog and its machine/action immediately; a passing
+automation doctor does not establish Mentra App permission readiness.
 
 Classify app, routine, framework, machine/fixture state or unknown on evidence. Compare the
 failing source with current source before fixing it. Reuse the relevant diagnosis
@@ -114,6 +118,10 @@ passing required checks, under the task's merge authority. Reconcile uncertain
 push/PR/review/merge outcomes before retrying. Continue this lifecycle without
 asking for authorization already supplied by the task. Keep credentials, private
 logs and recordings out of public PRs/comments.
+
+Before merging a fixing MentraOS PR, check for its active ordinary or tagged
+`Routine tests` children and follow [PR check sequencing](../select-pr-routines/SKILL.md#verify-a-fix-against-its-original-failure).
+Frozen build inputs do not let a check-owned run continue after PR closure.
 
 ## Choose useful verification
 

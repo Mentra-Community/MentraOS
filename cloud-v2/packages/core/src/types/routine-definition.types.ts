@@ -1,5 +1,7 @@
+import {recorderStorageRequirementSchema} from './recorder-storage.types';
 import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
+import {permissionRequirementsSchema} from "./resource-permissions.types";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 
@@ -14,17 +16,18 @@ const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 export const routineResourceKindSchema = z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]);
 export const resourceCapabilityMap = {
-  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
-  glasses: ['glasses-ble', 'connection', 'software', 'wifi'], recorder: [],
+  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs', 'backend-connectivity'],
+  glasses: ['glasses-ble', 'connection', 'software', 'wifi', 'button'], recorder: ['quiet-room'],
   audio: ['speech', 'witness', 'synthesis', 'recognition'], browser: ['external-window'],
   network: ['independent-uplink'],
   'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
   workspace: [],
 } as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
-  capabilities: z.array(routineIdentitySchema).max(30)}).strict().refine(value =>
+  capabilities: z.array(routineIdentitySchema).max(30), storage: recorderStorageRequirementSchema.optional(), permissions: permissionRequirementsSchema.optional()}).strict().refine(value =>
     new Set(value.capabilities).size === value.capabilities.length && value.capabilities.every(capability =>
-      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations');
+      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations')
+  .refine(value => !value.storage || value.kind === 'recorder', 'Storage capacity belongs to the recorder resource');
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
   id,

@@ -23,16 +23,18 @@ public final class GlassesMediaRelayModule: Module {
                 self.localHotspot.join(ssid: ssid, passphrase: password, gateway: gateway, purpose: accessPurpose) { result in
                     switch result {
                     case let .success(address): promise.resolve(address)
-                    case let .failure(error): promise.reject(error)
+                    case let .failure(error):
+                        let failure = HotspotJoinFailure(error)
+                        promise.reject(Exception(name: "HotspotJoinFailure", description: failure.message, code: failure.code))
                     }
                 }
             }
         }
 
-        AsyncFunction("leaveLocalHotspot") { (id: String, promise: Promise) in
+        AsyncFunction("leaveLocalHotspot") { (id: String, waitForInternet: Bool, promise: Promise) in
             self.queue.async {
                 guard self.localHotspotOwner == id else { promise.resolve(nil); return }
-                self.localHotspot.leave { result in
+                self.localHotspot.leave(waitForInternet: waitForInternet) { result in
                     self.queue.async {
                         switch result {
                         case .success:

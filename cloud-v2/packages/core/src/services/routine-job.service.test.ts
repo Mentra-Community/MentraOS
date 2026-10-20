@@ -1,22 +1,24 @@
 import {TestRunError} from './test-result-error';
 import {createHash} from 'node:crypto';
-import {expect, test, mock} from 'bun:test';
+import {expect, test, mock, spyOn} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
 import {createRoutineJobsApi} from '../api/internal/routine-jobs.api';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {requestInputDigest, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
-import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineJobInputDigest, orderedRoutineCandidates, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
-import type {ReceivedTestHostState} from './test-host-state.service';
+import type {ReceivedTestHostState, RoutingTestHostState} from './test-host-state.service';
+import type {ExclusiveHostReservation} from '../types/resource-reservations.types';
+import {RESOURCE_ADMISSION_WAIT, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT, sharedResourceWait} from './routine-resource-wait';
 const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttempt:2};
 const selection = {requestId:'job-one',routineId:'new-routine',platform:'android' as const,source,routineRevision:'a'.repeat(40)};
 const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
-  execution:{resourceKinds:['phone','app','recorder','network']},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
+  execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024 ** 3}},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
 function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
-  let offeredHosts: ReceivedTestHostState[] | undefined, resultFound = false;
+  let offeredHosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[] | undefined, resultFound = false;
   const copy = <T>(value:T):T => structuredClone(value);
   const rows:RoutineJobRepository={
     async get(id){return row?.requestId===id?copy(row):null},async insert(value){if(row)throw Object.assign(Error('duplicate'),{code:11000});row=copy(value)},
@@ -25,6 +27,9 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async exhaustPreparation(id,completed,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.fleetDispatch?.attempts!==20||row.fleetActions?.some(run=>!completed.includes(run.actionsRunId)))return null;row={...row,state:'terminal',terminalStatus:'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}};return copy(row)},
     async preparationStatus(id,value,now){if(!row||row.requestId!==id||row.fleetPreparation||row.fleetBinding||row.fleetCancellation||row.state==='terminal'||row.fleetActions?.some(run=>BigInt(run.actionsRunId)>BigInt(value.actionsRunId)))return null;
       row={...row,fleetPreparationStatus:copy(value),...(!value.retryable?{state:'terminal' as const,terminalStatus:value.code==='not-applicable'?'not-applicable':'not-run',fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}}:{})};return copy(row)},
+    async reserveResources(id,digest,hostId,laneId,now) {if(!row||row.requestId!==id||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
+      if(row.fleetResourceReservation)return row.fleetResourceReservation.hostId===hostId&&row.fleetResourceReservation.laneId===laneId?copy(row):null;
+      row={...row,fleetResourceReservation:{id:'591e0c34-ee97-41df-a0ec-5e2d0c7503ee',requestId:id,fleetInputSha256:digest,hostId,laneId,poolId:`${hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:now.toISOString(), ...(row.fleetPreparation?.requirements.glasses ? {chosenModel: offeredHosts?.find(host=>host.hostId===hostId)?.lanes.find(lane=>lane.id===laneId)?.glasses?.[0]?.model} : {})}};return copy(row)},
     async bind(id,digest,binding,intent,now){if(!row||row.requestId!==id||row.state!=='awaiting-runner'||row.fleetBinding||row.fleetInputSha256!==digest||row.fleetCancellation||row.fleetDeadline<=now)return null;
       row={...row,hostId:binding.hostId,fleetBinding:copy(binding),dispatchIntent:copy(intent),dispatchIntentSha256:requestInputDigest(intent),state:'preparing'};return copy(row)},
     async dispatch(id,previous,value){if(!row||requestInputDigest(row.fleetDispatch??null)!==requestInputDigest(previous??null)||row.fleetCancellation||row.fleetBinding)return null;row={...row,fleetDispatch:copy(value)};return copy(row)},
@@ -36,18 +41,18 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async cancel(id,digest,value){if(!row||row.requestId!==id||row.fleetSelectionSha256!==digest||row.fleetCancellation)return null;row={...row,fleetCancellation:copy(value),...(row.dispatchCompletion && row.state!=='terminal'?{state:'terminal',terminalStatus:'cancelled'}:{})};return copy(row)},
   };
   const lane:ReceivedTestHostState['lanes'][number]={id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
-    {id:'phone:android',kind:'phone'}, {id:'app:android',kind:'app'}, {id:'recorder:android',kind:'recorder'}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
+    {id:'phone:android',kind:'phone'}, {id:'app:android',kind:'app'}, {id:'recorder:android',kind:'recorder',storage:{poolId:'mini:disk:1',observedAt:new Date(time).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
   lane.descriptorRevision=routineLaneDescriptorRevision(lane);
-  const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[copy(lane)]});
+  const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[{...copy(lane),resources:lane.resources.map(resource=>resource.storage?{...resource,storage:{...resource.storage,observedAt:new Date(time).toISOString()}}:resource)}]});
   const service=new RoutineJobService(rows,{async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:new Date(time).toISOString(),buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
-    {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? []}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
+    {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? [host('mini')]}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
     {async detail(){throw new TestRunError(404,'missing')}},()=>time);
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
-  return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
+  return {service,rows,lane,prepare,offer(hosts: (ReceivedTestHostState & Pick<RoutingTestHostState, 'authorityReservations'>)[]){offeredHosts=copy(hosts)}, restore(value:StoredRoutineJob){row=copy(value)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
 test('bound observation never substitutes prepared input before executable preparation', async () => {
   const f = fixture(), prepared = await f.prepare();
@@ -56,6 +61,113 @@ test('bound observation never substitutes prepared input before executable prepa
   const bound = await f.service.bind(selection.requestId, 'mini', input);
   expect(bound.observation).toMatchObject({inputSha256: prepared.inputSha256, state: 'preparing', terminal: false});
   expect(bound.observation).not.toHaveProperty('boundInputSha256');
+});
+test('portable preparation preserves an actual resource blocker instead of inventing recorder shortage when admission returns no winner', async () => {
+  const f = fixture(), original = f.rows.reserveResources!; await f.prepare();
+  const frozen = structuredClone(f.row);
+  f.rows.reserveResources = async (_id, _digest, _host, _lane, _now, onWaiting) => {onWaiting?.(sharedResourceWait('google-authentication'), true); return null;};
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(sharedResourceWait('google-authentication'));
+  expect(f.row).toEqual(frozen);
+  f.rows.reserveResources = async () => null;
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT);
+  f.rows.reserveResources = original;
+});
+test('existing observation reports a staged authority blocker without changing custody or manufacturing a recorder reason', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined};
+  row.fleetResourceAdmission = {intent: {operationId: `run:${row.requestId}`, hostId: 'mini', laneId: f.lane.id,
+    owner: {id: row.requestId, kind: 'run'}, inputSha256: row.fleetInputSha256!, controller: {incarnation: 'one', generation: 1, sequence: 1},
+    resources: [{id: 'fixture', capabilities: ['google-authentication']}]},
+    dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]};
+  f.restore(row);
+  f.offer([{hostId: 'mini', receivedAt: '2026-10-08T00:00:00Z', lanes: [f.lane], authorityReservations: [{kind: 'exclusive',
+    resourceId: 'private-account', authorityHostId: 'mini', borrowerHostId: 'elsewhere', laneId: 'other', owner: {id: 'other-owner', kind: 'run'}}]} as any]);
+  expect((await f.service.observation(row.requestId)).waitingReason).toBe(sharedResourceWait('google-authentication'));
+  expect(f.row).toEqual(row);
+});
+test('portable routing distinguishes known capacity shortage, missing measurements and mixed unknowns before authority admission', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined}; f.restore(row);
+  const now = Date.parse('2026-10-08T00:00:00Z');
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), lanes: [structuredClone(f.lane)]};
+  host.lanes[0]!.resources.find(value => value.kind === 'recorder')!.storage!.availableBytes = 0; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RECORDER_CAPACITY_WAIT);
+  delete host.lanes[0]!.resources.find(value => value.kind === 'recorder')!.storage; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RECORDER_OBSERVATION_WAIT);
+  host.lanes.push({...structuredClone(f.lane), id: 'other'});
+  host.lanes[1]!.resources.find(value => value.kind === 'recorder')!.storage!.availableBytes = 0; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT);
+});
+
+test('an observed exclusive blocker cannot be overwritten by a later candidate after its immutable target is staged', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined}; f.restore(row);
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00Z', receivedAt: '2026-10-08T00:00:00Z', lanes: [structuredClone(f.lane), {...structuredClone(f.lane), id: 'other'}]};
+  f.offer([host]);
+  const candidates: string[] = [];
+  f.rows.reserveResources = async (_id, _digest, hostId, laneId, _now, onWaiting) => {
+    candidates.push(laneId);
+    f.restore({...row, fleetResourceAdmission: {intent: {operationId: `run:${row.requestId}`, hostId, laneId,
+      owner: {id: row.requestId, kind: 'run'}, inputSha256: row.fleetInputSha256!, controller: {incarnation: 'one', generation: 1, sequence: 1},
+      resources: [{id: 'fixture', capabilities: ['google-authentication']}]},
+      dependencies: [{resourceId: 'private-account', authorityHostId: 'mini', capability: 'google-authentication'}]}});
+    onWaiting?.(candidates.length === 1 ? sharedResourceWait('google-authentication') : RECORDER_CAPACITY_WAIT, candidates.length === 1);
+    return null;
+  };
+  expect((await f.service.preparation(row.requestId)).waitingReason).toBe(sharedResourceWait('google-authentication'));
+  expect(candidates).toHaveLength(1);
+  expect(f.row!.fleetResourceAdmission!.intent.laneId).toBe(candidates[0]!);
+  expect(f.row!.fleetBinding).toBeUndefined(); expect(f.row!.fleetResourceReservation).toBeUndefined();
+});
+
+test('staged target disk shortage or absent observation is not hidden by another available lane', async () => {
+  const f = fixture(); await f.prepare();
+  const row = {...f.row!, fleetResourceReservation: undefined};
+  row.fleetResourceAdmission = {intent: {operationId: `run:${row.requestId}`, hostId: 'mini', laneId: f.lane.id,
+    owner: {id: row.requestId, kind: 'run'}, inputSha256: row.fleetInputSha256!, controller: {incarnation: 'one', generation: 1, sequence: 1},
+    resources: [{id: 'recorder', capabilities: []}]}, dependencies: []};
+  f.restore(row);
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00Z', receivedAt: '2026-10-08T00:00:00Z', lanes: [structuredClone(f.lane), {...structuredClone(f.lane), id: 'other'}]};
+  let calls = 0; f.rows.reserveResources = async () => {calls++; return null;};
+  host.lanes[0]!.resources.find(resource => resource.kind === 'recorder')!.storage!.availableBytes = 0; f.offer([host]);
+  expect((await f.service.preparation(row.requestId)).waitingReason).toBe(RECORDER_CAPACITY_WAIT);
+  delete host.lanes[0]!.resources.find(resource => resource.kind === 'recorder')!.storage; f.offer([host]);
+  expect((await f.service.preparation(row.requestId)).waitingReason).toBe(RECORDER_OBSERVATION_WAIT);
+  expect(calls).toBe(0); expect(f.row).toEqual(row);
+});
+
+test('mixed candidate refusal and skipped recorder observations use truthful general wording regardless of order', async () => {
+  const f = fixture(); await f.prepare(); f.restore({...f.row!, fleetResourceReservation: undefined});
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00Z', receivedAt: '2026-10-08T00:00:00Z', lanes: [structuredClone(f.lane), {...structuredClone(f.lane), id: 'other'}]};
+  f.rows.reserveResources = async (_id, _digest, _host, _lane, _now, onWaiting) => {onWaiting?.(RECORDER_CAPACITY_WAIT); return null;};
+  delete host.lanes[1]!.resources.find(resource => resource.kind === 'recorder')!.storage;
+  for (const lanes of [host.lanes, [...host.lanes].reverse()]) {
+    f.offer([{...host, lanes}]); expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT);
+  }
+  host.lanes[1]!.resources.find(resource => resource.kind === 'recorder')!.storage = {...f.lane.resources.find(resource => resource.kind === 'recorder')!.storage!, availableBytes: 0};
+  f.offer([host]); expect((await f.service.preparation(selection.requestId)).waitingReason).toBe(RECORDER_CAPACITY_WAIT);
+});
+
+test('observation phase diagnostics follow existing reads without changing original custody or outcome',async()=>{
+  const f=fixture(),prepared=await f.prepare(), phases:string[]=[];
+  await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+  const before=structuredClone(f.row),result=await f.service.observation(selection.requestId,value=>phases.push(value));
+  expect(phases).toEqual(['request','delivery','result','projection']);expect(f.row).toEqual(before);
+  expect(result).toMatchObject({state:'preparing',terminal:false});expect(result).not.toHaveProperty('result');
+});
+
+test('deadline cancellation propagates phase through its nested observation and subsequent outer reload',async()=>{
+  const f=fixture(),prepared=await f.prepare(),phases:string[]=[];
+  await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+  f.advance(3*3600000+1);
+  const result=await f.service.observation(selection.requestId,value=>phases.push(value));
+  expect(phases).toEqual(['request','delivery','cancellation','request','delivery','result','projection','request','result','projection']);
+  expect(result).toMatchObject({state:'terminal',terminal:false});expect(f.row?.fleetCancellation?.reason).toContain('three-hour deadline');
+  expect(result).not.toHaveProperty('dispatchCompletion');
 });
 
 for (const state of ['queued', 'accepted'] as const) {
@@ -91,7 +203,7 @@ for (const state of ['queued', 'accepted'] as const) {
 }
 
 test('run routing chooses an accepting alternate model, refreshes availability and retains exact target and input', async () => {
-  const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses']}});
+  const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses'], policy: {estimatedOutputBytes:1024**3}}});
   const time = Date.parse('2026-10-08T00:00:00Z');
   const lane = (model: string, state: ReceivedTestHostState['lanes'][number]['state'], dispatchMode: ReceivedTestHostState['lanes'][number]['dispatchMode']) => ({...f.lane,
     id: model, state, dispatchMode, resources: [...f.lane.resources, {id: `glasses:${model}`, kind: 'glasses' as const, capabilities: ['connection']}],
@@ -101,13 +213,13 @@ test('run routing chooses an accepting alternate model, refreshes availability a
   f.offer([host]);
   const prepared = await f.prepare(), digest = prepared.inputSha256, frozen = structuredClone(f.row!.fleetSelection);
   expect(prepared.chosenModel).toBe('mentra-live'); expect(prepared.waitingReason).toBeUndefined();
-  expect(prepared.routingLabels).toEqual(routineRequirementLabels(prepared.prepared!.requirements, 'mentra-live'));
+  expect(prepared.routingLabels).toEqual(routineRequirementLabels(prepared.prepared!.requirements, 'mentra-live', {hostId:'healthy',laneId:'mentra-live'}));
   host.lanes[0]!.dispatchMode = 'automatic'; host.lanes[0]!.state = 'in-repair'; f.offer([host]);
   expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('mentra-live');
   host.lanes[0]!.state = 'running'; host.lanes[1]!.state = 'running'; f.offer([host]);
-  expect(await f.service.preparation(selection.requestId)).toMatchObject({state: 'awaiting-runner', waitingReason: 'Awaiting an idle compatible enrolled runner', inputSha256: digest});
+  expect(await f.service.preparation(selection.requestId)).toMatchObject({state: 'awaiting-runner', resourceTarget: {hostId:'healthy',laneId:'mentra-live'}, inputSha256: digest});
   host.lanes[0]!.state = 'idle'; f.offer([host]);
-  expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('g1');
+  expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('mentra-live');
   expect(f.row!.fleetSelection).toEqual(frozen); expect(f.row!.fleetInputSha256).toBe(digest);
   const {routineJobRouting} = await import('./routine-job.service');
   expect(routineJobRouting(prepared.prepared!.requirements, [host], time, {hostId: 'elsewhere'})).toMatchObject({waitingReason: 'Awaiting a compatible enrolled runner'});
@@ -118,6 +230,34 @@ test('offline requirements and exact app/source freeze before host selection; re
   const calls=f.sources;await f.service.submit(selection);expect(f.sources).toBe(calls);expect(f.resolves).toBe(1);expect(f.row?.hostId).toBeUndefined();
   await expect(f.service.submit({...selection,source:{...source,buildRunId:56}})).rejects.toThrow('changed');
   await expect(f.service.prepared(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest({...definition,minimumRoutineApiVersion:2}),definition:{...definition,minimumRoutineApiVersion:2}})).rejects.toThrow();
+});
+test('a prepared request from before capacity admission retains its exact digest while the same policy gains a current claim', async () => {
+  const f=fixture(); await f.prepare();
+  const original=structuredClone(f.row!);
+  original.fleetPreparation!.requirements.resources=original.fleetPreparation!.requirements.resources.map(({storage:_,...resource})=>resource);
+  delete original.fleetResourceReservation;
+  original.fleetInputSha256=routineJobInputDigest(original); f.restore(original);
+  await f.service.prepared(selection.requestId,{inputSha256:original.fleetSelectionSha256,
+    routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(definition),definition});
+  expect(f.row).toEqual(original);
+  const input={inputSha256:original.fleetInputSha256!,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
+  expect((await f.service.bind(selection.requestId,'mini',input)).execute).toBe(true);
+  expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256);
+  expect(f.row!.fleetPreparation).toEqual(original.fleetPreparation);
+  expect(f.row!.fleetResourceReservation).toMatchObject({requestId:selection.requestId,hostId:'mini',minimumAvailableBytes:3*1024**3});
+});
+test('a retained target never changes runner labels when another host becomes available', async () => {
+  const f=fixture(), prepared=await f.prepare(), time=Date.parse('2026-10-08T00:00:00Z');
+  const report=(hostId:string,state:'idle'|'offline'):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,
+    observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[{...structuredClone(f.lane),state}]});
+  f.offer([report('mini','offline'),report('other','idle')]);
+  const reserve=f.rows.reserveResources!;
+  f.rows.reserveResources=async()=>null;
+  const waiting=await f.service.preparation(selection.requestId);
+  expect(waiting).toMatchObject({inputSha256:prepared.inputSha256,resourceTarget:{hostId:'mini',laneId:'android'},
+    waitingReason:'Awaiting a compatible enrolled runner'});
+  expect(waiting.routingLabels).toEqual(prepared.routingLabels);
+  f.rows.reserveResources=reserve;
 });
 test('concurrent automatic source choices have one insert winner and its cancellation fences default retries',async()=>{
   const f=fixture(),choices=await Promise.allSettled([f.service.submit(selection),
@@ -135,8 +275,9 @@ test('concurrent automatic source choices have one insert winner and its cancell
 test('single CAS binding retains winner across hosts and duplicate Actions deliveries',async()=>{
   const f=fixture(),prepared=await f.prepare(),input={inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
   const {TestRunError}=await import('./test-result-error');(f.service as any).results={async detail(){throw new TestRunError(404,'missing')}};
-  const bindings=await Promise.all([f.service.bind(selection.requestId,'mini',input),f.service.bind(selection.requestId,'air',{...input,actionsRunId:'11',actionsJobId:'21'})]);
-  expect(bindings.filter(value=>value.execute)).toHaveLength(1);expect(bindings[0]!.binding).toEqual(bindings[1]!.binding);expect(f.row?.hostId).toBe(bindings[0]!.binding.hostId);
+  const attempts=await Promise.allSettled([f.service.bind(selection.requestId,'mini',input),f.service.bind(selection.requestId,'air',{...input,actionsRunId:'11',actionsJobId:'21'})]);
+  const bindings=attempts.flatMap(value=>value.status==='fulfilled'?[value.value]:[]);
+  expect(bindings.filter(value=>value.execute)).toHaveLength(1);expect(f.row?.hostId).toBe('mini');
   const winner=bindings.find(value=>value.execute)!;const repeated=await f.service.bind(selection.requestId,winner.binding.hostId,{...input,actionsRunId:winner.binding.actionsRunId,actionsJobId:'99'});expect(repeated.execute).toBe(false);
 });
 test('descriptor/capability and target fences reject incompatible assignments before binding',async()=>{
@@ -145,10 +286,28 @@ test('descriptor/capability and target fences reject incompatible assignments be
   f.lane.resources.find(resource => resource.kind === 'network')!.capabilities=[];f.lane.descriptorRevision=routineLaneDescriptorRevision(f.lane);
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:f.lane.descriptorRevision})).rejects.toThrow('compatible');expect(f.row?.fleetBinding).toBeUndefined();
 });
+test('phone backend readiness capability cannot be supplied by the host uplink or an older phone provider', async () => {
+  const f = fixture({...definition, resourceRequirements: definition.resourceRequirements.map(resource =>
+    resource.kind === 'phone' ? {...resource, capabilities: ['backend-connectivity']} : resource)});
+  const waiting = await f.prepare();
+  expect(waiting.waitingReason).toBe('Awaiting a compatible enrolled runner');
+  expect(f.row?.fleetPreparation?.requirements.resources.find(resource => resource.kind === 'phone')?.capabilities)
+    .toEqual(['backend-connectivity']);
+  f.lane.resources.find(resource => resource.kind === 'phone')!.capabilities = ['backend-connectivity'];
+  f.lane.descriptorRevision = routineLaneDescriptorRevision(f.lane);
+  const prepared = await f.service.preparation(selection.requestId);
+  expect(prepared.state).toBe('awaiting-runner');
+  const phone = prepared.prepared!.requirements.resources.find(resource => resource.kind === 'phone')!;
+  expect(phone.capabilities).toEqual(['backend-connectivity']);
+  f.lane.resources.find(resource => resource.kind === 'phone')!.capabilities = [];
+  f.lane.descriptorRevision = routineLaneDescriptorRevision(f.lane);
+  await expect(f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: f.lane.id,
+    descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible');
+});
 test('reviewed fixture operations exclude generic fixtures from routing and binding while preserving exact source', async () => {
   const selectedDefinition = {...definition,
     fixtures: [{provider: 'miniapp-appearance', description: 'Owned reviewed references and decoder'}],
-    execution: {resourceKinds: [...definition.execution.resourceKinds, 'fixture-data']},
+    execution: {resourceKinds: [...definition.execution.resourceKinds, 'fixture-data'],policy:definition.execution.policy},
     resourceRequirements: [...definition.resourceRequirements, {kind: 'fixture-data', capabilities: ['reviewed-miniapp-appearance', 'media-decode']}]};
   const f = fixture(selectedDefinition);
   const lane = (capabilities: string[]): ReceivedTestHostState['lanes'][number] => {
@@ -169,7 +328,7 @@ test('reviewed fixture operations exclude generic fixtures from routing and bind
   expect(prepared.routingLabels).toContain('mentra-cap-a8e5ce48dfc27e77cac4aaf5');
   for (const [hostId, offered] of [['air', generic], ['decoder-only', decoderOnly]] as const)
     await expect(f.service.bind(selection.requestId, hostId, {inputSha256: prepared.inputSha256, laneId: offered.id,
-      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible');
+      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible lane descriptor');
   expect(f.row!.fleetBinding).toBeUndefined();
   const capable = lane(['reviewed-miniapp-appearance', 'media-decode']);
   expect(capable.descriptorRevision).not.toBe(generic.descriptorRevision);
@@ -191,11 +350,15 @@ test('cancel and deadline before bind never revive after preparation retry or ob
   await expect(expired.service.bind(selection.requestId,'mini',{...input,inputSha256:before.inputSha256})).rejects.toThrow('expired');expect(await expired.service.observation(selection.requestId)).toMatchObject({terminal:true,waitingReason:expect.stringContaining('deadline')});
 });
 test('Mongo bind predicate guards absent host/binding, uncancelled prepared identity and deadline in one write',async()=>{
-  const original=TestRequestModel.collection.findOneAndUpdate,cas=mock(async(..._args:unknown[])=>null);
+  const original=TestRequestModel.collection.findOneAndUpdate,originalRead=TestRequestModel.collection.findOne,cas=mock(async(..._args:unknown[])=>null),
+    admission={intent:{operationId:'run:job-one',hostId:'mini',laneId:'android',inputSha256:'a'.repeat(64),owner:{id:'job-one',kind:'run'},
+      controller:{incarnation:'selected',generation:1,sequence:1},resources:[{id:'app',capabilities:[]}]},dependencies:[]};
   TestRequestModel.collection.findOneAndUpdate=cas as any;
+  TestRequestModel.collection.findOne=mock(async()=>({fleetResourceAdmission:admission})) as any;
   try {await routineJobRepository.bind('job-one','a'.repeat(64),{jobId:'job-one',requestId:'job-one',hostId:'mini',laneId:'android',descriptorRevision:'b'.repeat(64),actionsRunId:'10',actionsJobId:'20',boundAt:'2026-10-08T00:00:00Z'}, {requestId:'job-one'},new Date('2026-10-08T00:00:00Z'));
     expect(cas.mock.calls[0]?.[0]).toMatchObject({requestId:'job-one',fleetInputSha256:'a'.repeat(64),state:'awaiting-runner',fleetBinding:{$exists:false},hostId:{$exists:false},fleetCancellation:{$exists:false},fleetDeadline:{$gt:new Date('2026-10-08T00:00:00Z')}});
-  } finally {TestRequestModel.collection.findOneAndUpdate=original;}
+    expect(cas.mock.calls[0]?.[0]).toMatchObject({fleetResourceAdmission:admission,fleetExclusiveReservation:{$exists:false}});
+  } finally {TestRequestModel.collection.findOneAndUpdate=original;TestRequestModel.collection.findOne=originalRead;}
 });
 
 test('Mongo cancellation settlement cannot overwrite a concurrent late Actions registration',async()=>{
@@ -439,6 +602,7 @@ test('head changing during binding observation cannot return execution permissio
   const f=fixture(), id=automaticId(), first=await f.service.submit({...selection,requestId:id});
   await f.service.prepared(id,{inputSha256:first.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),
     definitionSha256:requestInputDigest(definition),definition});
+  await f.service.preparation(id);
   const input={inputSha256:f.row!.fleetInputSha256!,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'123',actionsJobId:'124'};
   await f.service.bind(id,'mini',input);
   let checks=0;
@@ -605,3 +769,214 @@ test('permanent preparation reports use the settled fence consumed by rerun read
  const attempt=await (reruns as any).requestAttempt(selection.requestId,{parent:{kind:'request',requestId:selection.requestId},memberId:selection.requestId,attemptNumber:1,attemptId:'attempt'});
  expect(attempt).toMatchObject({status:'not-run',publicationComplete:false,reason:'Routine new-routine does not support android.'});
 });
+
+
+test('an expired app grant refuses fleet binding before consuming the pending job; a fresh exact grant admits it', async () => {
+  const selected = {...definition, resourceRequirements: definition.resourceRequirements.map(resource => resource.kind === 'app'
+    ? {...resource, permissions: [{permission: 'camera', recipient: 'app'}]} : resource)};
+  const f = fixture(selected), prepared = await f.prepare(), frozen = structuredClone(f.row), time = Date.parse('2026-10-08T00:00:00Z');
+  const binding = {version: 938, revision: 'a'.repeat(40), installationId: 'accepted', configurationSha256: 'b'.repeat(64),
+    runtimeSha256: 'c'.repeat(64), routineApiVersion: 37, publicApiSha256: 'd'.repeat(64)};
+  const lane = structuredClone(f.lane);
+  const observed = {permission: 'camera' as const, status: 'granted' as const, rawStatus: 'authorized', observedAt: new Date(time - 120_001).toISOString(), binding,
+    recipient: {kind: 'app' as const, uid: 501, pid: 50, processStartedAt: 'verified lifetime', launchedAt: time - 1000,
+      bundleId: 'com.mentra.mentra' as const, bundlePath: '/Applications/Mentra.app', executablePath: '/Applications/Mentra.app/Mentra',
+      version: '3.3.0', build: '100', teamId: 'T5XXXL6N36', codeRequirement: 'verified signed requirement',
+      selectedBuild: {headSha: 'c'.repeat(40), archiveSha256: 'd'.repeat(64), receiptSha256: 'e'.repeat(64)}}, evidence: {sha256: 'f'.repeat(64)}};
+  lane.resources.find(resource => resource.kind === 'app')!.permissionObservations = [observed];
+  const host: ReceivedTestHostState = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), frameworkBinding: binding, lanes: [lane]};
+  f.offer([host]);
+  const input = {inputSha256: prepared.inputSha256, laneId: lane.id, descriptorRevision: lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
+  await expect(f.service.bind(selection.requestId, host.hostId, input)).rejects.toThrow('compatible lane descriptor');
+  expect(f.row).toEqual(frozen);
+  observed.observedAt = new Date(time).toISOString(); f.offer([host]);
+  await f.service.preparation(selection.requestId);
+  expect((await f.service.bind(selection.requestId, host.hostId, input)).execute).toBe(true);
+  expect(f.row!.fleetBinding!.hostId).toBe(host.hostId);
+});
+
+function routingClaim(hostId: string, laneId: string, requestId: string) {
+  return {id: '591e0c34-ee97-41df-a0ec-5e2d0c7503ee', requestId, fleetInputSha256: 'a'.repeat(64), hostId, laneId,
+    poolId: `${hostId}:disk:1`, minimumAvailableBytes: 3 * 1024 ** 3, reservedAt: '2026-10-16T11:00:00.000Z'};
+}
+
+test('simultaneous zero-load selections use request-specific ties independent of host report order', () => {
+  const f = fixture(), now = '2026-10-08T00:00:00.000Z';
+  const hosts = ['mini', 'air1', 'air2', 'pro1'].map(hostId => ({hostId, receivedAt: now, lanes: [f.lane], authorityReservations: []}));
+  const selected = new Set<string>();
+  for (let index = 0; index < 26; index++) {
+    const id = `scheduled-original-${index}`;
+    const first = orderedRoutineCandidates(id, hosts)[0]!;
+    selected.add(first.host.hostId);
+    expect(orderedRoutineCandidates(id, [...hosts].reverse())[0]!.host.hostId).toBe(first.host.hostId);
+  }
+  expect(selected.size).toBe(4);
+});
+
+test('selected, cancelled-but-unreturned and unknown authority claims remain lane load across host reports', () => {
+  const f = fixture(), now = '2026-10-08T00:00:00.000Z';
+  const claims = ['selected-not-started', 'cancelled-unreturned', 'unknown-writer'].map(id => routingClaim('air1', 'android', id));
+  const hosts = [{hostId: 'air1', receivedAt: now, lanes: [f.lane], authorityReservations: claims},
+    {hostId: 'mini', receivedAt: now, lanes: [f.lane], authorityReservations: []}];
+  expect(orderedRoutineCandidates('new-original', hosts)[0]!.host.hostId).toBe('mini');
+  expect(orderedRoutineCandidates('selected-not-started', hosts).find(value => value.host.hostId === 'air1')!.load).toBe(2);
+  const refreshed = hosts.map(host => ({...host, receivedAt: '2026-10-08T00:00:01.000Z'}));
+  expect(orderedRoutineCandidates('new-original', refreshed)[0]!.host.hostId).toBe('mini');
+  expect(hosts[0]!.authorityReservations).toEqual(claims);
+});
+
+test('new routing prefers free compatible lanes while a retained winner survives load and report changes', async () => {
+  const f = fixture(), now = '2026-10-08T00:00:00.000Z';
+  const host = (hostId: string, claims: ReturnType<typeof routingClaim>[]) => ({hostId, incarnation: 'one', incarnationGeneration: 1,
+    sequence: 1, observedAt: now, receivedAt: now, lanes: [f.lane], authorityReservations: claims});
+  const busy = host('air1', [routingClaim('air1', 'android', 'waiting-original')]), free = host('mini', []);
+  f.offer([busy, free]);
+  const prepared = await f.prepare();
+  expect(prepared).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}});
+  const original = structuredClone(f.row);
+  f.offer([{...free, authorityReservations: [routingClaim('mini', 'android', 'another-original')]}, {...busy, authorityReservations: []}]);
+  expect(await f.service.preparation(selection.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}});
+  expect(f.row).toEqual(original);
+});
+
+test('an admission interrupted before its byte receipt continues only its frozen candidate', async () => {
+  const f = fixture(), prepared = await f.prepare(), original = structuredClone(f.row!);
+  const {fleetResourceReservation: _, ...withoutByteReceipt} = original;
+  const intent = {operationId: `run:${selection.requestId}`, hostId: 'mini', laneId: 'android', inputSha256: prepared.inputSha256,
+    owner: {id: selection.requestId, kind: 'run' as const}, resources: [{id: 'app:android', capabilities: []}],
+    controller: {incarnation: 'one', generation: 1, sequence: 1}};
+  f.restore({...withoutByteReceipt, fleetResourceAdmission: {intent, dependencies: []}});
+  const now = '2026-10-08T00:00:00.000Z', base = {incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: now, receivedAt: now, lanes: [f.lane]};
+  f.offer([{...base, hostId: 'mini', authorityReservations: [routingClaim('mini', 'android', 'other-claim')]}, {...base, hostId: 'air1'}]);
+  expect(await f.service.preparation(selection.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}});
+  expect(f.row!.fleetResourceAdmission).toEqual({intent, dependencies: []});
+  expect(f.row!.fleetInputSha256).toBe(prepared.inputSha256);
+});
+
+test('staged selections count before byte receipts and duplicate authority representations count once', () => {
+  const f = fixture(), hosts = [{hostId: 'mini', receivedAt: '2026-10-08T00:00:00.000Z', lanes: [f.lane],
+    authorityReservations: [routingClaim('mini', 'android', 'same-original')]}];
+  const selected = [{requestId: 'same-original', hostId: 'mini', laneId: 'android'},
+    {requestId: 'staged-before-byte', hostId: 'mini', laneId: 'android'}, {requestId: 'different-lane', hostId: 'mini', laneId: 'mac'}];
+  expect(orderedRoutineCandidates('new-original', hosts, selected)[0]!.load).toBe(2);
+});
+
+test('exclusive-only cancelled custody counts on its borrower lane until authority return', () => {
+  const f = fixture(), now = '2026-10-08T00:00:00.000Z';
+  const claim: ExclusiveHostReservation = {kind: 'exclusive', id: 'a1d9b22e-12c1-4f5b-b210-0bca2b0798c6',
+    authorityHostId: 'mini', borrowerHostId: 'air1', laneId: 'android', resourceId: 'google-account',
+    operationId: 'run:cancelled-before-byte', owner: {kind: 'run', id: 'cancelled-before-byte'},
+    inputSha256: 'a'.repeat(64), intentSha256: 'b'.repeat(64), controllerIncarnation: 'one', controllerGeneration: 1,
+    borrowerSequence: 1, reservedAt: now};
+  const hosts: RoutingTestHostState[] = [{hostId: 'mini', receivedAt: now, lanes: [f.lane], authorityReservations: [claim]},
+    {hostId: 'air1', receivedAt: now, lanes: [f.lane], authorityReservations: []}];
+  const load = (values: RoutingTestHostState[]) => orderedRoutineCandidates('new-original', values).find(value => value.host.hostId === 'air1')!.load;
+  expect(load(hosts)).toBe(1);
+  expect(orderedRoutineCandidates('cancelled-before-byte', hosts).find(value => value.host.hostId === 'air1')!.load).toBe(0);
+  expect(orderedRoutineCandidates('new-original', hosts)[0]!.host.hostId).toBe('mini');
+  expect(load(hosts.map(host => ({...host, receivedAt: '2026-10-08T00:00:01.000Z'})))).toBe(1);
+  hosts[1]!.authorityReservations = [routingClaim('air1', 'android', claim.owner.id)];
+  expect(load(hosts)).toBe(1);
+  expect(orderedRoutineCandidates('new-original', hosts, [{requestId: claim.owner.id, hostId: 'air1', laneId: 'android'}])
+    .find(value => value.host.hostId === 'air1')!.load).toBe(1);
+  hosts[0]!.authorityReservations = [];
+  hosts[1]!.authorityReservations = [];
+  expect(load(hosts)).toBe(0);
+});
+
+test('non-run exclusive custody remains lane load and cannot collide with a run identity', () => {
+  const f = fixture(), now = '2026-10-08T00:00:00.000Z';
+  const claim: ExclusiveHostReservation = {kind: 'exclusive', id: 'a1d9b22e-12c1-4f5b-b210-0bca2b0798c6',
+    authorityHostId: 'mini', borrowerHostId: 'air1', laneId: 'android', resourceId: 'glasses-one',
+    operationId: 'authoring:one', owner: {kind: 'authoring', id: 'one'}, inputSha256: 'a'.repeat(64),
+    intentSha256: 'b'.repeat(64), controllerIncarnation: 'one', controllerGeneration: 1, borrowerSequence: 1, reservedAt: now};
+  const hosts: RoutingTestHostState[] = [{hostId: 'mini', receivedAt: now, lanes: [f.lane], authorityReservations: [claim]},
+    {hostId: 'air1', receivedAt: now, lanes: [f.lane], authorityReservations: [routingClaim('air1', 'android', 'authoring:one')]}];
+  expect(orderedRoutineCandidates('new-original', hosts).find(value => value.host.hostId === 'air1')!.load).toBe(2);
+  expect(orderedRoutineCandidates('authoring:one', hosts).find(value => value.host.hostId === 'air1')!.load).toBe(1);
+});
+
+test('staged selection read is bounded primary majority and excludes completed history', async () => {
+  const filters: unknown[] = [], selections: unknown[] = [], settings: unknown[] = [];
+  const selected = {requestId: 'selected-original', fleetResourceAdmission: {intent: {operationId: 'run:selected-original', hostId: 'mini',
+    laneId: 'android', inputSha256: 'a'.repeat(64), owner: {id: 'selected-original', kind: 'run'}, resources: [{id: 'app', capabilities: []}],
+    controller: {incarnation: 'one', generation: 1, sequence: 1}}, dependencies: []}};
+  let records = [selected];
+  const find = spyOn(TestRequestModel, 'find').mockImplementation(((filter: unknown) => {
+    filters.push(filter);
+    const query = {select(value: unknown) {selections.push(value); return query}, limit(value: unknown) {settings.push(value); return query},
+      read(value: unknown) {settings.push(value); return query}, readConcern(value: unknown) {settings.push(value); return query},
+      setOptions(value: unknown) {settings.push(value); return query}, async lean() {return records}};
+    return query;
+  }) as never);
+  try {
+    expect(await routineJobRepository.selectedLanes!(['mini'])).toEqual([{requestId: 'selected-original', hostId: 'mini', laneId: 'android'}]);
+    expect(filters).toEqual([{'fleetResourceAdmission.intent.hostId': {$in: ['mini']}, fleetResourceReservation: {$exists: false}, dispatchCompletion: {$exists: false}, fleetCancellation: {$exists: false},
+      state: {$in: ['awaiting-runner', 'preparing', 'queued', 'accepted']}}]);
+    expect(selections).toEqual([{requestId: 1, fleetResourceAdmission: 1, _id: 0}]);
+    expect(settings).toEqual([1001, 'primary', 'majority', {timeoutMS: 5000}]);
+    records = Array(1001).fill(selected);
+    await expect(routineJobRepository.selectedLanes!(['mini'])).rejects.toThrow('bounded routing read');
+  } finally {find.mockRestore()}
+});
+
+test('routing consumes staged selections before admission and preserves explicit target constraints', async () => {
+  const f = fixture(), now = '2026-10-08T00:00:00.000Z';
+  const host = (hostId: string) => ({hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: now, receivedAt: now, lanes: [f.lane]});
+  f.offer([host('air1'), host('mini')]);
+  const calls: string[][] = [];
+  f.rows.selectedLanes = async hostIds => {calls.push(hostIds); return [{requestId: 'pending-original', hostId: 'air1', laneId: 'android'}]};
+  expect(await f.prepare()).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}});
+  expect(calls).toEqual([['air1', 'mini']]);
+  const original = structuredClone(f.row!);
+  const {fleetResourceReservation: _, ...withoutReceipt} = original;
+  const targeted = {...withoutReceipt, fleetTarget: {hostId: 'air1', laneId: 'android'}};
+  f.restore({...targeted, fleetInputSha256: routineJobInputDigest(targeted)});
+  expect(await f.service.preparation(selection.requestId)).toMatchObject({resourceTarget: {hostId: 'air1', laneId: 'android'}});
+});
+
+test('offline lost-claim response and restart route only the original provisional phone lane', async () => {
+  for (const repositoryProof of [true, false]) {
+    const f = fixture(); await f.prepare()
+    const original = structuredClone(f.row!), claim = original.fleetResourceReservation!
+    delete original.fleetResourceReservation; f.restore(original)
+    expect(original.fleetPreparation!.requirements.resources.find(value => value.kind === 'phone')!.capabilities).toEqual([])
+    const timestamp = '2026-10-08T00:00:00.000Z', lane = structuredClone(f.lane)
+    lane.resources.find(value => value.kind === 'phone')!.capabilities = ['backend-connectivity']
+    const host = (hostId: string) => ({hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+      observedAt: timestamp, receivedAt: timestamp, lanes: [lane], authorityReservations: hostId === 'mini' ? [claim] : []})
+    f.offer([host('air1'), host('mini')])
+    // Same-lane retained load makes the alternate first without original recovery.
+    f.rows.selectedLanes = async () => [{requestId: 'queued-other', hostId: 'mini', laneId: 'android'}]
+    if (repositoryProof) f.rows.recorderClaims = async () => [structuredClone(claim)]
+    const reserve = f.rows.reserveResources!, attempted: string[] = []
+    f.rows.reserveResources = async (id, digest, hostId, laneId, now, waiting) => {
+      attempted.push(hostId)
+      if (hostId !== claim.hostId || laneId !== claim.laneId) {waiting?.(RESOURCE_ADMISSION_WAIT, true); return null}
+      return reserve(id, digest, hostId, laneId, now, waiting)
+    }
+    expect(await f.service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}})
+    expect(attempted).toEqual(['mini'])
+    expect(f.row!.fleetResourceReservation).toEqual(claim)
+    expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256)
+    expect(f.row!.fleetBinding).toBeUndefined(); expect(f.row!.inputSha256).toBeUndefined()
+    // A restarted delivery reads the same repository/snapshot proof. Changed
+    // load cannot move custody or create another target after the lost reply.
+    f.restore(original); attempted.length = 0
+    expect(await f.service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}})
+    expect(attempted).toEqual(['mini']); expect(f.row!.fleetResourceReservation).toEqual(claim)
+  }
+})
+test('offline provisional recovery refuses duplicate or changed original custody without trying a free phone', async () => {
+  for (const duplicate of [true, false]) {
+    const f = fixture(); await f.prepare(); const original = structuredClone(f.row!), claim = original.fleetResourceReservation!
+    delete original.fleetResourceReservation; f.restore(original)
+    f.rows.recorderClaims = async () => duplicate ? [claim, {...claim, hostId: 'air1'}] : [{...claim, fleetInputSha256: 'f'.repeat(64)}]
+    let attempted = 0; f.rows.reserveResources = async () => {attempted++; throw Error('Ambiguous custody cannot reserve')}
+    expect((await f.service.preparation(original.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT)
+    expect(attempted).toBe(0); expect(f.row).toEqual(original)
+  }
+})

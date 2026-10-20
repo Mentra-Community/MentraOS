@@ -56,6 +56,21 @@
       "groups": ["miniapp-store-dev-doppler"]
     },
     {
+      "name": "mfm-development",
+      "cluster": 5692,
+      "groups": ["mfm-dev-doppler"]
+    },
+    {
+      "name": "mfm-staging",
+      "cluster": 5692,
+      "groups": ["mfm-staging-doppler"]
+    },
+    {
+      "name": "miniapp-store-staging",
+      "cluster": 5692,
+      "groups": ["miniapp-store-staging-doppler"]
+    },
+    {
       "name": "mentra-ai-miniapp",
       "cluster": 5783,
       "groups": ["mentra-ai-miniapp-dev"]
@@ -204,7 +219,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_BOT_TOKEN",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
@@ -281,11 +295,7 @@
         "TEST_RUN_GITHUB_APP_PRIVATE_KEY",
         "TEST_RUN_GITHUB_INSTALLATION_ID",
         "TEST_RUN_GITHUB_WEBHOOK_SECRET",
-        "TEST_RUN_INGEST_TOKEN",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "TEST_RUN_INGEST_TOKEN"
       ]
     },
     {
@@ -309,7 +319,6 @@
         "CLOUD_CORE_ADMIN_EMAILS",
         "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
         "CLOUD_CORE_ENVIRONMENT",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_BOT_TOKEN",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
@@ -329,7 +338,6 @@
         "CLOUD_STORAGE_S3_REGION",
         "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
         "CONSOLE2_URL",
-        "COOKIE_SECURE",
         "DOPPLER_CONFIG",
         "DOPPLER_ENVIRONMENT",
         "DOPPLER_PROJECT",
@@ -370,11 +378,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -404,7 +408,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_BOT_TOKEN",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
@@ -424,7 +427,6 @@
         "CLOUD_STORAGE_S3_REGION",
         "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
         "CONSOLE2_URL",
-        "COOKIE_SECURE",
         "DOPPLER_CONFIG",
         "DOPPLER_ENVIRONMENT",
         "DOPPLER_PROJECT",
@@ -468,11 +470,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -502,7 +500,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_URL",
         "CLOUD_REPORT_AGENT_API_TOKEN",
@@ -560,11 +557,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -594,7 +587,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_URL",
         "CLOUD_REPORT_AGENT_API_TOKEN",
@@ -651,11 +643,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -733,6 +721,84 @@
         "MENTRA_STORE_WORKSPACE_CORE_JWKS_URL",
         "MONGO_URL",
         "NODE_ENV"
+      ]
+    },
+    {
+      "name": "mfm-dev-doppler",
+      "cluster": 5692,
+      "project": "cloud-v2",
+      "config": "mfm_dev",
+      "keys": [
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "LOG_STDOUT_JSON",
+        "MFM_ARCHIVE_S3_ACCESS_KEY_ID",
+        "MFM_ARCHIVE_S3_BUCKET",
+        "MFM_ARCHIVE_S3_ENDPOINT",
+        "MFM_ARCHIVE_S3_SECRET_ACCESS_KEY",
+        "MFM_CORE_FORWARDING_SECRETS",
+        "MFM_CORE_SERVICE_SECRET",
+        "MFM_CORE_URL",
+        "MONGO_URL"
+      ]
+    },
+    {
+      "name": "mfm-staging-doppler",
+      "cluster": 5692,
+      "project": "cloud-v2",
+      "config": "mfm_staging",
+      "keys": [
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "LOG_STDOUT_JSON",
+        "MFM_ARCHIVE_S3_ACCESS_KEY_ID",
+        "MFM_ARCHIVE_S3_BUCKET",
+        "MFM_ARCHIVE_S3_ENDPOINT",
+        "MFM_ARCHIVE_S3_SECRET_ACCESS_KEY",
+        "MFM_CORE_FORWARDING_SECRETS",
+        "MFM_CORE_SERVICE_SECRET",
+        "MFM_CORE_URL",
+        "MONGO_URL"
+      ]
+    },
+    {
+      "name": "miniapp-store-staging-doppler",
+      "cluster": 5692,
+      "project": "cloud-v2",
+      "config": "store_staging",
+      "keys": [
+        "CLOUD_STORAGE_PROVIDER",
+        "CLOUD_STORAGE_S3_ACCESS_KEY_ID",
+        "CLOUD_STORAGE_S3_BUCKET",
+        "CLOUD_STORAGE_S3_ENDPOINT",
+        "CLOUD_STORAGE_S3_REGION",
+        "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "EMAIL_SENDER",
+        "LOG_LEVEL",
+        "LOG_STDOUT_JSON",
+        "MENTRA_CORE_INTERNAL_URL",
+        "MENTRA_CORE_WORKSPACE_SERVICE_SECRET",
+        "MENTRA_STORE_ADMIN_EMAIL_DOMAINS",
+        "MENTRA_STORE_CLI_CLIENT_ID",
+        "MENTRA_STORE_CONSOLE_RELAY_KEY",
+        "MENTRA_STORE_CONSOLE_URL",
+        "MENTRA_STORE_CORE_JWKS_URLS",
+        "MENTRA_STORE_ENVIRONMENT",
+        "MENTRA_STORE_OIDC_CLIENT_ID",
+        "MENTRA_STORE_OIDC_CLIENT_SECRET",
+        "MENTRA_STORE_OIDC_ISSUER",
+        "MENTRA_STORE_PUBLIC_URL",
+        "MENTRA_STORE_SESSION_KEY",
+        "MENTRA_STORE_WORKSPACE_CORE_JWKS_URL",
+        "MONGO_URL",
+        "NODE_ENV",
+        "PORT",
+        "RESEND_API_KEY"
       ]
     },
     {

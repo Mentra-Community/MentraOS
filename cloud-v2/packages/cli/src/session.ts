@@ -14,6 +14,13 @@
  * signed out. The rotated refresh
  * token is stored before the new access token is used. A refused refresh
  * token clears the login (`SessionExpiredError`).
+ *
+ * The Store can refuse an access token before it expires: Core refuses every
+ * token of a person whose sign-ins were revoked ("log out everywhere" in the
+ * Mentra App, a deleted account). A Store request answered 401 then refreshes
+ * the login at once (`renewRefusedLogin`) and is retried once, so a login
+ * whose grant has ended says so at its next request instead of at its next
+ * scheduled refresh.
  */
 
 import {refreshLoginToken, revokeLogin, SessionExpiredError} from "./api"
@@ -57,32 +64,61 @@ export async function loadFreshCredentials(target: CliTarget): Promise<CommandCr
     // Another command may have refreshed (or cleared) the login while this one waited.
     const current = await loadStoredLogin(target)
     if (!current || !needsRefresh(current)) return current
-    // Paused past the lock's stale age, this command may have lost it: never spend the refresh token then.
-    if (!lease.held()) throw new Error(LOST_LOCK)
-    let refreshed: CliCredentials
-    try {
-      refreshed = await refreshLoginToken(current)
-    } catch (error) {
-      if (error instanceof SessionExpiredError) {
-        // Cleared only if it is still the login that was refused: a command that took the lock
-        // meanwhile and stored another keeps it.
-        const stored = await loadStoredLogin(target)
-        if (stored && stored.refreshToken !== current.refreshToken) return stored
-        if (stored) await clearCredentials(target)
-      }
-      throw error
-    }
-    // Stored only over the login this refresh started from. A command that took the lock meanwhile
-    // keeps what it stored, and a login it signed out stays signed out; these tokens, which nothing
-    // will use, are revoked.
-    const stored = await loadStoredLogin(target)
-    if (!stored || stored.refreshToken !== current.refreshToken) {
-      await revokeLogin(refreshed).catch(() => undefined)
-      return stored
-    }
-    await saveCredentials(refreshed)
-    return refreshed
+    return refreshUnderLock(target, current, lease)
   })
+}
+
+/**
+ * After the Store refused `refusedToken`, an access token of `mentraUserId`'s stored login on `target`
+ * (401): the login to retry with. When the stored login already carries another token (another command,
+ * or an earlier request of this one, refreshed it meanwhile) it is used as stored. Otherwise it is
+ * refreshed now, although it has not expired: a refused refresh token clears it (`SessionExpiredError`).
+ * Null when there is nothing to retry with: signed out, or another person's login is stored now.
+ */
+export function renewRefusedLogin(
+  target: CliTarget,
+  mentraUserId: string,
+  refusedToken: string,
+): Promise<CliCredentials | null> {
+  return withRefreshLock(target, async lease => {
+    const current = await loadStoredLogin(target)
+    if (!current || current.mentraUserId !== mentraUserId) return null
+    if (current.token !== refusedToken) return current
+    const renewed = await refreshUnderLock(target, current, lease)
+    return renewed && renewed.mentraUserId === mentraUserId ? renewed : null
+  })
+}
+
+/**
+ * Refresh `current`, the login as stored when this command took the refresh lock, and store the result
+ * over it. Returns the login to use: the refreshed one, or whatever another command stored meanwhile.
+ */
+async function refreshUnderLock(target: CliTarget, current: CliCredentials, lease: FileLease): Promise<CliCredentials | null> {
+  // Paused past the lock's stale age, this command may have lost it: never spend the refresh token then.
+  if (!lease.held()) throw new Error(LOST_LOCK)
+  let refreshed: CliCredentials
+  try {
+    refreshed = await refreshLoginToken(current)
+  } catch (error) {
+    if (error instanceof SessionExpiredError) {
+      // Cleared only if it is still the login that was refused: a command that took the lock
+      // meanwhile and stored another keeps it.
+      const stored = await loadStoredLogin(target)
+      if (stored && stored.refreshToken !== current.refreshToken) return stored
+      if (stored) await clearCredentials(target)
+    }
+    throw error
+  }
+  // Stored only over the login this refresh started from. A command that took the lock meanwhile
+  // keeps what it stored, and a login it signed out stays signed out; these tokens, which nothing
+  // will use, are revoked.
+  const stored = await loadStoredLogin(target)
+  if (!stored || stored.refreshToken !== current.refreshToken) {
+    await revokeLogin(refreshed).catch(() => undefined)
+    return stored
+  }
+  await saveCredentials(refreshed)
+  return refreshed
 }
 
 /** Store a new sign-in, replacing its target's login once no refresh of that login is running. */

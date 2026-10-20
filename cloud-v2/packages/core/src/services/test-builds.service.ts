@@ -8,7 +8,6 @@ const REPOSITORY = "Mentra-Community/MentraOS";
 const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
-const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
 // Google Play's largest accepted version code.
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
@@ -86,6 +85,7 @@ function publication(run: GithubRun, jobs: Job[]) {
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
   resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild>;
+  resolveNimoDiagnostic?(source: TestBuildSource): Promise<TestBuild>;
   isPrSuperseded?(prNumber: number, headSha: string): Promise<boolean>;
 }
 
@@ -197,9 +197,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         const current = finalizers.filter(job => job.run_attempt === latest);
         if (current.length > 1) throw new TestDispatchError(502, "Nightly publication is ambiguous");
         if (current[0]?.status !== "completed" || current[0]?.conclusion !== "success"
-          || !current[0]?.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success")
           || !current[0]?.completed_at || !Number.isFinite(Date.parse(current[0].completed_at))
           || Date.parse(current[0].completed_at) > boundary) continue;
+        // Dry runs can finalize successfully, but never produce the finalized result artifact.
+        if (!await this.releaseIdentity(run)) continue;
         // A published but missing platform artifact remains unavailable; do not silently use an older release.
         const publicationAttempt = Math.min(latest, ...finalizers.filter(job => job.started_at && job.completed_at
           && job.started_at === current[0]!.started_at && job.completed_at === current[0]!.completed_at
@@ -221,18 +222,26 @@ export class GithubTestBuildGateway implements TestBuildGateway {
           run.display_title.startsWith(`Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref} `) && /^[a-f0-9]{64}$/.test(run.display_title.slice(`Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref} `.length))))
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
+  async resolveNimoDiagnostic(source: TestBuildSource): Promise<TestBuild> {
+    requireThat(source.channel === 'pr', 'NIMO diagnostics require an exact PR source');
+    return this.resolveSelected(source, 'android', true);
+  }
   async resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild> {
+    return this.resolveSelected(source, platform, false);
+  }
+  private async resolveSelected(source: TestBuildSource, platform: TestBuildPlatform, diagnostic: boolean): Promise<TestBuild> {
     const pr = source.channel === "pr" ? await this.pr(source.prNumber) : undefined;
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
       "Build does not match the selected source and publication attempt");
     // Explicit sources identify an immutable publication. Its producing merge may
     // precede today's base tip; inventory alone requires the current base.
-    const result = await this.describe(run, source.channel, platform, pr, undefined, true);
+    requireThat(!diagnostic || run.event === 'workflow_dispatch', 'Diagnostics require an explicit pinned PR dispatch');
+    const result = await this.describe(run, source.channel, platform, pr, undefined, true, diagnostic);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
-  private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false): Promise<TestBuild> {
+  private async describe(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PrIdentity, baseSha?: string, exact = false, diagnostic = false): Promise<TestBuild> {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
     const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
@@ -241,7 +250,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       ...(run.status !== 'completed' ? {producerStatus: 'pending' as const} :
         run.conclusion && run.conclusion !== 'success' ? {producerStatus: 'failed' as const} : {}) };
     try {
-      const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha) : this.prArtifacts(run, pr, baseSha))
+      const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha, diagnostic) : this.prArtifacts(run, pr, baseSha))
         : await this.releaseArtifacts(run, channel, platform);
       build.source.publicationAttempt = artifacts.attempt;
       const archive = artifacts.archive;
@@ -286,7 +295,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
       result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
-  private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha?: string) {
+  private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha?: string, diagnostic = false) {
     const jobs = await this.jobs(run.id);
     const builds = jobs.filter(job => job.name === "build" && job.run_attempt <= run.run_attempt);
     const latest = Math.max(0, ...builds.map(job => job.run_attempt));
@@ -298,8 +307,17 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const attempt = Math.min(latest, ...builds.filter(job => build.started_at && build.completed_at
       && job.started_at === build.started_at && job.completed_at === build.completed_at && job.conclusion === build.conclusion)
       .map(job => job.run_attempt));
-    const name = `mentra-android-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempt}`;
+    const name = `mentra-android-${diagnostic ? "nimo-diagnostic-" : ""}pr-${pr.number}-${pr.head.sha}-${run.id}-${attempt}`;
     const receipt = await this.metadata("pr-builds", `${name}.json`);
+    const classification = z.object({diagnostic: z.literal('nimo-resource-v1').optional(), app: z.object({diagnostic: z.literal('nimo-resource-v1').optional()})}).parse(receipt.value);
+    requireThat(diagnostic ? classification.diagnostic === 'nimo-resource-v1' && classification.app.diagnostic === 'nimo-resource-v1' : classification.diagnostic === undefined && classification.app.diagnostic === undefined,
+      'Diagnostic APK cannot enter ordinary build selection');
+    const rawProof = (receipt.value as {diagnosticVerification?:unknown})?.diagnosticVerification;
+    if (diagnostic) {
+      const proof=z.object({kind:z.literal('compiled-capture-wiring-v3'),clockProtocol:z.literal('nimo-monotonic-receipt-v1'),captureProtocol:z.literal('nimo-preconnect-capture-v1'),captureRequiredBeforeArm:z.literal(true),scanInstancePreserved:z.literal(true),apkSha256:digest,wiringSha256:digest,
+        analyzer:z.object({source:z.literal('android-sdk-command-line-tools'),revision:z.string().regex(/^[0-9.]+$/).max(128),sha256:digest}).strict()}).strict().parse(rawProof);
+      requireThat(proof.apkSha256 === (receipt.value as {artifacts?:{android?:{sha256?:string}}}).artifacts?.android?.sha256, 'Diagnostic wiring proof belongs to another APK');
+    } else requireThat(rawProof === undefined, 'Diagnostic wiring proof cannot enter ordinary selection');
     const data = z.object({ schemaVersion: z.literal(1), pr: positive, headSha: sha, baseSha: sha, buildSha: sha,
       runId: positive, runAttempt: positive,
       app: z.object({ packageId: z.literal("com.mentra.mentra"), version: z.string().min(1), build: z.string().regex(/^[1-9]\d*$/),
@@ -317,7 +335,22 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt, tag: "pr-builds", archive: data.artifacts.android,
-      result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
+      result: { ...(diagnostic ? {diagnostic: "nimo-resource-v1" as const} : {}), receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
+  }
+  private async releaseIdentity(run: GithubRun): Promise<string | null> {
+    const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
+      workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
+    const plans = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-plan-mentra-"));
+    requireThat(plans.length === 1 && !plans[0]!.expired && plans[0]!.workflow_run.id === run.id
+      && plans[0]!.workflow_run.head_sha === run.head_sha, "Release plan is missing or ambiguous");
+    const identity = plans[0]!.name.slice("coordinated-release-plan-mentra-".length);
+    const results = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-result-mentra-"));
+    // The existing workflow deliberately omits this artifact for dry runs. Its absence is not a CDN read failure.
+    if (results.length === 0) return null;
+    requireThat(results.length === 1 && results[0]!.name === `coordinated-release-result-mentra-${identity}`
+      && !results[0]!.expired && results[0]!.workflow_run.id === run.id && results[0]!.workflow_run.head_sha === run.head_sha,
+      "Finalized release result is missing or ambiguous");
+    return identity;
   }
   private async releaseArtifacts(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform) {
     // Downstream failures and notification-only retries do not erase a publication.
@@ -325,20 +358,16 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
     const latestAttempt = Math.max(0, ...finalizers.map(job => job.run_attempt));
     const published = finalizers.filter(job => job.run_attempt === latestAttempt);
-    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success"
-      && published[0]!.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success"),
+    // Successful finalization plus the immutable receipts below prove publication; GitHub can omit job steps.
+    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success",
       "Selected coordinated attempt did not publish immutable assets");
     const job = published[0]!;
     // GitHub can repeat a retained successful job in a later attempt's history.
     const attempt = Math.min(job.run_attempt, ...finalizers.filter(item => job.started_at && job.completed_at
       && item.started_at === job.started_at && item.completed_at === job.completed_at && item.conclusion === job.conclusion)
       .map(item => item.run_attempt));
-    const listed = z.object({ artifacts: z.array(z.object({ name: z.string(), expired: z.boolean(),
-      workflow_run: z.object({ id: positive, head_sha: sha }) })) }).parse(await this.api(`${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`));
-    const plans = listed.artifacts.filter(item => item.name.startsWith("coordinated-release-plan-mentra-"));
-    requireThat(plans.length === 1 && !plans[0]!.expired && plans[0]!.workflow_run.id === run.id
-      && plans[0]!.workflow_run.head_sha === run.head_sha, "Release plan is missing or ambiguous");
-    const identity = plans[0]!.name.slice("coordinated-release-plan-mentra-".length);
+    const identity = await this.releaseIdentity(run);
+    requireThat(identity, "Selected coordinated attempt did not publish immutable assets");
     const match = /^(\d+\.\d+\.\d+)-(dev|beta)\.[1-9]\d*$/.exec(identity);
     requireThat(match && match[2] === (channel === "dev" ? "dev" : "beta"), "Release identity does not match the selected channel");
     const tag = `mentra-builds-v${match[1]}`;

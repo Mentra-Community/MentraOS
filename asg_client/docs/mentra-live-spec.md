@@ -75,7 +75,17 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 - `asg_client` exposes phone-facing commands and responses through the BLE command protocol.
 - The phone is the user's primary UI for setup, WiFi configuration, gallery sync, app routing, and settings.
 - Button/touch events are forwarded to the phone so apps can react even when the glasses also perform local actions.
-- Secure owner-exclusive pairing is release-gated on both the Mentra App and BES and defaults off for Mentra 3.1. When enabled, three power-button presses enter pairing mode. ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, repeated by BES every 30 seconds, and speaks “Pairing mode ended.” when BES reports the window closing.
+- Secure owner-exclusive pairing is enabled for Mentra 3.3 (OS-2055) by the BES build flag `MENTRA_SECURE_PAIRING`. The Mentra App has no flag: it follows each unit's secure-pairing advertisement, so glasses without it keep the legacy flow. The BES source of truth is `docs/pairing-spec.md` in `mentra-live-bes`.
+  - Three power-button presses enter pairing mode, but only after MTK readiness (the first valid MTK→BES UART frame). Earlier presses play "not ready". Short press (battery readout) and the ~2 s power-off are unchanged.
+  - Glasses with no bonded phone enter pairing mode automatically once per boot when MTK becomes ready. A bonded phone that is merely absent never triggers this.
+  - Pairing mode is one 120 s window (up to 30 s longer only while another phone is mid-pairing). Triple-press again cancels it; a single press repeats the code. Entering pairing mode forgets nothing. Bonds change only when a new phone's pairing completes: the new phone becomes the sole owner, the previous owner's BLE entries and its older Classic records are removed, and any open link from the previous phone is closed. Timeout and cancel leave every bond untouched. Outside pairing mode only the owner connects. Media is never wiped by pairing or ownership change. The firmware contract is in `docs/pairing-spec.md` ("Ownership transfer v4") in `mentra-live-bes`.
+  - Ownership transfer defaults on in firmware (`MENTRA_OWNERSHIP_TRANSFER=1`) and has no separate app flag or confirm screen. Set the firmware flag to 0 for the forget-on-entry image.
+  - ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, once per pairing entry. A single press while pairing mode is open speaks it again. When BES reports the window closing, ASG speaks “Pairing mode ended. No new phone paired.” for a timeout and “Pairing cancelled.” for a cancel. A successful pair says only “Mentra connected.”
+  - Upgrading from flag-off firmware keeps the existing owner. An iPhone that only has a Classic bond attaches its BLE identity once while its Classic link is up, with no re-pair.
+  - The phone that owned the glasses when pairing mode opens shows a one-time popup ("Your glasses are in pairing mode", "Press the power button 3 times to exit.") and pauses automatic reconnect for the window. After a timeout or cancel it reconnects on its own. If another phone took over, it shows only a **Pair Again** button on Home.
+  - Button gestures can be injected for tests with `adb shell am broadcast -a com.mentra.BES_BUTTON -p com.mentra.asg_client --es gesture <single|double|triple|long>` (protected by `android.permission.DUMP`, so only adb or privileged holders can send it).
+  - In 3.3 the BLE bond completes, and BES CTKD is compiled in (`CTKD_ENABLE ?= 1`). After `GAPC_PAIRING_SUCCEED`, `clac_linkKey` in `nvrecord_ble.c` derives a Classic link key and stores it under the peer's BLE address via `ddbif_add_record`. That is not one-step iOS pairing. The Mentra App still shows Pair Audio (Open Settings) if Classic profiles are not detected within an 8 s settle window. The BES write-up is `docs/pairing-spec.md` in `mentra-live-bes`.
+  - The Mentra App is adding a visible "Connecting audio" state and a three-state audio readiness model (Classic profiles connected, audio routed to the glasses, and the legacy combined flag). An opt-in iOS transport-bridging connect option (`CBConnectPeripheralOptionEnableTransportBridgingKey`) is default off pending a test. Firmware key re-keying is not being done unless a baseline trace proves the CTKD key is stored under the wrong address. H1 (iOS not initiating Classic), H2 (key stored or associated wrongly), and H3 (the app misdetects Classic) are TBD (pending Run A/Run B trace). Production BES builds are gating LTK, IRK, and link-key `DUMP8` logging off behind `MENTRA_KEY_LOG`.
 
 ### Camera capture
 
@@ -282,6 +292,17 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 - Touch/swipe events are forwarded to the phone as status or input events.
 - Power-button short press can trigger battery-level audio feedback.
 - Power-button hold/graceful shutdown should finalize active recordings before powering down to avoid corrupt media.
+
+The Bluetooth SDK can independently enable or disable the stock action for
+`single_tap`, `double_tap`, `triple_tap`, `long_press`, `forward_swipe`,
+`backward_swipe`, `up_swipe`, and `down_swipe`. Disabling a gesture suppresses its
+stock media/volume and feedback actions on BES while retaining input events for
+the phone and factory diagnostics. The direct BES `cs_tpdef` command requires a
+correlated `sr_tpdef` settings acknowledgement before the caller reports success.
+BES 26.10.16.0 or newer supports this contract; older firmware times out rather
+than acknowledging suppression. Overrides are RAM-only, default to all enabled,
+and reset on BLE disconnect or reboot. Apps reapply desired overrides after
+reconnecting; existing global control switches still apply to enabled gestures.
 
 ### WiFi and hotspot management
 

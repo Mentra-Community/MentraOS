@@ -14,6 +14,7 @@ import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {TestDispatchError} from "./test-builds.service";
 import {RoutineJobService, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
+import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 
 const mainRevision = "7".repeat(40);
 // Old targeted test inputs are adapted into portable submission at the test boundary.
@@ -76,7 +77,7 @@ function row(id: string, platform: "android" | "ios-on-mac", nightlyEnabled = tr
         requirements: [],
         fixtures: [],
         steps: [{id: "check", instruction: "Check", expected: "Checked"}],
-        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"]},
+        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"],policy:{estimatedOutputBytes:1024**3}},
         source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: `routines/${id}/routine.ts`},
       },
     }),
@@ -120,7 +121,7 @@ function fixture(
     {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock,
     undefined,
-    {async resolve() {sourceReads++; return selectedMain;}},
+    {async resolve(revision, boundary) {expect(revision).toBeUndefined(); expect(boundary).toBe(startedAt); sourceReads++; return selectedMain;}},
   )
   return {service, admitted, get sourceReads() {return sourceReads;}, set main(value: string) {selectedMain = value;}, set autoPrepare(value: boolean) {autoPrepare = value;}, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
@@ -143,6 +144,33 @@ test("nightly pins fresh main for every enabled routine and freezes exact app ar
   expect(state.sourceReads).toBe(1);
   expect(state.admitted).toHaveLength(2);
   await expect(state.service.start({...occurrence, startedAt: "2026-10-03T12:00:00Z"})).rejects.toThrow("changed");
+});
+test('delayed first delivery selects boundary main and frozen retry never consults later source', async () => {
+  const oldMain = '1'.repeat(40), laterMain = '2'.repeat(40), calls: string[] = [];
+  let available = true, plan: NightlyPlan | null = null;
+  const sources = new GithubRoutineSourceGateway({async token() {return 'private';}}, async url => {
+    calls.push(url); if (!available) throw new Error('History unavailable');
+    if (url.endsWith('/commits/main')) return Response.json({sha: laterMain});
+    if (url.includes('/activity?')) return Response.json([
+      {id: 2, ref: 'refs/heads/main', before: oldMain, after: laterMain, timestamp: '2026-10-03T11:02:00Z', activity_type: 'pr_merge'},
+      {id: 1, ref: 'refs/heads/main', before: '3'.repeat(40), after: oldMain, timestamp: '2026-10-03T10:58:00Z', activity_type: 'pr_merge'},
+    ]);
+    if (url.includes('/compare/')) return Response.json({status: 'ahead', base_commit: {sha: oldMain}, merge_base_commit: {sha: oldMain}});
+    throw new Error('Unexpected source read');
+  });
+  const jobs = {async submitFrozen() {return {} as any;}, async cancelFrozen() {return {} as any;}, async cancel() {return {} as any;}};
+  const service = new ActualNightlyRoutineService({async list() {return [row('delayed', 'android')];}} as any,
+    {async latestDev(platform, before) {expect(before).toBe(startedAt); return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+    {async get() {return null;}}, {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;},
+      async completed() {return null;}, async finish(_id, result) {return result;}}, undefined, () => now + 5 * 60_000, undefined, sources, jobs);
+  const first = await service.start(occurrence);
+  expect(first.plan.members[0]!.routineRevision).toBe(oldMain);
+  expect(first.plan.members[0]!.selection!.routineRevision).toBe(oldMain);
+  expect(first.plan.startedAt).toBe(startedAt);
+  expect(first.plan.publication!.source).toEqual({channel: 'dev', buildRunId: 21, publicationAttempt: 2});
+  const readCount = calls.length; available = false;
+  expect((await service.start(occurrence)).plan).toEqual(first.plan);
+  expect(calls).toHaveLength(readCount);
 });
 test("one failed admission does not suppress neighboring members and retries the same request", async () => {
   const state = fixture();
@@ -709,6 +737,7 @@ test('actual fleet service preserves every nightly member through preparation, b
       const next = {...value, state: 'awaiting-runner' as const, fleetPreparation: preparation, fleetInputSha256: inputSha256};
       requestRows.set(id, next); return copy(next);
     },
+    async reserveResources(id, digest, hostId, laneId) {const value=requestRows.get(id);if(!value||value.fleetCancellation||value.fleetInputSha256!==digest)return null;value.fleetResourceReservation??={id:'bb5736e3-7031-44c3-af88-b7fd1c07ee3c',requestId:id,fleetInputSha256:digest,hostId,laneId,poolId:'real-host:disk:1',minimumAvailableBytes:3*1024**3,reservedAt:new Date(clock).toISOString()};return copy(value);},
     async bind(id, digest, binding, intent) {
       const value = requestRows.get(id); if (!value || value.fleetCancellation || value.fleetBinding || value.fleetInputSha256 !== digest) return null;
       const next = {...value, state: 'preparing' as const, hostId: binding.hostId, fleetBinding: binding,
@@ -727,13 +756,13 @@ test('actual fleet service preserves every nightly member through preparation, b
   };
   const lanes = ['android', 'ios-on-mac'].map(platform => {
     const lane = {id: platform, platform: platform as 'android' | 'ios-on-mac', state: 'idle' as const, dispatchMode: 'automatic' as const,
-      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const}]};
+      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const, storage:{poolId:'real-host:disk:1',observedAt:new Date(clock).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}]};
     return {...lane, descriptorRevision: routineLaneDescriptorRevision(lane)};
   });
   const requests = {async get(id: string) {reads++; return copy(requestRows.get(id) ?? null) as any;}, async cancel() {return null;}};
   const summary = {async summary(id: string) {const result = results.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, 'No result'); return result;}, async detail() {throw new TestRunError(404, 'No result');}};
   const jobs = new RoutineJobService(rows, undefined, undefined, {async getExact() {return null;}},
-    {async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    {async list(){return [{hostId:'real-host',receivedAt:new Date(clock).toISOString(),lanes}];},async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
       observedAt: new Date(clock).toISOString(), receivedAt: new Date(clock).toISOString(), lanes};}}, requests, summary, () => clock,
     {async dispatch() {dispatches++;}, async cancel() {}});
   const repository = {...cancellationRepository(), async get() {return copy(plan);}, async freeze(value: NightlyPlan) {plan ??= copy(value); return copy(plan);},

@@ -149,6 +149,15 @@ dependencies {
 dependencies {
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.robolectric:robolectric:4.11.1'
+  // Local HTTP server for the miniapp fetch bridge tests; matches okhttp above.
+  testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+}
+
+// Robolectric loads classes, and so QuickJS's JNI library, in its own sandbox
+// class loader. Plain JUnit QuickJS tests in the same JVM then crash inside
+// JNI, so every test class runs in a fresh JVM.
+tasks.withType(Test).configureEach {
+  forkEvery = 1
 }
 
 // A desktop JVM cannot load the Android QuickJS library, so local unit tests

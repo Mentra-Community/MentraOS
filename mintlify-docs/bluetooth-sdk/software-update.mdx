@@ -129,8 +129,9 @@ Do not reproduce that sequencing with `checkForOtaUpdate()`,
 than 3.1 does not support hotspot OTA. Factory-stock glasses are delivered in
 this state, so their first update must use a Wi-Fi network configured on the
 glasses. After that update installs Mentra Live software 3.1 or newer,
-subsequent updates can use hotspot OTA and the flow should not require glasses
-Wi-Fi.
+subsequent updates use hotspot OTA whenever the glasses advertise the supported
+hotspot OTA capability, even when glasses Wi-Fi is connected. Glasses without
+that capability keep the Wi-Fi update path.
 </Warning>
 
 ## Use The Exact Mentra App OTA Pages

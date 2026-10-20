@@ -22,6 +22,7 @@ import {parsePhotoCompression, type PhotoCompression} from "@mentra/cloud-protoc
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
+import {fleetEvents} from "./fleet/fleetEvents"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
 
@@ -245,6 +246,10 @@ export class PhonePhotoCoordinator {
     const clearWatchdog = () => clearTimeout(captureWatchdog)
     void outcome.then(clearWatchdog, clearWatchdog)
 
+    // Fleet counts a photo from here: it has a request ID and is about to be asked of the glasses.
+    // Every stage reports under that ID, and no report can throw or wait.
+    fleetEvents.photo({operationId: requestId, stage: "requested"})
+
     // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
     //    photo_response success, so run it beside the cloud poll instead of
     //    awaiting it before polling. Native defaults transferMethod to "auto"
@@ -290,6 +295,7 @@ export class PhonePhotoCoordinator {
     } catch (err) {
       this.activeRequests.delete(requestId)
       this.bleIdToCloud.delete(bleRequestId)
+      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
       throw this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble")
     }
 
@@ -310,6 +316,8 @@ export class PhonePhotoCoordinator {
 
     try {
       const result = await outcome
+      // Either signal that settles the outcome (the glasses' own upload confirmation, or the ready push) is the capture.
+      fleetEvents.photo({operationId: requestId, stage: "captured"})
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.debug(
           `[PhonePhotoCoordinator] takePhoto complete ${Math.round(
@@ -323,6 +331,11 @@ export class PhonePhotoCoordinator {
         size: result.size,
         requestId,
       }
+    } catch (err) {
+      // Every way this photo can fail lands here: the glasses' error, the watchdog, a dead push channel. It was
+      // requested and never captured.
+      fleetEvents.photo({operationId: requestId, stage: "failed", failedStage: "requested"})
+      throw err
     } finally {
       this.activeRequests.delete(requestId)
       this.bleIdToCloud.delete(bleRequestId)

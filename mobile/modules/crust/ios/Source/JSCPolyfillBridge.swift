@@ -100,14 +100,25 @@ public enum JSCPolyfillBridge {
             }
 
             var urlRequest = URLRequest(url: url)
-            urlRequest.httpMethod = (req["method"] as? String) ?? "GET"
+            let method = (req["method"] as? String) ?? "GET"
+            urlRequest.httpMethod = method
             if let headers = req["headers"] as? [String: Any] {
                 for (k, v) in headers {
                     urlRequest.setValue(String(describing: v), forHTTPHeaderField: k)
                 }
             }
-            if let body = req["body"] as? String, !body.isEmpty {
-                urlRequest.httpBody = body.data(using: .utf8)
+            // ArrayBuffer and typed-array bodies arrive as base64 of their bytes.
+            // As on Android, an empty body is still sent, and POST, PUT and PATCH
+            // always carry one, so the server sees Content-Length: 0.
+            if let encoded = req["bodyBase64"] as? String {
+                guard let data = Data(base64Encoded: encoded) else {
+                    return .error(code: "INVALID_ARGS", message: "fetch.request: bodyBase64 is not base64")
+                }
+                urlRequest.httpBody = data
+            } else if let body = req["body"] as? String {
+                urlRequest.httpBody = Data(body.utf8)
+            } else if ["POST", "PUT", "PATCH"].contains(method.uppercased()) {
+                urlRequest.httpBody = Data()
             }
 
             // Reasonable defaults — caller can override later by passing
@@ -141,21 +152,27 @@ public enum JSCPolyfillBridge {
                     }
                     return out
                 }()
-                let bodyStr: String = {
-                    guard let data else { return "" }
-                    return String(data: data, encoding: .utf8) ?? ""
-                }()
+                var result: [String: Any] = [
+                    "status": status,
+                    "statusText": HTTPURLResponse.localizedString(forStatusCode: status),
+                    "headers": headersDict,
+                    "ok": (200..<300).contains(status),
+                ]
+                // The string `body` only when the bytes are exactly its UTF-8
+                // encoding; otherwise every byte as base64. The decode fails
+                // on invalid UTF-8, and the round trip also catches a dropped
+                // byte order mark.
+                let body = data ?? Data()
+                if let text = String(data: body, encoding: .utf8), Data(text.utf8) == body {
+                    result["body"] = text
+                } else {
+                    result["bodyBase64"] = body.base64EncodedString()
+                }
                 let payload: [String: Any] = [
                     "kind": "response",
                     "reqId": reqId,
                     "ok": true,
-                    "result": [
-                        "status": status,
-                        "statusText": HTTPURLResponse.localizedString(forStatusCode: status),
-                        "headers": headersDict,
-                        "body": bodyStr,
-                        "ok": (200..<300).contains(status),
-                    ] as [String: Any],
+                    "result": result,
                 ]
                 JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: payload)
             }

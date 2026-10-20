@@ -14,6 +14,10 @@ internal class NimoCanvasEncoder(
     private var generation = 0L
     private var pending: Request? = null
     private var closed = false
+    private var running = 0
+    private var deliveries = 0
+
+    @Synchronized fun pendingCount(): Int = (if (pending != null) 1 else 0) + running + deliveries
 
     @Synchronized
     fun submit(encode: () -> ByteArray, release: () -> Unit = {}, deliver: (ByteArray) -> Unit): Boolean {
@@ -44,15 +48,18 @@ internal class NimoCanvasEncoder(
         synchronized(this) {
             if (pending !== request) return
             pending = null // Running work releases its own source, never the invalidator.
+            running++
         }
         try {
             val bytes = request.encode()
+            synchronized(this) { deliveries++ }
             main.post(0) {
                 synchronized(this) {
+                    deliveries--
                     if (!closed && generation == request.generation) request.deliver(bytes)
                 }
             }
         } catch (error: Exception) { failed(error) }
-        finally { request.release() }
+        finally { request.release(); synchronized(this) { running-- } }
     }
 }

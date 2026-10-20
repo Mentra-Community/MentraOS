@@ -6,7 +6,7 @@ export function redirectSystemPath({path, initial}: {path: string; initial: bool
     const url = new URL(path)
     if (
       url.protocol === "com.mentra:" &&
-      ["/test/submit-incident-report", "/test/load-miniapp"].includes(`/${url.hostname}${url.pathname}`)
+      ["/test/submit-incident-report", "/test/load-miniapp", "/test/permissions", "/test/request-permissions"].includes(`/${url.hostname}${url.pathname}`)
     ) {
       return initial ? "/" : null
     }

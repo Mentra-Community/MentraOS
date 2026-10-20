@@ -28,6 +28,7 @@ import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mo
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -35,9 +36,11 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
+import {clearDeletionHold, setDeletionHold} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {nextHoldAsOf} from "./support/hold-as-of"
 import {
   coreAccessToken,
   ADMIN_COOKIE,
@@ -59,6 +62,7 @@ const MODELS = [
   AccessCredentialModel,
   BrowserSessionModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,
@@ -823,6 +827,72 @@ describe("workspaces", () => {
         (await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: orgAdmin, body: {confirmName: "Acme"}})).status,
       ).toBe(204)
     })
+
+    test("a workspace a service holds is refused with 409 workspace_has_holds and the holds, on every route group, to an owner and an Organization Admin alike", async () => {
+      const ws = await newWorkspace()
+      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3, asOf: nextHoldAsOf()})
+      const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+      const callers: Array<[string, Person | Session]> = [
+        ["/api/workspaces", ws.owner],
+        ["/api/workspaces", orgAdmin],
+        ["/api/portal/workspaces", await session("portal", ws.owner)],
+        ["/api/portal/workspaces", await session("portal", orgAdmin)],
+        ["/api/admin/workspaces", await session("admin", orgAdmin)],
+      ]
+
+      for (const [base, as] of callers) {
+        const reply = await call("DELETE", `${base}/${ws.workspaceId}`, {as, body: {confirmName: "Acme"}})
+        expect({base, status: reply.status, body: reply.json}).toEqual({
+          base,
+          status: 409,
+          body: {
+            error: "workspace_has_holds",
+            error_description: "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+            holds: [{service: "store", reason: "owns_miniapps", count: 3}],
+          },
+        })
+      }
+      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
+      expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws.workspaceId, action: "workspace.deleted"})).toBe(0)
+
+      // The Store clears its hold once the workspace owns no published miniapp; then the delete goes through.
+      await clearDeletionHold("store", ws.workspaceId, {asOf: nextHoldAsOf()})
+      expect(
+        (await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner, body: {confirmName: "Acme"}})).status,
+      ).toBe(204)
+    })
+
+    test("someone who may not delete is refused as before, and learns nothing about the holds", async () => {
+      const ws = await newWorkspace()
+      await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 3, asOf: nextHoldAsOf()})
+
+      const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.admin, body: {confirmName: "Acme"}})
+      expect(reply.status).toBe(403)
+      expect(reply.json.holds).toBeUndefined()
+    })
+  })
+
+  test("GET /:workspaceId says what holds the workspace from deletion", async () => {
+    const ws = await newWorkspace()
+    const holdsSeenBy = async (as: Person) => (await call("GET", `/api/workspaces/${ws.workspaceId}`, {as})).json.deletionHolds
+
+    expect(await holdsSeenBy(ws.owner)).toEqual([])
+    await setDeletionHold("store", ws.workspaceId, {reason: "owns_miniapps", count: 2, asOf: nextHoldAsOf()})
+    await setDeletionHold("fleet", ws.workspaceId, {reason: "manages_devices", asOf: nextHoldAsOf()})
+    const expected = [
+      {service: "fleet", reason: "manages_devices"},
+      {service: "store", reason: "owns_miniapps", count: 2},
+    ]
+    expect(await holdsSeenBy(ws.owner)).toEqual(expected)
+    expect(await holdsSeenBy(ws.developer)).toEqual(expected)
+    // A rename answers the same detail, holds included.
+    const renamed = await call("PATCH", `/api/workspaces/${ws.workspaceId}`, {
+      as: ws.owner,
+      body: {name: "Beta", expectedRevision: await revisionOf(ws.workspaceId, ws.owner)},
+    })
+    expect(renamed.json.deletionHolds).toEqual(expected)
+    // A new workspace has none.
+    expect((await createWorkspace(ws.stranger, "Fresh") as {deletionHolds?: unknown}).deletionHolds).toEqual([])
   })
 })
 

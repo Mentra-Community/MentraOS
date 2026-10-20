@@ -17,6 +17,7 @@ import {
   matchesCatalogSearch,
   matchesHistorySearch,
   routineCatalogOverviewQuery,
+  requestLiveStatus,
   matchesStepSearch,
   recordingOffset,
   testHistoryListPath,
@@ -27,6 +28,106 @@ import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
 import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
+
+test('crashed app evidence distinguishes preceding app from the current phone screen', () => {
+  const image = (id: string) => ({id, kind: 'screenshot' as const, path: `screenshots/${id}.png`, sha256: 'd'.repeat(64), size: 10, mimeType: 'image/png' as const});
+  const preceding = image('preceding-app'), system = image('current-system'), desktop = image('failure-desktop');
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'crash-display', hostId: 'testing-pro-1', laneId: 'phone',
+    routineId: 'login', definitionRevision: 'c'.repeat(40), platform: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [preceding, system, desktop],
+    result: {runId: 'crash-display', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'failed', actionId: 'entry'}, test: 'not-run',
+      steps: [{id: 'connect', status: 'not-run', durationMs: 0}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: 'setup', actionId: 'entry', message: 'App process disappeared'}], evidence: [],
+      timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 10000, testMs: 0, teardownMs: 1000}}});
+  const original = {pid: 29776, startSeq: 7632, bootId: 'f37d778b-baa3-4c56-a4a8-bc88bd207464', apkSha256: '9'.repeat(64), build: '991'};
+  const screen = {phase: 'setup' as const, actionId: 'entry', desktopAssetId: desktop.id, failureObservedAt: '2026-10-03T19:00:10Z',
+    phoneProcessWitness: {state: 'replaced' as const, original, current: {pid: 30444, startSeq: 7635}, observedAt: '2026-10-03T19:00:11Z'},
+    precedingAppImage: {assetId: preceding.id, boundary: 'before-password-input' as const, original,
+      captureStartedAt: '2026-10-03T19:00:08Z', captureFinishedAt: '2026-10-03T19:00:09Z'},
+    currentPhoneImage: {assetId: system.id, source: 'system' as const, captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:13Z'}};
+  const client = new QueryClient(), display = {run, definition: null, outcome: 'setup-failed', uploadsComplete: true,
+    evidenceStatus: 'complete', failureScreens: [screen]};
+  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  client.setQueryData(['framework-run', run.requestId], display);
+  expect(render()).toContain('The original app stopped and another app process was observed.');
+  expect(render()).toContain('alt="Phone after failure: entry"');
+  expect(render()).toContain('/assets/current-system');
+  expect(render()).toContain('App before failure</button>');
+  expect(render()).not.toContain('Failure screenshot</button>');
+  expect(render()).toContain('Execution: setup failed');
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup')).toBeUndefined();
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup', 'preceding')).toEqual(preceding);
+  expect(selectedFailureScreen(run, [screen], 'entry', 'setup', 'system')).toEqual(system);
+  client.setQueryData(['framework-run', run.requestId], {...display, failureScreens: [{...screen, currentPhoneImage: undefined}]});
+  expect(render()).toContain('alt="App before failure: entry"');
+  expect(render()).toContain('This image precedes the failure; it does not show the failure state.');
+  expect(render()).not.toContain('alt="Failure screenshot:');
+  client.setQueryData(['framework-run', run.requestId], {...display, uploadsComplete: false});
+  expect(render()).not.toContain('<img');
+  expect(selectedFailureScreen(run, [{...screen, precedingAppImage: {...screen.precedingAppImage, assetId: 'foreign'}}], 'entry', 'setup', 'preceding')).toBeUndefined();
+  const second = image('second-desktop'), desktopImages = [desktop, second].map((asset, displayId) => ({assetId: asset.id, displayId,
+    captureStartedAt: '2026-10-03T19:00:12Z', captureFinishedAt: '2026-10-03T19:00:14Z'}));
+  client.setQueryData(['framework-run', run.requestId], {...display, run: {...run, assets: [...run.assets, second]}, failureScreens: [{
+    phase: 'setup', actionId: 'entry', failureObservedAt: screen.failureObservedAt, desktopImages,
+  }]});
+  expect(render()).toContain('Desktop screenshots');
+  expect(render()).toContain('alt="Desktop display 0: entry"');
+  expect(render()).toContain('alt="Desktop display 1: entry"');
+  expect(render().match(/<img /g)).toHaveLength(2);
+  expect(render()).not.toContain('alt="Failure screenshot:');
+});
+
+test('active run page shows current phase, completed count and named steps before final publication', () => {
+  const now = new Date().toISOString(), requestId = 'active-miniapps';
+  const client = new QueryClient();
+  client.setQueryData(['framework-run', requestId], {kind: 'request', request: {
+    requestId, hostId: 'testing-pro-1', routineId: 'miniapps', platform: 'android', laneId: 'phone', state: 'accepted',
+    definitionRevision: 'a'.repeat(40), build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    live: {title: 'Open and close miniapps', receivedAt: now, observationAgeMs: 0, progress: {phase: 'test', currentStep: {id: 'close', index: 1},
+      completedSteps: 1, totalSteps: 3, startedAt: now, observedAt: now},
+      steps: [{id: 'open', instruction: 'Open miniapp'}, {id: 'close', instruction: 'Close miniapp'}, {id: 'home', instruction: 'Verify Home'}]},
+  }});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(html).toContain('Open and close miniapps: In progress');
+  expect(html).toContain('Running test');
+  expect(html).toContain('1/3 steps completed');
+  expect(html).toContain('Completed'); expect(html).toContain('Pending');
+  expect(html).toContain('aria-current="step"');
+  expect(html).toContain('Close miniapp');
+  expect(html).toContain('Final result and evidence are pending.');
+  expect(html).not.toContain('No routine result has been published.');
+  expect(html).not.toContain('Passed'); expect(html).not.toContain('<video');
+  const cached = client.getQueryData<{kind: 'request'; request: {live: {observationAgeMs: number}}}>(['framework-run', requestId])!;
+  cached.request.live.observationAgeMs = 61_000;
+  client.setQueryData(['framework-run', requestId], cached);
+  const stale = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(stale).toContain('Progress unavailable');
+  expect(stale).toContain('Last observed');
+  expect(stale).not.toContain('animate-spin');
+  expect(stale).not.toContain('>Running<');
+  expect(stale).not.toContain('miniapps: In progress');
+})
+
+test('stale live observations freeze elapsed time and stop claiming a currently running step', () => {
+  const request = {live: {receivedAt: '2026-10-03T00:02:00Z', observationAgeMs: 0, progress: {phase: 'routine-teardown', startedAt: '2026-10-03T00:00:00Z',
+    observedAt: '2026-10-03T00:02:00Z'}}} as Parameters<typeof requestLiveStatus>[0];
+  const received = Date.parse('2026-10-03T00:02:00Z');
+  expect(requestLiveStatus(request, received + 60_000, received)).toEqual({stale: false, phase: 'Routine cleanup', elapsed: '3m 00s'});
+  expect(requestLiveStatus(request, received + 61_000, received)).toEqual({stale: true, phase: 'Routine cleanup', elapsed: '2m 00s'});
+  expect(requestLiveStatus({} as Parameters<typeof requestLiveStatus>[0])).toBeNull();
+})
+
+test('controller and browser clock offsets cannot mark fresh heartbeats stale or extend stopped activity', () => {
+  for (const controllerOffset of [-120_000, 120_000]) for (const browserOffset of [-120_000, 120_000]) {
+    const server = Date.parse('2026-10-03T01:00:00Z'), browser = server + browserOffset;
+    const request = {live: {receivedAt: new Date(server).toISOString(), observationAgeMs: 2000,
+      progress: {phase: 'test', startedAt: new Date(server + controllerOffset - 30_000).toISOString(),
+        observedAt: new Date(server + controllerOffset).toISOString()}}} as Parameters<typeof requestLiveStatus>[0];
+    expect(requestLiveStatus(request, browser, browser)).toEqual({stale: false, phase: 'Running test', elapsed: '32s'});
+    expect(requestLiveStatus(request, browser + 90_000, browser)).toEqual({stale: true, phase: 'Running test', elapsed: '30s'});
+  }
+})
 
 test('run page separates actual Harness diagnostic actions/time from teardown failures and resource readiness', () => {
   const fixture = lifecycleRuns.find(fixture => fixture.scenario === 'cleaned-provider-error')!;
@@ -504,6 +605,28 @@ test("failed runs select the failure; explicit step links preserve their request
   expect(selectedFailureScreen(withScreen, failureScreens, 'connect', 'setup')).toBeUndefined();
   expect(selectedFailureScreen(withScreen, [{...failureScreens[0]!, assetId: 'foreign'}], 'connect', 'test')).toBeUndefined();
   expect(selectedFailureScreen(withScreen, failureScreens, 'open', 'test')).toBeUndefined();
+  const desktop = {...screen, id: 'desktop-image', path: 'screenshots/full-desktop.png'};
+  const macRun = {...withScreen, platform: 'ios-on-mac' as const, assets: [...withScreen.assets, desktop]};
+  const macScreens = [{...failureScreens[0]!, desktopAssetId: desktop.id}];
+  client.setQueryData(['framework-run', run.requestId], {run: macRun, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: macScreens});
+  const macOpening = render();
+  expect(macOpening).toContain('data-step-id="connect" data-selected="true"');
+  expect(macOpening).toContain('alt="App: connect"');
+  expect(macOpening).toContain('alt="Desktop: connect"');
+  expect(macOpening.match(/<img /g)).toHaveLength(2);
+  expect(macOpening).toContain('/assets/failure-image');
+  expect(macOpening).toContain('/assets/desktop-image');
+  expect(macOpening).toContain('Open app screenshot');
+  expect(macOpening).toContain('Open desktop screenshot');
+  expect(macOpening).not.toContain('Desktop screenshot</button>');
+  expect(macOpening).not.toContain('<video');
+  expect(render('open')).toContain('<video');
+  expect(render('open')).not.toContain('<img');
+  client.setQueryData(['framework-run', run.requestId], {run: macRun, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: [{...macScreens[0]!, desktopAssetId: 'foreign'}]});
+  expect(render().match(/<img /g)).toHaveLength(1);
+  expect(render()).not.toContain('alt="Desktop:');
   client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
     uploadsComplete: false, evidenceStatus: 'complete', failureScreens});
   expect(render()).not.toContain('<img');
@@ -680,18 +803,20 @@ test("routine lifecycle rows report real actions without video and keep failures
       evidenceStatus: 'complete', failureScreens};
     client.setQueryData(['framework-run', 'lifecycle-run'], display);
     const both = renderLifecycle();
-    expect(both).toContain(`alt="Failure screenshot: ${failed.actionId}"`);
+    expect(both).toContain(`alt="App: ${failed.actionId}"`);
+    expect(both).toContain(`alt="Desktop: ${failed.actionId}"`);
+    expect(both.match(/<img /g)).toHaveLength(2);
     expect(both).toContain('/assets/lifecycle-app');
-    expect(both).toContain('Desktop screenshot</button>');
+    expect(both).toContain('/assets/lifecycle-desktop');
     expect(both).toContain('Watch recording');
     expect(both).not.toContain('<video');
     expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase, 'desktop')).toEqual(desktopImage);
     expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase === 'setup' ? 'teardown' : 'setup', 'desktop')).toBeUndefined();
     client.setQueryData(['framework-run', 'lifecycle-run'], {...display, failureScreens: [{phase, actionId: failed.actionId, desktopAssetId: desktopImage.id}]});
     const desktopOnly = renderLifecycle();
-    expect(desktopOnly).toContain(`alt="Desktop screenshot: ${failed.actionId}"`);
+    expect(desktopOnly).toContain(`alt="Desktop: ${failed.actionId}"`);
     expect(desktopOnly).toContain('/assets/lifecycle-desktop');
-    expect(desktopOnly).not.toContain('alt="Failure screenshot:');
+    expect(desktopOnly).not.toContain('alt="App:');
     expect(desktopOnly).not.toContain('<video');
     client.setQueryData(['framework-run', 'lifecycle-run'], {...display, uploadsComplete: false});
     expect(renderLifecycle()).not.toContain('<img');

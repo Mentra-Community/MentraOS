@@ -95,7 +95,7 @@ it.each(["unavailable", "failed", "timed-out"] as const)(
     const logCollection = {
       phone: received("art_phone"),
       glasses: {...requested, state, reason: "glasses_disconnected"},
-      glasses_firmware: requested,
+      glasses_firmware: received("art_firmware"),
     }
     read.mockResolvedValue(snapshot(logCollection))
     const error = await failureOf(
@@ -266,5 +266,61 @@ it("resolves only selected stored artifacts and ignores unselected terminal fail
   })
   expect(read).toHaveBeenCalledTimes(1)
   expect(read.mock.calls[0][1]?.aborted).toBe(true)
+  expect(jest.getTimerCount()).toBe(0)
+})
+
+it("settles independent firmware collection after phone failure before rejecting partial evidence", async () => {
+  const failedPhone = {...requested, state: "failed" as const}
+  read
+    .mockResolvedValueOnce(
+      snapshot({phone: failedPhone, glasses: received("art_glasses"), glasses_firmware: requested}),
+    )
+    .mockResolvedValueOnce(
+      snapshot({phone: failedPhone, glasses: received("art_glasses"), glasses_firmware: received("art_firmware")}),
+    )
+  const pending = reports.waitForCollection("rep_test", {
+    sources: ["phone", "glasses", "glasses_firmware"],
+  })
+  let settled = false
+  const rejected = failureOf(pending).then((error) => {
+    settled = true
+    return error
+  })
+  await jest.advanceTimersByTimeAsync(0)
+  expect(settled).toBe(false)
+  await jest.advanceTimersByTimeAsync(500)
+  expect((await rejected).collection).toMatchObject({
+    state: "failed",
+    logCollection: {
+      phone: {state: "failed"},
+      glasses: {artifactId: "art_glasses"},
+      glasses_firmware: {artifactId: "art_firmware"},
+    },
+  })
+  expect(jest.getTimerCount()).toBe(0)
+})
+
+it("shared cancellation rejects immediately with the last safe receipts and aborts an unanswered read", async () => {
+  const controller = new AbortController()
+  read
+    .mockResolvedValueOnce(snapshot({phone: received("art_phone"), glasses: requested}))
+    .mockImplementationOnce(() => new Promise(() => {}))
+  const rejected = failureOf(
+    reports.waitForCollection("rep_test", {
+      sources: ["phone", "glasses"],
+      signal: controller.signal,
+      timeoutMs: 120_000,
+    }),
+  )
+  await jest.advanceTimersByTimeAsync(500)
+  controller.abort()
+  expect((await rejected).collection).toMatchObject({
+    state: "timed-out",
+    logCollection: {
+      phone: {artifactId: "art_phone"},
+      glasses: {state: "requested"},
+    },
+  })
+  expect(read.mock.calls.at(-1)?.[1]?.aborted).toBe(true)
   expect(jest.getTimerCount()).toBe(0)
 })

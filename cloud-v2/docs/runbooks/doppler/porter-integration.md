@@ -13,18 +13,21 @@ Always specify project 15081 and the intended cluster: 5690 (legacy east), 5692 
 
 ## Cloud configuration
 
-| Porter app                                            | Doppler config in `cloud-v2` | Direct group                 |
-| ----------------------------------------------------- | ---------------------------- | ---------------------------- |
-| cloud-dev, legacy cloud-v2 west                       | dev_aws                      | cloud-v2-dev-doppler         |
-| cloud-prod                                            | prod                         | cloud-v2-prod-doppler-sync   |
-| cloud-staging                                         | staging                      | cloud-v2-staging-doppler     |
-| cloud-debug                                           | dev_debug                    | cloud-v2-debug-doppler       |
-| cloud-isaiah                                          | dev_isaiah                   | cloud-v2-isaiah-doppler      |
-| legacy cloud-v2 east (retired; zero replicas)         | legacy_east                  | cloud-v2-legacy-east-doppler |
-| Miniapp Store (historical app name miniapp-store-dev) | store_prod                   | miniapp-store-prod-doppler   |
-| Development Store (miniapp-store-development)         | store_dev                    | miniapp-store-dev-doppler    |
+| Porter app                                            | Doppler config in `cloud-v2` | Direct group                  |
+| ----------------------------------------------------- | ---------------------------- | ----------------------------- |
+| cloud-dev, legacy cloud-v2 west                       | dev_aws                      | cloud-v2-dev-doppler          |
+| cloud-prod                                            | prod                         | cloud-v2-prod-doppler-sync    |
+| cloud-staging                                         | staging                      | cloud-v2-staging-doppler      |
+| cloud-debug                                           | dev_debug                    | cloud-v2-debug-doppler        |
+| cloud-isaiah                                          | dev_isaiah                   | cloud-v2-isaiah-doppler       |
+| legacy cloud-v2 east (retired; zero replicas)         | legacy_east                  | cloud-v2-legacy-east-doppler  |
+| Miniapp Store (historical app name miniapp-store-dev) | store_prod                   | miniapp-store-prod-doppler    |
+| Staging Store (miniapp-store-staging)                 | store_staging                | miniapp-store-staging-doppler |
+| Development Store (miniapp-store-development)         | store_dev                    | miniapp-store-dev-doppler     |
+| MFM development (mfm-development)                     | mfm_dev                      | mfm-dev-doppler               |
+| MFM staging (mfm-staging)                             | mfm_staging                  | mfm-staging-doppler           |
 
-Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. The development Store is a separate app paired with dev Core, with its own `store_dev` config in the same `store` environment; it shares nothing with production. Both Store manifests (in the private `miniapp-store` repository) link only their group and set no Porter `env`; the Store's deployment checks the group's settings before applying. Do not copy the main cloud config into it. Legacy east has different regional/database/auth settings. Its application services were retired at the owner’s request: both have zero replicas, and their existing settings and image are preserved with the native Doppler group attached. The separate database infrastructure was preserved. Repair its invalid Mongo/Redis settings before any restart; configuration ownership is still monitored while the app is stopped. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
+Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. The staging and development Stores are separate apps paired with staging and dev Core, with their own `store_staging` and `store_dev` configs in the same `store` environment, and their own databases and buckets. All three Store manifests (production, staging and development, in the private `miniapp-store` repository) link only their group and set no Porter `env`; the Store's deployment checks the group's settings before applying. Do not copy the main cloud config into a Store config. Legacy east has different regional/database/auth settings. Its application services were retired at the owner’s request: both have zero replicas, and their existing settings and image are preserved with the native Doppler group attached. The separate database infrastructure was preserved. Repair its invalid Mongo/Redis settings before any restart; configuration ownership is still monitored while the app is stopped. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
 
 Enterprise has a separate `mentra-enterprise/prd` project/config. Intentionally shared Merge credentials use Doppler references to `local-merge/prd`, so future shared rotations propagate without duplicating those values. App-specific settings belong to Enterprise.
 

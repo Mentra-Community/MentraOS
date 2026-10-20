@@ -99,6 +99,9 @@ public class AsgConstants {
     /** Native WifiManager AP state after Android has stopped the access point. */
     public static final int WIFI_AP_STATE_DISABLED = 11;
 
+    /** Terminal SoftAP setup failure; no access point is running after native cleanup. */
+    public static final int WIFI_AP_STATE_FAILED = 14;
+
     /** SmartXY setting containing the Mentra Live hotspot SSID. */
     public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
 

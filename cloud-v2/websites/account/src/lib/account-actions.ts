@@ -58,7 +58,10 @@ export async function startSocialSignIn(
   try {
     const { error } = await auth.signInWithOAuth({
       provider,
-      options: { redirectTo: loginUrl(origin, interactionId) },
+      options: {
+        redirectTo: loginUrl(origin, interactionId),
+        ...(provider === "google" ? { queryParams: { prompt: "select_account" } } : {}),
+      },
     });
     return error ? failure : ok;
   } catch {

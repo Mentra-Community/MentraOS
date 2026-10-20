@@ -13,13 +13,19 @@
  *   /api/client/reports/*       — device-filed reports
  *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
  *                                 unauthenticated (called from customer apps)
+ *   /api/client/fleet/*         — a phone's Fleet reports, forwarded to the optional Fleet
+ *                                 service (404 fleet_not_installed without one)
+ *   /api/client/miniapps/*      — LEGACY: the frozen preinstalled catalog that
+ *                                 released Mentra App versions still install from
  *   /api/agent/reports/*        — read-only private dev-agent access
  *   /api/cli/config             — the issuer and client ID the `mentra` CLI signs
  *                                 in with, unauthenticated
  *   /api/admin/auth/*, /api/portal/auth/*
  *                               — portal sign-in (the deployment's identity provider)
  *   /api/admin/*                — the admin portal's API (capability-gated), incl.
- *                                 /api/admin/workspaces and /api/admin/organization
+ *                                 /api/admin/workspaces and /api/admin/organization, and
+ *                                 /api/admin/fleet/*, forwarded to the optional Fleet
+ *                                 service for an Organization Admin
  *   /api/portal/*               — the workspace portal's API, incl. /api/portal/workspaces
  *   /api/workspaces/*, /api/organization/*
  *                               — the same workspace and organization handlers, for
@@ -35,7 +41,8 @@
  *
  * The global error handler translates `OauthError` subtypes to the RFC 8693
  * error body shape `{ error, error_description }`, and expected workspace
- * failures (`WorkspaceError`) to the same shape with their status. Anything
+ * failures (`WorkspaceError`) to the same shape with their status (plus any
+ * fields the error carries in `details`). Anything
  * else becomes a generic 500.
  */
 
@@ -68,10 +75,10 @@ import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
 import clientMiniapps from "./client/miniapps.api";
 import clientBluetoothSdk from "./client/bluetooth-sdk.api";
+import { clientFleetApi } from "./fleet/fleet-forwarding";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import cliApi from "./cli/cli.api";
-import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import { createOrganizationApi } from "./organization/organization.api";
@@ -133,6 +140,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
+  // Fleet is optional and lives in its own service; Core authenticates the phone (its own gate) and forwards.
+  app.route("/api/client/fleet", clientFleetApi);
   app.route("/api/agent/reports", reportAgent);
   app.route("/api/cli", cliApi);
   // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
@@ -161,10 +170,11 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/routine-work-deliveries", createRoutineWorkDeliveriesApi());
   app.route("/api/internal/test-runs", testRunIngest);
   app.route("/api/internal/test-host-observations", testHostObservations);
+  // LEGACY: released Mentra App versions install their preinstalled miniapps
+  // from here until supported versions install only from the Store's backend.
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
-  app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);
   app.route("/api/admin", adminApi);
   app.route("/api/workspaces", createWorkspacesApi());
@@ -186,7 +196,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
       );
     }
     if (err instanceof WorkspaceError) {
-      return c.json({ error: err.code, error_description: err.message }, err.status as 400);
+      // `details` add fields (a 409 workspace_has_holds lists the holds); they never replace these two.
+      return c.json({ ...err.details, error: err.code, error_description: err.message }, err.status as 400);
     }
 
     // Unexpected. Log with the per-request logger if available so the line

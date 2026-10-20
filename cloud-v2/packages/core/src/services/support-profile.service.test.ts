@@ -4,6 +4,7 @@ import {
   fingerprintFor,
   meaningfulTransitions,
   posthogPropertiesFor,
+  retryUntilSucceeded,
   shouldRecordConnectedAt,
   type SupportStateInput,
 } from "./support-profile.service"
@@ -13,6 +14,51 @@ const savedSecret = process.env.SUPPORT_DEVICE_ID_HMAC_KEY
 afterEach(() => {
   if (savedSecret === undefined) delete process.env.SUPPORT_DEVICE_ID_HMAC_KEY
   else process.env.SUPPORT_DEVICE_ID_HMAC_KEY = savedSecret
+})
+
+describe("support profile index creation", () => {
+  test("retries after a failure and remembers only success", async () => {
+    let clock = 0
+    let calls = 0
+    const throttled = new Error("TooManyRequests")
+    const ensure = retryUntilSucceeded(
+      async () => {
+        calls += 1
+        if (calls === 1) throw throttled
+      },
+      10_000,
+      () => clock,
+    )
+
+    await expect(ensure()).rejects.toBe(throttled)
+    // Within the retry interval the failure is answered without another attempt.
+    clock = 9_999
+    await expect(ensure()).rejects.toBe(throttled)
+    expect(calls).toBe(1)
+
+    clock = 10_000
+    await ensure()
+    clock = 1_000_000
+    await ensure()
+    expect(calls).toBe(2)
+  })
+
+  test("shares one attempt between concurrent callers", async () => {
+    let calls = 0
+    let finish!: () => void
+    const ensure = retryUntilSucceeded(() => {
+      calls += 1
+      return new Promise<void>((resolve) => {
+        finish = resolve
+      })
+    }, 10_000)
+
+    const first = ensure()
+    const second = ensure()
+    finish()
+    await Promise.all([first, second])
+    expect(calls).toBe(1)
+  })
 })
 
 describe("support profile privacy and transitions", () => {

@@ -138,3 +138,80 @@ test('bounded command admission always preserves return space for every accepted
  expect(f.rows()).toHaveLength(100)
  expect(f.rows().filter(row=>row.command.action==='release')).toHaveLength(50)
 })
+
+function halted(f: ReturnType<typeof fixture>) {
+  const repair = {executionId: 'fixer:original', interruptionId: 'repair:phone:98', laneId: 'phone',
+    state: 'halted' as const, current: false, startedAt: new Date(f.now - 1000).toISOString(),
+    finishedAt: new Date(f.now).toISOString(), haltDecisionId: 'halt:original'}
+  f.host().snapshot.laneControls = {schemaVersion: 1, receipts: [], reopenRepair: true}
+  f.host().snapshot.lanes = [{id: 'phone', state: 'out-of-service', dispatchMode: 'automatic',
+    activity: {generation: 99, owner: {id: repair.executionId, kind: 'fixer'}}}]
+  f.host().snapshot.restoration = {attempts: [repair]}
+  return {repair, input: f.input('reopen-repair', {repair: {interruptionId: repair.interruptionId,
+    expectedHaltDecisionId: repair.haltDecisionId, changedConditions: 'I allowed the requested microphone permission.'}})}
+}
+
+test('recovery uses the existing signed-in delivery and records repair custody rather than scheduling success', async () => {
+  const f = fixture(), {input} = halted(f)
+  expect((await f.service.list('air', 'alice')).reopenRepair).toBe(true)
+  const accepted = await f.service.submit(input, 'alice')
+  expect(await f.service.submit(input, 'alice')).toEqual(accepted)
+  expect(f.rows()).toHaveLength(1)
+  expect(f.rows()[0]!.command.repair).toEqual(input.repair)
+  const result = {status: 'accepted' as const, repair: {interruptionId: input.repair!.interruptionId,
+    laneId: 'phone', status: 'in-repair' as const, generation: 100, fixerExecutionId: 'fixer:next'}}
+  await expect(f.service.exchange('air', {schemaVersion: 1, reopenRepair: true,
+    receipts: [f.receipt(input, {...result, mode: 'automatic'})]})).rejects.toThrow('requested action')
+  await expect(f.service.exchange('air', {schemaVersion: 1, receipts: [f.receipt(input,
+    {...result, repair: {...result.repair, interruptionId: 'repair:foreign'}})]})).rejects.toThrow('requested action')
+  await f.service.exchange('air', {schemaVersion: 1, reopenRepair: true, receipts: [f.receipt(input, result)]})
+  expect((await f.service.list('air', 'alice')).controls[0]!.receipt!.result).toEqual(result)
+  expect(f.host().snapshot.lanes[0]!.state).toBe('out-of-service')
+  expect(f.host().snapshot.lanes[0]!.dispatchMode).toBe('automatic')
+})
+
+test('recovery admission refuses old halt, changed repair, active fixer, missing halt and unsupported controller', async () => {
+  for (const change of [
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.laneControls = {schemaVersion: 1, receipts: []}},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.lanes[0]!.state = 'in-repair'},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.lanes[0]!.activity!.owner.id = 'fixer:other'},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts[0]!.state = 'working'},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts[0]!.current = true},
+    (f: ReturnType<typeof fixture>) => {delete f.host().snapshot.restoration!.attempts[0]!.haltDecisionId},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts[0]!.haltDecisionId = 'halt:new'},
+    (f: ReturnType<typeof fixture>) => {f.host().snapshot.restoration!.attempts.push({...f.host().snapshot.restoration!.attempts[0]!})},
+  ]) {
+    const f = fixture(), {input} = halted(f); change(f)
+    await expect(f.service.submit(input, 'alice')).rejects.toThrow()
+    expect(f.rows()).toEqual([])
+  }
+  const f = fixture(), {input} = halted(f)
+  await expect(f.service.submit({...input, repair: {...input.repair!, changedConditions: '   '}}, 'alice')).rejects.toThrow()
+  await expect(f.service.submit({...input, action: 'resume'}, 'alice')).rejects.toThrow()
+  await expect(f.service.submit({...input, repair: {...input.repair!, assumeReady: true}}, 'alice')).rejects.toThrow()
+})
+
+test('admin email stays in Core metadata and never changes authenticated command delivery or retries', async () => {
+  const f = fixture(), input = f.input('reserve', {purpose: 'Manual work'})
+  const first = await f.service.submit(input, 'alice-id', 'alice@example.com')
+  expect(f.rows()[0].operatorLabel).toBe('alice@example.com')
+  expect(f.rows()[0].command).not.toHaveProperty('operatorLabel')
+  expect(await f.service.submit(input, 'alice-id', 'new-address@example.com')).toEqual(first)
+  expect(f.rows()[0].operatorLabel).toBe('alice@example.com')
+  const delivery = await f.service.exchange('air', {schemaVersion: 1, receipts: []})
+  expect(delivery.commands).toEqual([f.rows()[0].command])
+  expect(JSON.stringify(delivery)).not.toContain('alice@example.com')
+  expect(JSON.stringify(await f.service.list('air', 'alice-id'))).not.toContain('alice@example.com')
+  await expect(f.service.submit({...input, operatorLabel: 'spoof@example.com'}, 'alice-id')).rejects.toThrow()
+  await expect(f.service.submit(input, 'bob-id', 'alice@example.com')).rejects.toThrow('identity changed')
+})
+
+test('authorized credential and user-ID labels can reserve without an email address', async () => {
+  for (const label of ['credential:operator-key', 'usr_no_email']) {
+    const f = fixture(), input = f.input('reserve', {purpose: 'Manual work'})
+    await f.service.submit(input, 'authenticated-id', label)
+    expect(f.rows()[0].operatorLabel).toBe(label)
+    expect(f.rows()[0].command).not.toHaveProperty('operatorLabel')
+    expect((await f.service.exchange('air', {schemaVersion: 1, receipts: []})).commands).toEqual([f.rows()[0].command])
+  }
+})

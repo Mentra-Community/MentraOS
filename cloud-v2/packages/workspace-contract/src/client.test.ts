@@ -3,7 +3,14 @@ import {CoreWorkspaceClientError, createCoreWorkspaceClient} from "./client"
 import {SERVICE_HEADERS, verifyServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
 import type {WorkspaceRole} from "./capabilities"
-import type {AuthorizeResponse, PrincipalResponse, WorkspaceSummary} from "./types"
+import type {
+  AuthorizeResponse,
+  DeletionHoldsResponse,
+  PrincipalResponse,
+  WorkspaceChangeEvent,
+  WorkspaceDeletionHold,
+  WorkspaceSummary,
+} from "./types"
 
 const SECRET = "client-secret"
 const BASE = "https://core.test"
@@ -53,6 +60,18 @@ const workspace = (): WorkspaceSummary => ({
   name: "Acme",
   status: "active",
   authorizationRevision: 3,
+})
+
+const changeEvent = (seq: number, overrides: Partial<WorkspaceChangeEvent> = {}): WorkspaceChangeEvent => ({
+  eventId: `01HZ00000000000000000000${seq}`,
+  seq,
+  workspaceId: "ws_1",
+  action: "membership.added",
+  occurredAt: "2026-10-13T12:00:00.000Z",
+  target: {membershipId: "wm_1", mentraUserId: "mu_1"},
+  before: {role: null},
+  after: {role: "member"},
+  ...overrides,
 })
 
 const userPrincipal = () =>
@@ -292,6 +311,60 @@ describe("operations", () => {
       await expectClientError(client.resolveEmail("a@example.com"), "bad_response")
     }
   })
+
+  test("listChanges asks for the page after a cursor, signed over the exact query", async () => {
+    const page = {events: [changeEvent(8), changeEvent(9)], next: "9"}
+    const {client, calls} = clientFor(() => json(page))
+
+    expect(await client.listChanges({after: "7", limit: 2})).toEqual(page)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.method).toBe("GET")
+    expect(calls[0]!.url).toBe(`${BASE}/api/internal/workspaces/changes?after=7&limit=2`)
+    const url = new URL(calls[0]!.url)
+    expect(
+      verifyServiceRequest({
+        secrets: [SECRET],
+        method: "GET",
+        pathWithQuery: `${url.pathname}${url.search}`,
+        body: "",
+        timestampMs: Number(calls[0]!.headers.get(SERVICE_HEADERS.timestamp)),
+        signature: calls[0]!.headers.get(SERVICE_HEADERS.signature) ?? "",
+        nowMs: Date.now(),
+      }),
+    ).toBe(true)
+  })
+
+  test("listChanges sends only what it is given: no cursor starts from the beginning", async () => {
+    const empty = {events: [], next: null}
+    const {client, calls} = clientFor(() => json(empty))
+
+    expect(await client.listChanges({})).toEqual(empty)
+    expect(await client.listChanges({after: null})).toEqual(empty)
+    expect(await client.listChanges({after: "0"})).toEqual(empty)
+    expect(await client.listChanges({limit: 500})).toEqual(empty)
+
+    expect(calls.map(call => call.url.slice(BASE.length))).toEqual([
+      "/api/internal/workspaces/changes",
+      "/api/internal/workspaces/changes",
+      "/api/internal/workspaces/changes?after=0",
+      "/api/internal/workspaces/changes?limit=500",
+    ])
+  })
+
+  test("listChanges returns an event as Core sent it, tombstones with no workspace and null snapshots included", async () => {
+    const tombstone = changeEvent(10, {
+      workspaceId: null,
+      action: "user.deleted",
+      target: {mentraUserId: "mu_gone"},
+      before: null,
+      after: null,
+    })
+    const unknownAction = changeEvent(11, {action: "something.new", target: null})
+    const {client} = clientFor(() => json({events: [tombstone, unknownAction], next: null}))
+
+    expect(await client.listChanges({after: "9"})).toEqual({events: [tombstone, unknownAction], next: null})
+  })
 })
 
 describe("response shape", () => {
@@ -380,6 +453,45 @@ describe("response shape", () => {
     const notAnObject = clientFor(() => json([{credentialId: "cred_1", token: "msk_dev_x.y"}]))
     await expectClientError(notAnObject.client.mintServiceCredential(mint), "bad_response")
   })
+
+  test("fails closed when a change page has the wrong shape", async () => {
+    const good = changeEvent(1)
+    const bad: unknown[] = [
+      [good],
+      {next: null},
+      {events: good, next: null},
+      {events: [good]},
+      {events: [good], next: 1},
+      {events: [good], next: ""},
+      {events: [good], next: "not-a-cursor"},
+      {events: ["event"], next: null},
+      {events: [{...good, eventId: undefined}], next: null},
+      {events: [{...good, seq: "1"}], next: null},
+      {events: [{...good, seq: 1.5}], next: null},
+      {events: [{...good, seq: -1}], next: null},
+      {events: [{...good, action: undefined}], next: null},
+      {events: [{...good, workspaceId: 7}], next: null},
+      {events: [{...good, occurredAt: undefined}], next: null},
+      {events: [{...good, target: "x"}], next: null},
+      {events: [{...good, before: []}], next: null},
+      {events: [{...good, after: 7}], next: null},
+    ]
+    for (const body of bad) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.listChanges({}), "bad_response")
+    }
+  })
+
+  test("fails closed when a change page is out of order or its cursor does not point at its last event", async () => {
+    const outOfOrder = clientFor(() => json({events: [changeEvent(5), changeEvent(4)], next: "4"}))
+    await expectClientError(outOfOrder.client.listChanges({}), "bad_response")
+    const repeated = clientFor(() => json({events: [changeEvent(5), changeEvent(5)], next: "5"}))
+    await expectClientError(repeated.client.listChanges({}), "bad_response")
+    const wrongCursor = clientFor(() => json({events: [changeEvent(5), changeEvent(6)], next: "9"}))
+    await expectClientError(wrongCursor.client.listChanges({}), "bad_response")
+    const cursorWithoutEvents = clientFor(() => json({events: [], next: "9"}))
+    await expectClientError(cursorWithoutEvents.client.listChanges({}), "bad_response")
+  })
 })
 
 describe("failures", () => {
@@ -464,6 +576,103 @@ describe("failures", () => {
     await expectClientError(notJson.client.getWorkspace("ws_1"), "bad_response")
     const wrongShape = clientFor(() => json({name: "no id"}))
     await expectClientError(wrongShape.client.getWorkspace("ws_1"), "bad_response")
+  })
+})
+
+describe("deletion holds", () => {
+  const AS_OF = new Date("2026-10-14T12:34:56.789Z")
+  const holds = (...entries: WorkspaceDeletionHold[]): DeletionHoldsResponse => ({workspaceId: "ws 1", holds: entries, ignored: false})
+  const verifies = (call: Recorded) => {
+    const url = new URL(call.url)
+    const timestampMs = Number(call.headers.get(SERVICE_HEADERS.timestamp))
+    return verifyServiceRequest({
+      secrets: [SECRET],
+      method: call.method,
+      pathWithQuery: `${url.pathname}${url.search}`,
+      body: call.body,
+      timestampMs,
+      signature: call.headers.get(SERVICE_HEADERS.signature) ?? "",
+      nowMs: timestampMs,
+    })
+  }
+
+  test("setDeletionHold PUTs the reason, count and asOf to this service's own hold, signed over the exact path and body", async () => {
+    const answer = holds({service: "store", reason: "owns_miniapps", count: 3})
+    const {client, calls} = clientFor(() => json(answer))
+
+    expect(await client.setDeletionHold("ws 1", {reason: "owns_miniapps", count: 3, asOf: AS_OF})).toEqual(answer)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].method).toBe("PUT")
+    // The service in the path is always the one the client signs as: a service sets only its own hold.
+    expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws%201/deletion-holds/store`)
+    expect(calls[0].headers.get("content-type")).toBe("application/json")
+    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps", count: 3, asOf: "2026-10-14T12:34:56.789Z"})
+    expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("setDeletionHold sends no count when it is given none", async () => {
+    const {client, calls} = clientFor(() => json(holds({service: "store", reason: "owns_miniapps"})))
+    await client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF})
+    expect(JSON.parse(calls[0].body)).toEqual({reason: "owns_miniapps", asOf: "2026-10-14T12:34:56.789Z"})
+  })
+
+  test("clearDeletionHold DELETEs this service's hold with its asOf, and returns the holds left", async () => {
+    const answer = holds({service: "fleet", reason: "manages_devices"})
+    const {client, calls} = clientFor(() => json(answer))
+
+    expect(await client.clearDeletionHold("ws 1", {asOf: AS_OF})).toEqual(answer)
+
+    expect(calls[0].method).toBe("DELETE")
+    expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws%201/deletion-holds/store`)
+    expect(calls[0].headers.get("content-type")).toBe("application/json")
+    expect(JSON.parse(calls[0].body)).toEqual({asOf: "2026-10-14T12:34:56.789Z"})
+    expect(verifies(calls[0])).toBe(true)
+  })
+
+  test("an update Core ignored as stale resolves with the holds Core keeps and ignored: true", async () => {
+    const answer: DeletionHoldsResponse = {workspaceId: "ws 1", holds: [{service: "store", reason: "owns_miniapps", count: 2}], ignored: true}
+    const {client} = clientFor(() => json(answer))
+    expect(await client.clearDeletionHold("ws 1", {asOf: AS_OF})).toEqual(answer)
+    expect(await client.setDeletionHold("ws 1", {reason: "owns_miniapps", count: 5, asOf: AS_OF})).toEqual(answer)
+  })
+
+  test("an asOf that is not a valid date is refused before anything is sent", async () => {
+    const {client, calls} = clientFor(() => json(holds()))
+    const invalid = new Date(Number.NaN)
+    await expect(client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: invalid})).rejects.toThrow(RangeError)
+    await expect(client.clearDeletionHold("ws_1", {asOf: invalid})).rejects.toThrow(RangeError)
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a refusal is an error with Core's status: an unknown workspace, a deleted one, another service's hold", async () => {
+    const unknown = clientFor(() => json({error: "workspace_not_found"}, 404))
+    expect((await expectClientError(unknown.client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "bad_request")).status).toBe(404)
+    expect((await expectClientError(unknown.client.clearDeletionHold("ws_1", {asOf: AS_OF}), "bad_request")).status).toBe(404)
+    const deleted = clientFor(() => json({error: "workspace_deleted"}, 410))
+    expect((await expectClientError(deleted.client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "bad_request")).status).toBe(410)
+    const forbidden = clientFor(() => json({error: "forbidden"}, 403))
+    await expectClientError(forbidden.client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "forbidden")
+  })
+
+  test("fails closed on an answer that does not have the holds shape", async () => {
+    for (const body of [
+      {},
+      {workspaceId: "ws_1"},
+      {workspaceId: "ws_1", holds: {}},
+      {workspaceId: 5, holds: []},
+      {workspaceId: "ws_1", holds: [{service: "store"}]},
+      {workspaceId: "ws_1", holds: [{service: "store", reason: "owns_miniapps", count: "3"}]},
+      {workspaceId: "ws_1", holds: [{service: "store", reason: "owns_miniapps", count: 0}]},
+      // A Core that predates asOf says nothing about it, and would have applied a late call.
+      {workspaceId: "ws_1", holds: []},
+      {workspaceId: "ws_1", holds: [], ignored: "true"},
+      {workspaceId: "ws_1", holds: [], ignored: null},
+    ]) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.setDeletionHold("ws_1", {reason: "owns_miniapps", asOf: AS_OF}), "bad_response")
+      await expectClientError(client.clearDeletionHold("ws_1", {asOf: AS_OF}), "bad_response")
+    }
   })
 })
 

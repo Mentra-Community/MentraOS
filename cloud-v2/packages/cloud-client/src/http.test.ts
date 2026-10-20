@@ -455,7 +455,7 @@ describe("createHttpClient", () => {
       new Response(
         JSON.stringify({
           code: "NOT_FOUND",
-          message: "bundle missing",
+          message: "report missing",
         }),
         { status: 404, headers: { "Content-Type": "application/json" } },
       )) as unknown as typeof fetch;
@@ -463,7 +463,7 @@ describe("createHttpClient", () => {
     try {
       const http = createHttpClient({ baseUrl: "https://core.test", logger });
       try {
-        await http.get("/api/client/miniapps/demo/bundle");
+        await http.get("/api/client/reports/rep_demo");
         throw new Error("expected request to fail");
       } catch (err) {
         expect(err).toBeInstanceOf(HttpError);
@@ -471,11 +471,48 @@ describe("createHttpClient", () => {
         expect(httpError.status).toBe(404);
         expect(httpError.code).toBe("NOT_FOUND");
         expect(httpError.message).toBe(
-          "HTTP 404 on GET /api/client/miniapps/demo/bundle: bundle missing",
+          "HTTP 404 on GET /api/client/reports/rep_demo: report missing",
         );
       }
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+  describe("Retry-After on error responses", () => {
+    async function errorFor(status: number, headers: Record<string, string>): Promise<HttpError> {
+      const http = createHttpClient({
+        baseUrl: "https://core.test",
+        logger,
+        fetch: async () => new Response(JSON.stringify({ error: "slow_down" }), { status, headers }),
+      });
+      const error = await http.get("/api/client/anything", { idempotent: false }).catch((e) => e);
+      expect(error).toBeInstanceOf(HttpError);
+      return error as HttpError;
+    }
+
+    test("reads delta-seconds into HttpError.retryAfterSeconds", async () => {
+      expect((await errorFor(503, { "Retry-After": "30" })).retryAfterSeconds).toBe(30);
+      expect((await errorFor(429, { "Retry-After": "0" })).retryAfterSeconds).toBe(0);
+      expect((await errorFor(429, { "Retry-After": " 15 " })).retryAfterSeconds).toBe(15);
+    });
+
+    test("leaves retryAfterSeconds undefined when absent, an HTTP-date, or garbage", async () => {
+      expect((await errorFor(503, {})).retryAfterSeconds).toBeUndefined();
+      expect((await errorFor(503, { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" })).retryAfterSeconds).toBeUndefined();
+      for (const value of ["", "soon", "-1", "+5", "1.5", "1e3", "99999999999999999999"]) {
+        expect((await errorFor(503, { "Retry-After": value })).retryAfterSeconds).toBeUndefined();
+      }
+    });
+
+    test("keeps status and code mapping unchanged", async () => {
+      const error = await errorFor(503, { "Retry-After": "30" });
+      expect(error.status).toBe(503);
+      expect(error.code).toBe("slow_down");
+    });
+
+    test("a plain HttpError has no retryAfterSeconds and accepts it as an optional fourth argument", () => {
+      expect(new HttpError("x", 503, "code").retryAfterSeconds).toBeUndefined();
+      expect(new HttpError("x", 503, "code", 9).retryAfterSeconds).toBe(9);
+    });
   });
 });

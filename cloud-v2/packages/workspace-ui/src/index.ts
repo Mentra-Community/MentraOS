@@ -14,6 +14,7 @@ export {
   errorMessage,
   isInvitationGone,
   isWorkspaceChangedError,
+  isWorkspaceHeldError,
   WORKSPACE_CHANGED_MESSAGE,
   WorkspaceApiError,
 } from "./errors";

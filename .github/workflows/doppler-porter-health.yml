@@ -9,6 +9,10 @@ on:
       - ".github/scripts/porter-doppler-health*"
       - ".github/scripts/porter-doppler-source*"
       - "cloud-v2/porter*.yaml"
+      - "cloud-v2/deploy/porter.shared.yaml"
+      - "cloud-v2/deploy/runtime-policy.yaml"
+      - ".github/scripts/render-cloud-v2-config*"
+      - ".github/scripts/coordinated-cloud-v2-records.mjs"
       - ".github/production-release/doppler-porter-contract.json"
       - ".github/workflows/doppler-porter-health.yml"
 
@@ -21,13 +25,21 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Render every deployment environment
+        run: |
+          for environment in dev staging prod; do
+            bun .github/scripts/render-cloud-v2-config.mjs --source-root . --environment "$environment"
+          done
       - name: Test audit failure detection
         run: node --test .github/scripts/porter-doppler-{health,source}.test.mjs
       - name: Reject deployment source overrides
@@ -37,7 +49,7 @@ jobs:
     # Pull requests run the uncredentialed tests/source guard above.
     needs: test
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}

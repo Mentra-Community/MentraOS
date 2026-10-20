@@ -21,8 +21,23 @@ describe("package entry points", () => {
     expect(root.SERVICE_UNAUTHORIZED_ERROR).toBe("service_unauthorized")
     expect(root.WORKSPACE_NOT_FOUND_ERROR).toBe("workspace_not_found")
     expect(root.USER_NOT_FOUND_ERROR).toBe("user_not_found")
+    expect(root.WORKSPACE_HAS_HOLDS_ERROR).toBe("workspace_has_holds")
+    expect(root.OWNS_MINIAPPS_HOLD_REASON).toBe("owns_miniapps")
+    // The portals put holds in words with the same function Core uses for its 409.
+    expect(typeof root.describeDeletionHold).toBe("function")
+    expect(typeof root.describeDeletionHolds).toBe("function")
+    expect(root.FORWARDED_PRINCIPAL_HEADERS).toEqual({
+      principal: "x-mentra-principal",
+      principalSignature: "x-mentra-principal-signature",
+    })
+    expect(root.FORWARDING_SERVICE).toBe("core")
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
+    // The Fleet UI contract names DOM types, so it has its own subpath and server packages never see it.
+    expect(Object.keys(root)).not.toContain("FLEET_UI_CONTRACT_VERSION")
+    for (const name of ["signForwardedPrincipal", "verifyForwardedPrincipal", "parseForwardedPrincipal"]) {
+      expect(Object.keys(root)).not.toContain(name)
+    }
   })
 
   test("the server entry exposes signing and the Core client", () => {
@@ -30,12 +45,22 @@ describe("package entry points", () => {
     expect(typeof server.verifyServiceRequest).toBe("function")
     expect(typeof server.createCoreWorkspaceClient).toBe("function")
     expect(typeof server.CoreWorkspaceClientError).toBe("function")
+    expect(typeof server.signForwardedPrincipal).toBe("function")
+    expect(typeof server.verifyForwardedPrincipal).toBe("function")
+    expect(typeof server.parseForwardedPrincipal).toBe("function")
+    expect(server.FORWARDING_SERVICE).toBe("core")
     expect(server.SERVICE_HEADERS.service).toBe("x-mentra-service")
     expect(server.INVALID_TOKEN_ERROR).toBe("invalid_token")
+    expect(server.WORKSPACE_HAS_HOLDS_ERROR).toBe("workspace_has_holds")
+    expect(typeof server.describeDeletionHolds).toBe("function")
   })
 
   test("package.json maps the root to the browser-safe entry and ./server to the Node entry", () => {
     const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"))
-    expect(manifest.exports).toEqual({".": "./src/index.ts", "./server": "./src/server.ts"})
+    expect(manifest.exports).toEqual({
+      ".": "./src/index.ts",
+      "./server": "./src/server.ts",
+      "./fleet-ui": "./src/fleet-ui.ts",
+    })
   })
 })

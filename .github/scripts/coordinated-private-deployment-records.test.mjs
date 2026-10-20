@@ -25,9 +25,11 @@ function runtimeImage(status = "published") {
     digest: status === "published" ? `sha256:${"b".repeat(64)}` : undefined,
   }
 }
-const workspaceOrigin = "https://demo.acmeworkspace.com"
-const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+// Dev releases deploy the demo-dev stack.
+const workspaceOrigin = "https://demo-dev.acmeworkspace.com"
+const coreHostname = "ca-mentra-ent-demo-dev-core.politefield-26674ca2.westus2.azurecontainerapps.io"
 const coreOrigin = `https://${coreHostname}`
+const salesDemoCoreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
 
 function create(status = "deployed") {
   return createPrivateDeploymentRecord({
@@ -39,11 +41,11 @@ function create(status = "deployed") {
     sourceImageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
     image:
       status === "deployed"
-        ? `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`
+        ? `mentraenterprisedemodev.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`
         : undefined,
     imageDigest: status === "deployed" ? `sha256:${"b".repeat(64)}` : undefined,
-    revision: status === "deployed" ? "ca-mentra-enterprise-reference--0000091" : undefined,
-    coreRevision: status === "deployed" ? "ca-mentra-ent-ref-core--0000091" : undefined,
+    revision: status === "deployed" ? "ca-mentra-ent-demo-dev--0000091" : undefined,
+    coreRevision: status === "deployed" ? "ca-mentra-ent-demo-dev-core--0000091" : undefined,
     workspaceOrigin: status === "deployed" ? workspaceOrigin : undefined,
     coreHostname: status === "deployed" ? coreHostname : undefined,
     coreOrigin: status === "deployed" ? coreOrigin : undefined,
@@ -88,11 +90,11 @@ test("rejects mutable or mismatched deployment evidence", () => {
 
   const wrongSource = structuredClone(create())
   wrongSource.sourceCommit = "c".repeat(40)
-  assert.throws(() => validatePrivateDeploymentRecord({plan, record: wrongSource}), /do not match a dev release plan/)
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record: wrongSource}), /do not match a dev or beta release plan/)
 
   const rebuilt = structuredClone(create())
   rebuilt.azure.imageDigest = `sha256:${"d".repeat(64)}`
-  rebuilt.azure.image = `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${rebuilt.azure.imageDigest}`
+  rebuilt.azure.image = `mentraenterprisedemodev.azurecr.io/mentra-cloud-enterprise@${rebuilt.azure.imageDigest}`
   assert.throws(() => validatePrivateDeploymentRecord({plan, record: rebuilt}), /canonical GHCR source/)
 
   const substitutedPublication = runtimeImage()
@@ -111,8 +113,10 @@ test("rejects mutable or mismatched deployment evidence", () => {
 test("rejects look-alike or non-default-port Core origins", () => {
   for (const lookAlike of [
     `${coreOrigin}.evil.example`,
-    `https://${coreHostname.replace(".gentlehill-", ".gentlehil1-")}`,
-    `https://ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io.example.com`,
+    `https://${coreHostname.replace(".politefield-", ".politefie1d-")}`,
+    `https://${coreHostname}.example.com`,
+    // The sales demo's Core is another stack.
+    `https://${salesDemoCoreHostname}`,
   ]) {
     assert.throws(
       () => createPrivateDeploymentRecord({...deploymentArgs(), coreOrigin: lookAlike}),
@@ -127,8 +131,9 @@ test("rejects look-alike or non-default-port Core origins", () => {
   for (const badHostname of [
     undefined,
     "",
-    "ca-mentra-ent-ref-core.example.azurecontainerapps.io",
-    "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io.example.com",
+    "ca-mentra-ent-demo-dev-core.example.azurecontainerapps.io",
+    `${coreHostname}.example.com`,
+    salesDemoCoreHostname,
   ]) {
     assert.throws(
       () => createPrivateDeploymentRecord({...deploymentArgs(), coreHostname: badHostname}),
@@ -137,7 +142,7 @@ test("rejects look-alike or non-default-port Core origins", () => {
     )
   }
   const recorded = structuredClone(create())
-  recorded.azure.coreHostname = "ca-mentra-ent-ref-core.happyfield-0123abcd.westus2.azurecontainerapps.io"
+  recorded.azure.coreHostname = "ca-mentra-ent-demo-dev-core.happyfield-0123abcd.westus2.azurecontainerapps.io"
   assert.throws(
     () => validatePrivateDeploymentRecord({plan, record: recorded}),
     /expected Azure Core Container App ingress/,
@@ -145,14 +150,13 @@ test("rejects look-alike or non-default-port Core origins", () => {
 })
 
 test("rejects deployed evidence with the wrong workspace origin", () => {
-  assert.throws(
-    () =>
-      createPrivateDeploymentRecord({
-        ...deploymentArgs(),
-        workspaceOrigin: "https://demo.acmeworkspace.com.evil.example",
-      }),
-    /wrong workspace origin/,
-  )
+  for (const wrongOrigin of ["https://demo-dev.acmeworkspace.com.evil.example", "https://demo.acmeworkspace.com"]) {
+    assert.throws(
+      () => createPrivateDeploymentRecord({...deploymentArgs(), workspaceOrigin: wrongOrigin}),
+      /wrong workspace origin/,
+      wrongOrigin,
+    )
+  }
   const recorded = structuredClone(create())
   recorded.workspaceOrigin = "https://mentra-acmeworkspace.example"
   assert.throws(() => validatePrivateDeploymentRecord({plan, record: recorded}), /wrong workspace origin/)
@@ -204,6 +208,47 @@ test("rejects a recorded requestedTag that differs from the plan", () => {
   )
 })
 
+test("beta releases record the sales demo stack, and no stack serves another channel", () => {
+  const betaPlan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 91,
+    sourceCommit,
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 91),
+  })
+  const salesDemoOrigin = "https://demo.acmeworkspace.com"
+  const salesDemoCoreOrigin = `https://${salesDemoCoreHostname}`
+  const record = createPrivateDeploymentRecord({
+    ...deploymentArgs(),
+    plan: betaPlan,
+    image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`,
+    revision: "ca-mentra-enterprise-reference--0000091",
+    coreRevision: "ca-mentra-ent-ref-core--0000091",
+    workspaceOrigin: salesDemoOrigin,
+    coreHostname: salesDemoCoreHostname,
+    coreOrigin: salesDemoCoreOrigin,
+    checks: [salesDemoOrigin, salesDemoCoreOrigin].flatMap((origin) =>
+      ["healthz", "ready"].map((probe) => ({url: `${origin}/${probe}`, ready: true, statusCode: 200})),
+    ),
+  })
+  assert.equal(record.environment, "enterprise-demo")
+  assert.equal(record.azure.resourceGroup, "rg-mentra-enterprise-reference")
+  assert.equal(validatePrivateDeploymentRecord({plan: betaPlan, record, runtimeImage: runtimeImage()}).workspaceOrigin,
+    salesDemoOrigin)
+  assert.equal(create().environment, "enterprise-demo-dev")
+
+  // A dev-stack record cannot stand in for a beta release, nor the reverse.
+  const devRecordForBeta = {...structuredClone(create()), channel: "beta", releaseSetId: betaPlan.releaseSetId,
+    releaseIdentity: betaPlan.releaseIdentity}
+  assert.throws(() => validatePrivateDeploymentRecord({plan: betaPlan, record: devRecordForBeta}),
+    /does not match the release plan and target/)
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record}), /does not match the release plan and target/)
+  assert.throws(
+    () => createPrivateDeploymentRecord({...deploymentArgs(), plan: {...plan, channel: "production"}}),
+    /do not match a dev or beta release plan/,
+  )
+})
+
 test("validation-only evidence must not carry a Core hostname", () => {
   const record = structuredClone(create("validated"))
   record.azure.coreHostname = coreHostname
@@ -221,10 +266,10 @@ function deploymentArgs() {
     status: "deployed",
     sourceImage: "ghcr.io/mentra-community/mentra-cloud",
     sourceImageDigest: `sha256:${"b".repeat(64)}`,
-    image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`,
+    image: `mentraenterprisedemodev.azurecr.io/mentra-cloud-enterprise@sha256:${"b".repeat(64)}`,
     imageDigest: `sha256:${"b".repeat(64)}`,
-    revision: "ca-mentra-enterprise-reference--0000091",
-    coreRevision: "ca-mentra-ent-ref-core--0000091",
+    revision: "ca-mentra-ent-demo-dev--0000091",
+    coreRevision: "ca-mentra-ent-demo-dev-core--0000091",
     workspaceOrigin,
     coreHostname,
     coreOrigin,

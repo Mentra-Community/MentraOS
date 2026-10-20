@@ -52,6 +52,7 @@ jest.mock("@mentra/bluetooth-sdk/ota-transport", () => {
   return {
     otaLocalNetwork: {
       isAvailable: () => true,
+      getNetworkDiagnostics: mentraLocalNetworkMock.getNetworkDiagnostics,
       connect: mentraLocalNetworkMock.connect,
       request: mentraLocalNetworkMock.request,
       download: mentraLocalNetworkMock.download,
@@ -552,6 +553,9 @@ const mockIslandEntries = () => {
             connected: realGlasses.isGlassesConnected(glassesState.connection),
             fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
             bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+            bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+            bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+            audioSetup: glassesState.audioSetup ?? {state: "idle"},
             nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
           }
         }),
@@ -563,6 +567,9 @@ const mockIslandEntries = () => {
               connected: realGlasses.isGlassesConnected(glassesState.connection),
               fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
               bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+              bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
+              bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+              audioSetup: glassesState.audioSetup ?? {state: "idle"},
               nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
             }
           }

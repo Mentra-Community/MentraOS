@@ -48,7 +48,11 @@ For UI or system-sheet failures, inspect the saved failure screenshot or relevan
 recording interval alongside the accessibility tree before concluding the cause.
 Use existing video when no screenshot was captured, and record missing or failed
 captures. A missing screenshot alone does not justify replaying inputs or asking
-the human for a photo.
+the human for a photo. For permission or preflight stalls, first inspect both app
+and full-desktop captures and follow
+[the permission diagnosis guidance](../investigate-routine-failure/SKILL.md#inspect-permission-stalls-before-another-attempt).
+Report the exact observed host/dialog/action promptly and verify the blocked
+operation after a grant; selected-app AX and worker readiness are insufficient.
 
 For network failures, distinguish glasses station Wi-Fi from the glasses SoftAP,
 phone Internet and host routing. API33 station-Wi-Fi routines declare
@@ -224,7 +228,10 @@ using their existing controller progress and budget mechanics below.
 For supported PR targets, labels may start CI and testing while review is still running. Adopt an
 existing request for the exact new head instead of dispatching duplicates. After
 review passes, request any missing selected routines using that head's CI
-artifacts through the existing dispatch path. Qualification requires both an
+artifacts through the existing dispatch path. Keep the fixing PR open until its
+check-owned runs finish; [PR check sequencing](../select-pr-routines/SKILL.md#verify-a-fix-against-its-original-failure)
+explains cancellation on close/merge and accepted cleanup before replacement.
+Qualification requires both an
 independent approval and passing routine results for that same head, regardless
 of which finishes first. Never SSH into fixtures to bypass the routine worker.
 For an already implemented, reviewed correction, begin with ordinary full recorded

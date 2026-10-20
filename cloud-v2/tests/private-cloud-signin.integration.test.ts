@@ -4,7 +4,7 @@
  *
  * Starts a real Core (`startCore`) with one host for Core, its sign-in server
  * (the issuer) and the admin portal, a fake Entra provider (fetch
- * interception), no Supabase settings and no WorkOS settings. An Entra admin
+ * interception) and no Supabase settings. An Entra admin
  * on the allowlist signs in to the admin portal through Core's sign-in server,
  * which fronts Entra, and gets the same Core user as their phone (`oid`).
  * Core serves the admin portal's files and never answers `/api/*`, `/oidc/*`
@@ -77,9 +77,6 @@ beforeAll(async () => {
     ]),
     CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET: CLIENT_SECRETS.CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET,
     CLOUD_CORE_ADMIN_STATIC_DIR: staticDir,
-    WORKOS_API_KEY: undefined,
-    WORKOS_CLIENT_ID: undefined,
-    WORKOS_COOKIE_PASSWORD: undefined,
     REFRESH_TOKEN_PEPPER: "private-cloud-signin-pepper",
   })
   resetCoreKeyCaches()

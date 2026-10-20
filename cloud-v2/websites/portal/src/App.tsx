@@ -5,6 +5,7 @@ import { BrandPage } from "@/components/brand";
 import { PortalShell } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
 import { api, safeLocalStorage, type PortalMe } from "./lib/api";
+import { DEVELOPER_CONSOLE_URL } from "./lib/config";
 import { Redirect, usePathname } from "./lib/navigation";
 import { PortalProvider, portalWorkspaceApi, usePortal, type PortalSession } from "./lib/portal";
 import {
@@ -102,6 +103,7 @@ function PortalPage() {
     forgetInvitation: invites.forgetInvitation,
     signOut: () => void signOut(),
     signingOut,
+    developerConsoleUrl: DEVELOPER_CONSOLE_URL,
   };
 
   return (
@@ -161,7 +163,7 @@ function InvitationRoute() {
 
 export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { invitePending?: boolean; loginUrl?: string }) {
   return (
-    <BrandPage title="Sign into the Mentra Workspace Portal">
+    <BrandPage title="Sign into Mentra Portal">
       <p className="text-muted-foreground mb-7">
         {invitePending
           ? "Sign in with the email address your invitation was sent to, then accept it."

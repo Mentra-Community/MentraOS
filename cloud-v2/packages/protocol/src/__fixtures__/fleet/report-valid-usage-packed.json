@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "schemaVersion": 1,
+      "recordId": "rec-pack-0001",
+      "phoneDeviceId": "phone-7f3a91",
+      "collectorSessionId": "cs-20261013-01",
+      "sequence": 4,
+      "observedAt": "2026-10-13T11:03:10Z",
+      "capabilities": ["glasses_connection", "miniapp_execution", "app_foreground", "engine_active"],
+      "kind": "usage_checkpoint",
+      "payload": {
+        "sessions": [
+          {
+            "activity": "glasses_connection",
+            "activitySessionId": "act-conn-01",
+            "deviceBinding": {
+              "kind": "serial",
+              "manufacturer": "Mentra",
+              "product": "mentra_live",
+              "serial": "ML2A-0042-7731"
+            },
+            "startedAt": "2026-10-13T10:59:00Z",
+            "elapsedMs": 250000,
+            "ended": false
+          },
+          {
+            "activity": "miniapp_execution",
+            "activitySessionId": "act-8d02",
+            "packageName": "com.mentra.notes",
+            "startedAt": "2026-10-13T11:02:10Z",
+            "elapsedMs": 60000,
+            "ended": false
+          },
+          {
+            "activity": "miniapp_execution",
+            "activitySessionId": "act-8c91",
+            "packageName": "com.acme.inventory",
+            "startedAt": "2026-10-13T11:00:30Z",
+            "elapsedMs": 120000,
+            "ended": true
+          },
+          {
+            "activity": "app_foreground",
+            "activitySessionId": "act-fg-01",
+            "startedAt": "2026-10-13T10:58:30Z",
+            "elapsedMs": 280000,
+            "ended": false
+          },
+          {
+            "activity": "engine_active",
+            "activitySessionId": "act-eng-01",
+            "startedAt": "2026-10-13T08:00:00Z",
+            "elapsedMs": 10990000,
+            "ended": false
+          }
+        ]
+      }
+    }
+  ]
+}

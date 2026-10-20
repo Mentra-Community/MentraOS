@@ -13,7 +13,7 @@ The MentraOS cloud rewrite for the local JS miniapp SDK.
 ```
 cloud-v2/
 ├── packages/
-│   ├── core/      Mentra Services (OEM auth, portal backend, REST, miniapp store)
+│   ├── core/      Mentra Services (OEM auth, portal backend, REST)
 │   ├── audio/     Audio Stack (UDP ingress, workers, transcription/translation)
 │   ├── proxy/     Forwarder / reverse proxy (OEM-deployable)
 │   └── shared/    Types, config, observability primitives

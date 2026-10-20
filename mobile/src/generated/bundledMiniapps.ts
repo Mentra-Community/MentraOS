@@ -7,16 +7,16 @@
 
 export const BUNDLED_MINIAPPS: number[] = [
   require("@assets/miniapps/com.mentra.ai-1.5.14.zip"),
-  require("@assets/miniapps/com.mentra.call-2.1.61.zip"),
-  require("@assets/miniapps/com.mentra.captions-1.0.22.zip"),
+  require("@assets/miniapps/com.mentra.call-2.1.62.zip"),
+  require("@assets/miniapps/com.mentra.captions-1.0.24.zip"),
   require("@assets/miniapps/com.mentra.enterprise-0.1.11.zip"),
   require("@assets/miniapps/com.mentra.link-1.0.21.zip"),
-  require("@assets/miniapps/com.mentra.livestreamer-1.0.36.zip"),
+  require("@assets/miniapps/com.mentra.livestreamer-1.0.37.zip"),
   require("@assets/miniapps/com.mentra.merge-0.1.34.zip"),
   require("@assets/miniapps/com.mentra.navigation-1.1.36.zip"),
   require("@assets/miniapps/com.mentra.notes-1.0.30.zip"),
   require("@assets/miniapps/com.mentra.recorder-1.0.19.zip"),
-  require("@assets/miniapps/com.mentra.store-1.0.29.zip"),
+  require("@assets/miniapps/com.mentra.store-1.0.30.zip"),
   require("@assets/miniapps/com.mentra.teleprompter-1.0.12.zip"),
   require("@assets/miniapps/com.mentra.translation-1.0.25.zip"),
 ]

@@ -14,6 +14,7 @@ import sys
 import subprocess
 import tempfile
 import zipfile
+from nimo_capability import optional_nimo_capability
 from mac_installer import DEVELOPER_ID_REQUIREMENT, package_installer
 
 BUNDLE_ID = "com.mentra.mentra"
@@ -270,6 +271,9 @@ def package(ipa, output, mac_signing):
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}
+        capability = optional_nimo_capability(executable, HERE.parents[2], compilation["mobileSourceCommit"])
+        if capability is not None:
+            manifest["nativeCapabilities"] = {"nimoMacSession": capability}
         mac = root / "Mentra PR"
         mac.mkdir()
         run("ditto", app, mac / "Mentra.app")

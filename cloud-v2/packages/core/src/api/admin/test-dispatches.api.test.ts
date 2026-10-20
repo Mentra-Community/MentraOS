@@ -11,7 +11,7 @@ import type {TestBuildGateway} from "../../services/test-builds.service";
 import type {TestHostStateService} from "../../services/test-host-state.service";
 const selection = {requestId: "request-1", hostId: "mini", laneId: "mac", routineId: "no-glasses", platform: "ios-on-mac",
  source: {channel: "dev", buildRunId: 15, publicationAttempt: 1}, archiveSha256: "c".repeat(64)};
-const resources = [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "recorder"}];
+const resources = [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "recorder", storage: {poolId:"mini:disk:1",observedAt:new Date().toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}}];
 function fleetJobs(get: (id: string) => StoredRequest | undefined, save: (row: StoredRequest) => void,
   builds: TestBuildGateway, definitions: RoutineDefinitionService, hosts: TestHostStateService, revision: () => string) {
   const rows: RoutineJobRepository = {
@@ -140,7 +140,7 @@ function glassesFixture(
         minimumRoutineApiVersion: 1,
         resourceRequirements: [{kind:"app",capabilities:[]},{kind:"recorder",capabilities:[]},{kind:"glasses",capabilities:["glasses-ble"]}],
         glasses: {models: ["mentra-live"], ...(startSoftware ? {startSoftware} : {})},
-        execution: {resourceKinds: ["app", "recorder", "glasses"]},
+        execution: {resourceKinds: ["app", "recorder", "glasses"], policy:{estimatedOutputBytes:1024**3}},
       },
     }),
   } as unknown as RoutineDefinitionService

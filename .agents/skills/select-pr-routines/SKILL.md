@@ -86,6 +86,13 @@ PR's exact app artifacts. Follow its ongoing progress and use its native re-run
 or cancellation controls. An active predecessor waits for cleanup; an ambiguous
 or invalid label reports a refusal instead of guessing another test.
 
+Keep the PR open until its required ordinary or tagged routine check has finished.
+Closing or merging the PR cancels remaining check-owned requests, including linked
+reruns whose build inputs are already frozen. Cancellation does not release hardware;
+wait for accepted cleanup/readiness before a replacement run. If an early merge is
+necessary, preserve the canceled result and verify the merged build through the
+ordinary linked-rerun API.
+
 Keep the original failed run, screenshots and incident report in the PR evidence.
 State whether the change fixes app code, routine code or framework code, and
 link the resulting verification attempt. A labelled rerun attaches the fixing PR as

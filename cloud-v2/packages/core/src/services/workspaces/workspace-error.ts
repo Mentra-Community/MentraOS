@@ -23,6 +23,7 @@ export type WorkspaceErrorCode =
   | "invitations_unavailable"
   | "user_not_found"
   | "account_deleted"
+  | "workspace_has_holds"
 
 const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   not_found: 404,
@@ -41,19 +42,25 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   invitations_unavailable: 503,
   user_not_found: 404,
   account_deleted: 403,
+  workspace_has_holds: 409,
 }
 
+/**
+ * `details` are further fields of the error body, beside `error` and `error_description`: the holds of a
+ * 409 `workspace_has_holds`, for one.
+ */
 export class WorkspaceError extends Error {
   constructor(
     public code: WorkspaceErrorCode,
     public status: number,
     message?: string,
+    public details?: Record<string, unknown>,
   ) {
     super(message ?? code)
     this.name = "WorkspaceError"
   }
 }
 
-export function fail(code: WorkspaceErrorCode, message?: string): never {
-  throw new WorkspaceError(code, STATUS_BY_CODE[code], message)
+export function fail(code: WorkspaceErrorCode, message?: string, details?: Record<string, unknown>): never {
+  throw new WorkspaceError(code, STATUS_BY_CODE[code], message, details)
 }

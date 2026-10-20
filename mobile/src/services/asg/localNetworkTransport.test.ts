@@ -142,6 +142,27 @@ describe("Mac hotspot ownership", () => {
 })
 
 describe("localNetworkErrorDetails", () => {
+  it("recovers exact owned legacy Expo causes without exposing arbitrary native text", () => {
+    const error = Object.assign(new Error("Call to function joinLocalHotspot was rejected\n→ Caused by: Hotspot join timed out"), {code: "ERR_UNEXPECTED"})
+    expect(localNetworkErrorDetails(error)).toEqual({code: "ERR_UNEXPECTED", message: "Hotspot join timed out"})
+    expect(localNetworkErrorDetails({code: "ERR_UNEXPECTED", message: "Mac Wi-Fi scan failed (com.apple.wifi, -3905)"})).toEqual({
+      code: "ERR_UNEXPECTED", message: "Mac Wi-Fi scan failed (com.apple.wifi, -3905)",
+    })
+    for (const message of ["private native description", "Hotspot join timed out with private network", "Mac Wi-Fi scan failed (private domain, -3905)", "a".repeat(2049)]) {
+      expect(localNetworkErrorDetails({code: "ERR_UNEXPECTED", message})).toEqual({code: "ERR_UNEXPECTED"})
+    }
+  })
+  it("retains bounded hotspot bridge messages without copying arbitrary native descriptions", () => {
+    const error = Object.assign(new Error("Mac Wi-Fi scan failed (com.apple.wifi, -3905)"), {
+      code: "ERR_HOTSPOT_JOIN", userInfo: {networkName: "fixture confidential network", opaque: "fixture confidential value"},
+    })
+    expect(localNetworkErrorDetails(error)).toEqual({
+      code: "ERR_HOTSPOT_JOIN", message: "Mac Wi-Fi scan failed (com.apple.wifi, -3905)",
+    })
+    expect(localNetworkErrorDetails({code: "ERR_UNEXPECTED", message: "private NSError description"})).toEqual({code: "ERR_UNEXPECTED"})
+    expect(localNetworkErrorDetails({code: "ERR_HOTSPOT_NATIVE", message: "\n\t" + "a".repeat(600)}).message).toBe("a".repeat(512))
+    expect(JSON.stringify(localNetworkErrorDetails(error))).not.toMatch(/fixture confidential|networkName|opaque/)
+  })
   it("preserves bridged domain and underlying code without a native stack or private userInfo", () => {
     const error = Object.assign(new Error("internal error"), {
       code: "unableToConnect",

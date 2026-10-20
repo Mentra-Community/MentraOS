@@ -18,6 +18,7 @@ import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {PrBuildDispatchFailure, GithubPrRoutineChecks, type PrRoutineGithub} from './pr-routine-check-github'
 import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-routine-check.repository'
 import {PrRerunReferenceService} from './pr-rerun-reference.service'
+import {matchingRoutineProgress} from '../types/routine-progress.types'
 
 const digest = (value: unknown) => requestInputDigest(value)
 const selectionDigest = ({requestId: _requestId, ...selected}: NonNullable<PrRoutineMember['selection']>) => digest(selected)
@@ -50,12 +51,13 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
   const attempt = gate.attempt, done = !!attempt.conclusion
   const rows = attempt.members.map(member => {
     const progress = member.progress, stale = !progress || now - Date.parse(progress.observedAt) > 60_000
+    const progressEnd = progress && (done ? Date.parse(attempt.finishedAt ?? progress.observedAt) : stale ? Date.parse(progress.observedAt) : now)
     const step = progress?.currentStep, name = step && member.stepIds[step.index] === step.id
       ? member.stepNames[step.index] : undefined
     const stage = member.settled ? member.status : stale ? 'Progress unavailable' : progress!.phase.replace(/-/g, ' ')
     const original = member.linkedTarget ? `${adminBase()}/?${'suiteId' in member.linkedTarget.parent ? 'testSuite=' + encodeURIComponent(member.linkedTarget.parent.suiteId) : 'testRun=' + encodeURIComponent(member.linkedTarget.parent.requestId)}` : undefined
     const result = member.requestId ? `${adminBase()}/?testRun=${encodeURIComponent(member.requestId)}` : undefined
-    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor(((stale ? Date.parse(progress.observedAt) : now) - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
+    return `| ${member.title}${original ? ` · [Original](${original})` : ''}${result ? ` · [Run](${result})` : ''} | ${member.laneLabel ?? member.platform} | ${member.status === 'pass' && !member.publicationComplete ? 'publishing evidence' : member.status} | ${member.waitReason ?? stage}${member.followUp && 'state' in member.followUp && member.followUp.state === 'unavailable' ? ' · Follow-up record unavailable during canonical conversion' : ''}${name ? `: ${name} (${step!.index + 1}/${member.stepIds.length})` : ''}${progress ? ` · ${progress.completedSteps}/${progress.totalSteps} test steps · ${Math.max(0, Math.floor((progressEnd! - Date.parse(progress.startedAt)) / 1000))}s · observed ${progress.observedAt}` : ''} |`
   })
   const coverage = attempt.members.length ? `Selected ${attempt.members.length} routine/platform member(s) at ${gate.routineRevision ?? 'pending source'}.`
     : gate.selectionError ?? gate.selectionWait ?? (gate.context.labels.length ? 'Preparing selected routine coverage.' : 'No routine tests requested.')
@@ -95,6 +97,10 @@ export class PrRoutineCheckService {
   private settled(gate: PrRoutineCheck) {
     return !!gate.attempt.conclusion && [gate.attempt, ...gate.retired].every(attempt =>
       attempt.members.every(member => member.settled && !member.containmentPending))
+  }
+  private completedAndDelivered(gate: PrRoutineCheck) {
+    return this.settled(gate) && ['success', 'failure'].includes(gate.attempt.conclusion!) &&
+      gate.reporting.deliveredDigest === digest(routineCheckPayload(gate, this.now()))
   }
   private next(gate: PrRoutineCheck, pendingAt: number) {
     return this.settled(gate) && !gate.reporting.intended && !gate.reporting.error &&
@@ -158,7 +164,7 @@ export class PrRoutineCheckService {
         const previous = gate.retired.at(-1)!
         const all = previous.conclusion === 'success'
         for (const member of gate.attempt.members.filter(member => member.linkedTarget && (all || member.status !== 'pass' || !member.publicationComplete))) {
-          delete member.linkedPreview; delete member.selection; delete member.requestId; delete member.requestDeadline
+          delete member.linkedPreview; delete member.linkedSource; delete member.selection; delete member.requestId; delete member.requestDeadline
           member.status = 'waiting for app build'; member.publicationComplete = false; member.settled = false
         }
         gate.attempt.rerun = {id: `pr-rerun-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, generation: gate.attempt.generation})}`,
@@ -284,12 +290,10 @@ export class PrRoutineCheckService {
     delete member.progress
     const input = frameworkRequestInputSchema.safeParse(request.input)
     if (request.hostId && request.inputSha256 && input.success) {
-      const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId), progress = lane?.progress
-      if (host && progress && lane!.activity?.owner.kind === 'run' && lane!.activity.owner.id === member.requestId &&
-          progress.requestId === member.requestId && progress.requestDigest === request.inputSha256 &&
-          progress.ownerGeneration === lane!.activity.generation && progress.controllerIncarnation === host.incarnation &&
-          progress.sequence === host.sequence && (progress.totalSteps === member.stepIds.length || progress.phase === 'preparation' && progress.totalSteps === 0) &&
-          (!progress.currentStep || member.stepIds[progress.currentStep.index] === progress.currentStep.id)) member.progress = progress
+      const host = await this.hosts.get(request.hostId), lane = host?.lanes.find(lane => lane.id === input.data.laneId)
+      const waiting = lane?.waiting?.find(value => value.requestId === request.requestId && value.requestDigest === request.inputSha256 && value.acceptedAt === request.hostReceipt?.acceptedAt);
+      if (waiting && !lane?.progress && ['queued', 'accepted'].includes(request.state)) member.waitReason = `${waiting.reason} · observed ${waiting.observedAt}`;
+      if (host && lane) member.progress = matchingRoutineProgress(host, lane, request, member.stepIds)
     }
   }
   private async latestMembers(attempt: PrRoutineAttempt) {
@@ -613,11 +617,13 @@ export class PrRoutineCheckService {
       try {
         context = await this.github.context(gate.context.number)
       } catch (error) {if (!gate.attempt.cancellation) throw error}
-      if (context.headSha !== gate.headSha || !context.open) {
+      const contextEnded = context.headSha !== gate.headSha || !context.open
+      const preserveCompleted = contextEnded && this.completedAndDelivered(gate)
+      if (contextEnded && !preserveCompleted) {
         gate.attempt.cancellation ??= {kind: context.open ? 'superseded' : 'closed', requestedAt: iso(this.now())}
         if (gate.attempt.conclusion && !['timed_out', 'cancelled'].includes(gate.attempt.conclusion)) {gate.attempt.conclusion = 'cancelled'; gate.attempt.finishedAt = iso(this.now())}
       }
-      else if (selectionKey(context) !== gate.selectionKey) {
+      else if (!contextEnded && selectionKey(context) !== gate.selectionKey) {
         gate.retired.push({...gate.attempt, cancellation: {kind: 'superseded', requestedAt: iso(this.now())}})
         gate.context = context; gate.selectionKey = selectionKey(context); gate.coverageGeneration++
         gate.attempt = this.attempt(1); delete gate.routineRevision; delete gate.selectionError; delete gate.selectionWait; delete gate.selectionComplete; delete gate.buildRequests
@@ -629,7 +635,9 @@ export class PrRoutineCheckService {
         if (saved) await this.deliver(gateId)
         return saved
       }
-      gate.context = context
+      // A fully settled verdict already acknowledged by GitHub belongs to its
+      // frozen source. Closing/merging or advancing the PR cannot rewrite it.
+      if (!preserveCompleted) gate.context = context
       for (const retired of gate.retired.filter(attempt => attempt.cancellation)) {
         if (retired.members.some(member => !member.settled)) await this.cancel(retired)
         await this.completeOriginalSuite(gate, retired)

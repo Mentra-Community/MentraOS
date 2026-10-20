@@ -409,8 +409,8 @@ Core refuses at startup:
 - a `verifiedEmailDomains` entry that is not a lowercase domain without a
   trailing dot, a duplicate, a domain listed by two providers, or a Mentra domain
   (`mentra.glass`, `mentraglass.com`);
-- a provider `tenantId` of `mentra` or `workos`, or one an OEM or an enterprise
-  already uses;
+- a provider `tenantId` of `mentra`, or one an OEM or an enterprise already
+  uses;
 - more than one provider with `browser` settings, or `browser` settings together
   with `CLOUD_CORE_SUPABASE_ISSUER`.
 

@@ -36,6 +36,8 @@ function projectStatus() {
     micEnabled: s.micEnabled,
     vadEnabled: s.voiceActivityDetectionEnabled,
     btClassic: s.bluetoothClassicConnected,
+    // SDK-owned Mentra Live pairing state, mirrored as-is; the app renders from it.
+    pairingState: s.pairingState ?? ({state: "normal"} as const),
   }
 }
 

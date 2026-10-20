@@ -9,7 +9,7 @@ import {ensureOidcClient, revokeLogin, SessionExpiredError} from "./api"
 import type {CliTarget} from "./config"
 import {clearCredentials, loadStoredLogin, refreshLockPath, saveCredentials, type CliCredentials} from "./credentials"
 import {loopbackLogin} from "./loopback-login"
-import {loadFreshCredentials, selectWorkspace, signOut, storeLogin} from "./session"
+import {loadFreshCredentials, renewRefusedLogin, selectWorkspace, signOut, storeLogin} from "./session"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
 import {expectLoopbackPortsFree, freeLoopbackPorts} from "./testing/loopback"
 
@@ -104,6 +104,42 @@ test("concurrent commands refresh once and share the result", async () => {
   const refreshTokens = new Set(results.map(result => (result as CliCredentials).refreshToken))
   expect(refreshTokens.size).toBe(1)
   expect(idp.refreshTokenActive([...refreshTokens][0]!)).toBe(true)
+})
+
+test("a refused access token is refreshed at once, although it has not expired", async () => {
+  const login = await storedLogin(3_600_000)
+  const renewed = (await renewRefusedLogin(target, login.mentraUserId, login.token))!
+  expect(idp.refreshes).toBe(1)
+  expect(renewed.token).not.toBe(login.token)
+  expect(await loadStoredLogin(target)).toMatchObject({token: renewed.token, refreshToken: renewed.refreshToken, workspaceId: "ws_1"})
+})
+
+test("a refused access token another request already replaced is not refreshed again", async () => {
+  const login = await storedLogin(3_600_000)
+  const first = await Promise.all([
+    renewRefusedLogin(target, login.mentraUserId, login.token),
+    renewRefusedLogin(target, login.mentraUserId, login.token),
+  ])
+  expect(idp.refreshes).toBe(1)
+  expect(first[0]!.token).toBe(first[1]!.token)
+  // The refused token is no longer the stored one: the stored login is used as it is.
+  expect((await renewRefusedLogin(target, login.mentraUserId, login.token))!.token).toBe(first[0]!.token)
+  expect(idp.refreshes).toBe(1)
+})
+
+test("a refused access token gives nothing to retry with once signed out or another person's login is stored", async () => {
+  const login = await storedLogin(3_600_000)
+  expect(await renewRefusedLogin(target, "mu_someone_else", login.token)).toBeNull()
+  await clearCredentials(target)
+  expect(await renewRefusedLogin(target, login.mentraUserId, login.token)).toBeNull()
+  expect(idp.refreshes).toBe(0)
+})
+
+test("a refused access token whose sign-in has ended clears the login (SessionExpiredError)", async () => {
+  const login = await storedLogin(3_600_000)
+  await revokeLogin(login)
+  await expect(renewRefusedLogin(target, login.mentraUserId, login.token)).rejects.toBeInstanceOf(SessionExpiredError)
+  expect(await loadStoredLogin(target)).toBeNull()
 })
 
 test("signing out waits for a running refresh, revokes the refresh token it produced, and nothing restores the login", async () => {

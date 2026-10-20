@@ -186,7 +186,7 @@ describe("MantleManager", () => {
         contextual_dashboard: true,
         auth_email: "from-server@example.com",
         power_saving_mode: false,
-        voice_activity_detection_enabled: true,
+        voice_activity_detection_enabled: false,
       }),
     )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
@@ -242,13 +242,13 @@ describe("MantleManager", () => {
     useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
-    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
+    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, true, false)
     // Setting pushes are debounced (300ms) and merged into one native write.
     jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         core_token: "new-token",
-        voice_activity_detection_enabled: false,
+        voice_activity_detection_enabled: true,
       }),
     )
   })
@@ -310,7 +310,7 @@ describe("MantleManager", () => {
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalled()
 
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("power_saving_mode")
-    expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", true)
+    expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", false)
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("metric_system")
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("twelve_hour_time")
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
@@ -1313,6 +1313,19 @@ describe("runtime recovery initialization", () => {
     await manager.waitForMiniapps()
     expect(engine.start).toHaveBeenCalledTimes(2)
     expect(manager.initialized).toBe(true)
+  })
+
+  it("restores miniapps only after engine.start() has resolved, so Fleet's collector hears their launches", async () => {
+    const start = deferred()
+    jest.spyOn(engine, "start").mockReturnValueOnce(start.promise)
+    const autostart = miniappLauncher.autostartLocalMiniapps as jest.Mock
+    const activity = manager.init()
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(autostart).not.toHaveBeenCalled()
+    start.resolve()
+    await activity
+    await manager.waitForMiniapps()
+    expect(autostart).toHaveBeenCalledTimes(1)
   })
 
   it("retries failed foreground reconciliation without restarting the runtime", async () => {

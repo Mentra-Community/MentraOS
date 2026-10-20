@@ -50,3 +50,22 @@ test("pins external Engine native peers to the app's verified version", () => {
   assert.match(versions[0], /^\d+\.\d+\.\d+$/)
   assert.equal(new Set(versions).size, 1)
 })
+
+// expo-audio accepts any expo-asset peer; a clean npm host otherwise installs
+// the current SDK's asset package ahead of Expo 55's nested dependency.
+test("constrains the external Engine asset peer to the mobile Expo SDK", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+  const readPackage = (relativePath) => JSON.parse(readFileSync(path.join(root, relativePath), "utf8"))
+  const expected = readPackage("mobile/package.json").dependencies["expo-asset"]
+  assert.match(expected, /^~55\.0\.\d+$/)
+  assert.equal(readPackage("mobile/modules/engine/package.json").peerDependencies["expo-asset"], expected)
+  assert.equal(readPackage("sdk/example-oem-app/package.json").dependencies["expo-asset"], expected)
+
+  const output = path.join(mkdtempSync(path.join(os.tmpdir(), "mentra-engine-asset-fixture-")), "host")
+  prepareExternalEngineFixture({
+    sourceDir: path.join(root, "sdk/example-oem-app"),
+    outputDir: output,
+    releaseIdentity: "3.3.0-dev.932",
+  })
+  assert.equal(JSON.parse(readFileSync(path.join(output, "package.json"), "utf8")).dependencies["expo-asset"], expected)
+})

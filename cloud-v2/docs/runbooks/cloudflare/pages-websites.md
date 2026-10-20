@@ -14,10 +14,8 @@ Production hostnames omit the environment label:
 | Admin console | `admin.mentraglass.com` |
 | Enterprise portal | `portal.mentraglass.com` |
 
-The Developer Console is deployed by the private miniapp-store repository to
-`mentra-console2-dev` (`console2.dev.mentraglass.com`); MentraOS does not deploy
-to any `mentra-console2-*` project. `websites/console` is the old built-in
-console and is not deployed.
+The Developer Console and the Store website are deployed by the Mentra Miniapp
+Store service, not by MentraOS.
 
 Use one Pages project per surface per environment. That keeps each website's
 `CORE_URL` plain and prevents dev, staging, and production domains from
@@ -50,6 +48,12 @@ Required Pages environment variable:
 
 `bun run deploy:pages` refreshes `CORE_URL` for the selected Pages project
 before uploading the static bundle.
+
+The workspace portal's sidebar links to its environment's Developer Console.
+`bun run deploy:pages` builds the portal with `DEVELOPER_CONSOLE_URL` from the
+`developerConsoleUrls` map in `scripts/deploy-pages.ts`: `console.mentraglass.com`,
+`console.staging.mentraglass.com` and `console.dev.mentraglass.com`. A portal
+built without `DEVELOPER_CONSOLE_URL`, such as a Private Cloud's, shows no link.
 
 Deploy manually:
 

@@ -40,6 +40,7 @@ import {EnterpriseOrgModel} from "../packages/core/src/models/enterprise-org.mod
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -114,6 +115,7 @@ const CLEANED = [
   LegacyBrowserIdentityModel,
   SigninIdentityModel,
   UserModel,
+  WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
   WorkspaceInvitationModel,
   WorkspaceMembershipModel,

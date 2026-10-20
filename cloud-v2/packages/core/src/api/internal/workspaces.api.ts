@@ -1,19 +1,28 @@
 /**
  * @fileoverview Internal workspace service API, mounted at `/api/internal/workspaces`.
  *
- * This is how the Store asks Core about people and workspaces. `serviceAuth`
- * authenticates every route (a signed request from a service Core has a secret
- * for); the request and response shapes are the contract's
- * (`@mentra/workspace-contract`), spoken by its `createCoreWorkspaceClient`.
+ * This is how the Store and Fleet ask Core about people and workspaces, and how
+ * they follow what changes. `serviceAuth` authenticates every route (a signed
+ * request from a service Core has a secret for); the request and response shapes
+ * are the contract's (`@mentra/workspace-contract`), spoken by its
+ * `createCoreWorkspaceClient`.
  *
- * | Route                          | Service | Answers                                     |
- * | ------------------------------ | ------- | ------------------------------------------- |
- * | `POST /authorize`              | any     | `AuthorizeResponse`                         |
- * | `POST /principal`              | any     | `PrincipalResponse`, or 401 `invalid_token` |
- * | `POST /memberships/check`      | any     | `{memberships}`                             |
- * | `GET /workspaces/:workspaceId` | any     | `WorkspaceSummary`, or 404                  |
- * | `POST /credentials`            | store   | `{credentialId, token}`                     |
- * | `POST /users/resolve-email`    | store   | `{mentraUserId}`, or 404 `user_not_found`   |
+ * | Route                                                     | Service      | Answers                                     |
+ * | --------------------------------------------------------- | ------------ | ------------------------------------------- |
+ * | `POST /authorize`                                         | any          | `AuthorizeResponse`                         |
+ * | `POST /principal`                                         | any          | `PrincipalResponse`, or 401 `invalid_token` |
+ * | `POST /memberships/check`                                 | any          | `{memberships}`                             |
+ * | `GET /workspaces/:workspaceId`                            | any          | `WorkspaceSummary`, or 404                  |
+ * | `GET /changes?after=&limit=`                              | store, fleet | `WorkspaceChangesResponse`                  |
+ * | `POST /credentials`                                       | store        | `{credentialId, token}`                     |
+ * | `POST /users/resolve-email`                               | store        | `{mentraUserId}`, or 404 `user_not_found`   |
+ * | `PUT /workspaces/:workspaceId/deletion-holds/:service`    | `:service`   | `DeletionHoldsResponse`                     |
+ * | `DELETE /workspaces/:workspaceId/deletion-holds/:service` | `:service`   | `DeletionHoldsResponse`                     |
+ *
+ * `GET /changes` is the change feed: workspace events and `user.deleted`
+ * tombstones in commit order, for a service that follows them (`listChanges`).
+ * `after` is the last `seq` it processed, as a decimal string; `limit` defaults to
+ * 100 and is clamped to between 1 and 500.
  *
  * A service knows which organization it is talking to from the Core URL it is
  * configured with, and the shared secret proves both sides, so no response
@@ -32,6 +41,17 @@
  * so the person is never an Organization Admin here: that standing comes only
  * from a verified identity (`bearer`).
  *
+ * A deletion hold (`deletion-hold.service`) is a service's reason a workspace must
+ * not be deleted yet. Any service Core knows may hold a workspace, but only under
+ * its own name: `:service` must be the service that signed the request (403
+ * `forbidden` otherwise, as for `issuedBy.service`). `PUT` takes
+ * `{reason, count?, asOf}` and replaces that service's hold; `DELETE` takes
+ * `{asOf}` and clears it. `asOf` is when the service computed the call: one that
+ * is not newer than the service's last applied call is ignored. Both answer every
+ * hold on the workspace afterwards and whether the call was `ignored`. An unknown
+ * workspace is 404 `workspace_not_found`; holding a deleted one is 410
+ * `workspace_deleted`, and clearing there finds nothing to clear.
+ *
  * `POST /users/resolve-email` turns an account email into the opaque Mentra
  * user id (the Store's private-miniapp and beta invitations). Core stays the
  * only service that maps account-provider identities to Mentra users: only an
@@ -47,11 +67,13 @@ import {
   type AuthorizeCredential,
   type AuthorizeResponse,
   type CorePrincipal as WirePrincipal,
+  type DeletionHoldsResponse,
   type MembershipCheckResponse,
   type PrincipalResponse,
   type ResolveEmailResponse,
   type ServiceCredentialResponse,
   type WorkspaceCapability,
+  type WorkspaceChangesResponse,
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import {z} from "zod"
@@ -59,8 +81,15 @@ import {findAccountByEmail, isGotrueAdminConfigured} from "../../services/accoun
 import {principalFromToken, wirePrincipal, type CorePrincipal} from "../../services/signin/principal.service"
 import {MENTRA_TENANT_ID} from "../../services/signin/config"
 import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "../../services/user.service"
+import {listChanges} from "../../services/workspaces/audit.service"
 import {authorize} from "../../services/workspaces/authorization.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
+import {
+  clearDeletionHold,
+  setDeletionHold,
+  type DeletionHoldChange,
+} from "../../services/workspaces/deletion-hold.service"
+import {WorkspaceError} from "../../services/workspaces/workspace-error"
 import {getWorkspace, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
@@ -145,6 +174,17 @@ app.get("/workspaces/:workspaceId", async c => {
   return c.json(workspace)
 })
 
+// --- Change feed -----------------------------------------------------------
+
+// Explicitly the two services that follow it, not "any": a service added later reads nothing until it is named here.
+app.get("/changes", requireService("store", "fleet"), async c => {
+  const page: WorkspaceChangesResponse = await listChanges({
+    after: c.req.query("after") ?? null,
+    limit: changesLimit(c.req.query("limit")),
+  })
+  return c.json(page)
+})
+
 // --- Credentials -----------------------------------------------------------
 
 app.post("/credentials", requireService("store"), async c => {
@@ -173,6 +213,27 @@ app.post("/credentials", requireService("store"), async c => {
   c.header("cache-control", "no-store")
   const minted: ServiceCredentialResponse = {credentialId: credential.credentialId, token}
   return c.json(minted, 201)
+})
+
+// --- Deletion holds --------------------------------------------------------
+
+// Any service Core knows, for its own hold only.
+app.put("/workspaces/:workspaceId/deletion-holds/:service", async c => {
+  const service = ownHoldService(c)
+  if (!service) return holdForbidden(c)
+  const body = jsonBody(c)
+  const workspaceId = c.req.param("workspaceId")
+  return holdsAnswer(c, workspaceId, () =>
+    setDeletionHold(service, workspaceId, {reason: body.reason, count: body.count, asOf: body.asOf}),
+  )
+})
+
+app.delete("/workspaces/:workspaceId/deletion-holds/:service", async c => {
+  const service = ownHoldService(c)
+  if (!service) return holdForbidden(c)
+  const body = jsonBody(c)
+  const workspaceId = c.req.param("workspaceId")
+  return holdsAnswer(c, workspaceId, () => clearDeletionHold(service, workspaceId, {asOf: body.asOf}))
 })
 
 // --- People ----------------------------------------------------------------
@@ -250,6 +311,16 @@ function authorizeFields(body: JsonObject): {
 }
 
 /**
+ * The `limit` query parameter: absent for the feed's default, otherwise an integer. A number outside the
+ * feed's range is clamped by `listChanges`; something that is not a number at all is a malformed request.
+ */
+function changesLimit(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined
+  if (!/^-?\d+$/.test(raw)) throw new InvalidRequest("limit must be an integer")
+  return Number(raw)
+}
+
+/**
  * The person a service vouches for, or null for a deleted account (no principal). Never an
  * Organization Admin: that needs a verified identity.
  */
@@ -263,6 +334,32 @@ async function mentraUserPrincipal(
     email: null,
     emailVerified: false,
     isOrganizationAdmin: false,
+  }
+}
+
+/** The service that signed, when the path names it; null when the path names another service's hold. */
+function ownHoldService(c: AppContext): string | null {
+  const service = c.get("service")
+  if (!service) throw new Error("serviceAuth did not set the service")
+  return c.req.param("service") === service ? service : null
+}
+
+function holdForbidden(c: AppContext) {
+  return c.json({error: "forbidden", error_description: "a service may set or clear only its own deletion hold"}, 403)
+}
+
+/**
+ * The workspace's holds after `change`, or the contract's 404 `workspace_not_found` for a workspace that
+ * does not exist (any other failure is the error handler's).
+ */
+async function holdsAnswer(c: AppContext, workspaceId: string, change: () => Promise<DeletionHoldChange>) {
+  try {
+    const {holds, ignored} = await change()
+    const answer: DeletionHoldsResponse = {workspaceId, holds, ignored}
+    return c.json(answer)
+  } catch (err) {
+    if (err instanceof WorkspaceError && err.code === "not_found") return c.json({error: WORKSPACE_NOT_FOUND_ERROR}, 404)
+    throw err
   }
 }
 

@@ -51,6 +51,7 @@ import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES, type MicUseCa
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
+import {fleetEvents} from "./fleet/fleetEvents"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
@@ -94,7 +95,7 @@ import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} fro
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
-import {useAppStatusStore} from "../stores/apps"
+import {useAppStatusStore, visibleMiniappPackage} from "../stores/apps"
 import appRegistry, {getDevAppRecords, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
@@ -879,7 +880,7 @@ class LocalMiniappRuntime {
   }
 
   private currentVisiblePackage(): string | null {
-    return AppState.currentState === "active" ? useAppStatusStore.getState().foregroundedPackage : null
+    return visibleMiniappPackage()
   }
 
   private updateVisibility(): void {
@@ -3777,6 +3778,8 @@ class LocalMiniappRuntime {
         ispAnalogGain: payload.ispAnalogGain as string | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
+      // The photo reached the miniapp. A call with no request ID has nobody to answer, so nothing was delivered.
+      if (requestId) fleetEvents.photo({operationId: result.requestId, stage: "delivered"})
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
