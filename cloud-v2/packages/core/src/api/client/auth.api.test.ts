@@ -201,6 +201,44 @@ describe("POST /miniapp-token features", () => {
     )
   })
 
+  test("answers 503 features_unavailable at the deadline, and mints nothing, when the lookup never settles", async () => {
+    featuresFor.mockImplementation(() => new Promise(() => {}))
+    const issue = spyOn(session, "issueMiniappToken")
+    mocks.push(issue)
+
+    const started = Date.now()
+    const response = await postMiniappToken({packageName: "com.mentra.call"})
+    const elapsed = Date.now() - started
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error: "features_unavailable"})
+    // The same 1.5 s the email lookup gets: not before it, and not much after it.
+    expect(elapsed).toBeGreaterThanOrEqual(1_400)
+    expect(elapsed).toBeLessThan(3_000)
+    expect(issue).not.toHaveBeenCalled()
+  })
+
+  test("a lookup that fails after its deadline is not an unhandled rejection", async () => {
+    let failLate: (error: Error) => void = () => {}
+    featuresFor.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          failLate = reject
+        }),
+    )
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on("unhandledRejection", onUnhandled)
+    try {
+      expect((await postMiniappToken({packageName: "com.mentra.call"})).status).toBe(503)
+      failLate(new Error("mongo came back with an error"))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
   test("does not look features up for a request that has no package", async () => {
     // The route throws the RFC 400 for the app's error handler, which this bare router does not mount.
     expect((await postMiniappToken({})).status).not.toBe(200)

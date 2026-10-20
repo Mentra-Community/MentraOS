@@ -142,7 +142,8 @@ A change reaches a person with their next token. A token already minted keeps th
 features it was minted with until it expires (an hour by default), so a license
 that ends or a seat that is released stops showing at the person's next mint.
 
-If Core cannot read the licenses or seats, the mint answers
+If Core cannot read the licenses or seats, or the lookup takes longer than 1.5
+seconds (the same deadline as the account email lookup), the mint answers
 `503 {"error":"features_unavailable"}` and issues no token; the Mentra App asks
 again. Core never mints a token that is missing features the person holds.
 

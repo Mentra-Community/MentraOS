@@ -333,10 +333,15 @@ describe("the lookups use the collections' indexes", () => {
   }
 
   test("personal licenses by owner, seats by person and seated licenses by id", async () => {
+    // Other people's licenses and seats, enough that scanning the collections (or only the owner type
+    // or the workspace) would read dozens of documents where the person's own indexes read one.
+    const others = 40
+    for (let n = 0; n < others; n++) await personal(`mu_other_${n}`)
+    for (let n = 0; n < others; n++) await workspaceLicense(`ws_other_${n}`, [`mu_seat_other_${n}`])
     await personal("mu_alice")
     await workspaceLicense("ws_acme", ["mu_alice"])
 
-    // Collect the filters featuresFor sends, then ask Mongo how it would run each.
+    // Collect the filters featuresFor sends, then ask Mongo how it runs each.
     const licenseFilters: any[] = []
     const seatFilters: any[] = []
     const licenseFind = LicenseModel.find.bind(LicenseModel)
@@ -358,14 +363,19 @@ describe("the lookups use the collections' indexes", () => {
     expect(seatFilters).toHaveLength(1)
     const plans = {
       personal: await LicenseModel.find(licenseFilters.find((filter) => "owner.type" in filter)).explain(
-        "queryPlanner",
+        "executionStats",
       ),
-      seated: await LicenseModel.find(licenseFilters.find((filter) => "_id" in filter)).explain("queryPlanner"),
-      seats: await LicenseSeatModel.find(seatFilters[0]).explain("queryPlanner"),
+      seated: await LicenseModel.find(licenseFilters.find((filter) => "_id" in filter)).explain("executionStats"),
+      seats: await LicenseSeatModel.find(seatFilters[0]).explain("executionStats"),
     }
     expect(scannedIndexes(plans.personal)).toContain("owner.type_1_owner.mentraUserId_1")
     expect(scannedIndexes(plans.seated)).toContain("_id_")
     expect(scannedIndexes(plans.seats)).toContain("mentraUserId_1")
+    // Alice has one license of her own, one seat and one seated license; nothing else is read.
+    for (const plan of Object.values(plans)) {
+      expect((plan as any).executionStats.totalDocsExamined).toBe(1)
+      expect((plan as any).executionStats.totalKeysExamined).toBe(1)
+    }
   })
 })
 
@@ -430,10 +440,16 @@ describe("POST /api/client/auth/miniapp-token", () => {
     expect(await mint(CALL)).toMatchObject({sub: "mu_alice", aud: CALL, features: [UNLIMITED]})
   })
 
-  test("has no features claim for a person with no license, an expired one, or a feature for no package", async () => {
+  test("has no features claim for a person with no license", async () => {
     expect("features" in (await mint(CALL))).toBe(false)
+  })
 
+  test("has no features claim for a person whose license has expired", async () => {
     await personal("mu_alice", {validFrom: new Date(Date.now() - 40 * DAY), paidThrough: new Date(Date.now() - DAY)})
+    expect("features" in (await mint(CALL))).toBe(false)
+  })
+
+  test("has no features claim for a person whose license has a feature for no package", async () => {
     await personal("mu_alice", {...inTerm, features: [{key: "service.only", packages: []}]})
     expect("features" in (await mint(CALL))).toBe(false)
   })
