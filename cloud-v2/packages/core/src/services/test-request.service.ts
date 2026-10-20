@@ -335,6 +335,12 @@ export class TestRequestService {
     const existing = await this.preparation(requestId, hostId, row.dispatchIntentSha256);
     return await this.cancel(requestId, requestedAt, reason) ?? existing;
   }
+  async preparationView(requestId: string, hostId: string) {
+    const row = await this.repository.get(requestId), candidate = row as unknown as import('../types/routine-job.types').StoredRoutineJob | null;
+    if (candidate && candidate.state === 'awaiting-runner' && !candidate.hostId && !candidate.fleetBinding &&
+      candidate.fleetCandidatePreparation?.hostId === hostId) return candidate;
+    return this.preparation(requestId, hostId);
+  }
   async preparation(requestId: string, hostId: string, intentSha256?: string) {
     const row = await this.repository.get(requestId);
     if (!row || row.hostId !== hostId) throw new TestRunError(404, 'Assigned routine request was not found');
@@ -368,6 +374,26 @@ export class TestRequestService {
     let frameworkFence: Record<string, unknown> | undefined = await this.admitPreparationFramework(row, {kind: 'complete', inputSha256: digest}, responseBinding, !trustedCachedSource);
     if (frozen.platform === 'android' && row.fleetPreparation?.requirements.resources.some(resource =>
       resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))) {
+      const {qualifiedCandidate} = await import('./backend-candidate-preparation');
+      const candidateSource = row as unknown as import('../types/routine-job.types').StoredRoutineJob,
+        candidateHost = candidateSource.fleetCandidatePreparations ? await this.backendHosts?.get(hostId) : undefined,
+        candidate = candidateHost && qualifiedCandidate(candidateSource, candidateHost, frozen.laneId, this.now());
+      if (candidate) {
+        if (!candidate || requestInputDigest(candidate.target.proposedInput) !== digest || candidateSource.fleetCandidatePreparation ||
+          !candidateSource.fleetPreparation || candidateSource.fleetDeadline.getTime() <= this.now())
+          throw new TestRunError(409, 'Prepared executable requires the exact returned pre-binding phone candidate');
+        const current = await this.preparation(requestId, hostId, intentSha256), currentHost = await this.backendHosts?.get(hostId);
+        if (!currentHost || !qualifiedCandidate(current as unknown as import('../types/routine-job.types').StoredRoutineJob, currentHost, frozen.laneId, this.now()) ||
+          requestInputDigest((current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCandidatePreparations) !== requestInputDigest(candidateSource.fleetCandidatePreparations) ||
+          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).fleetCancellation ||
+          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationCancellation ||
+          (current as unknown as import('../types/routine-job.types').StoredRoutineJob).preparationRejection)
+          throw new PreparationRequestChanged('Original pre-binding phone candidate changed before executable admission');
+        frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row), fleetCandidatePreparation: {$exists: false},
+          fleetCandidatePreparations: candidateSource.fleetCandidatePreparations, fleetCandidateSelection: candidateSource.fleetCandidateSelection,
+          fleetPreparation: candidateSource.fleetPreparation,
+          $and: [{fleetDeadline: candidateSource.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]};
+      } else {
       const {preparingQualificationReceipt,recorderCapacityRequirements} = await import('./routine-job.service');
       const host = await this.backendHosts?.get(hostId), lane = host?.lanes.find(value => value.id === frozen.laneId),
         phone = lane?.resources.find(value => value.kind === 'phone'), preparing = host && lane && preparingQualificationReceipt(row as unknown as import('../types/routine-job.types').StoredRoutineJob, hostId, lane),
@@ -403,7 +429,10 @@ export class TestRequestService {
       // One request-row CAS adopts this exact selected preparation. No cross-document transaction or fallback.
       frameworkFence = {...frameworkFence, ...this.preparationFrameworkFence(row),
         fleetPreparation: source.fleetPreparation, fleetResourceReservation: source.fleetResourceReservation,
+        fleetCandidatePreparation: {$exists: false}, fleetCandidatePreparations: source.fleetCandidatePreparations ?? {$exists: false},
+        fleetCandidateSelection: source.fleetCandidateSelection ?? {$exists: false},
         $and: [{fleetDeadline: source.fleetDeadline}, {fleetDeadline: {$gt: new Date(this.now())}}]};
+      }
     }
     if (!this.repository.completePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
     const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest, exclusive, row.fleetResourceAdmission, frameworkFence) ??

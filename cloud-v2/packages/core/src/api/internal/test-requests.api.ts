@@ -53,7 +53,7 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
     await dispatch.validatePreparationSource(row.dispatchIntent!);
     return row.dispatchIntent!;
   };
-  app.get('/:requestId/preparation', async c => c.json({request: await service.preparation(c.req.param('requestId'), c.var.testHostId)}));
+  app.get('/:requestId/preparation', async c => c.json({request: await service.preparationView(c.req.param('requestId'), c.var.testHostId)}));
   app.get('/:requestId/routine-source/inventory', async c => {
     const intent = await active(c.req.param('requestId'), c.var.testHostId);
     return c.json(await sources.inventory(intent.routineRevision));
