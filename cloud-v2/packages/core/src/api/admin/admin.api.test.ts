@@ -1,19 +1,24 @@
 /**
- * @fileoverview `GET /api/admin/me`: who is calling, what they may do, and whether Fleet is installed.
+ * @fileoverview `GET /api/admin/me`: who is calling, what they may do, whether Fleet is installed and whether
+ * the Licenses page has anything to offer.
  *
  * The admin app is mounted behind a middleware that sets the principal, which `principalAuth` accepts
- * as already resolved, so no sign-in or database is involved: the person's workspace list is stubbed.
+ * as already resolved, so no sign-in or database is involved: the person's workspace list and the question
+ * whether any license exists are stubbed.
  */
 
 import {afterEach, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "@mentra/workspace-contract"
 import {Hono} from "hono"
+import {LicenseModel} from "../../models/license.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import type {CorePrincipal} from "../../services/signin/principal.service"
 import type {AppEnv} from "../../types/hono.types"
 import admin, {type AdminMeResponse} from "./admin.api"
 
 const SETTINGS = [
+  "CLOUD_CORE_BILLING_URL",
+  "CLOUD_CORE_BILLING_SECRET",
   "CLOUD_CORE_FLEET_URL",
   "CLOUD_CORE_FLEET_SECRET",
   "CLOUD_CORE_ENABLED_FEATURES",
@@ -64,14 +69,18 @@ async function me(principal: CorePrincipal): Promise<AdminMeResponse> {
 }
 
 let memberships: ReturnType<typeof spyOn>
+let licenseExists: ReturnType<typeof spyOn>
 
 beforeEach(() => {
   for (const name of SETTINGS) delete process.env[name]
   memberships = spyOn(WorkspaceMembershipModel, "find").mockImplementation((() => ({lean: async () => []})) as never)
+  // No license exists unless a test says one does.
+  licenseExists = spyOn(LicenseModel, "exists").mockResolvedValue(null as never)
 })
 
 afterEach(() => {
   memberships.mockRestore()
+  licenseExists.mockRestore()
   for (const name of SETTINGS) {
     if (saved[name] === undefined) delete process.env[name]
     else process.env[name] = saved[name]
@@ -113,6 +122,53 @@ describe("GET /api/admin/me reports whether Fleet is installed", () => {
       expect(JSON.stringify(body)).not.toContain("mfm.example.test")
       expect(JSON.stringify(body)).not.toContain("secret-value")
     }
+  })
+})
+
+describe("GET /api/admin/me reports whether the Licenses page has anything to offer", () => {
+  test("not available on a Core with no billing and no license", async () => {
+    expect((await me(organizationAdmin)).licenses).toEqual({available: false})
+    expect(licenseExists).toHaveBeenCalledTimes(1)
+  })
+
+  test("available when billing is configured, without asking the database", async () => {
+    process.env.CLOUD_CORE_BILLING_URL = "https://billing.example.test"
+    process.env.CLOUD_CORE_BILLING_SECRET = "billing-secret"
+    expect((await me(organizationAdmin)).licenses).toEqual({available: true})
+    expect(licenseExists).not.toHaveBeenCalled()
+  })
+
+  test("billing configured but unusable still counts, so the list stays reachable", async () => {
+    process.env.CLOUD_CORE_BILLING_URL = "https://billing.example.test"
+    expect((await me(organizationAdmin)).licenses).toEqual({available: true})
+  })
+
+  test("available once any license exists, whoever holds it", async () => {
+    licenseExists.mockResolvedValue({_id: "lic_1"} as never)
+    expect((await me(organizationAdmin)).licenses).toEqual({available: true})
+  })
+
+  test("a secret without a billing URL is inert", async () => {
+    process.env.CLOUD_CORE_BILLING_SECRET = "billing-secret"
+    expect((await me(organizationAdmin)).licenses).toEqual({available: false})
+  })
+
+  test("not available to a caller who cannot read licenses, and the database is not asked for them", async () => {
+    process.env.CLOUD_CORE_BILLING_URL = "https://billing.example.test"
+    process.env.CLOUD_CORE_BILLING_SECRET = "billing-secret"
+    licenseExists.mockResolvedValue({_id: "lic_1"} as never)
+    for (const principal of [member, operatorKey([...OPERATOR_KEY_SCOPES]), workspaceKey]) {
+      expect((await me(principal)).licenses).toEqual({available: false})
+    }
+    expect(licenseExists).not.toHaveBeenCalled()
+  })
+
+  test("never carries the billing URL or the secret", async () => {
+    process.env.CLOUD_CORE_BILLING_URL = "https://billing.example.test"
+    process.env.CLOUD_CORE_BILLING_SECRET = "billing-secret-value"
+    const body = JSON.stringify(await me(organizationAdmin))
+    expect(body).not.toContain("billing.example.test")
+    expect(body).not.toContain("billing-secret-value")
   })
 })
 

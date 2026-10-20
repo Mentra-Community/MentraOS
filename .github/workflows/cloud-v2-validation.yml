@@ -114,7 +114,8 @@ jobs:
             websites/admin/src/components/signed-out.test.tsx \
             websites/admin/src/pages/workspaces.test.tsx \
             websites/admin/src/pages/operator-keys.test.tsx \
-            websites/admin/src/pages/fleet.test.tsx
+            websites/admin/src/pages/fleet.test.tsx \
+            websites/admin/src/pages/licenses.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -219,6 +220,7 @@ jobs:
             tests/account-deletion.integration.test.ts \
             tests/licenses.integration.test.ts \
             tests/license-features.integration.test.ts \
+            tests/admin-licenses.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
             tests/legacy-identity-claim.integration.test.ts \
             tests/legacy-miniapp-registry.integration.test.ts

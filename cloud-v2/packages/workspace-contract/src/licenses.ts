@@ -1,7 +1,8 @@
 /**
  * Licenses: what billing writes into Core (`PUT /api/internal/licenses/:licenseId`, the Store only) and
- * what Core shows of them, to billing (`GET /api/internal/licenses`) and to people (the workspace routes'
- * `GET /:workspaceId/licenses`). See Core's `docs/licenses.md`.
+ * what Core shows of them, to billing (`GET /api/internal/licenses`), to people (the workspace routes'
+ * `GET /:workspaceId/licenses`) and to Organization Admins (the admin portal's `GET /api/admin/licenses`).
+ * See Core's `docs/licenses.md`.
  *
  * A license is a quantity of one product for a term, held by a workspace (its Admins and Owners assign
  * the seats to members) or by a person (who holds its one seat). Core keeps a copy of each license as
@@ -75,6 +76,37 @@ export interface LicenseView extends Omit<LicenseWrite, "licenseId"> {
 /** Response of `GET /api/internal/licenses?ownerType=&ownerId=`: one owner's licenses, ended ones included. */
 export interface LicensesResponse {
   licenses: LicenseView[]
+}
+
+/**
+ * Who holds a license, as the admin portal's list shows it: the workspace by name, or the person by the name
+ * and email Core has for them. Each is null when Core has none (a person who never signed in through Core's
+ * sign-in server, or whose account is deleted), and the portal then shows the id.
+ */
+export type AdminLicenseOwner =
+  | {type: "workspace"; workspaceId: string; name: string | null}
+  | {type: "person"; mentraUserId: string; name: string | null; email: string | null}
+
+/** One license in the admin portal's list. Times are ISO 8601 UTC; `endedAt` and `endedReason` are null while it stands. */
+export interface AdminLicenseView {
+  licenseId: string
+  owner: AdminLicenseOwner
+  product: string
+  quantity: number
+  seatsUsed: number
+  validFrom: string
+  paidThrough: string
+  endedAt: string | null
+  endedReason: LicenseEndedReason | null
+}
+
+/**
+ * Response of `GET /api/admin/licenses?query=&cursor=`: a page of every license, workspace and personal,
+ * newest first. `next` is the `cursor` of the page after this one, or null on the last page.
+ */
+export interface AdminLicensesResponse {
+  items: AdminLicenseView[]
+  next: string | null
 }
 
 /** Why a seat was freed, in a `seat.released` event's `after.reason`. */

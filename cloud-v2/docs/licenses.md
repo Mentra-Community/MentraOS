@@ -112,6 +112,32 @@ An ended license keeps its document, takes no seat and no write: Core answers
 deletion from the change feed (`workspace.deleted`, `user.deleted`) and stops
 charging.
 
+## Listing every license
+
+An Organization Admin lists every license, workspace and personal, in the admin
+portal's Licenses page, which reads `GET /api/admin/licenses?query=&cursor=`. It
+needs `organization.licenses.read`, which only an Organization Admin holds: an
+operator key never does, and neither do a workspace admin, a workspace key or a
+phone. The list is read-only: no admin route changes a license or a seat.
+
+- **Items.** Newest first, 50 to a page: `{items, next}`. Each item is an
+  `AdminLicenseView` (the license's id, owner, product, quantity, `seatsUsed`,
+  `validFrom`, `paidThrough`, `endedAt` and `endedReason`). `next` is the `cursor`
+  of the next page, or `null` on the last. A license written while an admin pages
+  never moves a row between pages.
+- **Owners.** A workspace shows by its name, also once deleted. A person shows by
+  the name and email of their latest sign-in through Core's sign-in server, or by
+  Core's copy of their verified email when they have not signed in through it;
+  both are null for a deleted account, and the portal shows the id. A page's
+  owners are read in one query per collection.
+- **Search.** `query` is plain text of up to 100 characters, compared without
+  regard to case as a substring of the owner's name, email or id, or of the
+  product. A search reads the owners that hold a license, not only a page's, so
+  it suits the few thousand licenses a deployment has.
+- **The Licenses page** appears in the portal only when the caller may read
+  licenses and `GET /api/admin/me` says `licenses.available`: billing is
+  configured on this Core (`CLOUD_CORE_BILLING_URL`), or any license exists.
+
 ## Features in miniapp tokens
 
 When the Mentra App asks Core for a miniapp's token
