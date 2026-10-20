@@ -17,7 +17,7 @@ import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.servi
 import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
 import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
-import {backendConnectivityObservationMatches, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, type BackendConnectivityContext} from '../types/backend-connectivity.types';
+import {backendConnectivityObservationMatches, backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, type BackendConnectivityContext} from '../types/backend-connectivity.types';
 import type {FrameworkBinding} from '../types/framework-version.types';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {RoutineDefinitionService} from './routine-definition.service';
@@ -187,6 +187,12 @@ export const routineJobRepository: RoutineJobRepository = {
       const own = retained.find(value => value.requestId === requestId && value.fleetInputSha256 === fleetInputSha256);
       if (retained.some(value => value.requestId === requestId && value.fleetInputSha256 !== fleetInputSha256) ||
         selected && own?.id !== selected.id || own && own.poolId !== offered.poolId || !own && retained.length + exclusiveClaims.length >= 1000) return null;
+      // Repeat selection's negative fence on the authoritative snapshot before any new host claim.
+      // An existing admission or provisional byte claim must reconcile its original lane instead.
+      if (!selected && !row.fleetResourceAdmission && !own && backendPreparationRefused(requirements, lane,
+        routineLaneContext(host, row.fleetSelection.build, now.getTime()))) {
+        onWaiting?.(BACKEND_PREPARATION_WAIT); return null;
+      }
       // Serialize before any request stage/dependency claim. Byte capacity alone cannot
       // authorize a future owner that would defeat the selected request's one phone check.
       if (serializedPreparation && (retained.some(value => value !== own && value.hostId === hostId && value.laneId === laneId) ||
@@ -490,6 +496,13 @@ export function routineLaneContext(host: Pick<RoutingTestHostState, 'hostId' | '
       generation: subject.generation, current: subject.current && subject.subject.authorityHostId === host.hostId,
       unowned: subject.owner === null})) ?? [],
   }} : {})};
+}
+const BACKEND_PREPARATION_WAIT = 'Awaiting a fresh phone backend observation after its unqualified prerequisite';
+function backendPreparationRefused(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
+  context: ReturnType<typeof routineLaneContext>) {
+  return Boolean(context && requirements.resources.some(required => required.kind === 'phone' &&
+    required.capabilities.includes('backend-connectivity') && lane.resources.some(offered => offered.kind === 'phone' &&
+      backendConnectivityObservationRefusesPreparation(offered.backendConnectivity, offered.id, context))));
 }
 /** Selection preference only; the existing resource admission CAS remains the authority.
  * Per-request ties spread simultaneous zero-load snapshots without relying on Mongo row order.
@@ -1057,6 +1070,9 @@ export class RoutineJobService {
       if (row.fleetTarget?.hostId && row.fleetTarget.hostId !== host.hostId || row.fleetTarget?.laneId && row.fleetTarget.laneId !== lane.id ||
         lane.state !== 'idle' || lane.dispatchMode !== 'automatic') continue;
       const context = routineLaneContext(host, row.fleetSelection.build, this.now());
+      if (!retained && !admitted && !provisional && backendPreparationRefused(requirements, lane, context)) {
+        candidateReasons.push(BACKEND_PREPARATION_WAIT); continue;
+      }
       if (!compatibleStructuralRoutineLane(requirements, lane, context, this.now())) {
         if (Number.isFinite(Date.parse(host.receivedAt)) && Date.parse(host.receivedAt) <= this.now() && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
             compatibleStructuralRoutineLane(inventoryRequirements, lane, context, this.now()))
@@ -1075,7 +1091,8 @@ export class RoutineJobService {
       candidateReasons.push(candidateReason);
     }
     return {...routed, waitingReason: sharedResourceWaitingReason(row, hosts) ??
-      (candidateReasons.length && candidateReasons.every(reason => reason === RECORDER_CAPACITY_WAIT) ? RECORDER_CAPACITY_WAIT
+      (candidateReasons.length && candidateReasons.every(reason => reason === BACKEND_PREPARATION_WAIT) ? BACKEND_PREPARATION_WAIT
+        : candidateReasons.length && candidateReasons.every(reason => reason === RECORDER_CAPACITY_WAIT) ? RECORDER_CAPACITY_WAIT
         : candidateReasons.length && candidateReasons.every(reason => reason === RECORDER_OBSERVATION_WAIT) ? RECORDER_OBSERVATION_WAIT
           : RESOURCE_ADMISSION_WAIT)};
   }
