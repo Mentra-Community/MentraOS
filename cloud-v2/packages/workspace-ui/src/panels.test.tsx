@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationObserver, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { MemberView } from "@mentra/workspace-contract";
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -24,19 +24,24 @@ import {
 import { CreateWorkspaceDialog, CreateWorkspaceForm } from "./components/create-workspace";
 import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
+import { seatChanges, unseatedMembers, WorkspaceLicensesPanel } from "./components/licenses-panel";
 import { WorkspaceMembersPanel } from "./components/members-panel";
 import { WorkspacePicker } from "./components/workspace-picker";
 import { deleteRefusalToShow, DeleteSection, LeaveSection, WorkspaceSettingsPanel } from "./components/settings-panel";
-import { invitationPreviewQuery } from "./queries";
+import { formatDate } from "./lib/format";
+import { invitationPreviewQuery, workspaceKeys, workspaceMutationOptions } from "./queries";
 import {
   AUDIT_EVENTS,
+  EXPIRED_AT,
   INVITATIONS,
   labelsStartingWith,
+  licenseFor,
   membersFor,
   offlineApi,
   OTHER_MEMBERS,
   organizationAdminDetail,
   detailFor,
+  PAID_THROUGH,
   renderAfterFailedRefetch,
   renderSeeded,
   selectOptions,
@@ -943,5 +948,210 @@ describe("members panel: count and invitation card dismiss", () => {
       );
     expect(render(() => {})).toContain(">Dismiss<");
     expect(render()).not.toContain(">Dismiss<");
+  });
+});
+
+describe("licenses panel: a member sees their own seats", () => {
+  const OWN_SEAT = { membershipId: "wm_self", mentraUserId: "u_self", assignedAt: START };
+  // What Core answers a member: the licenses they hold a seat in, each with only their own seat. The member list
+  // is in the cache anyway (another panel loaded it), and must still stay out of the member's view.
+  const asMember = (licenses = [licenseFor({ seatsUsed: 3, seats: [OWN_SEAT] })]) => {
+    const { api, requests } = offlineApi();
+    const detail = detailFor("member");
+    const markup = renderSeeded(
+      api,
+      { detail, licenses, members: membersFor(detail) },
+      <WorkspaceLicensesPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+    return { markup, requests };
+  };
+
+  test("shows the license they hold a seat in, and its term, with nothing about anyone else", () => {
+    const { markup, requests } = asMember();
+    expect(markup).toContain('aria-label="Licenses"');
+    expect(markup).toContain("Mentra Call Unlimited");
+    expect(markup).toContain("You hold a seat");
+    expect(markup).toContain(`Paid through ${formatDate(PAID_THROUGH)}`);
+    for (const absent of ["olivia@acme.test", "adam@acme.test", "dana@acme.test", "max@acme.test", "u_3", "u_4"]) {
+      expect(markup).not.toContain(absent);
+    }
+    expect(requests).toEqual([]);
+  });
+
+  test("offers no way to assign or unassign a seat, and no totals", () => {
+    const { markup } = asMember();
+    for (const absent of ["<select", "<button", "<form", "Assign", "Unassign", "seats used", "3 of 5"]) {
+      expect(markup).not.toContain(absent);
+    }
+  });
+
+  test("a member holding no seat is told so", () => {
+    const { markup } = asMember([]);
+    expect(markup).toContain("You do not hold a seat in a license of this workspace yet.");
+    expect(markup).not.toContain("Mentra Call Unlimited");
+  });
+});
+
+describe("licenses panel: an admin assigns and unassigns seats", () => {
+  const asAdmin = (licenses = [licenseFor()], viewer = detailFor("admin"), members: MemberView[] = membersFor(viewer)) => {
+    const { api, requests } = offlineApi();
+    const markup = renderSeeded(api, { detail: viewer, licenses, members }, <WorkspaceLicensesPanel api={api} workspaceId={WORKSPACE_ID} />);
+    return { markup, requests };
+  };
+
+  test("shows seats used and total, and who holds each seat with a way to unassign it", () => {
+    const { markup, requests } = asAdmin();
+    expect(markup).toContain("Mentra Call Unlimited");
+    expect(markup).toContain("2 of 5 seats used");
+    expect(markup).toContain("dana@acme.test");
+    expect(markup).toContain("max@acme.test");
+    expect(labelsStartingWith(markup, "Unassign ")).toEqual(["Unassign dana@acme.test", "Unassign max@acme.test"]);
+    // Unassigning asks first: the seat is freed only by the second click.
+    expect(markup).not.toContain("Confirm unassign");
+    expect(requests).toEqual([]);
+  });
+
+  test("offers a seat to the members who have none, and not to those waiting for their first sign-in", () => {
+    const viewer = detailFor("admin");
+    const imported: MemberView = {
+      membershipId: "wm_imported",
+      mentraUserId: null,
+      email: "imported@acme.test",
+      role: "member",
+      startedAt: START,
+      pending: true,
+    };
+    const { markup } = asAdmin([licenseFor()], viewer, [...membersFor(viewer), imported]);
+    // Dana and Max hold seats; the viewer, Olivia and Adam do not.
+    expect(selectOptions(markup, "Member")).toEqual({ "Mentra Call Unlimited": ["wm_self", "wm_owner", "wm_admin"] });
+    expect(markup).toContain(">Assign seat<");
+    expect(markup).not.toContain("imported@acme.test");
+  });
+
+  test("a license with every seat assigned says so and offers no assignment", () => {
+    const { markup } = asAdmin([licenseFor({ quantity: 2 })]);
+    expect(markup).toContain("2 of 2 seats used");
+    expect(markup).toContain("Every seat is assigned.");
+    expect(markup).not.toContain("<select");
+    expect(markup).not.toContain(">Assign seat<");
+    expect(labelsStartingWith(markup, "Unassign ")).toHaveLength(2);
+    expect(markup).not.toContain('role="note"');
+  });
+
+  test("a license with more seats than its quantity gets a notice, shows the real count, and takes no new seat", () => {
+    // The quantity was lowered to 1 after three seats were assigned.
+    const seats = [
+      { membershipId: "wm_dev", mentraUserId: "u_3", assignedAt: START },
+      { membershipId: "wm_member", mentraUserId: "u_4", assignedAt: START },
+      { membershipId: "wm_owner", mentraUserId: "u_1", assignedAt: START },
+    ];
+    const { markup } = asAdmin([licenseFor({ quantity: 1, seatsUsed: 3, seats })]);
+    expect(markup).toMatch(/<p role="note"[^>]*>[\s\S]*This license covers 1 seat but 3 are assigned\. Unassign 2 before assigning anyone else\./);
+    expect(markup).toContain("3 of 1 seat used");
+    expect(markup).not.toContain("<select");
+    expect(markup).not.toContain(">Assign seat<");
+    // Unassigning is how it comes back within its quantity.
+    expect(labelsStartingWith(markup, "Unassign ")).toHaveLength(3);
+  });
+
+  test("a license within its quantity has no notice", () => {
+    expect(asAdmin().markup).not.toContain('role="note"');
+  });
+
+  test("an owner, and an Organization Admin who is not a member, manage seats the same way", () => {
+    for (const viewer of [detailFor("owner"), organizationAdminDetail()]) {
+      const { markup } = asAdmin([licenseFor()], viewer);
+      expect(markup).toContain("2 of 5 seats used");
+      expect(markup).toContain(">Assign seat<");
+      expect(labelsStartingWith(markup, "Unassign ")).toHaveLength(2);
+    }
+  });
+
+  test("a workspace with no licenses says so", () => {
+    const { markup } = asAdmin([]);
+    expect(markup).toContain("This workspace has no licenses yet.");
+    expect(markup).not.toContain("<select");
+  });
+
+  test("an unpaid-for term reads as expired, and one in term says what it is paid through; dates are en-US", () => {
+    const expired = asAdmin([licenseFor({ paidThrough: EXPIRED_AT })]).markup;
+    expect(expired).toContain(`Expired ${formatDate(EXPIRED_AT)}`);
+    expect(expired).not.toContain("Paid through");
+    const current = asAdmin().markup;
+    expect(current).toContain(`Paid through ${formatDate(PAID_THROUGH)}`);
+    expect(current).not.toContain("Expired");
+    // One that has not begun says when it will.
+    const later = asAdmin([licenseFor({ validFrom: PAID_THROUGH, paidThrough: "2100-06-15T12:00:00.000Z" })]).markup;
+    expect(later).toContain(`Starts ${formatDate(PAID_THROUGH)}`);
+    expect(later).not.toContain("Expired");
+    // The assertions above follow formatDate; this one pins what it is: the English month-day-year form.
+    expect(formatDate(PAID_THROUGH)).toMatch(/^[A-Z][a-z]{2} \d{1,2}, 2099$/);
+  });
+
+  test("keeps what it showed when a background refetch fails", async () => {
+    const { api } = offlineApi();
+    const viewer = detailFor("admin");
+    const markup = await renderAfterFailedRefetch(
+      api,
+      { detail: viewer, licenses: [licenseFor()], members: membersFor(viewer) },
+      <WorkspaceLicensesPanel api={api} workspaceId={WORKSPACE_ID} />,
+      ["licenses"],
+    );
+    expect(markup).toContain("2 of 5 seats used");
+    expect(markup).not.toContain("Try again");
+  });
+
+  test("with nothing loaded yet it says it is loading", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(api, { detail: detailFor("admin") }, <WorkspaceLicensesPanel api={api} workspaceId={WORKSPACE_ID} />);
+    expect(markup).toContain("Loading");
+    expect(markup).not.toContain("seats used");
+  });
+});
+
+describe("licenses panel: the seat changes", () => {
+  test("members without a seat on the license are the ones it can be assigned to", () => {
+    const viewer = detailFor("admin");
+    const members = membersFor(viewer);
+    expect(unseatedMembers(licenseFor(), members).map((member) => member.membershipId)).toEqual(["wm_self", "wm_owner", "wm_admin"]);
+    expect(unseatedMembers(licenseFor({ seats: [] }), members)).toHaveLength(members.length);
+    expect(unseatedMembers(licenseFor({ seats: undefined }), members)).toHaveLength(members.length);
+    expect(unseatedMembers(licenseFor(), members.map((member) => ({ ...member, pending: true })))).toEqual([]);
+  });
+
+  /** An API that records its requests and answers a seat assignment with the license and a release with 204. */
+  function recordingApi() {
+    const calls: Array<{ url: string; method: string }> = [];
+    const api = createWorkspaceApi({
+      basePath: "/api/workspaces",
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({ url: String(input), method: init?.method ?? "GET" });
+        return init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json(licenseFor());
+      }) as unknown as typeof fetch,
+    });
+    return { api, calls };
+  }
+  const stale = (client: QueryClient, key: readonly unknown[]) => client.getQueryState(key)?.isInvalidated === true;
+
+  test("assigning puts the seat on the license for that membership, and unassigning deletes it; each refreshes the licenses", async () => {
+    const { api, calls } = recordingApi();
+    const client = new QueryClient();
+    client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), [licenseFor()]);
+    const seats = seatChanges(api, WORKSPACE_ID);
+
+    const assign = new MutationObserver(client, workspaceMutationOptions(client, api, WORKSPACE_ID, seats.assign));
+    expect(await assign.mutate({ licenseId: "lic_call", membershipId: "wm_owner" })).toEqual(licenseFor());
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+    client.setQueryData(workspaceKeys.licenses(api, WORKSPACE_ID), [licenseFor()]);
+
+    const release = new MutationObserver(client, workspaceMutationOptions(client, api, WORKSPACE_ID, seats.release));
+    expect(await release.mutate({ licenseId: "lic_call", membershipId: "wm_dev" })).toBeUndefined();
+    expect(stale(client, workspaceKeys.licenses(api, WORKSPACE_ID))).toBe(true);
+
+    expect(calls).toEqual([
+      { url: "/api/workspaces/ws_acme/licenses/lic_call/seats/wm_owner", method: "PUT" },
+      { url: "/api/workspaces/ws_acme/licenses/lic_call/seats/wm_dev", method: "DELETE" },
+    ]);
+    client.clear();
   });
 });

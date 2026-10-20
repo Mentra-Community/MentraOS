@@ -4,10 +4,17 @@ import { useState } from "react";
 import { BrandPage } from "@/components/brand";
 import { PortalShell } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
-import { api, safeLocalStorage, type PortalMe } from "./lib/api";
+import { fetchPortalMe, safeLocalStorage, type PortalMe } from "./lib/api";
 import { DEVELOPER_CONSOLE_URL } from "./lib/config";
 import { Redirect, usePathname } from "./lib/navigation";
-import { PortalProvider, portalWorkspaceApi, usePortal, type PortalSession } from "./lib/portal";
+import {
+  expireSession,
+  PORTAL_ME_KEY,
+  PortalProvider,
+  portalWorkspaceApi,
+  usePortal,
+  type PortalSession,
+} from "./lib/portal";
 import {
   homeWorkspace,
   INVITATION_PATH,
@@ -20,6 +27,7 @@ import {
 import { loginHref, signOutOfEnterprisePortal } from "./lib/session";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import { takePendingInvite } from "./lib/workspace-invite";
+import { AccountBillingScreen } from "./pages/account-billing";
 import { EnterpriseScreen } from "./pages/enterprise";
 import { NotFoundMessage } from "./pages/not-found";
 import { InvitationScreen, WelcomeScreen } from "./pages/welcome";
@@ -64,8 +72,8 @@ function PortalPage() {
   const [signingOut, setSigningOut] = useState(false);
   const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
   const me = useQuery({
-    queryKey: ["portal-me"],
-    queryFn: () => api<PortalMe>("/api/portal/me"),
+    queryKey: PORTAL_ME_KEY,
+    queryFn: fetchPortalMe,
     retry: false,
   });
   const accountEmail = me.data?.user.email?.trim() || null;
@@ -104,6 +112,8 @@ function PortalPage() {
     signOut: () => void signOut(),
     signingOut,
     developerConsoleUrl: DEVELOPER_CONSOLE_URL,
+    modules: me.data.modules,
+    sessionExpired: () => expireSession(qc),
   };
 
   return (
@@ -121,7 +131,16 @@ export function PortalRoutes({ route, me }: { route: PortalRoute; me: PortalMe }
     case "invitation":
       return <InvitationRoute />;
     case "workspace":
-      return <WorkspaceScreen key={route.workspaceId} workspaceId={route.workspaceId} section={route.section} />;
+      return <WorkspaceScreen key={route.workspaceId} workspaceId={route.workspaceId} section={route.section} me={me} />;
+    case "account-billing":
+      // A person who is not offered billing gets the same page as for any address the portal does not have.
+      return me.modules.billing ? (
+        <AccountBillingScreen me={me} />
+      ) : (
+        <PortalShell current={null} nav={[]} activeKey={null}>
+          <NotFoundMessage kind="page" />
+        </PortalShell>
+      );
     case "enterprise":
       return <EnterpriseScreen page={route.page} me={me} />;
     case "not-found":

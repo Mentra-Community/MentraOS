@@ -16,7 +16,7 @@ import {
 } from "@tanstack/react-query";
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "./api";
-import { isWorkspaceChangedError, isWorkspaceHeldError, WorkspaceApiError } from "./errors";
+import { isLicenseChangedError, isWorkspaceChangedError, isWorkspaceHeldError, WorkspaceApiError } from "./errors";
 
 type ApiScope = Pick<WorkspaceApi, "basePath">;
 
@@ -33,6 +33,7 @@ export const workspaceKeys = {
     [...workspaceKeys.workspace(api, workspaceId), "invitations"] as const,
   credentials: (api: ApiScope, workspaceId: string) =>
     [...workspaceKeys.workspace(api, workspaceId), "credentials"] as const,
+  licenses: (api: ApiScope, workspaceId: string) => [...workspaceKeys.workspace(api, workspaceId), "licenses"] as const,
   audit: (api: ApiScope, workspaceId: string) => [...workspaceKeys.workspace(api, workspaceId), "audit"] as const,
   invitationPreview: (api: ApiScope, token: string) =>
     [...workspaceKeys.root(api), "invitation-preview", token] as const,
@@ -93,6 +94,17 @@ export const credentialsQuery = (api: WorkspaceApi, workspaceId: string) =>
     retry: shouldRetry,
   });
 
+/**
+ * The workspace's licenses as the viewer may see them (see `WorkspaceApi.listLicenses`). A host reads it to
+ * decide whether the workspace has any, as well as the licenses panel to list them.
+ */
+export const licensesQuery = (api: WorkspaceApi, workspaceId: string) =>
+  queryOptions({
+    queryKey: workspaceKeys.licenses(api, workspaceId),
+    queryFn: () => api.listLicenses(workspaceId),
+    retry: shouldRetry,
+  });
+
 export const auditQuery = (api: WorkspaceApi, workspaceId: string) =>
   infiniteQueryOptions({
     queryKey: workspaceKeys.audit(api, workspaceId),
@@ -135,7 +147,8 @@ export const myInvitationsQuery = (api: WorkspaceApi) =>
  * `membership_changed` (someone else changed the workspace first) the same refetch runs and the error
  * still reaches the caller, whose message is `WORKSPACE_CHANGED_MESSAGE`. A 409 `workspace_has_holds` (a
  * service placed a hold since the screen loaded) refetches too, so the screen shows what holds the
- * workspace. With `workspaceGone` (deleted or left) a success drops the workspace's data instead, since
+ * workspace, and so does a license that changed under the caller (every seat taken, or gone), so the
+ * licenses show their real seats. With `workspaceGone` (deleted or left) a success drops the workspace's data instead, since
  * fetching it again would only fail.
  *
  * `gcTime: 0` keeps results out of the shared mutation cache once the screen lets go of them.
@@ -157,7 +170,7 @@ export function workspaceMutationOptions<TVariables, TData>(
       await client.invalidateQueries({ queryKey: workspaceKeys.list(api) });
     },
     onError: async (error) => {
-      if (isWorkspaceChangedError(error) || isWorkspaceHeldError(error)) await refresh();
+      if (isWorkspaceChangedError(error) || isWorkspaceHeldError(error) || isLicenseChangedError(error)) await refresh();
     },
   };
 }

@@ -14,6 +14,7 @@ import type {
   CredentialView,
   InvitationPreview,
   InvitationView,
+  LicenseView,
   MemberView,
   PrincipalResponse,
   WorkspaceDetail,
@@ -97,6 +98,16 @@ export interface WorkspaceApi {
   revokeCredential(workspaceId: string, credentialId: string): Promise<void>;
 
   listAudit(workspaceId: string, page?: { before?: string; limit?: number }): Promise<AuditPage>;
+
+  /**
+   * The workspace's licenses as the caller may see them: every license with every seat for an Admin or Owner
+   * (`workspace.licenses.read`), otherwise only the licenses they hold a seat in, each with only their own.
+   */
+  listLicenses(workspaceId: string): Promise<LicenseView[]>;
+  /** Gives the membership a seat on the license (`workspace.licenses.assign`). Answers the license with its seats. */
+  assignSeat(workspaceId: string, licenseId: string, membershipId: string): Promise<LicenseView>;
+  /** Takes the seat back from the membership (`workspace.licenses.assign`). */
+  releaseSeat(workspaceId: string, licenseId: string, membershipId: string): Promise<void>;
 }
 
 /** What `createWorkspaceApi` needs of `fetch`; the global `fetch` of any runtime satisfies it. */
@@ -194,6 +205,13 @@ export function createWorkspaceApi(opts: {
       const queryString = query.toString();
       return json("GET", `${workspace(workspaceId)}/audit${queryString ? `?${queryString}` : ""}`);
     },
+
+    listLicenses: async (workspaceId) =>
+      (await json<{ items: LicenseView[] }>("GET", `${workspace(workspaceId)}/licenses`)).items,
+    assignSeat: (workspaceId, licenseId, membershipId) =>
+      json("PUT", `${workspace(workspaceId)}/licenses/${id(licenseId)}/seats/${id(membershipId)}`),
+    releaseSeat: (workspaceId, licenseId, membershipId) =>
+      empty("DELETE", `${workspace(workspaceId)}/licenses/${id(licenseId)}/seats/${id(membershipId)}`),
   };
 }
 

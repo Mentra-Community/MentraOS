@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { CreateWorkspaceDialog, ROLE_LABELS, workspaceListQuery } from "@mentra/workspace-ui";
-import { CodeXml } from "lucide-react";
+import { CodeXml, CreditCard } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AppShell, type NavGroup, type NavItem } from "@/components/app-shell";
 import { SwitcherInvitationActions } from "@/components/pending-invitation";
@@ -8,7 +8,7 @@ import { WorkspaceSwitcher, type SwitcherInvitation, type SwitcherWorkspace } fr
 import type { PendingInvitation } from "@/lib/invitations";
 import { navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { workspacePath, type WorkspaceSection } from "@/lib/routes";
+import { ACCOUNT_BILLING_PATH, workspacePath, type WorkspaceSection } from "@/lib/routes";
 
 /**
  * The person's valid invitations as switcher entries, with Accept and Dismiss: the one this tab's link
@@ -38,6 +38,12 @@ export function portalLinks(developerConsoleUrl: string | null): NavItem[] {
   return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
 }
 
+/** The account menu's pages: the person's own Billing, where the billing module is offered to them. */
+export function accountItems(billing: boolean): NavItem[] {
+  if (!billing) return [];
+  return [{ key: "billing", label: "Billing", icon: CreditCard, href: ACCOUNT_BILLING_PATH }];
+}
+
 /**
  * `AppShell` with the workspace switcher wired to the person's workspaces, this tab's invitation and the
  * create-workspace dialog, and the links out of the portal. A new workspace opens as soon as it exists.
@@ -46,6 +52,7 @@ export function PortalShell({
   current,
   section,
   nav,
+  navLabel,
   activeKey,
   title,
   description,
@@ -56,6 +63,8 @@ export function PortalShell({
   /** The section open now: switching workspaces keeps it when the other workspace has it. */
   section?: WorkspaceSection;
   nav: readonly NavGroup[];
+  /** The navigation's name for assistive technology; "Workspace" unless it is not a workspace's. */
+  navLabel?: string;
   activeKey: string | null;
   title?: string;
   description?: string;
@@ -89,8 +98,10 @@ export function PortalShell({
         />
       }
       nav={nav}
+      navLabel={navLabel}
       activeKey={activeKey}
       links={portalLinks(portal.developerConsoleUrl)}
+      accountItems={accountItems(portal.modules.billing)}
       title={title}
       description={description}
       headerAction={headerAction}
