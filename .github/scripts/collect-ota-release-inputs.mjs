@@ -20,7 +20,7 @@ function requireSize(value, label) {
   }
 }
 
-requireSize(manifest.bes_firmware.size, "bes_firmware")
+if (manifest.bes_firmware.size !== undefined) requireSize(manifest.bes_firmware.size, "bes_firmware")
 if (manifest.mtk_full_ota) requireSize(manifest.mtk_full_ota.size, "mtk_full_ota")
 manifest.mtk_patches.forEach((patch, index) => {
   if (patch.size !== undefined) requireSize(patch.size, `mtk_patches[${index}]`)
