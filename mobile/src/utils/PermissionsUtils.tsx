@@ -1,7 +1,7 @@
 import {AppletInterface, AppletPermission} from "@mentra/engine"
 import CrustModule from "@mentra/crust"
 import * as ExpoCalendar from "expo-calendar"
-import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
+import {Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import {check, PERMISSIONS, request, RESULTS} from "react-native-permissions"
 
@@ -295,7 +295,7 @@ export const requestBackgroundLocationPermission = async (): Promise<boolean> =>
 
     // Need to show dialog first explaining why we need background location
     return new Promise((resolve) => {
-      Alert.alert(
+      showAlert(
         "Background Location Permission",
         "MentraOS needs access to your location when the app is in the background " +
           "to provide continuous tracking and location-based features. " +
@@ -568,7 +568,7 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
 // Display appropriate warning messages
 export const displayPermissionDeniedWarning = (permissionName: string): Promise<boolean> => {
   return new Promise((resolve) => {
-    Alert.alert(
+    showAlert(
       `${permissionName} Permission Limited`,
       `Some features related to ${permissionName.toLowerCase()} may be limited or unavailable. You can enable full access in your device settings.`,
       [

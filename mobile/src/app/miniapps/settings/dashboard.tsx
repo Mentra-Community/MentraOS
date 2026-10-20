@@ -1,6 +1,6 @@
 import {getModelCapabilities, SETTINGS, useSetting, engine} from "@mentra/engine"
 import {useState} from "react"
-import {Alert, ScrollView, View} from "react-native"
+import {ScrollView, View} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
 import HeadUpAngleComponent from "@/components/settings/HeadUpAngleComponent"
@@ -8,6 +8,7 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
+import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 
 export default function DashboardSettingsScreen() {
@@ -25,7 +26,7 @@ export default function DashboardSettingsScreen() {
   // -- Handlers --
   const onSaveHeadUpAngle = async (newHeadUpAngle: number) => {
     if (!glassesConnected) {
-      Alert.alert("Glasses not connected", "Please connect your smart glasses first.")
+      showAlert("Glasses not connected", "Please connect your smart glasses first.")
       return
     }
     if (newHeadUpAngle == null) {
