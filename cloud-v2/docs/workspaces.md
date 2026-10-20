@@ -185,7 +185,7 @@ to the optional Fleet service for a person holding `organization.fleet.administe
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
 and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
-`/api/portal/billing/*` forwards the workspace portal's Licenses & Billing requests
+`/api/portal/billing/*` forwards the workspace portal's billing requests
 to that module for a signed-in person, with the workspace or the person's own
 account as the scope Core decides ([Portal modules](portal-modules.md)).
 `/api/portal/me` says whether to offer it (`modules.billing`).
