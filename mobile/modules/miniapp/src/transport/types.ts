@@ -12,7 +12,10 @@ export type TransportMessageHandler = (raw: string) => void
 export type TransportDisconnectHandler = (reason: string) => void
 
 export interface Transport {
-  /** Establish whatever connection the transport needs. May be a no-op. */
+  /**
+   * Establish whatever connection the transport needs. May be a no-op. Resolves
+   * at once when already open: a retried handshake calls it again.
+   */
   open(): Promise<void>
   /** Send a serialized envelope. */
   send(raw: string): void

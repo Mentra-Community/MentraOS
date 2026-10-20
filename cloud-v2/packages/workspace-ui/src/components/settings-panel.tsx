@@ -5,7 +5,7 @@
  * typed back, and leaving is offered to anyone who is a member (an organization admin acting from
  * outside the workspace has nothing to leave). The only owner cannot leave, so for them Leave is
  * disabled and says why. A workspace a service holds (`deletionHolds`, such as the Store's while it
- * owns published miniapps) cannot be deleted by anyone, so for them Delete is disabled and says why.
+ * owns a miniapp) cannot be deleted by anyone, so for them Delete is disabled and says why.
  * A host adds what deleting means in its context with `deleteNotice`. A refused action says why next
  * to the control that caused it.
  */

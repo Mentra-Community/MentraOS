@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { buttonVariants, Spinner, workspaceListQuery } from "@mentra/workspace-ui";
+import { BrandPage, buttonVariants, Spinner, workspaceListQuery } from "@mentra/workspace-ui";
 import { useState } from "react";
-import { BrandPage } from "@/components/brand";
 import { PortalShell } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
 import { fetchPortalMe, safeLocalStorage, type PortalMe } from "./lib/api";

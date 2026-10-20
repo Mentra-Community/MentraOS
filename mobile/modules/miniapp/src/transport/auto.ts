@@ -84,6 +84,11 @@ class LocalSocketWithMockFallback implements Transport {
   constructor(private readonly options: LocalSocketTransportOptions) {}
 
   async open(): Promise<void> {
+    // A retried handshake opens again: keep the transport already selected.
+    if (this.active?.isOpen()) return
+    // One that dropped is replaced, so it cannot keep delivering to the handlers.
+    this.active?.close()
+    this.active = null
     const local = new LocalSocketTransport(this.options)
     let timedOut = false
     const timeout = new Promise<void>((_, reject) => {

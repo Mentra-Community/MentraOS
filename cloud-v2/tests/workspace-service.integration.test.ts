@@ -1385,7 +1385,7 @@ describe("deletion holds", () => {
       const err = await thrown(() => deleteWorkspace(actor, ws, {confirmName: "Acme"}))
       expect(err).toBeInstanceOf(WorkspaceError)
       expect({code: err.code, status: err.status}).toEqual({code: "workspace_has_holds", status: 409})
-      expect(err.message).toBe("This workspace still owns 3 published miniapps. Delete them in the Developer Console first.")
+      expect(err.message).toBe("This workspace still owns 3 miniapps. Delete them in the Developer Console first.")
       expect(err.details).toEqual({holds: [storeHold(3)]})
     }
     // Nothing changed.

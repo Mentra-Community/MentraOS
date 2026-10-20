@@ -847,7 +847,7 @@ describe("workspaces", () => {
           status: 409,
           body: {
             error: "workspace_has_holds",
-            error_description: "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+            error_description: "This workspace still owns 3 miniapps. Delete them in the Developer Console first.",
             holds: [{service: "store", reason: "owns_miniapps", count: 3}],
           },
         })
@@ -855,7 +855,7 @@ describe("workspaces", () => {
       expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
       expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws.workspaceId, action: "workspace.deleted"})).toBe(0)
 
-      // The Store clears its hold once the workspace owns no published miniapp; then the delete goes through.
+      // The Store clears its hold once the workspace owns no miniapp; then the delete goes through.
       await clearDeletionHold("store", ws.workspaceId, {asOf: nextHoldAsOf()})
       expect(
         (await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner, body: {confirmName: "Acme"}})).status,

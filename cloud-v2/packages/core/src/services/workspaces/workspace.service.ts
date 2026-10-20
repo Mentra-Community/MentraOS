@@ -300,8 +300,8 @@ export async function renameWorkspace(
  * (someone who may not learns nothing about them) and before the typed name.
  *
  * Core asks no other service at delete time: a service that needs a workspace
- * kept holds it beforehand. The Store holds a workspace while it owns published
- * miniapps. Whatever else a service keeps for a deleted workspace is that
+ * kept holds it beforehand. The Store holds a workspace while it owns a miniapp
+ * that is not deleted, a draft included. Whatever else a service keeps for a deleted workspace is that
  * service's to handle; it learns of the deletion from the change feed.
  */
 export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {confirmName: string}): Promise<void> {
