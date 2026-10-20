@@ -27,24 +27,31 @@ const ENDED_REASONS: Record<LicenseEndedReason, string> = {
 };
 
 export interface LicenseState {
-  kind: "active" | "expired" | "ended";
+  kind: "active" | "upcoming" | "expired" | "ended";
   label: string;
 }
 
 /**
- * Where a license stands at `now`. An ended license (its owner was deleted) is ended whatever it was paid
- * through; otherwise it is expired from the instant it was paid through.
+ * Where a license stands at `now`. An ended license (its owner was deleted) is ended whatever its term. Otherwise
+ * it is active only inside its term, `validFrom <= now < paidThrough` (the rule that puts its features in tokens):
+ * expired once paid through, or, for a term with no instant in it, never valid; not started before `validFrom`.
  */
-export function licenseState(license: Pick<AdminLicenseView, "endedAt" | "endedReason" | "paidThrough">, now: number = Date.now()): LicenseState {
+export function licenseState(
+  license: Pick<AdminLicenseView, "endedAt" | "endedReason" | "validFrom" | "paidThrough">,
+  now: number = Date.now(),
+): LicenseState {
   if (license.endedAt) {
     const reason = license.endedReason ? (ENDED_REASONS[license.endedReason] ?? license.endedReason) : null;
     return { kind: "ended", label: reason ? `Ended: ${reason}` : "Ended" };
   }
-  return Date.parse(license.paidThrough) <= now ? { kind: "expired", label: "Expired" } : { kind: "active", label: "Active" };
+  const validFrom = Date.parse(license.validFrom);
+  if (Date.parse(license.paidThrough) <= Math.max(validFrom, now)) return { kind: "expired", label: "Expired" };
+  return validFrom > now ? { kind: "upcoming", label: "Not started" } : { kind: "active", label: "Active" };
 }
 
 const STATE_STYLE: Record<LicenseState["kind"], string> = {
   active: "bg-info text-info-foreground",
+  upcoming: "bg-surface text-muted-foreground",
   expired: "bg-error text-error-foreground",
   ended: "bg-surface text-muted-foreground",
 };

@@ -147,6 +147,25 @@ describe("the Licenses page lists every license", () => {
     expect(licenseState({ ...workspaceLicense, paidThrough: new Date(NOW).toISOString() }, NOW).kind).toBe("expired");
   });
 
+  test("licenseState: a license is active only inside its term, validFrom <= now < paidThrough", () => {
+    const later = new Date(NOW + 86_400_000).toISOString();
+    // Paid through the future but not started: it grants nothing yet.
+    expect(licenseState({ ...workspaceLicense, validFrom: later }, NOW)).toEqual({ kind: "upcoming", label: "Not started" });
+    // Starting this instant is in term.
+    expect(licenseState({ ...workspaceLicense, validFrom: new Date(NOW).toISOString() }, NOW).kind).toBe("active");
+    // A zero-length term never contains an instant, so a future one is never valid.
+    expect(licenseState({ ...workspaceLicense, validFrom: later, paidThrough: later }, NOW).kind).toBe("expired");
+    // Ended wins over every term.
+    expect(licenseState({ ...ended, validFrom: later }, NOW).kind).toBe("ended");
+  });
+
+  test("the list says a license that has not started is not started", () => {
+    const upcoming: AdminLicenseView = { ...workspaceLicense, licenseId: "lic_upcoming", validFrom: "2098-01-01T00:00:00.000Z" };
+    const markup = render([{ items: [upcoming], next: null }]);
+    expect(markup).toContain("Not started");
+    expect(markup).not.toContain(">Active<");
+  });
+
   test("a list still loading, an empty one and a failed one each say so", () => {
     expect(render(null)).toContain("Loading licenses");
     expect(render([{ items: [], next: null }])).toContain("No licenses yet.");
