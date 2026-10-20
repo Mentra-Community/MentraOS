@@ -335,6 +335,13 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly pendingRequests = new Map<string, PendingRequest>()
   /** In flight or succeeded. A failed attempt clears it so `connect()` can send CONNECT again. */
   private connectPromise: Promise<void> | null = null
+  /**
+   * Set by the first CONNECT_ACK and never cleared: the handshake completes once
+   * per session. The host answers every CONNECT, so after a retry the ACK for
+   * another CONNECT of this session can still arrive, in either order. Unlike
+   * `ready`, this survives a transport drop, which a session does not recover from.
+   */
+  private handshakeComplete = false
   /** Rejects the handshake in flight. Set only while waiting for CONNECT_ACK. */
   private failHandshake: ((error: Error) => void) | null = null
   /** Set by `registerMiniapp`: a CONNECT_ACK timeout sends CONNECT again instead of failing `connect()`. */
@@ -492,7 +499,7 @@ export class MiniappSession<TChannels extends object = any> {
     }
     if (this.connectPromise) return this.connectPromise
     // A CONNECT_ACK that arrived after an earlier attempt timed out still completed the handshake.
-    if (this.ready) {
+    if (this.handshakeComplete) {
       this.connectPromise = Promise.resolve()
       return this.connectPromise
     }
@@ -528,7 +535,7 @@ export class MiniappSession<TChannels extends object = any> {
       const failure = await this.pauseBeforeRetry()
       if (failure) throw failure
       // The CONNECT_ACK for an earlier CONNECT can still land during the pause.
-      if (this.ready) return
+      if (this.handshakeComplete) return
       if (this.disposed) throw new NotConnectedError("MiniappSession: connect aborted")
     }
   }
@@ -814,6 +821,10 @@ export class MiniappSession<TChannels extends object = any> {
 
     switch (type) {
       case MiniappResponseType.CONNECT_ACK: {
+        // The answer to another CONNECT of this session (a retry, or one whose
+        // attempt timed out). Applying it would run the handshake again: emit
+        // "ready" twice and replace state that later updates may have changed.
+        if (this.handshakeComplete) return
         const ack = payload as unknown as ConnectAckPayload
         this.userId = ack.userId ?? ""
         if (ack.packageName) this.packageName = ack.packageName
@@ -832,6 +843,7 @@ export class MiniappSession<TChannels extends object = any> {
         // that don't send `permissions` leave the all-false default in place
         // — `hasPermission` getters will simply return false.
         if (ack.permissions) this.applyPermissions(ack.permissions)
+        this.handshakeComplete = true
         this.ready = true
         this.flushQueue()
         this.emitter.emit("ready")

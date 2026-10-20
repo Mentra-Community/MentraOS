@@ -768,6 +768,63 @@ describe("MiniappSession connect retry", () => {
     session.disconnect()
   })
 
+  test("a CONNECT_ACK for an earlier CONNECT, after a later one completed the handshake, is ignored", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.dup", connectTimeoutMs: 20})
+    let readies = 0
+    let auths = 0
+    session.on("ready", () => readies++)
+    session.on("auth", () => auths++)
+    await expect(session.connect()).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+    const second = session.connect()
+    await Promise.resolve()
+    const [firstId, secondId] = transport.sent
+      .map((raw) => parseEnvelope(raw))
+      .filter((envelope) => (envelope?.payload as {type?: string}).type === MiniappRequestType.CONNECT)
+      .map((envelope) => envelope?.requestId)
+    expect(firstId).not.toBe(secondId)
+
+    const capabilities = {display: null}
+    const auth = {mentraUserId: "u", token: "second", expiresAt: Date.now() + 60_000}
+    transport.deliverFromPhone(
+      {type: MiniappResponseType.CONNECT_ACK, userId: "u", packageName: "com.test.dup", capabilities, auth},
+      secondId,
+    )
+    await second
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.CONNECT_ACK,
+        userId: "stale",
+        packageName: "com.test.dup",
+        capabilities: null,
+        configuration: {mode: "stale"},
+        auth: {...auth, token: "first"},
+      },
+      firstId,
+    )
+    expect(readies).toBe(1)
+    expect(auths).toBe(1)
+    // The handshake's state is the one it completed with.
+    expect(session.userId).toBe("u")
+    expect(session.capabilities).toEqual(capabilities)
+    expect(session._getConfiguration()).toEqual({})
+    expect(session._getAuth()?.token).toBe("second")
+    session.disconnect()
+  })
+
+  test("a handshake completed by a late CONNECT_ACK is not sent again after the transport drops", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.late-drop", connectTimeoutMs: 20})
+    await expect(session.connect()).rejects.toBeInstanceOf(ConnectAckTimeoutError)
+    ack(transport, "com.test.late-drop")
+    transport.fireDisconnect("bridge threw")
+    expect(session.ready).toBe(false)
+    // Like a session whose own attempt was answered: connected once, it does not handshake again.
+    await session.connect()
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
   test("disconnect during the handshake rejects connect() and cancels its timer", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport, packageName: "com.test.abort", connectTimeoutMs: 20})
