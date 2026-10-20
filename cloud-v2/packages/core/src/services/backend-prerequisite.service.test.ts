@@ -429,19 +429,21 @@ async function portableFixture() {
     duplicate() {const claim = current.host.resourceReservations as HostResourceReservation[]; duplicates = [{...claim[0]!, id: '05e28570-91a8-486e-aecb-c1d7b7874e79', hostId: 'other'} as HostResourceReservation]},
     pause(kind: 'probe' | 'run') {pausedKind = kind; pausePromise = new Promise(resolve => {pauseResume = resolve})
       return {entered: new Promise<void>(resolve => {pauseEntered = resolve}), resume() {pauseResume()}}},
-    async reserve(hostId = 'mini', laneId = 'android', id = 'original', at = now) {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(at))},
+    async reserve(hostId = 'mini', laneId = 'android', id = 'original', at = now, onWaiting?: (reason: string) => void) {return routineJobRepository.reserveResources!(id, requests.get(id)!.fleetInputSha256!, hostId, laneId, new Date(at), onWaiting)},
     restore() {for (const mock of [reserveClock, clock, requestGet, hostGet, originalGet, claimedHosts, recorderClaims, requestRead, requestList, hostRead, hostWrite, replace, requestWrite]) mock.mockRestore()}}
 }
 test('fresh settled negative refuses repeated new original admissions before any custody write', async () => {
   const f = await portableFixture()
   try {
     f.current.host.snapshot.lanes[0]!.resources[0]!.backendConnectivity = unqualified()
+    const reasons: string[] = []
     for (let i = 0; i < 10; i++) {
       const id = `scheduled-original-${i}`; f.addRequest(id)
-      expect(await f.reserve('mini', 'android', id)).toBeNull()
+      expect(await f.reserve('mini', 'android', id, now, reason => {reasons.push(reason)})).toBeNull()
       expect(f.requests.get(id)!.fleetResourceAdmission).toBeUndefined()
       expect(f.requests.get(id)!.fleetResourceReservation).toBeUndefined()
     }
+    expect(reasons).toEqual(Array(10).fill('The phone’s internet connection check failed. Waiting for a new check.'))
     expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
     const offline = f.addRequest('offline-original', true)
     expect(await f.reserve('mini', 'android', offline.requestId)).not.toBeNull()

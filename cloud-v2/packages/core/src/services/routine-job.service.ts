@@ -497,7 +497,7 @@ export function routineLaneContext(host: Pick<RoutingTestHostState, 'hostId' | '
       unowned: subject.owner === null})) ?? [],
   }} : {})};
 }
-const BACKEND_PREPARATION_WAIT = 'Awaiting a fresh phone backend observation after its unqualified prerequisite';
+const BACKEND_PREPARATION_WAIT = 'The phone’s internet connection check failed. Waiting for a new check.';
 function backendPreparationRefused(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
   context: ReturnType<typeof routineLaneContext>) {
   return Boolean(context && requirements.resources.some(required => required.kind === 'phone' &&
