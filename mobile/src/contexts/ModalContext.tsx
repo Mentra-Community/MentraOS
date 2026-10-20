@@ -1,23 +1,27 @@
-import * as NavigationBar from "expo-navigation-bar"
-import {GlassView} from "expo-glass-effect"
-import {useState, useEffect, useRef, useCallback} from "react"
-import {BackHandler, Platform, StyleSheet, TouchableOpacity, View} from "react-native"
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  useAnimatedProps,
-  withTiming,
-  withSpring,
-} from "react-native-reanimated"
+/**
+ * The Mentra App's one alert surface: a bottom sheet with an optional icon, a title, a message, optional
+ * content and stacked buttons. Both `showAlert` here and the older `showAlert` in `@/utils/AlertUtils`
+ * present through it.
+ *
+ * - Alerts queue. One sheet shows at a time, in the order they were asked for, and an alert identical to
+ *   one already waiting (same title and message) is not shown twice.
+ * - An alert answers once its sheet has slid away, so a button that opens a native surface (a link, a
+ *   permission prompt, a picker) never races the sheet.
+ * - Swiping the sheet down, tapping outside it and Android back answer with the cancel button, and only
+ *   when the alert has one and allows dismissal. Otherwise the sheet waits for a button.
+ */
+import {StatusBar} from "expo-status-bar"
+import {type ReactNode, useCallback, useEffect, useReducer, useRef, useState} from "react"
+import {BackHandler, Keyboard, Pressable, ScrollView, type TextStyle, useWindowDimensions, View} from "react-native"
+import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import Animated, {Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming} from "react-native-reanimated"
+import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {scheduleOnRN} from "react-native-worklets"
 
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
-import {scheduleOnRN} from "react-native-worklets"
 
-const AnimatedGlassView = Animated.createAnimatedComponent(GlassView)
-
-// Types
 export type ButtonStyle = "default" | "cancel" | "destructive"
 
 export interface AlertButton {
@@ -26,206 +30,278 @@ export interface AlertButton {
 }
 
 export interface AlertOptions {
-  icon?: React.ReactNode
-  content?: React.ReactNode
+  icon?: ReactNode
+  content?: ReactNode
+  /** Swipe down, tap outside and Android back answer with the cancel button. Needs a cancel button. */
   allowDismiss?: boolean
 }
 
-interface AlertState {
+interface AlertRequest {
   title: string
   message?: string
   buttons: AlertButton[]
   options: AlertOptions
-  resolve: (value: number) => void
 }
 
-// Global ref
-let showModalFn: ((state: Omit<AlertState, "resolve">) => Promise<number>) | null = null
-
-export const setModalRef = (fn: typeof showModalFn) => {
-  showModalFn = fn
+interface QueuedAlert extends AlertRequest {
+  id: number
+  settle: (index: number) => void
 }
 
-// Provider
-export function ModalProvider({children}: {children: React.ReactNode}) {
+/** The answer of an alert that closed without a button: removed by title, or a duplicate of one waiting. */
+export const NO_ANSWER = -1
+
+interface AlertHost {
+  present: (request: AlertRequest) => Promise<number>
+  dismiss: (title: string) => void
+}
+
+let host: AlertHost | null = null
+
+/** Whether the sheet is mounted. Before it is (early startup, some tests) callers fall back on their own. */
+export const hasAlertHost = () => host !== null
+
+/**
+ * Closes the alert titled `title` without running any of its buttons, and drops queued alerts with that
+ * title. For alerts whose condition resolved on its own. Their callers get `NO_ANSWER`.
+ */
+export function dismissAlert(title: string): void {
+  host?.dismiss(title)
+}
+
+export interface SheetButton {
+  button: AlertButton
+  /** The button's index in the alert's own list: what the alert answers when it's pressed. */
+  index: number
+  /** The filled button at the top. */
+  primary: boolean
+}
+
+/**
+ * The sheet's buttons, top to bottom. Callers list buttons dialog-style, with the main action last, so the
+ * other buttons go last-first and cancel buttons go to the bottom. The top button is the primary one,
+ * unless it's a cancel button among others.
+ */
+export function sheetButtonOrder(buttons: AlertButton[]): SheetButton[] {
+  const indexed = buttons.map((button, index) => ({button, index}))
+  const actions = indexed.filter(({button}) => button.style !== "cancel").reverse()
+  const cancels = indexed.filter(({button}) => button.style === "cancel")
+  return [...actions, ...cancels].map((entry, position) => ({
+    ...entry,
+    primary: position === 0 && (entry.button.style !== "cancel" || buttons.length === 1),
+  }))
+}
+
+const SHOW = {duration: 280, easing: Easing.out(Easing.cubic)}
+const HIDE = {duration: 220, easing: Easing.in(Easing.cubic)}
+/** A drag past this distance or speed answers with cancel; less springs the sheet back. */
+const DISMISS_DISTANCE = 96
+const DISMISS_VELOCITY = 800
+const BUTTON_TEXT: TextStyle = {fontSize: 16}
+
+export function ModalProvider({children}: {children: ReactNode}) {
   const {theme} = useAppTheme()
-  const [state, setState] = useState<AlertState | null>(null)
-  const resolveRef = useRef<((value: number) => void) | null>(null)
+  const insets = useSafeAreaInsets()
+  const {height: windowHeight} = useWindowDimensions()
 
-  const fadeAnim = useSharedValue(0)
-  const scaleAnim = useSharedValue(0.93)
+  const queue = useRef<QueuedAlert[]>([])
+  const nextId = useRef(1)
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  /** The showing alert's answer while its sheet slides away. */
+  const closing = useRef<{id: number; index: number} | null>(null)
+  /** Settles the alert that just closed, once React has removed its sheet. */
+  const settleAfterCommit = useRef<(() => void) | null>(null)
+  const [bodyOverflows, setBodyOverflows] = useState(false)
+  const bodyHeights = useRef({viewport: 0, content: 0})
 
-  const animateIn = useCallback(() => {
-    fadeAnim.value = withTiming(1, {duration: 200})
-    scaleAnim.value = withSpring(1, {damping: 200, stiffness: 800})
-  }, [fadeAnim, scaleAnim])
+  const offset = useSharedValue(windowHeight)
+  const backdrop = useSharedValue(0)
 
-  const animateOut = useCallback(
-    (onDone?: () => void) => {
-      fadeAnim.value = withTiming(0, {duration: 150})
-      scaleAnim.value = withTiming(0.93, {duration: 150}, (finished) => {
-        if (finished && onDone) {
-          scheduleOnRN(onDone)
-        }
-      })
-    },
-    [fadeAnim, scaleAnim],
-  )
+  const current = queue.current[0]
+  const cancelIndex = current ? current.buttons.findIndex((button) => button.style === "cancel") : -1
+  const dismissible = !!current?.options.allowDismiss && cancelIndex !== -1
 
-  const dismiss = useCallback(
-    (buttonIndex: number) => {
-      // Settle the answered alert now: a newer alert may replace this one
-      // before the fade-out finishes, and must not inherit this answer.
-      const resolve = resolveRef.current
-      resolveRef.current = null
-      resolve?.(buttonIndex)
-      animateOut(() => {
-        setState((current) => (current && current.resolve === resolve ? null : current))
-      })
-    },
-    [animateOut],
-  )
-
-  // Hardware back press
-  useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (state) return true
-      return false
-    })
-    return () => sub.remove()
-  }, [state])
-
-  // Nav bar color on Android
-  //   useEffect(() => {
-  //     if (Platform.OS !== "android") return
-  //     if (state) {
-  //       NavigationBar.setBackgroundColorAsync(theme.isDark ? "#000000" : "#1a1a1a").catch(() => {})
-  //       NavigationBar.setButtonStyleAsync("light").catch(() => {})
-  //     } else {
-  //       NavigationBar.setButtonStyleAsync(theme.isDark ? "light" : "dark").catch(() => {})
-  //     }
-  //   }, [state, theme])
-
-  // Animate in when state appears
-  useEffect(() => {
-    if (state) animateIn()
-  }, [state, animateIn])
-
-  // Register global fn
-  useEffect(() => {
-    setModalRef(
-      (alertState) =>
-        new Promise<number>((resolve) => {
-          // A newer alert replaces the visible one. Settle the replaced alert as
-          // dismissed (-1) so its caller does not wait forever.
-          resolveRef.current?.(-1)
-          resolveRef.current = resolve
-          setState({...alertState, resolve})
-        }),
-    )
-    return () => setModalRef(null)
+  const finish = useCallback(() => {
+    const answered = closing.current
+    closing.current = null
+    const alert = queue.current[0]
+    if (!alert || !answered || alert.id !== answered.id) return
+    queue.current = queue.current.slice(1)
+    settleAfterCommit.current = () => alert.settle(answered.index)
+    rerender()
   }, [])
 
-  const backdropStyle = useAnimatedStyle(() => ({
-    opacity: fadeAnim.value,
-  }))
+  const close = useCallback(
+    (index: number) => {
+      const alert = queue.current[0]
+      if (!alert || closing.current) return
+      closing.current = {id: alert.id, index}
+      rerender()
+      backdrop.value = withTiming(0, HIDE)
+      // Finish however the slide ends: nothing else animates the sheet while it closes.
+      offset.value = withTiming(windowHeight, HIDE, () => scheduleOnRN(finish))
+    },
+    [backdrop, finish, offset, windowHeight],
+  )
 
-  const wrapperStyle = useAnimatedStyle(() => ({
-    width: "100%",
-    maxWidth: 400,
-    transform: [{scale: scaleAnim.value}],
-    opacity: fadeAnim.value,
-  }))
+  const cancel = useCallback(() => {
+    const alert = queue.current[0]
+    const index = alert ? alert.buttons.findIndex((button) => button.style === "cancel") : -1
+    if (alert?.options.allowDismiss && index !== -1) close(index)
+  }, [close])
 
-  // const glassProps = useAnimatedProps(() => ({
-  //   glassEffectStyle: {
-  //     style: fadeAnim.value > 0.01 ? "regular" : "none",
-  //     animate: true,
-  //     animationDuration: 0.2,
-  //   } as any,
-  // }))
+  useEffect(() => {
+    const settle = settleAfterCommit.current
+    settleAfterCommit.current = null
+    settle?.()
+  })
+
+  useEffect(() => {
+    host = {
+      present: (request) =>
+        new Promise<number>((settle) => {
+          const waiting = queue.current.filter((alert, position) => !(position === 0 && closing.current))
+          if (waiting.some((alert) => alert.title === request.title && alert.message === request.message)) {
+            settle(NO_ANSWER)
+            return
+          }
+          queue.current = [...queue.current, {...request, id: nextId.current++, settle}]
+          rerender()
+        }),
+      dismiss: (title) => {
+        const [first, ...rest] = queue.current
+        const kept = rest.filter((alert) => {
+          if (alert.title !== title) return true
+          alert.settle(NO_ANSWER)
+          return false
+        })
+        queue.current = first ? [first, ...kept] : kept
+        if (first?.title === title) close(NO_ANSWER)
+        else rerender()
+      },
+    }
+    return () => {
+      host = null
+    }
+  }, [close])
+
+  // Slide each alert in. The previous one slid out to the bottom, so the sheet starts there.
+  const currentId = current?.id
+  useEffect(() => {
+    if (currentId === undefined) return
+    Keyboard.dismiss()
+    bodyHeights.current = {viewport: 0, content: 0}
+    setBodyOverflows(false)
+    backdrop.value = withTiming(1, SHOW)
+    offset.value = withTiming(0, SHOW)
+  }, [currentId, backdrop, offset])
+
+  useEffect(() => {
+    if (currentId === undefined) return
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      cancel()
+      return true
+    })
+    return () => subscription.remove()
+  }, [currentId, cancel])
+
+  const measureBody = (part: "viewport" | "content", height: number) => {
+    bodyHeights.current[part] = height
+    const {viewport, content} = bodyHeights.current
+    const overflows = viewport > 0 && content > viewport + 1
+    if (overflows !== bodyOverflows) setBodyOverflows(overflows)
+  }
+
+  // A long message scrolls instead of dragging the sheet.
+  const drag = Gesture.Pan()
+    .enabled(dismissible && !bodyOverflows && !closing.current)
+    .activeOffsetY(8)
+    .onUpdate((event) => {
+      offset.value = Math.max(0, event.translationY)
+    })
+    .onEnd((event) => {
+      if (event.translationY > DISMISS_DISTANCE || event.velocityY > DISMISS_VELOCITY) {
+        scheduleOnRN(cancel)
+      } else {
+        offset.value = withSpring(0, {damping: 22, stiffness: 260})
+      }
+    })
+
+  const backdropStyle = useAnimatedStyle(() => ({opacity: backdrop.value}))
+  const sheetStyle = useAnimatedStyle(() => ({transform: [{translateY: offset.value}]}))
 
   return (
     <>
       {children}
-      {state && (
-        <Animated.View
-          style={[StyleSheet.absoluteFillObject, backdropStyle]}
-          className="z-50 justify-center items-center px-6">
-          <TouchableOpacity
-            className="absolute inset-0 bg-black/75"
-            activeOpacity={1}
-            onPress={() => {
-              const cancelIndex = state.buttons.findIndex((b) => b.style === "cancel")
-              if (cancelIndex !== -1 && state.options.allowDismiss) {
-                dismiss(cancelIndex)
-              }
-            }}
-          />
-
-          <Animated.View style={wrapperStyle}>
-            <Animated.View className="rounded-2xl overflow-hidden bg-primary-foreground">
-              {/* Icon */}
-              {state.options.icon && <View className="items-center pt-6 pb-2">{state.options.icon}</View>}
-
-              {/* Title + Message */}
-              <View className="px-6 pt-6 gap-4 self-stretch">
-                <Text
-                  style={{
-                    color: theme.colors.secondary_foreground,
-                    fontSize: 20,
-                    alignSelf: "stretch",
-                    textAlign: "left",
-                  }}
-                  weight="semibold">
-                  {state.title}
-                </Text>
-                {state.message && (
-                  <Text
-                    style={{
-                      color: theme.colors.secondary_foreground,
-                      fontSize: 14,
-                      fontWeight: "500",
-                      alignSelf: "stretch",
-                      textAlign: "left",
-                    }}>
-                    {state.message}
-                  </Text>
-                )}
+      {current && (
+        <View className="absolute inset-0 z-50" accessibilityViewIsModal>
+          <StatusBar style="light" />
+          <Animated.View style={backdropStyle} className="absolute inset-0 bg-black/50">
+            <Pressable
+              className="absolute inset-0"
+              onPress={cancel}
+              accessible={dismissible}
+              accessibilityRole="button"
+              accessibilityLabel={translate("common:close")}
+              importantForAccessibility={dismissible ? "yes" : "no-hide-descendants"}
+              testID="alert.backdrop"
+            />
+          </Animated.View>
+          <GestureDetector gesture={drag}>
+            <Animated.View
+              key={current.id}
+              style={[sheetStyle, {maxHeight: windowHeight * 0.9, paddingBottom: Math.max(insets.bottom, 16) + 8}]}
+              className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-background px-6"
+              testID="alert.sheet">
+              <View className="h-6 items-center justify-center">
+                {dismissible && <View className="h-1.5 w-10 rounded-full bg-border" />}
               </View>
-
-              {/* Custom content */}
-              {state.options.content && <View className="px-6 pb-4">{state.options.content}</View>}
-
-              <View className="h-px mx-6 mt-4" style={{backgroundColor: theme.colors.border}} />
-
-              <View className="flex-row gap-4 pl-2 pr-6 py-5 justify-end">
-                {state.buttons.map((button, index) => {
-                  const isCancel = button.style === "cancel"
-
+              <ScrollView
+                className="grow-0"
+                scrollEnabled={bodyOverflows}
+                bounces={false}
+                showsVerticalScrollIndicator={bodyOverflows}
+                onLayout={(event) => measureBody("viewport", event.nativeEvent.layout.height)}
+                onContentSizeChange={(_width, height) => measureBody("content", height)}>
+                {current.options.icon && <View className="mb-4 mt-2 items-center">{current.options.icon}</View>}
+                <Text
+                  text={current.title}
+                  weight="semibold"
+                  accessibilityRole="header"
+                  className="text-center text-[22px] leading-7 text-secondary-foreground"
+                />
+                {!!current.message && (
+                  <Text
+                    text={current.message}
+                    className="mt-2 text-center text-[15px] leading-[21px] text-muted-foreground"
+                  />
+                )}
+                {current.options.content && <View className="mt-4">{current.options.content}</View>}
+              </ScrollView>
+              <View className="mt-6 gap-2.5">
+                {sheetButtonOrder(current.buttons).map(({button, index, primary}) => {
+                  const destructive = button.style === "destructive"
                   return (
                     <Button
-                      key={button.text}
-                      style={{minWidth: 96}}
-                      compact
-                      flexContainer={false}
-                      onPress={() => dismiss(index)}
-                      flex={false}
-                      preset={isCancel ? "alternate" : "primary"}
+                      key={index}
                       text={button.text}
+                      preset={primary ? (destructive ? "destructive" : "primary") : "alternate"}
+                      className="min-h-[50px]"
+                      textStyle={[BUTTON_TEXT, destructive && !primary && {color: theme.colors.error}]}
+                      disabled={!!closing.current}
+                      onPress={() => close(index)}
                     />
                   )
                 })}
               </View>
             </Animated.View>
-          </Animated.View>
-        </Animated.View>
+          </GestureDetector>
+        </View>
       )}
     </>
   )
 }
 
-// Core function
 interface ShowAlertProps {
   title: string
   message?: string
@@ -233,19 +309,18 @@ interface ShowAlertProps {
   options?: AlertOptions
 }
 
+/**
+ * Shows an alert sheet and answers with the index of the pressed button, or `NO_ANSWER`. Without
+ * options, an alert with a cancel button can be swiped away.
+ */
 export const showAlert = ({title, message, buttons, options}: ShowAlertProps): Promise<number> => {
-  if (!buttons) {
-    buttons = [{text: translate("common:ok")}]
-  }
-  if (!options) {
-    options = {allowDismiss: true}
-  }
-
-  if (!showModalFn) {
-    return Promise.resolve(-1)
-  }
-
-  return showModalFn({title, message, buttons, options})
+  if (!host) return Promise.resolve(NO_ANSWER)
+  return host.present({
+    title,
+    message,
+    buttons: buttons?.length ? buttons : [{text: translate("common:ok")}],
+    options: options ?? {allowDismiss: true},
+  })
 }
 
 export default showAlert
