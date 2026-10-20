@@ -1,15 +1,16 @@
 /**
  * The workspace's licenses and who holds their seats.
  *
- * What the viewer sees follows Core's answer, which follows their capabilities. An Admin or Owner
- * (`workspace.licenses.read`) sees every license with how many seats are used of how many, who holds each
- * seat, and can assign a seat to a member who has none and unassign one. Everyone else is listed only the
- * licenses they hold a seat in, each with only their own seat: they see that they hold it and until when,
- * and nothing about anyone else, no totals and no control. Controls the viewer's role cannot use are left
- * out, not greyed out; Core refuses them anyway.
+ * What the viewer sees follows Core's answer, which follows their capabilities. Whoever holds
+ * `workspace.licenses.read` (Admins and Owners) sees every license with how many seats are used of how many
+ * and who holds each seat; whoever also holds `workspace.licenses.assign` can assign a seat to a member who
+ * has none and unassign one. Everyone else is listed only the licenses they hold a seat in, each with only
+ * their own seat: they see that they hold it and until when, and nothing about anyone else, no totals and no
+ * control. Controls the viewer's role cannot use are left out, not greyed out; Core refuses them anyway.
  *
- * A license can hold more seats than its quantity: lowering the quantity frees no seat. Its notice says how
- * many to unassign, and the license takes no new seat until it is back within its quantity.
+ * A license can hold more seats than its quantity: lowering the quantity frees no seat. Its notice says by
+ * how many, and who can act on it how many to unassign to get back within the quantity. At the quantity the
+ * license is full and takes no new seat, so the notice does not promise one.
  *
  * A member who is waiting for their first sign-in (imported from the Store) has no Mentra user id yet and
  * cannot be given a seat, so they are not offered one.
@@ -98,6 +99,7 @@ export function WorkspaceLicensesPanel({ api, workspaceId }: { api: WorkspaceApi
                             key={license.licenseId}
                             license={license}
                             members={members}
+                            canAssign={can(detail, "workspace.licenses.assign")}
                             busy={assign.isPending || release.isPending}
                             onAssign={(licenseId, membershipId) => {
                               release.reset();
@@ -147,16 +149,21 @@ function OwnSeats({ licenses }: { licenses: readonly LicenseView[] }) {
   );
 }
 
-/** An Admin's view of a license: its seats used and total, the notice if it is over, who holds each seat, and assigning another. */
+/**
+ * The view of a license for whoever reads them all: its seats used and total, the notice if it is over, and
+ * who holds each seat. With `canAssign` it also has Unassign on each seat and the form to assign another.
+ */
 function LicenseCard({
   license,
   members,
+  canAssign,
   busy,
   onAssign,
   onRelease,
 }: {
   license: LicenseView;
   members: readonly MemberView[];
+  canAssign: boolean;
   busy: boolean;
   onAssign(licenseId: string, membershipId: string): void;
   onRelease(licenseId: string, membershipId: string): void;
@@ -181,9 +188,9 @@ function LicenseCard({
       {over > 0 ? (
         <p role="note" className="rounded-notice bg-info text-info-foreground flex items-start gap-2.5 px-4 py-3 text-sm">
           <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          {`This license covers ${license.quantity} ${seatWord(license.quantity)} but ${license.seatsUsed} ${
-            license.seatsUsed === 1 ? "is" : "are"
-          } assigned. Unassign ${over} before assigning anyone else.`}
+          {`This license has ${over} more ${seatWord(over)} assigned than it covers.${
+            canAssign ? ` Unassign ${over} to get back within its quantity.` : ""
+          }`}
         </p>
       ) : null}
 
@@ -195,13 +202,13 @@ function LicenseCard({
               seat={seat}
               member={members.find((member) => member.membershipId === seat.membershipId)}
               busy={busy}
-              onRelease={() => onRelease(license.licenseId, seat.membershipId)}
+              onRelease={canAssign ? () => onRelease(license.licenseId, seat.membershipId) : undefined}
             />
           ))}
         </ul>
       ) : null}
 
-      {over > 0 ? null : license.seatsUsed >= license.quantity ? (
+      {!canAssign || over > 0 ? null : license.seatsUsed >= license.quantity ? (
         <Restricted>Every seat is assigned.</Restricted>
       ) : candidates.length === 0 ? (
         <Restricted>Every member already has a seat.</Restricted>
@@ -226,7 +233,8 @@ function SeatRow({
   seat: LicenseSeatView;
   member: MemberView | undefined;
   busy: boolean;
-  onRelease(): void;
+  /** Unassigns the seat; absent where the viewer may not, and then the row has no Unassign. */
+  onRelease?: () => void;
 }) {
   const label = member ? memberLabel(member) : seat.mentraUserId;
   return (
@@ -236,14 +244,16 @@ function SeatRow({
         <div className="text-[15px] font-semibold [overflow-wrap:anywhere]">{label}</div>
         <div className="text-muted-foreground text-xs">{`Since ${formatDate(seat.assignedAt)}`}</div>
       </div>
-      <ConfirmButton
-        label="Unassign"
-        ariaLabel={`Unassign ${label}`}
-        prompt={`Unassign ${label}'s seat?`}
-        confirmLabel="Confirm unassign"
-        disabled={busy}
-        onConfirm={onRelease}
-      />
+      {onRelease ? (
+        <ConfirmButton
+          label="Unassign"
+          ariaLabel={`Unassign ${label}`}
+          prompt={`Unassign ${label}'s seat?`}
+          confirmLabel="Confirm unassign"
+          disabled={busy}
+          onConfirm={onRelease}
+        />
+      ) : null}
     </li>
   );
 }

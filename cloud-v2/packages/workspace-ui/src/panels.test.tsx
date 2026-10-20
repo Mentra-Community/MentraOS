@@ -1046,7 +1046,11 @@ describe("licenses panel: an admin assigns and unassigns seats", () => {
       { membershipId: "wm_owner", mentraUserId: "u_1", assignedAt: START },
     ];
     const { markup } = asAdmin([licenseFor({ quantity: 1, seatsUsed: 3, seats })]);
-    expect(markup).toMatch(/<p role="note"[^>]*>[\s\S]*This license covers 1 seat but 3 are assigned\. Unassign 2 before assigning anyone else\./);
+    expect(markup).toMatch(
+      /<p role="note"[^>]*>[\s\S]*This license has 2 more seats assigned than it covers\. Unassign 2 to get back within its quantity\./,
+    );
+    // The notice does not promise that assigning is possible once the excess is gone: the license is then full.
+    expect(markup).not.toContain("before assigning");
     expect(markup).toContain("3 of 1 seat used");
     expect(markup).not.toContain("<select");
     expect(markup).not.toContain(">Assign seat<");
@@ -1054,8 +1058,47 @@ describe("licenses panel: an admin assigns and unassigns seats", () => {
     expect(labelsStartingWith(markup, "Unassign ")).toHaveLength(3);
   });
 
+  test("the notice reads correctly when the quantity is 0, for one seat over and for several", () => {
+    const seat = (membershipId: string, mentraUserId: string) => ({ membershipId, mentraUserId, assignedAt: START });
+    const one = asAdmin([licenseFor({ quantity: 0, seatsUsed: 1, seats: [seat("wm_dev", "u_3")] })]).markup;
+    expect(one).toContain("This license has 1 more seat assigned than it covers. Unassign 1 to get back within its quantity.");
+    expect(one).toContain("1 of 0 seats used");
+    expect(one).not.toContain(">Assign seat<");
+    const two = asAdmin([licenseFor({ quantity: 0, seatsUsed: 2, seats: [seat("wm_dev", "u_3"), seat("wm_member", "u_4")] })]).markup;
+    expect(two).toContain("This license has 2 more seats assigned than it covers. Unassign 2 to get back within its quantity.");
+    expect(two).toContain("2 of 0 seats used");
+  });
+
   test("a license within its quantity has no notice", () => {
     expect(asAdmin().markup).not.toContain('role="note"');
+  });
+
+  test("a role that can read licenses but not assign seats sees the list, and the excess, with no control", () => {
+    // Synthetic: no built-in role holds read without assign.
+    const admin = detailFor("admin");
+    const readOnly = { ...admin, capabilities: admin.capabilities.filter((capability) => capability !== "workspace.licenses.assign") };
+    expect(readOnly.capabilities).toContain("workspace.licenses.read");
+    expect(readOnly.capabilities).not.toContain("workspace.licenses.assign");
+
+    const within = asAdmin([licenseFor()], readOnly).markup;
+    expect(within).toContain("2 of 5 seats used");
+    expect(within).toContain("dana@acme.test");
+    expect(within).toContain("max@acme.test");
+    for (const absent of ["<select", "<button", "<form", "Assign", "Unassign", "Every seat is assigned", "Every member already has a seat"]) {
+      expect(within).not.toContain(absent);
+    }
+
+    // A full license says nothing about assigning either, and one over its quantity states the excess without an instruction.
+    const full = asAdmin([licenseFor({ quantity: 2 })], readOnly).markup;
+    expect(full).toContain("2 of 2 seats used");
+    expect(full).not.toContain("Every seat is assigned");
+    const over = asAdmin([licenseFor({ quantity: 1, seatsUsed: 2 })], readOnly).markup;
+    expect(over).toContain("This license has 1 more seat assigned than it covers.");
+    expect(over).not.toContain("Unassign");
+    expect(over).not.toContain("<button");
+
+    // The same license with the capability has the controls.
+    expect(asAdmin([licenseFor()], admin).markup).toContain(">Assign seat<");
   });
 
   test("an owner, and an Organization Admin who is not a member, manage seats the same way", () => {

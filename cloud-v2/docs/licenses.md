@@ -93,11 +93,47 @@ first sign-in, and `409 no_seats_available` when every seat is taken.
   against the latest count, so two admins taking the last seat at once never
   both get it, and an assignment is refused only for want of a seat.
 - **Fewer seats.** A write that lowers the quantity below the seats in use frees
-  no seat: the license takes no new assignment until enough are unassigned.
+  no seat: the license takes no new assignment until the seats in use fall below
+  the quantity again, so a license that is `n` over needs `n + 1` unassigned
+  before it takes one.
 - **Membership.** Removing a member, the member leaving, or deleting their
   account ends the membership and frees its seats in that same transaction, and
   the freed seat can be assigned again at once. Rejoining is a new membership,
   with no seat.
+
+## In the workspace portal
+
+Mentra Portal shows licenses in two places. Whether it offers billing there
+follows `GET /api/portal/me`, whose `modules.billing` says that the
+[billing module](portal-modules.md#is-the-module-installed-and-is-it-for-me) is
+ready on this Core and visible to the person.
+
+- **Licenses & Billing.** A workspace's page has this item, last in its sidebar,
+  when the person is offered billing or the workspace has licenses to show them
+  (an Admin's every license, a member's own seats). A Private Cloud has neither,
+  so it never shows the item. The page lists the workspace's licenses and, where
+  the person is offered billing, the billing module for that workspace below
+  them ([the module's UI](portal-modules.md#the-modules-ui)). If the licenses
+  cannot be loaded, the item is offered only with billing, and the page's address
+  opens the list's own error with Try again.
+- **The list** follows the capabilities of `GET /:workspaceId/licenses`:
+  - a member sees only the licenses they hold a seat in, as "You hold a seat"
+    with the term, and nothing about anyone else;
+  - with `workspace.licenses.read`, every license shows its seats used of its
+    quantity and who holds each seat;
+  - with `workspace.licenses.assign` as well, each seat has Unassign (after a
+    confirm step), and a license with a seat free has a form to give one to a
+    member who has none. Members still waiting for their first sign-in are not
+    offered one;
+  - a license that holds more seats than its quantity says by how many, and to
+    those who can assign, how many to unassign to get back within the quantity.
+    It takes no new seat until then.
+- **Billing.** The person's own page is `/account/billing`, with a Billing entry in
+  the account menu. Its sidebar is Your account with Billing under it, and a way
+  back to one of the person's workspaces if they have one; a person in no
+  workspace gets the page all the same. It mounts the billing module with the
+  person's scope, for personal licenses. Where the person is not offered billing,
+  the menu has no Billing entry and the address is "Page not found".
 
 ## Ending
 

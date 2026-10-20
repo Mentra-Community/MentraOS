@@ -9,6 +9,7 @@ import {
 } from "@mentra/workspace-contract";
 import {
   invitationPreviewQuery,
+  licensesQuery,
   workspaceDetailQuery,
   WorkspaceApiError,
   workspaceKeys,
@@ -777,7 +778,7 @@ describe("the Licenses & Billing page", () => {
     const over = { ...LICENSE, quantity: 0, seatsUsed: 1 };
     const markup = renderAs(false, `/w/${ACME}/licenses`, withLicenses([over]));
     expect(markup).toContain('role="note"');
-    expect(markup).toContain("This license covers 0 seats but 1 is assigned. Unassign 1 before assigning anyone else.");
+    expect(markup).toContain("This license has 1 more seat assigned than it covers. Unassign 1 to get back within its quantity.");
   });
 
   test("a member sees only their own seat, with no assign control and nobody else's name", () => {
@@ -828,6 +829,57 @@ describe("the Licenses & Billing page", () => {
     const page = renderAs(false, `/w/${ACME}/licenses`, withLicenses(undefined));
     expect(page).toContain("Loading licenses");
     expect(page).not.toContain("This workspace has no licenses yet.");
+  });
+});
+
+describe("when the workspace's licenses cannot be loaded", () => {
+  let restore: (() => void) | null = null;
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  /**
+   * A cache where Acme's license list has already failed with a 500 (a Core that cannot read them). Each render
+   * clears its cache, so each gets its own.
+   */
+  async function failedLicenses(): Promise<QueryClient> {
+    const spy = spyOn(globalThis, "fetch").mockImplementation((async () =>
+      Response.json({ error: "server_error", error_description: "licenses are unavailable" }, { status: 500 })) as unknown as typeof fetch);
+    restore = () => spy.mockRestore();
+    // A server render would otherwise show the refetch a mounted observer starts for a failed query.
+    const client = seeded(TWO_WORKSPACES, new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } }));
+    await client.fetchQuery({ ...licensesQuery(api, ACME), retry: false }).catch(() => undefined);
+    expect(client.getQueryState(licensesQuery(api, ACME).queryKey)?.status).toBe("error");
+    return client;
+  }
+
+  const renderFailed = async (billing: boolean, path: string) =>
+    render(path, TWO_WORKSPACES, { modules: { billing } }, await failedLicenses(), meWith(billing));
+
+  test("the workspace's other pages still render, and Licenses & Billing is offered only with billing", async () => {
+    const without = await renderFailed(false, `/w/${ACME}/members`);
+    expect(without).toContain("priya@acme.test");
+    expect(without).toContain(">Invite<");
+    expect(without).not.toContain("Licenses &amp; Billing");
+    expect(hrefs(without)).not.toContain(`/w/${ACME}/licenses`);
+
+    const withBilling = await renderFailed(true, `/w/${ACME}/members`);
+    expect(withBilling).toContain("priya@acme.test");
+    expect(hrefs(withBilling)).toContain(`/w/${ACME}/licenses`);
+  });
+
+  test("the licenses address opens the page and shows the panel's own error with Try again, not a redirect or a spinner", async () => {
+    for (const billing of [false, true]) {
+      const markup = await renderFailed(billing, `/w/${ACME}/licenses`);
+      expect(markup).toContain('aria-label="Licenses"');
+      expect(markup).toContain("Licenses are unavailable");
+      expect(markup).toMatch(/<button[^>]*>Try again<\/button>/);
+      expect(markup).not.toContain("Loading licenses");
+      expect(markup).not.toContain("This workspace has no licenses yet.");
+      // The billing module is still the person's to use.
+      expect(markup.includes('<section aria-label="Billing"')).toBe(billing);
+    }
   });
 });
 
