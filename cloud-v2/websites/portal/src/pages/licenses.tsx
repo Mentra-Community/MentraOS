@@ -1,5 +1,5 @@
 /**
- * Licenses & Billing in one workspace: `/w/<workspaceId>/licenses`.
+ * Licenses in one workspace: `/w/<workspaceId>/licenses`.
  *
  * The licenses part is the shared panel (`@mentra/workspace-ui`): the workspace's licenses and who holds
  * each seat, as the viewer's role lets them see it. Below it, where the person is offered the billing

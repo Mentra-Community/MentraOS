@@ -490,7 +490,7 @@ describe("settings panel", () => {
     );
     const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
     expect(section).toContain(
-      "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+      "This workspace still owns 3 miniapps. Delete them in the Developer Console first.",
     );
     // The reason names the confirmation field and the button, both disabled; the host's notice about what
     // deleting does waits until deleting is possible.
@@ -508,7 +508,7 @@ describe("settings panel", () => {
       { detail: { ...organizationAdminDetail(), deletionHolds: held.deletionHolds } },
       <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
-    expect(admin).toContain("This workspace still owns 3 published miniapps.");
+    expect(admin).toContain("This workspace still owns 3 miniapps.");
 
     // Without holds (or from a server that predates them) nothing is said and the form works as before.
     for (const detail of [{ ...detailFor("owner"), deletionHolds: [] }, detailFor("owner")]) {
@@ -529,7 +529,7 @@ describe("settings panel", () => {
     expect(markup).toContain(
       'role="alert"',
     );
-    expect(markup).toContain("This workspace still owns 1 published miniapp. Delete it in the Developer Console first.");
+    expect(markup).toContain("This workspace still owns 1 miniapp. Delete it in the Developer Console first.");
   });
 
   test("a refusal for holds stops showing once a later look-up of the workspace has replaced it", () => {

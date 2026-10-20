@@ -1,11 +1,11 @@
 /**
  * The Mentra logo as on the sign-in page (websites/account/src/brand.tsx), which takes it from the Mentra
  * App (mobile/src/components/brands/MentraLogo.tsx): the mark in Mentra green and the "Mentra" wordmark.
- * Inline SVG, so it renders with the page and needs no extra request.
+ * Inline SVG, so it renders with the page and needs no asset loader or extra request.
  */
 
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "../lib/utils";
 
 /**
  * A page that is one card, as the sign-in page lays out every screen (`Page` in websites/account/src/ui.tsx):

@@ -4952,6 +4952,16 @@ class MentraLive : SGCManager() {
 
                 handleSwitchStatus(switchType, switchValue, switchTimestamp)
             }
+            "rgb_led_control_response" -> {
+                // Settles the sendRgbLedControl request this reply echoes (matches iOS).
+                val requestId = json.optString("requestId", "")
+                val success =
+                        json.optString("state", "") == "success" ||
+                                json.optBoolean("success", false)
+                val error =
+                        json.optString("errorCode", "").ifEmpty { json.optString("error", "") }
+                Bridge.sendRgbLedControlResponse(requestId, success, error.ifEmpty { null })
+            }
             "sensor_data" -> {
                 // Process sensor data
                 // ...

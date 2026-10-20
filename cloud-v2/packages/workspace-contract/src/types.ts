@@ -165,7 +165,7 @@ export interface DeletionHoldsResponse {
 /** What a hold's `reason` must match: a lowercase code of at most 64 letters, digits and underscores, starting with a letter. */
 export const DELETION_HOLD_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
 
-/** The Store's hold `reason` while a workspace still owns published miniapps; its `count` is how many. */
+/** The Store's hold `reason` while a workspace still owns a miniapp that is not deleted; its `count` is how many. */
 export const OWNS_MINIAPPS_HOLD_REASON = "owns_miniapps"
 
 /**

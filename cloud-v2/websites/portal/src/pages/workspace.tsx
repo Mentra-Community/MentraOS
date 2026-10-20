@@ -3,11 +3,10 @@
  *
  * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
  * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
- * & Billing (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and
- * Licenses & Billing only where there is something to show: the person manages billing, or the workspace
- * has licenses (a member sees their own seats, never billing). A Private Cloud has neither. Every request is
- * still checked by Core. A workspace that does not exist, or that the viewer may not see, is one "not found"
- * page.
+ * (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and Licenses only
+ * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
+ * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
+ * workspace that does not exist, or that the viewer may not see, is one "not found" page.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -29,10 +28,10 @@ import {
   WorkspaceSettingsPanel,
   workspaceDetailQuery,
   workspaceListQuery,
+  type NavGroup,
 } from "@mentra/workspace-ui";
 import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { NavGroup } from "@/components/app-shell";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
 import { navigate, Redirect } from "@/lib/navigation";
@@ -70,7 +69,7 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     description: name => `Every change made in ${name}, newest first.`,
   },
   licenses: {
-    label: "Licenses & Billing",
+    label: "Licenses",
     icon: CreditCard,
     // Open to everyone in the workspace, but offered only where there is something to show (see `licensesPartShown`).
     needs: null,
@@ -88,7 +87,7 @@ export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: 
 ];
 
 /**
- * Whether the workspace's Licenses & Billing is offered: `billing` (the person is offered the billing module
+ * Whether the workspace's Licenses section is offered: `billing` (the person is offered the billing module
  * and holds `workspace.billing.manage`, see `billingOffered`), or the workspace has licenses to show them (an
  * Admin's every license, a member's own seats). A Private Cloud has neither, and shows nothing.
  */
@@ -98,7 +97,7 @@ export function licensesPartShown(billing: boolean, licenses: readonly LicenseVi
 
 /**
  * The sections the viewer's capabilities in this workspace open, in sidebar order. `licenses` says whether
- * Licenses & Billing is offered (see {@link licensesPartShown}).
+ * Licenses is offered (see {@link licensesPartShown}).
  */
 export function visibleSections(
   detail: Pick<WorkspaceDetail, "capabilities"> | undefined,

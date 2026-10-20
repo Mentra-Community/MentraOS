@@ -868,7 +868,14 @@ White flash for photo capture. `duration` defaults to 5000 ms.
 
 Solid white for video recording. Internal duration is 30 minutes — the recorder turns the LED off explicitly when recording stops.
 
-All four commands respond with either `<command>_response` (success: `true`) or `rgb_led_control_error` if the device doesn't support RGB LEDs or validation fails.
+All four commands accept an optional `requestId` and answer with one `rgb_led_control_response` that echoes it. The phone settles the matching LED request with this reply.
+
+```json
+{"type": "rgb_led_control_response", "requestId": "…", "state": "success", "success": true}
+{"type": "rgb_led_control_response", "requestId": "…", "state": "error", "success": false, "errorCode": "invalid_parameters", "error": "Invalid RGB LED index: 9"}
+```
+
+`errorCode` is `device_not_supported`, `invalid_parameters` or `command_failed`.
 
 ---
 

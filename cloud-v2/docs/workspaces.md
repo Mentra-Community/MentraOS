@@ -99,13 +99,12 @@ at `/enterprise` until it returns as workspace settings.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once. It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the
-  Mentra Miniapp Store holds a workspace while it owns published miniapps, and
-  the portals say so where the delete is ("This workspace still owns 3
-  published miniapps. Delete them in the Developer Console first."). Once the
-  miniapps are deleted, the Store clears its hold and the workspace can be
-  deleted ([Store integration](store-integration.md#deletion-holds)). Any
-  miniapps it still has there when it is deleted stay until a Store operator
-  assigns them to another workspace.
+  Mentra Miniapp Store holds a workspace while it owns any miniapp that is not
+  deleted, a draft included, and the portals say so where the delete is ("This
+  workspace still owns 3 miniapps. Delete them in the Developer Console
+  first."). Once the miniapps are deleted, the Store clears its hold and the
+  workspace can be deleted ([Store
+  integration](store-integration.md#deletion-holds)).
 - Deleting a Mentra account first marks it deleted, which makes it no
   principal at all (see `signin.md`), so it can neither create nor join a
   workspace, and its owner memberships never count toward the last Owner. It
@@ -185,7 +184,7 @@ to the optional Fleet service for a person holding `organization.fleet.administe
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
 and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
-`/api/portal/billing/*` forwards the workspace portal's Licenses & Billing requests
+`/api/portal/billing/*` forwards the workspace portal's billing requests
 to that module for a signed-in person, with the workspace or the person's own
 account as the scope Core decides ([Portal modules](portal-modules.md)).
 `/api/portal/me` says whether to offer it (`modules.billing`).

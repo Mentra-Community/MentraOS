@@ -183,12 +183,26 @@ export function RoleBadge({ role, className }: { role: WorkspaceRole; className?
   );
 }
 
-/** A small outlined chip ("You"). */
-export function Badge({ children, className }: { children: ReactNode; className?: string }) {
+/**
+ * A chip's colours, from the tokens: `outline` (the default, "You"), `success` in the confirmation green
+ * ("Published"), `warn` in the notice amber ("Changes requested"), and `neutral` grey ("Draft").
+ */
+const BADGE_TONES = {
+  outline: "border-border text-muted-foreground",
+  success: "border-transparent bg-info text-info-foreground",
+  warn: "border-transparent bg-error text-error-foreground",
+  neutral: "border-transparent bg-surface text-foreground",
+} as const;
+
+export type BadgeTone = keyof typeof BADGE_TONES;
+
+/** A small chip: outlined by default ("You"), or filled in a `tone` for a status. */
+export function Badge({ children, tone = "outline", className }: { children: ReactNode; tone?: BadgeTone; className?: string }) {
   return (
     <span
       className={cn(
-        "border-border text-muted-foreground inline-flex h-6 items-center rounded-full border px-2.5 text-xs leading-none font-semibold whitespace-nowrap",
+        BADGE_TONES[tone],
+        "inline-flex h-6 items-center rounded-full border px-2.5 text-xs leading-none font-semibold whitespace-nowrap",
         className,
       )}
     >
