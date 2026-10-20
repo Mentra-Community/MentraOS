@@ -99,13 +99,12 @@ at `/enterprise` until it returns as workspace settings.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once. It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the
-  Mentra Miniapp Store holds a workspace while it owns published miniapps, and
-  the portals say so where the delete is ("This workspace still owns 3
-  published miniapps. Delete them in the Developer Console first."). Once the
-  miniapps are deleted, the Store clears its hold and the workspace can be
-  deleted ([Store integration](store-integration.md#deletion-holds)). Any
-  miniapps it still has there when it is deleted stay until a Store operator
-  assigns them to another workspace.
+  Mentra Miniapp Store holds a workspace while it owns any miniapp that is not
+  deleted, a draft included, and the portals say so where the delete is ("This
+  workspace still owns 3 miniapps. Delete them in the Developer Console
+  first."). Once the miniapps are deleted, the Store clears its hold and the
+  workspace can be deleted ([Store
+  integration](store-integration.md#deletion-holds)).
 - Deleting a Mentra account first marks it deleted, which makes it no
   principal at all (see `signin.md`), so it can neither create nor join a
   workspace, and its owner memberships never count toward the last Owner. It

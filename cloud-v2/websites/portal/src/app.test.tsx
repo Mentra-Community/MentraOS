@@ -616,13 +616,18 @@ describe("deleting a workspace a service holds", () => {
     };
     const markup = render(`/w/${ACME}/settings`, { ...TWO_WORKSPACES, details: [held] });
     const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
-    expect(section).toContain("This workspace still owns 2 published miniapps. Delete them in the Developer Console first.");
+    expect(section).toContain("This workspace still owns 2 miniapps. Delete them in the Developer Console first.");
+    // Held, the sentence above says why; the standing rule is not repeated beside it.
+    expect(section).not.toContain("can&#x27;t be deleted");
     expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
 
-    // Without a hold, the page warns what deleting does to the miniapps the workspace still has in the Store.
+    // Without a hold, the page still states the rule for miniapps in the Store.
     const free = render(`/w/${ACME}/settings`, TWO_WORKSPACES);
     expect(free).not.toContain("still owns");
-    expect(free).toContain("Miniapps this workspace still has in the Mentra Miniapp Store stay there");
+    expect(free).toContain(
+      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete or move its miniapps first.",
+    );
+    expect(free).not.toContain("stay there");
   });
 });
 
