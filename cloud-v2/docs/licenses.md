@@ -108,7 +108,7 @@ follows `GET /api/portal/me`, whose `modules.billing` says that the
 [billing module](portal-modules.md#is-the-module-installed-and-is-it-for-me) is
 ready on this Core and visible to the person.
 
-- **Licenses & Billing.** A workspace's page has this item, last in its sidebar,
+- **Licenses.** A workspace's page has this item, last in its sidebar,
   when the person is offered billing or the workspace has licenses to show them
   (an Admin's every license, a member's own seats). A Private Cloud has neither,
   so it never shows the item. The page lists the workspace's licenses and, where

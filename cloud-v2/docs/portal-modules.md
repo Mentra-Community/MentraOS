@@ -11,7 +11,7 @@ There is one portal module:
 
 | Module | Mounted at | Settings | What it is |
 | --- | --- | --- | --- |
-| `billing` | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: Licenses & Billing. Hosted Core only; a Private Cloud leaves it unset. |
+| `billing` | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module, shown on a workspace's Licenses page. Hosted Core only; a Private Cloud leaves it unset. |
 
 How a request is signed and sent, what a module receives, how its answer is mapped
 and how its UI assets are relayed are the same as Fleet's, in code
@@ -49,7 +49,7 @@ to answer, body included.
 
 `GET /api/portal/me` answers `modules: {"billing": true | false}`. It is true when
 billing is ready on this Core and visible to the person who asked (below), so the
-portal offers Licenses & Billing only where it works. A module whose settings are
+portal offers billing only where it works. A module whose settings are
 unusable is false, not true: the portal could not load its page.
 
 ### Who sees billing

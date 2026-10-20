@@ -233,6 +233,18 @@ describe("startup bundle", () => {
     expect(dec.decode(enc.encode("héllo 🌍"))).toBe("héllo 🌍")
   })
 
+  test("TextEncoder writes the exact UTF-8 bytes into a correctly sized Uint8Array", () => {
+    const sandbox = evalBundle()
+    const enc = new (sandbox.TextEncoder as new () => {encode: (s: string) => Uint8Array})()
+    for (const text of ["", "ascii", "é ß ÿ", "中文 € ✓", "😀 𝄞 🌍", "a😀b\u0000\u007f\u0080߿ࠀ￿"]) {
+      const bytes = enc.encode(text)
+      expect(bytes.length).toBe(Buffer.byteLength(text, "utf8"))
+      expect(Buffer.from(bytes).equals(Buffer.from(text, "utf8"))).toBe(true)
+    }
+    // A lone surrogate keeps its three-byte form, unchanged from earlier releases.
+    expect(Array.from(enc.encode("\ud800x"))).toEqual([0xed, 0xa0, 0x80, 0x78])
+  })
+
   test("crypto.subtle is installed as a clear-error stub (not silently undefined)", () => {
     const sandbox = evalBundle()
     const subtle = (sandbox.crypto as {subtle: unknown}).subtle as Record<string, unknown>
