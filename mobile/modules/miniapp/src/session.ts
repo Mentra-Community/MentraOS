@@ -339,8 +339,8 @@ export class MiniappSession<TChannels extends object = any> {
   private failHandshake: ((error: Error) => void) | null = null
   /** Set by `registerMiniapp`: a CONNECT_ACK timeout sends CONNECT again instead of failing `connect()`. */
   private retryHandshake = false
-  /** Ends the pause before CONNECT is sent again. Set only during that pause. */
-  private endRetryPause: (() => void) | null = null
+  /** Ends the pause before CONNECT is sent again, with the failure that ended it if any. Set only during that pause. */
+  private endRetryPause: ((failure?: Error) => void) | null = null
   private disposed = false
   /**
    * Set by `registerMiniapp` to the host's id for this spawn: CONNECT tells the
@@ -525,30 +525,37 @@ export class MiniappSession<TChannels extends object = any> {
       }
       // eslint-disable-next-line no-console
       console.warn("[mentra-miniapp] CONNECT_ACK timed out; sending CONNECT again")
-      await this.pauseBeforeRetry()
+      const failure = await this.pauseBeforeRetry()
+      if (failure) throw failure
       // The CONNECT_ACK for an earlier CONNECT can still land during the pause.
       if (this.ready) return
       if (this.disposed) throw new NotConnectedError("MiniappSession: connect aborted")
     }
   }
 
-  /** Resolves after CONNECT_RETRY_MS, or as soon as CONNECT_ACK lands or the session ends. */
-  private pauseBeforeRetry(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const end = () => {
+  /**
+   * Resolves after CONNECT_RETRY_MS, or as soon as CONNECT_ACK lands or the
+   * session ends. Resolves with the error when the transport failed meanwhile.
+   */
+  private pauseBeforeRetry(): Promise<Error | undefined> {
+    return new Promise<Error | undefined>((resolve) => {
+      const end = (failure?: Error) => {
         clearTimeout(timer)
-        this.emitter.off("ready", end)
+        this.emitter.off("ready", onReady)
         if (this.endRetryPause === end) this.endRetryPause = null
-        resolve()
+        resolve(failure)
       }
+      const onReady = () => end()
       const timer = setTimeout(end, CONNECT_RETRY_MS)
-      this.emitter.on("ready", end)
+      this.emitter.on("ready", onReady)
       this.endRetryPause = end
     })
   }
 
   /** Send one CONNECT and wait for its CONNECT_ACK. */
   private sendConnect(): Promise<void> {
+    // Only a host that received CONNECT can be waited out. Before that, the transport is what failed.
+    let connectSent = false
     // Register the readiness listener BEFORE any awaits so that a synchronous
     // CONNECT_ACK delivery in tests (or the phone) can't race the subscription.
     const readyPromise = new Promise<void>((resolve, reject) => {
@@ -563,11 +570,13 @@ export class MiniappSession<TChannels extends object = any> {
       const onReady = () => settle()
       const onError = (error: Error) => settle(error)
       const timer = setTimeout(() => {
-        const err = new ConnectAckTimeoutError()
+        const err = connectSent
+          ? new ConnectAckTimeoutError()
+          : new Error("MiniappSession: transport did not open before the CONNECT_ACK timeout")
         // Settled before the public emit, so a throwing "error" listener cannot leave it pending.
         settle(err)
         // Requests queued for a retried handshake wait for it, bounded by their own timeouts.
-        if (this.retryHandshake) return
+        if (connectSent && this.retryHandshake) return
         this.failAllPending({code: MiniappErrorCode.NOT_CONNECTED, message: err.message})
         this.emitter.emit("error", err)
       }, this.connectTimeoutMs)
@@ -575,16 +584,20 @@ export class MiniappSession<TChannels extends object = any> {
       this.emitter.on("error", onError)
       this.failHandshake = onError
     })
-    // A transport failure rejects the attempt before this is awaited; its
-    // rejection is the same failure and must not surface as unhandled.
-    readyPromise.catch(() => {})
-
-    return (async () => {
+    // Settles once CONNECT is sent, or rejects if opening or sending fails.
+    const sent = (async () => {
       try {
         this.transport.onMessage((raw) => this.handleIncoming(raw))
         this.transport.onDisconnect((reason) => this.handleTransportDisconnect(reason))
-        await this.transport.open()
-        // disconnect() while the transport was opening has already failed the handshake.
+        const opening = this.transport.open()
+        // An open that finishes after disconnect() must not leave the transport open.
+        opening.then(
+          () => {
+            if (this.disposed) this.transport.close()
+          },
+          () => {},
+        )
+        await opening
         if (this.disposed) throw new NotConnectedError("MiniappSession: connect aborted")
 
         const requestId = makeRequestId()
@@ -593,6 +606,7 @@ export class MiniappSession<TChannels extends object = any> {
           packageName: this.packageName,
           ...(this.initSessionId !== null ? {initReady: true, sessionId: this.initSessionId} : {}),
         }
+        connectSent = true
         this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err))
@@ -600,9 +614,10 @@ export class MiniappSession<TChannels extends object = any> {
         this.failHandshake?.(error)
         throw error
       }
-
-      await readyPromise
     })()
+    // The handshake can fail while the transport is still opening (disconnect(),
+    // the timeout): the attempt settles then, without waiting for open().
+    return Promise.all([sent, readyPromise]).then(() => undefined)
   }
 
   /**
@@ -1018,6 +1033,11 @@ export class MiniappSession<TChannels extends object = any> {
 
   private handleTransportDisconnect(reason: string): void {
     this.ready = false
+    // A transport that drops during the handshake has failed it. Sending CONNECT
+    // again over a dead bridge would keep that failure from the host.
+    const failure = new Error(`MiniappSession: transport disconnected: ${reason}`)
+    this.failHandshake?.(failure)
+    this.endRetryPause?.(failure)
     this.failAllPending({code: MiniappErrorCode.NOT_CONNECTED, message: `Transport disconnected: ${reason}`})
     this.emitter.emit("disconnect", reason)
   }

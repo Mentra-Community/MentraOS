@@ -210,6 +210,27 @@ test("a transport failure is still reported to the host, once", async () => {
   expect(reported[0]).toContain("session.connect() failed: bridge missing")
 })
 
+test("a native bridge that throws on send is reported once instead of retried", async () => {
+  const reported = captureHostErrors()
+  let sends = 0
+  g.__dispatch = () => {
+    sends++
+    throw new Error("native bridge gone")
+  }
+  const error = console.error
+  console.error = () => {}
+  try {
+    registerMiniapp(() => {}, {packageName: "com.test", connectTimeoutMs: 20})
+    g.__mentraInitCallback?.("s1")
+    await settle(1_400)
+  } finally {
+    console.error = error
+  }
+  expect(sends).toBe(1)
+  expect(reported).toHaveLength(1)
+  expect(reported[0]).toContain("transport disconnected")
+})
+
 test("a handler that disconnects its own session is not reported as a crash", async () => {
   const reported = captureHostErrors()
   const received = fakeHost({initReady: true})

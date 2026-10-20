@@ -869,6 +869,69 @@ describe("MiniappSession connect retry", () => {
     expect(connectCount(transport)).toBe(1)
   })
 
+  test("a transport that drops during the handshake fails connect() at once", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.drop", connectTimeoutMs: 20})
+    const errors: Error[] = []
+    session.on("error", (error) => errors.push(error))
+    const pending = session.connect()
+    await Promise.resolve()
+    transport.fireDisconnect("bridge threw")
+    await expect(pending).rejects.toThrow("transport disconnected: bridge threw")
+    await sleep(40)
+    // No CONNECT_ACK timeout follows the failure.
+    expect(errors).toEqual([])
+    session.disconnect()
+  })
+
+  test("a registerMiniapp session reports a transport drop during the retry pause instead of retrying", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.pause-drop", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const pending = session.connect()
+      await sleep(40)
+      transport.fireDisconnect("bridge threw")
+      await expect(pending).rejects.toThrow("transport disconnected: bridge threw")
+    } finally {
+      console.warn = warn
+    }
+    await sleep(1_000)
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
+  test("a registerMiniapp session reports a transport that never opens, without retrying", async () => {
+    const transport = new FakeTransport()
+    transport.open = () => new Promise<void>(() => {})
+    const session = new MiniappSession({transport, packageName: "com.test.hung", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    await expect(session.connect()).rejects.toThrow("transport did not open")
+    expect(connectCount(transport)).toBe(0)
+    session.disconnect()
+  })
+
+  test("disconnect while the transport is opening settles connect() and closes the late transport", async () => {
+    const transport = new FakeTransport()
+    let finishOpen: () => void = () => {}
+    let closes = 0
+    transport.open = () => new Promise<void>((resolve) => (finishOpen = resolve))
+    transport.close = () => {
+      closes += 1
+    }
+    const session = new MiniappSession({transport, packageName: "com.test.opening", connectTimeoutMs: 20})
+    const pending = session.connect()
+    session.disconnect()
+    await expect(pending).rejects.toBeInstanceOf(NotConnectedError)
+    const closedByDisconnect = closes
+    finishOpen()
+    await sleep(0)
+    expect(closes).toBe(closedByDisconnect + 1)
+    expect(connectCount(transport)).toBe(0)
+  })
+
   test("a request rejected by a CONNECT_ACK timeout is not sent after a later handshake", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport, packageName: "com.test.queue", connectTimeoutMs: 20})
