@@ -926,6 +926,40 @@ describe("ending with the owner", () => {
     expect(await audit("license.ended")).toHaveLength(3)
   })
 
+  test("a personal license written just as its owner's account is marked deleted is ended by that write", async () => {
+    const owner = await person("racer")
+    const write = licenseWrite({type: "person", mentraUserId: owner.mentraUserId})
+
+    // The write's account check passes; the deletion then marks the account, before the license is saved. The
+    // deletion's own license query comes after the mark, and may find nothing yet, so the write has to end it.
+    const exists = UserModel.exists.bind(UserModel)
+    let marked = false
+    const spy = spyOn(UserModel, "exists").mockImplementation(((filter: {mentraUserId?: string; supportTelemetryDeletedAt?: unknown}) => {
+      const query = exists(filter as never)
+      if (marked || filter.mentraUserId !== owner.mentraUserId || filter.supportTelemetryDeletedAt !== null) return query
+      marked = true
+      return query.then(async (found) => {
+        await markAccountDeleted(owner.mentraUserId)
+        return found
+      })
+    }) as never)
+    try {
+      await expectClientError(store().putLicense(write), "owner_not_found", 404)
+    } finally {
+      spy.mockRestore()
+    }
+    expect(marked).toBe(true)
+
+    const row = (await licenseRow(write.licenseId))!
+    expect({endedReason: row.endedReason, seatsUsed: row.seatsUsed}).toEqual({endedReason: "account_deleted", seatsUsed: 0})
+    expect(row.endedAt).toBeInstanceOf(Date)
+    expect(await audit("license.ended")).toHaveLength(1)
+
+    // The deletion that follows finds the license ended and ends nothing more.
+    await removeDeletedUserFromWorkspaces(owner.mentraUserId)
+    expect(await audit("license.ended")).toHaveLength(1)
+  })
+
   test("for a person whose account is live, a repeat is still a 200 no-op and an older revision a 409", async () => {
     const someone = await person("someone")
     const write = licenseWrite({type: "person", mentraUserId: someone.mentraUserId}, {revision: 2})
