@@ -9,6 +9,10 @@
  *    recorded;
  *  - revokes every other pending invitation the user sent, such as one sent as
  *    an Organization Admin (`invitation.revoked`, reason `inviter_account_deleted`);
+ *  - ends the user's own (personal) licenses (`endedReason: "account_deleted"`).
+ *    Their `license.ended` events are the organization's, recorded once the
+ *    transaction commits; the seats the user held in workspaces were released
+ *    with the memberships they belonged to;
  *  - records the `user.deleted` tombstone last: `workspaceId` null, target
  *    `{mentraUserId}`. It is on the change feed after the removals above, so a
  *    service holding data keyed by this person (Fleet) knows to delete it. It is
@@ -42,12 +46,15 @@ import {
   withTransaction,
 } from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
+import {LicenseModel} from "../../models/license.model"
 import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
+import {endLicensesForOwner} from "../licenses/license.service"
 import {
   recordFeedEventWithoutTransaction,
+  recordOrganizationEvent,
   recordWorkspaceEvent,
   type WorkspaceAuditEventInput,
 } from "./audit.service"
@@ -58,10 +65,10 @@ import {auditActor, endMembership, isId, type Actor, type MembershipRow} from ".
 const logger = createLogger("core").child({service: "account-deletion"})
 
 /**
- * End the deleted user's workspace memberships and revoke the invitations they sent (in one
- * transaction that ends with the `user.deleted` tombstone), revoke the operator keys they created
- * and clear their identity from the rows that stay. Safe to run again: a second run finds nothing
- * left to end or revoke, and the tombstone already recorded.
+ * End the deleted user's workspace memberships and their own licenses, and revoke the invitations they
+ * sent (in one transaction that ends with the `user.deleted` tombstone), revoke the operator keys they
+ * created and clear their identity from the rows that stay. Safe to run again: a second run finds
+ * nothing left to end or revoke, and the tombstone already recorded.
  */
 export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Promise<{
   endedMembershipIds: string[]
@@ -76,6 +83,10 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
     (await WorkspaceMembershipModel.exists({status: "active", mentraUserId})) ||
       (await WorkspaceInvitationModel.exists({status: "pending", invitedByMentraUserId: mentraUserId})),
   )
+  // Licenses exist on hosted Core only, so a database that cannot run this transaction never has any.
+  const licenseState = Boolean(
+    await LicenseModel.exists({"owner.type": "person", "owner.mentraUserId": mentraUserId, endedAt: null}),
+  )
   const tombstone: WorkspaceAuditEventInput = {
     workspaceId: null,
     action: USER_DELETED_ACTION,
@@ -84,8 +95,9 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
   }
   let endedMembershipIds: string[] = []
   let revokedInvitationIds: string[] = []
+  let licenseEvents: WorkspaceAuditEventInput[] = []
   // A repeat finds the tombstone and, with nothing left to end, does not even open a transaction.
-  if (workspaceState || !(await tombstoneRecorded(mentraUserId, null))) {
+  if (workspaceState || licenseState || !(await tombstoneRecorded(mentraUserId, null))) {
     try {
       // The tombstone is the transaction's last write: the removals before it are on the feed before it.
       // Checked again inside, so two runs at once record it once.
@@ -93,6 +105,10 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
         endedMembershipIds = workspaceState ? await endMemberships(session, mentraUserId, actor) : []
         revokedInvitationIds = workspaceState
           ? await revokeInvitationsSentBy(session, mentraUserId, actor, "inviter_account_deleted")
+          : []
+        licenseEvents = licenseState
+          ? (await endLicensesForOwner(session, {type: "person", mentraUserId}, "account_deleted", actor))
+              .organizationEvents
           : []
         if (!(await tombstoneRecorded(mentraUserId, session))) await recordWorkspaceEvent(session, tombstone)
       })
@@ -104,7 +120,11 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
       // its tombstone is still owed to the services that hold data about the person. Any other failure
       // propagates: on a replica set the sweep retries in a minute, whereas a tombstone written outside
       // the transaction while other recorders are active could be passed over by a poller and never seen.
-      if (workspaceState || !(isTransactionsUnsupportedError(err) || isCrossCollectionTransactionUnsupported(err))) {
+      if (
+        workspaceState ||
+        licenseState ||
+        !(isTransactionsUnsupportedError(err) || isCrossCollectionTransactionUnsupported(err))
+      ) {
         throw err
       }
       // Expected, and on Azure Cosmos DB for MongoDB it happens at every deletion of a person with no
@@ -117,6 +137,8 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
       if (!(await tombstoneRecorded(mentraUserId, null))) await recordFeedEventWithoutTransaction(tombstone)
     }
   }
+  // A personal license is the organization's: its events follow the committed change.
+  for (const event of licenseEvents) await recordOrganizationEvent(event)
 
   // An operator key is one document: revoked one by one, without a transaction.
   const operatorKeys = await AccessCredentialModel.find({

@@ -18,7 +18,7 @@ Roles are cumulative: each holds everything the one before it holds.
 | --- | --- | --- | --- | --- |
 | `workspace.read`, `miniapps.access` | Yes | Yes | Yes | Yes |
 | `miniapps.publish`, `miniapps.credentials.create` | | Yes | Yes | Yes |
-| `workspace.members.read`, `workspace.members.manage`, `workspace.settings.manage`, `workspace.audit.read`, `workspace.credentials.revoke`, `fleet.read`, `fleet.devices.manage`, `miniapps.assign` | | | Yes | Yes |
+| `workspace.members.read`, `workspace.members.manage`, `workspace.settings.manage`, `workspace.audit.read`, `workspace.credentials.revoke`, `fleet.read`, `fleet.devices.manage`, `miniapps.assign`, `workspace.licenses.read`, `workspace.licenses.assign`, `workspace.billing.manage` | | | Yes | Yes |
 | `workspace.roles.managePrivileged`, `workspace.delete` | | | | Yes |
 
 - Admins invite, remove and change Members and Developers. Only Owners grant,
@@ -31,14 +31,17 @@ Roles are cumulative: each holds everything the one before it holds.
   `409 membership_changed`.
 - Membership rows are never deleted. Leaving or removal ends the membership and
   keeps it as history, with every role it held; rejoining starts a new one.
+- Every member sees the license seats they hold; Admins and Owners see every
+  license and assign its seats ([Licenses and seats](licenses.md)). Ending a
+  membership frees its seats, and deleting a workspace ends its licenses.
 
 **Organization Admins** are the people whose verified email is on
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
 They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.testing.read`,
-`organization.testing.manage`, `organization.fleet.administer`) and act as Owner
-in every workspace, which is how they recover a workspace whose Owners are gone.
+`organization.testing.manage`, `organization.fleet.administer`,
+`organization.licenses.read`) and act as Owner in every workspace, which is how they recover a workspace whose Owners are gone.
 Recovery names an existing account; a deleted account is refused
 (`404 user_not_found`).
 
@@ -156,7 +159,8 @@ session authenticates only its own routes:
 
 Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
-(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`) are for people; a key
+(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
+its seats, [Licenses and seats](licenses.md#seats)) are for people; a key
 gets 403. A workspace's detail says whether the caller is an Organization Admin
 (`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
 invitations, `target.name` for keys. Each checks
@@ -178,7 +182,8 @@ to write). `/api/admin/me` answers any caller with its capabilities and whether
 Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwards
 to the optional Fleet service for a person holding `organization.fleet.administer`
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
-The Store calls Core through a signed service API ([Store integration](store-integration.md)).
+The Store calls Core through a signed service API ([Store integration](store-integration.md)),
+and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
 
 ## Configuration
 

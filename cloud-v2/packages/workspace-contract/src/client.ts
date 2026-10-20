@@ -1,9 +1,12 @@
 /**
- * Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`), for a service
- * that shares a secret with its Core (the Store, Fleet). Every request is signed over its timestamp, method,
- * path and body hash (`service-signature.ts`); no request names an organization.
+ * Signed client for Core's internal service API (`/api/internal/workspaces/*`, and the Store's
+ * `/api/internal/licenses/*`), for a service that shares a secret with its Core (the Store, Fleet). Every
+ * request is signed over its timestamp, method, path and body hash (`service-signature.ts`); no request
+ * names an organization.
  */
 import {isWorkspaceDeletionHold} from "./deletion-holds"
+import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
+import type {LicenseOwner, LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
 import type {
@@ -19,6 +22,7 @@ import type {
 } from "./types"
 
 const API_PREFIX = "/api/internal/workspaces"
+const LICENSES_PREFIX = "/api/internal/licenses"
 /** A feed cursor: a `seq` as a decimal string, with no sign, leading zero or fraction. */
 const CURSOR = /^[1-9]\d*$/
 const DEFAULT_TIMEOUT_MS = 5_000
@@ -32,6 +36,10 @@ export type CoreWorkspaceClientErrorCode =
   | "unauthorized"
   /** This service is not allowed to call the endpoint (HTTP 403). */
   | "forbidden"
+  /** A license write older than the one Core has (HTTP 409 `stale_revision`): Core has the newer one. */
+  | "stale_revision"
+  /** A license write for an owner that is deleted or never existed (HTTP 404 `owner_not_found`): retrying cannot help. */
+  | "owner_not_found"
   /** Core rejected the request itself (other 4xx). */
   | "bad_request"
   /** The response was not valid JSON or did not have the documented shape. */
@@ -95,10 +103,21 @@ export interface CoreWorkspaceClient {
    * refuses an unknown workspace (404).
    */
   clearDeletionHold(workspaceId: string, update: {asOf: Date}): Promise<DeletionHoldsResponse>
+  /**
+   * Write a license as billing last computed it (the Store only). Core applies it when `revision` is newer
+   * than the one it has (`applied: true`) and answers a repeat of the revision it has with `applied:
+   * false`. An older revision throws `stale_revision` (409): Core already has a newer one, so the write
+   * counts as delivered. An owner that is deleted or never existed throws `owner_not_found` (404): stop
+   * sending it. A Core that cannot answer throws `core_unavailable` (5xx, or no answer): send it again.
+   * Any other refusal is a malformed write (`bad_request`).
+   */
+  putLicense(write: LicenseWrite): Promise<LicenseWriteResponse>
+  /** One owner's licenses, ended ones included, each with how many seats are assigned (the Store only). */
+  listLicenses(owner: LicenseOwner): Promise<LicensesResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
-  /** Core's origin, e.g. `https://core.example.com`. Signed paths start at `/api/internal/workspaces`. */
+  /** Core's origin, e.g. `https://core.example.com`. Signed paths start at `/api/internal/`. */
   baseUrl: string
   /** Sent as `x-mentra-service`; must be a service Core has a secret for. */
   service: string
@@ -159,6 +178,28 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     const workspace = checkRecord(path, value, what)
     if (typeof workspace.workspaceId !== "string") throw badResponse(path, `${what} has no workspaceId`)
     return workspace
+  }
+
+  /** A license as Core lists it: the fields a caller relies on, each of its type. */
+  function checkLicense(path: string, value: unknown): LicenseView {
+    const license = checkRecord(path, value, "a license")
+    if (typeof license.licenseId !== "string" || !license.licenseId) throw badResponse(path, "a license has no licenseId")
+    if (!isRecord(license.owner) || typeof license.owner.type !== "string") throw badResponse(path, "a license has no owner")
+    for (const field of ["revision", "quantity", "seatsUsed"] as const) {
+      if (typeof license[field] !== "number" || !Number.isSafeInteger(license[field])) {
+        throw badResponse(path, `a license's ${field} is not a whole number`)
+      }
+    }
+    if (typeof license.product !== "string" || !Array.isArray(license.features)) {
+      throw badResponse(path, "a license has no product or features")
+    }
+    if (typeof license.validFrom !== "string" || typeof license.paidThrough !== "string") {
+      throw badResponse(path, "a license has no term")
+    }
+    if (license.endedAt !== null && typeof license.endedAt !== "string") {
+      throw badResponse(path, "a license's endedAt is neither a time nor null")
+    }
+    return license as unknown as LicenseView
   }
 
   /** Every hold on a workspace, as `PUT` and `DELETE` on a deletion hold answer it. */
@@ -244,6 +285,9 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       return new CoreWorkspaceClientError(code, message, status)
     }
     if (status === 403) return new CoreWorkspaceClientError("forbidden", message, status)
+    // Only Core's own codes say something about the license; a bare 404 or 409 from anything else does not.
+    if (status === 409 && error === STALE_REVISION_ERROR) return new CoreWorkspaceClientError("stale_revision", message, status)
+    if (status === 404 && error === OWNER_NOT_FOUND_ERROR) return new CoreWorkspaceClientError("owner_not_found", message, status)
     return new CoreWorkspaceClientError("bad_request", message, status)
   }
 
@@ -349,6 +393,26 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       const path = deletionHoldPath(workspaceId)
       const body: DeletionHoldUpdate = {asOf: update.asOf.toISOString()}
       return checkHolds(path, await call("DELETE", path, body))
+    },
+
+    async putLicense(write) {
+      const path = `${LICENSES_PREFIX}/${encodeURIComponent(write.licenseId)}`
+      const raw = checkRecord(path, await call("PUT", path, write), "the license write")
+      if (typeof raw.applied !== "boolean" || typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision)) {
+        throw badResponse(path, "missing applied or a whole revision")
+      }
+      return {applied: raw.applied, revision: raw.revision}
+    },
+
+    async listLicenses(owner) {
+      const query = new URLSearchParams({
+        ownerType: owner.type,
+        ownerId: owner.type === "workspace" ? owner.workspaceId : owner.mentraUserId,
+      })
+      const path = `${LICENSES_PREFIX}?${query.toString()}`
+      const raw = checkRecord(path, await call("GET", path), "the license list")
+      if (!Array.isArray(raw.licenses)) throw badResponse(path, "licenses is not a list")
+      return {licenses: raw.licenses.map(license => checkLicense(path, license))}
     },
   }
 

@@ -8,7 +8,9 @@ no Store address. Workspaces, roles and keys are described in
 
 The client is `createCoreWorkspaceClient` from
 `@mentra/workspace-contract/server`; the request and response types are in
-`@mentra/workspace-contract`.
+`@mentra/workspace-contract`. The Store's billing module also writes licenses
+into Core through `/api/internal/licenses/*`, signed the same way
+([Licenses and seats](licenses.md#writing-licenses)).
 
 ## Signing
 
@@ -46,6 +48,13 @@ other service Core knows: it adds a `"fleet"` list, with `x-mentra-service: flee
 | `POST /users/resolve-email` | `{mentraUserId}` of the Mentra account whose confirmed email this is (the Core user is created on first use), or `404 user_not_found`. |
 | `PUT /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds, ignored}`: the calling service holds the workspace from deletion, replacing its previous hold ([Deletion holds](#deletion-holds)). |
 | `DELETE /workspaces/:workspaceId/deletion-holds/:service` | `{workspaceId, holds, ignored}`: the calling service's hold is cleared. |
+
+The license routes, for the Store only, sit beside these at `/api/internal/licenses`:
+
+| Route | Answers |
+| --- | --- |
+| `PUT /api/internal/licenses/:licenseId` | `{applied, revision}`: a `LicenseWrite`, applied when its revision is newer than Core's; `409 stale_revision` for an older one, `404 owner_not_found` for an owner that is deleted or never existed ([Writing licenses](licenses.md#writing-licenses)). |
+| `GET /api/internal/licenses?ownerType=&ownerId=` | `{licenses}`: one workspace's or person's licenses, with seats used. |
 
 - **Principals.** A bearer credential is what a person or a key presented to the
   Store: a Core access token from the Core's sign-in server (issued to the

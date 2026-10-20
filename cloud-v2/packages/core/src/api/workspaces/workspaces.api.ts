@@ -23,6 +23,12 @@
  * DELETE (or any other call with nothing to say) is 204. The response types are
  * the contract's (`@mentra/workspace-contract`), shared with the portals and the Developer Console.
  *
+ * Licenses: `GET /:workspaceId/licenses` answers every license and seat to a
+ * caller with `workspace.licenses.read` (Admins and Owners), and to any other
+ * member only the licenses they hold a seat in, each with only their own seat.
+ * `PUT` and `DELETE /:workspaceId/licenses/:licenseId/seats/:membershipId`
+ * assign and unassign a seat, with `workspace.licenses.assign`.
+ *
  * Route order matters: `/invitations/...` is registered before `/:workspaceId`
  * so the literal segment is never read as a workspace id.
  */
@@ -33,6 +39,7 @@ import {
   type AuditEventView,
   type InvitationPreview,
   type InvitationView,
+  type LicenseView,
   type MemberView,
   type WorkspaceDetail,
   type WorkspaceRole,
@@ -40,6 +47,7 @@ import {
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import type {WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
+import {assignSeat, listWorkspaceLicenses, releaseSeat} from "../../services/licenses/license.service"
 import {listWorkspaceAudit, redactSecrets} from "../../services/workspaces/audit.service"
 import {
   createWorkspaceCredential,
@@ -269,6 +277,43 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     await revokeCredential(userActor(c), credentialId)
     return c.body(null, 204)
   })
+
+  // --- Licenses --------------------------------------------------------------
+
+  // Every member sees the seats they hold; `workspace.licenses.read` sees every license and every seat.
+  app.get("/:workspaceId/licenses", requireWorkspaceCapability("workspace.read"), async (c) => {
+    const decision = c.get("workspaceAuthorization")
+    const seatsOf = decision?.capabilities.includes("workspace.licenses.read")
+      ? "everyone"
+      : (decision?.membership?.membershipId ?? null)
+    const items: LicenseView[] = await listWorkspaceLicenses(c.req.param("workspaceId"), seatsOf)
+    return c.json({items})
+  })
+
+  // Assigning a seat a member already holds changes nothing; either way the answer is the license with its seats.
+  app.put(
+    "/:workspaceId/licenses/:licenseId/seats/:membershipId",
+    requireWorkspaceCapability("workspace.licenses.assign"),
+    async (c) => {
+      const license: LicenseView = await assignSeat(
+        userActor(c),
+        c.req.param("workspaceId"),
+        c.req.param("licenseId"),
+        c.req.param("membershipId"),
+      )
+      return c.json(license)
+    },
+  )
+
+  // Unassigning a seat nobody holds changes nothing.
+  app.delete(
+    "/:workspaceId/licenses/:licenseId/seats/:membershipId",
+    requireWorkspaceCapability("workspace.licenses.assign"),
+    async (c) => {
+      await releaseSeat(userActor(c), c.req.param("workspaceId"), c.req.param("licenseId"), c.req.param("membershipId"))
+      return c.body(null, 204)
+    },
+  )
 
   // --- Audit -----------------------------------------------------------------
 

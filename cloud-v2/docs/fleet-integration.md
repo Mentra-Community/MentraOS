@@ -526,7 +526,14 @@ Notes:
   with yet.
 - `workspace.deleted` ends every membership of the workspace
   (`endedReason: "workspace_deleted"`), revokes its credentials and invitations,
-  and records no per-membership event: treat it as ending them all.
+  and records no per-membership event: treat it as ending them all. The
+  workspace's licenses and their seats end before it, each with its own
+  `license.ended` and `seat.released` event.
+- `license.written`, `license.ended`, `seat.assigned` and `seat.released` are a
+  workspace license's and its seats' changes; their shapes are in
+  [Licenses and seats](licenses.md#audit-and-the-change-feed). A membership's
+  seats are released just before its `membership.removed` or `membership.left`
+  event.
 - `workspace.deletion_hold_*` events say which service holds the workspace from
   deletion and why; `count` is null when the service gave none. They change no
   membership, and a workspace is never deleted while held.

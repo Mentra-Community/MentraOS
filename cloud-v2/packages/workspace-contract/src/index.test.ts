@@ -31,6 +31,10 @@ describe("package entry points", () => {
       principalSignature: "x-mentra-principal-signature",
     })
     expect(root.FORWARDING_SERVICE).toBe("core")
+    // The license types and their error codes, for the portals and billing alike.
+    expect(root.STALE_REVISION_ERROR).toBe("stale_revision")
+    expect(root.OWNER_NOT_FOUND_ERROR).toBe("owner_not_found")
+    expect(root.LICENSE_OWNER_TYPES).toEqual(["workspace", "person"])
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
     // The Fleet UI contract names DOM types, so it has its own subpath and server packages never see it.
@@ -53,6 +57,8 @@ describe("package entry points", () => {
     expect(server.INVALID_TOKEN_ERROR).toBe("invalid_token")
     expect(server.WORKSPACE_HAS_HOLDS_ERROR).toBe("workspace_has_holds")
     expect(typeof server.describeDeletionHolds).toBe("function")
+    expect(server.STALE_REVISION_ERROR).toBe("stale_revision")
+    expect(server.OWNER_NOT_FOUND_ERROR).toBe("owner_not_found")
   })
 
   test("package.json maps the root to the browser-safe entry and ./server to the Node entry", () => {
