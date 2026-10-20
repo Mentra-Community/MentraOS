@@ -1,5 +1,8 @@
 package com.mentra.bluetoothsdk
 
+import com.mentra.bluetoothsdk.sgcs.GlassesAudioSetupPolicy
+import com.mentra.bluetoothsdk.sgcs.GlassesAudioSetupState
+
 data class WifiScanResult(
     val ssid: String,
     val requiresPassword: Boolean,
@@ -81,6 +84,12 @@ internal data class GlassesStatus(
     val ringSignalStrength: Int,
     /** Mentra Live `MentraLivePairingState` map (`{state, windowId?, endsAtMs?}`); absent for other glasses. */
     val pairingState: Map<String, Any>? = null,
+    /**
+     * `GlassesAudioSetupState` map, on every model. Derived from [fullyBooted] by
+     * [GlassesAudioSetupPolicy] rather than stored, so a snapshot that reports ready never
+     * carries a stale `idle`.
+     */
+    val audioSetup: Map<String, Any> = GlassesAudioSetupPolicy.state(fullyBooted).toMap(),
 ) {
     internal fun toMap(): Map<String, Any> {
         val values =
@@ -130,6 +139,7 @@ internal data class GlassesStatus(
         )
         systemTimeMs?.let { values["systemTimeMs"] = it }
         pairingState?.let { values["pairingState"] = it }
+        values["audioSetup"] = audioSetup
         return values
     }
 
@@ -188,6 +198,10 @@ internal data class GlassesStatus(
             )
     }
 }
+
+/** `audioSetup` from an event or update map, keeping only a known state and its action. */
+internal fun audioSetupValue(values: Map<String, Any>): Map<String, Any>? =
+    GlassesAudioSetupState.fromMap(values["audioSetup"])?.toMap()
 
 /** `pairingState` from a store or event map, keeping only string keys. */
 internal fun pairingStateValue(values: Map<String, Any>): Map<String, Any>? {
@@ -466,6 +480,8 @@ internal data class GlassesStatusUpdate(
     val controllerSignalStrength: Int? = null,
     val ringSignalStrength: Int? = null,
     val pairingState: Map<String, Any>? = null,
+    /** Explicit `GlassesAudioSetupState` map. When absent, an update that sets [fullyBooted] carries the matching state. */
+    val audioSetup: Map<String, Any>? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -525,6 +541,9 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("controllerSignalStrength", controllerSignalStrength)
             putIfNotNull("ringSignalStrength", ringSignalStrength)
             pairingState?.let { put("pairingState", it) }
+            (audioSetup ?: fullyBooted?.let { GlassesAudioSetupPolicy.state(it).toMap() })?.let {
+                put("audioSetup", it)
+            }
         }
 
     companion object {
@@ -589,6 +608,7 @@ internal data class GlassesStatusUpdate(
                 controllerSignalStrength = optionalNumberValue(values, "controllerSignalStrength"),
                 ringSignalStrength = optionalNumberValue(values, "ringSignalStrength"),
                 pairingState = pairingStateValue(values),
+                audioSetup = audioSetupValue(values),
             )
     }
 }

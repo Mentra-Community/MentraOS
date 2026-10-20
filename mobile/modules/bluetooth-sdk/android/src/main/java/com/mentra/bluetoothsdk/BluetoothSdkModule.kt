@@ -383,6 +383,7 @@ class BluetoothSdkModule : Module() {
             "entering_pairing_mode",
             "pairing_mode_ended",
             "pairing_state_changed",
+            "audio_setup_changed",
             "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",

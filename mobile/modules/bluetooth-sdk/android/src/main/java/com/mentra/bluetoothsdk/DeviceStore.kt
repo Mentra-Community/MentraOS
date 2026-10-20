@@ -2,6 +2,7 @@ package com.mentra.bluetoothsdk
 
 import android.os.Handler
 import android.os.Looper
+import com.mentra.bluetoothsdk.sgcs.GlassesAudioSetupPolicy
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.MicMap
@@ -169,6 +170,16 @@ object DeviceStore {
         return store.get(category, key)
     }
 
+    /**
+     * `GlassesStatus.audioSetup` follows readiness on every model ([GlassesAudioSetupPolicy]), so
+     * the snapshot that changed `fullyBooted` already carries the new state. Announce it like
+     * `pairing_state_changed`, only when it changed.
+     */
+    private fun publishAudioSetupChange(wasReady: Boolean, ready: Boolean) {
+        val state = GlassesAudioSetupPolicy.change(wasReady, ready) ?: return
+        Bridge.sendTypedMessage("audio_setup_changed", mapOf("state" to state.toMap()))
+    }
+
     fun set(category: String, key: String, value: Any) {
         store.set(category, key, value)
     }
@@ -187,6 +198,9 @@ object DeviceStore {
                 category == ObservableStore.BLUETOOTH_CATEGORY && key == "mic_tuning" && isMicTuningReset(value)
         if (skipped && !forceMicReset) {
             return
+        }
+        if (category == "glasses" && key == "fullyBooted" && value is Boolean) {
+            publishAudioSetupChange(oldValue as? Boolean ?: false, value)
         }
 
         // Trigger hardware updates based on setting changes
