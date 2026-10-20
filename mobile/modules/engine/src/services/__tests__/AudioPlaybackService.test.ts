@@ -643,4 +643,77 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(onComplete).toHaveBeenCalledWith("pending-tts", true, null, 0, "interrupted")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
+
+  test("stopForApp prevents that app's still-starting URL from playing", async () => {
+    let finishAudioSetup: (() => void) | undefined
+    setAudioModeAsync.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAudioSetup = resolve
+        }),
+    )
+    const onComplete = mock(() => {})
+    const playPromise = audioPlaybackService.play(
+      {requestId: "starting-cue", audioUrl: "file://cue.mp3", appId: "app-one"},
+      onComplete,
+    )
+
+    await audioPlaybackService.stopForApp("app-one")
+    finishAudioSetup?.()
+    await playPromise
+
+    expect(audioPlayer.replace).not.toHaveBeenCalled()
+    expect(audioPlayer.play).not.toHaveBeenCalled()
+    expect(onComplete).toHaveBeenCalledWith("starting-cue", true, null, 0, "interrupted")
+  })
+
+  test("stopForApp leaves another app's still-starting URL alone", async () => {
+    let finishAudioSetup: (() => void) | undefined
+    setAudioModeAsync.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAudioSetup = resolve
+        }),
+    )
+    const playPromise = audioPlaybackService.play(
+      {requestId: "other-app-cue", audioUrl: "file://other.mp3", appId: "app-two"},
+      () => {},
+    )
+
+    await audioPlaybackService.stopForApp("app-one")
+    finishAudioSetup?.()
+    await playPromise
+
+    expect(audioPlayer.play).toHaveBeenCalledTimes(1)
+  })
+
+  test("a URL requested while stopForApp aborts streams is not stopped by it", async () => {
+    await audioPlaybackService.openStream({
+      appId: "app-one",
+      channels: 1,
+      onEnded: () => {},
+      sampleRate: 16_000,
+      streamId: "answer-stream",
+    })
+    let finishStreamAbort: (() => void) | undefined
+    pcmStreamAbort.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStreamAbort = resolve
+        }),
+    )
+    const onComplete = mock(() => {})
+
+    const stopping = audioPlaybackService.stopForApp("app-one")
+    await audioPlaybackService.play(
+      {requestId: "after-stop", audioUrl: "file://after-stop.mp3", appId: "app-one", stopOtherAudio: false},
+      onComplete,
+    )
+    finishStreamAbort?.()
+    await stopping
+
+    expect(audioPlayer.play).toHaveBeenCalledTimes(1)
+    expect(onComplete).not.toHaveBeenCalled()
+    expect(audioPlaybackService.isPlaying()).toBe(true)
+  })
 })

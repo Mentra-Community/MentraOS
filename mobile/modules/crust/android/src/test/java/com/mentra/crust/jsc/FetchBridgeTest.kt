@@ -54,6 +54,10 @@ class FetchBridgeTest {
     private val utf8Bytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) +
         "{\"a\":\"é😀\"}".toByteArray(Charsets.UTF_8) + byteArrayOf(0x00, 0x7F)
 
+    /** Two MB of valid UTF-8 text: arrayBuffer() re-encodes it inside the 32 MB miniapp heap. */
+    private val largeUtf8Text: ByteArray =
+        "héllo 😀 中文 chunk of reply text ".repeat(52_000).toByteArray(Charsets.UTF_8)
+
     // crust's build.gradle ships this file as the runtime's startup.js asset.
     private val polyfill: String by lazy { File("../../jspolyfill/assets/startup.js").readText() }
 
@@ -63,6 +67,7 @@ class FetchBridgeTest {
                 override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
                     "/reply.pcm" -> response("application/octet-stream").setBody(Buffer().write(pcm))
                     "/utf8.bin" -> response("application/octet-stream").setBody(Buffer().write(utf8Bytes))
+                    "/large.txt" -> response("text/plain").setBody(Buffer().write(largeUtf8Text))
                     "/data.json" -> response("application/json").setBody("{\"message\":\"héllo 😀 中文\"}")
                     "/upload" -> response("text/plain").setBody("ok")
                     else -> MockResponse().setResponseCode(404)
@@ -106,6 +111,21 @@ class FetchBridgeTest {
             """,
         )
         assertArrayEquals(utf8Bytes, bytes(result["bytes"]))
+    }
+
+    @Test fun `arrayBuffer re-encodes a large UTF-8 body within the miniapp heap`() {
+        val result = runMiniapp(
+            """
+            const bytes = new Uint8Array(await (await fetch(BASE + "/large.txt")).arrayBuffer())
+            let sum = 0
+            for (let i = 0; i < bytes.length; i++) sum = (sum * 31 + bytes[i]) >>> 0
+            return {length: bytes.length, sum}
+            """,
+        )
+        var sum = 0L
+        for (byte in largeUtf8Text) sum = (sum * 31 + (byte.toInt() and 0xFF)) and 0xFFFFFFFFL
+        assertEquals(largeUtf8Text.size, (result["length"] as Number).toInt())
+        assertEquals(sum, (result["sum"] as Number).toLong())
     }
 
     @Test fun `responses are sent as text only when that text re-encodes to the same bytes`() {
