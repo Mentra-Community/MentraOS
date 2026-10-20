@@ -94,10 +94,11 @@ export const resourceControlReceiptSchema = z.object({operationId: z.string().uu
 }).strict()
 export type ResourceControlReceipt = z.infer<typeof resourceControlReceiptSchema>
 export const resourceControlRecordSchema = z.object({command: resourceControlCommandSchema,
-  receipt: resourceControlReceiptSchema.optional(), operatorLabel: z.string().min(1).max(320).optional()}).strict()
+  receipt: resourceControlReceiptSchema.optional(), operatorLabel: z.string().min(1).max(320).optional(),
+  reservationGenerationConstraint: z.number().int().positive().safe().optional()}).strict()
 export type ResourceControlRecord = z.infer<typeof resourceControlRecordSchema>
 export type ResourceControlView = {operationId: string; hostId: string; subject: ResourceControlInput['subject'];
-  action: ResourceControlInput['action']; expiresAt: number; receipt?: ResourceControlReceipt}
+  action: ResourceControlInput['action']; expiresAt: number; receipt?: ResourceControlReceipt; reservationGenerationConstraint?: number}
 export type ResourceControlsView = {enabled: boolean; fresh: boolean; observedAt: string;
   subject: ResourceControlInput['subject']; controls: ResourceControlView[]}
 

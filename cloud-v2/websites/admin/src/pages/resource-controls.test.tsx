@@ -209,3 +209,25 @@ test('a schema-legal immediately granted zero generation remains releasable and 
     expect(state.pending).toBeUndefined(); expect(state.reservation).toBeUndefined()
   }
 })
+
+
+test('same-state zero grant replay preserves the known nonzero release generation', () => {
+  const actual = control('granted'), delayed = {...control('granted')}
+  if (delayed.receipt!.result.status === 'accepted') delayed.receipt!.result.reservation!.generation = 0
+  for (const rows of [[actual, delayed], [delayed, actual]]) {
+    const state = resourceControlState(rows, 'shared-pair', 'air3')
+    expect(state.pending).toBeUndefined(); expect(state.reservation?.generation).toBe(8)
+  }
+})
+
+
+test('zero returning receipt keeps the server constraint and refuses a conflicting later generation', () => {
+  const returning = control('returning'), actual = control('granted')
+  if (returning.receipt!.result.status === 'accepted') returning.receipt!.result.reservation!.generation = 0
+  returning.reservationGenerationConstraint = 8
+  const current = resourceControlState([returning], 'shared-pair', 'air3')
+  expect(current.pending).toBeUndefined(); expect(current.reservation?.generation).toBe(0)
+  if (actual.receipt!.result.status === 'accepted') actual.receipt!.result.reservation!.generation = 9
+  expect(resourceControlState([returning, actual], 'shared-pair', 'air3').pending).toBeDefined()
+  expect(resourceControlState([actual, returning], 'shared-pair', 'air3').pending).toBeDefined()
+})

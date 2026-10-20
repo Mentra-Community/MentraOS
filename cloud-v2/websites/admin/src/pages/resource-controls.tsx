@@ -6,13 +6,13 @@ import {useClock} from '../lib/use-clock'
 import type {ResourceControlInput, ResourceControlView, ResourceControlsView} from '../../../../packages/core/src/types/lane-control.types'
 import {resourceControlInputSchema} from '../../../../packages/core/src/types/lane-control.types'
 import type {ResourceLifecycleSubject} from '../../../../packages/core/src/types/resource-lifecycle.types'
-import {advanceResourceReservation, resourceReservationIdentity} from '../../../../packages/core/src/types/resource-control-authority'
+import {advanceResourceReservation, resourceReservationIdentity, resourceReservationGenerationConstraint} from '../../../../packages/core/src/types/resource-control-authority'
 
 type Reservation = NonNullable<Extract<NonNullable<ResourceControlView['receipt']>['result'], {status: 'accepted'}>['reservation']>
 const activeStates = new Set(['waiting', 'granted', 'returning'])
 export function resourceControlState(rows: ResourceControlView[], resourceId: string, hostId: string) {
   const controls = rows.filter(row => row.subject.resourceId === resourceId && row.hostId === hostId)
-  const latest = new Map<string, Reservation>()
+  const latest = new Map<string, Reservation>(), constraints = new Map<string, number | undefined>()
   let conflicting: ResourceControlView | undefined
   for (const row of controls) {
     const receipt = row.receipt
@@ -22,7 +22,12 @@ export function resourceControlState(rows: ResourceControlView[], resourceId: st
     if (reservation?.resourceId === resourceId) {
       const key=resourceReservationIdentity({hostId,subject:{resourceId}},reservation),previous=latest.get(key),
         next=previous?advanceResourceReservation(previous,reservation):reservation
-      if(next)latest.set(key,next);else conflicting=row
+      try {
+        const retained=constraints.get(key), incoming=row.reservationGenerationConstraint
+        if(retained!==undefined&&incoming!==undefined&&retained!==incoming)throw new Error('Conflicting generation')
+        constraints.set(key,resourceReservationGenerationConstraint(retained??incoming,reservation))
+        if(next)latest.set(key,next);else conflicting=row
+      } catch {conflicting=row}
     }
   }
   const validReceipt = (row: ResourceControlView) => row.receipt?.hostId === hostId && row.receipt.operationId === row.operationId &&

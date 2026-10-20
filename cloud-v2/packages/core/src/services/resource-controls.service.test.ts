@@ -201,3 +201,47 @@ test('an immediately granted generation-zero reservation returns through its exa
     row.receipt?.result.status === 'accepted' && row.receipt.result.reservation?.state === 'released')).toBe(true)
   expect((await f.service.submit(f.input('reserve'), 'alice')).action).toBe('reserve')
 })
+
+
+test('delayed zero-generation active observation cannot erase the original known grant fence', async () => {
+  const f = fixture(), reserve = f.input('reserve')
+  await f.service.submit(reserve, 'alice')
+  const original = f.receipt(reserve, {status: 'accepted', reservation: f.reservation('granted', 0)})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [original]})
+  const actual = {...original, result: {status: 'accepted' as const, reservation: f.reservation('granted', 9)}}
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [actual]})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [original]})
+  expect((await f.service.listResource('phone-exact', 'alice')).controls[0]?.receipt?.result).toMatchObject({reservation: {generation: 9, state: 'granted'}})
+  const conflicting = {...actual, result: {status: 'accepted' as const, reservation: f.reservation('granted', 10)}}
+  await expect(f.service.exchange('air', {schemaVersion: 1, receipts: [conflicting]})).rejects.toThrow('generation or terminal decision changed')
+  const release = f.input('release', {reservation: {id: 'manual-exact', generation: 9}})
+  await expect(f.service.submit({...release, reservation: {id: 'manual-exact', generation: 0}}, 'alice')).rejects.toThrow('your current')
+  await f.service.submit(release, 'alice')
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [f.receipt(release, {status: 'accepted', reservation: f.reservation('released', 9)})]})
+})
+
+
+test('returning zero keeps the retained nonzero constraint outside its exact controller receipt', async () => {
+  const f = fixture(), reserve = f.input('reserve')
+  await f.service.submit(reserve, 'alice')
+  const waiting = f.receipt(reserve, {status: 'accepted', reservation: f.reservation('waiting', 0)})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [waiting]})
+  const release = f.input('release', {reservation: {id: 'manual-exact', generation: 0}})
+  await f.service.submit(release, 'alice')
+  const granted = {...waiting, result: {status: 'accepted' as const, reservation: f.reservation('granted', 9)}}
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [granted]})
+  const returning = f.receipt(release, {status: 'accepted', reservation: f.reservation('returning', 0)})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [returning]})
+  const retained = structuredClone(f.rows())
+  expect(retained.every(row => row.reservationGenerationConstraint === 9)).toBe(true)
+  expect(retained.find(row => row.command.operationId === release.operationId)?.receipt).toEqual(returning)
+  expect((await f.service.listResource('phone-exact', 'alice')).controls.every(row => row.reservationGenerationConstraint === 9)).toBe(true)
+  const forgedGeneration = {...granted, result: {status: 'accepted' as const, reservation: f.reservation('returning', 10)}}
+  await expect(f.service.exchange('air', {schemaVersion: 1, receipts: [forgedGeneration]})).rejects.toThrow('generation or terminal decision changed')
+  expect(f.rows()).toEqual(retained)
+  const released = {...returning, result: {status: 'accepted' as const, reservation: f.reservation('released', 0)}}
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [released]})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [granted, returning]})
+  expect(f.rows().every(row => row.reservationGenerationConstraint === 9)).toBe(true)
+  expect(f.rows().every(row => row.receipt?.result.status === 'accepted' && row.receipt.result.reservation?.generation === 0 && row.receipt.result.reservation.state === 'released')).toBe(true)
+})

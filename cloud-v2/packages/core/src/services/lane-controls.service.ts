@@ -7,7 +7,7 @@ import {laneControlInputSchema, laneControlRecordSchema, laneControlReceiptSchem
   type LaneControlInput, type LaneControlView, type LaneControlRecord, type LaneControlsView,
   type ResourceControlInput, type ResourceControlRecord, type ResourceControlView, type ResourceControlsView} from '../types/lane-control.types'
 import {resourceLifecycleSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
-import {manualWithdrawalNeedsRestoration, resourceReservationIdentity, advanceResourceReservation} from '../types/resource-control-authority'
+import {manualWithdrawalNeedsRestoration, resourceReservationIdentity, advanceResourceReservation, resourceReservationGenerationConstraint} from '../types/resource-control-authority'
 import {ResourceLifecycleService} from './resource-lifecycle.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -84,7 +84,8 @@ const view = (row: LaneControlRecord) => ({operationId: row.command.operationId,
   ...(row.receipt ? {receipt: row.receipt} : {})})
 const resourceView = (row: ResourceControlRecord): ResourceControlView => ({operationId: row.command.operationId,
   hostId: row.command.hostId, subject: row.command.subject, action: row.command.action, expiresAt: row.command.expiresAt,
-  ...(row.receipt ? {receipt: row.receipt} : {})})
+  ...(row.receipt ? {receipt: row.receipt} : {}),
+  ...(row.reservationGenerationConstraint !== undefined ? {reservationGenerationConstraint: row.reservationGenerationConstraint} : {})})
 const fresh = (host: LaneControlHost, now: number) => [host.receivedAt, host.observedAt].every(at =>
   Number.isFinite(at?.getTime()) && at.getTime() <= now + 5000 && now - at.getTime() <= 120000)
 
@@ -241,7 +242,7 @@ export class LaneControlsService {
             !('subject' in receipt) || requestInputDigest(receipt.subject) !== requestInputDigest(row.command.subject)))
           throw new TestRunError(409, 'Lane control receipt differs from its retained command')
         return isLane(row) ? {...row, receipt: reconcileReceipt(row, laneControlReceiptSchema.parse(receipt))} :
-          {...row, receipt: reconcileResourceReceipt(row, resourceControlReceiptSchema.parse(receipt))}
+          reconcileResourceRecord(row, resourceControlReceiptSchema.parse(receipt))
       })
       // A terminal record may have left the bounded delivery history while its last acknowledgement was in flight.
       // Forgotten receipts cannot perform an operation; retained commands remain the only source of effects.
@@ -307,9 +308,11 @@ function reconcileReservations(records: LaneControlRecord[]): LaneControlRecord[
 
 function currentResourceReservation(records: ResourceControlRecord[]) {
   const latest = new Map<string, NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
+  const constraints = new Map<string, number | undefined>()
   for (const row of records) {
     const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
     const key=value&&reservationAuthorityKey(row,value);
+    if(value&&key)constraints.set(key,reservationConstraint(constraints.get(key),row.reservationGenerationConstraint,value));
     if (value && key) {
       const previous=latest.get(key),next=previous?advanceResourceReservation(previous,value):value;
       if(!next)throw new TestRunError(409,'Resource reservation observations changed their original generation or terminal decision');
@@ -321,9 +324,11 @@ function currentResourceReservation(records: ResourceControlRecord[]) {
 function reconcileControls(records: ControlRecord[]): ControlRecord[] {
   const lanes = reconcileReservations(records.filter(isLane)),
     latest = new Map<string, NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
+  const constraints = new Map<string, number | undefined>()
   for (const row of records.filter(isResource)) {
     const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
     const key=value&&reservationAuthorityKey(row,value);
+    if(value&&key)constraints.set(key,reservationConstraint(constraints.get(key),row.reservationGenerationConstraint,value));
     if (value && key) {
       const previous=latest.get(key),next=previous?advanceResourceReservation(previous,value):value;
       if(!next)throw new TestRunError(409,'Resource reservation observations changed their original generation or terminal decision');
@@ -334,8 +339,21 @@ function reconcileControls(records: ControlRecord[]): ControlRecord[] {
     if (isLane(row)) return lanes.find(value => value.command.operationId === row.command.operationId)!
     const reservation = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
     return reservation && row.receipt?.result.status === 'accepted' ? {...row,
+      ...(constraints.get(reservationAuthorityKey(row,reservation)) !== undefined ? {reservationGenerationConstraint: constraints.get(reservationAuthorityKey(row,reservation))} : {}),
       receipt: {...row.receipt, result: {...row.receipt.result, reservation: latest.get(reservationAuthorityKey(row,reservation))!}}} : row
   })
+}
+function reservationConstraint(retained: number | undefined, other: number | undefined, ...values: NonNullable<Extract<NonNullable<ResourceControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>[]) {
+  if (retained !== undefined && other !== undefined && retained !== other) throw new TestRunError(409, 'Resource reservation generation or terminal decision changed')
+  try {return resourceReservationGenerationConstraint(retained ?? other, ...values)}
+  catch {throw new TestRunError(409, 'Resource reservation generation or terminal decision changed')}
+}
+function reconcileResourceRecord(row: ResourceControlRecord, receipt: NonNullable<ResourceControlRecord['receipt']>): ResourceControlRecord {
+  const old = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined,
+    next = receipt.result.status === 'accepted' ? receipt.result.reservation : undefined,
+    constraint = next ? reservationConstraint(row.reservationGenerationConstraint, undefined, ...(old ? [old] : []), next) : row.reservationGenerationConstraint
+  return {...row, receipt: reconcileResourceReceipt(row, receipt),
+    ...(constraint !== undefined ? {reservationGenerationConstraint: constraint} : {})}
 }
 function reconcileResourceReceipt(row: ResourceControlRecord, receipt: NonNullable<ResourceControlRecord['receipt']>) {
   const result = receipt.result, prior = row.receipt, input = row.command
