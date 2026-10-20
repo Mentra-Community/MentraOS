@@ -127,7 +127,7 @@ export function describeAuditEvent(event: AuditEventView): AuditDescription {
       const reason = text(after.reason);
       const held = typeof after.count === "number" ? after.count : null;
       if (text(target.service) === "store" && reason === OWNS_MINIAPPS_HOLD_REASON) {
-        const owned = held === null ? "published miniapps" : plural(held, "published miniapp", "published miniapps");
+        const owned = held === null ? "miniapps" : plural(held, "miniapp", "miniapps");
         return done([`Held the workspace from deletion while it owns ${owned}`]);
       }
       const why = reason ? ` (${reason.replace(/_/g, " ")}${held === null ? "" : `: ${held}`})` : "";

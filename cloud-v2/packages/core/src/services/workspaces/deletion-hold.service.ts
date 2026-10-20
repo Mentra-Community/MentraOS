@@ -2,7 +2,7 @@
  * @fileoverview Deletion holds: a service's reason a workspace must not be deleted yet.
  *
  * Core does not know what other services keep for a workspace. A service that keeps something the
- * workspace must not lose (the Store, while the workspace owns published miniapps) holds the workspace
+ * workspace must not lose (the Store, while the workspace owns a miniapp) holds the workspace
  * through the internal API, and `deleteWorkspace` refuses with 409 `workspace_has_holds` while any
  * hold is on it, whoever asks: an Organization Admin clears the cause like everyone else, and the
  * service then clears its hold.

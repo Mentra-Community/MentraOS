@@ -161,11 +161,11 @@ describe("audit events as sentences", () => {
     const target = { workspaceId: "ws_1", service: "store" };
     const held = (after: Record<string, unknown>, before: Record<string, unknown> | null = null) =>
       event("workspace.deletion_hold_set", { actor: STORE, target, before, after });
-    expect(say(held({ reason: "owns_miniapps", count: 3 }))).toBe("Held the workspace from deletion while it owns 3 published miniapps");
+    expect(say(held({ reason: "owns_miniapps", count: 3 }))).toBe("Held the workspace from deletion while it owns 3 miniapps");
     expect(say(held({ reason: "owns_miniapps", count: 1 }, { reason: "owns_miniapps", count: 2 }))).toBe(
-      "Held the workspace from deletion while it owns 1 published miniapp",
+      "Held the workspace from deletion while it owns 1 miniapp",
     );
-    expect(say(held({ reason: "owns_miniapps", count: null }))).toBe("Held the workspace from deletion while it owns published miniapps");
+    expect(say(held({ reason: "owns_miniapps", count: null }))).toBe("Held the workspace from deletion while it owns miniapps");
     expect(
       say(event("workspace.deletion_hold_set", { actor: STORE, target: { ...target, service: "fleet" }, after: { reason: "manages_devices", count: 4 } })),
     ).toBe("Held the workspace from deletion (manages devices: 4)");

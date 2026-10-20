@@ -281,7 +281,7 @@ describe("createWorkspaceApi: errors", () => {
     expect(isWorkspaceHeldError(refused)).toBe(true);
     expect(isWorkspaceChangedError(refused)).toBe(false);
     expect(errorMessage(refused)).toBe(
-      "This workspace still owns 3 published miniapps. Delete them in the Developer Console first.",
+      "This workspace still owns 3 miniapps. Delete them in the Developer Console first.",
     );
 
     const odd = await api.deleteWorkspace("ws_1", "Acme").catch((e: unknown) => e);
