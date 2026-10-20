@@ -107,11 +107,15 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
         let previous = DeviceManager.shared.sgc
         resetPairingState()
+        // The fixture models a live link. Pin phone Bluetooth on so the SDK does not tear the
+        // transport down when the host has no usable radio (CI runners report it unsupported).
+        BluetoothAvailability.shared.stateOverride = .poweredOn
         let transport = SessionReadinessTransport()
         let sdk = MentraBluetoothSDK()
         DeviceManager.shared.sgc = transport
         defer {
             sdk.invalidate()
+            BluetoothAvailability.shared.stateOverride = nil
             transport.cleanup()
             DeviceManager.shared.sgc = previous
             resetPairingState()
