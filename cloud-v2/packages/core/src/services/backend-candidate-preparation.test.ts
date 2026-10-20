@@ -179,6 +179,38 @@ async function returnedFixture() {
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(r=>r.kind==='recorder')!.storage!.minimumAvailableBytes;
  return f;
 }
+for (const winner of ['renewal','binding'] as const) test(`final binding and readiness renewal serialize when ${winner} wins`,async()=>{
+ const f=await returnedFixture(),host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!);
+ const admission=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},async recorderClaims(){return [claim]},
+   async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},async claimedHosts(){return []},async replace(){throw Error('Unexpected dependency')}} ,()=>f.now);
+ await admission.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
+ const original=structuredClone(f.row),bindingNow=f.now;
+ f.advance(120001);await f.service.preparation(f.row.requestId);const pending=structuredClone(f.row.fleetCandidatePreparation!);f.row=structuredClone(original);
+ const find=TestRequestModel.collection.findOne,write=TestRequestModel.collection.findOneAndUpdate,read=resourceReservationRepository.get,claims=resourceReservationRepository.recorderClaims;
+ let bindingArrived!:()=>void,renewalArrived!:()=>void,releaseBinding!:()=>void,releaseRenewal!:()=>void;
+ const bindingReady=new Promise<void>(resolve=>bindingArrived=resolve),renewalReady=new Promise<void>(resolve=>renewalArrived=resolve),
+   bindingGate=new Promise<void>(resolve=>releaseBinding=resolve),renewalGate=new Promise<void>(resolve=>releaseRenewal=resolve);
+ TestRequestModel.collection.findOne=mock(async()=>structuredClone(original)) as any;
+ resourceReservationRepository.get=async()=>structuredClone(host);resourceReservationRepository.recorderClaims=async()=>[structuredClone(claim)];
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{
+  const binding=update.$set.state==='preparing';if(binding){bindingArrived();await bindingGate}else{renewalArrived();await renewalGate}
+  for(const [key,expected] of Object.entries(filter)){
+   const actual=key.split('.').reduce((value:any,part)=>value?.[part],f.row);
+   if(expected&&typeof expected==='object'&&'$exists' in expected){if((actual!==undefined)!==(expected as any).$exists)return null}
+   else if(expected&&typeof expected==='object'&&'$gt' in expected){if(!(actual>(expected as any).$gt))return null}
+   else if(requestInputDigest(actual??null)!==requestInputDigest(expected??null))return null;
+  }
+  for(const key of Object.keys(update.$unset??{}))delete (f.row as any)[key];f.row={...f.row,...structuredClone(update.$set)};return structuredClone(f.row);
+ }) as any;
+ try{
+  const bound=routineJobRepository.bind(original.requestId,original.fleetInputSha256!,{jobId:original.requestId,requestId:original.requestId,hostId:'air1',laneId:'android',descriptorRevision:'b'.repeat(64),actionsRunId:'1',actionsJobId:'2',boundAt:new Date(bindingNow).toISOString()}, {},new Date(bindingNow)),
+    renewed=routineJobRepository.candidatePreparation!(original,pending,new Date(f.now));
+  await Promise.all([bindingReady,renewalReady]);
+  if(winner==='renewal'){releaseRenewal();expect(await renewed).toBeDefined();releaseBinding();expect(await bound).toBeNull();expect(f.row.fleetCandidatePreparation).toEqual(pending);expect(f.row.fleetBinding).toBeUndefined()}
+  else{releaseBinding();expect(await bound).toBeDefined();releaseRenewal();expect(await renewed).toBeNull();expect(f.row.state).toBe('preparing');expect(f.row.fleetCandidatePreparation).toBeUndefined()}
+  expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetResourceReservation).toEqual(claim);
+ }finally{releaseBinding();releaseRenewal();TestRequestModel.collection.findOne=find;TestRequestModel.collection.findOneAndUpdate=write;resourceReservationRepository.get=read;resourceReservationRepository.recorderClaims=claims}
+})
 test('actual resource admission consumes authenticated repository receive time, not snapshot metadata',async()=>{
  const f=await returnedFixture(),host=repositoryEnvelope(f),claim=f.row.fleetResourceReservation!;let stages=0;
  expect('receivedAt' in host.snapshot).toBe(false);

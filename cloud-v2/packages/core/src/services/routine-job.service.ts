@@ -340,6 +340,10 @@ export const routineJobRepository: RoutineJobRepository = {
           routineLaneContext(host.snapshot, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
     }
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
+      fleetCandidatePreparation: {$exists: false},
+      fleetCandidateSelection: row.fleetCandidateSelection ?? {$exists: false},
+      fleetCandidatePreparations: row.fleetCandidatePreparations ?? {$exists: false},
+      fleetResourceReservation: row.fleetResourceReservation,
       fleetResourceAdmission: admission.data, ...(row.fleetExclusiveReservation ? {fleetExclusiveReservation: row.fleetExclusiveReservation} : {fleetExclusiveReservation: {$exists: false}}),
       fleetBinding: {$exists: false}, hostId: {$exists: false}, 'fleetResourceReservation.hostId': fleetBinding.hostId, 'fleetResourceReservation.laneId': fleetBinding.laneId, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
       {$set: {hostId: fleetBinding.hostId, fleetBinding, dispatchIntent, dispatchIntentSha256: requestInputDigest(dispatchIntent),
