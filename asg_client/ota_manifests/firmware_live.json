@@ -8,6 +8,13 @@
       "size": 34697669
     },
     {
+      "start_firmware": "MentraLive_20260418",
+      "end_firmware": "MentraLive_20260923.0",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260923.0.zip",
+      "sha256": "9cad6df2769edbbab2d0fdc6342c14c3734a858ba0cdee9e5b406dc6bdfe9e87",
+      "size": 44239241
+    },
+    {
       "start_firmware": "MentraLive_20260113",
       "end_firmware": "MentraLive_20260709",
       "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260113_20260709.zip",
@@ -18,12 +25,6 @@
       "end_firmware": "MentraLive_20260709",
       "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260204_20260709.zip",
       "sha256": "b280ecb480c21bb8f83fbdd40b766ff1a7e234008ae639b9c6bec96bbae1fe8f"
-    },
-    {
-      "start_firmware": "MentraLive_20260418",
-      "end_firmware": "MentraLive_20260709",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260709.zip",
-      "sha256": "f82c55c53dd54ffe1b4885ea002f34bc6f7f96e1c30e8c3d717f438722d6925f"
     },
     {
       "start_firmware": "MentraLive_20260421",
@@ -59,6 +60,7 @@
   "bes_firmware": {
     "version": "26.10.16.0",
     "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.10.16.0.bin",
-    "sha256": "d8d4d997bd9864bc9e4805fc56b9a7d63e70721ca6455590efa47f0698696921"
+    "sha256": "d8d4d997bd9864bc9e4805fc56b9a7d63e70721ca6455590efa47f0698696921",
+    "size": 1154938
   }
 }

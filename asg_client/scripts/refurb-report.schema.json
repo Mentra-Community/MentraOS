@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "refurb-report.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "invocation",
+    "device",
+    "release",
+    "versions",
+    "artifacts",
+    "phases",
+    "elapsedSeconds",
+    "result"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "runId": {"type": "string", "minLength": 1},
+    "invocation": {"type": "array", "items": {"type": "string"}},
+    "device": {
+      "type": "object",
+      "required": ["adbSerial", "model", "mac", "cid"],
+      "properties": {
+        "adbSerial": {"type": "string"},
+        "productSerial": {"type": "string"},
+        "model": {"type": "string"},
+        "mac": {"type": "string"},
+        "cid": {"type": "string"}
+      }
+    },
+    "release": {
+      "type": "object",
+      "required": ["track"],
+      "properties": {
+        "track": {"enum": ["production", "staging", "dev"]},
+        "releaseIdentity": {"type": "string"},
+        "otaUrl": {"type": "string"},
+        "otaSha256": {"type": "string"},
+        "manifestSha256": {"type": "string"}
+      }
+    },
+    "versions": {
+      "type": "object",
+      "required": ["before", "target", "final"],
+      "properties": {
+        "before": {"type": "object"},
+        "target": {"type": "object"},
+        "final": {"type": "object"}
+      }
+    },
+    "artifacts": {"type": "array"},
+    "phases": {"type": "array"},
+    "elapsedSeconds": {"type": "number", "minimum": 0},
+    "result": {"enum": ["PASS", "FAIL"]},
+    "reason": {"type": "string"}
+  }
+}

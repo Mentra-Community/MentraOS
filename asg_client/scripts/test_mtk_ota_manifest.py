@@ -25,6 +25,7 @@ spec = importlib.util.spec_from_file_location("observer", HERE / "mtk-ota-observ
 observer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(observer)
 SOURCE, TARGET = "MentraLive_20260921.0", "MentraLive_20260113"
+UPGRADE = "MentraLive_20260922.0"
 
 
 def ota(path, *, metadata=None, properties=None, duplicate=None, signature=b"", header=None):
@@ -55,35 +56,48 @@ class ManifestTests(unittest.TestCase):
         self.path = self.root / "selected-january-full.zip"
 
     def prepare(self, **kwargs):
+        end = kwargs.pop("end", UPGRADE)
         with redirect_stderr(io.StringIO()):
-            return manifest.prepare(self.path, SOURCE, end=TARGET, full=True, **kwargs)
+            return manifest.prepare(self.path, SOURCE, end=end, full=True, **kwargs)
 
-    def test_full_wipe_uses_actual_base_and_exact_target_without_renaming(self):
+    def safe_ota(self):
+        ota(self.path, metadata={"ota-wipe": "no", "ota-downgrade": "no"}, properties={"POWERWASH": "0"})
+
+    def test_full_wipe_is_rejected_before_any_route_is_emitted(self):
         ota(self.path)
+        with self.assertRaisesRegex(ValueError, "wipe"):
+            self.prepare()
+
+    def test_full_nonwiping_upgrade_keeps_the_observed_base_and_exact_target(self):
+        self.safe_ota()
         value = self.prepare(port=9877)
         self.assertEqual(value, {"apps": {}, "mtk_patches": [{"start_firmware": SOURCE,
-                         "end_firmware": TARGET, "url": "http://localhost:9877/mtk_firmware.zip",
+                         "end_firmware": UPGRADE, "url": "http://localhost:9877/mtk_firmware.zip",
                          "sha256": hashlib.sha256(self.path.read_bytes()).hexdigest(),
                          "size": self.path.stat().st_size}]})
 
     def test_full_requires_real_target_and_never_overrides_observed_base(self):
-        ota(self.path)
+        self.safe_ota()
         for args in ({"end": None}, {"end": "current+1"}, {"end": "MentraLive_202609210"}, {"start": "MentraLive_20260709"}):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 manifest.prepare(self.path, SOURCE, full=True, **args)
 
-    def test_full_nonwiping_upgrade_and_same_version_are_explicit(self):
-        ota(self.path, metadata={"ota-wipe": "no", "ota-downgrade": "no"}, properties={"POWERWASH": "0"})
-        for target in (SOURCE, "MentraLive_20260922.0"):
-            with redirect_stderr(io.StringIO()):
-                value = manifest.prepare(self.path, SOURCE, end=target, full=True)
-            self.assertEqual(value["mtk_patches"][0]["end_firmware"], target)
-        with self.assertRaisesRegex(ValueError, "ota-downgrade"):
+    def test_full_rejects_wipe_downgrade_and_equal_or_older_targets(self):
+        self.safe_ota()
+        for target in (SOURCE, TARGET):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "newer"):
+                manifest.prepare(self.path, SOURCE, end=target, full=True)
+        ota(self.path, metadata={"ota-wipe": "no", "ota-downgrade": "yes"}, properties={"POWERWASH": "0"})
+        with self.assertRaisesRegex(ValueError, "downgrade"):
+            self.prepare()
+        ota(self.path, metadata={"ota-wipe": "yes", "ota-downgrade": "no"}, properties={"POWERWASH": "1"})
+        with self.assertRaisesRegex(ValueError, "wipe"):
             self.prepare()
 
     def test_metadata_hash_excludes_signature_bytes(self):
-        ota(self.path, signature=b"synthetic metadata signature")
-        self.assertEqual(self.prepare()["mtk_patches"][0]["end_firmware"], TARGET)
+        ota(self.path, signature=b"synthetic metadata signature",
+            metadata={"ota-wipe": "no", "ota-downgrade": "no"}, properties={"POWERWASH": "0"})
+        self.assertEqual(self.prepare()["mtk_patches"][0]["end_firmware"], UPGRADE)
 
     def test_incremental_filename_and_target_contract_remains(self):
         path = self.root / "mtk_firmware_20260113_20260921.0.zip"
@@ -114,15 +128,20 @@ class ManifestTests(unittest.TestCase):
                     self.prepare()
 
     def test_offline_cli_outputs_only_manifest_json(self):
-        ota(self.path)
+        self.safe_ota()
         result = subprocess.run([sys.executable, str(HERE / "mtk-ota-manifest.py"), str(self.path),
-                                 "--full", "--device-version", SOURCE, "--end-firmware", TARGET], capture_output=True, text=True)
+                                 "--full", "--device-version", SOURCE, "--end-firmware", UPGRADE], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["mtk_patches"][0]["end_firmware"], TARGET)
-        self.assertIn("POWERWASH=1", result.stderr)
-
-    def fake_shell_run(self, target=TARGET, transient_cid=False, log_eof=False, postboot_delay=0, observation_timeout=None):
+        self.assertEqual(json.loads(result.stdout)["mtk_patches"][0]["end_firmware"], UPGRADE)
+        self.assertIn("POWERWASH=0", result.stderr)
         ota(self.path)
+        rejected = subprocess.run([sys.executable, str(HERE / "mtk-ota-manifest.py"), str(self.path),
+                                   "--full", "--device-version", SOURCE, "--end-firmware", UPGRADE], capture_output=True, text=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("wipe", rejected.stderr)
+
+    def fake_shell_run(self, target=UPGRADE, transient_cid=False, log_eof=False, postboot_delay=0, observation_timeout=None):
+        self.safe_ota()
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
         calls = self.root / "calls.jsonl"
@@ -164,7 +183,7 @@ else:
             file.chmod(0o755)
         env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "ANDROID_SERIAL": "synthetic-only"}
         result = subprocess.run(["/bin/bash", str(HERE / "test-mtk-ota.sh"), str(self.path),
-                                 "--full", "--end-firmware", TARGET], env=env, capture_output=True, text=True, timeout=15)
+                                 "--full", "--end-firmware", UPGRADE], env=env, capture_output=True, text=True, timeout=15)
         return result, [json.loads(line) for line in calls.read_text().splitlines()]
 
     def test_script_dispatches_once_waits_for_target_and_does_not_reboot_again(self):
@@ -179,7 +198,7 @@ else:
     def test_wrong_postboot_target_is_failure_without_a_second_dispatch(self):
         result, calls = self.fake_shell_run(target="MentraLive_20260114")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected " + TARGET, result.stdout + result.stderr)
+        self.assertIn("expected " + UPGRADE, result.stdout + result.stderr)
         self.assertEqual(sum(a[:3] == ["shell", "am", "broadcast"] for a in calls), 1)
         self.assertNotIn(["reboot"], calls)
 
