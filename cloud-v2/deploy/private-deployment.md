@@ -297,6 +297,12 @@ backend shared by Mentra Cloud and multiple Private Deployments needs an
 explicit issuer-to-JWKS trust list; that multi-Core helper is a later SDK
 addition, not a reason to produce customer-specific miniapp bundles.
 
+The verified session also carries the token's `features` claim, which
+`session.hasFeature("feature.key")` reads. A backend configured with this
+deployment's `jwksUrl` accepts tokens signed by that Core alone, so it honors
+only the features this Core minted; a token from a Mentra Cloud Core is refused
+before its features are read.
+
 Runtime requires exact feature/module agreement in both directions:
 `runtimeRealtimeSession` and `cloudSpeech` equal whether `realtime-audio` is
 enabled, `managedStreams` equals `camera`, `nativeMeetings` equals `meetings`,
