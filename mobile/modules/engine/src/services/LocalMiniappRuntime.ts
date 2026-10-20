@@ -1773,9 +1773,12 @@ class LocalMiniappRuntime {
     const session = this.connectedApps.get(packageName)?.authSession
     const auth = await this.requestMiniappAuth(packageName, opts)
     if (!auth) return null
-    // The miniapp that asked may have reconnected or been replaced while the mint was out; its successor
-    // gets its own token.
-    if (!this.currentAuthApp(packageName, session)) return auth
+    // The miniapp that asked may have reconnected or been replaced while the mint was out. Its successor has
+    // its own token on the way, so this one is neither delivered nor handed back to a requester that could be
+    // that successor: the SDK would apply it over the newer token.
+    if (!this.currentAuthApp(packageName, session)) {
+      throw new Error("The miniapp reconnected or stopped while its auth token was being refreshed")
+    }
     this.scheduleMiniappAuthRefresh(packageName, auth)
     this.sendToMiniapp(packageName, {
       type: MiniappResponseType.AUTH_UPDATE,

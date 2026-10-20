@@ -14,6 +14,8 @@ const methods = [
   "handleConnect",
   "requestMiniappAuth",
   "refreshMiniappAuth",
+  "handleAuthRefresh",
+  "authRefreshOptions",
   "currentAuthApp",
   "scheduleMiniappAuthRefresh",
   "armMiniappAuthRefresh",
@@ -123,6 +125,7 @@ function fixture() {
     "computeDeclaredPermissionRecord",
     "getMiniappConfiguration",
     "MiniappResponseType",
+    "MiniappErrorCode",
     "LOG_TAG",
     "Date",
     "console",
@@ -138,6 +141,7 @@ function fixture() {
     () => ({}),
     () => ({}),
     {CONNECT_ACK: "connect_ack", AUTH_UPDATE: "auth_update"},
+    {NOT_CONNECTED: "not_connected", INTERNAL: "internal"},
     "LOCAL_MINIAPP",
     {now: () => now},
     {log() {}, warn: (message: string) => warnings.push(message)},
@@ -154,6 +158,14 @@ function fixture() {
   host.currentVisiblePackage = () => visible
   host.sendToMiniapp = (_packageName: string, message: {type: string; auth?: Token}) => sent.push(message)
   host.sendVisibilityChange = (packageName: string, state: string) => visibility.push([packageName, state])
+  const results: Array<{requestId?: string; ok: boolean; auth?: Token; error?: {code: string; message: string}}> = []
+  host.sendResult = (
+    _packageName: string,
+    requestId: string | undefined,
+    ok: boolean,
+    data?: {auth?: Token},
+    error?: {code: string; message: string},
+  ) => results.push({requestId, ok, auth: data?.auth, error})
   host.sendCloudStatusToMiniapp = () => {}
   host.flushConnectWaiters = () => {}
 
@@ -195,6 +207,8 @@ function fixture() {
     warnings,
     visibility,
     /** Tokens the miniapp was handed, in order (CONNECT's delivery and every AUTH_UPDATE after it). */
+    /** The results the miniapp was sent for its own AUTH_REFRESH requests. */
+    results,
     delivered: () => sent.filter((message) => message.type === "auth_update").map((message) => message.auth?.token),
     now: () => now,
     /** Timers still armed, with the delay each was armed for. */
@@ -209,6 +223,11 @@ function fixture() {
     async connect() {
       register()
       host.handleConnect(CALL, {}, "req-1")
+      await flush()
+    },
+    /** The miniapp asks for a refreshed token itself. */
+    async askForRefresh(minTtlMs?: number) {
+      host.handleAuthRefresh(CALL, minTtlMs ? {minTtlMs} : {}, "req-refresh")
       await flush()
     },
     /** The same WebView sends CONNECT again without being respawned. */
@@ -687,6 +706,35 @@ describe("a miniapp that connects again while an earlier token request is out", 
     await f.redrive()
 
     expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, {fresh: true}, undefined])
+    expect(f.delivered()).toEqual(["token-1", "token-1"])
+  })
+
+  test("a refresh the miniapp asked for is answered with an error, not the older token, once it has reconnected", async () => {
+    const f = fixture()
+    await f.connect()
+    const stale = pending()
+    f.plan(stale.plan)
+    await f.askForRefresh()
+
+    await f.connectAgain()
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    stale.resolve(before(f))
+    await flush()
+
+    expect(f.results).toHaveLength(1)
+    expect(f.results[0]).toMatchObject({requestId: "req-refresh", ok: false})
+    expect(f.results[0].auth).toBeUndefined()
+    expect(f.delivered()).toEqual(["token-1", "token-2"])
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
+  })
+
+  test("a refresh the miniapp asked for is answered with the token and the update when nothing intervened", async () => {
+    const f = fixture()
+    await f.connect()
+
+    await f.askForRefresh()
+
+    expect(f.results).toEqual([{requestId: "req-refresh", ok: true, auth: expect.objectContaining({token: "token-1"})}])
     expect(f.delivered()).toEqual(["token-1", "token-1"])
   })
 
