@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ACCOUNT_BILLING_PATH,
   forgetWorkspace,
   homeWorkspace,
   invitationLanding,
@@ -16,6 +17,17 @@ describe("addresses", () => {
     expect(parseRoute("/w/ws_1/members")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "members" });
     expect(parseRoute("/w/ws_1/settings/")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "settings" });
     expect(parseRoute("/w/ws_1/audit")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "audit" });
+    expect(parseRoute("/w/ws_1/licenses")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "licenses" });
+    expect(workspacePath("ws_1", "licenses")).toBe("/w/ws_1/licenses");
+  });
+
+  test("the personal Billing page is at /account/billing, and nothing else is under /account", () => {
+    expect(ACCOUNT_BILLING_PATH).toBe("/account/billing");
+    expect(parseRoute("/account/billing")).toEqual({ kind: "account-billing" });
+    expect(parseRoute("/account/billing/")).toEqual({ kind: "account-billing" });
+    for (const path of ["/account", "/account/", "/account/other", "/account/billing/extra", "/accounts/billing"]) {
+      expect(parseRoute(path)).toEqual({ kind: "not-found" });
+    }
   });
 
   test("a workspace without a section, or with one the portal does not have, opens its first section", () => {

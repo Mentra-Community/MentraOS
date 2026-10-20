@@ -772,7 +772,10 @@ export const cloudClientService = {
     return userId
   },
 
-  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
+  async getMiniappAuthToken(
+    packageName: string,
+    opts?: {minTtlMs?: number; fresh?: boolean},
+  ): Promise<MiniappAuthToken> {
     if (!client) this.init()
     const c = client
     if (!c) throw new Error("cloud client not initialized")

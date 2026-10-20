@@ -35,6 +35,18 @@ export function isWorkspaceHeldError(error: unknown): error is WorkspaceApiError
   return error instanceof WorkspaceApiError && error.status === 409 && error.code === WORKSPACE_HAS_HOLDS_ERROR;
 }
 
+/**
+ * Whether `error` says a license changed under the caller: every seat was taken before theirs (409
+ * `no_seats_available`), or the license is gone (404 `license_not_found`). The view they acted on is stale.
+ */
+export function isLicenseChangedError(error: unknown): error is WorkspaceApiError {
+  return (
+    error instanceof WorkspaceApiError &&
+    ((error.status === 409 && error.code === "no_seats_available") ||
+      (error.status === 404 && error.code === "license_not_found"))
+  );
+}
+
 /** Codes the server sends with no description of their own. */
 const CODE_MESSAGES: Record<string, string> = {
   unauthorized: "Your session has expired. Sign in again.",

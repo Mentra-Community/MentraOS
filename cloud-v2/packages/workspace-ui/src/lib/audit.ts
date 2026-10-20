@@ -41,6 +41,10 @@ const ACTION_LABELS: Record<string, string> = {
   "invitation.revoked": "Invitation revoked",
   "credential.created": "Key created",
   "credential.revoked": "Key revoked",
+  "license.written": "License created or changed",
+  "license.ended": "License ended",
+  "seat.assigned": "Seat assigned",
+  "seat.released": "Seat released",
 };
 
 /** A readable name for an audit action; an action this UI does not know shows as its raw name. */

@@ -11,9 +11,10 @@
  *    fetches the subject token on demand for subject tokens that themselves
  *    expire. An `accessToken`/`refreshToken` variant skips straight to refresh.
  *  - Near expiry (within a 60s margin) it refreshes at `/refresh` and rotates.
- *  - Exchange, refresh, and each per-miniapp mint are single-flighted, so a
- *    reconnect storm cannot fire a burst of competing requests (and a rotated
- *    refresh token cannot be invalidated out from under a concurrent caller).
+ *  - Exchange and refresh are single-flighted, so a reconnect storm cannot fire
+ *    a burst of competing requests (and a rotated refresh token cannot be
+ *    invalidated out from under a concurrent caller). Miniapp mints run one at
+ *    a time per package and are shared as `getMiniappToken` describes.
  *  - If Core definitively rejects the refresh token (see
  *    `DEAD_REFRESH_TOKEN_ERRORS`) and the host can fetch a fresh subject token
  *    on demand, we clear the dead refresh token and exchange once. If no fresh
@@ -63,10 +64,12 @@ export interface AuthModule {
   getRuntimeToken(opts?: {forceRefresh?: boolean}): Promise<string>
   // current Core token, refreshing as needed (Core-backed mode only).
   getCoreToken(opts?: {forceRefresh?: boolean}): Promise<string>
-  // a miniapp-scoped token, cached per packageName and re-minted before expiry
+  // a miniapp-scoped token, cached per packageName and re-minted before expiry.
+  // Pass `{ fresh: true }` to skip the cache and mint now, for the moments the
+  // token's claims must be current (a miniapp opening).
   getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number},
+    opts?: {minTtlMs?: number; fresh?: boolean},
   ): Promise<{token: string; expiresAt: number}>
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
@@ -133,6 +136,16 @@ interface TokenResponse {
 interface MiniappTokenEntry {
   token: string
   expiresAt: number
+}
+
+/**
+ * One miniapp mint. `requestSent()` turns true just before the request to Core
+ * leaves. Until then a caller who needs a token minted from now on can still
+ * share it, because Core has not yet read anything on its behalf.
+ */
+interface MiniappMint {
+  promise: Promise<MiniappTokenEntry>
+  requestSent: () => boolean
 }
 
 interface RuntimeTokenResponse {
@@ -259,6 +272,8 @@ export class Auth implements AuthModule {
 
   /** Miniapp tokens cached per packageName until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>()
+  /** The newest mint per package (and session), until it settles. See `mintMiniappToken`. */
+  private readonly miniappMints = new Map<string, MiniappMint>()
   /** Core-brokered runtime token cache. */
   private runtimeToken: RuntimeTokenEntry | null = null
 
@@ -346,34 +361,61 @@ export class Auth implements AuthModule {
   /**
    * Mint (or return a cached) miniapp-scoped token for `packageName`.
    *
-   * Cached per packageName and re-minted only when near expiry, so a steady
-   * miniapp does not hit the cloud on every call. The mint is single-flighted
-   * per packageName so two near-simultaneous launches of the same miniapp share
-   * one request. The access token is the Bearer here and is never exposed to the
-   * miniapp; only the returned miniapp-scoped token is.
+   * By default the token is cached per packageName and re-minted only when near
+   * expiry, so a steady miniapp does not hit the cloud on every call.
+   *
+   * `fresh: true` skips the cache and reaches Core, because what Core puts in a
+   * token (the features the user holds, today) can change within its hour. It
+   * can share a mint only if that mint's request has not left yet; a mint whose
+   * request is already out may have read the user's features before the change,
+   * so the caller gets a new mint, which starts once the earlier one settles.
+   * Callers waiting on that follow-up share it. `minTtlMs` has no use with
+   * `fresh`: the token it returns was minted for this call.
+   *
+   * Mints for one package never overlap, and a default call that finds one in
+   * flight takes it rather than starting another. The access token is the
+   * Bearer here and is never exposed to the miniapp; only the returned
+   * miniapp-scoped token is.
    */
   async getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number},
+    opts?: {minTtlMs?: number; fresh?: boolean},
   ): Promise<{token: string; expiresAt: number}> {
     this.assertSessionActive()
     const generation = this.sessionGeneration
-    const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs)
-    const cached = this.miniappCache.get(packageName)
-    if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
-      return {token: cached.token, expiresAt: cached.expiresAt}
+    const fresh = opts?.fresh === true
+    if (!fresh) {
+      const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs)
+      const cached = this.miniappCache.get(packageName)
+      if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
+        return {token: cached.token, expiresAt: cached.expiresAt}
+      }
     }
 
-    return this.store.singleFlight(`${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`, async () => {
-      // Re-check the cache inside the flight: a concurrent mint that resolved
-      // while we were queued may have already filled it.
-      const fresh = this.miniappCache.get(packageName)
-      if (fresh && !this.isExpiring(fresh.expiresAt, marginSeconds)) {
-        return {token: fresh.token, expiresAt: fresh.expiresAt}
-      }
+    const entry = await this.mintMiniappToken(packageName, generation, fresh)
+    return {token: entry.token, expiresAt: entry.expiresAt}
+  }
 
+  /**
+   * The mint a caller should wait on. Mints for a package form a chain, one at a
+   * time; `miniappMints` holds the newest link.
+   *
+   *  - A default caller takes the newest mint, whatever its state.
+   *  - A fresh caller takes it only while its request is unsent. Otherwise it
+   *    appends a mint that starts when the newest one settles, win or lose, and
+   *    becomes the newest, so later fresh callers share it until it too sends.
+   */
+  private mintMiniappToken(packageName: string, generation: number, fresh: boolean): Promise<MiniappTokenEntry> {
+    const key = `${MINIAPP_FLIGHT_PREFIX}${packageName}:${generation}`
+    const newest = this.miniappMints.get(key)
+    if (newest && (!fresh || !newest.requestSent())) return newest.promise
+
+    let requestSent = false
+    const promise = (async () => {
+      if (newest) await newest.promise.catch(() => undefined)
       const accessToken = await this.getCoreToken()
       const http = this.requireCoreHttp()
+      requestSent = true
       // A dev build of a package is that package: the request names it and
       // nothing else. The phone has already applied the installed signer rule.
       const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, {packageName}, {bearer: accessToken})
@@ -382,8 +424,16 @@ export class Auth implements AuthModule {
       const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}
       this.miniappCache.set(packageName, entry)
       this.logger.debug("minted miniapp token", {packageName})
-      return {token: entry.token, expiresAt: entry.expiresAt}
-    })
+      return entry
+    })()
+    const mint: MiniappMint = {promise, requestSent: () => requestSent}
+    this.miniappMints.set(key, mint)
+    // A later mint that replaced this one as the newest stays registered.
+    const release = () => {
+      if (this.miniappMints.get(key) === mint) this.miniappMints.delete(key)
+    }
+    void promise.then(release, release)
+    return promise
   }
 
   /**

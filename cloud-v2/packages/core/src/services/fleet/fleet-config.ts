@@ -39,6 +39,8 @@
  */
 
 import {createLogger} from "@mentra/cloud-shared"
+import {DEFAULT_FORWARDING_LIMITS, parseUpstreamUrl, type ForwardingLimits} from "../forwarding/upstream-url"
+import {enabledFeaturesConfigured, parseEnabledFeatures} from "../licenses/enabled-features"
 import {isDeployedEnvironment} from "../signin/config"
 
 const logger = createLogger("core").child({service: "fleet-config"})
@@ -46,28 +48,16 @@ const logger = createLogger("core").child({service: "fleet-config"})
 /** The feature a Private Cloud lists in `CLOUD_CORE_ENABLED_FEATURES` once it has bought Fleet. */
 const FLEET_FEATURE = "fleet.managed"
 
-const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
-const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
-const DEFAULT_TIMEOUT_MS = 10_000
-const DEFAULT_MAX_ASSET_BYTES = 25 * 1024 * 1024
-
 /** The longest a timer holds: past 2^31 - 1 ms some runtimes fire at once, which would fail every request. */
 const MAX_TIMEOUT_MS = 2_147_483_647
-
-/** The only hosts a deployed Core may reach over plain `http`. */
-const LOCAL_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"])
 
 export type FleetConfig =
   | {state: "not_installed"}
   | {state: "misconfigured"; reason: string}
   | {state: "ready"; baseUrl: URL; secret: string}
 
-export interface FleetLimits {
-  maxBodyBytes: number
-  maxResponseBytes: number
-  timeoutMs: number
-  maxAssetBytes: number
-}
+/** The byte and time limits on Core's side of the Fleet seam. */
+export type FleetLimits = ForwardingLimits
 
 /**
  * The settings this module reads, taken from the process now. Each variable is read as a literal
@@ -100,36 +90,17 @@ function reportOnce(level: "error" | "warn", variable: string, message: string):
 
 /**
  * The feature names `CLOUD_CORE_ENABLED_FEATURES` lists, or `null` when it is blank (the hosted Core).
- * Entries are `feature[:package+package]`; the package lists are ignored here and an entry with no
- * feature name is skipped.
+ * The setting's syntax and parser are `services/licenses/enabled-features.ts`; the package lists are
+ * ignored here.
  */
 function listedFeatures(env: NodeJS.ProcessEnv): Set<string> | null {
-  const raw = (env.CLOUD_CORE_ENABLED_FEATURES ?? "").trim()
-  if (!raw) return null
-  const features = new Set<string>()
-  for (const entry of raw.split(",")) {
-    const name = entry.split(":", 1)[0]!.trim()
-    if (name) features.add(name)
-  }
-  return features
+  if (!enabledFeaturesConfigured(env)) return null
+  return new Set(parseEnabledFeatures(env).keys())
 }
 
 /** The feature names of `CLOUD_CORE_ENABLED_FEATURES`: empty when the setting is blank or lists none. */
 export function enabledFeatures(env: NodeJS.ProcessEnv = processEnvironment()): Set<string> {
   return listedFeatures(env) ?? new Set()
-}
-
-function parseFleetUrl(raw: string, deployed: boolean): URL | null {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    return null
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null
-  if (!url.hostname || url.username || url.password || url.search || url.hash) return null
-  if (deployed && url.protocol === "http:" && !LOCAL_HOSTS.has(url.hostname)) return null
-  return url
 }
 
 /** Whether Fleet is installed on this Core, and when it is, whether Core can reach it. */
@@ -152,7 +123,7 @@ export function fleetConfig(env: NodeJS.ProcessEnv = processEnvironment()): Flee
   }
 
   const problems: string[] = []
-  const baseUrl = parseFleetUrl(rawUrl, isDeployedEnvironment(env))
+  const baseUrl = parseUpstreamUrl(rawUrl, isDeployedEnvironment(env))
   if (!baseUrl) {
     const message =
       "CLOUD_CORE_FLEET_URL is not a usable Fleet URL (an http(s) URL without credentials, query or fragment; a deployed Core requires https except on localhost)"
@@ -186,7 +157,7 @@ function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number)
 
 /** The timeout, never above what a timer can hold. */
 function timeoutMs(env: NodeJS.ProcessEnv): number {
-  const value = positiveInteger(env, "CLOUD_CORE_FLEET_TIMEOUT_MS", DEFAULT_TIMEOUT_MS)
+  const value = positiveInteger(env, "CLOUD_CORE_FLEET_TIMEOUT_MS", DEFAULT_FORWARDING_LIMITS.timeoutMs)
   if (value <= MAX_TIMEOUT_MS) return value
   reportOnce(
     "warn",
@@ -199,9 +170,9 @@ function timeoutMs(env: NodeJS.ProcessEnv): number {
 /** The byte and time limits on Core's side of the Fleet seam. */
 export function fleetLimits(env: NodeJS.ProcessEnv = processEnvironment()): FleetLimits {
   return {
-    maxBodyBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES),
-    maxResponseBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES", DEFAULT_MAX_RESPONSE_BYTES),
+    maxBodyBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_BODY_BYTES", DEFAULT_FORWARDING_LIMITS.maxBodyBytes),
+    maxResponseBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES", DEFAULT_FORWARDING_LIMITS.maxResponseBytes),
     timeoutMs: timeoutMs(env),
-    maxAssetBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_ASSET_BYTES", DEFAULT_MAX_ASSET_BYTES),
+    maxAssetBytes: positiveInteger(env, "CLOUD_CORE_FLEET_MAX_ASSET_BYTES", DEFAULT_FORWARDING_LIMITS.maxAssetBytes),
   }
 }

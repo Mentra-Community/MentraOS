@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-15.1",
+  "contractVersion": "2026-10-20.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -184,6 +184,8 @@
     "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
     "CLOUD_CORE_ADMIN_PORTAL_URL",
     "CLOUD_CORE_ADMIN_STATIC_DIR",
+    "CLOUD_CORE_BILLING_SECRET",
+    "CLOUD_CORE_BILLING_URL",
     "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
     "CLOUD_CORE_ENABLED_FEATURES",
     "CLOUD_CORE_ENTERPRISE_PORTAL_URL",

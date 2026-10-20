@@ -97,7 +97,7 @@ const defaultLogger: RouterLogger = {
  */
 export const BACKGROUND_READY_TIMEOUT_MS = 10_000
 
-/** Timer used for the UI-hold deadline. The engine injects BgTimer. */
+/** Timer used for the UI-hold deadline and crash respawns. The engine injects BgTimer. */
 export interface RouterTimer {
   setTimeout(callback: () => void, ms: number): number
   clearTimeout(id: number): void
@@ -126,20 +126,20 @@ export class MentraJSRouter {
   /** Cached spawn arguments so the crash controller can respawn after a backoff. */
   private readonly spawnCache: Map<string, SpawnCache> = new Map()
   /** Active respawn timers (so unregister() can cancel a pending respawn). */
-  private readonly respawnTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  private readonly respawnTimers: Map<string, number> = new Map()
 
   /**
    * Optional crash controller. When wired, every `__error` frame from a
    * JSContext drives the state machine; an Outcome with
-   * scheduleRespawnAfterMs queues a setTimeout that re-spawns the
+   * scheduleRespawnAfterMs queues a `timer` callback that re-spawns the
    * miniapp's last-known JS source after the backoff delay.
    */
   crashController: MentraJSCrashController | null = null
 
   /**
-   * Timer for the UI-hold deadline. MiniappEngine injects BgTimer because plain
-   * JS timers pause while the Android app is backgrounded; tests keep the
-   * global timers.
+   * Timer for the UI-hold deadline and crash respawns. MiniappEngine injects
+   * BgTimer because plain JS timers pause while the Android app is
+   * backgrounded; tests keep the global timers.
    */
   timer: RouterTimer = {
     setTimeout: (callback, ms) => setTimeout(callback, ms) as unknown as number,
@@ -375,8 +375,8 @@ export class MentraJSRouter {
     }
     // Cancel any prior pending respawn before scheduling a new one.
     const existing = this.respawnTimers.get(packageName)
-    if (existing) clearTimeout(existing)
-    const timer = setTimeout(() => {
+    if (existing !== undefined) this.timer.clearTimeout(existing)
+    const timer = this.timer.setTimeout(() => {
       this.respawnTimers.delete(packageName)
       void (async () => {
         try {
@@ -440,8 +440,8 @@ export class MentraJSRouter {
     // Cancel any pending crash-respawn before tearing down — we don't
     // want a stale timer to re-spawn a miniapp the user just disabled.
     const pending = this.respawnTimers.get(packageName)
-    if (pending) {
-      clearTimeout(pending)
+    if (pending !== undefined) {
+      this.timer.clearTimeout(pending)
       this.respawnTimers.delete(packageName)
     }
     this.replacementConnects.delete(packageName)

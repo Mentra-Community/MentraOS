@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AuditEventView } from "@mentra/workspace-contract";
-import { actorLabel, describeAuditEvent, plainText, rawLines, readableChanges } from "./lib/audit";
+import { actionLabel, actorLabel, describeAuditEvent, plainText, rawLines, readableChanges } from "./lib/audit";
 import { formatDate } from "./lib/format";
 
 const ALEX = { kind: "user" as const, email: "alex@acme.test", credentialId: null, service: null };
@@ -203,6 +203,22 @@ describe("audit events as sentences", () => {
     expect(lines.join("\n")).not.toContain("wm_");
     expect(lines.join("\n")).not.toContain("Same");
     expect(readableChanges({ before: { role: "member" }, after: { role: null } })).toEqual(["Role: Member (removed)"]);
+  });
+
+  test("license and seat events read as plain labels, not their action names", () => {
+    expect(["license.written", "license.ended", "seat.assigned", "seat.released"].map(actionLabel)).toEqual([
+      "License created or changed",
+      "License ended",
+      "Seat assigned",
+      "Seat released",
+    ]);
+    const assigned = event("seat.assigned", {
+      target: { licenseId: "lic_1", membershipId: "wm_1", mentraUserId: "mu_1", email: "priya@acme.test" },
+      after: { assignedAt: "2026-10-12T10:00:00.000Z", seatsUsed: 1, quantity: 5 },
+    });
+    expect(say(assigned)).toBe("Seat assigned");
+    expect(notes(assigned)).toEqual(expect.arrayContaining(["Seats used: 1", "Quantity: 5"]));
+    expect(notes(assigned).join("\n")).not.toContain("wm_");
   });
 
   test("the raw details keep everything as recorded", () => {

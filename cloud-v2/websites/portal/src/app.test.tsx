@@ -2,12 +2,14 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   capabilitiesForRole,
+  type LicenseView,
   type MemberView,
   type WorkspaceDetail,
   type WorkspaceRole,
 } from "@mentra/workspace-contract";
 import {
   invitationPreviewQuery,
+  licensesQuery,
   workspaceDetailQuery,
   WorkspaceApiError,
   workspaceKeys,
@@ -16,15 +18,27 @@ import {
 } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoginGate, PortalRoutes } from "./App";
-import { portalLinks, switcherInvitation } from "./components/portal-shell";
+import { AccountFooter } from "./components/app-shell";
+import { PortalModuleHost } from "./components/portal-module-host";
+import { accountItems, portalLinks, switcherInvitation } from "./components/portal-shell";
 import { WorkspaceSwitcher } from "./components/workspace-switcher";
 import type { PortalMe } from "./lib/api";
 import type { PendingInvitation } from "./lib/invitations";
-import { creationNotice, PortalProvider, portalWorkspaceApi, type PortalSession, type WorkspaceCreation } from "./lib/portal";
+import {
+  creationNotice,
+  expireSession,
+  PORTAL_ME_KEY,
+  PortalProvider,
+  portalWorkspaceApi,
+  type PortalSession,
+  type WorkspaceCreation,
+} from "./lib/portal";
 import { parseRoute } from "./lib/routes";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import type { InviteStorage } from "./lib/workspace-invite";
-import { isNoAccess, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
+import { accountBillingPart, accountNav } from "./pages/account-billing";
+import { billingOffered, billingPart } from "./pages/licenses";
+import { isNoAccess, licensesPartShown, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
 
 // Synthetic data only. The query cache is seeded, so a server render never reaches the network.
 const api = portalWorkspaceApi;
@@ -54,11 +68,15 @@ const MEMBERS: MemberView[] = [
 
 const ME: PortalMe = {
   authenticated: true,
-  user: { id: "u_self", email: "sam@acme.test" },
+  user: { id: "u_self", email: "sam@acme.test", emailVerified: true },
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: true,
   org: null,
+  modules: { billing: false },
 };
+
+/** `/api/portal/me` for a person who is (or is not) offered the billing module. */
+const meWith = (billing: boolean): PortalMe => ({ ...ME, modules: { billing } });
 
 function session(overrides: Partial<PortalSession> = {}): PortalSession {
   return {
@@ -71,6 +89,8 @@ function session(overrides: Partial<PortalSession> = {}): PortalSession {
     signOut() {},
     signingOut: false,
     developerConsoleUrl: null,
+    modules: { billing: false },
+    sessionExpired() {},
     ...overrides,
   };
 }
@@ -107,6 +127,8 @@ interface Seed {
   list?: WorkspaceListItem[];
   details?: WorkspaceDetail[];
   members?: MemberView[];
+  /** Acme's licenses, as the viewer's listing answers them. */
+  licenses?: LicenseView[];
   preview?: InvitationPreview;
 }
 
@@ -115,22 +137,28 @@ function seeded(seed: Seed, client = new QueryClient()): QueryClient {
   for (const item of seed.details ?? []) client.setQueryData(workspaceKeys.detail(api, item.workspaceId), item);
   if (seed.members) client.setQueryData(workspaceKeys.members(api, ACME), seed.members);
   client.setQueryData(workspaceKeys.invitations(api, ACME), []);
+  if (seed.licenses) client.setQueryData(workspaceKeys.licenses(api, ACME), seed.licenses);
   if (seed.preview) client.setQueryData(invitationPreviewQuery(api, TOKEN).queryKey, seed.preview);
   return client;
 }
 
-function render(path: string, seed: Seed, portal: Partial<PortalSession> = {}, client = seeded(seed)): string {
+function render(path: string, seed: Seed, portal: Partial<PortalSession> = {}, client = seeded(seed), me: PortalMe = ME): string {
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
         <PortalProvider value={session(portal)}>
-          <PortalRoutes route={parseRoute(path)} me={ME} />
+          <PortalRoutes route={parseRoute(path)} me={me} />
         </PortalProvider>
       </QueryClientProvider>,
     );
   } finally {
     client.clear();
   }
+}
+
+/** `render` for a person who is offered the billing module, or is not: the page and the session agree, as the app makes them. */
+function renderAs(billing: boolean, path: string, seed: Seed, portal: Partial<PortalSession> = {}): string {
+  return render(path, seed, { modules: { billing }, ...portal }, seeded(seed), meWith(billing));
 }
 
 const TWO_WORKSPACES: Seed = {
@@ -667,4 +695,330 @@ test("the login gate says to sign in with the invited address when an invitation
   expect(renderToStaticMarkup(<LoginGate invitePending loginUrl={loginUrl} />)).toContain("your invitation was sent to");
   expect(renderToStaticMarkup(<LoginGate loginUrl={loginUrl} />)).not.toContain("your invitation was sent to");
   expect(renderToStaticMarkup(<LoginGate loginUrl={loginUrl} />)).not.toContain("trusted identity issuers");
+});
+
+// --- Licenses & Billing -------------------------------------------------------------------------------
+
+const LICENSE: LicenseView = {
+  licenseId: "lic_call",
+  revision: 1,
+  owner: { type: "workspace", workspaceId: ACME },
+  product: "mentra.call.unlimited",
+  features: [{ key: "call.unlimited", packages: ["com.mentra.call"] }],
+  quantity: 3,
+  validFrom: "2026-09-01T12:00:00.000Z",
+  paidThrough: "2099-06-15T12:00:00.000Z",
+  seatsUsed: 1,
+  endedAt: null,
+  // Priya holds the one seat that is taken.
+  seats: [{ membershipId: "wm_2", mentraUserId: "u_2", assignedAt: "2026-09-03T12:00:00.000Z" }],
+};
+
+/** What Core answers a plain member: the license they hold a seat in, with only their own seat. */
+const MEMBERS_OWN_LICENSE: LicenseView = {
+  ...LICENSE,
+  seatsUsed: 2,
+  seats: [{ membershipId: `wm_${ACME}`, mentraUserId: "u_self", assignedAt: "2026-09-03T12:00:00.000Z" }],
+};
+
+const withLicenses = (licenses: LicenseView[] | undefined, seed: Seed = TWO_WORKSPACES): Seed => ({ ...seed, licenses });
+
+/** Acme as a plain member sees it, with `licenses` as Core lists them to a member. */
+const memberOfAcme = (licenses: LicenseView[] | undefined): Seed => ({
+  ...TWO_WORKSPACES,
+  list: [listItem(ACME, "Acme Field Team", "member"), listItem(NORTHWIND, "Northwind Pilot", "developer")],
+  details: [detail(ACME, "Acme Field Team", "member"), detail(NORTHWIND, "Northwind Pilot", "developer")],
+  licenses,
+});
+
+/** Acme as an Admin sees it (an Admin holds `workspace.billing.manage`), with `licenses` as Core lists them. */
+const adminOfAcme = (licenses: LicenseView[] | undefined): Seed => ({
+  ...TWO_WORKSPACES,
+  list: [listItem(ACME, "Acme Field Team", "admin"), listItem(NORTHWIND, "Northwind Pilot", "developer")],
+  details: [detail(ACME, "Acme Field Team", "admin"), detail(NORTHWIND, "Northwind Pilot", "developer")],
+  licenses,
+});
+
+const caps = (role: WorkspaceRole) => ({ capabilities: [...capabilitiesForRole(role)] });
+
+describe("Licenses & Billing in the sidebar", () => {
+  test("is the last section, and is offered only where there are licenses to show", () => {
+    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
+    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
+    expect(visibleSections(caps("member"), { licenses: true })).toEqual(["settings", "licenses"]);
+    expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings", "audit"]);
+    expect(visibleSections(caps("owner"))).toEqual(["members", "settings", "audit"]);
+  });
+
+  test("is called Licenses & Billing and goes to the workspace's licenses address", () => {
+    const items = workspaceNav(ACME, visibleSections(caps("owner"), { licenses: true })).flatMap(group => group.items);
+    expect(items.find(item => item.key === "licenses")).toMatchObject({ label: "Licenses & Billing", href: `/w/${ACME}/licenses` });
+  });
+
+  test("shows when billing is offered or the workspace has licenses, and never when it has neither", () => {
+    expect(licensesPartShown(true, undefined)).toBe(true);
+    expect(licensesPartShown(true, [])).toBe(true);
+    expect(licensesPartShown(false, [LICENSE])).toBe(true);
+    expect(licensesPartShown(false, [])).toBe(false);
+    expect(licensesPartShown(false, undefined)).toBe(false);
+  });
+});
+
+describe("the Licenses & Billing page", () => {
+  test("an admin of a workspace with licenses, without billing, sees only the licenses part", () => {
+    const markup = renderAs(false, `/w/${ACME}/licenses`, withLicenses([LICENSE]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toMatch(/aria-current="page"[^>]*>.*Licenses &amp; Billing/);
+    expect(markup).toContain("<h1");
+    expect(markup).toMatch(/<h1[^>]*>Licenses &amp; Billing<\/h1>/);
+    expect(markup).toContain('aria-label="Licenses"');
+    expect(markup).toContain("Mentra Call Unlimited");
+    expect(markup).toContain("1 of 3 seats used");
+    expect(markup).toContain("Unassign priya@acme.test");
+    expect(markup).toContain(">Assign seat<");
+    // No billing module, no way into one.
+    expect(markup).not.toContain('aria-label="Billing"');
+    expect(markup).not.toContain("Loading Billing");
+    expect(hrefs(markup)).not.toContain("/account/billing");
+  });
+
+  test("a license holding more seats than its quantity shows its notice on the page", () => {
+    const over = { ...LICENSE, quantity: 0, seatsUsed: 1 };
+    const markup = renderAs(false, `/w/${ACME}/licenses`, withLicenses([over]));
+    expect(markup).toContain('role="note"');
+    expect(markup).toContain("This license has 1 more seat assigned than it covers. Unassign 1 to get back within its quantity.");
+  });
+
+  test("a member sees only their own seat, with no assign control and nobody else's name", () => {
+    const markup = renderAs(false, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toContain("You hold a seat");
+    expect(markup).toContain("Mentra Call Unlimited");
+    for (const absent of ["priya@acme.test", "<select", "Assign", "Unassign", "seats used"]) expect(markup).not.toContain(absent);
+    expect(markup).not.toContain('aria-label="Billing"');
+  });
+
+  test("with billing, the licenses part comes first and the billing module follows it, even before any license exists", () => {
+    const markup = renderAs(true, `/w/${ACME}/licenses`, withLicenses([]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toContain("This workspace has no licenses yet.");
+    expect(markup).toContain('<section aria-label="Billing"');
+    expect(markup).toContain("Loading Billing");
+    expect(markup.indexOf('aria-label="Licenses"')).toBeGreaterThan(-1);
+    expect(markup.indexOf('aria-label="Licenses"')).toBeLessThan(markup.indexOf('<section aria-label="Billing"'));
+  });
+
+  test("an Admin with billing sees the licenses and the billing module", () => {
+    const markup = renderAs(true, `/w/${ACME}/licenses`, adminOfAcme([LICENSE]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toContain("Licenses, seats and billing for Acme Field Team.");
+    expect(markup).toContain("Unassign priya@acme.test");
+    expect(markup).toContain(">Assign seat<");
+    expect(markup).toContain('<section aria-label="Billing"');
+    expect(markup.indexOf('aria-label="Licenses"')).toBeLessThan(markup.indexOf('<section aria-label="Billing"'));
+  });
+
+  test("a Member with billing on sees their own seats and no billing module", () => {
+    const markup = renderAs(true, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
+    expect(hrefs(markup)).toContain(`/w/${ACME}/licenses`);
+    expect(markup).toMatch(/aria-current="page"[^>]*>.*Licenses &amp; Billing/);
+    expect(markup).toContain("Licenses and seats for Acme Field Team.");
+    expect(markup).toContain("You hold a seat");
+    expect(markup).not.toContain("billing for");
+    expect(markup).not.toContain('aria-label="Billing"');
+    expect(markup).not.toContain("Loading Billing");
+    expect(markup).not.toContain("priya@acme.test");
+  });
+
+  test("a Member with billing on and no licenses has no Licenses & Billing item and no page", () => {
+    for (const path of [`/w/${ACME}/settings`, `/w/${ACME}/licenses`]) {
+      const markup = renderAs(true, path, memberOfAcme([]));
+      expect(markup).not.toContain("Licenses &amp; Billing");
+      expect(markup).not.toContain('aria-label="Licenses"');
+      expect(markup).not.toContain('aria-label="Billing"');
+      expect(hrefs(markup).some(href => href.endsWith("/licenses") || href === "/account/billing")).toBe(false);
+    }
+  });
+
+  test("the module is mounted with the workspace's scope, and only for a viewer who is offered billing and manages it", () => {
+    const admin = detail(ACME, "Acme Field Team", "admin");
+    const part = billingPart(meWith(true), ACME, admin)!;
+    expect(part.type).toBe(PortalModuleHost);
+    expect(part.props).toMatchObject({ module: "billing", me: meWith(true), scope: { kind: "workspace", workspaceId: ACME } });
+    expect(billingPart(meWith(true), ACME, detail(ACME, "Acme Field Team", "owner"))).not.toBeNull();
+    // Billing off, a role below Admin, or a workspace not yet loaded: nothing.
+    expect(billingPart(meWith(false), ACME, admin)).toBeNull();
+    for (const role of ["member", "developer"] as const) {
+      expect(billingPart(meWith(true), ACME, detail(ACME, "Acme Field Team", role))).toBeNull();
+      expect(billingOffered(meWith(true), detail(ACME, "Acme Field Team", role))).toBe(false);
+    }
+    expect(billingPart(meWith(true), ACME, undefined)).toBeNull();
+  });
+
+  test("a Private Cloud, with no billing and no licenses, has no Licenses & Billing item and no page", () => {
+    for (const path of [`/w/${ACME}/members`, `/w/${ACME}/licenses`, `/w/${NORTHWIND}/settings`]) {
+      const markup = renderAs(false, path, withLicenses([]));
+      expect(markup).not.toContain("Licenses &amp; Billing");
+      expect(markup).not.toContain('aria-label="Licenses"');
+      expect(markup).not.toContain('aria-label="Billing"');
+      expect(hrefs(markup).some(href => href.endsWith("/licenses") || href === "/account/billing")).toBe(false);
+    }
+  });
+
+  test("while the licenses load, the item is not offered but the page waits instead of leaving", () => {
+    const sidebar = renderAs(false, `/w/${ACME}/members`, withLicenses(undefined));
+    expect(sidebar).not.toContain("Licenses &amp; Billing");
+    const page = renderAs(false, `/w/${ACME}/licenses`, withLicenses(undefined));
+    expect(page).toContain("Loading licenses");
+    expect(page).not.toContain("This workspace has no licenses yet.");
+  });
+});
+
+describe("when the workspace's licenses cannot be loaded", () => {
+  let restore: (() => void) | null = null;
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  /**
+   * A cache where Acme's license list has already failed with a 500 (a Core that cannot read them). Each render
+   * clears its cache, so each gets its own.
+   */
+  async function failedLicenses(): Promise<QueryClient> {
+    const spy = spyOn(globalThis, "fetch").mockImplementation((async () =>
+      Response.json({ error: "server_error", error_description: "licenses are unavailable" }, { status: 500 })) as unknown as typeof fetch);
+    restore = () => spy.mockRestore();
+    // A server render would otherwise show the refetch a mounted observer starts for a failed query.
+    const client = seeded(TWO_WORKSPACES, new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } }));
+    await client.fetchQuery({ ...licensesQuery(api, ACME), retry: false }).catch(() => undefined);
+    expect(client.getQueryState(licensesQuery(api, ACME).queryKey)?.status).toBe("error");
+    return client;
+  }
+
+  const renderFailed = async (billing: boolean, path: string) =>
+    render(path, TWO_WORKSPACES, { modules: { billing } }, await failedLicenses(), meWith(billing));
+
+  test("the workspace's other pages still render, and Licenses & Billing is offered only with billing", async () => {
+    const without = await renderFailed(false, `/w/${ACME}/members`);
+    expect(without).toContain("priya@acme.test");
+    expect(without).toContain(">Invite<");
+    expect(without).not.toContain("Licenses &amp; Billing");
+    expect(hrefs(without)).not.toContain(`/w/${ACME}/licenses`);
+
+    const withBilling = await renderFailed(true, `/w/${ACME}/members`);
+    expect(withBilling).toContain("priya@acme.test");
+    expect(hrefs(withBilling)).toContain(`/w/${ACME}/licenses`);
+  });
+
+  test("the licenses address opens the page and shows the panel's own error with Try again, not a redirect or a spinner", async () => {
+    for (const billing of [false, true]) {
+      const markup = await renderFailed(billing, `/w/${ACME}/licenses`);
+      expect(markup).toContain('aria-label="Licenses"');
+      expect(markup).toContain("Licenses are unavailable");
+      expect(markup).toMatch(/<button[^>]*>Try again<\/button>/);
+      expect(markup).not.toContain("Loading licenses");
+      expect(markup).not.toContain("This workspace has no licenses yet.");
+      // The billing module is still the person's to use.
+      expect(markup.includes('<section aria-label="Billing"')).toBe(billing);
+    }
+  });
+});
+
+describe("Billing in the account menu and the personal Billing page", () => {
+  const menu = (billing: boolean) =>
+    renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={accountItems(billing)} defaultOpen />);
+
+  test("the account menu offers Billing only when billing is offered, and always Sign out", () => {
+    expect(accountItems(true)).toEqual([expect.objectContaining({ key: "billing", label: "Billing", href: "/account/billing" })]);
+    expect(accountItems(false)).toEqual([]);
+    const withBilling = menu(true);
+    expect(withBilling).toMatch(/<a href="\/account\/billing"[^>]*>.*Billing<\/a>/);
+    expect(withBilling).toContain("Sign out");
+    const without = menu(false);
+    expect(without).not.toContain("Billing");
+    expect(without).not.toContain("/account/billing");
+    expect(without).toContain("Sign out");
+  });
+
+  test("the address is not found for a person who is not offered billing", () => {
+    const markup = renderAs(false, "/account/billing", { list: [] });
+    expect(markup).toContain("Page not found");
+    expect(markup).not.toContain('aria-label="Billing"');
+    expect(markup).not.toContain("Loading Billing");
+  });
+
+  test("renders for a person in no workspace: their account and Billing, and no workspace navigation", () => {
+    const markup = renderAs(true, "/account/billing", { list: [] });
+    expect(markup).toMatch(/<h1[^>]*>Billing<\/h1>/);
+    expect(markup).toContain('<section aria-label="Billing"');
+    expect(markup).toContain("Loading Billing");
+    const nav = /<nav aria-label="Account"[\s\S]*?<\/nav>/.exec(markup)?.[0] ?? "";
+    expect(nav).toContain("Your account");
+    expect(nav).toMatch(/aria-current="page"[^>]*>.*Billing/);
+    expect(hrefs(nav)).toEqual(["/account/billing"]);
+    for (const absent of ["Members", "Settings", "Audit log", "Licenses &amp; Billing", "Back to"]) expect(markup).not.toContain(absent);
+    expect(hrefs(markup).some(href => href.startsWith("/w/"))).toBe(false);
+  });
+
+  test("a person who has a workspace gets a link back to it, and still no workspace sections", () => {
+    const markup = renderAs(true, "/account/billing", TWO_WORKSPACES);
+    const nav = /<nav aria-label="Account"[\s\S]*?<\/nav>/.exec(markup)?.[0] ?? "";
+    expect(hrefs(nav)).toEqual(["/account/billing", `/w/${ACME}`]);
+    expect(nav).toContain("Back to Acme Field Team");
+    for (const absent of ["Members", "Settings", "Audit log", "Licenses &amp; Billing"]) expect(nav).not.toContain(absent);
+  });
+
+  test("the personal navigation is Your account with Billing, then the way back to a workspace if there is one", () => {
+    const none = accountNav(null);
+    expect(none.map(group => [group.key, group.label, group.items.map(item => item.label)])).toEqual([
+      ["account", "Your account", ["Billing"]],
+      ["workspace", undefined, []],
+    ]);
+    const one = accountNav({ workspaceId: "ws/odd id", name: "Odd" });
+    expect(one[1]!.items).toEqual([expect.objectContaining({ label: "Back to Odd", href: "/w/ws%2Fodd%20id" })]);
+  });
+
+  test("the module is mounted with the person's scope, and only when billing is offered", () => {
+    const part = accountBillingPart(meWith(true))!;
+    expect(part.type).toBe(PortalModuleHost);
+    expect(part.props).toMatchObject({ module: "billing", me: meWith(true), scope: { kind: "person" } });
+    expect(accountBillingPart(meWith(false))).toBeNull();
+  });
+});
+
+describe("the portal's session", () => {
+  test("a module's 401 refreshes who the person is, which sends an ended session to sign in", () => {
+    const client = new QueryClient();
+    client.setQueryData(PORTAL_ME_KEY, ME);
+    expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(false);
+    expireSession(client);
+    expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(true);
+    client.clear();
+  });
+});
+
+/**
+ * The payment processor's name, spelled in pieces: the repository's guard (the `no-` test for it in
+ * `.github/scripts`) keeps that name out of every source file in Cloud V2, this one included, and with it out of
+ * what the pages say. This checks what they render.
+ */
+const PROCESSOR_NAME = new RegExp(["st", "ripe"].join(""), "i");
+
+describe("no page names the payment processor", () => {
+  test("not the workspace's licenses page, with billing or without it, nor the personal page, nor the account menu", () => {
+    const pages = [
+      renderAs(false, `/w/${ACME}/licenses`, withLicenses([LICENSE])),
+      renderAs(true, `/w/${ACME}/licenses`, withLicenses([LICENSE])),
+      renderAs(true, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE])),
+      renderAs(true, "/account/billing", TWO_WORKSPACES),
+      renderAs(true, "/account/billing", { list: [] }),
+      renderAs(false, "/account/billing", { list: [] }),
+      renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={accountItems(true)} defaultOpen />),
+    ];
+    expect(pages.every(markup => markup.length > 0)).toBe(true);
+    for (const markup of pages) expect(markup).not.toMatch(PROCESSOR_NAME);
+    // The pattern is the name it stands for.
+    expect(PROCESSOR_NAME.test(["Pay with ", "St", "ripe"].join(""))).toBe(true);
+  });
 });

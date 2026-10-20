@@ -2,7 +2,8 @@
  * @fileoverview The error every workspace service operation raises for an expected failure.
  *
  * It lives in its own module so the audit service can raise it without importing
- * the workspace service that imports the audit service. `workspace.service`
+ * the workspace service that imports the audit service. The license service, whose
+ * seats are workspace memberships', raises it too. `workspace.service`
  * re-exports it, which is where callers import it from.
  */
 
@@ -24,6 +25,12 @@ export type WorkspaceErrorCode =
   | "user_not_found"
   | "account_deleted"
   | "workspace_has_holds"
+  // Licenses (`services/licenses/license.service.ts`).
+  | "stale_revision"
+  | "owner_not_found"
+  | "license_not_found"
+  | "license_ended"
+  | "no_seats_available"
 
 const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   not_found: 404,
@@ -43,6 +50,11 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   user_not_found: 404,
   account_deleted: 403,
   workspace_has_holds: 409,
+  stale_revision: 409,
+  owner_not_found: 404,
+  license_not_found: 404,
+  license_ended: 409,
+  no_seats_available: 409,
 }
 
 /**
