@@ -932,6 +932,36 @@ describe("MiniappSession connect retry", () => {
     expect(connectCount(transport)).toBe(0)
   })
 
+  for (const outcome of ["rejects", "resolves"] as const) {
+    test(`an open() that ${outcome} after its attempt timed out leaves the next attempt alone`, async () => {
+      const transport = new FakeTransport()
+      let finishFirstOpen: (error?: Error) => void = () => {}
+      const open = transport.open.bind(transport)
+      transport.open = () => {
+        if (transport.opens++ > 0) return open()
+        return new Promise<void>((resolve, reject) => {
+          finishFirstOpen = (error) => (error ? reject(error) : resolve())
+        })
+      }
+      const session = new MiniappSession({transport, packageName: "com.test.stale", connectTimeoutMs: 20})
+      await expect(session.connect()).rejects.toThrow("transport did not open")
+
+      let settled = false
+      const second = session.connect().finally(() => (settled = true))
+      await sleep(0)
+      expect(connectCount(transport)).toBe(1)
+      finishFirstOpen(outcome === "rejects" ? new Error("late open failure") : undefined)
+      await sleep(0)
+      // The stale attempt neither fails the live one nor sends its own CONNECT.
+      expect(settled).toBe(false)
+      expect(connectCount(transport)).toBe(1)
+      ack(transport, "com.test.stale")
+      await second
+      expect(session.ready).toBe(true)
+      session.disconnect()
+    })
+  }
+
   test("a request rejected by a CONNECT_ACK timeout is not sent after a later handshake", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport, packageName: "com.test.queue", connectTimeoutMs: 20})

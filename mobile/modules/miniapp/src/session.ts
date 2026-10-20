@@ -556,10 +556,16 @@ export class MiniappSession<TChannels extends object = any> {
   private sendConnect(): Promise<void> {
     // Only a host that received CONNECT can be waited out. Before that, the transport is what failed.
     let connectSent = false
+    // This attempt's own outcome. A slow open() can finish after a newer attempt
+    // took over, so nothing below acts through the session-wide failHandshake.
+    let attemptSettled = false
+    let failAttempt: (error: Error) => void = () => {}
     // Register the readiness listener BEFORE any awaits so that a synchronous
     // CONNECT_ACK delivery in tests (or the phone) can't race the subscription.
     const readyPromise = new Promise<void>((resolve, reject) => {
       const settle = (error?: Error) => {
+        if (attemptSettled) return
+        attemptSettled = true
         clearTimeout(timer)
         this.emitter.off("ready", onReady)
         this.emitter.off("error", onError)
@@ -583,6 +589,7 @@ export class MiniappSession<TChannels extends object = any> {
       this.emitter.on("ready", onReady)
       this.emitter.on("error", onError)
       this.failHandshake = onError
+      failAttempt = onError
     })
     // Settles once CONNECT is sent, or rejects if opening or sending fails.
     const sent = (async () => {
@@ -598,6 +605,9 @@ export class MiniappSession<TChannels extends object = any> {
           () => {},
         )
         await opening
+        // Settled while opening: failed (the timeout, disconnect(), a transport drop),
+        // or completed by an earlier CONNECT's ACK. Either way, send nothing.
+        if (attemptSettled) return
         if (this.disposed) throw new NotConnectedError("MiniappSession: connect aborted")
 
         const requestId = makeRequestId()
@@ -609,9 +619,11 @@ export class MiniappSession<TChannels extends object = any> {
         connectSent = true
         this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
       } catch (err) {
+        // Already reported through readyPromise; a newer attempt may own the session now.
+        if (attemptSettled) return
         const error = err instanceof Error ? err : new Error(String(err))
         if (!this.disposed) this.failAllPending({code: MiniappErrorCode.NOT_CONNECTED, message: error.message})
-        this.failHandshake?.(error)
+        failAttempt(error)
         throw error
       }
     })()
