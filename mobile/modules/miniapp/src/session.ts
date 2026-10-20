@@ -171,6 +171,17 @@ export class NotConnectedError extends Error {
   }
 }
 
+/**
+ * @internal — `connect()` rejects with this when the host did not answer CONNECT
+ * within `connectTimeoutMs`. The session stays usable: `connect()` sends CONNECT again.
+ */
+export class ConnectAckTimeoutError extends Error {
+  constructor() {
+    super("MiniappSession: CONNECT_ACK timeout")
+    this.name = "ConnectAckTimeoutError"
+  }
+}
+
 export interface MiniappRequestError {
   code: string
   message: string
@@ -315,11 +326,15 @@ export class MiniappSession<TChannels extends object = any> {
 
   /**
    * Outbound queue for anything sent before CONNECT_ACK. Flushed in FIFO order
-   * once the phone responds with CONNECT_ACK.
+   * once the phone responds with CONNECT_ACK. A queued request carries its id so
+   * one that has already been rejected is dropped instead of sent.
    */
-  private readonly outboundQueue: string[] = []
+  private readonly outboundQueue: Array<{raw: string; requestId?: string}> = []
   private readonly pendingRequests = new Map<string, PendingRequest>()
+  /** In flight or succeeded. A failed attempt clears it so `connect()` can send CONNECT again. */
   private connectPromise: Promise<void> | null = null
+  /** Rejects the handshake in flight. Set only while waiting for CONNECT_ACK. */
+  private failHandshake: ((error: Error) => void) | null = null
   private disposed = false
   /**
    * Set by `registerMiniapp` to the host's id for this spawn: CONNECT tells the
@@ -458,52 +473,81 @@ export class MiniappSession<TChannels extends object = any> {
   // -------------------------------------------------------------------------
 
   /**
-   * Connect to LocalMiniappRuntime. Idempotent — calling multiple times
-   * returns the same Promise.
+   * Connect to LocalMiniappRuntime. Idempotent while a handshake is in flight
+   * or has succeeded: repeat calls return the same Promise. A failed attempt
+   * (CONNECT_ACK timeout, transport failure) does not stick, so a later call
+   * sends CONNECT again.
    */
   connect(): Promise<void> {
     if (this.disposed) {
       return Promise.reject(new NotConnectedError("MiniappSession was disposed"))
     }
     if (this.connectPromise) return this.connectPromise
+    // A CONNECT_ACK that arrived after an earlier attempt timed out still completed the handshake.
+    if (this.ready) {
+      this.connectPromise = Promise.resolve()
+      return this.connectPromise
+    }
 
     // Register the readiness listener BEFORE any awaits so that a synchronous
     // CONNECT_ACK delivery in tests (or the phone) can't race the subscription.
     const readyPromise = new Promise<void>((resolve, reject) => {
+      const settle = (error?: Error) => {
+        clearTimeout(timer)
+        this.emitter.off("ready", onReady)
+        this.emitter.off("error", onError)
+        if (this.failHandshake === onError) this.failHandshake = null
+        if (error) reject(error)
+        else resolve()
+      }
+      const onReady = () => settle()
+      const onError = (error: Error) => settle(error)
       const timer = setTimeout(() => {
-        const err = new Error("MiniappSession: CONNECT_ACK timeout")
+        const err = new ConnectAckTimeoutError()
+        // Settled before the public emit, so a throwing "error" listener cannot leave it pending.
+        settle(err)
         this.failAllPending({code: MiniappErrorCode.NOT_CONNECTED, message: err.message})
         this.emitter.emit("error", err)
-        reject(err)
       }, this.connectTimeoutMs)
-
-      this.emitter.once("ready", () => {
-        clearTimeout(timer)
-        resolve()
-      })
-      this.emitter.once("error", (err) => {
-        clearTimeout(timer)
-        reject(err)
-      })
+      this.emitter.on("ready", onReady)
+      this.emitter.on("error", onError)
+      this.failHandshake = onError
     })
+    // A transport failure rejects the attempt before this is awaited; its
+    // rejection is the same failure and must not surface as unhandled.
+    readyPromise.catch(() => {})
 
-    this.connectPromise = (async () => {
-      this.transport.onMessage((raw) => this.handleIncoming(raw))
-      this.transport.onDisconnect((reason) => this.handleTransportDisconnect(reason))
-      await this.transport.open()
+    const attempt = (async () => {
+      try {
+        this.transport.onMessage((raw) => this.handleIncoming(raw))
+        this.transport.onDisconnect((reason) => this.handleTransportDisconnect(reason))
+        await this.transport.open()
+        // disconnect() while the transport was opening has already failed the handshake.
+        if (this.disposed) throw new NotConnectedError("MiniappSession: connect aborted")
 
-      const requestId = makeRequestId()
-      const connectPayload = {
-        type: MiniappRequestType.CONNECT,
-        packageName: this.packageName,
-        ...(this.initSessionId !== null ? {initReady: true, sessionId: this.initSessionId} : {}),
+        const requestId = makeRequestId()
+        const connectPayload = {
+          type: MiniappRequestType.CONNECT,
+          packageName: this.packageName,
+          ...(this.initSessionId !== null ? {initReady: true, sessionId: this.initSessionId} : {}),
+        }
+        this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        if (!this.disposed) this.failAllPending({code: MiniappErrorCode.NOT_CONNECTED, message: error.message})
+        this.failHandshake?.(error)
+        throw error
       }
-      this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
 
       await readyPromise
     })()
 
-    return this.connectPromise
+    this.connectPromise = attempt
+    attempt.catch(() => {
+      // Registered before the caller's handlers, so a retry from a rejection handler sends CONNECT again.
+      if (this.connectPromise === attempt) this.connectPromise = null
+    })
+    return attempt
   }
 
   /**
@@ -534,6 +578,9 @@ export class MiniappSession<TChannels extends object = any> {
   disconnect(): void {
     if (this.disposed) return
     this.disposed = true
+    // End a handshake still waiting for CONNECT_ACK. Its timer would otherwise
+    // report a timeout for a session that no longer exists.
+    this.failHandshake?.(new NotConnectedError("MiniappSession: connect aborted"))
     // Give listeners one synchronous chance to flush final messages
     // (e.g. display.render([])) before we tear down the transport.
     try {
@@ -602,7 +649,7 @@ export class MiniappSession<TChannels extends object = any> {
         reject,
         timer,
       })
-      this.enqueueOrSend(serializeEnvelope(envelope))
+      this.enqueueOrSend(serializeEnvelope(envelope), requestId)
     })
   }
 
@@ -647,7 +694,7 @@ export class MiniappSession<TChannels extends object = any> {
   // Internal — transport glue
   // -------------------------------------------------------------------------
 
-  private enqueueOrSend(raw: string): void {
+  private enqueueOrSend(raw: string, requestId?: string): void {
     if (this.ready) {
       try {
         this.transport.send(raw)
@@ -657,12 +704,15 @@ export class MiniappSession<TChannels extends object = any> {
       }
       return
     }
-    this.outboundQueue.push(raw)
+    this.outboundQueue.push(requestId === undefined ? {raw} : {raw, requestId})
   }
 
   private flushQueue(): void {
     const queue = this.outboundQueue.splice(0)
-    for (const raw of queue) {
+    for (const {raw, requestId} of queue) {
+      // Rejected while waiting for the handshake (a CONNECT_ACK timeout or its own
+      // timeout). Its caller has seen the failure, so the host must not run it.
+      if (requestId !== undefined && !this.pendingRequests.has(requestId)) continue
       try {
         this.transport.send(raw)
       } catch (err) {
