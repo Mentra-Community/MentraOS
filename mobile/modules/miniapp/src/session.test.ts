@@ -748,6 +748,8 @@ describe("MiniappSession connect retry", () => {
     const second = session.connect()
     await Promise.resolve()
     expect(connectCount(transport)).toBe(2)
+    // The transport is still open, so the retry only sends CONNECT again.
+    expect(transport.opens).toBe(1)
     ack(transport, "com.test.retry")
     await second
     expect(session.ready).toBe(true)

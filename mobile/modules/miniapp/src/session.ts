@@ -596,7 +596,8 @@ export class MiniappSession<TChannels extends object = any> {
       try {
         this.transport.onMessage((raw) => this.handleIncoming(raw))
         this.transport.onDisconnect((reason) => this.handleTransportDisconnect(reason))
-        const opening = this.transport.open()
+        // An open transport stays as it is: a retried handshake only sends CONNECT again.
+        const opening = this.transport.isOpen() ? Promise.resolve() : this.transport.open()
         // An open that finishes after disconnect() must not leave the transport open.
         opening.then(
           () => {
