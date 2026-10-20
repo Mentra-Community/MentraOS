@@ -87,7 +87,7 @@ session.off("ready", handler)
 
 | Event          | Signature                                     |
 | -------------- | --------------------------------------------- |
-| `ready`        | `() => void` — fires after CONNECT_ACK        |
+| `ready`        | `() => void` — fires once, on the handshake   |
 | `disconnect`   | `(reason: string) => void`                    |
 | `error`        | `(err: Error) => void`                        |
 | `visibility`   | `("foreground" \| "background") => void`      |
