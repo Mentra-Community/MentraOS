@@ -1,12 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
-import { CreateWorkspaceDialog, ROLE_LABELS, workspaceListQuery } from "@mentra/workspace-ui";
+import {
+  AppShell,
+  CenteredLayout,
+  CreateWorkspaceDialog,
+  ROLE_LABELS,
+  WorkspaceSwitcher,
+  workspaceListQuery,
+  type ExternalNavItem,
+  type NavGroup,
+  type NavItem,
+  type SwitcherCurrent,
+  type SwitcherInvitation,
+  type SwitcherWorkspace,
+} from "@mentra/workspace-ui";
 import { CodeXml, CreditCard } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { AppShell, type NavGroup, type NavItem } from "@/components/app-shell";
 import { SwitcherInvitationActions } from "@/components/pending-invitation";
-import { WorkspaceSwitcher, type SwitcherInvitation, type SwitcherWorkspace } from "@/components/workspace-switcher";
 import type { PendingInvitation } from "@/lib/invitations";
-import { navigate } from "@/lib/navigation";
+import { Link, navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
 import { ACCOUNT_BILLING_PATH, workspacePath, type WorkspaceSection } from "@/lib/routes";
 
@@ -33,7 +44,7 @@ export function switcherInvitation(invitation: PendingInvitation): SwitcherInvit
 }
 
 /** The sidebar's links out of the portal: this environment's Developer Console, where there is one. */
-export function portalLinks(developerConsoleUrl: string | null): NavItem[] {
+export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem[] {
   if (!developerConsoleUrl) return [];
   return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
 }
@@ -45,7 +56,8 @@ export function accountItems(billing: boolean): NavItem[] {
 }
 
 /**
- * `AppShell` with the workspace switcher wired to the person's workspaces, this tab's invitation and the
+ * The shared `AppShell` as the portal's: named Mentra Portal, on MentraOS, with the portal's History-API
+ * `Link`, the workspace switcher wired to the person's workspaces, this tab's invitation and the
  * create-workspace dialog, and the links out of the portal. A new workspace opens as soon as it exists.
  */
 export function PortalShell({
@@ -59,7 +71,7 @@ export function PortalShell({
   headerAction,
   children,
 }: {
-  current: Omit<SwitcherWorkspace, "href"> | null;
+  current: SwitcherCurrent | null;
   /** The section open now: switching workspaces keeps it when the other workspace has it. */
   section?: WorkspaceSection;
   nav: readonly NavGroup[];
@@ -85,9 +97,12 @@ export function PortalShell({
 
   return (
     <AppShell
+      brandTitle="Mentra Portal"
+      brandSubtitle="MentraOS"
+      linkComponent={Link}
       switcher={
         <WorkspaceSwitcher
-          current={current ? { ...current, href: workspacePath(current.workspaceId, section) } : null}
+          current={current}
           workspaces={workspaces}
           invitations={invitations}
           canCreate={portal.creation.allowed}
@@ -95,11 +110,12 @@ export function PortalShell({
           onCreate={() => setCreating(true)}
           listFailed={list.isError}
           onRetry={() => void list.refetch()}
+          linkComponent={Link}
         />
       }
       nav={nav}
       navLabel={navLabel}
-      activeKey={activeKey}
+      active={item => item.key === activeKey}
       links={portalLinks(portal.developerConsoleUrl)}
       accountItems={accountItems(portal.modules.billing)}
       title={title}
@@ -117,5 +133,15 @@ export function PortalShell({
         onCreated={created => navigate(workspacePath(created.workspaceId))}
       />
     </AppShell>
+  );
+}
+
+/** The shared `CenteredLayout` with the portal's account: who is signed in, and Sign out. */
+export function PortalCenteredLayout({ children }: { children: ReactNode }) {
+  const portal = usePortal();
+  return (
+    <CenteredLayout userEmail={portal.userEmail} onSignOut={portal.signOut} signingOut={portal.signingOut}>
+      {children}
+    </CenteredLayout>
   );
 }

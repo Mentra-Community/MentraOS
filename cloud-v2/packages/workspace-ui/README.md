@@ -5,6 +5,10 @@ settings, an audit log and the invitation-accept page. The workspace portal and 
 portal use it directly; the Developer Console vendors it. All of them call the same JSON
 API, so the package only needs to know where that API is mounted.
 
+It also holds the workspace portal's frame and controls, for any Mentra site that should
+look like the portal: the sidebar shell, the workspace switcher, the brand marks, a
+one-column layout, cards, dialogs, badges and form fields (see [Shell](#shell)).
+
 A **workspace** is a group of people with permissions inside an organization (one Core
 deployment). Roles are `member`, `developer`, `admin` and `owner`.
 
@@ -56,8 +60,17 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `describeAuditEvent`, `plainText` | An audit event as a sentence, for other screens |
 | `SecretDialog` (`name`, `token`, `onDone`) | The show-once dialog for a new credential, for other screens that mint one (the admin portal's operator keys) |
 | `ConfirmButton` (`label`, `ariaLabel`, `prompt`, `confirmLabel`, `onConfirm`) | A destructive action behind an inline confirm step |
-| `Button`, `buttonVariants`, `Input`, `Label`, `NativeSelect` | Mentra's controls, for a host's own screens: one pill button system (`default`, `secondary`, `destructive-secondary`, `destructive`, `ghost`, `link`), pill inputs, and native selects drawn to match |
+| `Button`, `buttonVariants`, `Input`, `Label`, `NativeSelect`, `Textarea` | Mentra's controls, for a host's own screens: one pill button system (`default`, `secondary`, `destructive-secondary`, `destructive`, `ghost`, `link`), pill inputs, native selects drawn to match, and a multi-line field drawn like the input |
+| `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardAction`, `CardContent`, `CardFooter` | The bordered 24px card the panels sit in |
+| `Dialog` (`open`, `onClose`, `title`, `description?`) | A modal on the platform's `<dialog>`; its content renders only while open |
+| `Panel` (`title`, `description?`, `count?`, `actions?`) | A titled card for one panel's content, with a count beside the title and actions on the right |
+| `Badge` (`tone?`) | A small chip: `outline` (the default, "You"), or filled `success` (green), `warn` (amber) or `neutral` (grey) for a status |
+| `ErrorNotice` (`error`), `Loading`, `QueryGate` (`result`, `loadingLabel?`, `children(data)`) | An error in words in the amber notice, the spinner with what is loading, and a query's loading and failed-load states with Try again |
 | `Avatar`, `WorkspaceAvatar`, `Count`, `Spinner` | A person's initials, a workspace's letter tile, a count beside a heading, the loading spinner |
+| `AppShell`, `AccountFooter`, `WorkspaceSwitcher`, `SWITCHER_ITEM_CLASS` | The portal's frame, its account menu and its workspace switcher (see [Shell](#shell)) |
+| `MentraMark`, `MentraLogo`, `BrandPage` (`title`) | The Mentra mark, the logo with its wordmark (inline SVG, no asset loader), and a page that is one card under the logo |
+| `CenteredLayout` (`userEmail`, `onSignOut?`, `signingOut?`) | A page that is one focused task: the logo and Sign out across the top, one centered column |
+| `useDismiss(ref, open, close)` | Closes a popover on a press outside `ref` or on Escape |
 | `expiryFromDateInput` | The end of a `<input type="date">` day as an ISO string, or null |
 | `effectiveRole`, `actsAsOrganizationAdmin`, `assignableRoles`, `can`, `ROLE_LABELS`, `ROLE_DESCRIPTIONS` | The capability helpers the panels use, whether an Organization Admin's powers go beyond their membership, and a one-line description of each role |
 | `workspaceListQuery`, `workspaceDetailQuery`, `invitationPreviewQuery`, `myInvitationsQuery`, `workspaceKeys` | Query options and keys, for a host that shows the same data (a workspace switcher) |
@@ -124,15 +137,75 @@ of the bundle (`external: ["/fonts/*"]` in `Bun.build`) and preloads both weight
 workspace portal's and the admin portal's `build.ts` do. Nothing is loaded from another
 origin.
 
+## Shell
+
+`AppShell` is the workspace portal's frame: a 264px sidebar with the brand and a
+switcher on top, the sections, links to other sites and the account at the bottom, a
+sticky page header over the content, and on a phone the sidebar as a drawer behind a
+menu button. It needs no `QueryClientProvider` and knows no router.
+
+```tsx
+import {AppShell, WorkspaceSwitcher, type ShellLinkComponent} from "@mentra/workspace-ui"
+import {Link, useRouterState} from "@tanstack/react-router"
+
+// The shell renders every in-app address through the host's link.
+const ShellLink: ShellLinkComponent = ({href, ...props}) => <Link to={href} {...props} />
+
+function ConsoleShell({children}: {children: React.ReactNode}) {
+  const pathname = useRouterState({select: state => state.location.pathname})
+  return (
+    <AppShell
+      brandTitle="Developer Console"
+      brandSubtitle="MentraOS"
+      linkComponent={ShellLink}
+      switcher={<WorkspaceSwitcher current={active} workspaces={mine} invitations={[]} canCreate createNotice={null} onCreate={create} />}
+      nav={[{key: "main", items: [{key: "apps", label: "Miniapps", icon: Boxes, href: "/apps"}]}]}
+      active={item => item.href !== undefined && pathname.startsWith(item.href)}
+      accountItems={[{key: "billing", label: "Billing", icon: CreditCard, href: "/billing"}]}
+      title="Miniapps"
+      userEmail={email}
+      onSignOut={signOut}
+    >
+      {children}
+    </AppShell>
+  )
+}
+```
+
+- **Items go somewhere by address or by action.** A section, an account-menu item or a
+  switcher workspace has either an `href`, rendered with `linkComponent`, or an
+  `onSelect`, rendered as a `<button>`. `links` (other sites) are always plain anchors
+  that open a new tab.
+- **The link component** gets an anchor's props with `href` (`ShellLinkProps`). It must
+  render an `<a>` with them and call the given `onClick` before it navigates: the account
+  menu closes itself in that `onClick`. Without one, items are plain anchors
+  (`PlainLink`), so a click is a full page load.
+- **The host says what is open.** `active(item)` marks the item `aria-current="page"` and
+  fills it. Without it, nothing is marked.
+- **Navigating closes the drawer and the menus.** A click on a link in the sidebar closes
+  the mobile drawer; so does a click on a control marked `data-navigates`, which the
+  shell puts on its own `onSelect` buttons. The switcher's menu closes the same way.
+- **The switcher is presentational.** It takes the current workspace, the list (undefined
+  while loading; `listFailed` and `onRetry` when it failed), the invitations as entries
+  with the host's own actions, and whether Create workspace is offered. Choosing the
+  current workspace's `onSelect` button only closes the menu. `extraItems` adds rows
+  under the workspaces, above Create workspace: give each `role="menuitem"` and
+  `SWITCHER_ITEM_CLASS`, so the arrow keys reach it and it matches.
+- **Colours come from the tokens.** The shell uses only `mentra.css`'s theme names, so a
+  site that imports it and scans this package's `src` (see [Styling](#styling)) gets the
+  portal's look.
+
 ## Develop
 
 ```bash
 cd cloud-v2
-bun test packages/workspace-ui   # API client and panels (server-rendered with seeded query data)
+bun test packages/workspace-ui   # API client, panels and shell (server-rendered with seeded query data)
 bun run typecheck                # tsc -b, which includes this package
 ```
 
 `src/ui/` holds the controls (`button`, `card`, `dialog`, `input`, `label`,
-`native-select`); the workspace portal uses them for its own screens too. The panels use
-a native select because its options are real markup on the server and use each
-platform's own picker.
+`native-select`, `textarea`); the workspace portal uses them for its own screens too. The
+panels use a native select because its options are real markup on the server and use
+each platform's own picker. `src/shell/` holds the frame (`app-shell`,
+`workspace-switcher`, `brand`, `centered-layout`, `link`, `use-dismiss`); the workspace
+portal wires it in `websites/portal/src/components/portal-shell.tsx`.
