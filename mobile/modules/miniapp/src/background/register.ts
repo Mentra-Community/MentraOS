@@ -24,10 +24,7 @@
  * re-evaluated and the handler fires again with a fresh session.
  */
 
-import {ConnectAckTimeoutError, MiniappSession, NotConnectedError, type MiniappSessionOptions} from "../session"
-
-/** Pause before CONNECT is sent again after a CONNECT_ACK timeout. */
-const CONNECT_RETRY_MS = 1_000
+import {MiniappSession, NotConnectedError, type MiniappSessionOptions} from "../session"
 
 export type TypedMiniappSession<TChannels extends object> = MiniappSession<TChannels>
 
@@ -47,44 +44,14 @@ interface InitGlobals {
    * The session from the latest init. Global rather than module state so a
    * bundle evaluated again in the same context also finds it.
    */
-  __mentraBackgroundSession?: BackgroundSession
+  __mentraBackgroundSession?: MiniappSession
 }
 
-interface BackgroundSession {
-  session: MiniappSession
-  retryTimer: ReturnType<typeof setTimeout> | null
-}
-
-/** A later init replaces the session: stop its handshake so it neither retries nor reports. */
+/** A later init replaces the session: disconnecting it ends its handshake, so it neither retries nor reports. */
 function releaseBackgroundSession(g: InitGlobals): void {
   const previous = g.__mentraBackgroundSession
-  if (!previous) return
   g.__mentraBackgroundSession = undefined
-  if (previous.retryTimer) clearTimeout(previous.retryTimer)
-  previous.retryTimer = null
-  previous.session.disconnect()
-}
-
-/**
- * Resolves once a CONNECT is acknowledged. A CONNECT_ACK timeout sends CONNECT
- * again for as long as this is the current session; any other failure rejects.
- */
-function connectUntilAcknowledged(g: InitGlobals, current: BackgroundSession): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const attempt = () => {
-      current.retryTimer = null
-      current.session.connect().then(resolve, (err: unknown) => {
-        if (g.__mentraBackgroundSession === current && err instanceof ConnectAckTimeoutError) {
-          // eslint-disable-next-line no-console
-          console.warn("[mentra-miniapp] CONNECT_ACK timed out; sending CONNECT again")
-          current.retryTimer = setTimeout(attempt, CONNECT_RETRY_MS)
-          return
-        }
-        reject(err)
-      })
-    }
-    attempt()
-  })
+  previous?.disconnect()
 }
 
 /**
@@ -113,8 +80,9 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
   g.__mentraInitCallback = (sessionId: string) => {
     releaseBackgroundSession(g)
     const session = new MiniappSession<TChannels>(options)
-    const current: BackgroundSession = {session, retryTimer: null}
-    g.__mentraBackgroundSession = current
+    g.__mentraBackgroundSession = session
+    // Before the handler runs, so its own connect() or waitForReady() shares the retried handshake.
+    session.retryHandshakeOnTimeout()
     // The handler's returned promise defines readiness: the host keeps the UI
     // closed until it settles, so handlers registered after an await still
     // exist before the first UI request arrives.
@@ -137,7 +105,7 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
       // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] registerMiniapp handler threw:", err)
     }
-    const connected = connectUntilAcknowledged(g, current)
+    const connected = session.connect()
     // A failed handler still reports READY: its UI must not stay closed.
     void Promise.all([connected, initSettled]).then(
       () => session.reportInitReady(),
@@ -148,7 +116,7 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
     connected.catch((err: unknown) => {
       // Replaced by a later init, or disconnected during the handshake: a
       // deliberate teardown, not a crash.
-      if (g.__mentraBackgroundSession !== current || err instanceof NotConnectedError) return
+      if (g.__mentraBackgroundSession !== session || err instanceof NotConnectedError) return
       // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] session.connect() rejected:", err)
       // Surface to the host's crash controller as a structured uncaught

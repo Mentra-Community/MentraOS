@@ -200,6 +200,8 @@ interface PendingRequest {
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
+/** Pause before a `registerMiniapp` session sends CONNECT again after a CONNECT_ACK timeout. */
+const CONNECT_RETRY_MS = 1_000
 
 // Hard ceiling on how long a single bridge request waits for the host's
 // REQUEST_RESULT. Without it, a host that never responds (a hung cloud call, a
@@ -335,6 +337,10 @@ export class MiniappSession<TChannels extends object = any> {
   private connectPromise: Promise<void> | null = null
   /** Rejects the handshake in flight. Set only while waiting for CONNECT_ACK. */
   private failHandshake: ((error: Error) => void) | null = null
+  /** Set by `registerMiniapp`: a CONNECT_ACK timeout sends CONNECT again instead of failing `connect()`. */
+  private retryHandshake = false
+  /** Ends the pause before CONNECT is sent again. Set only during that pause. */
+  private endRetryPause: (() => void) | null = null
   private disposed = false
   /**
    * Set by `registerMiniapp` to the host's id for this spawn: CONNECT tells the
@@ -476,7 +482,9 @@ export class MiniappSession<TChannels extends object = any> {
    * Connect to LocalMiniappRuntime. Idempotent while a handshake is in flight
    * or has succeeded: repeat calls return the same Promise. A failed attempt
    * (CONNECT_ACK timeout, transport failure) does not stick, so a later call
-   * sends CONNECT again.
+   * sends CONNECT again. A session started by `registerMiniapp` keeps sending
+   * CONNECT after a timeout, so this Promise (and `waitForReady()`) settles
+   * only when the host answers, the transport fails, or the session ends.
    */
   connect(): Promise<void> {
     if (this.disposed) {
@@ -489,6 +497,58 @@ export class MiniappSession<TChannels extends object = any> {
       return this.connectPromise
     }
 
+    const attempt = this.retryHandshake ? this.connectUntilAcknowledged() : this.sendConnect()
+    this.connectPromise = attempt
+    attempt.catch(() => {
+      // Registered before the caller's handlers, so a retry from a rejection handler sends CONNECT again.
+      if (this.connectPromise === attempt) this.connectPromise = null
+    })
+    return attempt
+  }
+
+  /**
+   * @internal — called by `registerMiniapp` before its handler runs. The host
+   * owns this context's lifetime, so a host that has not answered CONNECT is
+   * stalled rather than gone: send CONNECT again instead of failing.
+   */
+  retryHandshakeOnTimeout(): void {
+    this.retryHandshake = true
+  }
+
+  private async connectUntilAcknowledged(): Promise<void> {
+    for (;;) {
+      try {
+        await this.sendConnect()
+        return
+      } catch (err) {
+        if (this.disposed || !(err instanceof ConnectAckTimeoutError)) throw err
+      }
+      // eslint-disable-next-line no-console
+      console.warn("[mentra-miniapp] CONNECT_ACK timed out; sending CONNECT again")
+      await this.pauseBeforeRetry()
+      // The CONNECT_ACK for an earlier CONNECT can still land during the pause.
+      if (this.ready) return
+      if (this.disposed) throw new NotConnectedError("MiniappSession: connect aborted")
+    }
+  }
+
+  /** Resolves after CONNECT_RETRY_MS, or as soon as CONNECT_ACK lands or the session ends. */
+  private pauseBeforeRetry(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const end = () => {
+        clearTimeout(timer)
+        this.emitter.off("ready", end)
+        if (this.endRetryPause === end) this.endRetryPause = null
+        resolve()
+      }
+      const timer = setTimeout(end, CONNECT_RETRY_MS)
+      this.emitter.on("ready", end)
+      this.endRetryPause = end
+    })
+  }
+
+  /** Send one CONNECT and wait for its CONNECT_ACK. */
+  private sendConnect(): Promise<void> {
     // Register the readiness listener BEFORE any awaits so that a synchronous
     // CONNECT_ACK delivery in tests (or the phone) can't race the subscription.
     const readyPromise = new Promise<void>((resolve, reject) => {
@@ -506,6 +566,8 @@ export class MiniappSession<TChannels extends object = any> {
         const err = new ConnectAckTimeoutError()
         // Settled before the public emit, so a throwing "error" listener cannot leave it pending.
         settle(err)
+        // Requests queued for a retried handshake wait for it, bounded by their own timeouts.
+        if (this.retryHandshake) return
         this.failAllPending({code: MiniappErrorCode.NOT_CONNECTED, message: err.message})
         this.emitter.emit("error", err)
       }, this.connectTimeoutMs)
@@ -517,7 +579,7 @@ export class MiniappSession<TChannels extends object = any> {
     // rejection is the same failure and must not surface as unhandled.
     readyPromise.catch(() => {})
 
-    const attempt = (async () => {
+    return (async () => {
       try {
         this.transport.onMessage((raw) => this.handleIncoming(raw))
         this.transport.onDisconnect((reason) => this.handleTransportDisconnect(reason))
@@ -541,13 +603,6 @@ export class MiniappSession<TChannels extends object = any> {
 
       await readyPromise
     })()
-
-    this.connectPromise = attempt
-    attempt.catch(() => {
-      // Registered before the caller's handlers, so a retry from a rejection handler sends CONNECT again.
-      if (this.connectPromise === attempt) this.connectPromise = null
-    })
-    return attempt
   }
 
   /**
@@ -581,6 +636,7 @@ export class MiniappSession<TChannels extends object = any> {
     // End a handshake still waiting for CONNECT_ACK. Its timer would otherwise
     // report a timeout for a session that no longer exists.
     this.failHandshake?.(new NotConnectedError("MiniappSession: connect aborted"))
+    this.endRetryPause?.()
     // Give listeners one synchronous chance to flush final messages
     // (e.g. display.render([])) before we tear down the transport.
     try {

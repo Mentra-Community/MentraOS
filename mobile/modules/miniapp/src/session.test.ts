@@ -807,6 +807,68 @@ describe("MiniappSession connect retry", () => {
     session.disconnect()
   })
 
+  test("a registerMiniapp session's waitForReady() spans a timed-out handshake", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.spans", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const errors: Error[] = []
+    session.on("error", (error) => errors.push(error))
+    let settled = false
+    const ready = session.waitForReady().then(() => (settled = true))
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      await sleep(1_400)
+    } finally {
+      console.warn = warn
+    }
+    expect(settled).toBe(false)
+    expect(connectCount(transport)).toBe(2)
+    // A stalled host is not a session error.
+    expect(errors).toEqual([])
+    ack(transport, "com.test.spans")
+    await ready
+    expect(session.ready).toBe(true)
+    session.disconnect()
+  })
+
+  test("a CONNECT_ACK during the retry pause completes the handshake without another CONNECT", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.pause", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const ready = session.connect()
+      await sleep(40)
+      ack(transport, "com.test.pause")
+      await ready
+    } finally {
+      console.warn = warn
+    }
+    await sleep(1_000)
+    expect(connectCount(transport)).toBe(1)
+    session.disconnect()
+  })
+
+  test("disconnect during the retry pause ends the handshake", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.pause-abort", connectTimeoutMs: 20})
+    session.retryHandshakeOnTimeout()
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const pending = session.connect()
+      await sleep(40)
+      session.disconnect()
+      await expect(pending).rejects.toBeInstanceOf(NotConnectedError)
+    } finally {
+      console.warn = warn
+    }
+    await sleep(1_000)
+    expect(connectCount(transport)).toBe(1)
+  })
+
   test("a request rejected by a CONNECT_ACK timeout is not sent after a later handshake", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport, packageName: "com.test.queue", connectTimeoutMs: 20})
