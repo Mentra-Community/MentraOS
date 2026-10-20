@@ -1,4 +1,4 @@
-import {expect, test} from 'bun:test'
+import {expect, test, spyOn} from 'bun:test'
 import {RoutineJobService, routineJobInputDigest, routineJobRepository, recorderCapacityRequirements, compatibleStructuralRoutineLane, routineLaneContext, routineLaneDescriptorRevision} from './routine-job.service'
 import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, candidatePrerequisiteRequestMatches, candidateReturnMatches, candidateRenewal} from './backend-candidate-preparation'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
@@ -271,6 +271,59 @@ for(const condition of ['valid','missing-membership','future-subject','owned-sub
   expect(f.row.fleetCandidatePreparation!.provisionalReturn!.exclusive).toEqual(pending.provisionalReturn!.exclusive);expect(candidateRequestCurrent(f.row,f.row.fleetCandidatePreparation,f.now)).toBe(false);expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCancellation).toBeDefined()}
  finally{routineJobRepository.get=get;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;TestRequestModel.collection.findOneAndUpdate=write}
 })
+
+for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'retains custody if proof expires during authority read':'completes the same admission without cleanup-only custody'}`,async()=>{
+ const f=await returnedFixture(),claim=structuredClone(f.row.fleetResourceReservation!),host=repositoryEnvelope(f);delete f.row.fleetResourceReservation;
+ f.hosts[0]!.authorityReservations=[claim];
+ const requestRead=TestRequestModel.collection.findOne,requestList=TestRequestModel.collection.find,requestWrite=TestRequestModel.collection.findOneAndUpdate,
+   hostRead=TestHostStateModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,
+   originals=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,
+   claimed=resourceReservationRepository.claimedHosts,request=resourceReservationRepository.request,get=routineJobRepository.get;
+ let hostWrites=0,checkpointWrites=0,admissionWrites=0;
+ const reserveFleet=ResourceReservationsService.prototype.reserveFleet,
+   reserveClock=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async function(...args){
+    return reserveFleet.apply(new ResourceReservationsService(resourceReservationRepository,()=>f.now),args);
+   });
+ const matches=(filter:Record<string,unknown>)=>Object.entries(filter).every(([key,wanted])=>{
+  const value=key.split('.').reduce((v:any,part)=>v?.[part],f.row);
+  if(wanted&&typeof wanted==='object'&&'$exists' in wanted)return (value!==undefined)===(wanted as {$exists:boolean}).$exists;
+  if(wanted&&typeof wanted==='object'&&'$gt' in wanted)return value>(wanted as {$gt:Date}).$gt;
+  return requestInputDigest(value??null)===requestInputDigest(wanted??null);
+ });
+ resourceReservationRepository.recorderClaims=async()=>[structuredClone(claim)];resourceReservationRepository.get=async()=>structuredClone(host);
+ resourceReservationRepository.claimedHosts=async()=>[];resourceReservationRepository.request=async()=>structuredClone(f.row);routineJobRepository.get=async()=>structuredClone(f.row);
+ TestRequestModel.collection.findOne=mock(async()=>structuredClone(f.row)) as never;
+ TestRequestModel.collection.find=mock(()=>({limit:()=>({toArray:async()=>[structuredClone(f.row)]})})) as never;
+ TestHostStateModel.collection.findOne=mock(async()=>{if(expiry&&f.now===initialNow)f.advance(120001);return structuredClone(host)}) as never;
+ TestHostStateModel.collection.findOneAndUpdate=mock(async()=>{hostWrites++;throw Error('The original host claim must not be repeated')}) as never;
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{
+  if(!matches(filter))return null;
+  if(update.$set.fleetResourceAdmission)admissionWrites++;
+  if(update.$set.fleetResourceReservation&&!f.row.fleetResourceAdmission)checkpointWrites++;
+  f.row={...f.row,...update.$set};return structuredClone(f.row);
+ }) as never;
+ f.rows.recorderClaims=async()=>[structuredClone(claim)];f.rows.checkpointBackendRecorder=(row,original,now)=>routineJobRepository.checkpointBackendRecorder!(row,original,now);
+ f.rows.reserveResources=(...args)=>routineJobRepository.reserveResources!(...args);
+ const currentRow=():StoredRoutineJob=>f.row;
+ try{
+  expect(qualifiedCandidate(f.row,f.hosts[0]!,'android',f.now,f.hosts[0]!.receivedAt)).toBeDefined();
+  await f.service.preparation('job-one');
+  expect(admissionWrites).toBe(expiry?0:1);expect(checkpointWrites).toBe(0);expect(hostWrites).toBe(0);
+  if(expiry){
+   expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.row.fleetResourceAdmission).toBeUndefined();
+   expect(host.resourceReservations).toEqual([claim]);
+   const fresh=repositoryEnvelope(f);host.receivedAt=fresh.receivedAt;host.snapshot=fresh.snapshot;
+   await f.service.preparation('job-one');expect(checkpointWrites).toBe(1);expect(admissionWrites).toBe(0);
+   expect(f.row.fleetCandidatePreparation!.provisionalReturn!.recorder).toEqual(claim);
+  }else{
+   expect(currentRow().fleetResourceReservation).toEqual(claim);expect(currentRow().fleetResourceAdmission?.intent.hostId).toBe('air1');
+   expect(f.row.fleetCandidatePreparation).toBeUndefined();
+  }
+  expect(f.row.fleetCandidatePreparations).toHaveLength(1);
+  expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
+ }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.find=requestList;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
+  resourceReservationRepository.recorderClaims=originals;resourceReservationRepository.get=read;resourceReservationRepository.claimedHosts=claimed;resourceReservationRepository.request=request;routineJobRepository.get=get;reserveClock.mockRestore()}
+});
 
 test('lost recorder host-CAS reply is recovered as cleanup custody after health expires, returned once, then falls back',async()=>{
  const f=await returnedFixture(),currentRow=():StoredRoutineJob=>f.row;delete f.row.fleetResourceReservation;

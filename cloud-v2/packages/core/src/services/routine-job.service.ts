@@ -1310,9 +1310,16 @@ export class RoutineJobService {
         waitingReason: RESOURCE_ADMISSION_WAIT};
     const provisional = originals[0];
     if (provisional && !row.fleetResourceReservation && !row.fleetResourceAdmission && requiresBackendConnectivity(row)) {
-      const checkpoint=await this.rows.checkpointBackendRecorder?.(row,provisional,new Date(this.now()));
-      if (!checkpoint) return {...routineJobRouting(requirements,hosts,this.now(),provisional,row.fleetSelection.build,true),waitingReason:RESOURCE_ADMISSION_WAIT};
-      row=checkpoint;
+      // A live original can still complete the existing admission stage, whose CAS
+      // refuses cleanup-only receipts. Only expired/unqualified custody needs that
+      // receipt before the original claim is returned; reserveResources rechecks
+      // the authoritative proof before any admission effect.
+      const host=await this.hosts.get(provisional.hostId);
+      if (!host || !qualifiedCandidate(row,host,provisional.laneId,this.now(),host.receivedAt)) {
+        const checkpoint=await this.rows.checkpointBackendRecorder?.(row,provisional,new Date(this.now()));
+        if (!checkpoint) return {...routineJobRouting(requirements,hosts,this.now(),provisional,row.fleetSelection.build,true),waitingReason:RESOURCE_ADMISSION_WAIT};
+        row=checkpoint;
+      }
     }
     const retained = row.fleetResourceReservation, admitted = row.fleetResourceAdmission;
     const candidateSelection = row.fleetCandidateSelection;
