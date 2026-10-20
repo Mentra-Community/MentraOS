@@ -1,5 +1,6 @@
 import BluetoothSdk, {DeviceModels} from "@mentra/bluetooth-sdk"
 import type {
+  GlassesAudioSetupState,
   MentraLivePairingState,
   PairFailureEvent,
   PhotoCaptureMetadata,
@@ -70,6 +71,7 @@ export default function App() {
   const [lastCapture, setLastCapture] = useState<CaptureResult | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [pairingState, setPairingState] = useState<MentraLivePairingState>({state: "normal"})
+  const [audioSetup, setAudioSetup] = useState<GlassesAudioSetupState>({state: "idle"})
   const [pairNotice, setPairNotice] = useState<string | null>(null)
   const receiverStarted = useRef(false)
   const uploadUrlRef = useRef<string | null>(null)
@@ -94,11 +96,17 @@ export default function App() {
     let cancelled = false
     void BluetoothSdk.getGlassesStatus()
       .then(status => {
-        if (!cancelled && status.pairingState) setPairingState(status.pairingState)
+        if (cancelled) return
+        if (status.pairingState) setPairingState(status.pairingState)
+        if (status.audioSetup) setAudioSetup(status.audioSetup)
       })
       .catch(() => {})
     const pairingSub = BluetoothSdk.addListener("pairing_state_changed", event => {
       setPairingState(event.state)
+    })
+    // The SDK decides when audio needs the user; the app only renders the Settings step.
+    const audioSub = BluetoothSdk.addListener("audio_setup_changed", event => {
+      setAudioSetup(event.state)
     })
     const failureSub = BluetoothSdk.addListener("pair_failure", (event: PairFailureEvent) => {
       setPairNotice(pairFailureMessage(event))
@@ -106,6 +114,7 @@ export default function App() {
     return () => {
       cancelled = true
       pairingSub.remove()
+      audioSub.remove()
       failureSub.remove()
     }
   }, [])
@@ -264,6 +273,7 @@ export default function App() {
         {tab === "connection" ? (
           <Group name="Connection">
             <Text style={styles.hint}>{pairingStatusLabel(pairingState)}</Text>
+            <Text style={styles.hint}>{audioSetupLabel(audioSetup)}</Text>
             {pairNotice ? <Text style={styles.status}>{pairNotice}</Text> : null}
             <Button
               title="Scan and connect Mentra Live"
@@ -412,9 +422,22 @@ function pairingStatusLabel(state: MentraLivePairingState): string {
     return `Pairing window open for about ${secondsLeft}s. Automatic reconnect is paused.`
   }
   if (state.state === "pairing_rejected") {
-    return "These glasses are paired with another phone."
+    return "These glasses no longer accept this phone. Pair Again."
   }
   return "No pairing window."
+}
+
+function audioSetupLabel(state: GlassesAudioSetupState): string {
+  switch (state.state) {
+    case "connecting":
+      return "Connecting audio..."
+    case "connected":
+      return "Audio connected."
+    case "needs_user":
+      return "Connect the glasses in Settings > Bluetooth to finish audio setup."
+    default:
+      return ""
+  }
 }
 
 function pairFailureMessage(event: PairFailureEvent): string {

@@ -896,8 +896,8 @@ export type PairFailureEvent = {
  * - `pairing_mode`: the glasses opened a pairing window. Automatic reconnect is paused until
  *   `endsAtMs` or until the glasses report the window ended. `windowId` identifies the
  *   window and survives a cold restart.
- * - `pairing_rejected`: the glasses no longer accept this phone (another phone took over).
- *   Reconnect has stopped. Render Pair Again.
+ * - `pairing_rejected`: the glasses no longer accept this phone (another phone paired, or repeated
+ *   authentication rejections on secure-pairing firmware). Reconnect has stopped. Render Pair Again.
  */
 export type MentraLivePairingState =
   | {state: "normal"}
@@ -906,6 +906,31 @@ export type MentraLivePairingState =
 
 export type PairingStateChangedEvent = {
   state: MentraLivePairingState
+}
+
+/**
+ * Whether the user has to do anything to get glasses audio working, decided by the SDK for
+ * every glasses model. Render it; do not add your own audio timers or platform checks.
+ *
+ * - `idle`: no glasses session.
+ * - `not_applicable`: no user step for audio. Android attaches Classic audio from the BLE bond,
+ *   and glasses without Classic audio have nothing to set up.
+ * - `connecting`: the glasses are connected, audio is not, and the SDK still expects audio to
+ *   come up on its own (for example iPhone audio derived from the BLE pair).
+ * - `connected`: Classic audio (A2DP or HFP) to the glasses is up.
+ * - `needs_user`: audio did not come up on its own. Ask the user to connect the glasses in the
+ *   system Bluetooth settings (iPhone: Settings > Bluetooth). The state moves to `connected`
+ *   as soon as audio comes up.
+ */
+export type GlassesAudioSetupState =
+  | {state: "idle"}
+  | {state: "not_applicable"}
+  | {state: "connecting"}
+  | {state: "connected"}
+  | {state: "needs_user"; action: "connect_in_settings"}
+
+export type AudioSetupChangedEvent = {
+  state: GlassesAudioSetupState
 }
 
 export type PairingModeEndedReason = "paired" | "cancelled" | "timeout" | string
@@ -1232,6 +1257,7 @@ export type BluetoothSdkModuleEvents = {
   entering_pairing_mode: (event: EnteringPairingModeEvent) => void
   pairing_mode_ended: (event: PairingModeEndedEvent) => void
   pairing_state_changed: (event: PairingStateChangedEvent) => void
+  audio_setup_changed: (event: AudioSetupChangedEvent) => void
   /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: (event: OwnerReplacedEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
@@ -1399,6 +1425,7 @@ export type BluetoothSdkEventMap = {
   entering_pairing_mode: EnteringPairingModeEvent
   pairing_mode_ended: PairingModeEndedEvent
   pairing_state_changed: PairingStateChangedEvent
+  audio_setup_changed: AudioSetupChangedEvent
   /** @deprecated No longer emitted. Use `pairing_state_changed`. */
   owner_replaced: OwnerReplacedEvent
   audio_pairing_needed: AudioPairingNeededEvent
@@ -1713,6 +1740,8 @@ export interface GlassesStatus {
   buildNumber: string
   /** Mentra Live pairing state owned by the SDK. Absent on other models. */
   pairingState?: MentraLivePairingState
+  /** Audio setup state owned by the SDK, on every model. See `GlassesAudioSetupState`. */
+  audioSetup?: GlassesAudioSetupState
   /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
   systemTimeMs?: number
   otaVersionUrl: string

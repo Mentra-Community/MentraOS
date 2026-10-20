@@ -496,7 +496,7 @@ type MentraLivePairingState =
 | --- | --- |
 | `normal` | No pairing window. Automatic reconnect is allowed. |
 | `pairing_mode` | A pairing window is open. `windowId` identifies it and survives an app restart. Automatic reconnect stays paused until `endsAtMs`, the window length plus a 30-second margin. |
-| `pairing_rejected` | Another phone took over the glasses. Reconnect has stopped. Show Pair Again. Cleared only by a successful explicit `connect()` / `connectDefault()`, or by `forget()`. |
+| `pairing_rejected` | The glasses no longer accept this phone (another phone paired, or repeated authentication rejections on secure-pairing firmware). Reconnect has stopped. Show Pair Again. Cleared only by a successful explicit `connect()` / `connectDefault()`, or by `forget()`. |
 
 `pairing_state_changed` carries the new `MentraLivePairingState` when the value changes. Android and iOS glasses-status snapshots include the same map. On those native SDKs the pairing events below arrive as raw events (`onRawEvent` on Android, `BluetoothEvent.raw` on iOS), except `pair_failure`, which is the pairing error callback and includes `failureCode`.
 
@@ -505,10 +505,33 @@ type MentraLivePairingState =
 | `entering_pairing_mode` | `window_ms`, optional `window_id`, optional `reason`, optional `owner_retained` | The connected glasses opened a window. `window_id` matches `pairingState.windowId`. `owner_retained` means the glasses kept their bonds when the window opened; bonds change only if another phone pairs. |
 | `pairing_mode_ended` | `reason`: `"paired"` \| `"cancelled"` \| `"timeout"`, optional `window_id` | The glasses closed the window and this phone is still accepted. The previous phone does not receive this when another phone takes over; it moves to `pairing_rejected`. |
 | `pairing_state_changed` | `PairingStateChangedEvent` | `pairingState` changed. The payload's `state` field is a `MentraLivePairingState`. |
-| `pairing_info` | Includes `auto_audio` | Session facts after a pair. `auto_audio` is true when the glasses derive Classic audio from the LE pair (CTKD), so audio should connect on its own. `awaiting_confirm` and `retained_owner_link` are no longer sent. |
+| `pairing_info` | Includes `auto_audio` | Session facts after a pair. `auto_audio` is true when the glasses derive Classic audio from the LE pair (CTKD); the SDK uses it for `audioSetup`. `awaiting_confirm` and `retained_owner_link` are no longer sent. |
 | `pair_failure` | `error`, optional `code` | Bluetooth pairing failed. `code: "ios_forget_pairing"` means iOS holds a stale Bluetooth pairing for these glasses during an explicit attempt. Open Settings > Bluetooth, choose Forget This Device, then pair again. |
 
 User-facing copy for `pairing_rejected` should say "Pair Again". Do not use the word "owner" in that copy.
+
+## Glasses audio setup
+
+`GlassesStatus.audioSetup` says whether the user has to do anything to get glasses audio working. The SDK decides it for every glasses model; render it without adding audio timers or platform checks. `audio_setup_changed` (`{state}`) fires on every change, and Android and iOS glasses-status snapshots include the same map.
+
+```ts
+type GlassesAudioSetupState =
+  | {state: "idle"}
+  | {state: "not_applicable"}
+  | {state: "connecting"}
+  | {state: "connected"}
+  | {state: "needs_user"; action: "connect_in_settings"}
+```
+
+| State | Meaning |
+| --- | --- |
+| `idle` | No glasses session. |
+| `not_applicable` | No audio step. Android attaches Classic audio from the BLE bond, and glasses without Classic audio have nothing to set up. |
+| `connecting` | The glasses are connected and audio is expected to come up on its own. |
+| `connected` | Classic audio (A2DP or HFP) to the glasses is up. |
+| `needs_user` | Audio did not come up on its own. Ask the user to connect the glasses in Settings > Bluetooth. The state moves to `connected` as soon as audio comes up. |
+
+On iPhone the SDK waits up to 8 seconds after a pair on firmware that brings audio up from the BLE pair, reports `needs_user` at once on older firmware, and waits 10 seconds after a reconnect. Mentra Live firmware that reports its own audio link is preferred over the phone's audio route.
 
 ## React Native Public Surface
 
@@ -793,7 +816,8 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `pairing_info` | `PairingInfoEvent` | Mentra Live pairing session facts. `auto_audio` is true when Classic audio should connect on its own after the LE pair. `awaiting_confirm` and `retained_owner_link` are not sent. |
 | `entering_pairing_mode` | `EnteringPairingModeEvent` | The connected Mentra Live glasses opened a pairing window (three power-button presses). Includes `window_ms` and `window_id`. The SDK pauses automatic reconnect for the window plus a 30-second margin and keeps the saved device. |
 | `pairing_mode_ended` | `PairingModeEndedEvent` | The glasses closed the pairing window and this phone is still accepted. `reason` is `"paired"`, `"cancelled"`, or `"timeout"`. Optional `window_id`. |
-| `pairing_state_changed` | `PairingStateChangedEvent` | `GlassesStatus.pairingState` changed. `pairing_rejected` means another phone took over: reconnect has stopped, so show Pair Again. |
+| `pairing_state_changed` | `PairingStateChangedEvent` | `GlassesStatus.pairingState` changed. `pairing_rejected` means the glasses no longer accept this phone: reconnect has stopped, so show Pair Again. |
+| `audio_setup_changed` | `AudioSetupChangedEvent` | `GlassesStatus.audioSetup` changed. Show the Settings step for `needs_user`. |
 | `owner_replaced` | `OwnerReplacedEvent` | Deprecated. Never emitted. Use `pairing_state_changed` and render Pair Again for `pairing_rejected`. |
 | `audio_pairing_needed` | `AudioPairingNeededEvent` | The phone needs Bluetooth audio pairing for the device. |
 | `audio_connected` | `AudioConnectedEvent` | Bluetooth audio connects. |

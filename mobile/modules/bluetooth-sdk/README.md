@@ -452,7 +452,7 @@ await saveDeviceToYourAppStorage(null)
 
 `confirmReplaceOwner()` and `confirm_replace_owner_result` are removed. `owner_replaced` is deprecated and is never emitted. The replacement is `GlassesStatus.pairingState`, also delivered as `pairing_state_changed`. Full steps are in [MIGRATION.md](./MIGRATION.md). The version stays `3.3.0` in `package.json` (podspec and Gradle read it). npm still publishes `3.2.1`.
 
-On supported Mentra Live firmware, three power-button presses open one 120-second window and the glasses speak a 4-character code. Three presses again cancel it. The phone that was already paired pauses automatic reconnect for that window plus a 30-second margin (`pairingState.endsAtMs`), then reconnects after `pairing_mode_ended` with `reason` `"timeout"` or `"cancelled"`. If another phone pairs, this phone's state becomes `pairing_rejected`: reconnect stops, and the UI should show Pair Again. That state clears only after a successful explicit pair or `forget()`.
+On supported Mentra Live firmware, three power-button presses open one 120-second window and the glasses speak a 4-character code. Three presses again cancel it. The phone that was already paired pauses automatic reconnect for that window plus a 30-second margin (`pairingState.endsAtMs`), then reconnects after `pairing_mode_ended` with `reason` `"timeout"` or `"cancelled"`. If the glasses stop accepting this phone (another phone paired, or repeated authentication rejections on secure-pairing firmware), this phone's state becomes `pairing_rejected`: reconnect stops, and the UI should show Pair Again. That state clears only after a successful explicit pair or `forget()`.
 
 `useMentraBluetooth().glasses` does not include `pairingState`. Read `getGlassesStatus()`, `subscribeGlassesStatus()`, or:
 
@@ -470,6 +470,28 @@ BluetoothSdk.addListener("pair_failure", (event) => {
 ```
 
 `entering_pairing_mode` includes `window_id`. `pairing_info` includes `auto_audio` and no longer includes `awaiting_confirm` or `retained_owner_link`. Do not use the word "owner" in user-facing sample copy.
+
+## Glasses audio setup
+
+`GlassesStatus.audioSetup`, also delivered as `audio_setup_changed` (`{state}`), says whether the user has to do anything to get glasses audio working. The SDK decides it for every glasses model. Render it; do not add your own audio timers or platform checks.
+
+| `audioSetup.state` | Meaning | What to show |
+| --- | --- | --- |
+| `idle` | No glasses session | Nothing |
+| `not_applicable` | No audio step (Android attaches audio from the BLE bond; glasses without Classic audio) | Nothing |
+| `connecting` | Glasses connected, audio expected to come up on its own | A "connecting" state |
+| `connected` | Classic audio (A2DP or HFP) is up | Nothing |
+| `needs_user` | Audio did not come up on its own (`action: "connect_in_settings"`) | Ask the user to connect the glasses in Settings > Bluetooth |
+
+On iPhone, after a pair the SDK waits up to 8 seconds on firmware that brings audio up from the BLE pair and reports `needs_user` at once on older firmware. After a reconnect it waits 10 seconds. The state moves to `connected` as soon as audio comes up. Mentra Live firmware that reports its own audio link (`classic_link`) is preferred over the phone's audio route, which is wrong while another Bluetooth audio device holds it.
+
+```ts
+BluetoothSdk.addListener("audio_setup_changed", (event) => {
+  if (event.state.state === "needs_user") showConnectAudioInSettings()
+})
+```
+
+`useMentraBluetooth().glasses` does not include `audioSetup`. Read `getGlassesStatus()`, `subscribeGlassesStatus()`, or the event.
 
 ## Native notification controls
 
