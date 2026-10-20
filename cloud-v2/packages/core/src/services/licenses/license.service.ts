@@ -12,7 +12,10 @@
  * ended with its owner. A workspace license is written in a transaction that also writes the workspace
  * document, so it conflicts with the workspace's deletion and never lands after it. A personal license is
  * one document and is written without a transaction, like an operator key; its audit event follows as a
- * separate write (`recordOrganizationEvent`), so personal licenses are not on the change feed.
+ * separate write (`recordOrganizationEvent`), so personal licenses are not on the change feed. Every
+ * personal write, a repeat included, first asks whether the person's account still exists, and ends the
+ * license when it does not: a write that raced the account's deletion and failed before it could end the
+ * license itself is ended by billing's next attempt.
  *
  * **The seat cap is a counter.** `seatsUsed` counts a workspace license's seats. Assigning one runs one
  * transaction: a conditional increment (`seatsUsed < quantity` and not ended), then the seat's insert.
@@ -93,7 +96,8 @@ function invalid(message: string): never {
 /**
  * The license write in `body`, for the license the path names (`licenseId`), with only the write's own
  * fields. Anything malformed is `invalid_request` (400), saying what: a personal license with a quantity
- * other than 1 among them, since its owner holds its one seat.
+ * other than 1 among them, since its owner holds its one seat, and a term whose `paidThrough` is before
+ * its `validFrom`.
  */
 export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrite {
   if (!isRecord(body)) invalid("a license write must be a JSON object")
@@ -109,16 +113,11 @@ export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrit
   }
   if (owner.type === "person" && quantity !== 1)
     invalid("a personal license's quantity is 1: its owner holds its one seat")
-  return {
-    licenseId,
-    revision,
-    owner,
-    product,
-    features,
-    quantity,
-    validFrom: instant(body.validFrom, "validFrom"),
-    paidThrough: instant(body.paidThrough, "paidThrough"),
-  }
+  const validFrom = instant(body.validFrom, "validFrom")
+  const paidThrough = instant(body.paidThrough, "paidThrough")
+  // A term of no length is a subscription cancelled as it started; one that ends before it starts is a bug.
+  if (Date.parse(paidThrough) < Date.parse(validFrom)) invalid("paidThrough must not be before validFrom")
+  return {licenseId, revision, owner, product, features, quantity, validFrom, paidThrough}
 }
 
 function parseOwner(value: unknown): LicenseOwner {
@@ -235,31 +234,55 @@ async function applyPersonalLicenseWrite(
   // Without a transaction, a write that lost a race with another write of the license decides again.
   for (;;) {
     existing = await LicenseModel.findById(write.licenseId).lean<LicenseRow>()
-    const answer = decide(existing, write)
-    if (answer) return answer
+    refuseUnwritable(existing, write)
+    // Every write, a repeat or an older one included, asks whether the person still has an account. A write
+    // that landed after the account's deletion had ended the person's licenses, and then failed before the
+    // recheck below, left a live license for a deleted account and a deletion that has finished: billing
+    // sends that write again until Core answers, so its next attempt is what ends the license.
     if (!(await UserModel.exists({mentraUserId, supportTelemetryDeletedAt: null}))) {
+      if (existing) await endOutlivedLicense(write.licenseId)
       fail("owner_not_found", "the person's account is deleted or does not exist")
     }
+    const answer = byRevision(existing, write)
+    if (answer) return answer
     if (await saveLicense(null, existing, write)) break
   }
   const written = writtenEvent(existing, write, actor)
   // Account deletion marks the account before it ends the person's licenses (`account-deletion.service`).
   // A write that passed the check above just before the mark can land after the deletion ended them, so
   // look again: either this sees the mark and ends the license here, or the deletion ends it after this.
+  // Should this request fail before it does, billing's next attempt ends it (above).
   if (await isDeletedAccountId(mentraUserId)) {
-    const ended = await endLicenses(null, {_id: write.licenseId}, "account_deleted", SYSTEM_ACTOR)
-    for (const event of [written, ...ended.organizationEvents]) await recordOrganizationEvent(event)
+    await recordOrganizationEvent(written)
+    await endOutlivedLicense(write.licenseId)
     fail("owner_not_found", "the person's account is deleted")
   }
   await recordOrganizationEvent(written)
   return {applied: true, revision: write.revision}
 }
 
+/** End a personal license whose owner's account is deleted, if it has not ended, and record that. */
+async function endOutlivedLicense(licenseId: string): Promise<void> {
+  const ended = await endLicenses(null, {_id: licenseId}, "account_deleted", SYSTEM_ACTOR)
+  for (const event of ended.organizationEvents) await recordOrganizationEvent(event)
+}
+
 /** What a write does to the license Core has: null to apply it, or Core's answer when it applies nothing. */
 function decide(existing: LicenseRow | null, write: LicenseWrite): LicenseWriteResponse | null {
-  if (!existing) return null
+  refuseUnwritable(existing, write)
+  return byRevision(existing, write)
+}
+
+/** Refuse a write that would change the license's owner (400), or one for a license that ended with its owner (404). */
+function refuseUnwritable(existing: LicenseRow | null, write: LicenseWrite): void {
+  if (!existing) return
   if (!sameOwner(ownerOf(existing.owner), write.owner)) invalid("a license's owner never changes")
   if (existing.endedAt) fail("owner_not_found", "the license ended with its owner")
+}
+
+/** By revision: null for a newer write (apply it), a no-op answer for a repeat, `stale_revision` for an older one. */
+function byRevision(existing: LicenseRow | null, write: LicenseWrite): LicenseWriteResponse | null {
+  if (!existing) return null
   if (write.revision < existing.revision) {
     fail("stale_revision", `Core has revision ${existing.revision} of this license`, {revision: existing.revision})
   }

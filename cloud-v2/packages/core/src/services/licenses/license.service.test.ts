@@ -121,6 +121,17 @@ describe("parseLicenseWrite", () => {
     }
   })
 
+  test("a term is never reversed: paidThrough before validFrom is refused, and a term of no length is not", () => {
+    expect(
+      refused({...workspaceWrite(), validFrom: "2026-11-04T00:00:00Z", paidThrough: "2026-10-01T00:00:00Z"}).message,
+    ).toContain("paidThrough")
+    // Milliseconds count: one before the start is still reversed.
+    refused({...workspaceWrite(), validFrom: "2026-10-01T00:00:00.001Z", paidThrough: "2026-10-01T00:00:00Z"})
+    // A subscription cancelled at the moment it started.
+    const instant = {...workspaceWrite(), validFrom: "2026-10-01T00:00:00Z", paidThrough: "2026-10-01T00:00:00.000Z"}
+    expect(parseLicenseWrite(instant, LICENSE_ID)).toEqual(instant)
+  })
+
   test("a body that is not an object is refused", () => {
     for (const body of [null, [], "license", 5]) refused(body)
   })

@@ -48,8 +48,8 @@ repeats and late deliveries are harmless:
 | `200 {"applied": true, "revision"}` | A new license, or a newer revision. | Delivered. |
 | `200 {"applied": false, "revision"}` | The revision Core has. Nothing changes. | Delivered. |
 | `409 stale_revision` | An older revision. The body's `revision` is Core's. | Delivered: Core has a newer one. |
-| `404 owner_not_found` | The workspace or account is deleted, or never existed, or the license ended with its owner. | Stop sending it. |
-| `400 invalid_request` | A malformed write, another license than the path's, a person's quantity other than 1, or a change of owner. | A bug to fix. |
+| `404 owner_not_found` | The workspace or account is deleted, or never existed, or the license ended with its owner. For a personal license this is checked on every write, a repeat or an older revision included. | Stop sending it. |
+| `400 invalid_request` | A malformed write, another license than the path's, a person's quantity other than 1, a `paidThrough` before `validFrom`, or a change of owner. | A bug to fix. |
 | `5xx` | Core could not answer. | Send it again. |
 
 `GET /api/internal/licenses?ownerType=workspace|person&ownerId=` answers
@@ -64,8 +64,11 @@ repeats and late deliveries are harmless:
 
 A workspace license is written in a transaction that also writes the workspace,
 so it never lands after the workspace is deleted. A personal license is one
-document, written without a transaction; a write that races the person's
-account deletion is ended at once and answered `404 owner_not_found`.
+document, written without a transaction. Every write of one, a repeat
+included, first checks that the person's account still exists; if it does not,
+Core ends the license and answers `404 owner_not_found`. So a write that races
+the person's account deletion is ended at once, or, should that request fail
+first, by billing's next attempt.
 
 ## Seats
 

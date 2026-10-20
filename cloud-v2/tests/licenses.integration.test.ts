@@ -493,6 +493,12 @@ describe("license writes", () => {
     expect((await signed("PUT", `${LICENSES}/${newLicenseId()}`, {body: other})).status).toBe(400)
     // A body that is not JSON.
     expect((await signed("PUT", `${LICENSES}/${other.licenseId}`, {body: "nope"})).status).toBe(400)
+    // A term that ends before it starts.
+    const reversed = {...other, validFrom: "2026-11-04T00:00:00.000Z", paidThrough: "2026-10-01T00:00:00.000Z"}
+    expect(await signed("PUT", `${LICENSES}/${other.licenseId}`, {body: reversed})).toMatchObject({
+      status: 400,
+      json: {error: "invalid_request"},
+    })
     expect(await LicenseModel.countDocuments({})).toBe(0)
   })
 
@@ -858,6 +864,75 @@ describe("ending with the owner", () => {
     // Running the deletion again ends nothing more.
     await removeDeletedUserFromWorkspaces(someone.mentraUserId)
     expect(await audit("license.ended")).toHaveLength(1)
+  })
+
+  test("a personal license that outlived its deleted owner is ended by billing's next write, whatever its revision", async () => {
+    // A write that passed the account check, landed after the deletion's license query found nothing, and then
+    // failed before its own recheck (a crash, a failed read) leaves exactly this: an active license whose owner is
+    // deleted, and a deletion already complete. Each is written directly, as that write would have left it.
+    const outlived = async (revision: number) => {
+      const owner = await person("outlived")
+      const write = licenseWrite({type: "person", mentraUserId: owner.mentraUserId}, {revision})
+      await LicenseModel.create({
+        _id: write.licenseId,
+        owner: write.owner,
+        product: write.product,
+        features: write.features,
+        quantity: 1,
+        seatsUsed: 1,
+        validFrom: new Date(write.validFrom),
+        paidThrough: new Date(write.paidThrough),
+        revision,
+      })
+      await markAccountDeleted(owner.mentraUserId)
+      await UserModel.updateOne({mentraUserId: owner.mentraUserId}, {$set: {accountDeletionCompletedAt: new Date()}})
+      return write
+    }
+    const repeat = await outlived(3)
+    const newer = await outlived(3)
+    const older = await outlived(3)
+
+    // Billing's retry of the same revision, a later change, and a late older one: each ends the license and stops billing.
+    await expectClientError(store().putLicense(repeat), "owner_not_found", 404)
+    await expectClientError(
+      store().putLicense({...newer, revision: 4, paidThrough: "2026-12-04T00:00:00.000Z"}),
+      "owner_not_found",
+      404,
+    )
+    await expectClientError(store().putLicense({...older, revision: 2}), "owner_not_found", 404)
+
+    for (const write of [repeat, newer, older]) {
+      const row = (await licenseRow(write.licenseId))!
+      expect({
+        licenseId: write.licenseId,
+        revision: row.revision,
+        endedReason: row.endedReason,
+        seatsUsed: row.seatsUsed,
+      }).toEqual({
+        licenseId: write.licenseId,
+        revision: 3,
+        endedReason: "account_deleted",
+        seatsUsed: 0,
+      })
+      expect(row.endedAt).toBeInstanceOf(Date)
+    }
+    const ended = await audit("license.ended")
+    expect(ended.map((event) => event.target?.licenseId).sort()).toEqual(
+      [repeat.licenseId, newer.licenseId, older.licenseId].sort(),
+    )
+    expect(ended.every((event) => event.workspaceId === null && event.seq === undefined)).toBe(true)
+    // Ended, it stays ended: the same write again is refused the same way and records nothing more.
+    await expectClientError(store().putLicense(repeat), "owner_not_found", 404)
+    expect(await audit("license.ended")).toHaveLength(3)
+  })
+
+  test("for a person whose account is live, a repeat is still a 200 no-op and an older revision a 409", async () => {
+    const someone = await person("someone")
+    const write = licenseWrite({type: "person", mentraUserId: someone.mentraUserId}, {revision: 2})
+    expect(await store().putLicense(write)).toEqual({applied: true, revision: 2})
+    expect(await store().putLicense(write)).toEqual({applied: false, revision: 2})
+    await expectClientError(store().putLicense({...write, revision: 1}), "stale_revision", 409)
+    expect((await licenseRow(write.licenseId))!.endedAt).toBeNull()
   })
 })
 
