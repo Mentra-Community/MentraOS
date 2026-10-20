@@ -54,6 +54,30 @@ describe("AlertUtils.showAlert", () => {
     expect(screen.queryByText("Leave Ridgeline Field Services?")).toBeNull()
   })
 
+  it("runs each caller's own handler when an identical alert was already waiting", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    // Like PermissionsUtils' warnings: a promise that only a button settles.
+    const ask = () =>
+      new Promise<boolean>((resolve) => {
+        showAlert("Camera Permission Limited", "You can enable full access in your device settings.", [
+          {text: "Settings", onPress: () => resolve(false)},
+          {text: "Continue Anyway", onPress: () => resolve(true)},
+        ])
+      })
+    let first!: Promise<boolean>
+    let second!: Promise<boolean>
+    await act(async () => {
+      first = ask()
+      second = ask()
+    })
+    expect(screen.getAllByText("Camera Permission Limited")).toHaveLength(1)
+    await act(async () => {
+      fireEvent.press(screen.getByText("Continue Anyway"))
+    })
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(true)
+  })
+
   it("treats a button worded Cancel as cancel, so dismissing the sheet presses it", async () => {
     const screen = render(<ModalProvider>{null}</ModalProvider>)
     const cancel = jest.fn()

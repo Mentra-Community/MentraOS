@@ -3,8 +3,9 @@
  * content and stacked buttons. Both `showAlert` here and the older `showAlert` in `@/utils/AlertUtils`
  * present through it.
  *
- * - Alerts queue. One sheet shows at a time, in the order they were asked for, and an alert identical to
- *   one already waiting (same title and message) is not shown twice.
+ * - Alerts queue. One sheet shows at a time, in the order they were asked for. An alert identical to one
+ *   already waiting (same title, message and buttons) joins it instead of showing twice: every caller
+ *   gets the same answer.
  * - An alert answers once its sheet has slid away, so a button that opens a native surface (a link, a
  *   permission prompt, a picker) never races the sheet.
  * - Swiping the sheet down, tapping outside it and Android back answer with the cancel button, and only
@@ -45,10 +46,20 @@ interface AlertRequest {
 
 interface QueuedAlert extends AlertRequest {
   id: number
-  settle: (index: number) => void
+  /** Everyone who asked for this alert: one caller, plus any identical requests that joined it. */
+  waiters: Array<(index: number) => void>
 }
 
-/** The answer of an alert that closed without a button: removed by title, or a duplicate of one waiting. */
+/** Identical alerts: the same title, message and buttons. */
+const sameAlert = (a: AlertRequest, b: AlertRequest) =>
+  a.title === b.title &&
+  a.message === b.message &&
+  a.buttons.length === b.buttons.length &&
+  a.buttons.every((button, index) => button.text === b.buttons[index]!.text && button.style === b.buttons[index]!.style)
+
+const settle = (alert: QueuedAlert, index: number) => alert.waiters.forEach((waiter) => waiter(index))
+
+/** The answer of an alert closed without a button, by `dismissAlert`, or shown with no sheet mounted. */
 export const NO_ANSWER = -1
 
 interface AlertHost {
@@ -127,7 +138,7 @@ export function ModalProvider({children}: {children: ReactNode}) {
     const alert = queue.current[0]
     if (!alert || !answered || alert.id !== answered.id) return
     queue.current = queue.current.slice(1)
-    settleAfterCommit.current = () => alert.settle(answered.index)
+    settleAfterCommit.current = () => settle(alert, answered.index)
     rerender()
   }, [])
 
@@ -151,28 +162,30 @@ export function ModalProvider({children}: {children: ReactNode}) {
   }, [close])
 
   useEffect(() => {
-    const settle = settleAfterCommit.current
+    const settleClosed = settleAfterCommit.current
     settleAfterCommit.current = null
-    settle?.()
+    settleClosed?.()
   })
 
   useEffect(() => {
     host = {
       present: (request) =>
-        new Promise<number>((settle) => {
+        new Promise<number>((answer) => {
+          // The showing alert can't be joined once it's answered and closing.
           const waiting = queue.current.filter((alert, position) => !(position === 0 && closing.current))
-          if (waiting.some((alert) => alert.title === request.title && alert.message === request.message)) {
-            settle(NO_ANSWER)
+          const identical = waiting.find((alert) => sameAlert(alert, request))
+          if (identical) {
+            identical.waiters.push(answer)
             return
           }
-          queue.current = [...queue.current, {...request, id: nextId.current++, settle}]
+          queue.current = [...queue.current, {...request, id: nextId.current++, waiters: [answer]}]
           rerender()
         }),
       dismiss: (title) => {
         const [first, ...rest] = queue.current
         const kept = rest.filter((alert) => {
           if (alert.title !== title) return true
-          alert.settle(NO_ANSWER)
+          settle(alert, NO_ANSWER)
           return false
         })
         queue.current = first ? [first, ...kept] : kept

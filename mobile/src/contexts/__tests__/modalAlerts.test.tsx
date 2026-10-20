@@ -78,12 +78,32 @@ describe("alert sheet", () => {
     await expect(second).resolves.toBe(0)
   })
 
-  it("doesn't queue an alert identical to one already waiting", async () => {
+  it("joins an alert identical to one already waiting, and answers every caller", async () => {
     const screen = render(<ModalProvider>{null}</ModalProvider>)
-    await show({title: "Glasses disconnected", message: "Reconnect them in Settings."})
-    const {answer: again} = await show({title: "Glasses disconnected", message: "Reconnect them in Settings."})
-    await expect(again).resolves.toBe(NO_ANSWER)
+    const disconnected = {
+      title: "Glasses disconnected",
+      message: "Reconnect them in Settings.",
+      buttons: [{text: "OK"}],
+    }
+    const {answer: first} = await show(disconnected)
+    const {answer: again} = await show(disconnected)
     expect(screen.getAllByText("Glasses disconnected")).toHaveLength(1)
+    await act(async () => {
+      fireEvent.press(screen.getByText("OK"))
+    })
+    await expect(first).resolves.toBe(0)
+    await expect(again).resolves.toBe(0)
+    expect(screen.queryByText("Glasses disconnected")).toBeNull()
+  })
+
+  it("shows an alert with the same title but different buttons separately", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await show({title: "Update Notes?", buttons: [{text: "Update"}]})
+    await show(UPDATE)
+    await act(async () => {
+      fireEvent.press(screen.getByText("Update"))
+    })
+    expect(screen.getByText("Not now")).toBeTruthy()
   })
 
   it("lets an alert with a cancel button be dismissed outside it, as cancel", async () => {
