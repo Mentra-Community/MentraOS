@@ -154,6 +154,7 @@ session authenticates only its own routes:
 | Route group | Who | Authenticates with |
 | --- | --- | --- |
 | `/api/portal/workspaces/*` | The workspace portal | Its session, or a bearer |
+| `/api/portal/billing/*` | The workspace portal | Its session, or a bearer; forwarded to the billing module ([Portal modules](portal-modules.md)) |
 | `/api/admin/workspaces/*`, `/api/admin/organization/*` | The admin portal | Its session, or a bearer |
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
@@ -184,6 +185,10 @@ to the optional Fleet service for a person holding `organization.fleet.administe
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
 and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
+`/api/portal/billing/*` forwards the workspace portal's Licenses & Billing requests
+to that module for a signed-in person, with the workspace or the person's own
+account as the scope Core decides ([Portal modules](portal-modules.md)).
+`/api/portal/me` says whether to offer it (`modules.billing`).
 
 ## Configuration
 
@@ -195,6 +200,7 @@ and its billing module writes licenses through it ([Licenses and seats](licenses
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
 | `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets by service (`store`, `fleet`), `{"store": ["<newest>", "<older>"], "fleet": ["<newest>"]}`. Unset: every service call is refused. |
 | `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
+| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Outside `CLOUD_CORE_ENVIRONMENT=prod` it is visible to Organization Admins only. See [Portal modules](portal-modules.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they

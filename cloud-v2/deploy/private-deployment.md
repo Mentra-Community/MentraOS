@@ -59,6 +59,8 @@ repository.
 | `CLOUD_CORE_ENABLED_FEATURES` | Public | Optional. The first-party features this deployment has bought, as comma-separated `feature[:package+package]` entries. Names are case-sensitive; Fleet needs `fleet.managed`. An entry with packages (`call.unlimited:com.mentra.call`) also grants that feature to every signed-in person, in those packages' miniapp tokens only. Blank leaves a feature to its own settings. See [Fleet integration](../docs/fleet-integration.md) and [Licenses and seats](../docs/licenses.md#features-in-miniapp-tokens). |
 | `CLOUD_CORE_FLEET_URL` | Public | Optional. Fleet's base URL. Unset means Fleet is not installed. The size and time limits (`CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_MAX_ASSET_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS`) are in [Fleet integration](../docs/fleet-integration.md). |
 | `CLOUD_CORE_FLEET_SECRET` | Secret | Optional. The secret that signs what Core forwards to Fleet. Required when `CLOUD_CORE_FLEET_URL` is set. |
+| `CLOUD_CORE_BILLING_URL` | Public | Optional, hosted Core only: a Private Cloud leaves it unset, and billing is not installed. The billing portal module's base URL. See [Portal modules](../docs/portal-modules.md). |
+| `CLOUD_CORE_BILLING_SECRET` | Secret | Optional. The secret that signs what Core forwards to the billing module. Required when `CLOUD_CORE_BILLING_URL` is set. |
 
 Signing keys and the refresh pepper must survive upgrades. An Entra provider is
 configured explicitly:

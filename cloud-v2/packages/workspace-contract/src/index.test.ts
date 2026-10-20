@@ -39,6 +39,7 @@ describe("package entry points", () => {
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
     // The Fleet UI contract names DOM types, so it has its own subpath and server packages never see it.
     expect(Object.keys(root)).not.toContain("FLEET_UI_CONTRACT_VERSION")
+    expect(Object.keys(root)).not.toContain("PORTAL_MODULE_CONTRACT_VERSION")
     for (const name of ["signForwardedPrincipal", "verifyForwardedPrincipal", "parseForwardedPrincipal"]) {
       expect(Object.keys(root)).not.toContain(name)
     }
@@ -67,6 +68,7 @@ describe("package entry points", () => {
       ".": "./src/index.ts",
       "./server": "./src/server.ts",
       "./fleet-ui": "./src/fleet-ui.ts",
+      "./portal-module-ui": "./src/portal-module-ui.ts",
     })
   })
 })

@@ -214,6 +214,7 @@ jobs:
             tests/workspaces-internal-api.integration.test.ts \
             tests/workspace-change-feed.integration.test.ts \
             tests/fleet-forwarding.integration.test.ts \
+            tests/portal-modules.integration.test.ts \
             tests/legacy-admin-keys.integration.test.ts \
             tests/account-deletion.integration.test.ts \
             tests/licenses.integration.test.ts \

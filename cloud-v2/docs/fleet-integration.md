@@ -14,6 +14,11 @@ behavior is implemented and tested in
 Nothing here changes a deployment that has no Fleet: the forwarding routes answer
 `404 {"error":"fleet_not_installed"}`.
 
+Signing, the headers a service receives, the mapping of its answers and the relay
+of its UI assets are shared with Core's other forwarding seam, the
+[portal modules](portal-modules.md) (billing), which follow the same rules under
+their own paths and error codes.
+
 ## Configuration
 
 Set on Core. Values are read on every request, so a change takes effect at once.
@@ -257,8 +262,9 @@ if (!principal) return new Response(JSON.stringify({error: "forbidden"}), {statu
   organization, and `scope` is what this request covers. Core sends
   `{"kind": "organization"}` on the admin surface and the person must hold
   `organization.fleet.administer` for the request to be forwarded at all. The
-  contract also defines `{"kind": "workspace", "workspaceId": "..."}`, which a
-  receiver must be ready to read.
+  contract also defines `{"kind": "workspace", "workspaceId": "..."}` and
+  `{"kind": "person"}` (the scopes of [portal modules](portal-modules.md)), which
+  a receiver must be ready to read.
 - Core decided both within the signature's 60-second window, so Fleet acts on
   them as signed and does not ask Core again.
 
