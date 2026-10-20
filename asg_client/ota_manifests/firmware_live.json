@@ -8,6 +8,13 @@
       "size": 34697669
     },
     {
+      "start_firmware": "MentraLive_20260418",
+      "end_firmware": "MentraLive_20260923.0",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260923.0.zip",
+      "sha256": "9cad6df2769edbbab2d0fdc6342c14c3734a858ba0cdee9e5b406dc6bdfe9e87",
+      "size": 44239241
+    },
+    {
       "start_firmware": "MentraLive_20260113",
       "end_firmware": "MentraLive_20260709",
       "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260113_20260709.zip",
