@@ -891,7 +891,17 @@ class LocalMiniappRuntime {
     // UI_OPEN also fires during periodic foreground resync. Only the authoritative
     // selection/host-activity edge should trigger a miniapp's foreground redraw.
     if (previous && this.handshookApps.has(previous)) this.sendVisibilityChange(previous, "background")
-    if (next && this.handshookApps.has(next)) this.sendVisibilityChange(next, "foreground")
+    if (next && this.handshookApps.has(next)) {
+      this.sendVisibilityChange(next, "foreground")
+      // Coming back to the foreground is an open: the miniapp gets a token minted now, so what the user
+      // acquired while it was away (a purchase) is in the token it uses next. A miniapp still waiting for its
+      // first token already has a fresh mint on the way (CONNECT's, or its retry), so it is left to that.
+      if (this.connectedApps.get(next)?.authDelivered) {
+        void this.refreshMiniappAuth(next, {fresh: true}).catch((err) => {
+          console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${next}: ${(err as Error)?.message ?? err}`)
+        })
+      }
+    }
   }
 
   // ===========================================================================
@@ -1672,7 +1682,9 @@ class LocalMiniappRuntime {
     // below re-arms from scratch.
     existing.authDelivered = false
     this.clearMiniappAuthDeliveryRetry(packageName)
-    const authPromise = this.requestMiniappAuth(packageName)
+    // A connect is an open, so the token is minted now rather than taken from the cache: it must carry
+    // whatever the user has acquired since the last one.
+    const authPromise = this.requestMiniappAuth(packageName, {fresh: true})
 
     // Send CONNECT_ACK in this turn, before any await. A 1.5s auth wait let a
     // concurrent unregister (dev respawn, tray stop, glasses-not-ready teardown)
@@ -1700,7 +1712,10 @@ class LocalMiniappRuntime {
     this.flushConnectWaiters(packageName)
   }
 
-  private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+  private async requestMiniappAuth(
+    packageName: string,
+    opts?: {minTtlMs?: number; fresh?: boolean},
+  ): Promise<MiniappAuthToken | null> {
     // Core owns miniapp-backend token minting. A Runtime-only deployment has
     // no such capability, so fail once instead of entering the retry loop.
     if (!cloudClientService.hasCore()) return null
@@ -1733,7 +1748,10 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async refreshMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+  private async refreshMiniappAuth(
+    packageName: string,
+    opts?: {minTtlMs?: number; fresh?: boolean},
+  ): Promise<MiniappAuthToken | null> {
     const auth = await this.requestMiniappAuth(packageName, opts)
     if (!auth) return null
     this.scheduleMiniappAuthRefresh(packageName, auth)
@@ -1761,7 +1779,9 @@ class LocalMiniappRuntime {
       const current = this.connectedApps.get(packageName)
       if (!current) return
       current.authRefreshTimerId = null
-      void this.refreshMiniappAuth(packageName).catch((err) => {
+      // Fresh: the cached token is the one being replaced and has no more than the headroom left, so asking
+      // for it again would hand the miniapp the same token and re-arm this timer for the minimum delay.
+      void this.refreshMiniappAuth(packageName, {fresh: true}).catch((err) => {
         console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${packageName}: ${(err as Error)?.message ?? err}`)
       })
     }, delay)
@@ -1779,7 +1799,8 @@ class LocalMiniappRuntime {
    * Deliver the miniapp's FIRST auth token, retrying until it lands. Called from
    * {@link handleConnect} when the initial mint didn't resolve in the CONNECT_ACK
    * window. `inFlight` lets attempt 0 reuse the mint the handshake already
-   * started (avoids a redundant duplicate request); later attempts mint fresh.
+   * started (avoids a redundant duplicate request); later attempts start a new
+   * one. Every mint here is for an open, so none is served from the cache.
    *
    * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
    * — permanent, so we do NOT retry. A REJECTION means a transient failure
@@ -1794,7 +1815,7 @@ class LocalMiniappRuntime {
   ): void {
     const app = this.connectedApps.get(packageName)
     if (!app || app.authDelivered) return
-    const mint = inFlight ?? this.requestMiniappAuth(packageName)
+    const mint = inFlight ?? this.requestMiniappAuth(packageName, {fresh: true})
     void mint
       .then((auth) => {
         const current = this.connectedApps.get(packageName)
