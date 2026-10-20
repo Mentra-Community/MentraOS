@@ -565,6 +565,32 @@ describe("PhoneStreamCoordinator", () => {
       expect(startStream).toHaveBeenCalledTimes(2)
     })
 
+    test("a failed stop after a start timeout is retried before the next start", async () => {
+      const timeout = Object.assign(new Error("start stream timed out waiting for glasses response."), {
+        code: "request_timeout",
+      })
+      startStream.mockRejectedValueOnce(timeout)
+      stopStream.mockRejectedValueOnce(new Error("stop stream timed out"))
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+      })
+      await expect(coord.startUnmanaged("com.a", {streamUrl: "srt://x:1"})).rejects.toBe(timeout)
+      expect(coord.getDiagnosticSnapshot().pendingBleStop).not.toBeNull()
+
+      const order: string[] = []
+      stopStream.mockImplementationOnce(async () => {
+        order.push("stop")
+      })
+      startStream.mockImplementationOnce(async (request) => {
+        order.push("start")
+        return streamStatusFor(request)
+      })
+      await coord.startUnmanaged("com.a", {streamUrl: "srt://x:1"})
+      expect(order).toEqual(["stop", "start"])
+    })
+
     test("a start that times out with the link down stops the publisher on reconnect", async () => {
       const link = fakeLink()
       const timeout = Object.assign(new Error("start stream timed out waiting for glasses response."), {
