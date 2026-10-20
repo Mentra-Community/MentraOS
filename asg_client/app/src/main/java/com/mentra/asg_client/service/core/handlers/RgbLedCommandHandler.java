@@ -87,7 +87,8 @@ public class RgbLedCommandHandler implements ICommandHandler {
         // Check if RGB LED is supported on this device
         if (hardwareManager == null || !hardwareManager.supportsRgbLed()) {
             Log.w(TAG, "⚠️ RGB LED not supported on this device");
-            sendErrorResponse("RGB LED not supported on this device");
+            sendErrorResponse(
+                    data, "device_not_supported", "RGB LED not supported on this device");
             return false;
         }
 
@@ -137,7 +138,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
             // Validate parameters
             if (led < RgbLedConstants.LED_RED || led > RgbLedConstants.LED_WHITE) {
                 Log.e(TAG, "❌ Invalid RGB LED index: " + led + " (must be 0-4)");
-                sendErrorResponse("Invalid RGB LED index: " + led);
+                sendErrorResponse(data, "invalid_parameters", "Invalid RGB LED index: " + led);
                 return false;
             }
 
@@ -150,13 +151,14 @@ public class RgbLedCommandHandler implements ICommandHandler {
                                 + offtime
                                 + ", count="
                                 + count);
-                sendErrorResponse("Invalid timing parameters");
+                sendErrorResponse(data, "invalid_parameters", "Invalid timing parameters");
                 return false;
             }
 
             if (brightness < 0 || brightness > 255) {
                 Log.e(TAG, "❌ Invalid brightness value: " + brightness + " (must be 0-255)");
-                sendErrorResponse("Invalid brightness value: " + brightness);
+                sendErrorResponse(
+                        data, "invalid_parameters", "Invalid brightness value: " + brightness);
                 return false;
             }
 
@@ -170,12 +172,12 @@ public class RgbLedCommandHandler implements ICommandHandler {
             hardwareManager.setRgbLedOn(led, ontime, offtime, count, brightness);
 
             Log.i(TAG, "✅ RGB LED ON command sent via hardware manager");
-            sendSuccessResponse(CMD_RGB_LED_CONTROL_ON);
+            sendSuccessResponse(data);
             return true;
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error handling RGB LED ON command", e);
-            sendErrorResponse("Failed to execute RGB LED command");
+            sendErrorResponse(data, "command_failed", "Failed to execute RGB LED command");
             return false;
         }
     }
@@ -191,12 +193,12 @@ public class RgbLedCommandHandler implements ICommandHandler {
             hardwareManager.setRgbLedOff();
 
             Log.i(TAG, "✅ RGB LED OFF command sent via hardware manager");
-            sendSuccessResponse(CMD_RGB_LED_CONTROL_OFF);
+            sendSuccessResponse(data);
             return true;
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error handling RGB LED OFF command", e);
-            sendErrorResponse("Failed to execute RGB LED command");
+            sendErrorResponse(data, "command_failed", "Failed to execute RGB LED command");
             return false;
         }
     }
@@ -219,7 +221,8 @@ public class RgbLedCommandHandler implements ICommandHandler {
             // Validate brightness
             if (brightness < 0 || brightness > 255) {
                 Log.e(TAG, "❌ Invalid brightness value: " + brightness + " (must be 0-255)");
-                sendErrorResponse("Invalid brightness value: " + brightness);
+                sendErrorResponse(
+                        data, "invalid_parameters", "Invalid brightness value: " + brightness);
                 return false;
             }
 
@@ -233,12 +236,12 @@ public class RgbLedCommandHandler implements ICommandHandler {
             hardwareManager.flashRgbLedWhite(duration, brightness);
 
             Log.i(TAG, "✅ Photo flash LED command sent via hardware manager");
-            sendSuccessResponse(CMD_RGB_LED_PHOTO_FLASH);
+            sendSuccessResponse(data);
             return true;
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error handling photo flash LED command", e);
-            sendErrorResponse("Failed to execute photo flash command");
+            sendErrorResponse(data, "command_failed", "Failed to execute photo flash command");
             return false;
         }
     }
@@ -259,7 +262,8 @@ public class RgbLedCommandHandler implements ICommandHandler {
             // Validate brightness
             if (brightness < 0 || brightness > 255) {
                 Log.e(TAG, "❌ Invalid brightness value: " + brightness + " (must be 0-255)");
-                sendErrorResponse("Invalid brightness value: " + brightness);
+                sendErrorResponse(
+                        data, "invalid_parameters", "Invalid brightness value: " + brightness);
                 return false;
             }
 
@@ -273,22 +277,36 @@ public class RgbLedCommandHandler implements ICommandHandler {
             hardwareManager.setRgbLedSolidWhite(1800000, brightness);
 
             Log.i(TAG, "✅ Video recording LED command sent via hardware manager");
-            sendSuccessResponse(CMD_RGB_LED_VIDEO_SOLID);
+            sendSuccessResponse(data);
             return true;
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error handling video recording LED command", e);
-            sendErrorResponse("Failed to execute video recording LED command");
+            sendErrorResponse(
+                    data, "command_failed", "Failed to execute video recording LED command");
             return false;
         }
     }
 
-    /** Send success response back to phone. */
-    private void sendSuccessResponse(String commandType) {
+    /**
+     * Reply to the phone. Every RGB LED command answers with one {@code rgb_led_control_response}
+     * that echoes the command's {@code requestId}, which is how the phone settles the request it is
+     * waiting on. Commands sent without a requestId get the same reply without one.
+     */
+    private void sendResponse(JSONObject command, boolean success, String errorCode, String error) {
         try {
             JSONObject response = new JSONObject();
-            response.put("type", commandType + "_response");
-            response.put("success", true);
+            response.put("type", "rgb_led_control_response");
+            String requestId = command != null ? command.optString("requestId", "") : "";
+            if (!requestId.isEmpty()) {
+                response.put("requestId", requestId);
+            }
+            response.put("state", success ? "success" : "error");
+            response.put("success", success);
+            if (!success) {
+                response.put("errorCode", errorCode);
+                response.put("error", error);
+            }
             response.put("timestamp", System.currentTimeMillis());
 
             if (serviceManager != null
@@ -297,32 +315,18 @@ public class RgbLedCommandHandler implements ICommandHandler {
                 serviceManager
                         .getBluetoothManager()
                         .sendMessage(response.toString().getBytes(StandardCharsets.UTF_8));
-                Log.d(TAG, "✅ Success response sent to phone");
+                Log.d(TAG, (success ? "✅" : "⚠️") + " RGB LED response sent to phone");
             }
         } catch (JSONException e) {
-            Log.e(TAG, "Error creating success response", e);
+            Log.e(TAG, "Error creating RGB LED response", e);
         }
     }
 
-    /** Send error response back to phone. */
-    private void sendErrorResponse(String errorMessage) {
-        try {
-            JSONObject response = new JSONObject();
-            response.put("type", "rgb_led_control_error");
-            response.put("success", false);
-            response.put("error", errorMessage);
-            response.put("timestamp", System.currentTimeMillis());
+    private void sendSuccessResponse(JSONObject command) {
+        sendResponse(command, true, null, null);
+    }
 
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && serviceManager.getBluetoothManager().isConnected()) {
-                serviceManager
-                        .getBluetoothManager()
-                        .sendMessage(response.toString().getBytes(StandardCharsets.UTF_8));
-                Log.d(TAG, "⚠️ Error response sent to phone");
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating error response", e);
-        }
+    private void sendErrorResponse(JSONObject command, String errorCode, String error) {
+        sendResponse(command, false, errorCode, error);
     }
 }
