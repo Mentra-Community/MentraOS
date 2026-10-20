@@ -8,10 +8,9 @@ jest.mock("@/utils/AlertUtils", () => ({
 }))
 
 import {act, render} from "@testing-library/react-native"
-import {Platform} from "react-native"
+import type {GlassesAudioSetupState} from "@mentra/bluetooth-sdk"
 
 import {BtClassicPairing} from "@/effects/BtClassicPairing"
-import {AUDIO_RECONNECT_GRACE_MS} from "@/utils/pairing/pairAudio"
 import showAlert, {dismissAlert} from "@/utils/AlertUtils"
 import {SETTINGS, DeviceTypes} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
@@ -19,76 +18,76 @@ import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 
 const TITLE = "pairing:btClassicDisconnected"
+const NEEDS_USER: GlassesAudioSetupState = {state: "needs_user", action: "connect_in_settings"}
 
-const connect = () =>
-  act(() => useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}}))
+const setAudioSetup = (audioSetup: GlassesAudioSetupState) =>
+  act(() => useGlassesStore.getState().setGlassesInfo({audioSetup}))
 
 describe("BtClassicPairing", () => {
-  const originalOS = Platform.OS
-
   beforeEach(() => {
-    jest.useFakeTimers()
     jest.clearAllMocks()
-    ;(Platform as {OS: string}).OS = "ios"
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
     useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, DeviceTypes.LIVE, false)
+    act(() => useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}}))
   })
 
-  afterEach(() => {
-    jest.useRealTimers()
-    ;(Platform as {OS: string}).OS = originalOS
-  })
-
-  it("shows the prompt when the link is up and audio stays down", () => {
-    connect()
+  it("shows the prompt when the SDK says audio needs the user", () => {
+    setAudioSetup(NEEDS_USER)
     render(<BtClassicPairing />)
-    act(() => jest.advanceTimersByTime(AUDIO_RECONNECT_GRACE_MS))
+    expect(showAlert).toHaveBeenCalledTimes(1)
     expect(showAlert).toHaveBeenCalledWith(TITLE, "pairing:btClassicDisconnectedMessage", expect.any(Array))
   })
 
-  it("does not show the prompt when audio comes up inside the grace period", () => {
-    connect()
+  it.each(["idle", "not_applicable", "connecting", "connected"] as const)(
+    "does not show the prompt while audio setup is %s",
+    (state) => {
+      setAudioSetup({state})
+      render(<BtClassicPairing />)
+      expect(showAlert).not.toHaveBeenCalled()
+    },
+  )
+
+  it("shows the prompt once when connecting turns into needs_user", () => {
+    setAudioSetup({state: "connecting"})
     render(<BtClassicPairing />)
-    act(() => jest.advanceTimersByTime(AUDIO_RECONNECT_GRACE_MS - 1000))
-    act(() => useGlassesStore.getState().setGlassesInfo({bluetoothAudioRouted: true}))
-    act(() => jest.advanceTimersByTime(AUDIO_RECONNECT_GRACE_MS))
     expect(showAlert).not.toHaveBeenCalled()
+
+    setAudioSetup(NEEDS_USER)
+    setAudioSetup(NEEDS_USER)
+    expect(showAlert).toHaveBeenCalledTimes(1)
   })
 
-  it("does not show the prompt when the audio route is already active", () => {
-    connect()
-    act(() => useGlassesStore.getState().setGlassesInfo({bluetoothAudioRouted: true}))
+  it("takes the prompt down when audio connects while it is showing", () => {
+    setAudioSetup(NEEDS_USER)
     render(<BtClassicPairing />)
-    act(() => jest.advanceTimersByTime(AUDIO_RECONNECT_GRACE_MS))
-    expect(showAlert).not.toHaveBeenCalled()
-  })
-
-  it("takes the prompt down when audio comes up while it is showing", () => {
-    connect()
-    render(<BtClassicPairing />)
-    act(() => jest.advanceTimersByTime(AUDIO_RECONNECT_GRACE_MS))
     expect(showAlert).toHaveBeenCalledTimes(1)
 
-    act(() => useGlassesStore.getState().setGlassesInfo({bluetoothAudioRouted: true}))
+    setAudioSetup({state: "connected"})
 
     expect(dismissAlert).toHaveBeenCalledWith(TITLE)
   })
 
   it("takes the prompt down when the glasses disconnect while it is showing", () => {
-    connect()
+    setAudioSetup(NEEDS_USER)
     render(<BtClassicPairing />)
-    act(() => jest.advanceTimersByTime(AUDIO_RECONNECT_GRACE_MS))
 
-    act(() => useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}}))
+    setAudioSetup({state: "idle"})
 
     expect(dismissAlert).toHaveBeenCalledWith(TITLE)
   })
 
   it("does not dismiss anything when no prompt was shown", () => {
-    connect()
+    setAudioSetup({state: "connecting"})
     render(<BtClassicPairing />)
-    act(() => useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true}))
+    setAudioSetup({state: "connected"})
     expect(dismissAlert).not.toHaveBeenCalled()
+  })
+
+  it("does not prompt for glasses other than Mentra Live", () => {
+    useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, DeviceTypes.G2, false)
+    setAudioSetup(NEEDS_USER)
+    render(<BtClassicPairing />)
+    expect(showAlert).not.toHaveBeenCalled()
   })
 })

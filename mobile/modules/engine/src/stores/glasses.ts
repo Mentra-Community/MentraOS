@@ -26,6 +26,12 @@ export const selectGlassesReady = (state: {connection: GlassesConnectionStatus})
  */
 export type LivePairingState = NonNullable<PublicGlassesStatus["pairingState"]>
 
+/**
+ * The SDK-owned audio setup state (`idle`, `not_applicable`, `connecting`, `connected`,
+ * `needs_user`). The engine mirrors it from `glasses_status` and `audio_setup_changed`.
+ */
+export type GlassesAudioSetup = NonNullable<PublicGlassesStatus["audioSetup"]>
+
 type EngineGlassesStatus = PublicGlassesStatus & {
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null
@@ -139,6 +145,7 @@ const initialState: GlassesStore = {
   rightMacAddress: "",
   buildNumber: "",
   pairingState: {state: "normal"},
+  audioSetup: {state: "idle"},
   systemTimeMs: 0,
   otaVersionUrl: "",
   appVersion: "",

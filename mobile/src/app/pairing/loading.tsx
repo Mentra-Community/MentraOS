@@ -1,6 +1,6 @@
 import {useIsFocused, useRoute} from "@react-navigation/native"
-import BluetoothSdk, {type Device, type PairingInfoEvent} from "@mentra/bluetooth-sdk"
-import {engine, DeviceTypes} from "@mentra/engine"
+import type {Device} from "@mentra/bluetooth-sdk"
+import {ControllerTypes, engine, DeviceTypes} from "@mentra/engine"
 import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Platform, View} from "react-native"
@@ -15,12 +15,8 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {isG2RecoveryError} from "@/utils/pairing/g2Recovery"
 import {FORGET_IOS_PAIRING_ROUTE, isIosForgetPairingFailure} from "@/utils/pairing/iosStaleBond"
-import {AUTO_AUDIO_WAIT_MS, BT_CLASSIC_ROUTE, decidePairAudio} from "@/utils/pairing/pairAudio"
-import {advertisedSecurePairingCapable} from "@/utils/pairing/securePairingFeature"
+import {BT_CLASSIC_ROUTE} from "@/utils/pairing/pairAudio"
 
-// Secure pairing info should arrive immediately after Mentra Live finishes booting.
-// Secure or unknown firmware fails closed instead of spinning forever.
-const PAIRING_INFO_WAIT_MS = 5_000
 const PAIRING_KICKOFF_DELAY_MS = 2_000
 
 /**
@@ -28,13 +24,10 @@ const PAIRING_KICKOFF_DELAY_MS = 2_000
  * never confirms anything: the SDK sends `pair_select` on its own, and a previous phone stays paired
  * until the new bond commits on the glasses.
  *
- * `pairing_info` is a secure-firmware readiness signal and carries `auto_audio`. The advertised
- * capability lets existing customer firmware proceed without waiting for an event it does not emit.
- * Route params arrive as strings, so legacy firmware is both boolean false and "false".
- *
- * iPhone audio (spec S6): always read the real audio state first. Audio up goes straight to success.
- * Audio down with `auto_audio` waits up to 8 s, re-checks, then opens Pair Audio only if it is
- * still down. Audio down without `auto_audio` opens Pair Audio at once. Android never shows it.
+ * The Bluetooth SDK decides when the selected glasses are ready (on secure firmware, only after the
+ * glasses commit the new bond) and whether audio needs the user (`audioSetup`). This screen renders
+ * both: `connected` or `not_applicable` shows success, `needs_user` opens Pair Audio, and
+ * `connecting` keeps the spinner while audio comes up on its own.
  *
  * `pair_failure.code === "ios_forget_pairing"` on iPhone opens the "Forget the old pairing" screen.
  */
@@ -46,16 +39,11 @@ export default function GlassesPairingLoadingScreen() {
     deviceModel,
     deviceName,
     ar99ProjectName,
-    securePairingCapable,
-    pairingCode,
   } = route.params as {
     device?: string
     deviceModel: string
     deviceName?: string
     ar99ProjectName?: string
-    /** Known upfront from the scan result's advertised capability, before any pairing_info event. */
-    securePairingCapable?: boolean
-    pairingCode?: string
   }
   const isFocused = useIsFocused()
   const selectedDevice = useMemo((): Device | null => {
@@ -73,7 +61,6 @@ export default function GlassesPairingLoadingScreen() {
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedTargetReady, setSelectedTargetReady] = useState(false)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
-  const [pairingInfoReceived, setPairingInfoReceived] = useState(false)
   const [pairingKickoffComplete, setPairingKickoffComplete] = useState(false)
   const pairingKickoffStartedRef = useRef(false)
   const pairingKickoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -82,17 +69,12 @@ export default function GlassesPairingLoadingScreen() {
   // Pair Audio covers this screen. Success is only decided again once it hands the screen back.
   const pairAudioUnfocusedRef = useRef(false)
   const pairAudioReturnedRef = useRef(false)
-  const autoAudioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [autoAudio, setAutoAudio] = useState<boolean | undefined>(undefined)
-  const readiness = useEngineSnapshot(engine.pairing.readiness, (onChange) => engine.pairing.onReadiness(onChange))
-  const {bluetoothClassicConnected, bluetoothClassicProfilesConnected, bluetoothAudioRouted} = readiness
-  const [autoAudioWaitElapsed, setAutoAudioWaitElapsed] = useState(false)
-  const isMentraLive = deviceModel === DeviceTypes.LIVE
-  const advertisedSecurePairing = advertisedSecurePairingCapable(
-    securePairingCapable,
-    selectedDevice?.securePairingCapable,
+  const {audioSetup: glassesAudioSetup} = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
   )
-  const securePairingRequired = isMentraLive && advertisedSecurePairing !== false
+  // Audio setup belongs to glasses. A controller target (R1) has nothing to set up.
+  const isControllerTarget = (Object.values(ControllerTypes) as string[]).includes(deviceModel)
+  const audioSetup = isControllerTarget ? ({state: "not_applicable"} as const) : glassesAudioSetup
   const pairingTimingStartRef = useRef(Date.now())
   const pairingTimingLastRef = useRef(Date.now())
 
@@ -137,35 +119,6 @@ export default function GlassesPairingLoadingScreen() {
     }
   }, [logPairingTiming])
 
-  useEffect(() => {
-    if (!securePairingRequired) {
-      return
-    }
-
-    const sub = BluetoothSdk.addListener("pairing_info", (event: PairingInfoEvent) => {
-      if (!pairingKickoffStartedRef.current) return
-
-      const advertisedCode = pairingCode?.trim().toUpperCase()
-      const eventCode = typeof event.pairing_code === "string" ? event.pairing_code.trim().toUpperCase() : undefined
-      if (advertisedCode && eventCode && eventCode !== advertisedCode) {
-        logPairingTiming("ignoring_pairing_info_for_other_device")
-        return
-      }
-      setPairingInfoReceived(true)
-      setAutoAudio(event.auto_audio === true ? true : undefined)
-      logPairingTiming(
-        "pairing_info",
-        `had_previous_bond=${event.had_previous_bond} secure=${event.secure_pairing_capable} auto_audio=${String(
-          event.auto_audio,
-        )}`,
-      )
-    })
-
-    return () => {
-      sub.remove()
-    }
-  }, [securePairingRequired, pairingCode, logPairingTiming])
-
   const handleGoBack = useCallback(() => {
     console.log(`PAIRFLOW: loading_cancel model=${deviceModel} name=${deviceName ?? ""}`)
     pairingStoppedRef.current = true
@@ -201,10 +154,6 @@ export default function GlassesPairingLoadingScreen() {
         clearTimeout(navigationTimerRef.current)
         navigationTimerRef.current = null
       }
-      if (autoAudioTimerRef.current) {
-        clearTimeout(autoAudioTimerRef.current)
-        autoAudioTimerRef.current = null
-      }
       void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Pairing failure cleanup failed:", cleanupError)
       })
@@ -239,11 +188,7 @@ export default function GlassesPairingLoadingScreen() {
       pairingKickoffTimerRef.current = null
       if (pairingStoppedRef.current) return
       pairingKickoffStartedRef.current = true
-      console.log(
-        `PAIRFLOW: loading_kickoff model=${deviceModel} name=${deviceName ?? ""} secure=${String(
-          securePairingRequired,
-        )}`,
-      )
+      console.log(`PAIRFLOW: loading_kickoff model=${deviceModel} name=${deviceName ?? ""}`)
       logPairingTiming("pairing_kickoff")
       void engine.pairing
         .pair(selectedDevice)
@@ -288,35 +233,6 @@ export default function GlassesPairingLoadingScreen() {
     }
   }, [deviceModel, deviceName, handlePairFailure, isFocused, pairingKickoffComplete])
 
-  useEffect(() => {
-    if (
-      !isFocused ||
-      pairingStoppedRef.current ||
-      !pairingKickoffComplete ||
-      !securePairingRequired ||
-      !selectedTargetReady ||
-      pairingInfoReceived
-    ) {
-      return
-    }
-    // A missing pairing_info only leaves the spinner: it never routes to failure and never marks the
-    // flow as navigated, so a late pairing_info still lets pairing finish.
-    const timer = setTimeout(() => {
-      logPairingTiming("pairing_info_timeout", `securePairingCapable=${String(advertisedSecurePairing)}`)
-    }, PAIRING_INFO_WAIT_MS)
-    return () => {
-      clearTimeout(timer)
-    }
-  }, [
-    securePairingRequired,
-    isFocused,
-    pairingKickoffComplete,
-    advertisedSecurePairing,
-    selectedTargetReady,
-    pairingInfoReceived,
-    logPairingTiming,
-  ])
-
   const openPairAudio = useCallback(() => {
     if (pairAudioHandedOffRef.current) return
     pairAudioHandedOffRef.current = true
@@ -335,62 +251,22 @@ export default function GlassesPairingLoadingScreen() {
     if (pairingStoppedRef.current || !isFocused || !pairingKickoffComplete || !selectedTargetReady) {
       return
     }
-    logPairingTiming(
-      "glasses_fully_booted",
-      `pairingInfoReceived=${pairingInfoReceived} securePairingCapable=${String(advertisedSecurePairing)}`,
-    )
+    logPairingTiming("glasses_fully_booted", `audioSetup=${audioSetup.state}`)
     if (hasNavigatedRef.current) {
       return
     }
 
-    if (securePairingRequired && !pairingInfoReceived) {
-      logPairingTiming("waiting_secure_pairing_info")
+    if (audioSetup.state === "needs_user") {
+      // Pair Audio advances by itself once the SDK reports audio connected, then hands this screen back.
+      openPairAudio()
+      return
+    }
+    if (audioSetup.state !== "connected" && audioSetup.state !== "not_applicable") {
+      // `connecting`: the SDK still expects audio to come up on its own and decides when to stop waiting.
+      logPairingTiming("waiting_audio_setup", `audioSetup=${audioSetup.state}`)
       return
     }
 
-    const audioDecision = decidePairAudio({
-      platform: Platform.OS,
-      deviceModel,
-      readiness: {bluetoothClassicConnected, bluetoothClassicProfilesConnected, bluetoothAudioRouted},
-      autoAudio,
-      waitElapsed: autoAudioWaitElapsed,
-    })
-
-    if (audioDecision !== "done") {
-      // Pair Audio already took over once; it advances on its own when audio connects.
-      if (pairAudioHandedOffRef.current) return
-      if (audioDecision === "pair_audio") {
-        openPairAudio()
-        return
-      }
-      if (autoAudioTimerRef.current) return
-      logPairingTiming("waiting_auto_audio")
-      autoAudioTimerRef.current = setTimeout(() => {
-        autoAudioTimerRef.current = null
-        if (pairingStoppedRef.current || hasNavigatedRef.current || pairAudioHandedOffRef.current) return
-        // Re-check the real audio state at expiry. A connection that lands just before this fires
-        // takes the success path below; one that lands just after finds Pair Audio already open.
-        const latest = engine.pairing.readiness()
-        const atExpiry = decidePairAudio({
-          platform: Platform.OS,
-          deviceModel,
-          readiness: latest,
-          autoAudio,
-          waitElapsed: true,
-        })
-        if (atExpiry === "pair_audio") {
-          openPairAudio()
-          return
-        }
-        setAutoAudioWaitElapsed(true)
-      }, AUTO_AUDIO_WAIT_MS)
-      return
-    }
-
-    if (autoAudioTimerRef.current) {
-      clearTimeout(autoAudioTimerRef.current)
-      autoAudioTimerRef.current = null
-    }
     // Audio came up after Pair Audio opened: that screen advances itself and gives this one back.
     // Navigating here too would be a second navigation.
     if (pairAudioHandedOffRef.current && !pairAudioReturnedRef.current) return
@@ -399,7 +275,7 @@ export default function GlassesPairingLoadingScreen() {
     console.log(
       `PAIRFLOW: loading_navigate route=/pairing/success model=${deviceModel} name=${
         deviceName ?? ""
-      } pairingInfo=${pairingInfoReceived}`,
+      } audioSetup=${audioSetup.state}`,
     )
     logPairingTiming("navigate_success_scheduled")
     navigationTimerRef.current = setTimeout(() => {
@@ -412,17 +288,10 @@ export default function GlassesPairingLoadingScreen() {
     pairingKickoffComplete,
     replace,
     deviceModel,
-    securePairingRequired,
-    pairingInfoReceived,
     ar99ProjectName,
     deviceName,
-    advertisedSecurePairing,
     logPairingTiming,
-    bluetoothClassicConnected,
-    bluetoothClassicProfilesConnected,
-    bluetoothAudioRouted,
-    autoAudio,
-    autoAudioWaitElapsed,
+    audioSetup.state,
     openPairAudio,
   ])
 
@@ -432,10 +301,6 @@ export default function GlassesPairingLoadingScreen() {
       navigationTimerRef.current = null
       hasNavigatedRef.current = false
     }
-    if (!isFocused && autoAudioTimerRef.current) {
-      clearTimeout(autoAudioTimerRef.current)
-      autoAudioTimerRef.current = null
-    }
   }, [isFocused])
 
   useEffect(() => {
@@ -443,15 +308,12 @@ export default function GlassesPairingLoadingScreen() {
       if (navigationTimerRef.current) {
         clearTimeout(navigationTimerRef.current)
       }
-      if (autoAudioTimerRef.current) {
-        clearTimeout(autoAudioTimerRef.current)
-      }
     }
   }, [])
 
   useEffect(() => {
     console.log(
-      `PAIRFLOW: loading_state focused=${isFocused} kickoffComplete=${pairingKickoffComplete} targetReady=${selectedTargetReady} pairingInfo=${pairingInfoReceived} secureRequired=${securePairingRequired} booting=${showGlassesBooting} model=${deviceModel} name=${
+      `PAIRFLOW: loading_state focused=${isFocused} kickoffComplete=${pairingKickoffComplete} targetReady=${selectedTargetReady} audioSetup=${audioSetup.state} booting=${showGlassesBooting} model=${deviceModel} name=${
         deviceName ?? ""
       }`,
     )
@@ -459,9 +321,8 @@ export default function GlassesPairingLoadingScreen() {
     deviceModel,
     deviceName,
     isFocused,
-    pairingInfoReceived,
+    audioSetup.state,
     pairingKickoffComplete,
-    securePairingRequired,
     selectedTargetReady,
     showGlassesBooting,
   ])

@@ -163,6 +163,7 @@ describe("pairing ready timeout reports", () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       bluetoothClassicConnected: true,
+      audioSetup: {state: "connected"},
     })
 
     expect(pairing.readiness()).toEqual({
@@ -172,6 +173,7 @@ describe("pairing ready timeout reports", () => {
       bluetoothClassicConnected: true,
       bluetoothClassicProfilesConnected: false,
       bluetoothAudioRouted: false,
+      audioSetup: {state: "connected"},
       nativeLinkBusy: false,
     })
   })

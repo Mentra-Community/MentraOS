@@ -10,7 +10,6 @@ import {engine} from "@mentra/engine"
 import type {Device} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {cancelPendingPairing, routePairingKickoffFailure} from "@/utils/PairingUtils"
-import {isClassicAudioUp} from "@/utils/pairing/pairAudio"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -38,9 +37,10 @@ export default function BtClassicPairingScreen() {
       return null
     }
   }, [route.params])
-  const audioReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) => engine.pairing.onReadiness(onChange))
-  // Any of the three audio signals counts, so Pair Audio never stays open over working audio.
-  const audioUp = isClassicAudioUp(audioReadiness)
+  const {audioSetup} = useEngineSnapshot(engine.pairing.readiness, (onChange) => engine.pairing.onReadiness(onChange))
+  // The Bluetooth SDK decides when glasses audio is up (the glasses' own report or the phone's audio
+  // signals); this screen only waits for it.
+  const audioUp = audioSetup.state === "connected" || audioSetup.state === "not_applicable"
   const otherBtConnected = useEngineSnapshot(engine.pairing.otherBtConnected, (onChange) =>
     engine.pairing.onOtherBtConnected(onChange),
   )
@@ -109,7 +109,7 @@ export default function BtClassicPairingScreen() {
 
   useEffect(() => {
     console.log(
-      `PAIRFLOW: btclassic device=${deviceName} audioUp=${audioUp} ${audioUp ? "advance" : "wait_for_audio_route"}`,
+      `PAIRFLOW: btclassic device=${deviceName} audioSetup=${audioSetup.state} ${audioUp ? "advance" : "wait_for_audio"}`,
     )
     // On mount this advances at once when audio is already up.
     if (audioUp) {

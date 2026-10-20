@@ -149,6 +149,14 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
+  // Whether the user has to do anything for glasses audio is decided by the Bluetooth SDK. The
+  // engine mirrors it; the pairing flow and Home render Pair Audio from it.
+  subs.push(
+    BluetoothSdk.addListener("audio_setup_changed", (event) => {
+      useGlassesStore.getState().setGlassesInfo({audioSetup: event.state})
+    }),
+  )
+
   // --- coordinators (owns()-gated) ---
 
   // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout).

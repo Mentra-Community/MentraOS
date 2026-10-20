@@ -64,6 +64,7 @@ function projectReadiness() {
     bluetoothClassicConnected: s.bluetoothClassicConnected,
     bluetoothClassicProfilesConnected: s.bluetoothClassicProfilesConnected,
     bluetoothAudioRouted: s.bluetoothAudioRouted,
+    audioSetup: s.audioSetup ?? ({state: "idle"} as const),
     nativeLinkBusy: isGlassesLinkLayerBusy(s.connection),
   }
 }

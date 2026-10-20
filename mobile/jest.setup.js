@@ -555,6 +555,7 @@ const mockIslandEntries = () => {
             bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
             bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
             bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+            audioSetup: glassesState.audioSetup ?? {state: "idle"},
             nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
           }
         }),
@@ -568,6 +569,7 @@ const mockIslandEntries = () => {
               bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
               bluetoothClassicProfilesConnected: glassesState.bluetoothClassicProfilesConnected,
               bluetoothAudioRouted: glassesState.bluetoothAudioRouted,
+              audioSetup: glassesState.audioSetup ?? {state: "idle"},
               nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
             }
           }

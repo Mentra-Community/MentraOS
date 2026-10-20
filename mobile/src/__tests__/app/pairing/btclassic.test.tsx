@@ -150,7 +150,7 @@ describe("btclassic pairing screen", () => {
 
   it("advances at once when audio is already up on mount", async () => {
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({bluetoothAudioRouted: true})
+      useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "connected"}})
     })
     render(<BtClassicPairingScreen />)
 
@@ -158,39 +158,43 @@ describe("btclassic pairing screen", () => {
     expect(replace).not.toHaveBeenCalled()
   })
 
-  it.each([
-    ["the Classic bond", {bluetoothClassicConnected: true}],
-    ["the connected profiles", {bluetoothClassicProfilesConnected: true}],
-    ["the audio route", {bluetoothAudioRouted: true}],
-  ])("advances exactly once when %s reports audio up", async (_label, signal) => {
-    render(<BtClassicPairingScreen />)
-    expect(pushPrevious).not.toHaveBeenCalled()
-
-    act(() => {
-      useGlassesStore.getState().setGlassesInfo(signal)
-    })
-    // The other signals follow in the same pairing. They must not navigate again.
-    act(() => {
-      useGlassesStore.getState().setGlassesInfo({
-        bluetoothClassicConnected: true,
-        bluetoothClassicProfilesConnected: true,
-        bluetoothAudioRouted: true,
+  it.each(["connected", "not_applicable"] as const)(
+    "advances exactly once when the SDK reports audio setup %s",
+    async (state) => {
+      act(() => {
+        useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "needs_user", action: "connect_in_settings"}})
       })
-    })
+      render(<BtClassicPairingScreen />)
+      expect(pushPrevious).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(pushPrevious).toHaveBeenCalledTimes(1))
-  })
+      act(() => {
+        useGlassesStore.getState().setGlassesInfo({audioSetup: {state}})
+      })
+      // Later status updates in the same pairing must not navigate again.
+      act(() => {
+        useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "connected"}, bluetoothAudioRouted: true})
+      })
 
-  it("stays on Pair Audio while no audio signal is up", () => {
-    render(<BtClassicPairingScreen />)
-    expect(pushPrevious).not.toHaveBeenCalled()
-  })
+      await waitFor(() => expect(pushPrevious).toHaveBeenCalledTimes(1))
+    },
+  )
+
+  it.each([{state: "idle"}, {state: "connecting"}, {state: "needs_user", action: "connect_in_settings"}] as const)(
+    "stays on Pair Audio while audio setup is $state",
+    (audioSetup) => {
+      act(() => {
+        useGlassesStore.getState().setGlassesInfo({audioSetup, bluetoothAudioRouted: true})
+      })
+      render(<BtClassicPairingScreen />)
+      expect(pushPrevious).not.toHaveBeenCalled()
+    },
+  )
 
   it("reveals loading once Bluetooth Classic links and lets loading own the connect", async () => {
     render(<BtClassicPairingScreen />)
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
+      useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "connected"}})
     })
 
     await waitFor(() => {
@@ -213,7 +217,7 @@ describe("btclassic pairing screen", () => {
     fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith({clearPendingSelection: true})
     expect(clearHistoryAndGoHome).not.toHaveBeenCalled()
-    act(() => useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true}))
+    act(() => useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "connected"}}))
     expect(pushPrevious).not.toHaveBeenCalled()
     fireEvent.press(screen.getByLabelText("pairing:cancelPairing"))
     expect(engine.pairing.abandonAttempt).toHaveBeenCalledTimes(1)
@@ -254,7 +258,7 @@ describe("btclassic pairing screen", () => {
     render(<BtClassicPairingScreen />)
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
+      useGlassesStore.getState().setGlassesInfo({audioSetup: {state: "connected"}})
     })
 
     await waitFor(() => {
