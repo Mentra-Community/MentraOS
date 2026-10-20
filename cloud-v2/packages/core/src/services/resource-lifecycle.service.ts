@@ -157,6 +157,14 @@ function projectFleetResourceAuthorities(rows:ResourceLifecycleRow[],subjects:Re
         owner:claim?{...claim.owner,generation:null,hostId:claim.borrowerHostId,laneId:claim.laneId}:null,
         idle:{contractVersion:'not-commissioned',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'unqualified'},evidenceRefs:[]},
         repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'exclusive-dependency',capabilities:[...offer.capabilities],memberships:[],dependencies:[],placement:'fleet'}};
+      if (claim?.prerequisite && existing >= 0) {
+        const phone = subjects[existing]!;
+        // The raw claim fences this installed phone. Preserve its real local generation and idle/repair semantics.
+        Object.assign(value, {...phone, status: 'reserved', supportedActions: [],
+          owner: phone.owner?.id === claim.owner.id && phone.owner.kind === claim.owner.kind ? phone.owner :
+            {...claim.owner, generation: null, hostId: claim.borrowerHostId, laneId: claim.laneId},
+          reason: {code: 'retained-backend-prerequisite', message: 'The original phone prerequisite claim remains retained until its resource-check return is accepted.'}});
+      }
       if(existing>=0) subjects[existing]=value;else subjects.push(value);
     }
     if(claim) {
@@ -169,8 +177,8 @@ function projectFleetResourceAuthorities(rows:ResourceLifecycleRow[],subjects:Re
       const observation=resourceReservationObservationSchema.parse(snapshot.resourceReservations);
       for(const receipt of observation.returns.filter(receipt=>receipt.resourceId===resourceId && receipt.authorityHostId===offer.authorityHostId)) {
         const id=`return:${createHash('sha256').update(`${receipt.claimId}:${receipt.release.eventId}`).digest('hex')}`;
-        const original=receipt.release.lineage.find(owner=>owner.id===receipt.originalOwner.id && owner.kind===receipt.originalOwner.kind);
-        history.set(`${offer.authorityHostId}:${resourceId}:${id}`,{id,resourceId,subjectGeneration:null,at:receipt.release.releasedAt,event:'return-reported',ownerId:receipt.originalOwner.id,...(original?{ownerGeneration:original.generation}:{}),hostId:borrower.hostId,laneId:receipt.laneId});
+        const original='kind' in receipt.release ? undefined : receipt.release.lineage.find(owner=>owner.id===receipt.originalOwner.id && owner.kind===receipt.originalOwner.kind);
+        history.set(`${offer.authorityHostId}:${resourceId}:${id}`,{id,resourceId,subjectGeneration:'kind' in receipt.release?receipt.release.subjectGeneration:null,at:receipt.release.releasedAt,event:'return-reported',ownerId:receipt.originalOwner.id,...(original?{ownerGeneration:original.generation}:{}),...('kind' in receipt.release?{checkOperationId:receipt.release.operationId}:{}),hostId:borrower.hostId,laneId:receipt.laneId});
       }
     }
   }

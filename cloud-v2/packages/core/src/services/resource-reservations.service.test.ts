@@ -370,6 +370,7 @@ test('exact cancelled-before-allocation proof returns a claim without inventing 
   const f = fixture(), request = {...intent('air1', 'cancelled'), operationId: 'run:cancelled'}
   const claim = (await f.service.acquire(request, 'air1')).claims[0]!, host = f.observe('air1')
   const proof = returned(claim, host)
+  if ('kind' in proof.release) throw Error('Expected a normal lane release')
   proof.release.neverStarted = {requestId: 'cancelled', reason: 'cancelled-before-allocation'}
   const {controller: _, ...local} = proof
   host.snapshot.resourceReservations = {claims: [claim], returns: [local]}

@@ -1,10 +1,16 @@
 import {z} from 'zod';
-import {frameworkIdentitySchema} from './framework-request.types';
+import {frameworkIdentitySchema, frameworkRequestInputSchema} from './framework-request.types';
 import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {publishedRoutineDefinitionSchema, routineResourceRequirementSchema, routinePlatformSchema,
   glassesModelSchema, routineIdentitySchema} from './routine-definition.types';
 import {routineDispatchSelectionSchema, routinePreparedBuildSchema, routineRevisionSchema} from './routine-dispatch.types';
+import {backendQualificationPurposeSchema, backendLocalPrerequisiteSchema, backendPreparingReceiptSchema} from './backend-connectivity.types';
 
+const canonicalTarget = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalTarget) :
+  value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, child]) => [key, canonicalTarget(child)])) : value
+// SHA validation is performed at the service boundary; this helper compares exact input identities here.
+const canonicalTargetIdentity = (value: unknown) => JSON.stringify(canonicalTarget(value))
 export const jobHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const routineJobTargetSchema = z.object({hostId: frameworkIdentitySchema.optional(), laneId: frameworkIdentitySchema.optional()}).strict()
   .refine(value => !!value.hostId, 'A lane target requires its host identity');
@@ -31,23 +37,38 @@ export const routineJobPreparationSchema = z.object({routineSource: routineSourc
 export const routineQualificationTargetSchema = z.object({jobId: frameworkIdentitySchema, hostId: frameworkIdentitySchema,
   laneId: frameworkIdentitySchema, inputSha256: jobHashSchema, deadline: z.string().datetime({offset: true}),
   selection: portableRoutineSelectionSchema, requirements: portableRequirementsSchema,
-  preparing: z.object({dispatchIntentSha256: jobHashSchema, fleetInputSha256: jobHashSchema,
-    bindingSha256: jobHashSchema, admissionSha256: jobHashSchema, reservationSha256: jobHashSchema}).strict().optional(),
+  purpose: backendQualificationPurposeSchema.optional(),
+  acceptedBinding: frameworkBindingSchema.optional(),
+  proposedInput: frameworkRequestInputSchema.optional(),
+  preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional(),
   accepted: z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, inputSha256: jobHashSchema,
     acceptedAt: z.string().datetime({offset: true}), binding: frameworkBindingSchema,
     controller: z.object({incarnation: frameworkIdentitySchema, generation: z.number().int().positive().safe()}).strict()}).strict().optional(),
   target: routineJobTargetSchema.optional()}).strict().refine(value => value.selection.requestId === value.jobId &&
-    value.selection.platform === 'ios-on-mac' && value.requirements.platform === value.selection.platform &&
+    (value.purpose ? value.selection.platform === 'android' && !!value.acceptedBinding && (Boolean(value.preparing) !== Boolean(value.local)) && !!value.proposedInput && !value.accepted &&
+      value.requirements.resources.some(resource => resource.kind === 'phone' && resource.capabilities.includes('backend-connectivity'))
+      : value.selection.platform === 'ios-on-mac' && !value.acceptedBinding && !value.proposedInput && !value.local) && value.requirements.platform === value.selection.platform &&
     (!value.target || value.target.hostId === value.hostId && (!value.target.laneId || value.target.laneId === value.laneId)) &&
     (!value.accepted || value.accepted.requestId === value.jobId && value.accepted.hostId === value.hostId) &&
-    (!value.preparing || !value.accepted && value.target?.hostId === value.hostId && value.target.laneId === value.laneId),
-  'Qualification target differs from its selected job, platform or explicit lane constraint');
+    (!(value.preparing || value.local) || !value.accepted && value.target?.hostId === value.hostId && value.target.laneId === value.laneId),
+  'Qualification target differs from its selected job, platform or explicit lane constraint').refine(value => !value.local ||
+    value.proposedInput &&
+    value.deadline === new Date(value.local.admissionExpiresAt).toISOString() &&
+    Date.parse(value.local.requestedAt) < value.local.admissionExpiresAt &&
+    Boolean(/^local:([0-9]{13}):([A-Za-z0-9_-]{1,120})$/.exec(value.jobId)) &&
+    (value.local.authority.kind === 'operator' ? Number(value.jobId.split(':')[1]) === value.local.admissionExpiresAt :
+      Number(value.jobId.split(':')[1]) <= value.local.admissionExpiresAt) &&
+    value.proposedInput.platform === 'android' && value.proposedInput.laneId === value.laneId &&
+    value.proposedInput.routineId === value.selection.routineId && value.proposedInput.definitionRevision === value.selection.routineRevision &&
+    canonicalTargetIdentity(value.proposedInput.routineSource) === canonicalTargetIdentity(value.selection.routineSource) &&
+    (value.local.authority.kind === 'candidate' ? canonicalTargetIdentity(value.proposedInput.verification) === canonicalTargetIdentity(value.local.authority.verification) : !value.proposedInput.verification),
+  'Local prerequisite must retain its original admission input, authority and deadline');
 export type RoutineQualificationTarget = z.infer<typeof routineQualificationTargetSchema>;
 /** Exact passive owner lookup on the existing host-authenticated target read. */
 export const ownedRoutineQualificationSchema = z.object({jobId: frameworkIdentitySchema, laneId: frameworkIdentitySchema,
   inputSha256: jobHashSchema, ownerId: frameworkIdentitySchema, generation: z.number().int().positive().safe(),
   binding: frameworkBindingSchema, controller: z.object({incarnation: frameworkIdentitySchema,
-    generation: z.number().int().positive().safe()}).strict()}).strict();
+    generation: z.number().int().positive().safe()}).strict(), purpose: backendQualificationPurposeSchema.optional()}).strict();
 export type OwnedRoutineQualification = z.infer<typeof ownedRoutineQualificationSchema>;
 export const completeRoutineJobPreparationSchema = routineJobPreparationSchema.omit({requirements: true}).extend({inputSha256: jobHashSchema});
 export const routineJobBindingSchema = z.object({jobId: frameworkIdentitySchema, requestId: frameworkIdentitySchema,

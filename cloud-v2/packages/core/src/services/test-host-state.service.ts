@@ -18,6 +18,8 @@ import {
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {permissionObservationsSchema} from "../types/resource-permissions.types"
+import {backendConnectivityObservationSchema} from '../types/backend-connectivity.types'
+import {routineQualificationTargetSchema} from '../types/routine-job.types'
 import {TestRunError} from "./test-result-error"
 import {routineQueuedBlockSchema, routineProgressSchema} from '../types/routine-progress.types'
 import {TestRequestModel} from '../models/test-request.model'
@@ -30,12 +32,15 @@ const resource = z
     laneId: frameworkIdentitySchema.optional(),
     capabilities: z.array(routineIdentitySchema).max(30).optional(),
     permissionObservations: permissionObservationsSchema.optional(),
+    backendConnectivity: backendConnectivityObservationSchema.optional(),
     storage: recorderStorageObservationSchema.optional(),
     idleContract: resourceIdleContractSchema.optional(),
     exclusiveDependencies: exclusiveResourceDependenciesSchema.optional(),
   })
   .strict().refine(value => !value.exclusiveDependencies || value.exclusiveDependencies.every(dependency =>
     value.capabilities?.includes(dependency.capability)), 'Exclusive dependencies must name an offered capability')
+  .refine(value => !value.backendConnectivity || value.kind === 'phone' && value.backendConnectivity.phoneResourceId === value.id &&
+    value.capabilities?.includes('backend-connectivity'), 'Backend observation must identify its installed phone capability')
 export const glassesInventorySchema = z
   .object({
     resourceId: frameworkIdentitySchema,
@@ -115,12 +120,16 @@ function validateHostLaneInventory(snapshot: {lanes: z.infer<typeof routingLaneS
 }
 const routingHostSchema = z.object({
   hostId: frameworkIdentitySchema,
+  incarnation: frameworkIdentitySchema.optional(),
+  incarnationGeneration: z.number().int().positive().safe().optional(),
   frameworkBinding: frameworkBindingSchema.optional(),
+  resourceLifecycle: resourceLifecycleSchema.optional(),
   lanes: z.array(routingLaneSchema).max(100),
 }).strict().superRefine(validateHostLaneInventory)
 export type RoutingTestHostState = z.infer<typeof routingHostSchema> & {receivedAt: string; authorityReservations?: HostResourceReservation[]}
 // Permission observations remain fresh; only diagnostic/history fields are excluded at the database.
 const routingStateProjection = {hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+  'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
   'snapshot.lanes.glasses': 1, _id: 0} as const
@@ -220,6 +229,12 @@ export const hostStateSchema = z
       ctx.addIssue({code: 'custom', message: 'Resource observation is newer than host observation'})
     if (snapshot.resourceLifecycle?.subjects.some(subject => subject.subject.authorityHostId !== snapshot.hostId))
       ctx.addIssue({code: "custom", message: "Resource lifecycle must be reported by its authority host"})
+    const local = (snapshot.resourceReservations?.localPrerequisites ?? []).map(value => routineQualificationTargetSchema.safeParse(value))
+    if (local.some(value => !value.success || !value.data.local || value.data.hostId !== snapshot.hostId ||
+      !snapshot.lanes.some(lane => lane.id === value.data.laneId && lane.platform === 'android')) ||
+      new Set(local.flatMap(value => value.success ? [value.data.jobId] : [])).size !== local.length ||
+      new Set(local.flatMap(value => value.success ? [value.data.laneId] : [])).size !== local.length)
+      ctx.addIssue({code: 'custom', message: 'Local prerequisites must retain unique original inputs on their authority host'})
     validateHostLaneInventory(snapshot, ctx)
   })
 export type TestHostState = z.infer<typeof hostStateSchema>
@@ -256,7 +271,7 @@ export const updaterDeploymentSchema = z
     stopped: frameworkStopSchema.optional(),
   })
   .strict()
-export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]}
+export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]; authorityReservations?: HostResourceReservation[]}
 const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequence?: number}) => ({
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
@@ -460,6 +475,7 @@ export class TestHostStateService {
     return row
       ? {
           ...hostStateSchema.parse(row.snapshot),
+          authorityReservations: hostResourceReservationsSchema.parse(row.resourceReservations ?? []),
           receivedAt: row.receivedAt.toISOString(),
           frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),
         }

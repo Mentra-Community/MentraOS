@@ -937,3 +937,46 @@ test('routing consumes staged selections before admission and preserves explicit
   f.restore({...targeted, fleetInputSha256: routineJobInputDigest(targeted)});
   expect(await f.service.preparation(selection.requestId)).toMatchObject({resourceTarget: {hostId: 'air1', laneId: 'android'}});
 });
+
+test('offline lost-claim response and restart route only the original provisional phone lane', async () => {
+  for (const repositoryProof of [true, false]) {
+    const f = fixture(); await f.prepare()
+    const original = structuredClone(f.row!), claim = original.fleetResourceReservation!
+    delete original.fleetResourceReservation; f.restore(original)
+    expect(original.fleetPreparation!.requirements.resources.find(value => value.kind === 'phone')!.capabilities).toEqual([])
+    const timestamp = '2026-10-08T00:00:00.000Z', lane = structuredClone(f.lane)
+    lane.resources.find(value => value.kind === 'phone')!.capabilities = ['backend-connectivity']
+    const host = (hostId: string) => ({hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+      observedAt: timestamp, receivedAt: timestamp, lanes: [lane], authorityReservations: hostId === 'mini' ? [claim] : []})
+    f.offer([host('air1'), host('mini')])
+    // Same-lane retained load makes the alternate first without original recovery.
+    f.rows.selectedLanes = async () => [{requestId: 'queued-other', hostId: 'mini', laneId: 'android'}]
+    if (repositoryProof) f.rows.recorderClaims = async () => [structuredClone(claim)]
+    const reserve = f.rows.reserveResources!, attempted: string[] = []
+    f.rows.reserveResources = async (id, digest, hostId, laneId, now, waiting) => {
+      attempted.push(hostId)
+      if (hostId !== claim.hostId || laneId !== claim.laneId) {waiting?.(RESOURCE_ADMISSION_WAIT, true); return null}
+      return reserve(id, digest, hostId, laneId, now, waiting)
+    }
+    expect(await f.service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}})
+    expect(attempted).toEqual(['mini'])
+    expect(f.row!.fleetResourceReservation).toEqual(claim)
+    expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256)
+    expect(f.row!.fleetBinding).toBeUndefined(); expect(f.row!.inputSha256).toBeUndefined()
+    // A restarted delivery reads the same repository/snapshot proof. Changed
+    // load cannot move custody or create another target after the lost reply.
+    f.restore(original); attempted.length = 0
+    expect(await f.service.preparation(original.requestId)).toMatchObject({resourceTarget: {hostId: 'mini', laneId: 'android'}})
+    expect(attempted).toEqual(['mini']); expect(f.row!.fleetResourceReservation).toEqual(claim)
+  }
+})
+test('offline provisional recovery refuses duplicate or changed original custody without trying a free phone', async () => {
+  for (const duplicate of [true, false]) {
+    const f = fixture(); await f.prepare(); const original = structuredClone(f.row!), claim = original.fleetResourceReservation!
+    delete original.fleetResourceReservation; f.restore(original)
+    f.rows.recorderClaims = async () => duplicate ? [claim, {...claim, hostId: 'air1'}] : [{...claim, fleetInputSha256: 'f'.repeat(64)}]
+    let attempted = 0; f.rows.reserveResources = async () => {attempted++; throw Error('Ambiguous custody cannot reserve')}
+    expect((await f.service.preparation(original.requestId)).waitingReason).toBe(RESOURCE_ADMISSION_WAIT)
+    expect(attempted).toBe(0); expect(f.row).toEqual(original)
+  }
+})

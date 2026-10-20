@@ -29,7 +29,7 @@ export const resourceLifecycleSubjectSchema = z.object({
   if(value.status==='idle' && (value.owner!==null || value.idle.outcome!=='passed' || value.idle.acceptedCheck?.subjectGeneration!==value.generation || value.idle.qualifiedScope.kind==='unqualified'))
     ctx.addIssue({code:'custom',message:'Idle requires unowned accepted generation-bound qualification'});
 });
-export const resourceLifecycleHistorySchema=z.object({id,resourceId:id,subjectGeneration:generation.nullable(),at:timestamp,event:id,ownerId:id.optional(),ownerGeneration:generation.optional(),hostId:id.optional(),laneId:id.optional(),reasonCode:id.optional()}).strict();
+export const resourceLifecycleHistorySchema=z.object({id,resourceId:id,subjectGeneration:generation.nullable(),at:timestamp,event:id,ownerId:id.optional(),ownerGeneration:generation.optional(),hostId:id.optional(),laneId:id.optional(),reasonCode:id.optional(),checkOperationId:id.optional()}).strict();
 export const resourceLifecycleSchema=z.object({schemaVersion:z.literal(1),subjects:z.array(resourceLifecycleSubjectSchema).max(200),history:z.array(resourceLifecycleHistorySchema).max(200)}).strict().superRefine((value,ctx)=>{
   if(new Set(value.subjects.map(v=>v.subject.id)).size!==value.subjects.length || new Set(value.history.map(v=>v.id)).size!==value.history.length)
     ctx.addIssue({code:'custom',message:'Duplicate resource lifecycle identity'});

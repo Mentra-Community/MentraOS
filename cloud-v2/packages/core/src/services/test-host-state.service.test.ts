@@ -70,6 +70,7 @@ test('routing reads only fresh current offers and preserves permission and physi
     const service = new TestHostStateService(), [offered] = await service.list();
     expect(offered).toEqual({...current, receivedAt: new Date(now).toISOString(), authorityReservations: retained});
     expect(selections).toEqual([{hostId: 1, receivedAt: 1, resourceReservations: 1, 'snapshot.hostId': 1, 'snapshot.frameworkBinding': 1,
+      'snapshot.incarnation': 1, 'snapshot.incarnationGeneration': 1, 'snapshot.resourceLifecycle': 1,
       'snapshot.lanes.id': 1, 'snapshot.lanes.descriptorRevision': 1, 'snapshot.lanes.platform': 1,
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.resources': 1,
       'snapshot.lanes.glasses': 1, _id: 0}]);
