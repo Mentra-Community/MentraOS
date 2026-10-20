@@ -1,5 +1,8 @@
 import BluetoothSdk, {DeviceModels} from "@mentra/bluetooth-sdk"
 import type {
+  GlassesAudioSetupState,
+  MentraLivePairingState,
+  PairFailureEvent,
   PhotoCaptureMetadata,
   PhotoRequestParams,
   PhotoSize,
@@ -67,6 +70,9 @@ export default function App() {
   const [thumbnail, setThumbnail] = useState<{uri: string; bytes: number} | null>(null)
   const [lastCapture, setLastCapture] = useState<CaptureResult | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [pairingState, setPairingState] = useState<MentraLivePairingState>({state: "normal"})
+  const [audioSetup, setAudioSetup] = useState<GlassesAudioSetupState>({state: "idle"})
+  const [pairNotice, setPairNotice] = useState<string | null>(null)
   const receiverStarted = useRef(false)
   const uploadUrlRef = useRef<string | null>(null)
   const pendingRequestId = useRef<string | null>(null)
@@ -85,6 +91,33 @@ export default function App() {
       mfnr,
     }
   }, [scanMode, aeDivisor, isoCap, zsl, mfnr])
+
+  useEffect(() => {
+    let cancelled = false
+    void BluetoothSdk.getGlassesStatus()
+      .then(status => {
+        if (cancelled) return
+        if (status.pairingState) setPairingState(status.pairingState)
+        if (status.audioSetup) setAudioSetup(status.audioSetup)
+      })
+      .catch(() => {})
+    const pairingSub = BluetoothSdk.addListener("pairing_state_changed", event => {
+      setPairingState(event.state)
+    })
+    // The SDK decides when audio needs the user; the app only renders the Settings step.
+    const audioSub = BluetoothSdk.addListener("audio_setup_changed", event => {
+      setAudioSetup(event.state)
+    })
+    const failureSub = BluetoothSdk.addListener("pair_failure", (event: PairFailureEvent) => {
+      setPairNotice(pairFailureMessage(event))
+    })
+    return () => {
+      cancelled = true
+      pairingSub.remove()
+      audioSub.remove()
+      failureSub.remove()
+    }
+  }, [])
 
   useEffect(() => {
     const statusSub = BluetoothSdk.addListener("photo_status", (event: PhotoStatusEvent) => {
@@ -239,6 +272,9 @@ export default function App() {
       <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
         {tab === "connection" ? (
           <Group name="Connection">
+            <Text style={styles.hint}>{pairingStatusLabel(pairingState)}</Text>
+            <Text style={styles.hint}>{audioSetupLabel(audioSetup)}</Text>
+            {pairNotice ? <Text style={styles.status}>{pairNotice}</Text> : null}
             <Button
               title="Scan and connect Mentra Live"
               onPress={async () => {
@@ -248,6 +284,23 @@ export default function App() {
                 }
               }}
             />
+            {pairingState.state === "pairing_rejected" ? (
+              <View style={styles.buttonSpacing}>
+                <Button
+                  title="Pair Again"
+                  onPress={async () => {
+                    setPairNotice(null)
+                    try {
+                      const devices = await BluetoothSdk.scan(DeviceModels.MentraLive)
+                      const target = devices.find(device => device.pairingMode) ?? devices[0]
+                      if (target) await BluetoothSdk.connect(target)
+                    } catch (err) {
+                      setPairNotice(err instanceof Error ? err.message : "Pairing failed")
+                    }
+                  }}
+                />
+              </View>
+            ) : null}
             <Button title="Disconnect" onPress={() => BluetoothSdk.disconnect()} />
           </Group>
         ) : (
@@ -361,6 +414,37 @@ export default function App() {
       </ScrollView>
     </SafeAreaView>
   )
+}
+
+function pairingStatusLabel(state: MentraLivePairingState): string {
+  if (state.state === "pairing_mode") {
+    const secondsLeft = Math.max(0, Math.ceil((state.endsAtMs - Date.now()) / 1000))
+    return `Pairing window open for about ${secondsLeft}s. Automatic reconnect is paused.`
+  }
+  if (state.state === "pairing_rejected") {
+    return "These glasses no longer accept this phone. Pair Again."
+  }
+  return "No pairing window."
+}
+
+function audioSetupLabel(state: GlassesAudioSetupState): string {
+  switch (state.state) {
+    case "connecting":
+      return "Connecting audio..."
+    case "connected":
+      return "Audio connected."
+    case "needs_user":
+      return "Connect the glasses in Settings > Bluetooth to finish audio setup."
+    default:
+      return ""
+  }
+}
+
+function pairFailureMessage(event: PairFailureEvent): string {
+  if (event.code === "ios_forget_pairing") {
+    return "This iPhone still has a Bluetooth pairing for these glasses. Open Settings > Bluetooth, tap Forget This Device, then pair again."
+  }
+  return event.error
 }
 
 function TabButton(props: {label: string; active: boolean; onPress: () => void}) {

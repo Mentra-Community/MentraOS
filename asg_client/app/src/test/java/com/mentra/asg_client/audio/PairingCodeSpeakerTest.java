@@ -149,6 +149,89 @@ public class PairingCodeSpeakerTest {
         verify(hardware).playAudioAsset(AudioAssets.PAIRING_EXITED);
     }
 
+    @Test
+    public void chooseEndedAsset_timeout_usesNoPhoneClip() {
+        assertThat(PairingCodeSpeaker.chooseEndedAsset("timeout", name -> true))
+                .isEqualTo(AudioAssets.AUDIO_PAIRING_ENDED_NO_PHONE);
+        assertThat(AudioAssets.AUDIO_PAIRING_ENDED_NO_PHONE)
+                .isEqualTo("pairing/pairing_ended_no_phone.wav");
+    }
+
+    @Test
+    public void chooseEndedAsset_cancelled_usesCancelledClip() {
+        assertThat(PairingCodeSpeaker.chooseEndedAsset("cancelled", name -> true))
+                .isEqualTo(AudioAssets.AUDIO_PAIRING_CANCELLED);
+        assertThat(AudioAssets.AUDIO_PAIRING_CANCELLED).isEqualTo("pairing/pairing_cancelled.wav");
+    }
+
+    @Test
+    public void chooseEndedAsset_pairedUnknownOrMissing_usesGenericClip() {
+        for (String reason : new String[] {"paired", "unknown", "idle_timeout", "", null}) {
+            assertThat(PairingCodeSpeaker.chooseEndedAsset(reason, name -> true))
+                    .as("reason=%s", reason)
+                    .isEqualTo(AudioAssets.PAIRING_EXITED);
+        }
+    }
+
+    @Test
+    public void chooseEndedAsset_missingAsset_fallsBackToGenericClip() {
+        assertThat(PairingCodeSpeaker.chooseEndedAsset("timeout", name -> false))
+                .isEqualTo(AudioAssets.PAIRING_EXITED);
+        assertThat(PairingCodeSpeaker.chooseEndedAsset("cancelled", name -> false))
+                .isEqualTo(AudioAssets.PAIRING_EXITED);
+        assertThat(
+                        PairingCodeSpeaker.chooseEndedAsset(
+                                "timeout",
+                                name -> {
+                                    throw new IllegalStateException("boom");
+                                }))
+                .isEqualTo(AudioAssets.PAIRING_EXITED);
+        assertThat(PairingCodeSpeaker.chooseEndedAsset("timeout", null))
+                .isEqualTo(AudioAssets.PAIRING_EXITED);
+    }
+
+    @Test
+    public void chooseEndedAsset_isCaseAndWhitespaceTolerant() {
+        assertThat(PairingCodeSpeaker.chooseEndedAsset(" TimeOut ", name -> true))
+                .isEqualTo(AudioAssets.AUDIO_PAIRING_ENDED_NO_PHONE);
+    }
+
+    @Test
+    public void speakPairingEnded_withReasons_playsClipOrFallsBackWhenAssetNotPackaged() {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+
+        assertThat(PairingCodeSpeaker.speakPairingEnded(app, hardware, "timeout")).isTrue();
+        assertThat(PairingCodeSpeaker.speakPairingEnded(app, hardware, "cancelled")).isTrue();
+        assertThat(PairingCodeSpeaker.speakPairingEnded(app, hardware, "paired")).isTrue();
+        assertThat(PairingCodeSpeaker.speakPairingEnded(app, hardware, null)).isTrue();
+
+        ArgumentCaptor<String> played = ArgumentCaptor.forClass(String.class);
+        verify(hardware, org.mockito.Mockito.times(4)).playAudioAsset(played.capture());
+        assertThat(played.getAllValues().get(0))
+                .isEqualTo(packagedOrGeneric(AudioAssets.AUDIO_PAIRING_ENDED_NO_PHONE));
+        assertThat(played.getAllValues().get(1))
+                .isEqualTo(packagedOrGeneric(AudioAssets.AUDIO_PAIRING_CANCELLED));
+        assertThat(played.getAllValues().get(2)).isEqualTo(AudioAssets.PAIRING_EXITED);
+        assertThat(played.getAllValues().get(3)).isEqualTo(AudioAssets.PAIRING_EXITED);
+    }
+
+    @Test
+    public void speakPairingEnded_audioUnavailable_doesNothing() {
+        when(hardware.supportsAudioPlayback()).thenReturn(false);
+
+        assertThat(PairingCodeSpeaker.speakPairingEnded(app, hardware, "timeout")).isFalse();
+        verify(hardware, never()).playAudioAsset(any());
+    }
+
+    /** The WAVs are generated separately; until they are packaged the generic clip must play. */
+    private String packagedOrGeneric(String asset) {
+        try (java.io.InputStream ignored = app.getAssets().open(asset)) {
+            return asset;
+        } catch (IOException e) {
+            return AudioAssets.PAIRING_EXITED;
+        }
+    }
+
     private void deletePairingCacheFiles() {
         File[] files =
                 app.getCacheDir().listFiles((dir, name) -> name.startsWith("pairing_code_"));

@@ -14,6 +14,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {deploymentStore} from "@/services/deployment"
 import {SETTINGS, useSetting, Capabilities, DeviceTypes, getModelCapabilities, engine} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
@@ -103,11 +104,7 @@ export function DeviceSettingsSection() {
       return
     }
     try {
-      await engine.glasses.unpair()
-      await engine.settings.set(SETTINGS.default_wearable.key, "", false)
-      await engine.settings.set(SETTINGS.device_name.key, "", false)
-      await engine.settings.set(SETTINGS.device_address.key, "", false)
-      await engine.settings.set(SETTINGS.pending_wearable.key, "", false)
+      await unpairSavedGlasses()
       useNavigationStore.getState().clearHistoryAndGoHome()
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String((error as {code?: unknown}).code) : ""

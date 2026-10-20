@@ -549,6 +549,7 @@ public final class MentraBluetoothSDK {
         let isController = ControllerTypes.ALL.contains(device.model.deviceType)
         if !isController {
             requiresAncsForBluetoothRestore = options.requiresAncs
+            MentraLive.enableTransportBridging = options.enableTransportBridging
         }
         if options.cancelExistingConnectionAttempt {
             if isController {
@@ -556,6 +557,9 @@ public final class MentraBluetoothSDK {
             } else if !NimoResourceFixture.shared.preserveScan(device.name) {
                 cancelConnectionAttempt()
             }
+        }
+        if !isController {
+            MentraLive.clearStaleIosBondPrompt()
         }
         if options.saveAsDefault && !isController {
             setDefaultDevice(device)
@@ -575,6 +579,7 @@ public final class MentraBluetoothSDK {
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
         clearBluetoothRestoreIntent()
         requiresAncsForBluetoothRestore = options.requiresAncs
+        MentraLive.enableTransportBridging = options.enableTransportBridging
         guard let device = currentDefaultDevice() else {
             throw BluetoothSdkError(
                 code: "default_device_missing",
@@ -2722,9 +2727,9 @@ public final class MentraBluetoothSDK {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
-        case "pairing_info":
-            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
-        case "entering_pairing_mode", "owner_replaced":
+        case "pairing_info", "pairing_state_changed", "audio_setup_changed":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
+        case "entering_pairing_mode", "pairing_mode_ended", "owner_replaced":
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
@@ -2820,7 +2825,8 @@ public final class MentraBluetoothSDK {
                 self,
                 didFail: BluetoothSdkError(
                     code: "pair_failure",
-                    message: data["error"] as? String ?? data.description
+                    message: data["error"] as? String ?? data.description,
+                    failureCode: data["code"] as? String
                 )
             )
         default:

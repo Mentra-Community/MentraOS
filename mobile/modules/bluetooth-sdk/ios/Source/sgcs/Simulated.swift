@@ -18,6 +18,8 @@ class Simulated: SGCManager {
             BluetoothSdkDefaults.voiceActivityDetectionEnabled
         )
         DeviceStore.shared.apply("glasses", "bluetoothClassicConnected", false)
+        DeviceStore.shared.apply("glasses", "bluetoothClassicProfilesConnected", false)
+        DeviceStore.shared.apply("glasses", "bluetoothAudioRouted", false)
     }
 
     // MARK: - Device Information

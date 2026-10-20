@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.NimoResourceDiagnostics
 import com.mentra.bluetoothsdk.streaming.StreamSessionState
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -2110,6 +2111,7 @@ class MentraBluetoothSdk private constructor(
                         BluetoothError(
                             code = "pair_failure",
                             message = data["error"] as? String ?: data.toString(),
+                            failureCode = data["code"] as? String,
                         )
                     )
                 }
