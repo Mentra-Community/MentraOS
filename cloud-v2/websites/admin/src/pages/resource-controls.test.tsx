@@ -195,3 +195,17 @@ test('a resource change cannot silently retarget a reservation form to its new g
     expect(posts).toBe(0)
   } finally {await act(async () => view?.unmount()); client.clear(); globalThis.fetch = originalFetch}
 })
+
+
+test('a schema-legal immediately granted zero generation remains releasable and then terminal', () => {
+  const granted = control('granted'), returning = control('returning'), released = control('released')
+  for (const row of [granted, returning, released]) if (row.receipt!.result.status === 'accepted') row.receipt!.result.reservation!.generation = 0
+  const active = resourceControlState([granted], 'shared-pair', 'air3')
+  expect(active.pending).toBeUndefined(); expect(active.reservation?.generation).toBe(0)
+  const cleanup = resourceControlState([granted, returning], 'shared-pair', 'air3')
+  expect(cleanup.pending).toBeUndefined(); expect(cleanup.reservation?.state).toBe('returning')
+  for (const rows of [[granted, returning, released], [released, returning, granted]]) {
+    const state = resourceControlState(rows, 'shared-pair', 'air3')
+    expect(state.pending).toBeUndefined(); expect(state.reservation).toBeUndefined()
+  }
+})

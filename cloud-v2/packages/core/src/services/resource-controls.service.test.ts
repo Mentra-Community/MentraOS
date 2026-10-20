@@ -180,3 +180,24 @@ test('manual out-of-service action retains an existing writer and accepts only i
     resource: {resourceId: 'phone-exact', generation: 8, status: 'out-of-service'}})]})
   expect(f.subject().owner).toEqual(owner)
 })
+
+
+test('an immediately granted generation-zero reservation returns through its exact original authority', async () => {
+  const f = fixture(), reserve = f.input('reserve')
+  await f.service.submit(reserve, 'alice')
+  const granted = f.receipt(reserve, {status: 'accepted', reservation: f.reservation('granted', 0)})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [granted]})
+  const release = f.input('release', {reservation: {id: 'manual-exact', generation: 0}})
+  await expect(f.service.submit({...release, reservation: {id: 'manual-exact', generation: 1}}, 'alice')).rejects.toThrow('your current')
+  await f.service.submit(release, 'alice')
+  const returning = f.receipt(release, {status: 'accepted', reservation: f.reservation('returning', 0)})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [returning]})
+  expect((await f.service.listResource('phone-exact', 'alice')).controls.every(row =>
+    row.receipt?.result.status === 'accepted' && row.receipt.result.reservation?.state === 'returning')).toBe(true)
+  const released = {...returning, result: {status: 'accepted' as const, reservation: f.reservation('released', 0)}}
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [released]})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [granted, returning]})
+  expect((await f.service.listResource('phone-exact', 'alice')).controls.every(row =>
+    row.receipt?.result.status === 'accepted' && row.receipt.result.reservation?.state === 'released')).toBe(true)
+  expect((await f.service.submit(f.input('reserve'), 'alice')).action).toBe('reserve')
+})
