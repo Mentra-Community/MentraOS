@@ -389,19 +389,99 @@ final class MentraLivePairingAdvertisementTests: XCTestCase {
         return data
     }
 
-    func testAPacketWithoutTheTrailerFromAKnownSecureUnitIsPartialNotLegacy() {
+    func testAPacketWithoutTheTrailerRightAfterOneWithItIsPartialNotLegacy() {
+        let t0 = 1_000_000
         XCTAssertTrue(
-            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: false, knownSecureName: true)
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: false, lastSecureTrailerAtMs: t0, nowMs: t0 + 500)
+        )
+        XCTAssertTrue(
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(
+                secureCapable: false, lastSecureTrailerAtMs: t0, nowMs: t0 + MentraLiveDiscoveryPolicy.secureTrailerMemoryMs
+            )
         )
         XCTAssertFalse(
-            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: false, knownSecureName: false),
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: false, lastSecureTrailerAtMs: nil, nowMs: t0),
             "legacy firmware never carries the trailer and is still listed as pairable"
         )
         XCTAssertFalse(
-            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: true, knownSecureName: true)
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: true, lastSecureTrailerAtMs: t0, nowMs: t0 + 500)
         )
         XCTAssertFalse(
-            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: true, knownSecureName: false)
+            MentraLiveDiscoveryPolicy.isPartialAdvertisement(secureCapable: true, lastSecureTrailerAtMs: nil, nowMs: t0)
         )
+    }
+
+    func testTheSecureTrailerMemoryIsTenSeconds() {
+        XCTAssertEqual(MentraLiveDiscoveryPolicy.secureTrailerMemoryMs, 10_000)
+    }
+
+    func testARolledBackUnitListsAsLegacyOnceTheShortMemoryExpires() {
+        var memory = MentraLiveSecureTrailerMemory()
+        let unit = UUID()
+        let t0 = 5_000_000
+        memory.recordSecureTrailer(unit, nowMs: t0)
+        XCTAssertTrue(memory.isPartialAdvertisement(unit, secureCapable: false, nowMs: t0 + 2_000))
+        // Rolled back to legacy firmware: no trailer any more. After the memory it is legacy.
+        XCTAssertFalse(memory.isPartialAdvertisement(unit, secureCapable: false, nowMs: t0 + 10_001))
+        XCTAssertFalse(memory.hasRecentSecureTrailer(unit, nowMs: t0 + 10_001))
+    }
+
+    func testASameNamedLegacyUnitIsNotHidden() {
+        var memory = MentraLiveSecureTrailerMemory()
+        let secureUnit = UUID()
+        let legacyUnitWithTheSameName = UUID()
+        let t0 = 5_000_000
+        memory.recordSecureTrailer(secureUnit, nowMs: t0)
+        XCTAssertTrue(memory.isPartialAdvertisement(secureUnit, secureCapable: false, nowMs: t0 + 100))
+        XCTAssertFalse(memory.isPartialAdvertisement(legacyUnitWithTheSameName, secureCapable: false, nowMs: t0 + 100))
+    }
+
+    func testForgetClearsTheSecureTrailerMemory() {
+        var memory = MentraLiveSecureTrailerMemory()
+        let unit = UUID()
+        memory.recordSecureTrailer(unit, nowMs: 1_000)
+        memory.clear()
+        XCTAssertFalse(memory.isPartialAdvertisement(unit, secureCapable: false, nowMs: 1_100))
+    }
+
+    func testSecurePairingTargetFollowsOnlyTheSelectedRow() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        XCTAssertTrue(Policy.isSecurePairingTarget(selectedCapability: true, securePairingInfoThisSession: false))
+        XCTAssertFalse(
+            Policy.isSecurePairingTarget(selectedCapability: false, securePairingInfoThisSession: true),
+            "a row listed as legacy stays legacy"
+        )
+        XCTAssertFalse(Policy.isSecurePairingTarget(selectedCapability: nil, securePairingInfoThisSession: false))
+        XCTAssertTrue(
+            Policy.isSecurePairingTarget(selectedCapability: nil, securePairingInfoThisSession: true),
+            "an unknown row follows this session's secure pairing_info"
+        )
+    }
+
+    func testGlassesReadyReadinessForEachTargetCapability() {
+        typealias Policy = MentraLiveConnectionAttemptPolicy
+        func readiness(
+            explicit: Bool = true, row: Bool?, securePairingInfo: Bool = false, confirmed: Bool = false
+        ) -> Policy.Readiness {
+            Policy.readinessAtGlassesReady(
+                explicitPairing: explicit,
+                selectedCapability: row,
+                securePairingInfoThisSession: securePairingInfo,
+                securePairingConfirmed: confirmed
+            )
+        }
+        // Automatic reconnect never waits.
+        XCTAssertEqual(readiness(explicit: false, row: nil), .ready)
+        XCTAssertEqual(readiness(explicit: false, row: true), .ready)
+        // Known rows.
+        XCTAssertEqual(readiness(row: false), .ready)
+        XCTAssertEqual(readiness(row: true), .awaitOwnerCommit)
+        XCTAssertEqual(readiness(row: true, confirmed: true), .ready)
+        // Unknown row: wait (bounded) for pairing_info unless one already decided it.
+        XCTAssertEqual(readiness(row: nil), .awaitPairingInfo)
+        XCTAssertEqual(readiness(row: nil, securePairingInfo: true), .awaitOwnerCommit)
+        XCTAssertEqual(readiness(row: nil, securePairingInfo: true, confirmed: true), .ready)
+        XCTAssertEqual(Policy.unknownCapabilityPairingInfoWaitMs, 5_000)
+        XCTAssertEqual(Policy.secureFirmwareRefreshMs, 15_000)
     }
 }

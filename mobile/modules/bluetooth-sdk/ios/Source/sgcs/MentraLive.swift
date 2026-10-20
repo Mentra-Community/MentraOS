@@ -776,6 +776,10 @@ extension MentraLive: CBCentralManagerDelegate {
         {
             let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME)
             let isReconnectTarget = savedDeviceName != nil && savedDeviceName == name
+            let discoveredAtMs = Self.monotonicNowMs()
+            if advertisesPairingFlag(advertisementData) {
+                Self.secureTrailerMemory.recordSecureTrailer(peripheral.identifier, nowMs: discoveredAtMs)
+            }
             if !isReconnectTarget && advertisesPairingFlag(advertisementData)
                 && !isPairingDiscoverable(advertisementData)
             {
@@ -804,18 +808,19 @@ extension MentraLive: CBCentralManagerDelegate {
 
             let glassType = name == "Xy_A" ? "Standard" : "K900"
             let trailer = parseSecurePairingTrailer(advertisementData)
-            // A packet without the trailer from a unit already seen with it is a partial
+            // A packet without the trailer from a peripheral that just showed it is a partial
             // advertisement, not legacy firmware. Do not publish it: the scan list would show a
             // secure unit that is not in pairing mode as pairable, with no caption.
-            let partialAdvertisement = MentraLiveDiscoveryPolicy.isPartialAdvertisement(
+            let partialAdvertisement = Self.secureTrailerMemory.isPartialAdvertisement(
+                peripheral.identifier,
                 secureCapable: trailer.secureCapable,
-                knownSecureName: Self.securePairingNames.contains(name)
+                nowMs: discoveredAtMs
             )
             Bridge.log(
                 trailer.secureCapable
                     ? "Found compatible \(glassType) glasses device: \(name) (pairingMode=\(trailer.pairingMode))"
                     : partialAdvertisement
-                        ? "Found compatible \(glassType) glasses device: \(name) (partial advertisement, known secure)"
+                        ? "Found compatible \(glassType) glasses device: \(name) (partial advertisement, secure trailer seen recently)"
                         : "Found compatible \(glassType) glasses device: \(name) (legacy firmware, pairable)"
             )
 
@@ -1508,6 +1513,7 @@ class MentraLive: NSObject, SGCManager {
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
             resetOtaCache()
+            endAudioSetupSession()
         }
     }
 
@@ -1542,6 +1548,7 @@ class MentraLive: NSObject, SGCManager {
 
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
+        Self.secureTrailerMemory.clear()
 
         // Clear saved device name so the pairing filter is not bypassed on rescan
         UserDefaults.standard.removeObject(forKey: PREFS_DEVICE_NAME)
@@ -1569,6 +1576,9 @@ class MentraLive: NSObject, SGCManager {
 
     var type = "Mentra Live"
     var hasMic = true
+    var publishesAudioSetup: Bool {
+        true
+    }
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("LIVE: 🎤 Microphone state change requested: \(enabled)")
@@ -1715,19 +1725,36 @@ class MentraLive: NSObject, SGCManager {
     private var pairSelectSentThisSession = false
     /// `pairing_info` arrived on this BLE session, so the glasses run secure firmware.
     private var pairingInfoSeenThisSession = false
-    /// Names seen advertising the secure-pairing trailer; survives manager recreation and app
-    /// restarts. CoreBluetooth sometimes reports an advertisement without the manufacturer data
-    /// that carries the trailer, so absence of it must not reclassify a known secure unit as
-    /// legacy firmware.
-    private static let securePairingNamesKey = "mentra_live_secure_pairing_names"
-    private static var securePairingNames = Set(
-        UserDefaults.standard.stringArray(forKey: securePairingNamesKey) ?? []
-    )
+    /// `pairing_info.auto_audio` on this BLE session. Old firmware never sends it.
+    private var pairingInfoAutoAudio = false
+    /// Peripherals that advertised the secure-pairing trailer in the last few seconds.
+    /// CoreBluetooth sometimes reports an advertisement without the manufacturer data that
+    /// carries the trailer, so a packet without it right after one with it is partial, not
+    /// legacy firmware. Nothing is persisted: glasses rolled back to legacy firmware must list
+    /// as legacy again.
+    private static var secureTrailerMemory = MentraLiveSecureTrailerMemory()
+    /// Retired persisted name set that hid rolled-back glasses for good. Removed on startup.
+    private static let retiredSecurePairingNamesKey = "mentra_live_secure_pairing_names"
     /// glasses_ready arrived for a secure pairing target before pairing_info confirmed the bond.
     private var awaitingSecurePairingConfirmation = false
     /// pairing_info from secure firmware arrived on this BLE session.
     private var securePairingConfirmed = false
     private var securePairingWaitWorkItem: DispatchWorkItem?
+    /// glasses_ready arrived for an explicit pair whose capability is unknown; waiting for
+    /// pairing_info to tell secure from legacy firmware.
+    private var awaitingPairingInfoForUnknownCapability = false
+    private var unknownCapabilityWaitWorkItem: DispatchWorkItem?
+    /// Marks the saved glasses as legacy firmware when a ready session gets no pairing_info.
+    private var secureFirmwareRefreshWorkItem: DispatchWorkItem?
+    /// Internal so tests can shorten the waits.
+    var unknownCapabilityPairingInfoWaitMs = MentraLiveConnectionAttemptPolicy.unknownCapabilityPairingInfoWaitMs
+    var secureFirmwareRefreshMs = MentraLiveConnectionAttemptPolicy.secureFirmwareRefreshMs
+    /// `GlassesStatus.audioSetup` for this driver (see `GlassesAudioSetupPolicy`).
+    private var audioSetup = GlassesAudioSetupTracker()
+    private var audioSetupDeadlineWorkItem: DispatchWorkItem?
+    private var audioSetupStoreListenerId: String?
+    /// Monotonic milliseconds. Internal so tests can drive the audio-setup clock.
+    var audioSetupNowMs: () -> Int = { MentraLive.monotonicNowMs() }
     /// Hold GATT teardown until the unpair write can leave the phone.
     private var unpairFlushPending = false
     private var unpairFlushWorkItem: DispatchWorkItem?
@@ -1871,7 +1898,9 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: 🎵 Phone audio monitor disabled (BLOCK_AUDIO_DUPLEX=false)")
         }
 
+        UserDefaults.standard.removeObject(forKey: Self.retiredSecurePairingNamesKey)
         restorePairingState()
+        observeAudioSetupInputs()
     }
 
     deinit {
@@ -2082,7 +2111,13 @@ class MentraLive: NSObject, SGCManager {
     /// callers run on a live link: the RX subscribe and a received `pairing_info`.
     private func sendPairingSessionMessages(reason: String) {
         let secureTarget = isSecurePairingTarget()
-        guard secureTarget || isSavedGlassesSecureFirmware() || pairingInfoSeenThisSession else { return }
+        // A trailer this scan just saw is a hint to speak the protocol at all; pair_select below
+        // follows only the selected target.
+        let recentSecureTrailer = connectedPeripheral.map {
+            Self.secureTrailerMemory.hasRecentSecureTrailer($0.identifier, nowMs: Self.monotonicNowMs())
+        } ?? false
+        guard secureTarget || isSavedGlassesSecureFirmware() || pairingInfoSeenThisSession || recentSecureTrailer
+        else { return }
         if !phoneHelloSentThisSession {
             phoneHelloSentThisSession = true
             pairFlow("phone_hello", "protocol=\(Self.pairingProtocolVersion) trigger=\(reason)")
@@ -2104,9 +2139,12 @@ class MentraLive: NSObject, SGCManager {
         securePairingConfirmed = false
         awaitingSecurePairingConfirmation = false
         cancelSecurePairingWait()
+        cancelUnknownCapabilityWait()
+        cancelSecureFirmwareRefresh()
         phoneHelloSentThisSession = false
         pairSelectSentThisSession = false
         pairingInfoSeenThisSession = false
+        pairingInfoAutoAudio = false
     }
 
     /// Owner-loss destroy marks the manager dead. A later connect must build a new one.
@@ -3592,10 +3630,26 @@ class MentraLive: NSObject, SGCManager {
             let ownerCommitted = json["owner_committed"] as? Bool == true
             // Legacy firmware that omits this field is not secure-capable.
             let securePairingCapable = json["secure_pairing_capable"] as? Bool ?? false
+            // Read before any readiness below: the audio wait of a pairing depends on it.
+            pairingInfoAutoAudio = json["auto_audio"] as? Bool ?? false
             rememberSecureFirmware(securePairingCapable)
             if securePairingCapable {
                 pairingInfoSeenThisSession = true
+                cancelSecureFirmwareRefresh()
                 sendPairingSessionMessages(reason: "pairing_info")
+            }
+            // Readiness parked on an unknown capability: this pairing_info decides the rule.
+            var legacyReadiness = false
+            if awaitingPairingInfoForUnknownCapability {
+                cancelUnknownCapabilityWait()
+                if securePairingCapable {
+                    pairFlow("readiness", "capability=unknown pairing_info=secure action=await_owner_commit")
+                    awaitingSecurePairingConfirmation = true
+                    if !ownerCommitted { armSecurePairingWait() }
+                } else {
+                    pairFlow("readiness", "capability=unknown pairing_info=legacy action=ready")
+                    legacyReadiness = true
+                }
             }
             // Only owner_committed proves the bond. secure_pairing_capable is a capability flag
             // readable on the unencrypted window session.
@@ -3607,6 +3661,7 @@ class MentraLive: NSObject, SGCManager {
                     markFullyBooted()
                 }
             }
+            if legacyReadiness { markFullyBooted() }
             Bridge.sendPairingInfo(
                 hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
                 pairingCode: json["pairing_code"] as? String,
@@ -3617,6 +3672,23 @@ class MentraLive: NSObject, SGCManager {
                 ownerCommitted: ownerCommitted,
                 autoAudio: json["auto_audio"] as? Bool
             )
+
+        case "classic_link":
+            // The glasses' own view of the phone's A2DP and HFP links to them. Preferred over
+            // the phone's audio route, which another Bluetooth audio device can hold.
+            let a2dp = json["a2dp"] as? Bool ?? false
+            let hfp = json["hfp"] as? Bool ?? false
+            pairFlow("classic_link", "a2dp=\(a2dp) hfp=\(hfp)")
+            audioSetup.classicLink(a2dp: a2dp, hfp: hfp)
+            refreshAudioSetup(trigger: "classic_link")
+            #if !os(macOS)
+                if !AudioSessionMonitor.glassesReportClassicLink {
+                    // From now on the phone signals come from passive route observation, never
+                    // from the category probe. Re-read them that way.
+                    AudioSessionMonitor.glassesReportClassicLink = true
+                    DeviceManager.shared.checkCurrentAudioDevice()
+                }
+            #endif
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
              "imu_gesture_subscribed", "imu_ack", "imu_error":
@@ -4663,13 +4735,23 @@ class MentraLive: NSObject, SGCManager {
         // handleDeviceReady promotes the pairing target to the default device. Secure glasses
         // own a phone only after a BLE bond and announce it with pairing_info; GATT works
         // unencrypted inside the open window, so readiness alone is not a pairing.
-        if isExplicitPairingAttempt(), isSecurePairingTarget(), !securePairingConfirmed {
+        let readiness = MentraLiveConnectionAttemptPolicy.readinessAtGlassesReady(
+            explicitPairing: isExplicitPairingAttempt(),
+            selectedCapability: selectedTargetSecureCapability(),
+            securePairingInfoThisSession: pairingInfoSeenThisSession,
+            securePairingConfirmed: securePairingConfirmed
+        )
+        switch readiness {
+        case .ready:
+            markFullyBooted()
+        case .awaitOwnerCommit:
             Bridge.log("LIVE: glasses_ready before owner commit — waiting for pairing_info")
             awaitingSecurePairingConfirmation = true
             armSecurePairingWait()
-            return
+        case .awaitPairingInfo:
+            pairFlow("readiness", "capability=unknown action=await_pairing_info waitMs=\(unknownCapabilityPairingInfoWaitMs)")
+            armUnknownCapabilityWait()
         }
-        markFullyBooted()
     }
 
     private func markFullyBooted() {
@@ -4679,9 +4761,70 @@ class MentraLive: NSObject, SGCManager {
         pairingStore.update("session_ready") { $0.onSessionReady(explicitAttempt: explicitAttempt) }
         awaitingSecurePairingConfirmation = false
         cancelSecurePairingWait()
+        cancelUnknownCapabilityWait()
+        armSecureFirmwareRefresh()
+        if !fullyBooted {
+            audioSetup.startPhase(
+                explicitAttempt ? .pairing(autoAudio: pairingInfoAutoAudio) : .reconnect,
+                nowMs: audioSetupNowMs()
+            )
+        }
+        // Publish audioSetup before readiness so the ready update never carries a stale idle.
+        refreshAudioSetup(trigger: "session_ready", sessionReady: true)
         fullyBooted = true
         connected = true
         updateConnectionState(ConnTypes.CONNECTED)
+    }
+
+    /// The selected scan row's capability (`pending_device_secure_pairing_capable`); nil when
+    /// unknown, for example a target re-listed from saved state.
+    private func selectedTargetSecureCapability() -> Bool? {
+        DeviceStore.shared.get("bluetooth", "pending_device_secure_pairing_capable") as? Bool
+    }
+
+    /// Unknown capability: a secure pairing_info within the wait switches to the secure rule,
+    /// none means legacy firmware and the glasses are reported ready.
+    private func armUnknownCapabilityWait() {
+        cancelUnknownCapabilityWait()
+        awaitingPairingInfoForUnknownCapability = true
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.awaitingPairingInfoForUnknownCapability else { return }
+            self.unknownCapabilityWaitWorkItem = nil
+            self.awaitingPairingInfoForUnknownCapability = false
+            self.pairFlow("readiness", "capability=unknown pairing_info=none action=ready_legacy")
+            self.markFullyBooted()
+        }
+        unknownCapabilityWaitWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(max(unknownCapabilityPairingInfoWaitMs, 0)),
+            execute: work
+        )
+    }
+
+    private func cancelUnknownCapabilityWait() {
+        awaitingPairingInfoForUnknownCapability = false
+        unknownCapabilityWaitWorkItem?.cancel()
+        unknownCapabilityWaitWorkItem = nil
+    }
+
+    /// `mentra_live_secure_firmware` follows the current glasses: a ready session that gets no
+    /// pairing_info runs legacy firmware (for example after a rollback).
+    private func armSecureFirmwareRefresh() {
+        guard secureFirmwareRefreshWorkItem == nil, !pairingInfoSeenThisSession else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.secureFirmwareRefreshWorkItem = nil
+            guard !self.pairingInfoSeenThisSession else { return }
+            self.pairFlow("secure_firmware", "pairing_info=none afterMs=\(self.secureFirmwareRefreshMs) secure=false")
+            self.rememberSecureFirmware(false)
+        }
+        secureFirmwareRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(max(secureFirmwareRefreshMs, 0)), execute: work)
+    }
+
+    private func cancelSecureFirmwareRefresh() {
+        secureFirmwareRefreshWorkItem?.cancel()
+        secureFirmwareRefreshWorkItem = nil
     }
 
     /// Bond confirmation has to arrive on its own. A dismissed pairing sheet, or a bond that
@@ -4712,11 +4855,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func isSecurePairingTarget() -> Bool {
-        if DeviceStore.shared.get("bluetooth", "pending_device_secure_pairing_capable") as? Bool == true {
-            return true
-        }
-        guard let name = connectedPeripheral?.name else { return false }
-        return Self.securePairingNames.contains(name)
+        MentraLiveConnectionAttemptPolicy.isSecurePairingTarget(
+            selectedCapability: selectedTargetSecureCapability(),
+            securePairingInfoThisSession: pairingInfoSeenThisSession
+        )
     }
 
     /// The user is pairing from the scan screen rather than reconnecting a saved owner.
@@ -6662,11 +6804,6 @@ class MentraLive: NSObject, SGCManager {
         pairingCode: String?,
         securePairingCapable: Bool
     ) -> Bool {
-        if securePairingCapable, Self.securePairingNames.insert(name).inserted {
-            UserDefaults.standard.set(
-                Array(Self.securePairingNames).sorted(), forKey: Self.securePairingNamesKey
-            )
-        }
         let next = CachedAdvPairing(
             pairingMode: pairingMode,
             pairingCode: pairingCode,
@@ -6848,6 +6985,92 @@ class MentraLive: NSObject, SGCManager {
         centralManager = nil
 
         updateConnectionState(ConnTypes.DISCONNECTED)
+        resetSecurePairingSession()
+        stopObservingAudioSetupInputs()
+    }
+}
+
+// MARK: - Audio setup
+
+extension MentraLive {
+    nonisolated static func monotonicNowMs() -> Int {
+        Int(ProcessInfo.processInfo.systemUptime * 1000)
+    }
+
+    private static let audioSetupInputKeys: Set<String> = [
+        "fullyBooted", "bluetoothClassicConnected", "bluetoothClassicProfilesConnected", "bluetoothAudioRouted",
+    ]
+
+    /// Readiness (from any writer, including `sr_hrt ready=0`) and the phone's three audio
+    /// signals re-evaluate the state in the same update that changed them.
+    fileprivate func observeAudioSetupInputs() {
+        guard audioSetupStoreListenerId == nil else { return }
+        audioSetup.startPhase(.reconnect, nowMs: audioSetupNowMs())
+        audioSetupStoreListenerId = DeviceStore.shared.store.addListener { [weak self] category, changes in
+            MainActor.assumeIsolated {
+                guard category == "glasses",
+                      changes.keys.contains(where: { MentraLive.audioSetupInputKeys.contains($0) })
+                else { return }
+                self?.refreshAudioSetup(trigger: "status")
+            }
+        }
+        refreshAudioSetup(trigger: "init")
+    }
+
+    fileprivate func stopObservingAudioSetupInputs() {
+        if let id = audioSetupStoreListenerId {
+            DeviceStore.shared.store.removeListener(id)
+            audioSetupStoreListenerId = nil
+        }
+        audioSetupDeadlineWorkItem?.cancel()
+        audioSetupDeadlineWorkItem = nil
+    }
+
+    /// The phone's view: the Classic bond, a connected HFP input or a matching Bluetooth output.
+    private func phoneAudioUp() -> Bool {
+        ["bluetoothClassicConnected", "bluetoothClassicProfilesConnected", "bluetoothAudioRouted"].contains {
+            DeviceStore.shared.get("glasses", $0) as? Bool == true
+        }
+    }
+
+    /// The BLE session ended. Its `classic_link` report no longer applies.
+    fileprivate func endAudioSetupSession() {
+        audioSetup.endSession()
+        #if !os(macOS)
+            AudioSessionMonitor.glassesReportClassicLink = false
+        #endif
+        refreshAudioSetup(trigger: "disconnect")
+    }
+
+    /// Feeds `GlassesAudioSetupPolicy`, arms one timer for its next deadline and publishes on change.
+    /// Only the active driver publishes; a manager being created or torn down stays quiet.
+    fileprivate func refreshAudioSetup(trigger: String, sessionReady: Bool? = nil) {
+        guard (DeviceManager.shared.sgc as AnyObject?) === self else {
+            audioSetupDeadlineWorkItem?.cancel()
+            audioSetupDeadlineWorkItem = nil
+            return
+        }
+        let nowMs = audioSetupNowMs()
+        let decision = audioSetup.evaluate(
+            sessionReady: sessionReady ?? fullyBooted,
+            phoneAudioUp: phoneAudioUp(),
+            nowMs: nowMs
+        )
+        audioSetupDeadlineWorkItem?.cancel()
+        audioSetupDeadlineWorkItem = nil
+        if let deadlineMs = decision.nextDeadlineMs {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.audioSetupDeadlineWorkItem = nil
+                self.refreshAudioSetup(trigger: "deadline")
+            }
+            audioSetupDeadlineWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(max(deadlineMs - nowMs, 0)), execute: work)
+        }
+        guard DeviceStore.shared.publishAudioSetup(decision.state) else { return }
+        Bridge.log(
+            "PAIRFLOW: audio_setup state=\(decision.state.name) phase=\(audioSetup.phase.logName) afterMs=\(nowMs - audioSetup.phaseStartedAtMs) trigger=\(trigger) glassesReport=\(audioSetup.glassesReportsClassicLink ? "a2dp:\(audioSetup.glassesA2dp),hfp:\(audioSetup.glassesHfp)" : "none") phoneAudio=\(phoneAudioUp())"
+        )
     }
 }
 

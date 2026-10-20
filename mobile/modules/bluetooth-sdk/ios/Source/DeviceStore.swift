@@ -61,6 +61,7 @@ class DeviceStore {
         store.set("glasses", "signalStrength", -1)
         store.set("glasses", "signalStrengthUpdatedAt", 0)
         store.set("glasses", "ringSignalStrength", -1)
+        store.set("glasses", "audioSetup", GlassesAudioSetupState.idle.toMap())
 
         // CORE STATE:
         store.set("bluetooth", "systemMicUnavailable", false)
@@ -146,10 +147,34 @@ class DeviceStore {
         }
     }
 
+    /// Publishes `GlassesStatus.audioSetup` and `audio_setup_changed` when the state changed.
+    @discardableResult
+    func publishAudioSetup(_ state: GlassesAudioSetupState) -> Bool {
+        guard GlassesAudioSetupState(map: store.get("glasses", "audioSetup")) != state else { return false }
+        let map = state.toMap()
+        store.set("glasses", "audioSetup", map)
+        Bridge.sendTypedMessage("audio_setup_changed", body: ["state": map])
+        return true
+    }
+
+    /// Glasses without a driver-specific audio rule report `not_applicable` while ready and
+    /// `idle` otherwise. Runs before readiness is stored, so the update that marks the glasses
+    /// ready already carries the matching `audioSetup`.
+    private func publishModelDefaultAudioSetup(_ category: String, _ key: String, _ value: Any) {
+        guard ObservableStore.normalizeCategory(category) == "glasses", key == "fullyBooted",
+              let ready = value as? Bool,
+              DeviceManager.shared.sgc?.publishesAudioSetup != true
+        else { return }
+        publishAudioSetup(.modelDefault(ready: ready))
+    }
+
     /// Apply changes with side effects
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
         let storeWouldSkipSet = store.wouldSkipSet(category, key, value)
+        if !storeWouldSkipSet {
+            publishModelDefaultAudioSetup(category, key, value)
+        }
         store.set(category, key, value)
         if storeWouldSkipSet {
             return

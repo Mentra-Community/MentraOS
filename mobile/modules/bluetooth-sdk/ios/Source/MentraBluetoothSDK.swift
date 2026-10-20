@@ -2727,7 +2727,7 @@ public final class MentraBluetoothSDK {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
-        case "pairing_info", "pairing_state_changed":
+        case "pairing_info", "pairing_state_changed", "audio_setup_changed":
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "entering_pairing_mode", "pairing_mode_ended", "owner_replaced":
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))

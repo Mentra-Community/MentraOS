@@ -184,6 +184,46 @@ enum MentraLiveConnectionAttemptPolicy {
         explicitPairing && securePairingTarget
     }
 
+    /// How long readiness waits after `glasses_ready` for a `pairing_info` when the selected
+    /// glasses' capability is unknown. No `pairing_info` by then means legacy firmware.
+    static let unknownCapabilityPairingInfoWaitMs = 5_000
+
+    /// A ready session that gets no `pairing_info` within this time runs legacy firmware.
+    static let secureFirmwareRefreshMs = 15_000
+
+    /// The selected scan row decides (`pending_device_secure_pairing_capable`). When the row's
+    /// capability is unknown, a secure `pairing_info` on this session decides. Never a name seen
+    /// earlier: a unit rolled back to legacy firmware keeps its name.
+    static func isSecurePairingTarget(selectedCapability: Bool?, securePairingInfoThisSession: Bool) -> Bool {
+        selectedCapability ?? securePairingInfoThisSession
+    }
+
+    enum Readiness: Equatable {
+        /// Report ready now.
+        case ready
+        /// Secure pairing: wait for `pairing_info.owner_committed`, with the pairing wait.
+        case awaitOwnerCommit
+        /// Unknown capability: wait `unknownCapabilityPairingInfoWaitMs` for a `pairing_info`.
+        case awaitPairingInfo
+    }
+
+    /// What `glasses_ready` means for readiness. Every wait has a deadline.
+    static func readinessAtGlassesReady(
+        explicitPairing: Bool,
+        selectedCapability: Bool?,
+        securePairingInfoThisSession: Bool,
+        securePairingConfirmed: Bool
+    ) -> Readiness {
+        guard explicitPairing, !securePairingConfirmed else { return .ready }
+        if isSecurePairingTarget(
+            selectedCapability: selectedCapability,
+            securePairingInfoThisSession: securePairingInfoThisSession
+        ) {
+            return .awaitOwnerCommit
+        }
+        return selectedCapability == nil ? .awaitPairingInfo : .ready
+    }
+
     /// `pair_select` tells the glasses this link is the user's explicit choice (pairing spec V4).
     /// Once per BLE session, only on an explicit attempt to secure glasses, never on an
     /// automatic reconnect. Mirrors Android `MentraLiveOwnerLossPolicy.shouldSendPairSelect`.
@@ -287,11 +327,44 @@ struct MentraLivePendingReconnect {
 }
 
 enum MentraLiveDiscoveryPolicy {
+    /// How long a secure-pairing trailer from one peripheral marks its trailer-less packets as
+    /// partial. Short, so glasses rolled back to legacy firmware list as legacy again.
+    static let secureTrailerMemoryMs = 10_000
+
     /// CoreBluetooth can deliver an advertisement without the manufacturer data that holds the
-    /// secure-pairing trailer (for example right after a scan starts or a link drops). Legacy
-    /// firmware never has the trailer; a unit already seen with it is therefore not legacy, and
-    /// the packet says nothing about its pairing mode.
-    static func isPartialAdvertisement(secureCapable: Bool, knownSecureName: Bool) -> Bool {
-        !secureCapable && knownSecureName
+    /// secure-pairing trailer (for example right after a scan starts or a link drops). A packet
+    /// without it is partial only when the same peripheral showed the trailer within
+    /// `secureTrailerMemoryMs`; otherwise it is legacy firmware and listed as pairable.
+    static func isPartialAdvertisement(secureCapable: Bool, lastSecureTrailerAtMs: Int?, nowMs: Int) -> Bool {
+        guard !secureCapable, let lastSecureTrailerAtMs else { return false }
+        let elapsedMs = nowMs - lastSecureTrailerAtMs
+        return elapsedMs >= 0 && elapsedMs <= secureTrailerMemoryMs
+    }
+}
+
+/// Last time each peripheral advertised the secure-pairing trailer. In memory only, keyed by the
+/// CoreBluetooth identifier so a same-named unit is never affected.
+struct MentraLiveSecureTrailerMemory {
+    private var seenAtMs: [UUID: Int] = [:]
+
+    mutating func recordSecureTrailer(_ identifier: UUID, nowMs: Int) {
+        seenAtMs = seenAtMs.filter { nowMs - $0.value <= MentraLiveDiscoveryPolicy.secureTrailerMemoryMs }
+        seenAtMs[identifier] = nowMs
+    }
+
+    func hasRecentSecureTrailer(_ identifier: UUID, nowMs: Int) -> Bool {
+        isPartialAdvertisement(identifier, secureCapable: false, nowMs: nowMs)
+    }
+
+    func isPartialAdvertisement(_ identifier: UUID, secureCapable: Bool, nowMs: Int) -> Bool {
+        MentraLiveDiscoveryPolicy.isPartialAdvertisement(
+            secureCapable: secureCapable,
+            lastSecureTrailerAtMs: seenAtMs[identifier],
+            nowMs: nowMs
+        )
+    }
+
+    mutating func clear() {
+        seenAtMs.removeAll()
     }
 }

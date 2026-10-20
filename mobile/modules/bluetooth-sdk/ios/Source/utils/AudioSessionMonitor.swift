@@ -26,6 +26,10 @@ class AudioSessionMonitor {
     private static var lastPairFlow = ""
     /// SoloAmbient hides paired HFP inputs. One short category probe per second is enough.
     private static var lastBluetoothProbe: (at: Date, outputs: [AVAudioSessionPortDescription], inputs: [AVAudioSessionPortDescription]?)?
+    /// The glasses sent `classic_link` in the current BLE session. Their report replaces the
+    /// category probe, which can see a route that is not the glasses'. Old firmware never sends
+    /// it and keeps the probe.
+    static var glassesReportClassicLink = false
 
     private init() {
         Bridge.log("AudioMonitor: Initialized")
@@ -115,6 +119,14 @@ class AudioSessionMonitor {
         if categoryShowsBluetoothInputs(session.category) {
             return BluetoothSessionSnapshot(
                 categoryLabel: session.category.rawValue,
+                outputs: session.currentRoute.outputs,
+                availableInputs: session.availableInputs
+            )
+        }
+        if glassesReportClassicLink {
+            // Passive route observation only: never switch the category.
+            return BluetoothSessionSnapshot(
+                categoryLabel: "passive:\(session.category.rawValue)",
                 outputs: session.currentRoute.outputs,
                 availableInputs: session.availableInputs
             )

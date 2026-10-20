@@ -50,6 +50,9 @@ protocol SGCManager {
 
     var type: String { get set }
     var hasMic: Bool { get }
+    /// The driver publishes `GlassesStatus.audioSetup` itself. Otherwise the status layer
+    /// reports `not_applicable` while connected and `idle` otherwise.
+    var publishesAudioSetup: Bool { get }
 
     // MARK: - Audio Control
 
@@ -275,6 +278,10 @@ extension SGCManager {
     }
 
     var isMicSuspendedForAudio: Bool {
+        false
+    }
+
+    var publishesAudioSetup: Bool {
         false
     }
 

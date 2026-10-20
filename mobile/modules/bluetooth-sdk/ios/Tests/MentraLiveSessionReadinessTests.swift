@@ -230,10 +230,12 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
             pairingStore.ensureRestored(savedDeviceId: "")
             XCTAssertTrue(pairingStore.isRejected)
 
-            // A successful automatic session does not clear it; an explicit pair does.
+            // A successful automatic session does not clear it; an explicit pair does. The
+            // selected row lists this flag-off unit as legacy firmware.
             try receive(transport, ["type": "glasses_ready", "sid": "automatic"])
             XCTAssertTrue(pairingStore.isRejected)
             store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
+            store.set("bluetooth", "pending_device_secure_pairing_capable", false)
             try receive(transport, ["type": "glasses_ready", "sid": "explicit"])
             XCTAssertEqual(pairingStore.state, .normal)
         }
@@ -313,6 +315,133 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
             _ = transport.stopAfterConnectFailure(error14)
             XCTAssertEqual(failures.count, 1)
             XCTAssertEqual(MentraLivePairingStateStore.shared.state, .normal)
+        }
+    }
+
+    // MARK: - Pairing readiness by target capability
+
+    private func runMainLoop(until condition: () -> Bool, timeout: TimeInterval = 3) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    private func ready(_ store: ObservableStore) -> Bool {
+        store.get("glasses", "fullyBooted") as? Bool == true
+    }
+
+    /// An explicit pair to the row `capability` (nil when the row did not know it).
+    private func startExplicitPair(_ store: ObservableStore, capability: Bool?) {
+        store.set("glasses", "fullyBooted", false)
+        store.set("bluetooth", "pending_device_name", "MENTRA_LIVE_BLE_ABCD")
+        store.set("bluetooth", "pending_device_secure_pairing_capable", capability.map { $0 as Any } ?? "")
+    }
+
+    func testUnknownCapabilityWithoutPairingInfoIsReportedReadyAfterTheWait() throws {
+        try withPairingTransport { transport, _, store in
+            transport.unknownCapabilityPairingInfoWaitMs = 50
+            startExplicitPair(store, capability: nil)
+            try receive(transport, ["type": "glasses_ready", "sid": "legacy"])
+            XCTAssertFalse(ready(store), "readiness waits, bounded, for pairing_info")
+
+            runMainLoop { self.ready(store) }
+            XCTAssertTrue(ready(store), "no pairing_info: legacy firmware, reported ready")
+            let types = transport.commands.compactMap { $0["type"] as? String }
+            XCTAssertFalse(types.contains("pair_select"))
+        }
+    }
+
+    func testUnknownCapabilityWithASecurePairingInfoFollowsTheSecureRule() throws {
+        try withPairingTransport { transport, _, store in
+            var failures = 0
+            let sink = Bridge.addEventSink { event, _ in
+                if event == "pair_failure" { failures += 1 }
+            }
+            defer { Bridge.removeEventSink(sink) }
+            startExplicitPair(store, capability: nil)
+            try receive(transport, ["type": "glasses_ready", "sid": "secure"])
+            XCTAssertFalse(ready(store))
+
+            try receive(transport, [
+                "type": "pairing_info", "secure_pairing_capable": true, "owner_committed": false,
+                "protocol_version": 4,
+            ])
+            XCTAssertFalse(ready(store), "secure firmware: ready only after the owner commit")
+            let types = transport.commands.compactMap { $0["type"] as? String }
+            XCTAssertEqual(types.filter { $0 == "pair_select" }.count, 1)
+
+            // The unknown-capability wait no longer applies.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertFalse(ready(store))
+
+            try receive(transport, [
+                "type": "pairing_info", "secure_pairing_capable": true, "owner_committed": true,
+                "protocol_version": 4,
+            ])
+            XCTAssertTrue(ready(store))
+            XCTAssertEqual(failures, 0)
+        }
+    }
+
+    func testUnknownCapabilityWithALegacyPairingInfoIsReadyAtOnce() throws {
+        try withPairingTransport { transport, _, store in
+            startExplicitPair(store, capability: nil)
+            try receive(transport, ["type": "glasses_ready", "sid": "legacy"])
+            XCTAssertFalse(ready(store))
+            try receive(transport, ["type": "pairing_info", "had_previous_bond": false])
+            XCTAssertTrue(ready(store))
+        }
+    }
+
+    func testTheSelectedRowDecidesTheSecureRuleNotTheSession() throws {
+        try withPairingTransport { transport, _, store in
+            // The row listed legacy firmware: no owner-commit wait and no pair_select, even if
+            // the glasses then report secure firmware.
+            startExplicitPair(store, capability: false)
+            try receive(transport, ["type": "pairing_info", "secure_pairing_capable": true, "protocol_version": 4])
+            try receive(transport, ["type": "glasses_ready", "sid": "row_legacy"])
+            XCTAssertTrue(ready(store))
+            XCTAssertFalse(transport.commands.contains { $0["type"] as? String == "pair_select" })
+
+            // A secure row waits for the owner commit.
+            transport.cleanup()
+            let secureTransport = SessionReadinessTransport()
+            DeviceManager.shared.sgc = secureTransport
+            defer { secureTransport.cleanup() }
+            startExplicitPair(store, capability: true)
+            try receive(secureTransport, ["type": "glasses_ready", "sid": "row_secure"])
+            XCTAssertFalse(ready(store))
+            try receive(secureTransport, [
+                "type": "pairing_info", "secure_pairing_capable": true, "owner_committed": true,
+                "protocol_version": 4,
+            ])
+            XCTAssertTrue(ready(store))
+        }
+    }
+
+    func testAReadySessionWithoutPairingInfoClearsTheSecureFirmwareFlag() throws {
+        try withPairingTransport { transport, _, store in
+            transport.secureFirmwareRefreshMs = 50
+            store.set("bluetooth", "mentra_live_secure_firmware", true)
+            store.set("glasses", "fullyBooted", false)
+            try receive(transport, ["type": "glasses_ready", "sid": "rolled_back"])
+            XCTAssertTrue(ready(store))
+            runMainLoop { store.get("bluetooth", "mentra_live_secure_firmware") as? Bool == false }
+            XCTAssertEqual(store.get("bluetooth", "mentra_live_secure_firmware") as? Bool, false)
+        }
+    }
+
+    func testASecurePairingInfoKeepsTheSecureFirmwareFlag() throws {
+        try withPairingTransport { transport, _, store in
+            transport.secureFirmwareRefreshMs = 50
+            store.set("bluetooth", "mentra_live_secure_firmware", false)
+            store.set("glasses", "fullyBooted", false)
+            try receive(transport, ["type": "glasses_ready", "sid": "secure"])
+            try receive(transport, ["type": "pairing_info", "secure_pairing_capable": true, "protocol_version": 4])
+            runMainLoop { store.get("bluetooth", "mentra_live_secure_firmware") as? Bool == true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+            XCTAssertEqual(store.get("bluetooth", "mentra_live_secure_firmware") as? Bool, true)
         }
     }
 
