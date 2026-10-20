@@ -339,6 +339,7 @@ export class TestRequestService {
     const row = await this.repository.get(requestId), candidate = row as unknown as import('../types/routine-job.types').StoredRoutineJob | null;
     if (candidate && candidate.state === 'awaiting-runner' && !candidate.hostId && !candidate.fleetBinding &&
       candidate.fleetCandidatePreparation?.hostId === hostId) return candidate;
+    if (candidate && (await import('./backend-candidate-preparation')).completedCandidatePreparationForHost(candidate, hostId)) return candidate;
     return this.preparation(requestId, hostId);
   }
   async preparation(requestId: string, hostId: string, intentSha256?: string) {

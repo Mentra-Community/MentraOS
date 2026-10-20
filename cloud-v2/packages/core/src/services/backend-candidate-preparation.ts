@@ -1,6 +1,6 @@
 import {isDeepStrictEqual} from 'node:util'
-import {backendConnectivityObservationMatches, candidatePrerequisiteSettlementSchema, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
-import {fleetCandidatePreparationSchema, type FleetCandidatePreparation, type StoredRoutineJob} from '../types/routine-job.types'
+import {backendConnectivityObservationMatches, backendConnectivityObservationSchema, candidatePrerequisiteSettlementSchema, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
+import {fleetCandidatePreparationSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type FleetCandidatePreparation, type StoredRoutineJob} from '../types/routine-job.types'
 import {exclusiveHostReservationSchema, exclusiveResourceReturnSchema, type ExclusiveResourceIntent} from '../types/resource-reservations.types'
 import type {TestHostState} from './test-host-state.service'
 import {permissionContext} from '../types/resource-permissions.types'
@@ -32,6 +32,35 @@ export function candidateReturnMatches(pending: FleetCandidatePreparation, value
     isDeepStrictEqual(r.originalOwner, c.owner) && release.operationId === c.operationId &&
     Date.parse(release.releasedAt) >= Date.parse(c.reservedAt) && r.controller.incarnation === c.controllerIncarnation &&
     r.controller.generation === c.controllerGeneration && r.controller.sequence > c.borrowerSequence
+}
+
+/** Historical metadata acknowledges only this host's exact consumed probe, never current reader authority. */
+export function completedCandidatePreparationForHost(row: StoredRoutineJob, hostId: string) {
+  const history = row.fleetCandidatePreparations, deadline = row.fleetDeadline?.getTime();
+  if (!history?.length || history.length > MAX_FLEET_CANDIDATE_PREPARATIONS || !Number.isFinite(deadline) ||
+    !row.fleetPreparation || requestInputDigest(row.fleetSelection) !== row.fleetSelectionSha256 ||
+    requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null}) !== row.fleetInputSha256) return false;
+  const attempts = new Set<string>();
+  for (const value of history) {
+    const parsed = fleetCandidatePreparationSchema.safeParse(value);
+    if (!parsed.success || attempts.has(parsed.data.candidate.attemptId)) return false;
+    attempts.add(parsed.data.candidate.attemptId);
+  }
+  return history.some(value => value.hostId === hostId && value.target.hostId === hostId && value.target.laneId === value.laneId &&
+    value.target.jobId === row.requestId && value.target.deadline === row.fleetDeadline.toISOString() &&
+    Date.parse(value.candidate.requestedAt) < deadline! && value.candidate.fleetInputSha256 === row.fleetInputSha256 &&
+    value.candidate.selectionSha256 === row.fleetSelectionSha256 && isDeepStrictEqual(value.target.candidate, value.candidate) &&
+    value.target.inputSha256 === value.targetInputSha256 &&
+    requestInputDigest((({inputSha256: _, ...target}) => target)(value.target)) === value.targetInputSha256 &&
+    isDeepStrictEqual(value.target.selection, {...row.fleetSelection, routineSource: row.fleetPreparation!.routineSource}) &&
+    isDeepStrictEqual(value.target.definition, row.fleetPreparation!.definition) &&
+    value.target.definitionSha256 === row.fleetPreparation!.definitionSha256 && requestInputDigest(value.target.definition) === value.target.definitionSha256 &&
+    Boolean(value.settlement && value.settlement.targetInputSha256 === value.targetInputSha256 &&
+      isDeepStrictEqual(value.settlement.candidate, value.candidate)) &&
+    row.fleetCandidatePreparation?.candidate.attemptId !== value.candidate.attemptId &&
+    (value.settlement!.checkOperationId ? candidateReturnMatches(value, value.returnReceipt) &&
+      value.settlement!.checkOperationId === `backend-prerequisite:${value.targetInputSha256}` :
+      value.settlement!.outcome === 'unknown' && !value.backendTarget && !value.claimReceipt && !value.returnReceipt));
 }
 
 /** Pending preparation is request custody, before recorder/dependency/run admission. */
@@ -93,13 +122,21 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
     returned.data.inputSha256 !== pending.targetInputSha256 || returned.data.resourceId !== phoneId ||
     returned.data.laneId !== pending.laneId || returned.data.controller.incarnation !== host.incarnation ||
     returned.data.controller.generation !== host.incarnationGeneration || subject.generation !== returned.data.release.subjectGeneration) return undefined
-  const health = phone.backendConnectivity, qualification = health?.qualification
-  if (!health || !qualification || health.outcome !== receipt.outcome || qualification.jobId !== pending.target.jobId ||
+  const parsedHealth = backendConnectivityObservationSchema.safeParse(phone.backendConnectivity),
+    app = permissionContext(pending.target.acceptedBinding, pending.target.selection.build, now)?.app
+  if (!parsedHealth.success || !app) return undefined
+  const health = parsedHealth.data, qualification = health.qualification, observedAt = Date.parse(health.observedAt),
+    closedAt = Date.parse(health.check.closedAt), releasedAt = Date.parse(returned.data.release.releasedAt)
+  if (!qualification || !isDeepStrictEqual(health.binding, pending.target.acceptedBinding) ||
+    !isDeepStrictEqual(health.controller, pending.candidate.controller) || !isDeepStrictEqual(health.app, app) ||
+    health.phoneResourceId !== phoneId || health.outcome !== receipt.outcome || qualification.jobId !== pending.target.jobId ||
     qualification.targetInputSha256 !== pending.targetInputSha256 || !isDeepStrictEqual(qualification.candidate, pending.candidate) ||
     qualification.preparing || qualification.local || health.check.operationId !== receipt.checkOperationId ||
     !isDeepStrictEqual(health.target, pending.backendTarget) || qualification.inputSha256 !== requestInputDigest(pending.target.proposedInput) ||
-    health.releasedGeneration !== subject.generation || Date.parse(health.observedAt) < Date.parse(pending.candidate.requestedAt) ||
-    Date.parse(health.observedAt) > now || now - Date.parse(health.observedAt) > 120_000 || Date.parse(health.check.closedAt) > now) return undefined
+    health.releasedGeneration !== subject.generation || observedAt < Date.parse(pending.candidate.requestedAt) ||
+    observedAt > closedAt || closedAt > releasedAt || releasedAt > now || observedAt > Date.parse(pending.target.deadline) ||
+    // A returned negative settles immutable history; only a current positive may select executable resources.
+    receipt.outcome === 'qualified' && now - observedAt > 120_000) return undefined
   return receipt
 }
 /** Retained positive identity is necessary but never sufficient for current admission. */
