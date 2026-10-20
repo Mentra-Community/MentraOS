@@ -40,6 +40,7 @@ import {
   revokeSession,
 } from "../../services/session.service"
 import {trustedAccountEmail} from "../../services/account/trusted-email.service"
+import {featuresFor} from "../../services/licenses/features.service"
 import {userAuth} from "../middleware/user-auth.middleware"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
@@ -117,11 +118,29 @@ async function postMiniappToken(c: AppContext) {
     throw new InvalidRequest("packageName is required")
   }
 
+  // The email lookup runs beside the features lookup. It never rejects, so abandoning it on a 503 is safe.
+  const emailLookup = miniappTokenEmail(user.mentraUserId)
+
+  // The licensed features are not best-effort like the email: a token that lacks features the person
+  // paid for would lock them out of what they bought, so a failed lookup mints nothing and the phone
+  // asks again.
+  let features: string[]
+  try {
+    features = await featuresFor({mentraUserId: user.mentraUserId, packageName, now: new Date()})
+  } catch (error) {
+    logger.error(
+      {mentraUserId: user.mentraUserId, packageName, error: (error as Error)?.message},
+      "miniapp token refused: licensed features unavailable",
+    )
+    return c.json({error: "features_unavailable"}, 503)
+  }
+
   const {token, expiresAt} = await issueMiniappToken({
     mentraUserId: user.mentraUserId,
     tenantId: user.tenantId,
     packageName,
-    email: await miniappTokenEmail(user.mentraUserId),
+    email: await emailLookup,
+    features,
   })
 
   return c.json({token, expiresAt})

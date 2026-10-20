@@ -39,6 +39,7 @@
  */
 
 import {createLogger} from "@mentra/cloud-shared"
+import {enabledFeaturesConfigured, parseEnabledFeatures} from "../licenses/enabled-features"
 import {isDeployedEnvironment} from "../signin/config"
 
 const logger = createLogger("core").child({service: "fleet-config"})
@@ -100,18 +101,12 @@ function reportOnce(level: "error" | "warn", variable: string, message: string):
 
 /**
  * The feature names `CLOUD_CORE_ENABLED_FEATURES` lists, or `null` when it is blank (the hosted Core).
- * Entries are `feature[:package+package]`; the package lists are ignored here and an entry with no
- * feature name is skipped.
+ * The setting's syntax and parser are `services/licenses/enabled-features.ts`; the package lists are
+ * ignored here.
  */
 function listedFeatures(env: NodeJS.ProcessEnv): Set<string> | null {
-  const raw = (env.CLOUD_CORE_ENABLED_FEATURES ?? "").trim()
-  if (!raw) return null
-  const features = new Set<string>()
-  for (const entry of raw.split(",")) {
-    const name = entry.split(":", 1)[0]!.trim()
-    if (name) features.add(name)
-  }
-  return features
+  if (!enabledFeaturesConfigured(env)) return null
+  return new Set(parseEnabledFeatures(env).keys())
 }
 
 /** The feature names of `CLOUD_CORE_ENABLED_FEATURES`: empty when the setting is blank or lists none. */

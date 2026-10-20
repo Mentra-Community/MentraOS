@@ -112,6 +112,44 @@ An ended license keeps its document, takes no seat and no write: Core answers
 deletion from the change feed (`workspace.deleted`, `user.deleted`) and stops
 charging.
 
+## Features in miniapp tokens
+
+When the Mentra App asks Core for a miniapp's token
+(`POST /api/client/auth/miniapp-token`), Core puts the features the person holds
+for that miniapp's package in the token's `features` claim: feature keys, sorted
+and unique, such as `["call.unlimited"]`. A miniapp backend reads them with
+`hasFeature` from `@mentra/auth`. A person who holds none gets a token with no
+`features` claim.
+
+A person holds a feature through:
+
+- **a license of their own;**
+- **a seat** in a workspace's license (a seat is deleted when its membership
+  ends, so every seat Core finds is a current member's);
+- **`CLOUD_CORE_ENABLED_FEATURES`**, whose entries are `feature[:package+package]`,
+  comma-separated. An entry with packages grants that feature to every signed-in
+  person, in those packages' tokens only. An entry without packages (`fleet.managed`)
+  reaches no token. Fleet reads only the feature names from the same setting
+  ([Fleet integration](fleet-integration.md)).
+
+A license counts only while it is in its term, `validFrom <= now < paidThrough`,
+and has not ended (`endedAt` is null). A feature reaches a token only when the
+miniapp's package is one of that feature's `packages`: a seat in a license for
+another package never reaches this package's token, and a feature for no package
+reaches no token.
+
+A change reaches a person with their next token. A token already minted keeps the
+features it was minted with until it expires (an hour by default), so a license
+that ends or a seat that is released stops showing at the person's next mint.
+
+If Core cannot read the licenses or seats, the mint answers
+`503 {"error":"features_unavailable"}` and issues no token; the Mentra App asks
+again. Core never mints a token that is missing features the person holds.
+
+The lookup uses the collections' existing indexes: personal licenses by
+`{"owner.type", "owner.mentraUserId"}`, seats by `{mentraUserId}` and the seated
+licenses by `_id`. A person with no seat costs two queries, run together.
+
 ## Who sees what
 
 | Capability | Member | Developer | Admin | Owner |

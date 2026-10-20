@@ -67,6 +67,11 @@ lookup; the lookup never blocks issuance. Core never takes the email from the
 request. `sub` stays the stable key: backends should store data against it and
 treat the email as a mutable attribute.
 
+Optional `features`: the licensed feature keys the user holds for this audience's
+package (sorted, unique), omitted when there are none. A failed lookup answers
+`503 {"error":"features_unavailable"}` and issues no token. See
+[Licenses and seats](../../../licenses.md#features-in-miniapp-tokens).
+
 ## Endpoints
 
 ### `POST /api/client/auth/exchange`

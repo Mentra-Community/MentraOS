@@ -30,8 +30,10 @@ every Core variable.
   Required when the URL is set. A secret without a URL does nothing.
 - `CLOUD_CORE_ENABLED_FEATURES`: how a Private Cloud switches first-party
   features on, as comma-separated `feature[:package+package]` entries. Fleet
-  reads only the feature names. Blank or unset, as on the hosted Core, leaves the
-  installation to the URL and the secret. Set, it must list `fleet.managed` for
+  reads only the feature names; the packages are for the features in miniapp
+  tokens ([Licenses and seats](licenses.md#features-in-miniapp-tokens)). Blank or
+  unset, as on the hosted Core, leaves the installation to the URL and the
+  secret. Set, it must list `fleet.managed` for
   Fleet to be installed; a Core that lists other features and not `fleet.managed`
   has no Fleet, whatever its Fleet URL says. Feature names are case-sensitive
   (`Fleet.Managed` is not `fleet.managed`), and a value of nothing but separators

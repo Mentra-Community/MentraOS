@@ -217,6 +217,7 @@ jobs:
             tests/legacy-admin-keys.integration.test.ts \
             tests/account-deletion.integration.test.ts \
             tests/licenses.integration.test.ts \
+            tests/license-features.integration.test.ts \
             tests/migrate-store-developer-orgs.integration.test.ts \
             tests/legacy-identity-claim.integration.test.ts \
             tests/legacy-miniapp-registry.integration.test.ts
