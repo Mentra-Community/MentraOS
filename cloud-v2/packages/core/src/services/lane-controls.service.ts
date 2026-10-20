@@ -7,6 +7,7 @@ import {laneControlInputSchema, laneControlRecordSchema, laneControlReceiptSchem
   type LaneControlInput, type LaneControlView, type LaneControlRecord, type LaneControlsView,
   type ResourceControlInput, type ResourceControlRecord, type ResourceControlView, type ResourceControlsView} from '../types/lane-control.types'
 import {resourceLifecycleSchema, type ResourceLifecycleSubject} from '../types/resource-lifecycle.types'
+import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
 import {ResourceLifecycleService} from './resource-lifecycle.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -58,14 +59,10 @@ const isLane = (row: ControlRecord): row is LaneControlRecord => 'laneId' in row
 const isResource = (row: ControlRecord): row is ResourceControlRecord => 'subject' in row.command
 /** An operator withdrawal remains durable until its later authentic baseline restores this subject. */
 function retainedRestriction(row:ControlRecord,host:LaneControlHost,now:number) {
-  if(!isResource(row)||row.command.action!=='mark-out-of-service'||row.receipt?.result.status!=='accepted'||!row.receipt.result.resource)return false;
-  const values=resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle),marked=row.receipt.result.resource,
-    subject=values.success?values.data.subjects.find(value=>value.subject.id===marked.resourceId&&value.subject.authorityHostId===host.hostId):undefined,
-    observed=Date.parse(subject?.observedAt??''),accepted=Date.parse(subject?.idle.acceptedCheck?.acceptedAt??'');
-  return !subject?.current||subject.status!=='idle'||subject.owner!==null||subject.generation<=marked.generation||subject.idle.outcome!=='passed'||
-    subject.idle.acceptedCheck?.subjectGeneration!==subject.generation||subject.idle.qualifiedScope.kind==='unqualified'||
-    !fresh(host,now)||!Number.isFinite(observed)||observed>now||now-observed>120000||!Number.isFinite(accepted)||
-    accepted<Date.parse(row.receipt.completedAt)||accepted>now;
+  if(!isResource(row))return false;
+  const values=resourceLifecycleSchema.safeParse(host.snapshot.resourceLifecycle),
+    subject=values.success?values.data.subjects.find(value=>value.subject.id===row.command.subject.resourceId):undefined;
+  return manualWithdrawalNeedsRestoration(row,subject,host.hostId,fresh(host,now),now);
 }
 /** A manual withdrawal needs one available slot for its explicit restoration check. */
 function pendingRestorationSlot(records:ControlRecord[],host:LaneControlHost,now:number) {

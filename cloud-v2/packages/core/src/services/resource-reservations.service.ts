@@ -17,7 +17,9 @@ import {preparationRejectionSchema} from '../types/routine-dispatch.types'
 import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
-import {laneControlRecordSchema, resourceControlRecordSchema} from '../types/lane-control.types'
+import {laneControlRecordSchema, resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
+import {resourceLifecycleSchema} from '../types/resource-lifecycle.types'
+import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
 
 /** A phone check and ordinary preparation must not queue conflicting owners on one physical Android lane. */
 export function requiresSerializedAndroidPreparation(lane: TestHostState['lanes'][number]) {
@@ -26,7 +28,7 @@ export function requiresSerializedAndroidPreparation(lane: TestHostState['lanes'
 }
 export type ResourceReservationHost = {hostId: string; incarnation: string; incarnationGeneration: number; sequence: number;
   receivedAt: Date; snapshot: TestHostState; resourceReservationVersion?: number; resourceReservations?: unknown;
-  laneControlVersion?: number; laneControls?: unknown}
+  laneControlVersion?: number; laneControls?: unknown; resourceLifecycleCursor?: unknown}
 /** Installed resource controls and new fleet claims contend on the same authority row. */
 function dependencyAvailable(host: ResourceReservationHost, dependency: ExclusiveResourceDependency, now: number) {
   // Capability loss withdraws new controls; it cannot erase an original operator's
@@ -37,14 +39,19 @@ function dependencyAvailable(host: ResourceReservationHost, dependency: Exclusiv
       (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
         'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state!=='settled')))) return false;
   const subject=host.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===dependency.resourceId);
+  const cursor=host.resourceLifecycleCursor===undefined?undefined:resourceLifecycleSchema.parse(host.resourceLifecycleCursor),
+    previous=cursor?.subjects.find(value=>value.subject.id===dependency.resourceId);
+  if(records.some(row=>'subject' in row.command&&row.command.subject.resourceId===dependency.resourceId&&
+    manualWithdrawalNeedsRestoration(row as ResourceControlRecord,subject,host.hostId,fresh(host,now),now)))return false;
   // A formerly controlled subject cannot revert to legacy permissive readiness
   // after rollback or bounded history trimming. Any published lifecycle subject
   // remains subject to its current baseline, even after its control row retires.
   if (host.snapshot.laneControls?.resourceControls !== true &&
-    !subject && !records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId)) return true;
+    !subject && !previous && !records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId)) return true;
   if (!fresh(host,now)) return false;
   const at=Date.parse(subject?.observedAt??'');
-  if (!subject?.current || subject.subject.authorityHostId!==host.hostId || subject.status!=='idle' || subject.owner ||
+  if (!subject?.current || subject.subject.authorityHostId!==host.hostId || (previous &&
+    (previous.subject.authorityHostId!==host.hostId || subject.generation<previous.generation)) || subject.status!=='idle' || subject.owner ||
     subject.idle.outcome!=='passed' || subject.idle.acceptedCheck?.subjectGeneration!==subject.generation ||
     subject.idle.qualifiedScope.kind==='unqualified' || !Number.isFinite(at) || at>now || now-at>120_000) return false;
   return true;
@@ -117,7 +124,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
       'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.state': 1, 'snapshot.lanes.activity': 1,
       'snapshot.lanes.resources': 1, 'snapshot.lanes.glasses': 1, 'snapshot.resources': 1, 'snapshot.resourceReservations': 1,
       'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.frameworkProcess': 1,
-      'snapshot.resourceLifecycle': 1, resourceReservationVersion: 1, resourceReservations: 1})
+      'snapshot.resourceLifecycle': 1, resourceLifecycleCursor: 1, resourceReservationVersion: 1, resourceReservations: 1})
       .read('primary').readConcern('majority').setOptions({timeoutMS: 5000}).lean() as ResourceReservationHost | null
   },
   async replace(host, claims) {

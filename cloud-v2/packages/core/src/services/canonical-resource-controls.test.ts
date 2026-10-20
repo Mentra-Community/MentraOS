@@ -92,6 +92,32 @@ for(const baseline of ['out-of-service','missing','unknown','fresh-restored'] as
  expect(host.laneControls).toHaveLength(1);
 });
 
+for(const baseline of ['older-generation','marked-generation','predates-withdrawal','future-check','different-authority','restored'] as const)test(`accepted withdrawal requires later authentic restoration rather than ${baseline} readiness`,async()=>{
+ const f=fixture(),host=f.rows.get(authority)!,operationId=randomUUID(),command={operationId,hostId:authority,subject:{resourceId:id,subjectGeneration:7},operatorId:'c'.repeat(64),expiresAt:now-1,action:'mark-out-of-service' as const,reason:'Operator withdrew'};
+ host.snapshot.laneControls={schemaVersion:1,receipts:[]};host.laneControls=[{command,receipt:{operationId,hostId:authority,subject:command.subject,inputSha256:requestInputDigest(command),completedAt:at,result:{status:'accepted',resource:{resourceId:id,generation:8,status:'out-of-service'}}}}];
+ const value=host.snapshot.resourceLifecycle!.subjects[0]!;value.generation=baseline==='older-generation'?7:baseline==='marked-generation'?8:9;value.idle.acceptedCheck!.subjectGeneration=value.generation;
+ if(baseline==='predates-withdrawal')value.idle.acceptedCheck!.acceptedAt=new Date(now-1).toISOString();
+ if(baseline==='future-check')value.idle.acceptedCheck!.acceptedAt=new Date(now+1).toISOString();
+ if(baseline==='different-authority'){value.subject.authorityHostId='foreign';await expect(f.service.acquire(intent,'air')).rejects.toThrow('Resource lifecycle must be reported by its authority host');expect(f.writes()).toBe(0);return}
+ expect((await f.service.acquire(intent,'air')).status).toBe(baseline==='restored'?'reserved':'waiting');expect(f.writes()).toBe(baseline==='restored'?1:0);
+});
+
+for(const omission of ['envelope','subject','older-current'] as const)test(`retained commissioning cursor refuses legacy fallback after ${omission} omission`,async()=>{
+ const f=fixture(),host=f.rows.get(authority)!;host.resourceLifecycleCursor=structuredClone(host.snapshot.resourceLifecycle);
+ host.snapshot.laneControls={schemaVersion:1,receipts:[]};host.laneControls=[];
+ if(omission==='envelope')delete host.snapshot.resourceLifecycle;
+ else if(omission==='subject')host.snapshot.resourceLifecycle!.subjects=[];
+ else{const prior=(host.resourceLifecycleCursor as NonNullable<ResourceReservationHost['snapshot']['resourceLifecycle']>).subjects[0]!;prior.generation=8;prior.idle.acceptedCheck!.subjectGeneration=8}
+ expect((await f.service.acquire(intent,'air')).status).toBe('waiting');expect(f.writes()).toBe(0);expect(host.resourceReservations).toEqual([]);
+});
+
+test('canonical authority reader retains the existing lifecycle cursor with its exact host report',async()=>{
+ const host=hosts().get(authority)!,original=TestHostStateModel.findOne;let projection:Record<string,unknown>|undefined;
+ const query={select(value:Record<string,unknown>){projection=value;return query},read(){return query},readConcern(){return query},setOptions(){return query},lean:async()=>host};
+ TestHostStateModel.findOne=mock(()=>query) as never;
+ try{expect(await resourceReservationRepository.get(authority)).toEqual(host);expect(projection).toMatchObject({resourceLifecycleCursor:1,'snapshot.resourceLifecycle':1,laneControls:1,sequence:1,receivedAt:1})}finally{TestHostStateModel.findOne=original}
+});
+
 test('resource authority CAS includes manual control version so a concurrent operator intent wins before a new claim',async()=>{
  const host=hosts().get(authority)!,find=TestHostStateModel.findOneAndUpdate;let filter:unknown;
  const query={select(){return query},setOptions(){return query},lean:async()=>null};
