@@ -1683,7 +1683,8 @@ class LocalMiniappRuntime {
     existing.authDelivered = false
     this.clearMiniappAuthDeliveryRetry(packageName)
     // A connect is an open, so the token is minted now rather than taken from the cache: it must carry
-    // whatever the user has acquired since the last one.
+    // whatever the user has acquired since the last one. If this mint fails, the retries in
+    // deliverInitialMiniappAuth fall back to the cache-first path.
     const authPromise = this.requestMiniappAuth(packageName, {fresh: true})
 
     // Send CONNECT_ACK in this turn, before any await. A 1.5s auth wait let a
@@ -1799,8 +1800,13 @@ class LocalMiniappRuntime {
    * Deliver the miniapp's FIRST auth token, retrying until it lands. Called from
    * {@link handleConnect} when the initial mint didn't resolve in the CONNECT_ACK
    * window. `inFlight` lets attempt 0 reuse the mint the handshake already
-   * started (avoids a redundant duplicate request); later attempts start a new
-   * one. Every mint here is for an open, so none is served from the cache.
+   * started (avoids a redundant duplicate request). That first request is fresh
+   * (see {@link handleConnect}). If it failed, later attempts take the default,
+   * cache-first path: during a Core outage a still-valid cached token reaches the
+   * miniapp at once, as it did before opens asked for fresh tokens, and with no
+   * cached token the default path mints, so the backoff is unchanged. The
+   * foreground edge and the scheduled refresh stay fresh and pick up anything
+   * newer.
    *
    * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
    * — permanent, so we do NOT retry. A REJECTION means a transient failure
@@ -1815,7 +1821,7 @@ class LocalMiniappRuntime {
   ): void {
     const app = this.connectedApps.get(packageName)
     if (!app || app.authDelivered) return
-    const mint = inFlight ?? this.requestMiniappAuth(packageName, {fresh: true})
+    const mint = inFlight ?? this.requestMiniappAuth(packageName)
     void mint
       .then((auth) => {
         const current = this.connectedApps.get(packageName)

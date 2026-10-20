@@ -5,8 +5,9 @@ import {readFileSync} from "node:fs"
 
 // A miniapp's token carries what Core knew about the user when it was minted (the features they hold), so the
 // runtime asks for a fresh one whenever the miniapp opens: on CONNECT, on its foreground edge, and when the
-// scheduled refresh falls due. These run the shipped methods against a fake clock, fake timers and a fake Cloud
-// Client, in the style of the runtime's other isolated suites, instead of booting the Expo app singleton.
+// scheduled refresh falls due. If CONNECT's fresh mint fails, its retries go through the default path, which
+// serves a still-valid cached token. These run the shipped methods against a fake clock, fake timers and a fake
+// Cloud Client, in the style of the runtime's other isolated suites, instead of booting the Expo app singleton.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const methods = [
   "updateVisibility",
@@ -18,6 +19,7 @@ const methods = [
   "deliverInitialMiniappAuth",
   "scheduleInitialMiniappAuthRetry",
   "clearMiniappAuthDeliveryRetry",
+  "redriveMiniappAuthDelivery",
 ]
   .map((name) => {
     const start = source.search(new RegExp(`^  (?:public|private) (?:async )?${name}\\(`, "m"))
@@ -198,6 +200,11 @@ function fixture() {
       host.handleConnect(CALL, {}, "req-1")
       await flush()
     },
+    /** The cloud client (re)connects: apps still missing their first token retry at once. */
+    async redrive() {
+      host.redriveMiniappAuthDelivery()
+      await flush()
+    },
     /** The miniapp becomes the visible one (or, with null, none is). */
     async show(packageName: string | null) {
       visible = packageName
@@ -376,7 +383,7 @@ describe("a miniapp that comes to the foreground", () => {
 })
 
 describe("a mint that fails when the miniapp connects", () => {
-  test("is retried with the existing backoff, asking for a fresh token each time", async () => {
+  test("is retried with the existing backoff, through the default path after the first fresh request", async () => {
     const f = fixture()
     f.plan(fails("not ready"), fails("not ready"), fails("not ready"))
     await f.connect()
@@ -388,12 +395,7 @@ describe("a mint that fails when the miniapp connects", () => {
     expect(f.armed()).toEqual([RETRY_BASE_MS * 4])
     await f.advance(RETRY_BASE_MS * 4)
 
-    expect(f.requests.map((request) => request.opts)).toEqual([
-      {fresh: true},
-      {fresh: true},
-      {fresh: true},
-      {fresh: true},
-    ])
+    expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, undefined, undefined, undefined])
     expect(f.delivered()).toEqual(["token-1"])
     // The retries are over; only the token's refresh is armed.
     expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
@@ -411,5 +413,79 @@ describe("a mint that fails when the miniapp connects", () => {
     }
 
     expect(delays).toEqual([1_000, 2_000, 4_000, 8_000, RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS])
+  })
+
+  test("with a still-valid cached token, delivers it on the first retry", async () => {
+    const f = fixture()
+    await f.connect()
+    await f.advance(10 * 60_000)
+    f.plan(fails("Core is down"))
+
+    await f.connect()
+    // The fresh mint failed and nothing has been delivered for this open yet.
+    expect(f.delivered()).toEqual(["token-1"])
+    expect(f.armed()).toEqual([RETRY_BASE_MS])
+
+    await f.advance(RETRY_BASE_MS)
+
+    expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, {fresh: true}, undefined])
+    expect(f.delivered()).toEqual(["token-1", "token-1"])
+    // No more retries; the refresh is armed for the cached token's own expiry.
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS - 10 * 60_000 - RETRY_BASE_MS])
+  })
+
+  test("with a cached token, the refresh that follows is still fresh", async () => {
+    const f = fixture()
+    await f.connect()
+    f.plan(fails("Core is down"))
+    await f.connect()
+    await f.advance(RETRY_BASE_MS)
+
+    await f.advance(f.armed()[0])
+
+    expect(f.requests.at(-1)?.opts).toEqual({fresh: true})
+    expect(f.delivered().at(-1)).toBe("token-2")
+  })
+
+  test("with a cached token that is about to expire, the retry mints", async () => {
+    const f = fixture()
+    await f.connect()
+    // The scheduled refresh failed, so the cached token ran down into the cloud client's expiry margin, where the
+    // default path no longer serves it.
+    f.plan(fails("Core is down"), fails("Core is down"))
+    await f.advance(HOUR_MS - CACHE_MARGIN_MS / 2)
+    expect(f.delivered()).toEqual(["token-1"])
+
+    await f.connect()
+    await f.advance(RETRY_BASE_MS)
+
+    expect(f.requests.at(-1)?.opts).toBeUndefined()
+    expect(f.delivered().at(-1)).toBe("token-2")
+  })
+
+  test("the reconnect redrive also takes the default path, delivering a valid cached token", async () => {
+    const f = fixture()
+    await f.connect()
+    f.plan(fails("Core is down"))
+    await f.connect()
+    expect(f.armed()).toEqual([RETRY_BASE_MS])
+
+    await f.redrive()
+
+    expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, {fresh: true}, undefined])
+    expect(f.delivered()).toEqual(["token-1", "token-1"])
+    // The redrive took over from the pending retry.
+    expect(f.armed()).toEqual([HOUR_MS - HEADROOM_MS])
+  })
+
+  test("the reconnect redrive with no cached token mints, as before", async () => {
+    const f = fixture()
+    f.plan(fails("Core is down"))
+    await f.connect()
+
+    await f.redrive()
+
+    expect(f.requests.map((request) => request.opts)).toEqual([{fresh: true}, undefined])
+    expect(f.delivered()).toEqual(["token-1"])
   })
 })

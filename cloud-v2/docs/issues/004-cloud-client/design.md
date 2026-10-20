@@ -427,7 +427,9 @@ packageName run one at a time. A fresh call shares an in-flight mint only while 
 mint's request has not been sent; once it has, the call waits for it and starts the
 next mint, which later fresh calls share. This is what the on-device runtime calls, fresh,
 at miniapp launch, when the miniapp returns to the foreground, and when its scheduled
-refresh before expiry falls due.
+refresh before expiry falls due. If the launch mint fails, the runtime retries through
+the default path with backoff, so a still-valid cached token serves the miniapp while
+Core is unreachable; the foreground and scheduled mints then pick up anything newer.
 
 **`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `tenantId` are
 base64 JSON inside them. `identity` reads them straight off the active token path.
