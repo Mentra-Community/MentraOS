@@ -205,3 +205,17 @@ test('known local withdrawal preserves same-host Mac qualification while outage 
     } else await expect(service.qualificationTargets('mini')).rejects.toThrow(failure.message)
   }
 })
+
+test('paused local original revalidates report-only advancement before CAS without adopting another local target',async()=>{
+ const f=await claimFixture(),replace=f.repository.replaceBackend!.bind(f.repository);let first=true
+ f.repository.replaceBackend=async(host,claims,intent,at)=>{
+  if(first){first=false;f.row.sequence++;f.row.snapshot.sequence=f.row.sequence}
+  return replace(host,claims,intent,at)
+ }
+ const answer=await f.service.acquire(f.intent,'mini')
+ expect(answer.status).toBe('reserved');expect(f.row.snapshot.lanes[0]!.dispatchMode).toBe('paused')
+ expect(f.writes).toHaveLength(1);expect(answer.claims[0]!.borrowerSequence).toBe(f.intent.controller.sequence)
+ expect(answer.claims[0]!.prerequisite!.local).toEqual(f.target.local)
+ expect((await f.service.observe({intent:f.intent,controller:{...f.intent.controller,sequence:f.row.sequence}},'mini')).claims).toEqual(answer.claims)
+ expect(f.writes).toHaveLength(1)
+})

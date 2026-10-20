@@ -215,7 +215,7 @@ async function claimFixture(options: {cancelAfterWrite?: boolean; loseAnswer?: b
     resources: [{id: 'phone', capabilities: ['backend-connectivity']}],
     prerequisite: {kind: 'backend-connectivity', jobId: 'original', targetInputSha256: target.inputSha256, resourceId: 'phone', binding, preparing: target.preparing!}}
   const service = new ResourceReservationsService(repository, () => now, (hostId, owned) => f.service.qualificationTargets(hostId, owned))
-  return {...f, row, intent, service, repository, writes, target,
+  return {...f, row, intent, service, repository, writes, target, targets: (hostId: string, owned?: OwnedRoutineQualification) => f.service.qualificationTargets(hostId, owned),
     beforeRelease() {replacing = true},
     owned(): OwnedRoutineQualification {return {jobId: 'original', laneId: 'android', inputSha256: target.inputSha256,
       ownerId, generation: 2, binding, controller: {incarnation: 'controller', generation: 1}, purpose: {kind: 'backend-connectivity', resourceId: 'phone'}}}}
@@ -225,6 +225,55 @@ test('owned lookup requires exact resource check owner and original target while
   const original = fixture(); original.observed.resourceLifecycle = f.observed.resourceLifecycle
   expect((await original.service.qualificationTargets('mini', f.owned()))[0]?.inputSha256).toBe(f.target.inputSha256)
   expect(await original.service.qualificationTargets('mini', {...f.owned(), generation: 3})).toEqual([])
+})
+test('owned lookup can omit the unchanged exact phone target during a same-reporter heartbeat', async () => {
+  for (const advanceAt of [2, 3]) {
+    const claim = await claimFixture(), f = fixture(); f.observed.resourceLifecycle = claim.observed.resourceLifecycle
+    const before = structuredClone(f.original), target = (await f.service.qualificationTargets('mini', claim.owned()))[0]!
+    let reads = 0, advancing = true
+    const service = new RoutineJobService({async get() {return structuredClone(f.original)}} as unknown as RoutineJobRepository,
+      undefined, undefined, undefined, {async get() {
+        if (++reads === advanceAt && advancing) f.observed.sequence++
+        return structuredClone(f.observed)
+      }}, undefined, undefined, () => now)
+    expect(await service.qualificationTargets('mini', claim.owned())).toEqual([])
+    expect(f.observed.incarnation).toBe('controller'); expect(f.observed.incarnationGeneration).toBe(1)
+    expect(f.observed.lanes[0]!.state).toBe('idle')
+    expect(f.observed.resourceLifecycle!.subjects[0]!.owner).toMatchObject({id: claim.owned().ownerId, generation: 2})
+    expect(f.original).toEqual(before); expect(claim.writes).toEqual([])
+    advancing = false
+    const current = (await service.qualificationTargets('mini', claim.owned()))[0]!
+    expect(current).toEqual(target); expect(current.proposedInput).toEqual(target.proposedInput)
+  }
+})
+test('owned lookup budget exhaustion is absence without withdrawal or any acquired phone claim', async () => {
+  const claim = await claimFixture(), f = fixture(); f.observed.resourceLifecycle = claim.observed.resourceLifecycle
+  const target = (await f.service.qualificationTargets('mini', claim.owned()))[0]!, before = structuredClone(f.original)
+  let clock = now, exhaust = true
+  const service = new RoutineJobService({async get() {
+    if (exhaust) clock += 5_000
+    return structuredClone(f.original)
+  }} as unknown as RoutineJobRepository, undefined, undefined, undefined,
+  {async get() {return structuredClone(f.observed)}}, undefined, undefined, () => clock)
+  expect(await service.qualificationTargets('mini', claim.owned())).toEqual([])
+  expect(f.original).toEqual(before); expect(claim.writes).toEqual([])
+  exhaust = false
+  expect((await service.qualificationTargets('mini', claim.owned()))[0]).toEqual(target)
+})
+test('owned lookup needs the actual check-owner snapshot after an older in-flight report', async () => {
+  const claim = await claimFixture(), f = fixture(), oldReport = structuredClone(f.observed)
+  f.observed.resourceLifecycle = claim.observed.resourceLifecycle
+  const target = (await f.service.qualificationTargets('mini', claim.owned()))[0]!
+  let pendingOldReport = true
+  const service = new RoutineJobService({async get() {return structuredClone(f.original)}} as unknown as RoutineJobRepository,
+    undefined, undefined, undefined, {async get() {return structuredClone(pendingOldReport ? oldReport : f.observed)}},
+    undefined, undefined, () => now)
+  expect(await service.qualificationTargets('mini', claim.owned())).toEqual([])
+  expect(claim.writes).toEqual([]); pendingOldReport = false; f.observed.sequence++
+  expect((await service.qualificationTargets('mini', claim.owned()))[0]).toEqual(target)
+  expect(await service.qualificationTargets('mini', {...claim.owned(), generation: 3})).toEqual([])
+  f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Original cancelled'}
+  expect(await service.qualificationTargets('mini', claim.owned())).toEqual([])
 })
 test('one phone check contends with retained run claims before any target stage or native authority', async () => {
   const f = await claimFixture()
@@ -717,4 +766,128 @@ test('serialized phone preparation retains other-lane capacity and refuses unkno
     expect((f.current.host.resourceReservations as RecorderHostReservation[])[0]).toEqual(first)
     expect(f.requests.get('third')!.fleetResourceAdmission).toBeUndefined()
   } finally {f.restore()}
+})
+
+
+test('same-controller report advance before CAS revalidates the original check and writes one unchanged intent', async () => {
+  for (const at of ['lookup', 'cas']) {
+    const f = await claimFixture(), before = structuredClone(f.original), source = structuredClone(f.intent),
+      coherent = (await f.targets('mini', f.owned()))[0]!
+    let advance = true, attempts = 0
+    const advanceReport = () => {advance = false; f.row.sequence++; f.row.snapshot.sequence = f.row.sequence; f.observed.sequence = f.row.sequence}
+    const replace = f.repository.replaceBackend!.bind(f.repository)
+    f.repository.replaceBackend = async (host, claims, intent, now) => {
+      attempts++; if (advance && at === 'cas') advanceReport()
+      return replace(host, claims, intent, now)
+    }
+    const service = new ResourceReservationsService(f.repository, () => now, async (hostId, owned) => {
+      const exact = await f.targets(hostId, owned)
+      if (advance && at === 'lookup') advanceReport()
+      return exact
+    })
+    const acquired = await service.acquire(f.intent, 'mini')
+    expect(acquired.status).toBe('reserved'); expect(acquired.claims).toHaveLength(1)
+    expect(f.writes).toHaveLength(1); expect(f.row.resourceReservations).toEqual(acquired.claims)
+    expect(f.row.sequence).toBe(2); expect(acquired.claims[0]!.borrowerSequence).toBe(source.controller.sequence)
+    expect(attempts).toBe(at === 'cas' ? 2 : 1)
+    expect(f.original).toEqual(before); expect(f.intent).toEqual(source)
+    expect((await f.targets('mini', f.owned()))[0]).toEqual(coherent)
+    expect((await service.acquire(f.intent, 'mini')).claims).toEqual(acquired.claims)
+    expect(f.writes).toHaveLength(1)
+  }
+})
+
+test('newer reports cannot substitute check generation, source, owner, lane, target or cancellation before the CAS', async () => {
+  const changes = [
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.row.snapshot.resourceLifecycle!.subjects[0]!.generation++},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.row.snapshot.resourceLifecycle!.subjects[0]!.owner!.generation!++},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.row.snapshot.resourceLifecycle!.subjects[0]!.owner!.id = 'different-check'},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.row.snapshot.frameworkBinding!.revision = 'c'.repeat(40)},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.row.snapshot.lanes[0]!.state = 'reserved'},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Cancelled during read'}},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.original.fleetDeadline = new Date(now)},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.row.incarnation = 'replacement'; f.row.incarnationGeneration++},
+    (f: Awaited<ReturnType<typeof claimFixture>>) => {f.original.fleetBinding!.descriptorRevision = 'c'.repeat(64)},
+  ]
+  for (const change of changes) {
+    const f = await claimFixture(); let first = true
+    const service = new ResourceReservationsService(f.repository, () => now, async (hostId, owned) => {
+      const target = await f.targets(hostId, owned)
+      if (first) {first = false; change(f); f.row.sequence++; f.row.snapshot.sequence = f.row.sequence; f.observed.sequence = f.row.sequence}
+      return target
+    })
+    expect((await service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(f.writes).toEqual([]); expect(f.row.resourceReservations).toEqual([])
+  }
+})
+
+test('continuously advancing reports exhaust only the existing bounded acquisition attempt and never create a claim', async () => {
+  const f = await claimFixture(); let reads = 0
+  const service = new ResourceReservationsService(f.repository, () => now, async (hostId, owned) => {
+    reads++; const targets = await f.targets(hostId, owned)
+    f.row.sequence++; f.row.snapshot.sequence = f.row.sequence; f.observed.sequence = f.row.sequence
+    return targets
+  })
+  expect((await service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(reads).toBe(3)
+  expect(f.writes).toEqual([]); expect(f.row.resourceReservations).toEqual([])
+})
+
+test('post-CAS report advance recovers only the same committed claim through observe without a new write', async () => {
+  const f = await claimFixture(), source = structuredClone(f.intent)
+  let targets = 0
+  const service = new ResourceReservationsService(f.repository, () => now, async (hostId, owned) => {
+    const exact = await f.targets(hostId, owned)
+    if (++targets === 2) {f.row.sequence++; f.row.snapshot.sequence = f.row.sequence; f.observed.sequence = f.row.sequence}
+    return exact
+  })
+  expect((await service.acquire(f.intent, 'mini')).status).toBe('unknown')
+  expect(f.writes).toHaveLength(1); expect(f.row.resourceReservations).toHaveLength(1)
+  const controller = {incarnation: 'controller', generation: 1, sequence: f.row.sequence},
+    recovered = await service.observe({intent: f.intent, controller}, 'mini')
+  expect(recovered.status).toBe('reserved'); expect(recovered.claims).toEqual(hostResourceReservationsSchema.parse(f.row.resourceReservations).filter(value => 'kind' in value))
+  expect(f.intent).toEqual(source); expect(f.writes).toHaveLength(1)
+  f.original.fleetCancellation = {requestedAt: timestamp, reason: 'Original cancelled after response loss'}
+  expect(await f.targets('mini', f.owned())).toEqual([])
+  expect((await service.observe({intent: f.intent, controller}, 'mini')).status).toBe('reserved')
+  expect((await service.acquire(f.intent, 'mini')).status).toBe('unknown'); expect(f.writes).toHaveLength(1)
+})
+
+test('same-intent observe completes a never-committed report race under current CAS without replaying acquisition',async()=>{
+ const f=await claimFixture(),source=structuredClone(f.intent);let churn=true,calls=0
+ const service=new ResourceReservationsService(f.repository,()=>now,async(hostId,owned)=>{
+  calls++;const target=await f.targets(hostId,owned)
+  if(churn){f.row.sequence++;f.row.snapshot.sequence=f.row.sequence;f.observed.sequence=f.row.sequence}
+  return target
+ })
+ expect((await service.acquire(f.intent,'mini')).status).toBe('unknown');expect(f.writes).toEqual([]);expect(calls).toBe(3)
+ churn=false
+ const controller={incarnation:'controller',generation:1,sequence:f.row.sequence},recovered=await service.observe({intent:f.intent,controller},'mini')
+ expect(recovered.status).toBe('reserved');expect(recovered.claims).toHaveLength(1);expect(f.writes).toHaveLength(1)
+ expect(recovered.claims[0]!.borrowerSequence).toBe(source.controller.sequence);expect(f.intent).toEqual(source)
+ expect((await service.observe({intent:f.intent,controller},'mini')).claims).toEqual(recovered.claims)
+ expect(f.writes).toHaveLength(1)
+})
+test('delayed original acquire and no-claim observation compete in one host CAS and recover one claim',async()=>{
+ const f=await claimFixture(),entered=Promise.withResolvers<void>(),resume=Promise.withResolvers<void>(),replace=f.repository.replaceBackend!.bind(f.repository)
+ let first=true
+ f.repository.replaceBackend=async(host,claims,intent,at)=>{if(first){first=false;entered.resolve();await resume.promise}return replace(host,claims,intent,at)}
+ const acquiring=f.service.acquire(f.intent,'mini');await entered.promise
+ f.row.sequence++;f.row.snapshot.sequence=f.row.sequence;f.observed.sequence=f.row.sequence
+ const controller={incarnation:'controller',generation:1,sequence:f.row.sequence},observed=await f.service.observe({intent:f.intent,controller},'mini')
+ expect(observed.status).toBe('reserved');expect(f.writes).toHaveLength(1)
+ resume.resolve();expect((await acquiring).claims).toEqual(observed.claims)
+ expect(f.writes).toHaveLength(1);expect(f.row.resourceReservations).toEqual(observed.claims)
+})
+test('no-claim observe cannot revive released original checks or cancelled, expired and replaced authority',async()=>{
+ for(const reason of ['released','cancelled','expired','replaced','different-check'] as const){
+  const f=await claimFixture();f.row.sequence++;f.row.snapshot.sequence=f.row.sequence;f.observed.sequence=f.row.sequence
+  if(reason==='released')f.row.snapshot.resourceLifecycle!.history.push({id:'release',resourceId:'phone',subjectGeneration:2,at:timestamp,event:'resource-check-released',checkOperationId:f.intent.operationId})
+  if(reason==='cancelled')f.original.fleetCancellation={requestedAt:timestamp,reason:'Cancelled before observation'}
+  if(reason==='expired')f.original.fleetDeadline=new Date(now)
+  if(reason==='replaced'){f.row.incarnation='new';f.row.incarnationGeneration++;f.row.snapshot.incarnation='new';f.row.snapshot.incarnationGeneration++}
+  if(reason==='different-check')f.row.snapshot.resourceLifecycle!.subjects[0]!.owner!.id='different-check'
+  const controller={incarnation:f.row.incarnation,generation:f.row.incarnationGeneration,sequence:f.row.sequence}
+  expect((await f.service.observe({intent:f.intent,controller},'mini')).status).toBe('unknown')
+  expect(f.writes).toEqual([]);expect(f.row.resourceReservations).toEqual([])
+ }
 })
