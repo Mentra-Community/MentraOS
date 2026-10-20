@@ -40,12 +40,14 @@ import {
   revokeSession,
 } from "../../services/session.service"
 import {trustedAccountEmail} from "../../services/account/trusted-email.service"
+import {featuresFor} from "../../services/licenses/features.service"
 import {userAuth} from "../middleware/user-auth.middleware"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"
-const MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS = 1_500
+/** How long each lookup a miniapp token waits for (the account email, the licensed features) may take. */
+const MINIAPP_LOOKUP_DEADLINE_MS = 1_500
 
 const logger = createLogger("core").child({service: "client-auth.api"})
 
@@ -117,11 +119,31 @@ async function postMiniappToken(c: AppContext) {
     throw new InvalidRequest("packageName is required")
   }
 
+  // The email lookup runs beside the features lookup. It never rejects, so abandoning it on a 503 is safe.
+  const emailLookup = miniappTokenEmail(user.mentraUserId)
+
+  // The licensed features are not best-effort like the email: a token that lacks features the person
+  // paid for would lock them out of what they bought, so a failed lookup, or one that outlasts its
+  // deadline, mints nothing and the phone asks again.
+  let features: string[]
+  try {
+    features = await withinDeadline("licensed features lookup", () =>
+      featuresFor({mentraUserId: user.mentraUserId, packageName, now: new Date()}),
+    )
+  } catch (error) {
+    logger.error(
+      {mentraUserId: user.mentraUserId, packageName, error: (error as Error)?.message},
+      "miniapp token refused: licensed features unavailable",
+    )
+    return c.json({error: "features_unavailable"}, 503)
+  }
+
   const {token, expiresAt} = await issueMiniappToken({
     mentraUserId: user.mentraUserId,
     tenantId: user.tenantId,
     packageName,
-    email: await miniappTokenEmail(user.mentraUserId),
+    email: await emailLookup,
+    features,
   })
 
   return c.json({token, expiresAt})
@@ -166,19 +188,34 @@ async function postRevoke(c: AppContext) {
  * lookup races a deadline and degrades to a token without email.
  */
 async function miniappTokenEmail(mentraUserId: string): Promise<string | null> {
+  try {
+    return await withinDeadline("account email lookup", (signal) => trustedAccountEmail(mentraUserId, {signal}))
+  } catch (error) {
+    logger.warn({mentraUserId, error: (error as Error)?.message}, "miniapp token issued without email claim")
+    return null
+  }
+}
+
+/**
+ * Run `start` and give it `MINIAPP_LOOKUP_DEADLINE_MS`. The signal it receives is aborted at the deadline,
+ * for lookups that can stop. Rejects with the lookup's own error, or at the deadline with a timeout error;
+ * the timer is always cleared. A lookup that outlasts its deadline is abandoned, and a later rejection of it
+ * is swallowed rather than left unhandled.
+ */
+async function withinDeadline<T>(what: string, start: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort()
-      reject(new Error(`account email lookup exceeded ${MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS}ms`))
-    }, MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS)
+      reject(new Error(`${what} exceeded ${MINIAPP_LOOKUP_DEADLINE_MS}ms`))
+    }, MINIAPP_LOOKUP_DEADLINE_MS)
   })
   try {
-    return await Promise.race([trustedAccountEmail(mentraUserId, {signal: controller.signal}), deadline])
-  } catch (error) {
-    logger.warn({mentraUserId, error: (error as Error)?.message}, "miniapp token issued without email claim")
-    return null
+    const lookup = start(controller.signal)
+    // Abandoned on purpose when the deadline wins: whatever it later settles with is not an error to report.
+    lookup.catch(() => {})
+    return await Promise.race([lookup, deadline])
   } finally {
     clearTimeout(timer)
   }

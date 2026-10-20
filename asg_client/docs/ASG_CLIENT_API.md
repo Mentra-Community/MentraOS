@@ -1044,13 +1044,22 @@ Same active-recording cleanup, then `SysControl.reboot()`.
 #### `phone_ready`
 
 ```json
-{"type": "phone_ready"}
+{"type": "phone_ready", "readyId": "6f1c…"}
 ```
 
-The phone announces it has connected. Glasses respond with `glasses_ready`, then 500 ms later auto-send WiFi status and hotspot status, and claim RGB LED control authority from the BES chip.
+The phone announces it has connected. `readyId` names one readiness exchange: the phone repeats it on every retry until it receives the matching `glasses_ready`.
+
+For the first `phone_ready` of an exchange (or one without `readyId`), the glasses do four things:
+
+- reset the BLE transport state (packet sizing, file transport and wire protocol)
+- respond with `glasses_ready`, echoing `readyId`
+- 500 ms later, auto-send WiFi status and hotspot status
+- claim RGB LED control authority from the BES chip
+
+A later `phone_ready` with the same `readyId` gets the same `glasses_ready`, but no reset and none of the delayed WiFi, hotspot or LED messages. This covers copies the BES buffered while the glasses booted, and retries after a lost reply.
 
 ```json
-{"type": "glasses_ready", "timestamp": 1708963201234}
+{"type": "glasses_ready", "timestamp": 1708963201234, "sid": "2c5ade53", "readyId": "6f1c…"}
 ```
 
 #### `auth_token`

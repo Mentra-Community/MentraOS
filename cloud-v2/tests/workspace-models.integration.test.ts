@@ -26,6 +26,8 @@ import {
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
+import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
 import {
   WORKSPACE_AUDIT_COUNTER_ID,
   WorkspaceAuditCounterModel,
@@ -45,6 +47,8 @@ const MODELS: Model<any>[] = [
   WorkspaceAuditEventModel,
   WorkspaceAuditCounterModel,
   LegacyBrowserIdentityModel,
+  LicenseModel,
+  LicenseSeatModel,
 ]
 
 /** Run `fn` and return whatever it throws (fails the test if it does not throw). */

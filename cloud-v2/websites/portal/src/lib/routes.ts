@@ -4,13 +4,14 @@
  *  - `/`                              your last-used workspace, else your first, else the first-run screen
  *  - `/invitation`                    the invitation this tab holds (from an invitation link)
  *  - `/w/<workspaceId>`               the workspace's first section you may open
- *  - `/w/<workspaceId>/<section>`     members, settings or audit
+ *  - `/w/<workspaceId>/<section>`     members, settings, audit or licenses
+ *  - `/account/billing`               the person's own billing (when the billing module is offered to them)
  *  - `/enterprise[/environments|/access]`  the enterprise pages, by direct address only (see pages/enterprise)
  *
  * Anything else is "page not found". The address never carries an invitation token (lib/workspace-invite).
  */
 
-export const WORKSPACE_SECTIONS = ["members", "settings", "audit"] as const;
+export const WORKSPACE_SECTIONS = ["members", "settings", "audit", "licenses"] as const;
 export type WorkspaceSection = (typeof WORKSPACE_SECTIONS)[number];
 
 export const ENTERPRISE_PAGES = ["overview", "environments", "access"] as const;
@@ -18,12 +19,16 @@ export type EnterprisePage = (typeof ENTERPRISE_PAGES)[number];
 
 export const INVITATION_PATH = "/invitation";
 
+/** The person's own billing page: personal licenses, not a workspace's. */
+export const ACCOUNT_BILLING_PATH = "/account/billing";
+
 export type PortalRoute =
   | { kind: "home" }
   | { kind: "invitation" }
   /** `section` is null for `/w/<id>` or a section this portal does not have: open the first one instead. */
   | { kind: "workspace"; workspaceId: string; section: WorkspaceSection | null }
   | { kind: "enterprise"; page: EnterprisePage }
+  | { kind: "account-billing" }
   | { kind: "not-found" };
 
 function decode(segment: string): string | null {
@@ -46,6 +51,7 @@ export function parseRoute(pathname: string): PortalRoute {
     const section = WORKSPACE_SECTIONS.find(candidate => candidate === third) ?? null;
     return { kind: "workspace", workspaceId, section };
   }
+  if (first === "account" && second === "billing" && !third) return { kind: "account-billing" };
   if (first === "enterprise" && !third) {
     if (!second) return { kind: "enterprise", page: "overview" };
     if (second === "environments" || second === "access") return { kind: "enterprise", page: second };

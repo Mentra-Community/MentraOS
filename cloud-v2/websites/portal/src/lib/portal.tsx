@@ -4,8 +4,10 @@
  * and the Developer Console the sidebar links to.
  */
 
+import type { QueryClient } from "@tanstack/react-query";
 import { createWorkspaceApi } from "@mentra/workspace-ui";
 import { createContext, useContext } from "react";
+import type { PortalModules } from "./api";
 import type { LinkInvitation, PendingInvitation } from "./invitations";
 
 /** Core's workspace API, reached with this portal's session. */
@@ -19,6 +21,18 @@ export const portalWorkspaceApi = createWorkspaceApi({ basePath: "/api/portal/wo
  */
 export const STORE_DELETE_NOTICE =
   "Miniapps this workspace still has in the Mentra Miniapp Store stay there, and nobody can manage them until a Store operator assigns them to another workspace.";
+
+/** The query that holds who is signed in (`GET /api/portal/me`). While it fails, the portal shows the sign-in page. */
+export const PORTAL_ME_KEY = ["portal-me"] as const;
+
+/**
+ * The session has ended (a portal module's API answered 401). Asking who the person is again finds out: the
+ * answer is a 401 too, and the portal sends them to sign in. A session that is in fact still good just
+ * refreshes the answer, so nothing is lost by a module that was wrong.
+ */
+export function expireSession(client: QueryClient): void {
+  void client.invalidateQueries({ queryKey: PORTAL_ME_KEY });
+}
 
 /** Whether this person may create a workspace, as `/api/portal/me` reports it. */
 export interface WorkspaceCreation {
@@ -56,6 +70,10 @@ export interface PortalSession {
   signingOut: boolean;
   /** This environment's Developer Console (lib/config), linked from the sidebar; null where there is none. */
   developerConsoleUrl: string | null;
+  /** Which portal modules this person is offered (`/api/portal/me`). Nothing of a module shows where it is false. */
+  modules: PortalModules;
+  /** A portal module's API answered 401: the person's session has ended (see {@link expireSession}). */
+  sessionExpired(): void;
 }
 
 const PortalContext = createContext<PortalSession | null>(null);

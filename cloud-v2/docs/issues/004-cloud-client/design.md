@@ -167,7 +167,7 @@ export class Auth implements AuthModule {
   constructor(deps: { http: HttpClient; store: TokenStore; config: AuthConfig; logger: Logger })
   getRuntimeToken(): Promise<string>                                  // cloud-runtime audience
   getCoreToken(): Promise<string>                                     // cloud-core audience
-  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>
+  getMiniappToken(packageName: string, opts?: { minTtlMs?: number; fresh?: boolean }): Promise<{ token: string; expiresAt: number }>
   get identity(): { mentraUserId: string; tenantId: string }
   onExpired(handler: () => void): () => void
 }
@@ -421,8 +421,17 @@ without configuring Core at all.
 **`getMiniappToken(packageName)`:** calls `POST /api/client/auth/miniapp-token` with
 the Core token as the Bearer, and caches the result per packageName with its
 expiry. A second call for the same packageName returns the cached token until it's
-near expiry, then re-mints (single-flight, same as above). This is what the on-device
-runtime calls at miniapp launch and on refresh.
+near expiry, then re-mints. `{ fresh: true }` skips the cache and always reaches Core,
+so the token reflects what Core knows now (the features the user holds). Mints for one
+packageName run one at a time. A fresh call shares an in-flight mint only while that
+mint's request has not been sent; once it has, the call waits for it and starts the
+next mint, which later fresh calls share. This is what the on-device runtime calls, fresh,
+at miniapp launch, when the miniapp returns to the foreground, and when its scheduled
+refresh before expiry falls due. If the launch mint fails, the runtime retries through
+the default path with backoff, so a still-valid cached token serves the miniapp while
+Core is unreachable; the foreground and scheduled mints then pick up anything newer.
+A scheduled refresh that fails is retried with the same backoff until a new token
+arrives.
 
 **`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `tenantId` are
 base64 JSON inside them. `identity` reads them straight off the active token path.

@@ -25,6 +25,15 @@ export function usePathname(serverPath = "/"): string {
   );
 }
 
+/** The current query string, with its `?` (or ""). On the server (tests) it is "" unless a test passes its own. */
+export function useSearch(serverSearch = ""): string {
+  return useSyncExternalStore(
+    subscribe,
+    () => window.location.search,
+    () => serverSearch,
+  );
+}
+
 /** Go to `path` in this tab. `replace` swaps the current history entry (redirects). */
 export function navigate(path: string, options: { replace?: boolean } = {}): void {
   if (`${window.location.pathname}${window.location.search}` === path && !options.replace) return;

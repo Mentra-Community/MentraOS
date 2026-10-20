@@ -579,6 +579,13 @@ class MentraLive : SGCManager() {
     // the physical connection (never on heartbeat readiness flaps), so a first-seen sid
     // after an upgrade OTA is always detected as a restart.
     private var readinessCompletedThisBleSession = false
+    // Readiness exchange the phone is waiting on. Every phone_ready carries it until the
+    // matching glasses_ready arrives, so retries and the copies the BES buffers while the
+    // glasses boot are one exchange: the glasses reset their transport once for it and answer
+    // later copies without resetting. Both exchange fields are scoped to the BLE session.
+    private var pendingReadyId: String? = null
+    // `sid` of the glasses process whose glasses_ready this BLE session last handled.
+    private var readyGlassesSessionId: String? = null
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -1241,6 +1248,7 @@ class MentraLive : SGCManager() {
             if (state == ConnTypes.DISCONNECTED) {
                 resetWireNegotiationState()
                 resetPendingAckState()
+                resetReadinessExchange()
                 // Queued writes are session-bound: transmitting them into the NEXT session
                 // (e.g. a stale handshake whose reply activates v2 before the new session
                 // negotiated) is the bug class this clear removes. Higher layers re-send
@@ -1306,6 +1314,7 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             resetWireNegotiationState()
             resetPendingAckState()
+            resetReadinessExchange()
             // The glasses reset mic and wear tuning on BLE disconnect, so the
             // next link must be allowed to send them again.
             lastSentMicTuningBody = null
@@ -4953,6 +4962,19 @@ class MentraLive : SGCManager() {
                     Bridge.log("LIVE: Ignoring stale glasses_ready without a link")
                     return
                 }
+                val sid = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                val readyId = json.optString("readyId", "").takeIf { it.isNotEmpty() }
+                if (readyId != null && isRepeatedGlassesReady(readyId, sid)) {
+                    Bridge.log(
+                            "LIVE: Ignoring repeated glasses_ready for readiness exchange $readyId - " +
+                                    "the glasses did not reset for it"
+                    )
+                    return
+                }
+                if (readyId != null && readyId == pendingReadyId) {
+                    pendingReadyId = null
+                }
+                readyGlassesSessionId = sid
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
                 markPairingTiming(
                         "glasses_ready",
@@ -4970,7 +4992,7 @@ class MentraLive : SGCManager() {
                 // Record the session id BEFORE marking ready: an unsolicited glasses_ready
                 // already runs this full remote-reset flow, so recording (not re-triggering)
                 // is correct here; version_info detection covers the restart case.
-                glassesSessionId = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                glassesSessionId = sid
                 streamControlVersion = json.optInt("streamControlVersion", 0)
                 Bridge.sendTypedMessage(
                         "wifi_protocol_session_ready",
@@ -9772,13 +9794,34 @@ class MentraLive : SGCManager() {
         wireHandshakeSentGeneration = -1
     }
 
+    /**
+     * A glasses_ready that echoes a readyId answers a phone_ready exchange. The answer to the
+     * exchange the phone is waiting on, and any answer from a glasses process other than the one
+     * this link last handled (an asg restart resets for every exchange it first sees), followed a
+     * transport reset. Any other answer repeats an exchange that process already reset for, or one
+     * superseded by the pending exchange, whose answer is still to come.
+     */
+    private fun isRepeatedGlassesReady(readyId: String, sid: String?): Boolean =
+            readyId != pendingReadyId && sid == readyGlassesSessionId
+
+    private fun resetReadinessExchange() {
+        pendingReadyId = null
+        readyGlassesSessionId = null
+    }
+
     /** Sends phone_ready to (re)start the glasses-driven readiness flow. */
     private fun sendPhoneReady(reason: String) {
-        Bridge.log("LIVE: 📱 Sending phone_ready to glasses ($reason) - waiting for glasses_ready response")
+        val readyId = pendingReadyId ?: UUID.randomUUID().toString()
+        pendingReadyId = readyId
+        Bridge.log(
+                "LIVE: 📱 Sending phone_ready to glasses ($reason, exchange $readyId) - " +
+                        "waiting for glasses_ready response"
+        )
         markPairingTiming("phone_ready_sent", "reason=$reason queueSize=${sendQueue.size}")
         val readyMsg = JSONObject()
         readyMsg.put("type", "phone_ready")
         readyMsg.put("timestamp", System.currentTimeMillis())
+        readyMsg.put("readyId", readyId)
         sendJson(readyMsg, true)
     }
 

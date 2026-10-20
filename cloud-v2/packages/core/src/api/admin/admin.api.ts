@@ -8,9 +8,11 @@
  * else needs a principal (a signed-in person or a Core credential), and each
  * area then needs its own capability. There is no blanket admin gate:
  *
- *  - `/me`: any principal; says what it may do here and whether Fleet is installed;
+ *  - `/me`: any principal; says what it may do here, whether Fleet is installed and whether the Licenses
+ *    page has anything to offer;
  *  - `/reports`: `organization.incidents.read`;
  *  - `/support-profiles`: `organization.supportProfiles.read`;
+ *  - `/licenses`: `organization.licenses.read`, read-only (an Organization Admin; an operator key cannot hold it);
  *  - `/test-runs`, `/routine-catalog`, `/routines`, `/test-routines`, `/test-builds`, `/test-dispatches`:
  *    `organization.testing.read`, and `organization.testing.manage` for anything that writes;
  *  - `/workspaces`: the workspace API, for people, each route gated on the caller's
@@ -29,7 +31,10 @@ import type {OrganizationCapability, PrincipalResponse} from "@mentra/workspace-
 import {Hono, type MiddlewareHandler} from "hono"
 import {createMiddleware} from "hono/factory"
 import {fleetInstalled} from "../../services/fleet/fleet-config"
-import {organizationView} from "../../services/workspaces/authorization.service"
+import {anyLicenseExists} from "../../services/licenses/license-list.service"
+import {portalModuleAccess, type ConfigLog} from "../../services/portal-modules/portal-modules"
+import type {CorePrincipal} from "../../services/signin/principal.service"
+import {organizationCapabilities, organizationView} from "../../services/workspaces/authorization.service"
 import {listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppEnv} from "../../types/hono.types"
 import {adminFleetApi} from "../fleet/fleet-forwarding"
@@ -38,6 +43,7 @@ import {createOrganizationApi} from "../organization/organization.api"
 import {createPortalAuthApi} from "../signin/portal-auth.api"
 import {createWorkspacesApi} from "../workspaces/workspaces.api"
 import auditLog from "./audit-log.api"
+import licenses from "./licenses.api"
 import reports from "./reports.api"
 import {createRoutineCatalogApi} from "./routine-catalog.api"
 import {createRoutinePreferencesApi} from "./routine-preferences.api"
@@ -57,6 +63,12 @@ export interface AdminMeResponse {
    * unusable too, so the admin portal can say Fleet is unavailable rather than hide a broken install.
    */
   fleet: {installed: boolean}
+  /**
+   * Whether the Licenses page has anything to offer this caller: they may read licenses, and billing is
+   * configured on this Core or any license exists. False for everyone else, so a caller who cannot read
+   * licenses learns nothing about them.
+   */
+  licenses: {available: boolean}
 }
 
 const app = new Hono<AppEnv>()
@@ -75,6 +87,21 @@ const labelCaller: MiddlewareHandler<AppEnv> = createMiddleware<AppEnv>(async (c
   await next()
 })
 app.use("*", labelCaller)
+
+/** `/me` only decides what to offer; a billing misconfiguration is reported where billing is used, not here. */
+const QUIET: ConfigLog = {error: () => {}}
+
+/**
+ * Whether the Licenses page has anything to offer `principal`: they hold `organization.licenses.read`, and
+ * billing is configured (installed, whether or not its settings are usable: the list reads Core's own rows) or
+ * any license exists. Billing is asked first, so a Core with billing never queries the licenses.
+ */
+async function licensesAvailable(principal: CorePrincipal): Promise<boolean> {
+  // Only a person (an Organization Admin) holds it: it is not an operator key scope.
+  if (principal.kind !== "user" || !organizationCapabilities(principal).has("organization.licenses.read")) return false
+  if (portalModuleAccess("billing", principal, undefined, QUIET).state !== "hidden") return true
+  return anyLicenseExists()
+}
 
 app.get("/me", async c => {
   const principal = c.get("principal")!
@@ -96,6 +123,7 @@ app.get("/me", async c => {
     organization: {capabilities: organizationView(principal).capabilities},
     workspaces: principal.kind === "user" ? await listWorkspacesForUser(principal.mentraUserId) : [],
     fleet: {installed: fleetInstalled()},
+    licenses: {available: await licensesAvailable(principal)},
   }
   return c.json(body)
 })
@@ -106,6 +134,7 @@ app.route("/fleet", adminFleetApi)
 
 const readsIncidents = requireOrganizationCapability("organization.incidents.read")
 const readsSupportProfiles = requireOrganizationCapability("organization.supportProfiles.read")
+const readsLicenses = requireOrganizationCapability("organization.licenses.read")
 const readsTesting = requireOrganizationCapability("organization.testing.read")
 const managesTesting = requireOrganizationCapability("organization.testing.manage")
 
@@ -119,6 +148,7 @@ const testingGate: MiddlewareHandler<AppEnv> = (c, next) =>
 // A gate goes on before the routes it covers. `/x/*` also matches `/x`.
 app.use("/reports/*", readsIncidents)
 app.use("/support-profiles/*", readsSupportProfiles)
+app.use("/licenses/*", readsLicenses)
 app.use("/test-runs/*", testingGate)
 app.use("/routine-catalog/*", testingGate)
 app.use("/routines/*", testingGate)
@@ -128,6 +158,7 @@ app.use("/test-dispatches/*", testingGate)
 
 app.route("/reports", reports)
 app.route("/support-profiles", supportProfiles)
+app.route("/licenses", licenses)
 app.route("/test-runs", testRuns)
 app.route("/routine-catalog", createRoutineCatalogApi())
 app.route("/routines", createRoutinePreferencesApi())

@@ -4,7 +4,13 @@ import * as jose from "jose"
 
 import {RefreshTokenModel} from "../models/refresh-token.model"
 import {RevokedJtiModel} from "../models/revoked-jti.model"
-import {getPublicJwks, issueRuntimeToken, resetSigningKeyCache, revokeSession} from "./session.service"
+import {
+  getPublicJwks,
+  issueMiniappToken,
+  issueRuntimeToken,
+  resetSigningKeyCache,
+  revokeSession,
+} from "./session.service"
 
 const savedEnv = {
   MENTRA_JWT_PRIVATE_KEY: process.env.MENTRA_JWT_PRIVATE_KEY,
@@ -75,6 +81,31 @@ describe("Core JWKS", () => {
         directory_tenant_id: "tenant",
       },
     })
+  })
+})
+
+describe("issueMiniappToken features", () => {
+  const issue = async (features?: string[]) => {
+    setSigningEnv()
+    const {token} = await issueMiniappToken({
+      mentraUserId: "mu_01TEST",
+      tenantId: "mentra",
+      packageName: "com.mentra.call",
+      ...(features ? {features} : {}),
+    })
+    return jose.decodeJwt(token)
+  }
+
+  test("sets the features claim to the given keys, in order", async () => {
+    expect((await issue(["call.recording", "call.unlimited"])).features).toEqual(["call.recording", "call.unlimited"])
+  })
+
+  test("leaves the claim out when there are no features, given as nothing or as an empty list", async () => {
+    for (const features of [undefined, []]) {
+      const claims = await issue(features)
+      expect("features" in claims).toBe(false)
+      expect(claims).toMatchObject({sub: "mu_01TEST", aud: "com.mentra.call", tenantId: "mentra"})
+    }
   })
 })
 
