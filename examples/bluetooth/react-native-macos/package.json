@@ -9,7 +9,7 @@
     "typecheck": "node typecheck.cjs"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "3.4.0-dev.1008",
+    "@mentra/bluetooth-sdk": "3.4.0-dev.1009",
     "expo": "54.0.37",
     "react": "19.1.4",
     "react-native": "0.81.6",
