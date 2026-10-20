@@ -687,6 +687,16 @@ describe("billing is staff-only on a Core that is not prod", () => {
       expect(received).toHaveLength(0)
     })
 
+    test(`on ${environment}: a body over the limit cannot probe for hidden billing: a 404, not a 413`, async () => {
+      useBilling(environment)
+      const owner = await person("owner")
+
+      const reply = await billing(owner, "POST", "/account/checkout", {body: "x".repeat(1024 * 1024 + 1)})
+
+      expect([environment, reply.status, reply.json]).toEqual([environment, 404, {error: "module_not_installed"}])
+      expect(received).toHaveLength(0)
+    })
+
     test(`on ${environment}: an Organization Admin sees it and is forwarded`, async () => {
       useBilling(environment)
       const owner = await person("owner")

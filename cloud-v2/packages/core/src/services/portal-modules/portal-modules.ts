@@ -30,11 +30,14 @@
  * checkout to the public.
  */
 
-import {createLogger} from "@mentra/cloud-shared"
+import {createLogger, type Logger} from "@mentra/cloud-shared"
 import {isDeployedEnvironment} from "../signin/config"
 import {parseUpstreamUrl} from "../forwarding/upstream-url"
 
-const logger = createLogger("core").child({service: "portal-modules"})
+/** Where a misconfiguration is reported. Core's logger unless a caller (a test) passes its own. */
+export type ConfigLog = Pick<Logger, "error">
+
+const logger: ConfigLog = createLogger("core").child({service: "portal-modules"})
 
 /** The portal modules Core knows. */
 export const PORTAL_MODULE_NAMES = ["billing"] as const
@@ -77,18 +80,27 @@ function processEnvironment(): NodeJS.ProcessEnv {
   }
 }
 
-/** A problem is logged once per process and distinct message, so a request path that asks again stays quiet. */
-const reported = new Set<string>()
+/**
+ * A problem is logged once per logger and distinct message, so a request path that asks again stays quiet.
+ * Keyed by logger, a test that passes its own sees each problem once and Core's logger is not used up by it.
+ */
+const reported = new WeakMap<ConfigLog, Set<string>>()
 
-function reportOnce(variable: string, message: string): void {
+function reportOnce(log: ConfigLog, variable: string, message: string): void {
   const key = `${variable}:${message}`
-  if (reported.has(key)) return
-  reported.add(key)
-  logger.error({variable}, message)
+  const seen = reported.get(log) ?? new Set<string>()
+  reported.set(log, seen)
+  if (seen.has(key)) return
+  seen.add(key)
+  log.error({variable}, message)
 }
 
 /** Whether `name` is installed on this Core, and when it is, whether Core can reach it. */
-export function portalModuleConfig(name: PortalModuleName, env: NodeJS.ProcessEnv = processEnvironment()): PortalModuleConfig {
+export function portalModuleConfig(
+  name: PortalModuleName,
+  env: NodeJS.ProcessEnv = processEnvironment(),
+  log: ConfigLog = logger,
+): PortalModuleConfig {
   const {urlVariable, secretVariable} = REGISTRY[name]
   const rawUrl = (env[urlVariable] ?? "").trim()
   // The URL decides whether the module is installed; a secret without one is inert.
@@ -99,21 +111,24 @@ export function portalModuleConfig(name: PortalModuleName, env: NodeJS.ProcessEn
   if (!baseUrl) {
     const message = `${urlVariable} is not a usable module URL (an http(s) URL without credentials, query or fragment; a deployed Core requires https except on localhost)`
     problems.push(message)
-    reportOnce(urlVariable, `${message}; refusing ${name} requests`)
+    reportOnce(log, urlVariable, `${message}; refusing ${name} requests`)
   }
   const secret = env[secretVariable] ?? ""
   if (!secret.trim()) {
     const message = `${secretVariable} is required when ${urlVariable} is set`
     problems.push(message)
-    reportOnce(secretVariable, `${message}; refusing ${name} requests`)
+    reportOnce(log, secretVariable, `${message}; refusing ${name} requests`)
   }
   if (!baseUrl || problems.length > 0) return {state: "misconfigured", reason: problems.join("; ")}
   return {state: "ready", baseUrl, secret}
 }
 
 /** The modules that are installed and usable on this Core. A broken install is not offered: the portal could not load its page. */
-export function installedPortalModules(env: NodeJS.ProcessEnv = processEnvironment()): PortalModuleName[] {
-  return PORTAL_MODULE_NAMES.filter(name => portalModuleConfig(name, env).state === "ready")
+export function installedPortalModules(
+  env: NodeJS.ProcessEnv = processEnvironment(),
+  log: ConfigLog = logger,
+): PortalModuleName[] {
+  return PORTAL_MODULE_NAMES.filter(name => portalModuleConfig(name, env, log).state === "ready")
 }
 
 /**
@@ -129,13 +144,38 @@ export function portalModuleVisibleTo(
   return env.CLOUD_CORE_ENVIRONMENT === PRODUCTION_ENVIRONMENT || principal.isOrganizationAdmin
 }
 
+/**
+ * What a person can reach of module `name` on this Core, decided once for everything that asks (the routes, the
+ * request-body limit before them, and `/me`), so they cannot drift:
+ *  - `hidden`: the module is not installed, or is not visible to this person (see the file header). It is
+ *    indistinguishable from an absent one, a broken install included;
+ *  - `unavailable`: it is visible to them, but its settings are unusable;
+ *  - `ready`: Core may forward, to `baseUrl`, signing with `secret`.
+ */
+export type PortalModuleAccess =
+  | {state: "hidden"}
+  | {state: "unavailable"}
+  | {state: "ready"; baseUrl: URL; secret: string}
+
+export function portalModuleAccess(
+  name: PortalModuleName,
+  principal: {isOrganizationAdmin: boolean},
+  env: NodeJS.ProcessEnv = processEnvironment(),
+  log: ConfigLog = logger,
+): PortalModuleAccess {
+  const config = portalModuleConfig(name, env, log)
+  if (config.state === "not_installed" || !portalModuleVisibleTo(name, principal, env)) return {state: "hidden"}
+  if (config.state === "misconfigured") return {state: "unavailable"}
+  return {state: "ready", baseUrl: config.baseUrl, secret: config.secret}
+}
+
 /** For each module, whether the portal should offer it to this person: it is installed and usable, and visible to them. */
 export function portalModuleAvailability(
   principal: {isOrganizationAdmin: boolean},
   env: NodeJS.ProcessEnv = processEnvironment(),
+  log: ConfigLog = logger,
 ): Record<PortalModuleName, boolean> {
-  const installed = new Set(installedPortalModules(env))
   return Object.fromEntries(
-    PORTAL_MODULE_NAMES.map(name => [name, installed.has(name) && portalModuleVisibleTo(name, principal, env)]),
+    PORTAL_MODULE_NAMES.map(name => [name, portalModuleAccess(name, principal, env, log).state === "ready"]),
   ) as Record<PortalModuleName, boolean>
 }

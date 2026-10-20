@@ -50,11 +50,7 @@ import {Hono} from "hono"
 import {assetResponseHeaders, methodNotAllowed, relayAsset, UI_ASSET_SEGMENT} from "../../services/forwarding/assets"
 import {forwardJson, forwardedUser, jsonAnswerHeaders, limitBody, type Upstream} from "../../services/forwarding/forward"
 import {DEFAULT_FORWARDING_LIMITS, isSafeSuffix, rawPathAndQuery} from "../../services/forwarding/upstream-url"
-import {
-  portalModuleConfig,
-  portalModuleVisibleTo,
-  type PortalModuleName,
-} from "../../services/portal-modules/portal-modules"
+import {portalModuleAccess, type PortalModuleName} from "../../services/portal-modules/portal-modules"
 import type {UserPrincipal} from "../../services/signin/principal.service"
 import {authorize} from "../../services/workspaces/authorization.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
@@ -114,17 +110,15 @@ function admit(c: AppContext, name: PortalModuleName): Admitted | Response {
   if (!principal) return c.json({error: "unauthorized"}, 401)
   if (principal.kind !== "user") return c.json({error: "forbidden"}, 403)
 
-  const config = portalModuleConfig(name)
-  if (config.state === "not_installed" || !portalModuleVisibleTo(name, principal)) {
-    return c.json({error: MODULE_NOT_INSTALLED}, 404)
-  }
-  if (config.state === "misconfigured") return c.json({error: MODULE_UNAVAILABLE}, 503)
+  const access = portalModuleAccess(name, principal)
+  if (access.state === "hidden") return c.json({error: MODULE_NOT_INSTALLED}, 404)
+  if (access.state === "unavailable") return c.json({error: MODULE_UNAVAILABLE}, 503)
   const upstream: Upstream = {
     service: `portal-module-${name}`,
     label: `Portal module ${name}`,
     unavailableError: MODULE_UNAVAILABLE,
-    baseUrl: config.baseUrl,
-    secret: config.secret,
+    baseUrl: access.baseUrl,
+    secret: access.secret,
     limits: DEFAULT_FORWARDING_LIMITS,
   }
 
@@ -157,12 +151,13 @@ export function portalModuleApi(name: PortalModuleName): Hono<AppEnv> {
   api.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
   api.all(
     "/*",
-    // The body is limited only for a request that will be forwarded: a person the module is hidden from is
-    // answered without reading it, so a large one cannot tell them the module is there.
+    // The body is limited only for a request that `admit` will let through, by the same `portalModuleAccess`: a
+    // person the module is hidden from is answered without reading it, so a large one cannot tell them the
+    // module is there (a 413 instead of the 404).
     limitBody(c => {
       const principal = c.get("principal")
-      const visible = principal?.kind === "user" && portalModuleVisibleTo(name, principal)
-      return visible && portalModuleConfig(name).state === "ready" ? DEFAULT_FORWARDING_LIMITS.maxBodyBytes : null
+      const ready = principal?.kind === "user" && portalModuleAccess(name, principal).state === "ready"
+      return ready ? DEFAULT_FORWARDING_LIMITS.maxBodyBytes : null
     }),
     async c => {
       const admitted = admit(c, name)

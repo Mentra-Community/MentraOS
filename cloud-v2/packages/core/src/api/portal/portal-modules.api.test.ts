@@ -279,6 +279,33 @@ describe("staff-only billing outside prod", () => {
     }
   })
 
+  test("a person it is hidden from cannot probe for it with a body over the limit: a 404, not a 413, and no call", async () => {
+    const tooBig = "x".repeat(1024 * 1024 + 1)
+    for (const environment of ["dev", "staging"]) {
+      configure(environment)
+      for (const rest of ["/account/checkout", "/workspaces/ws_1/licenses"]) {
+        const reply = await billing(as("member", member), rest, {method: "POST", body: tooBig})
+        expect([environment, rest, reply.status, await reply.json()]).toEqual([
+          environment,
+          rest,
+          404,
+          {error: "module_not_installed"},
+        ])
+      }
+      // The limit is for a request that will be forwarded: the same body from staff is refused as too large.
+      const staff = await billing(as("admin", admin), "/account/checkout", {method: "POST", body: tooBig})
+      expect([environment, staff.status, await staff.json()]).toEqual([environment, 413, {error: "payload_too_large"}])
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("nor can a body over the limit tell a person the module is broken: it is the 503, unread", async () => {
+    configure("prod", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"})
+    const reply = await billing(as("member", member), "/account/checkout", {method: "POST", body: "x".repeat(1024 * 1024 + 1)})
+    expect([reply.status, await reply.json()]).toEqual([503, {error: "module_unavailable"}])
+    expect(calls).toHaveLength(0)
+  })
+
   test("on prod both are forwarded", async () => {
     configure("prod")
     expect((await billing(as("member", member), "/account/licenses")).status).toBe(200)
