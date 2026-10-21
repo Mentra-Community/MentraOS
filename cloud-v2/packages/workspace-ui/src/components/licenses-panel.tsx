@@ -22,7 +22,7 @@ import { Info } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import type { WorkspaceApi } from "../api";
 import { formatDate } from "../lib/format";
-import { licensesQuery, membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
+import { licensesQuery, membersQuery, useSeatMutation, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
 import { Button } from "../ui/button";
 import { NativeSelect } from "../ui/native-select";
@@ -72,8 +72,9 @@ export function WorkspaceLicensesPanel({ api, workspaceId }: { api: WorkspaceApi
   const membersResult = useQuery({ ...membersQuery(api, workspaceId), enabled: reads });
 
   const seats = seatChanges(api, workspaceId);
-  const assign = useWorkspaceMutation(api, workspaceId, seats.assign);
-  const release = useWorkspaceMutation(api, workspaceId, seats.release);
+  // Seat mutations, so billing's status for the workspace is marked stale along with its licenses.
+  const assign = useSeatMutation(api, workspaceId, seats.assign);
+  const release = useSeatMutation(api, workspaceId, seats.release);
 
   const description = detailResult.data
     ? reads

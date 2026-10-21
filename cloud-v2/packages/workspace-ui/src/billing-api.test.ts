@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type { BillingCatalog, BillingStatus } from "@mentra/workspace-contract/portal-billing";
 import {
   ACCOUNT_SCOPE,
@@ -10,6 +8,7 @@ import {
   createBillingApi,
   workspaceScope,
 } from "./billing-api";
+import { runtimeImports } from "./test-imports";
 
 interface Recorded {
   url: string;
@@ -326,26 +325,6 @@ describe("billingErrorMessage", () => {
 });
 
 describe("what a screen that doesn't use billing pulls in", () => {
-  /** Every module `entry` reaches through runtime imports (type-only imports are gone), as written in the source. */
-  function runtimeImports(entry: string): { files: string[]; specifiers: string[] } {
-    const files = new Set<string>();
-    const specifiers = new Set<string>();
-    const visit = (file: string) => {
-      if (files.has(file)) return;
-      files.add(file);
-      const loader = file.endsWith(".tsx") ? "tsx" : "ts";
-      for (const { path } of new Bun.Transpiler({ loader }).scanImports(readFileSync(file, "utf8"))) {
-        specifiers.add(path);
-        if (!path.startsWith(".")) continue;
-        const base = join(dirname(file), path);
-        const next = [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")].find((candidate) => existsSync(candidate));
-        if (next) visit(next);
-      }
-    };
-    visit(join(import.meta.dir, entry));
-    return { files: [...files], specifiers: [...specifiers] };
-  }
-
   test("the query layer reaches neither the contract's schemas nor zod, so embedders that don't use billing don't carry them", () => {
     const { files, specifiers } = runtimeImports("queries.ts");
     expect(specifiers.filter((specifier) => /portal-billing|^zod/.test(specifier))).toEqual([]);

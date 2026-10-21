@@ -439,6 +439,22 @@ describe("refusals", () => {
  * calls them all, and fails for a function that has none.
  */
 const BAG = { name: "Dana Reyes", product: "Mentra Call Unlimited" };
+/** A `fitFor` result for each of its kinds, worded with and without the option to add seats. */
+const PERSON = (name: string) => ({ name });
+const NAME_OF = (person: { name: string }) => person.name;
+const FIT_BASE = { holders: [], recipients: [], quantity: 5, free: 2, over: 0, fit: 0, needed: 0, ok: false };
+const FIT_LINES: unknown[][] = (["enough", "some_hold", "all_hold", "short", "full", "nobody"] as const).flatMap((kind) =>
+  [true, false].map((canAddSeats) => [
+    {
+      ...FIT_BASE,
+      kind,
+      holders: kind === "some_hold" || kind === "all_hold" ? [PERSON("Amara Okafor")] : [],
+      recipients: kind === "all_hold" || kind === "nobody" ? [] : [PERSON("Luis Ortega"), PERSON("Sofia Alvarez")],
+      needed: kind === "all_hold" || kind === "nobody" ? 0 : 2,
+    },
+    { nameOf: NAME_OF, canAddSeats },
+  ]),
+);
 const SAMPLES: Record<string, unknown[][]> = {
   "count.seats": [[0], [1], [5]],
   "count.people": [[1], [3]],
@@ -512,6 +528,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   ],
   "seats.since": [["Oct 20, 2026"]],
   "seats.unassignPrompt": [["Dana Reyes"]],
+  "seats.unassignAria": [["Dana Reyes"]],
   "seats.freeSeats": [[7]],
   "seats.allInUse": [[5]],
   "seats.allInUseHelp": [[true], [false]],
@@ -521,6 +538,7 @@ const SAMPLES: Record<string, unknown[][]> = {
     [{ fit: 3, needed: 4, canAddSeats: false }],
     [{ fit: 2, needed: 5, canAddSeats: true }],
   ],
+  "fit.line": FIT_LINES,
   "picker.description": [["Fleet", 1], ["Fleet", 3]],
   "picker.chosen": [[2, 3]],
   "picker.assign": [[0], [1], [3]],

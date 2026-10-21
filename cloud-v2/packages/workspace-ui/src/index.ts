@@ -146,3 +146,36 @@ export {
   type SwitcherInvitation,
   type SwitcherWorkspace,
 } from "./shell/workspace-switcher";
+
+// A product's look (its icon, chip and feature chips), and the cards of the Licenses page: Core's licenses, billing's
+// status and its catalog joined and put in order, with the seat counts and what fits a license's free seats.
+export { FeatureChips, ProductChip, ProductIcon, type ProductIdentity } from "./components/licenses/product";
+export {
+  catalogForOwner,
+  fitFor,
+  holdsSeat,
+  joinLicenses,
+  listedAction,
+  seatCounts,
+  type FitKind,
+  type JoinedLicense,
+  type JoinInput,
+  type LicenseFit,
+  type LicenseProblem,
+  type SeatCounts,
+} from "./lib/license-join";
+
+// The Licenses page's cards: a license with its seats, the people picker that fills them, and the banners and
+// states around them. `useHostedAction` is how every ↗ button leaves the portal (`NavigateOut` is the host's side).
+export { LicenseCard, type LicenseCardProps, type LicenseCardView } from "./components/licenses/license-card";
+export { HostedFeedback, useHostedAction, type HostedAction, type HostedRequest, type NavigateOut, type PortalTab } from "./components/licenses/hosted-action";
+export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./components/licenses/seats";
+export { PeoplePickerDialog } from "./components/licenses/people-picker";
+export {
+  LicensesSummary,
+  LicensesUnavailable,
+  PURCHASE_POLL_MS,
+  PURCHASE_TIMEOUT_MS,
+  PurchaseBanner,
+  TestModeBanner,
+} from "./components/licenses/banners";
