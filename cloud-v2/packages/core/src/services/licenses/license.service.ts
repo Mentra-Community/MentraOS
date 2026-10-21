@@ -19,20 +19,30 @@
  *
  * **The seat cap is a counter.** `seatsUsed` counts a workspace license's seats. Assigning one runs one
  * transaction: a conditional increment (`seatsUsed + 1 <= quantity` and not ended), then the seat's
- * insert. Concurrent assignments write the same license document, so all but one meet a write conflict,
- * which `withTransaction` retries; a retry reads `seatsUsed` again. Only the increment matching nothing
- * refuses an assignment (`no_seats_available`), so a conflict is never a refusal. Releasing decrements it
- * in the same transaction as the seat's delete. A quantity lowered below `seatsUsed` frees no seat: the
- * license just takes no new one until enough are released. Every seat change also writes the workspace
- * document, as every membership change does, so an assignment conflicts with the end of its membership or
- * the demotion of whoever assigns it, and the retried one sees the other. That write also serializes a
- * workspace's seat changes: once it succeeds, no other seat change of the workspace has committed since
- * the transaction's snapshot, so the counts it read are current.
+ * insert and its audit event. Concurrent assignments write the same license document, so all but one
+ * meet a write conflict, which `withTransaction` retries; a retry reads `seatsUsed` again. Only the
+ * increment matching nothing refuses an assignment (`no_seats_available`), so a conflict is never a
+ * refusal. Releasing decrements it in the same transaction as the seat's delete. A quantity lowered below
+ * `seatsUsed` frees no seat: the license just takes no new one until enough are released.
+ *
+ * **What serializes seat changes** is two writes, neither of which depends on timing. The increment
+ * writes the license document, so it conflicts with every concurrent write of that license: another
+ * assignment or release, a write from billing that changes its quantity, or its end. And a seat change
+ * that succeeds records audit events, which take the one feed counter (`audit.service`), so it conflicts
+ * with every other change recorded on the change feed, the end of the seat's membership and the demotion
+ * of whoever assigns it among them. `withTransaction` retries whichever loses, and the retry sees the other. A seat
+ * change also writes the workspace document (`touchWorkspace`), as every membership change does, and that
+ * usually conflicts too. But it sets only `updatedAt`, and a write of the value the document already
+ * holds changes nothing and conflicts with nothing, so nothing relies on it. A refusal records no event,
+ * so it stands on its transaction's snapshot: when that touch happened to be such a no-op, a refusal can
+ * miss a seat a concurrent release freed a moment before, and asking again assigns it.
  *
  * **Several seats at once** (`assignSeats`) are one transaction too, with every check of a single
  * assignment applied to each pair. Each license takes all of its new seats in one conditional increment
  * (`seatsUsed + n <= quantity`); if any license's matches nothing, the whole transaction is aborted and
- * the refusal lists every license that falls short, so a refused request assigns nothing.
+ * the refusal lists every license that falls short, so a refused request assigns nothing. Its events are
+ * recorded together (`recordWorkspaceEvents`), so it holds the feed counter for two writes, not for two
+ * per seat.
  *
  * **Seats end with their membership.** A seat belongs to one membership (`license_seats`): ending the
  * membership (`endMembership`: removal, leaving, account deletion) releases its seats inside that
@@ -43,7 +53,8 @@
  *
  * **Audit.** `license.written`, `license.ended`, `seat.assigned` and `seat.released` (with why: see
  * `SEAT_RELEASE_REASONS`), each with its actor. A workspace license's events are the workspace's
- * (`recordWorkspaceEvent`), so they are on the change feed; a personal license's are the organization's.
+ * (`recordWorkspaceEvent`, and `recordWorkspaceEvents` for a batch of seats), so they are on the change
+ * feed; a personal license's are the organization's.
  */
 
 import {
@@ -68,7 +79,12 @@ import {UserModel} from "../../models/user.model"
 import {WorkspaceMembershipModel, type WorkspaceMembershipEndedReason} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
-import {recordOrganizationEvent, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "../workspaces/audit.service"
+import {
+  recordOrganizationEvent,
+  recordWorkspaceEvent,
+  recordWorkspaceEvents,
+  type WorkspaceAuditEventInput,
+} from "../workspaces/audit.service"
 import {fail} from "../workspaces/workspace-error"
 import {
   actingRole,
@@ -478,7 +494,7 @@ export async function assignSeat(
       await touchWorkspace(session, workspaceId)
       const taken = await takeSeats(session, licenseId, 1)
       if (!taken) fail("no_seats_available", "every seat of this license is assigned")
-      await insertSeats(session, actor, workspaceId, taken, [holder!])
+      await recordWorkspaceEvents(session, await insertSeats(session, actor, workspaceId, taken, [holder!]))
     }
     return (await listWorkspaceLicenses(workspaceId, "everyone", session)).find((view) => view.licenseId === licenseId)!
   })
@@ -562,8 +578,8 @@ export async function assignSeats(
           taken.push({license, holders: entry.holders})
           continue
         }
-        // As read in this transaction before anything was taken. The workspace write above found no seat
-        // change of this workspace since the transaction's snapshot, so the count is current.
+        // As this transaction's snapshot has it, before anything was taken. A refusal records no event, so it
+        // can miss a release committed since that snapshot (see "What serializes seat changes" above).
         const {quantity, seatsUsed} = licenses.get(entry.licenseId)!
         short.push({licenseId: entry.licenseId, needed: entry.holders.length, free: Math.max(0, quantity - seatsUsed)})
       }
@@ -573,7 +589,12 @@ export async function assignSeats(
           licenses: short,
         })
       }
-      for (const entry of taken) await insertSeats(session, actor, workspaceId, entry.license, entry.holders)
+      // Every seat's event in one batch, after every insert: the feed counter is taken as late as it can be.
+      const events: WorkspaceAuditEventInput[] = []
+      for (const entry of taken) {
+        events.push(...(await insertSeats(session, actor, workspaceId, entry.license, entry.holders)))
+      }
+      await recordWorkspaceEvents(session, events)
     }
     return (await listWorkspaceLicenses(workspaceId, "everyone", session)).filter((view) => wanted.has(view.licenseId))
   })
@@ -626,9 +647,10 @@ async function takeSeats(session: ClientSession, licenseId: string, count: numbe
 }
 
 /**
- * Insert a seat of `license` for each of `holders` and record `seat.assigned` for each, in the caller's
- * transaction. `license` is as its conditional increment (`takeSeats`) left it, with these seats counted,
- * so each event's `seatsUsed` counts the seats in use once that seat was given.
+ * Insert a seat of `license` for each of `holders`, in the caller's transaction, and return the
+ * `seat.assigned` event of each, in that order, for the caller to record (`recordWorkspaceEvents`).
+ * `license` is as its conditional increment (`takeSeats`) left it, with these seats counted, so each
+ * event's `seatsUsed` counts the seats in use once that seat was given.
  */
 async function insertSeats(
   session: ClientSession,
@@ -636,7 +658,7 @@ async function insertSeats(
   workspaceId: string,
   license: LicenseRow,
   holders: SeatHolder[],
-): Promise<void> {
+): Promise<WorkspaceAuditEventInput[]> {
   const assignedAt = new Date()
   const assignedBy = actor.kind === "user" ? actor.mentraUserId : null
   await LicenseSeatModel.insertMany(
@@ -651,19 +673,17 @@ async function insertSeats(
     {session},
   )
   const seatsUsedBefore = license.seatsUsed - holders.length
-  for (const [index, holder] of holders.entries()) {
-    await recordWorkspaceEvent(session, {
-      workspaceId,
-      action: "seat.assigned",
-      actor: auditActor(actor),
-      target: seatTarget(
-        {licenseId: license._id, membershipId: holder.membershipId, mentraUserId: holder.mentraUserId},
-        holder.email,
-      ),
-      before: null,
-      after: {assignedAt: assignedAt.toISOString(), seatsUsed: seatsUsedBefore + index + 1, quantity: license.quantity},
-    })
-  }
+  return holders.map((holder, index) => ({
+    workspaceId,
+    action: "seat.assigned",
+    actor: auditActor(actor),
+    target: seatTarget(
+      {licenseId: license._id, membershipId: holder.membershipId, mentraUserId: holder.mentraUserId},
+      holder.email,
+    ),
+    before: null,
+    after: {assignedAt: assignedAt.toISOString(), seatsUsed: seatsUsedBefore + index + 1, quantity: license.quantity},
+  }))
 }
 
 /**
@@ -749,8 +769,9 @@ async function requireSeatManager(session: ClientSession, actor: Actor, workspac
 }
 
 /**
- * Delete `seats`, give each back to its license's count and record `seat.released` for each, in the
- * caller's transaction. `emails` are the members' display addresses, when the caller has them.
+ * Delete `seats`, give each back to its license's count and record `seat.released` for each, in one
+ * batch, in the caller's transaction. `emails` are the members' display addresses, when the caller has
+ * them.
  */
 async function releaseSeats(
   session: ClientSession,
@@ -773,16 +794,17 @@ async function releaseSeats(
     await LicenseSeatModel.deleteOne({licenseId: seat.licenseId, membershipId: seat.membershipId}, {session})
     await LicenseModel.updateOne({_id: seat.licenseId, seatsUsed: {$gt: 0}}, {$inc: {seatsUsed: -1}}, {session})
   }
-  for (const seat of seats) {
-    await recordWorkspaceEvent(session, {
+  await recordWorkspaceEvents(
+    session,
+    seats.map((seat) => ({
       workspaceId: seat.workspaceId,
       action: "seat.released",
       actor: auditActor(actor),
       target: seatTarget(seat, known.get(seat.membershipId) ?? null),
       before: {assignedAt: seat.assignedAt.toISOString()},
       after: {reason},
-    })
-  }
+    })),
+  )
 }
 
 /** A seat event's target: the license and the member, by membership, Core user and display address. */

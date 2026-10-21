@@ -27,7 +27,10 @@ import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
 import {LicenseModel} from "../packages/core/src/models/license.model"
 import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
-import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
+import {
+  WORKSPACE_AUDIT_COUNTER_ID,
+  WorkspaceAuditCounterModel,
+} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -41,6 +44,11 @@ import {
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
+import {
+  recordWorkspaceEvent,
+  recordWorkspaceEvents,
+  type WorkspaceAuditEventInput,
+} from "../packages/core/src/services/workspaces/audit.service"
 import {createWorkspaceCredential} from "../packages/core/src/services/workspaces/credential.service"
 import {
   bumpRevision,
@@ -1149,6 +1157,135 @@ describe("assigning several seats at once", () => {
     expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(seats.length)
   })
 
+  /** Resolves after `ms`, so a racing write can land at different points of the requests it races. */
+  const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+  test("a quantity lowered while bulk requests are in flight: no seat is assigned past the quantity it commits under", async () => {
+    const ws = await newWorkspace()
+    for (let round = 0; round < 4; round++) {
+      const license = await workspaceLicense(ws.workspaceId, {quantity: 10})
+      const bulk: string[][] = []
+      for (let i = 0; i < 4; i++) bulk.push(await addMembers(ws.workspaceId, 3))
+
+      const [lowered, ...results] = await Promise.allSettled([
+        after(round * 4).then(() => store().putLicense({...license, revision: 2, quantity: 4})),
+        ...bulk.map((ids) =>
+          assignSeats(
+            actorOf(ws.admin),
+            ws.workspaceId,
+            ids.map((membershipId) => pair(license.licenseId, membershipId)),
+          ),
+        ),
+      ])
+
+      expect(lowered).toEqual({status: "fulfilled", value: {applied: true, revision: 2}})
+      const refusals = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+      expect(refusals.map(codeOf)).toEqual(Array(refusals.length).fill("no_seats_available"))
+      const held = new Set(await holders(license.licenseId))
+      bulk.forEach((ids, at) => {
+        expect({round, at, held: ids.filter((id) => held.has(id)).length}).toEqual({
+          round,
+          at,
+          held: results[at]!.status === "fulfilled" ? 3 : 0,
+        })
+      })
+      // Replayed in commit order (the feed's `seq`), every seat was given within the quantity in force when its
+      // request committed, and saw that quantity: the lowering and the assignments never interleave.
+      const events = await WorkspaceAuditEventModel.find({"target.licenseId": license.licenseId}).sort({seq: 1}).lean()
+      let quantity = 0
+      let inUse = 0
+      for (const event of events) {
+        if (event.action === "license.written") quantity = event.after?.quantity
+        if (event.action !== "seat.assigned") continue
+        inUse += 1
+        expect({round, inUse, quantity, seen: event.after?.quantity, seatsUsed: event.after?.seatsUsed}).toEqual({
+          round,
+          inUse,
+          quantity,
+          seen: quantity,
+          seatsUsed: inUse,
+        })
+        expect(inUse).toBeLessThanOrEqual(quantity)
+      }
+      expect(inUse).toBe(held.size)
+      expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 4, seatsUsed: held.size})
+    }
+  })
+
+  test("a license that ends while bulk requests are in flight keeps no seat, and none is assigned after it ends", async () => {
+    for (let round = 0; round < 3; round++) {
+      const ws = await newWorkspace(`Ending ${round}`)
+      const license = await workspaceLicense(ws.workspaceId, {quantity: 10})
+      const bulk: string[][] = []
+      for (let i = 0; i < 4; i++) bulk.push(await addMembers(ws.workspaceId, 2))
+
+      const [deleted, ...results] = await Promise.allSettled([
+        after(round * 4).then(() => deleteWorkspace(actorOf(ws.owner), ws.workspaceId, {confirmName: ws.name})),
+        ...bulk.map((ids) =>
+          assignSeats(
+            actorOf(ws.admin),
+            ws.workspaceId,
+            ids.map((membershipId) => pair(license.licenseId, membershipId)),
+          ),
+        ),
+      ])
+
+      expect(deleted.status).toBe("fulfilled")
+      // A request that lost the race finds the workspace, and its license, gone.
+      const refusals = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+      expect(refusals.map(codeOf)).toEqual(Array(refusals.length).fill("workspace_deleted"))
+      expect(await seatsOf(license.licenseId)).toEqual([])
+      expect(await licenseRow(license.licenseId)).toMatchObject({seatsUsed: 0, endedReason: "workspace_deleted"})
+      // Every seat a request gave before the end, the end released; none was given after it.
+      const events = await WorkspaceAuditEventModel.find({"target.licenseId": license.licenseId}).sort({seq: 1}).lean()
+      const assigned = events.filter((event) => event.action === "seat.assigned")
+      const ended = events.filter((event) => event.action === "license.ended")
+      expect(assigned).toHaveLength(2 * results.filter((result) => result.status === "fulfilled").length)
+      expect(ended).toHaveLength(1)
+      expect(ended[0]!.after?.releasedSeats).toBe(assigned.length)
+      for (const event of assigned) expect(event.seq!).toBeLessThan(ended[0]!.seq!)
+    }
+  })
+
+  test("a 500-pair request takes the feed counter once, and records its 500 events in a row, in pair order", async () => {
+    const ws = await newWorkspace()
+    const calls = await workspaceLicense(ws.workspaceId, {quantity: 251})
+    const fleetSeats = await workspaceLicense(ws.workspaceId, {quantity: 250, product: "mentra.fleet"})
+    const members = await addMembers(ws.workspaceId, 250)
+    // Interleaved: the events come grouped by license, in the order the pairs first name each.
+    const pairs = members.flatMap((membershipId) => [
+      pair(calls.licenseId, membershipId),
+      pair(fleetSeats.licenseId, membershipId),
+    ])
+    expect(pairs).toHaveLength(500)
+
+    const counterWrites = spyOn(WorkspaceAuditCounterModel, "findOneAndUpdate")
+    try {
+      await assignSeats(actorOf(ws.admin), ws.workspaceId, pairs)
+      expect(counterWrites).toHaveBeenCalledTimes(1)
+      // As many as one seat takes.
+      counterWrites.mockClear()
+      await assignSeat(actorOf(ws.admin), ws.workspaceId, calls.licenseId, ws.memberMembershipId)
+      expect(counterWrites).toHaveBeenCalledTimes(1)
+    } finally {
+      counterWrites.mockRestore()
+    }
+
+    const events = (await WorkspaceAuditEventModel.find({action: "seat.assigned"}).sort({seq: 1}).lean()).slice(0, 500)
+    const first = events[0]!.seq!
+    expect(events.map((event) => event.seq)).toEqual(Array.from({length: 500}, (_, n) => first + n))
+    expect(events.map((event) => [event.target?.licenseId, event.target?.membershipId])).toEqual([
+      ...members.map((membershipId) => [calls.licenseId, membershipId]),
+      ...members.map((membershipId) => [fleetSeats.licenseId, membershipId]),
+    ])
+    const counted = Array.from({length: 250}, (_, n) => n + 1)
+    expect(events.map((event) => event.after?.seatsUsed)).toEqual([...counted, ...counted])
+    const eventIds = events.map((event) => event.eventId)
+    expect([...eventIds].sort()).toEqual(eventIds)
+    expect((await licenseRow(calls.licenseId))!.seatsUsed).toBe(251)
+    expect((await licenseRow(fleetSeats.licenseId))!.seatsUsed).toBe(250)
+  })
+
   test("only people who assign seats may: Developers, Members, strangers and keys get 403; 0 or 501 pairs are 400", async () => {
     const ws = await newWorkspace()
     const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
@@ -1182,6 +1319,81 @@ describe("assigning several seats at once", () => {
     })
     expect(viaApi.status).toBe(200)
     expect(await holders(license.licenseId)).toEqual([ws.memberMembershipId, ws.developerMembershipId].sort())
+  })
+})
+
+// --- Recording many events at once -----------------------------------------
+
+describe("recording many events at once", () => {
+  test("a batch stores the events one write each would, in order, with contiguous seq, and the feed serves them so", async () => {
+    const inputs = (action: string): WorkspaceAuditEventInput[] =>
+      [1, 2, 3].map((n) => ({
+        workspaceId: "ws_batch",
+        action,
+        actor: {kind: "system" as const},
+        target: {n},
+        before: null,
+        after: {n},
+      }))
+    await withTransaction(async (session) => {
+      for (const input of inputs("test.one_by_one")) await recordWorkspaceEvent(session, input)
+    })
+    const eventIds = await withTransaction((session) => recordWorkspaceEvents(session, inputs("test.batch")))
+
+    const read = async (action: string) =>
+      (await WorkspaceAuditEventModel.find({action}).sort({seq: 1}).lean()) as unknown as Array<Record<string, unknown>>
+    const oneByOne = await read("test.one_by_one")
+    const batch = await read("test.batch")
+    const comparable = ({
+      _id,
+      eventId,
+      seq,
+      occurredAt,
+      createdAt,
+      updatedAt,
+      action,
+      ...rest
+    }: Record<string, unknown>) => rest
+    expect(batch.map(comparable)).toEqual(oneByOne.map(comparable))
+    expect(batch.map((event) => event.eventId)).toEqual(eventIds)
+    const both = [...oneByOne, ...batch]
+    const first = both[0]!.seq as number
+    expect(both.map((event) => event.seq)).toEqual([0, 1, 2, 3, 4, 5].map((n) => first + n))
+    const ids = both.map((event) => event.eventId as string)
+    expect([...ids].sort()).toEqual(ids)
+    for (const event of batch) expect(event.occurredAt).toBeInstanceOf(Date)
+    expect(
+      (await feed()).filter((event) => event.workspaceId === "ws_batch").map((event) => [event.action, event.target]),
+    ).toEqual([...[1, 2, 3].map((n) => ["test.one_by_one", {n}]), ...[1, 2, 3].map((n) => ["test.batch", {n}])])
+
+    // An empty batch records nothing and takes no number.
+    const counter = async () => (await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq
+    const before = await counter()
+    expect(await withTransaction((session) => recordWorkspaceEvents(session, []))).toEqual([])
+    expect(await counter()).toBe(before)
+  })
+
+  test("an aborted batch rolls its numbers back with its events, so the feed has no gap", async () => {
+    const input: WorkspaceAuditEventInput = {
+      workspaceId: "ws_batch",
+      action: "test.aborted",
+      actor: {kind: "system"},
+      target: null,
+      before: null,
+      after: null,
+    }
+    await withTransaction((session) => recordWorkspaceEvent(session, {...input, action: "test.kept"}))
+    const aborted = withTransaction(async (session) => {
+      await recordWorkspaceEvents(session, [input, input, input])
+      throw new Error("abort after the batch")
+    })
+    await expect(aborted).rejects.toThrow("abort after the batch")
+    await withTransaction((session) => recordWorkspaceEvents(session, [{...input, action: "test.next"}]))
+
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "test.aborted"})).toBe(0)
+    const kept = (await WorkspaceAuditEventModel.findOne({action: "test.kept"}).lean())!
+    const next = (await WorkspaceAuditEventModel.findOne({action: "test.next"}).lean())!
+    expect(next.seq).toBe(kept.seq! + 1)
   })
 })
 
