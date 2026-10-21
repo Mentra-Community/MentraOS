@@ -121,7 +121,7 @@ Do not use `expo run:android` directly; it may install on whatever device Expo p
 - Builds `arm64-v8a` only (physical phones). Override with `REACT_NATIVE_ARCHITECTURES=...` if you need emulators.
 - Skips the old forced `:mentra-bluetooth-sdk:clean --rerun-tasks` Gradle pass. Use `SDK_CLEAN=1` only when you need a hard refresh of the SDK module.
 
-Local on-device STT/TTS via Sherpa-ONNX is **not** bundled in the public Android SDK (no-op stubs). Cloud transcription still works. That also avoids the ~54MB GitHub AAR download during Gradle configure.
+Local on-device STT/TTS via Sherpa-ONNX is **not** bundled in the published Android SDK (no-op stubs); cloud transcription still works. Built from source in MentraOS, the SDK's Android module uses the Mentra App's dependency set, so the first Gradle configure downloads the ~54MB Sherpa-ONNX AAR.
 
 Day-to-day iteration: prefer `bun run android:dev` after the first successful install.
 

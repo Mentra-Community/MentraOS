@@ -9,6 +9,7 @@
     "typecheck": "node typecheck.cjs"
   },
   "dependencies": {
+    "@babel/runtime": "^7.25.0",
     "@mentra/bluetooth-sdk": "workspace:*",
     "expo": "54.0.37",
     "react": "19.1.4",

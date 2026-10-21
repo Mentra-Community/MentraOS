@@ -31,7 +31,6 @@
       ]
     },
     "plugins": [
-      "./plugins/withMentraPublicSdk",
       [
         "@mentra/bluetooth-sdk",
         {
