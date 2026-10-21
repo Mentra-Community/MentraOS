@@ -129,3 +129,35 @@ export const STALE_REVISION_ERROR = "stale_revision"
 
 /** `error` of the 404 a license write gets when its owner is deleted or never existed. Retrying cannot help. */
 export const OWNER_NOT_FOUND_ERROR = "owner_not_found"
+
+/** The most pairs one `POST /api/portal/workspaces/:workspaceId/seat-assignments` takes. */
+export const MAX_SEAT_ASSIGNMENTS = 500
+
+/**
+ * Body of `POST /api/portal/workspaces/:workspaceId/seat-assignments`: seats to give out at once, each a
+ * license of that workspace and the membership that gets it, for 1 to {@link MAX_SEAT_ASSIGNMENTS} pairs.
+ * Core assigns all of them or none: a pair that is repeated, or whose membership already holds that
+ * license's seat, is dropped rather than refused.
+ */
+export interface SeatAssignmentsRequest {
+  assignments: {licenseId: string; membershipId: string}[]
+}
+
+/** Response of `POST /api/portal/workspaces/:workspaceId/seat-assignments` (200): every license it touched, as Core now holds it. */
+export interface SeatAssignmentsResponse {
+  licenses: LicenseView[]
+}
+
+/**
+ * How short one license is for a bulk assignment: `needed` new seats were asked for and `free` are left. The
+ * 409 {@link NO_SEATS_AVAILABLE_ERROR} of the bulk route lists one per license that falls short, as `licenses`;
+ * when it answers, nothing was assigned.
+ */
+export interface SeatShortfall {
+  licenseId: string
+  needed: number
+  free: number
+}
+
+/** `error` of the 409 an assignment gets when a license has no free seat for it. */
+export const NO_SEATS_AVAILABLE_ERROR = "no_seats_available"

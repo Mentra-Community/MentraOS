@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { createWorkspaceApi } from "./api";
 import {
   errorMessage,
+  isLicenseChangedError,
   isWorkspaceChangedError,
   isWorkspaceHeldError,
   WORKSPACE_CHANGED_MESSAGE,
@@ -378,5 +379,51 @@ describe("createWorkspaceApi: licenses and seats", () => {
     const error = await api.assignSeat("ws_1", "lic_1", "wm_1").catch((e: unknown) => e);
     expect(error).toMatchObject({ status: 409, code: "no_seats_available" });
     expect(errorMessage(error)).toBe("Every seat of this license is assigned");
+  });
+
+  describe("assignSeats", () => {
+    const pairs = [
+      { licenseId: "lic_1", membershipId: "wm_1" },
+      { licenseId: "lic_1", membershipId: "wm_2" },
+      { licenseId: "lic_2", membershipId: "wm_1" },
+    ];
+
+    test("POSTs every pair in one request to {base}/{id}/seat-assignments and answers the licenses it touched", async () => {
+      const touched = [license, { ...license, licenseId: "lic_2" }];
+      const rec = recordingFetch(Response.json({ licenses: touched }));
+      const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+      expect(await api.assignSeats("ws_1", pairs)).toEqual(touched as never);
+      expect(rec.calls).toHaveLength(1);
+      expect(rec.calls[0]).toMatchObject({
+        url: "/api/portal/workspaces/ws_1/seat-assignments",
+        method: "POST",
+        body: { assignments: pairs },
+      });
+      expect(rec.calls[0]!.headers["content-type"]).toBe("application/json");
+    });
+
+    test("escapes the workspace id", async () => {
+      const rec = recordingFetch(Response.json({ licenses: [] }));
+      const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+      await api.assignSeats("ws/1", pairs);
+      expect(rec.calls[0]!.url).toBe("/api/workspaces/ws%2F1/seat-assignments");
+    });
+
+    test("a 409 no_seats_available keeps its code, so the screen knows the counts it showed are stale", async () => {
+      const rec = recordingFetch(
+        Response.json(
+          {
+            error: "no_seats_available",
+            error_description: "not enough seats",
+            licenses: [{ licenseId: "lic_1", needed: 2, free: 1 }],
+          },
+          { status: 409 },
+        ),
+      );
+      const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
+      const error = await api.assignSeats("ws_1", pairs).catch((e: unknown) => e);
+      expect(error).toMatchObject({ status: 409, code: "no_seats_available" });
+      expect(isLicenseChangedError(error)).toBe(true);
+    });
   });
 });

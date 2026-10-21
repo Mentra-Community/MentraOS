@@ -17,6 +17,8 @@ import type {
   LicenseView,
   MemberView,
   PrincipalResponse,
+  SeatAssignmentsRequest,
+  SeatAssignmentsResponse,
   WorkspaceDetail,
   WorkspaceRole,
   WorkspaceSummary,
@@ -108,6 +110,13 @@ export interface WorkspaceApi {
   assignSeat(workspaceId: string, licenseId: string, membershipId: string): Promise<LicenseView>;
   /** Takes the seat back from the membership (`workspace.licenses.assign`). */
   releaseSeat(workspaceId: string, licenseId: string, membershipId: string): Promise<void>;
+  /**
+   * Gives several seats at once (`workspace.licenses.assign`), one request for every `{licenseId, membershipId}`
+   * pair, 1 to `MAX_SEAT_ASSIGNMENTS` of them. Core assigns all of them or none: a pair that is repeated or already
+   * held is dropped, and when any license lacks the seats nothing is assigned and the call fails with a 409
+   * `no_seats_available` (`isLicenseChangedError`). Answers every license it touched, as Core now holds it.
+   */
+  assignSeats(workspaceId: string, assignments: SeatAssignmentsRequest["assignments"]): Promise<LicenseView[]>;
 }
 
 /** What `createWorkspaceApi` needs of `fetch`; the global `fetch` of any runtime satisfies it. */
@@ -212,6 +221,12 @@ export function createWorkspaceApi(opts: {
       json("PUT", `${workspace(workspaceId)}/licenses/${id(licenseId)}/seats/${id(membershipId)}`),
     releaseSeat: (workspaceId, licenseId, membershipId) =>
       empty("DELETE", `${workspace(workspaceId)}/licenses/${id(licenseId)}/seats/${id(membershipId)}`),
+    assignSeats: async (workspaceId, assignments) =>
+      (
+        await json<SeatAssignmentsResponse>("POST", `${workspace(workspaceId)}/seat-assignments`, {
+          assignments,
+        } satisfies SeatAssignmentsRequest)
+      ).licenses,
   };
 }
 

@@ -679,10 +679,12 @@ export async function bumpRevision(
 
 /**
  * Write the workspace document without changing anything it holds, so this
- * transaction conflicts with any other mutation of the workspace (the same
- * serialization every membership change gets from its revision bump) without
- * invalidating anyone's `expectedRevision`. Invitations and credentials use it:
- * they do not change who holds which role.
+ * transaction usually conflicts with a concurrent mutation of the workspace
+ * without invalidating anyone's `expectedRevision`. Invitations and credentials
+ * use it: they do not change who holds which role. It is not a guarantee: when
+ * `updatedAt` already holds the same instant the write is a no-op and conflicts
+ * with nothing. Seat changes are serialized by the license's conditional
+ * increment and the feed counter instead.
  */
 export async function touchWorkspace(session: ClientSession, workspaceId: string): Promise<void> {
   const touched = await WorkspaceModel.updateOne(

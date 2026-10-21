@@ -80,18 +80,56 @@ group ([APIs](workspaces.md#apis)):
 | `GET /:workspaceId/licenses` | Any member | `{items}`: with `workspace.licenses.read`, every license and every seat; otherwise the licenses the caller holds a seat in, each with only their own seat. |
 | `PUT /:workspaceId/licenses/:licenseId/seats/:membershipId` | `workspace.licenses.assign` | The license with its seats. Assigning a seat the member already holds changes nothing. |
 | `DELETE /:workspaceId/licenses/:licenseId/seats/:membershipId` | `workspace.licenses.assign` | `204`. Unassigning a seat nobody holds changes nothing. |
+| `POST /:workspaceId/seat-assignments` | `workspace.licenses.assign` | `{licenses}`: every license the request names, with its seats. Assigns several seats at once, all of them or none. |
 
 They are for people: a key gets `403`. A seat assignment is refused with
 `404 license_not_found` for a license that is not this workspace's,
-`404 not_found` for a membership that is not an active one of this workspace,
-`400 invalid_request` for an imported membership still waiting for its person's
-first sign-in, and `409 no_seats_available` when every seat is taken.
+`409 license_ended` for one that has ended, `404 not_found` for a membership
+that is not an active one of this workspace, `400 invalid_request` for an
+imported membership still waiting for its person's first sign-in, and
+`409 no_seats_available` when every seat is taken.
 
 - **The cap.** Assigning a seat increments the license's `seatsUsed` only while
   it is below `quantity`, in the same transaction as the seat's insert.
   Concurrent assignments conflict on the license, and the database retries them
   against the latest count, so two admins taking the last seat at once never
-  both get it, and an assignment is refused only for want of a seat.
+  both get it, and an assignment is refused only for want of a seat. Rarely, a
+  refusal comes from a count read just before another seat was released; trying
+  again succeeds.
+- **Several at once.** `POST /:workspaceId/seat-assignments` takes
+  `{"assignments": [{"licenseId", "membershipId"}]}`, the people picker's and
+  Assign licenses' request. It takes 1 to 500 pairs (`MAX_SEAT_ASSIGNMENTS`);
+  any other count, or a pair without both ids, is `400 invalid_request`. Every
+  rule of one assignment applies to each pair, and a pair that is refused
+  assigns nothing. A repeated pair counts once, and a pair whose member already
+  holds that license's seat is skipped and takes no seat. Each license takes all
+  of its new seats in one conditional increment, in one transaction for the
+  whole request. If any license has fewer seats free than its new pairs need,
+  nothing is assigned and Core answers `409 no_seats_available` with
+  `licenses`, one `{licenseId, needed, free}` for each license that falls
+  short. Requests that race for the same seats, one seat or several, never
+  together exceed a license's quantity. Each seat assigned is its own
+  `seat.assigned` event.
+- **Assign licenses.** On the Members page ([Workspaces and
+  keys](workspaces.md#the-workspace-portal)) a seat manager ticks members and
+  gives them seats of any of the workspace's licenses in one step. The dialog has
+  a row per license and checks what fits before it sends anything, against the
+  seats free as Core last listed them. A row is ticked when everyone chosen who
+  needs a seat fits: "2 of 5 seats free: enough for both.", or "Amara Okafor has
+  one. 1 of 3 seats free, for Luis Ortega." when someone already holds it. A row
+  that cannot fit its people cannot be ticked: "2 of 3 fit: remove one or add
+  seats.", "All 10 seats are in use.", or "Everyone you chose has one.". The
+  footer counts the seats per product ("2 Call Unlimited · 1 Example Add-on"),
+  and Assign sends every ticked row as one `POST /:workspaceId/seat-assignments`,
+  so the whole choice is given or none of it is. The people picker on a license
+  does the same for one license and several people. Both stay off past
+  `MAX_SEAT_ASSIGNMENTS` seats, saying "You can assign up to 500 seats at a
+  time.", since one request takes no more. Core checks again in its transaction:
+  if the seats changed while the person was choosing, it answers
+  `409 no_seats_available`, assigns nothing, and the dialog reads the counts
+  again and says "Seats changed while you were choosing. Nothing was assigned.
+  Check the counts and try again." Add seats ↗ is offered in these dialogs only
+  for a license whose billing entry lists `add_seats`.
 - **Fewer seats.** A write that lowers the quantity below the seats in use frees
   no seat: the license takes no new assignment until the seats in use fall below
   the quantity again, so a license that is `n` over needs `n + 1` unassigned
@@ -103,37 +141,153 @@ first sign-in, and `409 no_seats_available` when every seat is taken.
 
 ## In the workspace portal
 
-Mentra Portal shows licenses in two places. Whether it offers billing there
-follows `GET /api/portal/me`, whose `modules.billing` says that the
-[billing module](portal-modules.md#is-the-module-installed-and-is-it-for-me) is
-ready on this Core and visible to the person.
+Mentra Portal draws the Licenses page itself, with `WorkspaceLicensesView` from
+`@mentra/workspace-ui`. Billing sends values and the actions it offers: prices,
+dates, statuses, product names and what can be done to each license. It sends no
+markup and no sentences. The portal words every sentence and formats every
+amount, date and count, in its own locale (the first of the browser's languages
+it has strings for, with its region, else `en-US`) and the viewer's time zone,
+and sends that locale on every request to billing. A status, price or action it
+does not know is shown as billing's own label. The page joins three answers into
+one card per license: Core's licenses and seats (the routes above), billing's
+catalog (what each product is) and billing's status (what each license costs and
+what can be done about it).
 
-- **Licenses.** A workspace's page has this item, last in its sidebar,
-  when the person is offered billing or the workspace has licenses to show them
-  (an Admin's every license, a member's own seats). A Private Cloud has neither,
-  so it never shows the item. The page lists the workspace's licenses and, where
-  the person is offered billing, the billing module for that workspace below
-  them ([the module's UI](portal-modules.md#the-modules-ui)). If the licenses
-  cannot be loaded, the item is offered only with billing, and the page's address
-  opens the list's own error with Try again.
-- **The list** follows the capabilities of `GET /:workspaceId/licenses`:
-  - a member sees only the licenses they hold a seat in, as "You hold a seat"
-    with the term, and nothing about anyone else;
-  - with `workspace.licenses.read`, every license shows its seats used of its
-    quantity and who holds each seat;
-  - with `workspace.licenses.assign` as well, each seat has Unassign (after a
-    confirm step), and a license with a seat free has a form to give one to a
-    member who has none. Members still waiting for their first sign-in are not
-    offered one;
-  - a license that holds more seats than its quantity says by how many, and to
-    those who can assign, how many to unassign to get back within the quantity.
-    It takes no new seat until then.
-- **Billing.** The person's own page is `/account/billing`, with a Billing entry in
-  the account menu. Its sidebar is Your account with Billing under it, and a way
-  back to one of the person's workspaces if they have one; a person in no
-  workspace gets the page all the same. It mounts the billing module with the
-  person's scope, for personal licenses. Where the person is not offered billing,
-  the menu has no Billing entry and the address is "Page not found".
+Whether the portal offers billing follows `GET /api/portal/me`. `modules.billing`
+says the [billing module](portal-modules.md#is-the-module-installed-and-is-it-for-me)
+is ready on this Core and visible to the person. `modules.billingCatalog` says
+its catalog can be read, which holds wherever billing is ready, whoever asks. The
+page asks only for what its viewer's view needs ([Who sees
+what](#who-sees-what)).
+
+- **The page.** A workspace has a Licenses item, last in its sidebar, when the
+  person is offered billing or the workspace has licenses to show them (an Admin's
+  every license, a member's own seats). A Private Cloud has neither, so it never
+  shows the item. If the licenses cannot be loaded, the sidebar offers the item
+  only with billing, but the page's own address still opens. The page says
+  "Licenses are unavailable", with Retry, whenever Core's licenses, the catalog it
+  needs to name them, or billing's status for someone offered billing cannot be
+  read or comes back in a shape the portal does not accept: it never draws cards
+  without names. A page that has loaded keeps its cards through every later read,
+  a failed one included.
+- **Cards.** One per license that has not ended: payment failed first, then
+  payment incomplete, then licenses with more seats than they cover, then the
+  license just bought, then by name.
+  - The head has the product's icon (a letter tile when billing sends none the
+    portal may show), its name and description, one status badge, and, for a
+    product with more than one feature, a chip per feature with the miniapp it
+    works in.
+  - The badge says "Active", "Ends Nov 20" (it will not renew), "Payment failed",
+    "Payment incomplete", "Setting up" (paid for, and Core has not received the
+    license) or "2 over" (more seats assigned than the license covers).
+  - For someone offered billing there are three facts. Seats: "3 of 5 in use" and
+    "2 free". The term: Renews with its date and "Every month" (or "Until" a later
+    end), or Ends with its date and "Doesn't renew". Cost: billing's own total,
+    such as "$145 a month" over "5 × $29 · before tax". A price that is not per
+    seat shows billing's label, with no arithmetic. Without billing the card shows
+    its Seats alone.
+  - A failed payment rings the card in amber and says the day the seats stop (or
+    stopped), with Update payment method ↗ and Complete payment ↗ where
+    billing lists them. That date is the only one of its kind: no card says "paid
+    through". A first payment that is not finished says so, with Complete
+    payment ↗ where billing lists it. Amber marks failed or unfinished payments
+    and over-assignment and nothing else on these pages; a refusal is a neutral
+    line.
+- **Actions.** Every button that leaves the portal for a hosted billing page is
+  marked ↗, and exists only where billing lists that action for the license: Add
+  seats, Change seats, Cancel, Renew, Update payment method, Complete payment,
+  and, for the account, Billing & invoices. The payment actions sit in their
+  notice, Add seats with the seats, and the rest in the card's "…" menu, an
+  action Core does not know among them under billing's own label. A press asks
+  billing for a session and sends this tab to the address it answers, if it is one
+  the portal will follow (`https:`, or `http:` to `localhost` or `127.0.0.1`).
+  Billing marks a page that cannot send the person back, such as an invoice's
+  payment page, with `returns: false`: it opens in a new tab started in the click
+  itself, and if the browser blocks the tab the address comes back as an "Open the
+  payment page ↗" link. After such a page, the licenses and billing's status are
+  read again when the window regains focus. A refusal is worded next to the
+  button.
+- **Seats.** A card lists who holds each seat, name over email, since when, and
+  Unassign, which asks first. Free seats follow: up to three as a row each with
+  Assign, more as one line. A list of more than 8 holders has a search. With
+  several licenses on the page the seats fold into one line (their avatars and
+  "Dana Reyes, Priya Natarajan and 8 others") until opened; a single license shows
+  its list open. With every seat taken the card says "All 10 seats are in use."
+  and offers Add seats ↗ where billing lists it. A license with more seats
+  assigned than it covers says by how many: "Unassign 2 of them, or add 2 seats.
+  No one else can get a seat until then." Assigning is off until it is back
+  within the quantity, and Unassign still works. Every seat change makes billing's
+  status stale, so the counts and costs on the page are read again.
+- **The people picker.** Assign seats on a card opens a dialog for that license:
+  search by name or email, tick several people, and Assign. A member who holds a
+  seat or has not signed in is listed but cannot be ticked ("Has a seat",
+  "After first sign-in"). When more are ticked than there are seats, it says "3 of
+  4 fit: remove one or add seats." and Assign stays off. Assign sends one
+  `POST /:workspaceId/seat-assignments` ([Seats](#seats)), so everyone ticked gets
+  a seat or no one does.
+- **Buying.** What can be bought comes from the catalog's `offer`, which billing
+  sends only to a viewer who manages the owner's billing. Anyone else gets
+  display content: no price and no Buy.
+  - A workspace with no licenses shows the catalog as its page, a card per product
+    with its price ("$15 per seat a month") and Buy; where billing offers it
+    nothing, the page says "This workspace has no licenses yet." With licenses,
+    the header's Buy a license opens the same products in a dialog. A product the
+    workspace holds shows "You have 5 seats" and Add seats ↗ where billing lists
+    it, not Buy. A product whose first payment is not finished shows "Payment
+    incomplete" and Complete payment ↗.
+  - Buy opens the seats step: a counter held between billing's smallest and
+    largest number of seats and starting at its default (5 for a workspace), the
+    one sum the portal works out ("10 seats × $15 · $150 a month · before tax"),
+    "Your workspace has 14 members.", and Continue to payment ↗. Continue asks
+    billing for a purchase, and the browser goes to the hosted payment page it
+    answers. For a price that is not per seat, the step shows billing's label and
+    no sum.
+  - Billing's refusals are worded in the dialog, such as "You already have Call
+    Unlimited. Add seats instead." and "A purchase of Call Unlimited is already
+    under way. Finish it, or try again in a minute."
+- **The header actions.** The page's title bar has Billing & invoices ↗, where
+  billing lists that action for the account, and Buy a license, where billing
+  offers the workspace something to buy or to add seats to. They are drawn only
+  for a person offered billing, in a workspace that has licenses (with none, the
+  page is the catalog). A refusal shows under them.
+- **Back from checkout.** A completed checkout returns to the Licenses page with
+  `?purchase=<purchaseId>`. The page shows a banner, "Setting up 5 Call Unlimited
+  seats. This takes a few seconds; you can stay on this page.", and reads
+  billing's status and Core's licenses every 2 seconds for up to a minute. When
+  billing says the purchase is ready and Core lists its license, the banner says
+  "Your 5 Call Unlimited seats are ready", the card for that license is first and
+  ringed in green, and Dismiss removes `?purchase=` from the address in place, so
+  Back does not return to the banner. After a minute the reads stop and the
+  banner says "Your payment went through" with Reload, because the seats can take
+  a few minutes to appear; a license that arrives later still turns it ready. A
+  purchase that collected no payment says "Purchase complete" and never "Payment
+  received". An unknown purchase, or another owner's, shows no banner.
+- **Test mode.** Where billing sells with a test key, a banner above everything
+  names the environment, the test card to pay with (with a copy button), and that
+  only Organization Admins see billing there.
+- **The member panel's Licenses section.** On the Members page ([Workspaces and
+  keys](workspaces.md#the-workspace-portal)) a member's panel lists every license
+  the workspace holds, with a switch for each. Switching one on gives the member a
+  seat (`PUT`) and off takes it back (`DELETE`), each at once. Under each
+  license's name it says "Has a seat · 2 of 5 free" or "3 of 5 seats free". A
+  license with every seat taken says "All 10 seats are in use", its switch is
+  off, and Add seats ↗ shows where billing lists it; an over-assigned one says
+  "2 more assigned than covered". A member who has not signed in sees "<email>
+  can get seats after their first sign-in." Without `workspace.licenses.assign`
+  the switches only show the state.
+- **Billing.** The person's own page is `/account/billing`, with a Billing entry
+  in the account menu. Its sidebar is Your account with Billing under it, and a
+  way back to one of the person's workspaces if they have one; a person in no
+  workspace gets the page all the same. It is `PersonalBillingView` over
+  billing's account scope: a card for each license the person bought for
+  themselves, with the status, term, cost, failed-payment notice and "…" menu of
+  a workspace's card, and no seats. With none, the catalog ("Buy a license for
+  yourself"), where Buy goes straight to the hosted payment page, since a
+  person's one seat needs no seats step. For a person who holds a license, the
+  title bar has Billing & invoices ↗ and, while something is left to buy, Buy a
+  license. Back from checkout shows the same banner ("Call Unlimited is ready").
+  Where the person is not offered billing, the menu has no Billing entry and the
+  address is "Page not found".
 
 ## Ending
 
@@ -162,10 +316,10 @@ phone. The list is read-only: no admin route changes a license or a seat.
   of the next page, or `null` on the last. A license written while an admin pages
   never moves a row between pages.
 - **Owners.** A workspace shows by its name, also once deleted. A person shows by
-  the name and email of their latest sign-in through Core's sign-in server, or by
-  Core's copy of their verified email when they have not signed in through it;
-  both are null for a deleted account, and the portal shows the id. A page's
-  owners are read in one query per collection.
+  the last name a sign-in through Core's sign-in server carried and the email of
+  their latest sign-in there, or by Core's copy of their verified email when they
+  have not signed in through it; both are null for a deleted account, and the
+  portal shows the id. A page's owners are read in one query per collection.
 - **Search.** `query` is plain text of up to 100 characters, compared without
   regard to case as a substring of the owner's name, email or id, or of the
   product. A search reads the owners that hold a license, not only a page's, so
@@ -226,6 +380,36 @@ Organization Admins act as Owner in every workspace, and hold
 `organization.licenses.read`: every license on their Core, personal ones
 included, for support. It allows no seat change and no billing. Operator keys
 never carry it.
+
+The Licenses page draws what the viewer's capabilities and the portal's offer of
+billing allow, and asks for no more than that. Core refuses the rest whatever
+the page does.
+
+| Viewer | The page shows | The page reads |
+| --- | --- | --- |
+| **A plain member** (Member or Developer) | Only the licenses they hold a seat in, each as "You have a seat" with since when, "Given by" the workspace, and the miniapps it works in. No totals, no money, no one else's seats, no controls. The Licenses item is in their sidebar while they hold a seat. | Their licenses from Core, and the catalog for names and icons. Not billing's status, not the members. |
+| **A seat manager without billing** (an Admin or Owner who is not offered billing) | Every license with its seats and who holds each. They assign and unassign, from a card or the people picker, and give seats from Members. No money, no dates, no total, no billing actions, no buying, no Add seats. | Core's licenses and the members, and the catalog for names and icons. Not billing's status. |
+| **A billing manager** (an Admin or Owner offered billing) | All of that, plus each license's cost and dates, the total, billing's actions and the failed-payment notices, buying, the header actions, and the banner after checkout. | Billing's status as well. |
+| **A person**, on their own | `/account/billing`, where billing is offered to them: licenses they bought for themselves, with no seats, and the catalog when they hold none. | Billing's catalog and status for their account. |
+| **Staff, where billing uses a test key** | Where `CLOUD_CORE_ENVIRONMENT` is not `prod`, billing is offered to Organization Admins only. They act as Owner everywhere, so they are billing managers of every workspace and have their own Billing page, under a test-mode banner. | As for a billing manager or a person. |
+
+- **Who is a seat manager without billing.** The roles hold the three
+  capabilities together, so the difference is whether billing is offered. It is
+  offered when `modules.billing` is true and the person holds
+  `workspace.billing.manage`. On a Core with a test key, an Admin or Owner who is
+  not an Organization Admin is a seat manager without billing: the catalog is an
+  open read, so their licenses are still named and drawn with their icons
+  ([Open reads](portal-modules.md#open-reads)), but they see no money and cannot
+  buy.
+- **The catalog is open, the rest is not.** Billing answers the catalog for every
+  member of the workspace, with display content only; it adds each product's
+  price and how many seats may be bought only for someone who manages the owner's
+  billing. A plain member's page needs it for names and icons, so it asks for it
+  once Core has listed a license for them to name.
+- **The Members page.** Its Licenses column and the member panel's Licenses
+  section are for a viewer with `workspace.licenses.read` where the catalog can
+  be read; selecting members and Assign licenses need `workspace.licenses.assign`.
+  Without the catalog they are left out and the rest of Members works.
 
 ## Audit and the change feed
 
