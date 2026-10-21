@@ -102,7 +102,7 @@ describe("listMembershipIntervals", () => {
   })
 
   test("accepts every end reason", async () => {
-    for (const endReason of ["left", "removed", "workspace_deleted", "user_deleted", "replaced"] as const) {
+    for (const endReason of ["left", "removed", "workspace_deleted", "account_deleted"] as const) {
       const {client} = clientFor(() => page({intervals: [open({end: "2026-09-01T00:00:00.000Z", endReason})]}))
       expect((await client.listMembershipIntervals({})).intervals[0]!.endReason).toBe(endReason)
     }
@@ -131,6 +131,15 @@ describe("listMembershipIntervals", () => {
     }
   })
 
+  test("an interval never ends with the retired reasons", async () => {
+    for (const endReason of ["replaced", "user_deleted"]) {
+      const {client} = clientFor(() =>
+        page({intervals: [open({end: "2026-09-01T00:00:00.000Z", endReason: endReason as never})]}),
+      )
+      await expectBadResponse(client.listMembershipIntervals({}))
+    }
+  })
+
   test("a 403 (a service that may not read history) is forbidden, and a 5xx is core_unavailable", async () => {
     const forbidden = clientFor(() => ({error: "forbidden"}), 403)
     const err = await forbidden.client.listMembershipIntervals({}).catch((e: unknown) => e)
@@ -155,5 +164,45 @@ describe("client workspace contract constants", () => {
       emailUnverified: "email_unverified",
       membershipChanged: "membership_changed",
     })
+  })
+})
+
+describe("listWorkspaceMembers", () => {
+  const member = (overrides: Record<string, unknown> = {}) => ({
+    membershipId: "wm_1",
+    mentraUserId: "mu_1",
+    email: "a@example.test",
+    name: "Ada",
+    role: "member" as const,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    pending: false,
+    ...overrides,
+  })
+
+  test("reads the workspace's members from its own path, signed", async () => {
+    const body = {members: [member(), member({membershipId: "wm_2", name: null, pending: true, mentraUserId: null})]}
+    const {client, calls} = clientFor(() => body)
+    expect(await client.listWorkspaceMembers("ws_1")).toEqual(body)
+    expect(calls[0]!.url).toBe(`${BASE}/api/internal/workspaces/workspaces/ws_1/members`)
+    expect(calls[0]!.headers.get(SERVICE_HEADERS.signature)).toBeTruthy()
+  })
+
+  test("a server that predates names is accepted: name is optional", async () => {
+    const {name: _name, ...bare} = member()
+    const {client} = clientFor(() => ({members: [bare]}))
+    expect((await client.listWorkspaceMembers("ws_1")).members).toHaveLength(1)
+  })
+
+  test("refuses a response that is not a member list", async () => {
+    for (const body of [{}, {members: "none"}, {members: [member({role: ""})]}, {members: [member({name: 5})]}, {members: [member({email: 7})]}, {members: [{}]}]) {
+      const {client} = clientFor(() => body)
+      await expectBadResponse(client.listWorkspaceMembers("ws_1"))
+    }
+  })
+
+  test("an id is encoded into the path", async () => {
+    const {client, calls} = clientFor(() => ({members: []}))
+    await client.listWorkspaceMembers("a/b")
+    expect(calls[0]!.url).toBe(`${BASE}/api/internal/workspaces/workspaces/a%2Fb/members`)
   })
 })

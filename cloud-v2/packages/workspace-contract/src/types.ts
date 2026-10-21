@@ -417,13 +417,16 @@ export const INVITATION_DECLINED_ACTION = "invitation.declined"
 // --- Membership interval history (Core -> Fleet) -----------------------------
 
 /** Why a membership interval ended. */
-export type MembershipIntervalEndReason = "left" | "removed" | "workspace_deleted" | "user_deleted" | "replaced"
+export type MembershipIntervalEndReason = "left" | "removed" | "workspace_deleted" | "account_deleted"
 
 /**
- * One continuous stretch of an account's membership in a workspace, at one role. An interval begins when the
- * membership's account is known: for a membership invited by email that is the claim, never the invitation, so
- * records observed earlier are never counted. `end` is null while the membership is open. `membership.replaced`
- * closes one interval and opens the replacement's at the same instant; `membership.merged_duplicate` ends nothing.
+ * One continuous stretch of an account's membership in a workspace: one membership generation. It begins when
+ * the membership's account is known: for a membership imported from the Store and waiting for its person that is
+ * the claim (`membership.claimed`), never the import, so records observed earlier are never counted. A membership
+ * that has no account yet is not an interval at all. `end` is null while the membership is open. `role` is the role
+ * held now, or the last one before the end; a role change does not split an interval (visibility follows
+ * membership, not role). A leave and a later re-join are two intervals with two `membershipId`s.
+ * `membership.merged_duplicate` and `membership.replaced` act on memberships with no account and so end no interval.
  */
 export interface MembershipInterval {
   membershipId: string
@@ -435,6 +438,12 @@ export interface MembershipInterval {
   /** ISO 8601 UTC, or null while the membership is open. */
   end: string | null
   endReason: MembershipIntervalEndReason | null
+}
+
+/** `GET /api/internal/workspaces/workspaces/:workspaceId/members` (service `fleet` only): who is in the workspace now. */
+export interface WorkspaceMembersResponse {
+  /** Active memberships, oldest first. `name` is null when Core has none; Fleet then shows the full email. */
+  members: MemberView[]
 }
 
 /**

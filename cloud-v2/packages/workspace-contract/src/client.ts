@@ -20,6 +20,7 @@ import type {
   PrincipalResponse,
   WorkspaceChangeEvent,
   WorkspaceChangesResponse,
+  WorkspaceMembersResponse,
   WorkspaceSummary,
 } from "./types"
 
@@ -80,6 +81,8 @@ export interface CoreWorkspaceClient {
    * position the read is consistent with, so a consumer then applies feed events after it.
    */
   listMembershipIntervals(input: {after?: string | null; limit?: number}): Promise<MembershipIntervalsResponse>
+  /** Who is in a workspace now, with names (Fleet only). An unknown or deleted workspace is `workspace_not_found`. */
+  listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMembersResponse>
   mintServiceCredential(input: {
     workspaceId: string
     name: string
@@ -183,7 +186,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
     return event as unknown as WorkspaceChangeEvent
   }
 
-  const INTERVAL_END_REASONS = ["left", "removed", "workspace_deleted", "user_deleted", "replaced"]
+  const INTERVAL_END_REASONS = ["left", "removed", "workspace_deleted", "account_deleted"]
 
   /** An interval as Core lists it: a closed one names why it ended, an open one does not. */
   function checkInterval(path: string, value: unknown): MembershipInterval {
@@ -394,6 +397,24 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         throw badResponse(path, "next is not the seq of the last event")
       }
       return {events: raw.events as WorkspaceChangeEvent[], next: raw.next}
+    },
+
+    async listWorkspaceMembers(workspaceId) {
+      const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/members`
+      const raw = checkRecord(path, await call("GET", path), "the member list")
+      if (!Array.isArray(raw.members)) throw badResponse(path, "missing members")
+      for (const entry of raw.members) {
+        const member = checkRecord(path, entry, "a member")
+        if (typeof member.membershipId !== "string" || !member.membershipId) throw badResponse(path, "a member has no membershipId")
+        if (typeof member.role !== "string" || !member.role) throw badResponse(path, "a member has no role")
+        for (const field of ["mentraUserId", "email"] as const) {
+          if (member[field] !== null && typeof member[field] !== "string") throw badResponse(path, `a member's ${field} is not text or null`)
+        }
+        if (member.name !== undefined && member.name !== null && typeof member.name !== "string") {
+          throw badResponse(path, "a member's name is not text or null")
+        }
+      }
+      return {members: raw.members as WorkspaceMembersResponse["members"]}
     },
 
     async listMembershipIntervals(input) {

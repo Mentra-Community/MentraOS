@@ -69,6 +69,7 @@ import {
   revokeCredential,
 } from "../../services/workspaces/credential.service"
 import {listDeletionHolds} from "../../services/workspaces/deletion-hold.service"
+import {toMemberViews} from "../../services/workspaces/member-view.service"
 import {
   acceptInvitation,
   acceptInvitationById,
@@ -79,7 +80,6 @@ import {
   revokeInvitation,
   type InvitationRow,
 } from "../../services/workspaces/invitation.service"
-import {memberNames} from "../../services/workspaces/member-names.service"
 import {fail} from "../../services/workspaces/workspace-error"
 import {
   changeRole,
@@ -196,9 +196,7 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   app.get("/:workspaceId/members", requireWorkspaceCapability("workspace.members.read"), async (c) => {
     const rows = await listMembers(c.req.param("workspaceId"))
-    // Every member's name in one read, not one per row.
-    const names = await memberNames(rows.map(row => row.mentraUserId))
-    return c.json({items: rows.map(row => memberView(row, names))})
+    return c.json({items: await toMemberViews(rows)})
   })
 
   app.patch("/:workspaceId/members/:membershipId", requireWorkspaceCapability("workspace.read"), async (c) => {
@@ -388,20 +386,6 @@ function workspaceRole(body: JsonObject): WorkspaceRole {
   const role = body.role
   if (!isWorkspaceRole(role)) fail("invalid_role", `role must be one of ${WORKSPACE_ROLES.join(", ")}`)
   return role
-}
-
-/** `names` are the members' sign-in names by Core user id (`memberNames`); a member without one has `name: null`. */
-function memberView(row: MembershipRow, names: ReadonlyMap<string, string>): MemberView {
-  return {
-    membershipId: row.membershipId,
-    mentraUserId: row.mentraUserId ?? null,
-    email: row.email ?? null,
-    name: (row.mentraUserId ? names.get(row.mentraUserId) : undefined) ?? null,
-    role: row.role as WorkspaceRole,
-    startedAt: row.startedAt.toISOString(),
-    // Imported from the Store and not yet claimed: the person has no Core user here until they sign in.
-    pending: !row.mentraUserId,
-  }
 }
 
 function invitationView(row: InvitationRow): InvitationView {

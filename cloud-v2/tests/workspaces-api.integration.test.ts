@@ -943,9 +943,9 @@ describe("members", () => {
       ws.memberMembershipId,
     ])
     for (const item of reply.json.items) {
-      expect(Object.keys(item).sort()).toEqual(
-        ["email", "membershipId", "mentraUserId", "name", "pending", "role", "startedAt"].sort(),
-      )
+      expect(Object.keys(item).sort()).toEqual(["email", "membershipId", "mentraUserId", "name", "pending", "role", "startedAt"].sort())
+      // Core has recorded no name for these test people, so Fleet would show their full email.
+      expect(item.name).toBeNull()
       expect(item.pending).toBe(false)
       expect(Number.isNaN(Date.parse(item.startedAt))).toBe(false)
     }
@@ -978,6 +978,7 @@ describe("members", () => {
         membershipId: "wm_imported_pending",
         mentraUserId: null,
         email: "dev@acme.example",
+        // A person who has not signed in has no recorded name.
         name: null,
         role: "developer",
         startedAt: startedAt.toISOString(),

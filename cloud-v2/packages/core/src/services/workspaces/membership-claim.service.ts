@@ -123,7 +123,7 @@ export async function claimPendingMemberships(
 
     const claimed = await WorkspaceMembershipModel.updateOne(
       {membershipId: row.membershipId, pendingWorkosUserId: workosUserId, status: "active"},
-      {$set: {mentraUserId, pendingWorkosUserId: null}},
+      {$set: {mentraUserId, pendingWorkosUserId: null, claimedAt: now}},
       {session},
     )
     if (claimed.modifiedCount !== 1) continue

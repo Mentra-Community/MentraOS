@@ -58,6 +58,13 @@ every Core variable.
   (see [Fleet UI assets](#fleet-ui-assets)). A larger one is a
   `503 {"error":"fleet_unavailable"}`. Default `26214400` (25 MiB); the JSON
   routes' response limit does not apply to assets.
+- `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`: how far back Core's membership interval
+  history reaches (`GET /api/internal/workspaces/membership-intervals`, read by
+  Fleet only). Default `90`; a whole number of days from 1 to 3650. Fleet's
+  Overview calculates over up to 114 days, so a deployment that runs Fleet sets
+  at least `120`; Fleet refuses a query window longer than the lookback its last
+  bootstrap was given. An open membership older than the window is still
+  returned, with its real start.
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
   its calls to Core with (below), for example
   `{"store": ["<newest>", "<older>"], "fleet": ["<newest>", "<older>"]}`. Without
@@ -521,6 +528,7 @@ that was offline can catch up:
 | `membership.ownership_recovered` | `{membershipId, mentraUserId, email}` | `{role}` (null when there was no membership) | `{role: "owner"}` |
 | `invitation.created` | `{invitationId, email}` | null | `{email, role, expiresAt}` |
 | `invitation.accepted` | `{invitationId, membershipId, email}` | `{status: "pending"}` | `{status: "accepted"}` |
+| `invitation.declined` | `{invitationId, email}` | `{status: "pending", role}` | `{status: "declined"}`. The invitee turned it down; no membership changes, so Fleet's membership intervals are untouched |
 | `invitation.revoked` | `{invitationId, email}` | `{status: "pending", role}` | `{status: "revoked"}`, with `reason: "superseded", supersededBy` when a new invitation replaced it and `reason: "inviter_account_deleted"` when the inviter's account was deleted |
 | `credential.created` | `{credentialId, prefix, credentialKind, workspaceId, name}` | null | `{scopes, packageNames, expiresAt, createdByMembershipId, issuedByService}` |
 | `credential.revoked` | `{credentialId, prefix, credentialKind, workspaceId, name}` | `{revokedAt: null}` | `{revokedAt}` |
