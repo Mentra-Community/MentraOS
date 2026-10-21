@@ -831,6 +831,13 @@ describe("billing's open reads outside prod", () => {
       expect(icon.headers.get("x-content-type-options")).toBe("nosniff")
       expect(icon.headers.get("cross-origin-resource-policy")).toBe("same-origin")
       expect(head.text).toBe("")
+      // A catalog is this viewer's (a billing manager's lists offers), so no cache keeps it; an icon is everyone's,
+      // and keeps what the module sent: here, nothing.
+      expect([catalog.headers.get("cache-control"), account.headers.get("cache-control")]).toEqual([
+        "private, no-store",
+        "private, no-store",
+      ])
+      expect(icon.headers.get("cache-control")).toBeNull()
       expect(received.map(call => call.pathWithQuery)).toEqual([
         `/v1/portal/workspaces/${workspaceId}/catalog?locale=en-US`,
         "/v1/portal/account/catalog?locale=en-US",

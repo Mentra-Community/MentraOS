@@ -831,6 +831,22 @@ describe("assigning several seats at once", () => {
   const byLicenseId = <T extends {licenseId: string}>(items: T[]) =>
     [...items].sort((a, b) => a.licenseId.localeCompare(b.licenseId))
   const codeOf = (error: unknown) => (error instanceof WorkspaceError ? error.code : String(error))
+  /** Resolves after `ms`, so a racing write can land at different points of the requests it races. */
+  const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+  /**
+   * The feed came through the race whole: every stored `seq` runs from 1 to the counter's, each exactly once,
+   * and a poller paging the feed reads the same numbers.
+   */
+  async function expectWholeFeed() {
+    const counter = (await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq
+    const everyNumber = Array.from({length: counter}, (_, n) => n + 1)
+    const stored = await WorkspaceAuditEventModel.find({seq: {$exists: true}})
+      .select({_id: 0, seq: 1})
+      .lean()
+    expect(stored.map((event) => event.seq).sort((a, b) => a! - b!)).toEqual(everyNumber)
+    expect((await feed()).map((event) => Number(event.seq))).toEqual(everyNumber)
+  }
 
   test("three pairs over two licenses with room are all assigned, each seat its own seat.assigned", async () => {
     const ws = await newWorkspace()
@@ -1030,16 +1046,74 @@ describe("assigning several seats at once", () => {
       expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 5, seatsUsed: 5})
     }
     expect(await audit("seat.assigned")).toHaveLength(15)
+    await expectWholeFeed()
+  })
 
-    // The feed came through the retries whole: every stored `seq` runs from 1 to the counter's, each exactly once,
-    // and a poller paging the feed reads the same numbers.
-    const counter = (await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq
-    const everyNumber = Array.from({length: counter}, (_, n) => n + 1)
-    const stored = await WorkspaceAuditEventModel.find({seq: {$exists: true}})
-      .select({_id: 0, seq: 1})
-      .lean()
-    expect(stored.map((event) => event.seq).sort((a, b) => a! - b!)).toEqual(everyNumber)
-    expect((await feed()).map((event) => Number(event.seq))).toEqual(everyNumber)
+  test("releases racing bulk requests for a full license: never past its quantity, and its count is always its seats", async () => {
+    const ws = await newWorkspace()
+    for (let round = 0; round < 4; round++) {
+      const quantity = 4
+      const license = await workspaceLicense(ws.workspaceId, {quantity})
+      const seated = await addMembers(ws.workspaceId, quantity)
+      for (const membershipId of seated) {
+        await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, membershipId)
+      }
+      // The license is full. Two of its seats are released while four requests ask for one or two each.
+      const freed = seated.slice(0, 2)
+      const bulk: string[][] = []
+      for (let i = 0; i < 4; i++) bulk.push(await addMembers(ws.workspaceId, i % 2 === 0 ? 1 : 2))
+
+      const [releases, results] = await Promise.all([
+        Promise.allSettled(
+          freed.map((membershipId, at) =>
+            after(round * 3 + at * 2).then(() =>
+              releaseSeat(actorOf(ws.owner), ws.workspaceId, license.licenseId, membershipId),
+            ),
+          ),
+        ),
+        Promise.allSettled(
+          bulk.map((ids) =>
+            assignSeats(
+              actorOf(ws.admin),
+              ws.workspaceId,
+              ids.map((membershipId) => pair(license.licenseId, membershipId)),
+            ),
+          ),
+        ),
+      ])
+
+      expect(releases).toEqual([
+        {status: "fulfilled", value: {released: true}},
+        {status: "fulfilled", value: {released: true}},
+      ])
+      const refusals = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+      expect(refusals.map(codeOf)).toEqual(Array(refusals.length).fill("no_seats_available"))
+      const held = new Set(await holders(license.licenseId))
+      for (const membershipId of freed) expect(held.has(membershipId)).toBe(false)
+      bulk.forEach((ids, at) => {
+        expect({round, at, held: ids.filter((id) => held.has(id)).length}).toEqual({
+          round,
+          at,
+          held: results[at]!.status === "fulfilled" ? ids.length : 0,
+        })
+      })
+      // The count is the seats there are, within the quantity.
+      expect(held.size).toBeLessThanOrEqual(quantity)
+      expect(await licenseRow(license.licenseId)).toMatchObject({quantity, seatsUsed: held.size})
+      // Replayed in commit order (the feed's `seq`), the seats in use never pass the quantity, and every
+      // assignment counted exactly the seats there were once it was given.
+      const events = await WorkspaceAuditEventModel.find({"target.licenseId": license.licenseId}).sort({seq: 1}).lean()
+      let inUse = 0
+      for (const event of events) {
+        if (event.action === "seat.released") inUse -= 1
+        if (event.action !== "seat.assigned") continue
+        inUse += 1
+        expect({round, inUse, seatsUsed: event.after?.seatsUsed}).toEqual({round, inUse, seatsUsed: inUse})
+        expect(inUse).toBeLessThanOrEqual(quantity)
+      }
+      expect(inUse).toBe(held.size)
+    }
+    await expectWholeFeed()
   })
 
   test("20 one-pair requests at once for 10 free seats: exactly 10 succeed, and none is refused for a write conflict", async () => {
@@ -1166,9 +1240,6 @@ describe("assigning several seats at once", () => {
     expect(active).toHaveLength(seats.length)
     expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(seats.length)
   })
-
-  /** Resolves after `ms`, so a racing write can land at different points of the requests it races. */
-  const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
   test("a quantity lowered while bulk requests are in flight: no seat is assigned past the quantity it commits under", async () => {
     const ws = await newWorkspace()

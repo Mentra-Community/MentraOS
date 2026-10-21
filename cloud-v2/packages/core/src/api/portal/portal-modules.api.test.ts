@@ -583,6 +583,73 @@ describe("what the person receives", () => {
   })
 })
 
+describe("what a cache may keep", () => {
+  const icon = (headers: Record<string, string> = {}) =>
+    new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {headers: {"content-type": "image/png", ...headers}})
+
+  test("a forwarded answer the module set no cache-control on is private, no-store: one address answers each viewer for themselves", async () => {
+    // Outside prod a member reads the catalog as an open read, and an Organization Admin reads it and the rest.
+    configure("staging")
+    const reads: Array<[who: string, principal: UserPrincipal, method: string, rest: string]> = [
+      ["member", member, "GET", "/workspaces/ws_1/catalog?locale=en-US"],
+      ["member", member, "GET", "/account/catalog"],
+      ["admin", admin, "GET", "/workspaces/ws_1/catalog"],
+      ["admin", admin, "GET", "/workspaces/ws_1/status"],
+      ["admin", admin, "GET", "/account/status?purchase=pur_1"],
+      ["admin", admin, "POST", "/workspaces/ws_1/purchase"],
+    ]
+    for (const [who, principal, method, rest] of reads) {
+      const reply = await billing(as(who, principal), rest, {method, ...(method === "POST" ? {body: "{}"} : {})})
+      expect([who, method, rest, reply.status, reply.headers.get("cache-control")]).toEqual([
+        who,
+        method,
+        rest,
+        200,
+        "private, no-store",
+      ])
+    }
+    expect(calls).toHaveLength(reads.length)
+
+    // On prod, where everyone reads everything, and for an error the module relays or a failure Core reports.
+    configure("prod")
+    expect((await billing(as("member", member), "/workspaces/ws_1/status")).headers.get("cache-control")).toBe(
+      "private, no-store",
+    )
+    respond = () => Response.json({error: "slow_down"}, {status: 429, headers: {"retry-after": "9"}})
+    const relayed = await billing(as("member", member), "/account/catalog")
+    expect([relayed.status, relayed.headers.get("cache-control")]).toEqual([429, "private, no-store"])
+    respond = () => new Response("down", {status: 500})
+    const failed = await billing(as("member", member), "/account/catalog")
+    expect([failed.status, failed.headers.get("cache-control")]).toEqual([503, "private, no-store"])
+  })
+
+  test("a cache-control the module sets is relayed as it sent it", async () => {
+    configure("staging")
+    for (const cacheControl of ["private, max-age=30", "no-cache", "no-store"]) {
+      respond = () => Response.json({ok: true}, {headers: {"cache-control": cacheControl}})
+      const catalog = await billing(as("member", member), "/workspaces/ws_1/catalog")
+      expect([cacheControl, catalog.headers.get("cache-control")]).toEqual([cacheControl, cacheControl])
+    }
+  })
+
+  test("icons and the rest of the UI keep what the module sends, which is the same for everyone", async () => {
+    configure("staging")
+    respond = () => icon({"cache-control": "public, max-age=86400, immutable"})
+    const cached = await billing(as("member", member), "/ui/icons/mentra.call.unlimited.png")
+    expect([cached.status, cached.headers.get("cache-control")]).toEqual([200, "public, max-age=86400, immutable"])
+    const head = await billing(as("member", member), "/ui/icons/mentra.call.unlimited.png", {method: "HEAD"})
+    expect([head.status, head.headers.get("cache-control")]).toEqual([200, "public, max-age=86400, immutable"])
+
+    // With none from the module, Core adds none.
+    respond = () => icon()
+    const plain = await billing(as("member", member), "/ui/icons/a.png")
+    expect([plain.status, plain.headers.get("cache-control")]).toEqual([200, null])
+    respond = () => new Response("export default {}", {headers: {"content-type": "text/javascript"}})
+    const bundle = await billing(as("admin", admin), "/ui/entry.js")
+    expect([bundle.status, bundle.headers.get("cache-control")]).toEqual([200, null])
+  })
+})
+
 describe("paths", () => {
   test("a dot segment, an encoded separator, a control character or a double encoding is a 400 invalid_path, with no call", async () => {
     configure()

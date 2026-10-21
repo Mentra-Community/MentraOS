@@ -45,9 +45,14 @@
  *  - then the shared forwarding code: 413 and 400 for the body, 503 `{error: "module_unavailable"}` for a
  *    module that fails, times out, redirects or sends too much, an upstream 401 relayed as a 403.
  *
- * Every JSON answer carries the labels of the shared code (`nosniff` and a sandbox policy). The UI route's
- * rules are `assets.ts`'s: GET and HEAD only (any other method is 405 once the caller is allowed), the content
- * types it relays, and its limits.
+ * Every JSON answer carries the labels of the shared code (`nosniff` and a sandbox policy). A forwarded JSON
+ * answer is the module's answer to this person, under an address that is the same for everyone: billing's
+ * catalog lists offers and prices to a billing manager and display content to anyone else. So when the module
+ * sets no `cache-control` on it, Core answers `cache-control: private, no-store`, and no cache keeps one
+ * viewer's answer for another; a `cache-control` the module sets is relayed as it is. The UI route's rules are
+ * `assets.ts`'s: GET and HEAD only (any other method is 405 once the caller is allowed), the content types it
+ * relays, and its limits. Its assets, billing's icons among them, are the same for everyone and keep the
+ * caching the module gives them.
  */
 
 import type {ForwardedScope} from "@mentra/workspace-contract/server"
@@ -67,6 +72,15 @@ import {denied} from "../middleware/principal.middleware"
 
 const MODULE_NOT_INSTALLED = "module_not_installed"
 const MODULE_UNAVAILABLE = "module_unavailable"
+
+/** How a forwarded JSON answer may be cached when the module does not say: by nobody, since it is one person's. */
+const PER_PERSON_CACHE_CONTROL = "private, no-store"
+
+/** `answer`, with {@link PER_PERSON_CACHE_CONTROL} unless it already says how it may be cached. */
+function keptByNoCache(answer: Response): Response {
+  if (!answer.headers.has("cache-control")) answer.headers.set("cache-control", PER_PERSON_CACHE_CONTROL)
+  return answer
+}
 
 /** The path every module serves the portal under. */
 const UPSTREAM_PREFIX = "/v1/portal"
@@ -221,7 +235,7 @@ export function portalModuleApi(name: PortalModuleName): Hono<AppEnv> {
       }
       const scope = await scopeOf(c, person, route)
       if (scope instanceof Response) return scope
-      return forwardJson(c, {...request, principal: () => forwardedUser(person, scope)})
+      return keptByNoCache(await forwardJson(c, {...request, principal: () => forwardedUser(person, scope)}))
     },
   )
   return api

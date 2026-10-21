@@ -223,6 +223,11 @@ or a success that is not JSON is `503 {"error":"module_unavailable"}`; an
 upstream `401` reaches the browser as a `403` (a `401` from Core means "sign in
 again"); every JSON answer carries `x-content-type-options: nosniff` and a
 sandbox `content-security-policy`; and the module's `x-request-id` is returned.
+A JSON answer is the module's answer to one person at an address that is the
+same for everyone (billing's catalog lists offers to a billing manager and
+display content to anyone else), so one the module sets no `cache-control` on
+carries `cache-control: private, no-store`; a module's own `cache-control` is
+relayed as it is. UI assets, billing's icons among them, keep the module's.
 Core logs each request that reaches the module once, as `Portal module billing
 request forwarded`, without a body, header, query or secret.
 
