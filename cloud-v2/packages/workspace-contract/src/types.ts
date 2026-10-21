@@ -362,6 +362,98 @@ export interface InvitationPreview {
   expiresAt: string
 }
 
+// --- Mentra App workspace calls (`/api/client/workspaces`) ------------------
+// A person belongs to at most one workspace, so a phone sees one workspace, or none.
+
+/** The workspace the signed-in phone's person belongs to (`GET /api/client/workspaces/mine`), or null when none. */
+export interface MyWorkspace {
+  workspaceId: string
+  name: string
+  role: WorkspaceRole
+  membershipId: string
+}
+
+/** `GET /api/client/workspaces/mine`. */
+export interface MyWorkspaceResponse {
+  workspace: MyWorkspace | null
+}
+
+/** `GET /api/client/workspaces/invitations/mine`: the invitations addressed to the signed-in person. */
+export interface PendingInvitationsResponse {
+  invitations: InvitationPreview[]
+}
+
+/** `POST /api/client/workspaces/invitations/:invitationId/accept`. */
+export interface AcceptInvitationResult {
+  workspace: MyWorkspace
+}
+
+/**
+ * `POST /api/client/workspaces/invitations/:invitationId/decline`. Declining twice is idempotent. Decline opens and
+ * closes no membership interval.
+ */
+export interface DeclineInvitationResult {
+  invitationId: string
+  declined: true
+}
+
+/** Codes a client workspace call can fail with, so the Mentra App can map each to its own words. */
+export const CLIENT_WORKSPACE_ERRORS = {
+  /** The person already belongs to a workspace; leave it first. */
+  alreadyInWorkspace: "already_in_workspace",
+  /** The only Owner cannot leave. */
+  lastOwner: "last_owner",
+  invitationExpired: "invitation_expired",
+  invitationNotFound: "invitation_not_found",
+  emailUnverified: "email_unverified",
+  /** The membership's role changed under the call. */
+  membershipChanged: "membership_changed",
+} as const
+export type ClientWorkspaceErrorCode = (typeof CLIENT_WORKSPACE_ERRORS)[keyof typeof CLIENT_WORKSPACE_ERRORS]
+
+/** `action` of the change-feed event recorded when an invitee declines. It opens and closes no interval. */
+export const INVITATION_DECLINED_ACTION = "invitation.declined"
+
+// --- Membership interval history (Core -> Fleet) -----------------------------
+
+/** Why a membership interval ended. */
+export type MembershipIntervalEndReason = "left" | "removed" | "workspace_deleted" | "user_deleted" | "replaced"
+
+/**
+ * One continuous stretch of an account's membership in a workspace, at one role. An interval begins when the
+ * membership's account is known: for a membership invited by email that is the claim, never the invitation, so
+ * records observed earlier are never counted. `end` is null while the membership is open. `membership.replaced`
+ * closes one interval and opens the replacement's at the same instant; `membership.merged_duplicate` ends nothing.
+ */
+export interface MembershipInterval {
+  membershipId: string
+  workspaceId: string
+  mentraUserId: string
+  role: WorkspaceRole
+  /** ISO 8601 UTC. */
+  start: string
+  /** ISO 8601 UTC, or null while the membership is open. */
+  end: string | null
+  endReason: MembershipIntervalEndReason | null
+}
+
+/**
+ * One page of `GET /api/internal/workspaces/membership-intervals` (service `fleet` only).
+ *
+ * Core returns every interval that overlaps `[windowStart, now]`, where `windowStart` is `now` minus
+ * `lookbackDays` (`CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`). An interval still open whose `start` is older than the
+ * window is returned with its real `start` and `end: null`, so long-standing members never vanish. One that ended
+ * before `windowStart` is not returned. `feedSeq` is the change-feed position the read is consistent with: a
+ * consumer applies feed events after it. `next` is an opaque cursor, or null on the last page.
+ */
+export interface MembershipIntervalsResponse {
+  lookbackDays: number
+  windowStart: string
+  feedSeq: number
+  intervals: MembershipInterval[]
+  next: string | null
+}
+
 /** A credential as shown to people (a workspace `msk_` key or an organization `mak_` operator key). It never includes the token or its hash. */
 export interface CredentialView {
   credentialId: string

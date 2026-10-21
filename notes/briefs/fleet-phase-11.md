@@ -1,0 +1,91 @@
+---
+status: active
+owner: nicolo
+last_verified: 2026-10-21
+covers:
+  - cloud-v2/packages/protocol/src/fleet.ts
+  - cloud-v2/packages/workspace-contract/src/**
+  - cloud-v2/packages/core/src/api/fleet/**
+  - cloud-v2/packages/core/src/api/client/**
+  - cloud-v2/packages/cloud-client/src/**
+  - mobile/modules/engine/src/services/fleet/**
+---
+
+# Fleet Phase 11 (Fleet Management in Mentra Portal): context brief
+
+Read this first for any Phase 11 question (OS-2110). It is a map and a pitfalls log, not a spec.
+When it disagrees with a source of truth below, the source of truth wins; then fix this file.
+
+## Sources of truth, in order
+
+1. Mentra-Specs `platform/enterprise/mentra-fleet-management/spec.md` (Phase 11 criteria 2-4, 7, 9, 10,
+   15-22, 26, 27), `managed-miniapp-provisioning/spec.md`, `cloud/core/workspaces/{spec,plan}.md`.
+2. Sign-in plan Tasks 21-23 (`cloud/auth/web-login/plan.md`): Core portal forwarding, FleetUi contract,
+   Store eligibility.
+3. Design board `Mentra-Community/fleet-design-board` round 2 (`src/r2/*`, `UPDATE-2026-10-20.md`). The
+   update note overrides older drawings.
+4. The plan: `~/.cursor/plans/fleet_phase_11_plan_*.plan.md` (not committed; ownership map W0-W17,
+   checkpoints A-H, walkthroughs, operational owners O1-O6).
+5. Code: Core `cloud-v2/packages/core/src/api/fleet/fleet-forwarding.ts`; protocol
+   `cloud-v2/packages/protocol/src/fleet.ts`; MFM is `fleet/` in `Mentra-Community/miniapp-store` (`dev`).
+
+## Model
+
+- Membership is management. A member of a workspace is managed from the moment they join. No acknowledgment
+  step gates installs; the Fleet notice only informs.
+- Desired state: `managed` (workspace + entries, entries may be empty) or `unmanaged`. `paused` is Phase 15
+  and is not in this schema. One monotonic `revision` per account. Error, timeout, partial read or missing MFM
+  is never an empty set: MFM answers 503 and the phone keeps its last complete snapshot.
+- MFM scopes queries by its own copy of membership intervals (from the Core change feed plus a bootstrap read
+  bounded by `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`, deployed at least 120). Records are never re-stamped.
+- A query is answered only when intervals are current (catch-up to Core head, or within
+  `FLEET_INTERVAL_MAX_STALENESS`); otherwise 503.
+- Core signs workspace scope from the URL only: `/api/portal/fleet/workspaces/:id/*` to MFM
+  `/v1/portal/workspaces/:id/*`. Organization Admins act as Owner. Fleet is not a `PORTAL_MODULE_NAMES` entry.
+- One workspace per person. Cosmos RU rejects cross-collection transactions, so the guard must live in the
+  memberships collection (W1 spike decides). No unique index on a populated Core collection.
+- Phone: installation reasons (`bundled`, `explicit`, `manifest`, `assignment`) are stored apart from artifact
+  provenance (`MiniappReleaseIdentity.source`). Withdrawal keeps data. Private data and development selections
+  partition by account/Core and workspace.
+
+## Entry points
+
+- New protocol record kinds / ack revision / desired state -> `cloud-v2/packages/protocol/src/fleet.ts`
+- Phone Fleet reporter -> `mobile/modules/engine/src/services/fleet/FleetReporter.ts`
+- Portal workspace sections -> `cloud-v2/websites/portal/src/lib/routes.ts`, `pages/workspace.tsx`
+- Leave / last-Owner -> `cloud-v2/packages/core/src/services/workspaces/workspace.service.ts` (`leaveWorkspace`)
+
+## Engineering choices recorded (Nicolo's; bounded, no sign-off needed)
+
+1. Latest versions: newest reported in the last 30 days per platform and per glasses model.
+2. Mentra Live "Glasses software" is the ASG client APK version; More lists BES and MTK firmware.
+3. Phone page is built (Status, Battery, Mentra App; More: OS, app version, assigned miniapp status).
+4. Last-Owner copy: "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first."
+5. Failure words: storage_full "Not enough space"; not_eligible "Not available to this workspace";
+   sharing_revoked "Sharing was turned off"; not_published "No published release"; download_failed
+   "Download failed"; signature_invalid "Signature check failed"; incompatible_host "Needs a newer Mentra App";
+   newer_version_installed "A newer version is installed"; manifest_conflict "Set by your organization".
+6. Invitation sheet is not swipeable (deviates from the board; Decline is irreversible). Flag in the PR.
+7. Update prompt buttons stack, main action on top (`UPDATE-2026-10-20.md`).
+8. Overview cache: rolling-window parts only, keyed by workspace + last complete bucket + interval revision,
+   15 minute TTL; "Connected now" and battery are live.
+9. Usage tab deferred to Phase 12; `GET usage` API ships.
+10. Undrawn copy: skeleton loading, "Something went wrong. Try again.", empty search "No results for "<query>"".
+
+## Pitfalls log
+
+1. Local MentraOS checkout was 125 commits behind `origin/dev`; read `origin/dev` or work in a worktree.
+2. `/w/<id>` redirects to the first section and drops the query; Fleet URL is `/w/<id>/fleet?fleet=<path>`.
+3. `membership.replaced` is emitted only by `scripts/migrate-store-developer-orgs.ts` (close plus open).
+4. Round-1/2 review: an `unmanaged` answer on a failed Core membership check is wrong; it is 503.
+5. Automatic update path in `miniappReleaseInstall.ts` calls `assertStillInstalled`, so it cannot first-install.
+
+## Open items
+
+- Dates: OS-2099 includes Phase 12; Oct 30 / Nov 11 / Nov 19 are meeting evidence, not checked commitments.
+- Cosmos boundary for the one-workspace guard; named owners O1-O6; harness host readiness is uninspected.
+
+## Tests and verification
+
+- Protocol: `cd cloud-v2/packages/protocol && bun test`. Core: `cd cloud-v2 && bun run test`.
+- Device evidence follows the plan's checkpoint gate; none exists yet.
