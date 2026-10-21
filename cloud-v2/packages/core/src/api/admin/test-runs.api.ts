@@ -69,6 +69,10 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
     return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId, c.var.developer.email), 202)
   })
+  app.get('/resources/:resourceId/controls', async c => {
+    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
+    return c.json(await controls.listResource(c.req.param('resourceId'), c.var.developer.developerId))
+  })
   app.get('/resources/:resourceId/history', async c => c.json(await new ResourceLifecycleService().history(c.req.param('resourceId'),c.req.query('cursor'))));
   app.get('/resources/:resourceId/detail', async c => c.json(await new ResourceLifecycleService().detail(c.req.param('resourceId'))));
   app.get("/resources/overview", async c => c.json(await new ResourceLifecycleService().list()));

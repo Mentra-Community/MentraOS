@@ -52,6 +52,9 @@ test('fleet claim appears once across aliases without fabricated owner generatio
  expect(result.history[0]?.subjectGeneration).toBeNull();
  const advanced=fleetRows();advanced[0]!.resourceReservationVersion=10;
  expect(projectResourceLifecycle(advanced,now).history).toEqual(result.history);
+ expect(value.observedAt).toBe(claim.reservedAt);expect(value.receivedAt).toBe('2020-01-01T00:00:00.000Z');
+ const later=projectResourceLifecycle(fleetRows(),now+3600000).subjects[0]!;
+ expect(later.observedAt).toBe(value.observedAt);expect(later.receivedAt).toBe(value.receivedAt);expect(later.status).toBe('reserved');expect(later.supportedActions).toEqual([]);
 });
 test('unclaimed fleet dependency remains unknown until commissioned',()=>{const value=projectResourceLifecycle(fleetRows(false),now).subjects[0]!;expect(value.status).toBe('unknown');expect(value.owner).toBeNull();expect(value.resource.placement).toBe('fleet');expect(value.idle.acceptedCheck).toBeNull()});
 test('retained claim survives removed enrollment and stale borrower',()=>{const rows=fleetRows();rows[0]!.snapshot.lanes=[];rows[1]!.snapshot.lanes=[];const value=projectResourceLifecycle(rows,now).subjects[0]!;expect(value.status).toBe('reserved');expect(value.owner?.id).toBe('run-1')});
@@ -126,7 +129,7 @@ test('resource history queries its own bounded host scope instead of the global 
   const service=new ResourceLifecycleService();const first=await service.history(subject.subject.id);
   expect(first.events).toHaveLength(50);expect(first.events[0]?.id).toBe('target-000');
   const second=await service.history(subject.subject.id,first.nextCursor!);expect(second.events).toHaveLength(10);expect(second.events[0]?.id).toBe('target-050');
-  expect(queries[0]).toMatchObject({$or:[{'snapshot.resourceLifecycle.subjects.subject.id':subject.subject.id},{'resourceLifecycleCursor.subjects.subject.id':subject.subject.id},{'resourceReservations.resourceId':subject.subject.id},{'snapshot.lanes.resources.exclusiveDependencies.resourceId':subject.subject.id},{'snapshot.resourceReservations.returns.resourceId':subject.subject.id}]});
+  expect(queries[0]).toMatchObject({$or:[{'snapshot.resourceLifecycle.subjects.subject.id':subject.subject.id},{'snapshot.resources.id':subject.subject.id},{'resourceLifecycleCursor.subjects.subject.id':subject.subject.id},{'resourceReservations.resourceId':subject.subject.id},{'snapshot.lanes.resources.exclusiveDependencies.resourceId':subject.subject.id},{'snapshot.resourceReservations.returns.resourceId':subject.subject.id}]});
   expect(limit).toBe(101);
   rows.push(...Array.from({length:88},()=>target));
   await expect(service.history(subject.subject.id)).rejects.toThrow('bounded 100-host');

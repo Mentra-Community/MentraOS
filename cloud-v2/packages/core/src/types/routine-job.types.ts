@@ -75,6 +75,7 @@ export const fleetCandidatePreparationSchema = z.object({candidate: backendCandi
   provisionalReturn: z.object({recorder: recorderHostReservationSchema, admission: fleetResourceAdmissionSchema.optional(),
     exclusive: fleetExclusiveReservationSchema.optional(), releasedAt: z.string().datetime({offset: true}).optional()}).strict().optional(),
   claimReceipt: z.unknown().optional(), returnReceipt: z.unknown().optional(), settlement: candidatePrerequisiteSettlementSchema.optional(),
+  noAcquisitionReceipt: z.unknown().optional(),
 }).strict()
 export type FleetCandidatePreparation = z.infer<typeof fleetCandidatePreparationSchema>
 export const MAX_FLEET_CANDIDATE_PREPARATIONS = 20

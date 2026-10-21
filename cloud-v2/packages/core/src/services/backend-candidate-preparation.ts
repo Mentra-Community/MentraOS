@@ -1,7 +1,8 @@
 import {isDeepStrictEqual} from 'node:util'
 import {backendConnectivityObservationMatches, backendConnectivityObservationSchema, candidatePrerequisiteSettlementSchema, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import {fleetCandidatePreparationSchema, MAX_FLEET_CANDIDATE_PREPARATIONS, type FleetCandidatePreparation, type StoredRoutineJob} from '../types/routine-job.types'
-import {exclusiveHostReservationSchema, exclusiveResourceReturnSchema, type ExclusiveResourceIntent} from '../types/resource-reservations.types'
+import {exclusiveHostReservationSchema, exclusiveResourceIntentSchema, exclusiveResourceReturnSchema, resourceReservationObservationSchema, type ExclusiveResourceIntent} from '../types/resource-reservations.types'
+import {z} from 'zod'
 import type {TestHostState} from './test-host-state.service'
 import {permissionContext} from '../types/resource-permissions.types'
 import {requestInputDigest} from './test-request.service'
@@ -19,9 +20,9 @@ export function candidateRenewal(row: StoredRoutineJob, hostId: string, laneId: 
 
 export function candidateReturnMatches(pending: FleetCandidatePreparation, value: unknown) {
   const claim = exclusiveHostReservationSchema.safeParse(pending.claimReceipt), returned = exclusiveResourceReturnSchema.safeParse(value)
-  if (!claim.success || !returned.success || !('kind' in returned.data.release) || returned.data.release.kind !== 'resource-check') return false
+  if (!claim.success || !returned.success || !('kind' in returned.data.release)) return false
   const c = claim.data, r = returned.data, release = r.release
-  if (!('kind' in release) || release.kind !== 'resource-check') return false
+  if (!('kind' in release) || release.kind === 'resource-check-not-started' && !isDeepStrictEqual(c.resourceCheck, release.resourceCheck)) return false
   return c.prerequisite?.candidate && isDeepStrictEqual(c.prerequisite.candidate, pending.candidate) &&
     c.prerequisite.targetInputSha256 === pending.targetInputSha256 && isDeepStrictEqual(c.prerequisite.target, pending.backendTarget) &&
     c.authorityHostId === pending.hostId && c.borrowerHostId === pending.hostId && c.laneId === pending.laneId &&
@@ -32,6 +33,37 @@ export function candidateReturnMatches(pending: FleetCandidatePreparation, value
     isDeepStrictEqual(r.originalOwner, c.owner) && release.operationId === c.operationId &&
     Date.parse(release.releasedAt) >= Date.parse(c.reservedAt) && r.controller.incarnation === c.controllerIncarnation &&
     r.controller.generation === c.controllerGeneration && r.controller.sequence > c.borrowerSequence
+}
+/** Core acknowledges immutable no-reader settlement without inventing a local check. */
+export function candidateNeverBegan(pending: FleetCandidatePreparation, journal: NonNullable<NonNullable<TestHostState['resourceReservations']>['resourceChecks']>[number] | undefined) {
+  if (!journal || journal.state !== 'never-began' || !journal.eventId || journal.operationId !== `backend-prerequisite:${pending.targetInputSha256}` ||
+    journal.resourceId !== pending.target.purpose?.resourceId || journal.intent.hostId !== pending.hostId || journal.intent.laneId !== pending.laneId ||
+    journal.intent.inputSha256 !== pending.targetInputSha256 || !journal.intent.resourceCheck || !journal.intent.prerequisite?.candidate ||
+    !isDeepStrictEqual(journal.intent.prerequisite.candidate, pending.candidate) || journal.intent.prerequisite.jobId !== pending.target.jobId ||
+    journal.intent.prerequisite.targetInputSha256 !== pending.targetInputSha256 || !isDeepStrictEqual(journal.resourceCheck, journal.intent.resourceCheck) ||
+    journal.intent.owner.id !== `resource-check:${requestInputDigest({operationId:journal.operationId,resourceId:journal.resourceId})}` ||
+    !isDeepStrictEqual(journal.intent.prerequisite.binding, pending.target.acceptedBinding) ||
+    pending.backendTarget && !isDeepStrictEqual(journal.intent.prerequisite.target, pending.backendTarget) ||
+    !isDeepStrictEqual(journal.resourceCheck.binding, pending.target.acceptedBinding) || !isDeepStrictEqual(journal.resourceCheck.controller, pending.candidate.controller) ||
+    journal.resourceCheck.deadlineAt > Date.parse(pending.target.deadline) || Date.parse(journal.observedAt) < Date.parse(pending.candidate.requestedAt) ||
+    journal.intent.controller.incarnation !== pending.candidate.controller.incarnation || journal.intent.controller.generation !== pending.candidate.controller.generation ||
+    requestInputDigest({...journal.intent, controller: journal.resourceCheck.controller, dependencies: [{resourceId: journal.resourceId,
+      authorityHostId: pending.hostId, capability: 'backend-connectivity'}]}) !== journal.intentSha256) return false
+  if (pending.claimReceipt || pending.returnReceipt) {
+    const returned = exclusiveResourceReturnSchema.safeParse(pending.returnReceipt)
+    return Boolean(candidateReturnMatches(pending, pending.returnReceipt) && returned.success && 'kind' in returned.data.release &&
+      returned.data.release.kind === 'resource-check-not-started' && returned.data.release.eventId === journal.eventId &&
+      returned.data.release.releasedAt === journal.observedAt && returned.data.intentSha256 === journal.intentSha256)
+  }
+  const parsed = z.object({intent: exclusiveResourceIntentSchema, journal: z.unknown(), observation: z.object({status: z.literal('not-acquired'), intentSha256: z.string(),
+    claims: z.array(z.unknown()).length(0), fence: z.object({hostId:z.string(),resourceId:z.string(),resourceReservationVersion:z.number().int().positive(),
+      subjectGeneration:z.number().int().nonnegative(),controller:z.object({incarnation:z.string(),generation:z.number().int().positive(),sequence:z.number().int().nonnegative()}).strict()}).strict()}).strict()}).strict().safeParse(pending.noAcquisitionReceipt)
+  return Boolean(parsed.success && (pending.backendTarget === undefined || isDeepStrictEqual(pending.backendTarget, journal.intent.prerequisite.target)) &&
+    isDeepStrictEqual(parsed.data.journal, journal) && isDeepStrictEqual(parsed.data.intent, journal.intent) &&
+    parsed.data.observation.intentSha256 === journal.intentSha256 && parsed.data.observation.fence.hostId === pending.hostId &&
+    parsed.data.observation.fence.resourceId === journal.resourceId && parsed.data.observation.fence.controller.incarnation === pending.candidate.controller.incarnation &&
+    parsed.data.observation.fence.controller.generation === pending.candidate.controller.generation &&
+    parsed.data.observation.fence.controller.sequence > journal.intent.controller.sequence)
 }
 
 /** Historical metadata acknowledges only this host's exact consumed probe, never current reader authority. */
@@ -58,8 +90,12 @@ export function completedCandidatePreparationForHost(row: StoredRoutineJob, host
     Boolean(value.settlement && value.settlement.targetInputSha256 === value.targetInputSha256 &&
       isDeepStrictEqual(value.settlement.candidate, value.candidate)) &&
     row.fleetCandidatePreparation?.candidate.attemptId !== value.candidate.attemptId &&
-    (value.settlement!.checkOperationId ? candidateReturnMatches(value, value.returnReceipt) &&
-      value.settlement!.checkOperationId === `backend-prerequisite:${value.targetInputSha256}` :
+    (value.settlement!.checkOperationId ? (candidateReturnMatches(value, value.returnReceipt) ||
+      value.settlement!.outcome === 'unknown' && (() => {
+        const saved = value.noAcquisitionReceipt as {journal?: unknown} | undefined,
+          parsed = resourceReservationObservationSchema.innerType().shape.resourceChecks.unwrap().element.safeParse(saved?.journal)
+        return parsed.success && candidateNeverBegan(value, parsed.data)
+      })()) && value.settlement!.checkOperationId === `backend-prerequisite:${value.targetInputSha256}` :
       value.settlement!.outcome === 'unknown' && !value.backendTarget && !value.claimReceipt && !value.returnReceipt));
 }
 
@@ -114,7 +150,11 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
       return claim.kind === 'exclusive' && (claim.resourceId === phoneId || claim.borrowerHostId === pending.hostId && claim.laneId === pending.laneId)
     })) return undefined
   const receipt = found[0]!
-  if (receipt.outcome === 'unknown' && receipt.checkOperationId) return undefined
+  if (receipt.outcome === 'unknown' && receipt.checkOperationId) {
+    const journal = host.resourceReservations?.resourceChecks?.find(value => value.operationId === receipt.checkOperationId)
+    return journal && Date.parse(journal.observedAt) <= now && Date.parse(journal.observedAt) <= Date.parse(host.observedAt) &&
+      candidateNeverBegan(pending, journal) ? receipt : undefined
+  }
   if (!receipt.checkOperationId) return receipt.outcome === 'unknown' && !pending.backendTarget && !pending.claimReceipt && !pending.returnReceipt ? receipt : undefined
   const returned = exclusiveResourceReturnSchema.safeParse(pending.returnReceipt)
   if (!pending.backendTarget || !candidateReturnMatches(pending, pending.returnReceipt) || !returned.success || !('kind' in returned.data.release) || returned.data.release.kind !== 'resource-check' ||

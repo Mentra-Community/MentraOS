@@ -1,6 +1,6 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from "bun:test";
-import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository, type NightlyCancellation} from "./nightly-routine.service";
+import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, nightlyRequiredResourceKinds, type NightlyPlan, type NightlyResult, type NightlyPlanRepository, type NightlyCancellation} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRequestModel} from "../models/test-request.model";
 import type {RoutineCatalogService} from "./routine-catalog.service";
@@ -12,11 +12,33 @@ import {TestSuiteService} from "./test-suite.service";
 import {requestInputDigest, TestRequestService, type StoredRequest, type StoredPreparingRequest, type TestRequestRepository} from "./test-request.service";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {TestDispatchError} from "./test-builds.service";
-import {RoutineJobService, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, routineJobInputDigest, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 
 const mainRevision = "7".repeat(40);
+
+test("never-bound Slack requirements require the exact original preparation digest and source", async () => {
+  const state = fixture([row("original-requirements", "android")]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, definition = {...row(member.routineId, member.platform).definition,
+    source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: mainRevision, path: `routines/${member.routineId}/routine.ts`}};
+  const job = {requestId: member.requestId, state: 'awaiting-runner', fleetSelection: member.selection,
+    fleetSelectionSha256: requestInputDigest(member.selection), fleetDeadline: new Date(now + 3 * 3600_000),
+    fleetPreparation: {routineSource: testRoutineSource(mainRevision), definition, definitionSha256: requestInputDigest(definition),
+      requirements: {platform: 'android', resources: definition.resourceRequirements}}} as StoredRoutineJob;
+  job.fleetInputSha256 = routineJobInputDigest(job);
+  expect(nightlyRequiredResourceKinds(member, job)).toEqual(['phone', 'app', 'recorder']);
+  for (const change of [{fleetPreparation: undefined}, {fleetInputSha256: 'f'.repeat(64)}, {requestId: 'different-request'},
+    {fleetDeadline: new Date(job.fleetDeadline.getTime() + 1)}, {fleetSelectionSha256: 'f'.repeat(64)},
+    {fleetBinding: {hostId: 'later-host'}},
+    {fleetPreparation: {...job.fleetPreparation!, definitionSha256: 'f'.repeat(64)}},
+    {fleetPreparation: {...job.fleetPreparation!, requirements: {platform: 'android', resources: [{kind: 'unknown', capabilities: []}]}}}])
+    expect(nightlyRequiredResourceKinds(member, {...job, ...change} as StoredRoutineJob)).toBeUndefined();
+  const foreign = {...job, fleetPreparation: {...job.fleetPreparation!, routineSource: testRoutineSource('8'.repeat(40))}};
+  foreign.fleetInputSha256 = routineJobInputDigest(foreign);
+  expect(nightlyRequiredResourceKinds(member, foreign)).toBeUndefined();
+});
+
 // Old targeted test inputs are adapted into portable submission at the test boundary.
 class NightlyRoutineService extends ActualNightlyRoutineService {
   constructor(...legacy: [catalog?: Pick<RoutineCatalogService, 'list'>,
@@ -607,7 +629,7 @@ test("prepared input must match the pinned revision and every frozen app referen
   }
   state.requestRows.set(member.requestId, {...original, dispatchIntent: {...original.dispatchIntent, routineRevision: "a".repeat(40)}});
   expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
-    unavailableReason: "Bound request identity differs from its assignment."});
+    assignmentEvidence: 'invalid', unavailableReason: "Bound request identity differs from its assignment."});
   state.requestRows.set(member.requestId, original);
   expect((await state.service.detail(occurrence.occurrenceId))).toMatchObject({status: "pass", passed: 1});
 });
@@ -688,7 +710,7 @@ test('fleet nightly rejects a changed bound app selection before using host resu
   const request = state.requestRows.get(member.requestId), changed = {...request.dispatchIntent, build: {...request.dispatchIntent.build, headSha: '9'.repeat(40)}};
   request.dispatchIntent = changed; request.dispatchIntentSha256 = requestInputDigest(changed);
   expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: 'incomplete',
-    unavailableReason: 'Bound request source differs from the frozen selection.'});
+    assignmentEvidence: 'invalid', unavailableReason: 'Bound request source differs from the frozen selection.'});
 });
 
 test('terminal fleet suite projects actual assignments and refuses changed binding custody', async () => {
@@ -723,6 +745,28 @@ test('result outages preserve validated binding in live and frozen suite project
     members: [{hostId: 'mini', laneId: 'android', status: 'not-run'}, {hostId: 'mini', laneId: 'ios-on-mac', status: 'pass'}]});
   expect(await state.service.detail(occurrence.occurrenceId)).toEqual(frozen);
   expect(await state.service.complete(occurrence.occurrenceId)).toEqual(frozen);
+});
+
+test('bound setup refusals retain the original machine and lane without inventing prepared resources', async () => {
+  const state = fixture([row('bound-setup-refusal', 'android')]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, request = state.requestRows.get(member.requestId);
+  request.state = 'preparing'; delete request.input; delete request.inputSha256;
+  request.preparationRejection = {code: 'setup-unavailable', reason: 'Original setup refused'};
+  const result = await state.service.snapshot(plan);
+  expect(result.members[0]).toMatchObject({hostId: 'mini', binding: request.fleetBinding, dispatchIntent: request.dispatchIntent,
+    status: 'waiting', publicationComplete: false, unavailableReason: 'setup-unavailable: Original setup refused'});
+  expect(result.members[0]!.input).toBeUndefined();
+  expect(result.members[0]!.requiredResourceKinds).toBeUndefined();
+});
+
+test('corrupt original binding is marked invalid without publishing its foreign machine identity', async () => {
+  const state = fixture([row('corrupt-assignment', 'android')]), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, request = state.requestRows.get(member.requestId);
+  request.fleetBinding.hostId = 'foreign-machine';
+  const result = (await state.service.snapshot(plan)).members[0]!;
+  expect(result.assignmentEvidence).toBe('invalid');
+  expect(result.hostId).toBeUndefined(); expect(result.binding).toBeUndefined();
+  expect(result.unavailableReason).toBe('Bound request identity differs from its assignment.');
 });
 
 test('actual fleet service preserves every nightly member through preparation, binding, result outage and frozen restart', async () => {
@@ -781,6 +825,8 @@ test('actual fleet service preserves every nightly member through preparation, b
       routineSource: testRoutineSource(mainRevision), definitionSha256: requestInputDigest(definition), definition});
   }
   expect((await service.detail(occurrence.occurrenceId)).members.every(member => member.status === 'waiting' && member.unavailableReason === 'Awaiting compatible runner.')).toBe(true);
+  expect((await service.detail(occurrence.occurrenceId)).members.map(member => member.requiredResourceKinds))
+    .toEqual([['phone', 'app', 'recorder'], ['app', 'recorder']]);
   for (const member of first.plan.members) {
     const preparation = await jobs.preparation(member.requestId), lane = lanes.find(lane => lane.id === member.platform)!;
     expect((await jobs.bind(member.requestId, 'real-host', {inputSha256: preparation.inputSha256, laneId: lane.id,
