@@ -32,8 +32,13 @@
  *  - the caller is not a signed-in person: 401 or 403;
  *  - the module is not installed, or is not visible to this person (billing is staff-only on a Core that is not
  *    prod, decision 17): 404 `{error: "module_not_installed"}`. A person the module is hidden from cannot tell
- *    it from one that is absent, whether or not it is broken;
- *  - the settings are set but unusable: 503 `{error: "module_unavailable"}`;
+ *    it from one that is absent, whether or not it is broken. The module's open reads are the one exception
+ *    (`openReads` in `services/portal-modules/portal-modules.ts`): billing's `GET .../catalog`, under either
+ *    scope, and `GET` and `HEAD` of `ui/icons/<file>`, are answered as for a person who may see the module. They
+ *    are decided from the request's method, family and the rest of its path as received, so every other
+ *    spelling or method of them, and `ui/entry.js` with the rest of `ui/`, are the 404 of an absent module;
+ *  - the settings are set but unusable: 503 `{error: "module_unavailable"}`. For a person the module is hidden
+ *    from, that is only for an open read;
  *  - a path with a `.` / `..` segment, an encoded or literal separator, a control character, a bad escape or a
  *    double encoding: 400 `{error: "invalid_path"}` (`isSafeSuffix`); not one of the three families: 404;
  *  - a workspace path for a person with no standing there: 403 or 404, as above;
@@ -50,7 +55,11 @@ import {Hono} from "hono"
 import {assetResponseHeaders, methodNotAllowed, relayAsset, UI_ASSET_SEGMENT} from "../../services/forwarding/assets"
 import {forwardJson, forwardedUser, jsonAnswerHeaders, limitBody, type Upstream} from "../../services/forwarding/forward"
 import {DEFAULT_FORWARDING_LIMITS, isSafeSuffix, rawPathAndQuery} from "../../services/forwarding/upstream-url"
-import {portalModuleAccess, type PortalModuleName} from "../../services/portal-modules/portal-modules"
+import {
+  portalModuleAccess,
+  type PortalModuleAccess,
+  type PortalModuleName,
+} from "../../services/portal-modules/portal-modules"
 import type {UserPrincipal} from "../../services/signin/principal.service"
 import {authorize} from "../../services/workspaces/authorization.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
@@ -65,8 +74,21 @@ const UPSTREAM_PREFIX = "/v1/portal"
 const WORKSPACES_SEGMENT = "workspaces"
 const ACCOUNT_SEGMENT = "account"
 
-/** Which of the three families of path a request is for. */
-type Route = {kind: "workspace"; workspaceId: string} | {kind: "account"} | {kind: "ui"}
+/**
+ * Which of the three families of path a request is for. `rest` is what follows the family's scope, as received
+ * (not decoded, no leading "/", no query): `catalog` for `/workspaces/ws_1/catalog`, `icons/a.png` for
+ * `/ui/icons/a.png`, "" when nothing does.
+ */
+type Route =
+  | {kind: "workspace"; workspaceId: string; rest: string}
+  | {kind: "account"; rest: string}
+  | {kind: "ui"; rest: string}
+
+/** What follows `scope` in `suffix` (which starts with it), after the "/" that joins them. */
+function restAfter(suffix: string, scope: string): string {
+  const tail = suffix.slice(scope.length)
+  return tail.startsWith("/") ? tail.slice(1) : tail
+}
 
 /**
  * The route for a path suffix (`/workspaces/ws_1/x`), or null when it is none of the three. The first segment
@@ -76,16 +98,44 @@ type Route = {kind: "workspace"; workspaceId: string} | {kind: "account"} | {kin
 function routeOf(suffix: string): Route | null {
   const [, first, second] = suffix.split("/")
   switch (first) {
-    case UI_ASSET_SEGMENT:
-      return suffix.length > `/${UI_ASSET_SEGMENT}/`.length && suffix.startsWith(`/${UI_ASSET_SEGMENT}/`) ? {kind: "ui"} : null
+    case UI_ASSET_SEGMENT: {
+      const scope = `/${UI_ASSET_SEGMENT}/`
+      return suffix.length > scope.length && suffix.startsWith(scope) ? {kind: "ui", rest: suffix.slice(scope.length)} : null
+    }
     case ACCOUNT_SEGMENT:
-      return {kind: "account"}
+      return {kind: "account", rest: restAfter(suffix, `/${ACCOUNT_SEGMENT}`)}
     case WORKSPACES_SEGMENT:
       // `isSafeSuffix` has already decoded every segment once, so this cannot throw.
-      return second ? {kind: "workspace", workspaceId: decodeURIComponent(second)} : null
+      return second
+        ? {kind: "workspace", workspaceId: decodeURIComponent(second), rest: restAfter(suffix, `/${WORKSPACES_SEGMENT}/${second}`)}
+        : null
     default:
       return null
   }
+}
+
+/** What a request's path says before anything is decided: the route it is for, or why it is for none. */
+type ParsedPath =
+  | {route: Route; suffix: string; query: string}
+  | {route: null; refusal: "not_found" | "invalid_path"}
+
+function parsePath(c: AppContext, name: PortalModuleName): ParsedPath {
+  const {path, query} = rawPathAndQuery(c.req.url)
+  const prefix = `/api/portal/${name}`
+  const suffix = path.slice(prefix.length)
+  if (!path.startsWith(prefix) || (suffix !== "" && !suffix.startsWith("/"))) return {route: null, refusal: "not_found"}
+  if (!isSafeSuffix(suffix)) return {route: null, refusal: "invalid_path"}
+  const route = routeOf(suffix)
+  return route ? {route, suffix, query} : {route: null, refusal: "not_found"}
+}
+
+/**
+ * What the person can reach with this request, the one answer that `admit` and the body limit both go by.
+ * A path that is no route is no open read, so it has the access the person has to the module at all.
+ */
+function accessOf(c: AppContext, name: PortalModuleName, person: UserPrincipal, parsed: ParsedPath): PortalModuleAccess {
+  const request = parsed.route ? {method: c.req.method, route: parsed.route, rest: parsed.route.rest} : undefined
+  return portalModuleAccess(name, person, undefined, undefined, request)
 }
 
 /** What a request to a module has settled before anything is read, signed or sent. */
@@ -101,7 +151,9 @@ interface Admitted {
 
 /**
  * What every route of a module settles first, in this order: who is calling, whether the module is installed
- * and visible to them and usable, then the path. Returns the answer Core gives when a step refuses.
+ * and visible to them (or the request an open read) and usable, then the path. Returns the answer Core gives
+ * when a step refuses. The path is read before the module is, only to tell an open read; its refusal still
+ * comes after, so a person the module is hidden from is told the module is absent whatever they ask.
  */
 function admit(c: AppContext, name: PortalModuleName): Admitted | Response {
   // Fail closed: the gate in front sets the principal, and a router mounted without it must not forward an
@@ -110,7 +162,8 @@ function admit(c: AppContext, name: PortalModuleName): Admitted | Response {
   if (!principal) return c.json({error: "unauthorized"}, 401)
   if (principal.kind !== "user") return c.json({error: "forbidden"}, 403)
 
-  const access = portalModuleAccess(name, principal)
+  const parsed = parsePath(c, name)
+  const access = accessOf(c, name, principal, parsed)
   if (access.state === "hidden") return c.json({error: MODULE_NOT_INSTALLED}, 404)
   if (access.state === "unavailable") return c.json({error: MODULE_UNAVAILABLE}, 503)
   const upstream: Upstream = {
@@ -122,16 +175,8 @@ function admit(c: AppContext, name: PortalModuleName): Admitted | Response {
     limits: DEFAULT_FORWARDING_LIMITS,
   }
 
-  const {path, query} = rawPathAndQuery(c.req.url)
-  const prefix = `/api/portal/${name}`
-  const suffix = path.slice(prefix.length)
-  if (!path.startsWith(prefix) || (suffix !== "" && !suffix.startsWith("/"))) {
-    return c.json({error: "not_found"}, 404)
-  }
-  if (!isSafeSuffix(suffix)) return c.json({error: "invalid_path"}, 400)
-  const route = routeOf(suffix)
-  if (!route) return c.json({error: "not_found"}, 404)
-  return {person: principal, upstream, route, suffix, query}
+  if (!parsed.route) return c.json({error: parsed.refusal}, parsed.refusal === "invalid_path" ? 400 : 404)
+  return {person: principal, upstream, route: parsed.route, suffix: parsed.suffix, query: parsed.query}
 }
 
 /** What the request covers, or the refusal: a workspace path needs standing in that workspace. */
@@ -151,12 +196,12 @@ export function portalModuleApi(name: PortalModuleName): Hono<AppEnv> {
   api.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
   api.all(
     "/*",
-    // The body is limited only for a request that `admit` will let through, by the same `portalModuleAccess`: a
-    // person the module is hidden from is answered without reading it, so a large one cannot tell them the
-    // module is there (a 413 instead of the 404).
+    // The body is limited only for a request that `admit` will let through, by the same `accessOf`: a person the
+    // module is hidden from is answered without reading it, so a large one cannot tell them the module is
+    // there (a 413 instead of the 404).
     limitBody(c => {
       const principal = c.get("principal")
-      const ready = principal?.kind === "user" && portalModuleAccess(name, principal).state === "ready"
+      const ready = principal?.kind === "user" && accessOf(c, name, principal, parsePath(c, name)).state === "ready"
       return ready ? DEFAULT_FORWARDING_LIMITS.maxBodyBytes : null
     }),
     async c => {

@@ -680,6 +680,376 @@ describe("UI assets", () => {
   })
 })
 
+/**
+ * `request` with another method but its body kept: what a server delivers for a `GET` or `HEAD` that carries one.
+ * The `Request` constructor refuses to build that, so it is set on the instance.
+ */
+function withMethod(request: Request, method: string): Request {
+  Object.defineProperty(request, "method", {value: method})
+  return request
+}
+
+describe("billing's open reads outside prod", () => {
+  const ENVIRONMENTS = ["dev", "staging", null, "production", ""] as const
+  const png = () => new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {headers: {"content-type": "image/png", etag: '"i1"'}})
+  const answerIcons = () => {
+    respond = request => (new URL(request.url).pathname.includes("/ui/icons/") ? png() : Response.json({ok: true}))
+  }
+
+  /** Every way to ask for something that is not an open read, each with the method that does not make it one. */
+  const CLOSED: Array<[method: string, rest: string]> = [
+    // The rest of billing, whatever the family.
+    ["GET", "/workspaces/ws_1/status"],
+    ["GET", "/workspaces/ws_1/status?purchase=pur_1"],
+    ["POST", "/workspaces/ws_1/purchase"],
+    ["POST", "/workspaces/ws_1/session"],
+    ["GET", "/workspaces/ws_1/summary"],
+    ["POST", "/workspaces/ws_1/checkout"],
+    ["GET", "/workspaces/ws_1"],
+    ["GET", "/workspaces/ws_1/"],
+    ["GET", "/account/status"],
+    ["POST", "/account/purchase"],
+    ["POST", "/account/session"],
+    ["GET", "/account/summary"],
+    ["GET", "/account"],
+    ["GET", "/account/"],
+    ["GET", "/ui/entry.js"],
+    ["HEAD", "/ui/entry.js"],
+    ["GET", "/ui/entry.js?v=1"],
+    ["GET", "/ui/chunk-abc.js"],
+    ["GET", "/ui/logo.svg"],
+    ["GET", "/ui/catalog"],
+    // A catalog is read with GET, and only GET.
+    ["POST", "/workspaces/ws_1/catalog"],
+    ["HEAD", "/workspaces/ws_1/catalog"],
+    ["PUT", "/workspaces/ws_1/catalog"],
+    ["PATCH", "/workspaces/ws_1/catalog"],
+    ["DELETE", "/workspaces/ws_1/catalog"],
+    ["OPTIONS", "/workspaces/ws_1/catalog"],
+    ["POST", "/account/catalog"],
+    ["HEAD", "/account/catalog"],
+    ["PUT", "/account/catalog"],
+    ["DELETE", "/account/catalog"],
+    // The path is exact: a trailing slash, another case, an encoding, a deeper or a doubled path.
+    ["GET", "/workspaces/ws_1/catalog/"],
+    ["GET", "/workspaces/ws_1/Catalog"],
+    ["GET", "/workspaces/ws_1/CATALOG"],
+    ["GET", "/workspaces/ws_1/catalog/x"],
+    ["GET", "/workspaces/ws_1/catalog/x/y"],
+    ["GET", "/workspaces/ws_1/%63atalog"],
+    ["GET", "/workspaces/ws_1/%43atalog"],
+    ["GET", "/workspaces/ws_1/catalog%20"],
+    ["GET", "/workspaces/ws_1/catalog;x"],
+    ["GET", "/workspaces/ws_1/x/catalog"],
+    ["GET", "/workspaces/ws_1//catalog"],
+    ["GET", "/account/catalog/"],
+    ["GET", "/account/Catalog"],
+    ["GET", "/account/catalog/x"],
+    ["GET", "/account/%63atalog"],
+    ["GET", "/account//catalog"],
+    // The family is part of the path: catalog is not an asset, an icon is not a scope's path.
+    ["GET", "/workspaces/catalog"],
+    ["GET", "/workspaces/ws_1/ui/icons/a.png"],
+    ["GET", "/workspaces/ws_1/icons/a.png"],
+    ["GET", "/account/icons/a.png"],
+    ["GET", "/account/ui/icons/a.png"],
+    // Nothing in the query or the case of the first segment makes a request another.
+    ["GET", "/workspaces/ws_1/status?path=catalog"],
+    ["GET", "/workspaces/ws_1/status?/catalog"],
+    ["GET", "/account/status?x=/account/catalog"],
+    ["GET", "/ui/entry.js?/icons/a.png"],
+    ["GET", "/Account/catalog"],
+    ["GET", "/UI/icons/a.png"],
+    ["GET", "/%75i/icons/a.png"],
+    ["GET", "/Workspaces/ws_1/catalog"],
+    // Icons: one file under icons/, GET and HEAD only, exactly spelled.
+    ["GET", "/ui/icons"],
+    ["GET", "/ui/icons/"],
+    ["GET", "/ui/iconsx/a.png"],
+    ["GET", "/ui/Icons/a.png"],
+    ["GET", "/ui/ICONS/a.png"],
+    ["GET", "/ui/%69cons/a.png"],
+    ["GET", "/ui/icons%2fa.png"],
+    ["GET", "/ui/icons/a/b.png"],
+    ["GET", "/ui/icons//a.png"],
+    ["GET", "/ui/icons/a.png/"],
+    ["GET", "/ui/icons/%61.png"],
+    ["GET", "/ui/icons/a%20b.png"],
+    ["GET", "/ui/x/icons/a.png"],
+    ["POST", "/ui/icons/a.png"],
+    ["PUT", "/ui/icons/a.png"],
+    ["PATCH", "/ui/icons/a.png"],
+    ["DELETE", "/ui/icons/a.png"],
+    ["OPTIONS", "/ui/icons/a.png"],
+  ]
+
+  test("a member who is not staff reads a workspace's catalog, the person's, and the icons: forwarded, each with its scope", async () => {
+    for (const environment of ENVIRONMENTS) {
+      configure(environment)
+      calls = []
+      answerIcons()
+      const workspaceCatalog = await billing(as("member", member), "/workspaces/ws_1/catalog?locale=en-US")
+      expect([environment, workspaceCatalog.status]).toEqual([environment, 200])
+      expect(calls[0].method).toBe("GET")
+      expect(calls[0].pathWithQuery).toBe("/v1/portal/workspaces/ws_1/catalog?locale=en-US")
+      expect(verified()).toEqual({
+        kind: "user",
+        mentraUserId: "mu_member",
+        email: "mu_member@example.test",
+        emailVerified: true,
+        isOrganizationAdmin: false,
+        organizationCapabilities: [],
+        scope: {kind: "workspace", workspaceId: "ws_1"},
+      })
+      expect(authorizeSpy).toHaveBeenCalledWith(member, {workspaceId: "ws_1"})
+
+      const accountCatalog = await billing(as("member", member), "/account/catalog?locale=en-US")
+      expect([environment, accountCatalog.status]).toEqual([environment, 200])
+      expect(calls[1].pathWithQuery).toBe("/v1/portal/account/catalog?locale=en-US")
+      expect(verified()).toMatchObject({isOrganizationAdmin: false, scope: {kind: "person"}})
+
+      const icon = await billing(as("member", member), "/ui/icons/mentra.call.unlimited.png")
+      expect([environment, icon.status]).toEqual([environment, 200])
+      expect(icon.headers.get("content-type")).toBe("image/png")
+      expect(icon.headers.get("x-content-type-options")).toBe("nosniff")
+      expect(icon.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+      expect(new Uint8Array(await icon.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+      expect(calls[2].method).toBe("GET")
+      expect(calls[2].pathWithQuery).toBe("/v1/portal/ui/icons/mentra.call.unlimited.png")
+      expect(verified()).toMatchObject({isOrganizationAdmin: false, scope: {kind: "person"}})
+
+      const head = await billing(as("member", member), "/ui/icons/x.svg", {method: "HEAD"})
+      expect([environment, head.status]).toEqual([environment, 200])
+      expect(calls[3].pathWithQuery).toBe("/v1/portal/ui/icons/x.svg")
+      expect(calls).toHaveLength(4)
+    }
+  })
+
+  test("a person with no workspace reads the person's catalog and the icons too", async () => {
+    configure("staging")
+    answerIcons()
+    expect((await billing(as("stranger", stranger), "/account/catalog")).status).toBe(200)
+    expect((await billing(as("stranger", stranger), "/ui/icons/a.png")).status).toBe(200)
+    expect(calls).toHaveLength(2)
+  })
+
+  test("everything else stays a 404 module_not_installed, with no call and no workspace lookup", async () => {
+    for (const environment of ENVIRONMENTS) {
+      configure(environment)
+      for (const [method, rest] of CLOSED) {
+        const reply = await billing(as("member", member), rest, {method, body: method === "POST" || method === "PUT" || method === "PATCH" ? "{}" : undefined})
+        // A HEAD answer has no body.
+        const answer = method === "HEAD" ? null : await reply.json()
+        expect([environment, method, rest, reply.status, answer]).toEqual([
+          environment,
+          method,
+          rest,
+          404,
+          method === "HEAD" ? null : {error: "module_not_installed"},
+        ])
+      }
+    }
+    expect(calls).toHaveLength(0)
+    expect(authorizeSpy).not.toHaveBeenCalled()
+  })
+
+  test("a path Core refuses to forward is the same 404 to someone who is not staff, and a 400 to staff: no probing around the open reads", async () => {
+    // Bun resolves literal and encoded dot segments before Core sees the URL; these requests are built raw to cover a
+    // server that would not. The separators, controls and escapes below arrive raw either way.
+    configure("staging")
+    const base = "http://localhost/api/portal/billing"
+    for (const rest of [
+      "/workspaces/ws_1/catalog/../status",
+      "/workspaces/ws_1/catalog/./",
+      "/workspaces/ws_1/catalog%2f..%2fstatus",
+      "/workspaces/ws_1/%2e%2e/catalog",
+      "/workspaces/ws_1/catalog%00",
+      "/workspaces/ws_1/catalog%zz",
+      "/account/catalog/../status",
+      "/account/%252e%252e/catalog",
+      "/ui/icons/../entry.js",
+      "/ui/icons/./a.png",
+      "/ui/icons/%2e%2e/entry.js",
+      "/ui/icons/..%2fentry.js",
+      "/ui/icons/%252e%252e/entry.js",
+      "/ui/icons/a%5cb",
+      "/ui/icons/a%2fb",
+    ]) {
+      const hidden = await root.fetch(rawUrlRequest(`${base}${rest}`, {"x-test-principal": as("member", member)}))
+      expect([rest, hidden.status, await hidden.json()]).toEqual([rest, 404, {error: "module_not_installed"}])
+      const staff = await root.fetch(rawUrlRequest(`${base}${rest}`, {"x-test-principal": as("admin", admin)}))
+      expect([rest, staff.status, await staff.json()]).toEqual([rest, 400, {error: "invalid_path"}])
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a catalog is for a member of its workspace: a non-member is a 403, an unknown or deleted workspace a 404, and nothing is called", async () => {
+    configure("staging")
+    for (const [name, rest, status, error] of [
+      ["stranger", "/workspaces/ws_1/catalog", 403, "forbidden"],
+      ["stranger", "/workspaces/ws_2/catalog", 403, "forbidden"],
+      ["member", "/workspaces/ws_2/catalog", 403, "forbidden"],
+      ["member", "/workspaces/ws_unknown/catalog", 404, "workspace_not_found"],
+      ["member", "/workspaces/ws_gone/catalog", 404, "workspace_not_found"],
+    ] as const) {
+      const reply = await billing(as(name, name === "member" ? member : stranger), rest)
+      const body = await errorBody(reply)
+      expect([name, rest, reply.status, body.error]).toEqual([name, rest, status, error])
+      if (status === 403) expect(body.reason).toBe("not_a_member")
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("an Organization Admin reads any workspace's catalog and every other path, as before", async () => {
+    configure("staging")
+    for (const rest of ["/workspaces/ws_2/catalog", "/workspaces/ws_2/status", "/account/status", "/ui/entry.js", "/ui/icons/a.png"]) {
+      expect([rest, (await billing(as("admin", admin), rest)).status]).toEqual([rest, 200])
+    }
+    expect((await billing(as("admin", admin), "/workspaces/ws_2/purchase", {method: "POST", body: "{}"})).status).toBe(200)
+    expect(calls).toHaveLength(6)
+  })
+
+  test("a workspace key, an operator key and nobody still get no open read", async () => {
+    configure("staging")
+    for (const name of [as("ws-key", workspaceKey), as("op-key", operatorKey)]) {
+      for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+        const reply = await billing(name, rest)
+        expect([name, rest, reply.status, (await errorBody(reply)).error]).toEqual([name, rest, 403, "forbidden"])
+      }
+    }
+    for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+      const reply = await billing(null, rest)
+      expect([rest, reply.status, await reply.json()]).toEqual([rest, 401, {error: "unauthorized"}])
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("on prod everything is forwarded, as before", async () => {
+    configure("prod")
+    answerIcons()
+    const requests: Array<[string, string]> = [
+      ["GET", "/workspaces/ws_1/catalog"],
+      ["GET", "/workspaces/ws_1/status"],
+      ["POST", "/workspaces/ws_1/purchase"],
+      ["POST", "/workspaces/ws_1/session"],
+      ["GET", "/workspaces/ws_1/summary"],
+      ["POST", "/workspaces/ws_1/catalog"],
+      ["GET", "/account/status"],
+      ["GET", "/ui/entry.js"],
+      ["GET", "/ui/icons/a.png"],
+    ]
+    for (const [method, rest] of requests) {
+      const reply = await billing(as("member", member), rest, {method, body: method === "POST" ? "{}" : undefined})
+      expect([method, rest, reply.status]).toEqual([method, rest, 200])
+    }
+    expect(calls).toHaveLength(requests.length)
+  })
+
+  test("a module that is not installed has no catalog and no icons: a 404 module_not_installed", async () => {
+    // Nothing configured, whatever the environment.
+    for (const environment of ["staging", "prod"]) {
+      process.env.CLOUD_CORE_ENVIRONMENT = environment
+      for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+        const reply = await billing(as("member", member), rest)
+        expect([environment, rest, reply.status, await reply.json()]).toEqual([environment, rest, 404, {error: "module_not_installed"}])
+      }
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a module whose settings are unusable is a 503 for an open read and still a 404 for anything else", async () => {
+    configure("staging", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"})
+    for (const rest of ["/workspaces/ws_1/catalog", "/account/catalog", "/ui/icons/a.png"]) {
+      const reply = await billing(as("member", member), rest)
+      expect([rest, reply.status, await reply.json()]).toEqual([rest, 503, {error: "module_unavailable"}])
+    }
+    for (const rest of ["/workspaces/ws_1/status", "/account/status", "/ui/entry.js"]) {
+      const reply = await billing(as("member", member), rest)
+      expect([rest, reply.status, await reply.json()]).toEqual([rest, 404, {error: "module_not_installed"}])
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("the body limit is applied exactly where the request is forwarded", async () => {
+    const tooBig = "x".repeat(1024 * 1024 + 1)
+    /** A request carrying `tooBig`, with the method it is to be seen under. */
+    const carrying = (principal: string, method: string, rest: string) =>
+      withMethod(
+        new Request(`http://localhost/api/portal/billing${rest}`, {method: "POST", body: tooBig, headers: {"x-test-principal": principal}}),
+        method,
+      )
+    const gated = new Set(["module_not_installed", "module_unavailable"])
+
+    for (const [environment, extra] of [
+      ["staging", {}],
+      ["dev", {}],
+      ["prod", {}],
+      ["staging", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"}],
+      ["prod", {CLOUD_CORE_BILLING_URL: "ftp://nope.example.test"}],
+    ] as const) {
+      configure(environment, extra)
+      // A HEAD answer has no body to read an error from; HEAD has a test of its own below.
+      const requests: Array<[string, string]> = [
+        ...CLOSED.filter(([method]) => method !== "HEAD"),
+        ["GET", "/workspaces/ws_1/catalog"],
+        ["GET", "/account/catalog"],
+        ["GET", "/ui/icons/a.png"],
+      ]
+      for (const [name, principal] of [["member", member], ["admin", admin]] as const) {
+        for (const [method, rest] of requests) {
+          const key = as(name, principal)
+          // Whether the request would be forwarded or refused: the answer without the large body.
+          const bodyless = method === "GET" || method === "OPTIONS"
+          const small = await root.fetch(
+            new Request(`http://localhost/api/portal/billing${rest}`, {
+              method,
+              body: bodyless ? undefined : "{}",
+              headers: {"x-test-principal": key},
+            }),
+          )
+          const smallError = ((await small.json()) as {error?: string}).error
+          const large = await root.fetch(carrying(key, method, rest))
+          const largeBody = (await large.json()) as {error?: string}
+          const expectation = gated.has(smallError ?? "") ? [small.status, smallError] : [413, "payload_too_large"]
+          expect([environment, Object.keys(extra).length, name, method, rest, large.status, largeBody.error]).toEqual([
+            environment,
+            Object.keys(extra).length,
+            name,
+            method,
+            rest,
+            ...expectation,
+          ])
+        }
+      }
+    }
+    // Nothing that was refused for its size reached the module.
+    expect(calls.every(call => call.body.length < 1024)).toBe(true)
+  })
+
+  test("an open read carrying a body over the limit is a 413, and a closed one is not told there is a limit", async () => {
+    configure("staging")
+    const tooBig = "x".repeat(1024 * 1024 + 1)
+    const send = async (method: string, rest: string) => {
+      const request = new Request(`http://localhost/api/portal/billing${rest}`, {method: "POST", body: tooBig, headers: {"x-test-principal": as("member", member)}})
+      return root.fetch(withMethod(request, method))
+    }
+    expect((await send("GET", "/workspaces/ws_1/catalog")).status).toBe(413)
+    expect((await send("GET", "/ui/icons/a.png")).status).toBe(413)
+    expect((await send("HEAD", "/ui/icons/a.png")).status).toBe(413)
+    expect((await send("HEAD", "/ui/entry.js")).status).toBe(404)
+    for (const [method, rest] of [
+      ["GET", "/workspaces/ws_1/status"],
+      ["POST", "/workspaces/ws_1/catalog"],
+      ["GET", "/ui/entry.js"],
+      ["GET", "/workspaces/ws_1/catalog/"],
+    ] as const) {
+      const reply = await send(method, rest)
+      expect([method, rest, reply.status, await reply.json()]).toEqual([method, rest, 404, {error: "module_not_installed"}])
+    }
+    expect(calls).toHaveLength(0)
+  })
+})
+
 describe("mounted in Core", () => {
   test("the portal's sign-in gate is in front: a request with no session is 401 and the module is not called", async () => {
     configure()
