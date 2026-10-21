@@ -138,7 +138,7 @@ describe("the components' own text", () => {
 
   test("reads the components, the controls, the shell, the audit labels and the strings", () => {
     const names = files.map((file) => relative(SRC, file));
-    for (const expected of ["components/licenses/seats.tsx", "components/licenses/catalog.tsx", "components/member-panel.tsx", "lib/audit.ts", "strings/licenses.ts", "ui/stepper.tsx"]) {
+    for (const expected of ["components/licenses/seats.tsx", "components/licenses/catalog.tsx", "components/members-panel.tsx", "components/confirm-dialog.tsx", "lib/audit.ts", "strings/licenses.ts", "ui/stepper.tsx"]) {
       expect(names).toContain(expected);
     }
     expect(files.flatMap(literals).length).toBeGreaterThan(1000);

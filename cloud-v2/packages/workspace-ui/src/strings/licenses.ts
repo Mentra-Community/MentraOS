@@ -1,5 +1,5 @@
 /**
- * Every sentence the Licenses page, the Members list's licenses, the member panel, the personal Billing page and
+ * Every sentence the Licenses page, the Members list's licenses, the personal Billing page and
  * their refusals show. Billing sends typed values and Core words them, here and nowhere else: this is the one
  * module a translation touches, and no component writes a sentence of its own.
  *
@@ -438,40 +438,22 @@ export const licenseStrings = {
     none: "None",
     afterFirstSignIn: "After first sign-in",
     moreChips: (n: number) => `+${n}`,
-    /** The row's checkbox, and the control that opens the member panel from a row. */
-    selectMember: (name: string) => `Select ${name}`,
-    openMember: (name: string) => `Open ${name}`,
     /** An Organization Admin's copy button for a member's Mentra user id, in the row (`showUserIds`). */
     copyId: "Copy id",
     copyIdFor: (name: string) => `Copy the Mentra user id of ${name}`,
-    selected: (n: number) => `${n} selected`,
-    assignLicenses: "Assign licenses",
-    clearSelection: "Clear selection",
-  },
-
-  /** The member panel: the member's role and joining, their licenses, and removing them. */
-  memberPanel: {
-    role: "Role",
-    joined: "Joined",
-    changeRole: "Change role",
-    licenses: "Licenses",
-    intro: (name: string) => `Turn one on to give ${name} a license. Changes apply right away.`,
-    /** On, with the licenses left after theirs. */
-    hasASeat: (free: number, quantity: number) => `Has a license · ${free} of ${quantity} available`,
-    seatsFree: (free: number, quantity: number) => `${free} of ${quantity} licenses available`,
-    allInUse: (quantity: number) => (quantity === 1 ? "The license is assigned" : `All ${quantity} licenses are assigned`),
-    overAssigned: (n: number) => `${n} more assigned than covered`,
-    afterFirstSignIn: (email: string) => `${email} can get licenses after their first sign-in.`,
-    /** A switch's accessible name: which product, for whom. */
-    seatSwitch: (product: string, name: string) => `${product} license for ${name}`,
+    /** The row's "…" menu, named for the member: Change role to a role, and Remove from workspace. */
+    moreFor: (name: string) => `More for ${name}`,
+    changeRoleTo: (role: string) => `Change role to ${role}`,
     remove: "Remove from workspace",
+    /** Remove's dialog: its title, one plain line under it, and its buttons. */
     removePrompt: (name: string) => `Remove ${name} from this workspace?`,
-    removeConfirm: "Confirm remove",
+    removeBody: "They lose access to this workspace, and any licenses assigned to them are freed.",
+    removeConfirm: "Remove",
+    cancel: "Cancel",
   },
 
-  /** Assign licenses: several people, several licenses, one request. */
+  /** What fits when licenses are given to several people at once: the people picker's lines. */
   assign: {
-    title: "Assign licenses",
     enough: ({ free, quantity, chosen }: { free: number; quantity: number; chosen: number }) => {
       const licenses = `${free} of ${quantity} licenses available`;
       if (chosen === 1) return `${licenses}.`;
@@ -481,9 +463,6 @@ export const licenseStrings = {
     someHold: ({ holders, free, quantity, recipients }: { holders: readonly string[]; free: number; quantity: number; recipients: readonly string[] }) =>
       `${nameList(holders)} ${holders.length === 1 ? "has" : "have"} one. ${free} of ${quantity} licenses available, for ${nameList(recipients)}.`,
     everyoneHolds: "Everyone you chose has one.",
-    /** The licenses per product: "2 Call Unlimited · 1 Example Add-on". */
-    footer: (parts: ReadonlyArray<{ seats: number; name: string }>) => parts.map((part) => `${part.seats} ${part.name}`).join(" · "),
-    confirm: (n: number) => (n === 0 ? "Assign" : `Assign ${plural(n, "license")}`),
     /** Under Assign when more licenses are chosen than one request takes (`MAX_SEAT_ASSIGNMENTS`). */
     tooMany: (max: number) => `You can assign up to ${max} licenses at a time.`,
   },

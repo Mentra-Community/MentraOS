@@ -72,6 +72,7 @@ describe("members panel: role controls follow the viewer's role", () => {
     expect(listed).toContain("olivia@acme.test");
     expect(listed).not.toContain("<select");
     expect(listed).not.toContain(">Remove<");
+    expect(labelsStartingWith(listed, "More for ")).toEqual([]);
     expect(requests).toEqual([]);
   });
 
@@ -121,14 +122,9 @@ describe("members panel: role controls follow the viewer's role", () => {
     expect(markup).not.toContain(">null<");
     // Only signed-in members have a Mentra user id to copy.
     expect(labelsStartingWith(markup, "Copy the Mentra user id of ")).toHaveLength(OTHER_MEMBERS.length);
-    // A pending member is still managed like anyone else: their panel offers the same role change and Remove.
-    const opened = renderSeeded(
-      api,
-      { detail, members },
-      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} member="wm_pending" />,
-    );
-    expect(opened).toContain("Remove from workspace");
-    expect(opened).toContain("Change role");
+    // A pending member is still managed like anyone else: their row has the same menu (Change role, Remove).
+    expect(labelsStartingWith(markup, "More for ")).toContain("More for pat@acme.test");
+    expect(labelsStartingWith(markup, "More for ")).toContain("More for Imported member");
 
     const signedIn = renderSeeded(
       api,
@@ -149,19 +145,19 @@ describe("members panel: role controls follow the viewer's role", () => {
     expect(markup).toContain(">You<");
   });
 
-  test("destructive actions start unconfirmed: removal needs a second, explicit step", () => {
+  test("destructive actions start unasked: nothing about removal is drawn until the row's menu is opened and Remove chosen", () => {
     const { api } = offlineApi();
     const detail = detailFor("owner");
     const markup = renderSeeded(
       api,
       { detail, members: membersFor(detail) },
-      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} member="wm_dev" />,
+      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
-    expect(markup).toContain("Remove from workspace");
-    expect(markup).not.toContain("Confirm remove");
+    expect(markup).not.toContain("Remove from workspace");
+    expect(markup).not.toContain("<dialog");
   });
 
-  test("the list itself has no Remove and no role control: both live in the member panel", () => {
+  test("the list has no native role control and no panel: each row the viewer manages has one menu, and none opens a panel", () => {
     const { api } = offlineApi();
     const detail = detailFor("owner");
     const markup = renderSeeded(
@@ -170,15 +166,15 @@ describe("members panel: role controls follow the viewer's role", () => {
       <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
     expect(markup).not.toContain("<select");
-    expect(markup).not.toContain("Remove");
-    expect(markup).not.toContain("Change role");
-    // Each row opens the panel instead.
-    expect(labelsStartingWith(markup, "Open ")).toEqual([
-      "Open sam@acme.test",
-      "Open olivia@acme.test",
-      "Open adam@acme.test",
-      "Open dana@acme.test",
-      "Open max@acme.test",
+    expect(markup).not.toContain("type=\"checkbox\"");
+    expect(markup).not.toContain("side-panel");
+    expect(labelsStartingWith(markup, "Open ")).toEqual([]);
+    // Everyone but the viewer (Sam, the owner).
+    expect(labelsStartingWith(markup, "More for ")).toEqual([
+      "More for olivia@acme.test",
+      "More for adam@acme.test",
+      "More for dana@acme.test",
+      "More for max@acme.test",
     ]);
   });
 
@@ -190,7 +186,7 @@ describe("members panel: role controls follow the viewer's role", () => {
   });
 });
 
-describe("members panel: the member panel's role controls follow the viewer's role", () => {
+describe("members panel: the row menu's role controls follow the viewer's role", () => {
   beforeAll(setupDom);
   afterAll(teardownDom);
   afterEach(cleanup);
@@ -209,32 +205,32 @@ describe("members panel: the member panel's role controls follow the viewer's ro
     return requests;
   }
 
-  const panel = () => find<HTMLDialogElement>('dialog[data-slot="side-panel"]');
-
-  /** What the panel for the member labelled `label` offers: the roles in Change role (null: no control) and whether Remove is there. */
+  /**
+   * What the row's menu for the member labelled `label` offers: the roles it can change to (null: no menu at all) and
+   * whether Remove from workspace is there.
+   */
   async function offeredFor(label: string): Promise<{ roles: string[] | null; remove: boolean }> {
-    await click(find(`button[aria-label="Open ${label}"]`));
-    const change = panel().querySelector<HTMLButtonElement>('button[aria-label="Change role"]');
-    let roles: string[] | null = null;
-    if (change) {
-      await click(change);
-      roles = findAll('[role="menuitem"]', document).map((item) => item.textContent!.trim());
-    }
-    const remove = findAll("button", panel()).some((button) => button.textContent === "Remove from workspace");
-    await press(panel(), "Escape");
-    // A menu left open is closed by its own Escape first; make sure the panel is closed before the next row.
-    if (panel().querySelector("h2")) await press(panel(), "Escape");
-    return { roles, remove };
+    const menu = document.querySelector<HTMLButtonElement>(`button[aria-label="More for ${label}"]`);
+    if (!menu) return { roles: null, remove: false };
+    await click(menu);
+    const items = findAll('[role="menuitem"]', document).map((item) => item.textContent!.trim());
+    await press(menu, "Escape");
+    return {
+      roles: items.filter((text) => text.startsWith("Change role to ")).map((text) => text.slice("Change role to ".length)),
+      remove: items.includes("Remove from workspace"),
+    };
   }
 
   const LABELS = { self: "sam@acme.test", owner: "olivia@acme.test", admin: "adam@acme.test", developer: "dana@acme.test", member: "max@acme.test" };
   const ROLE_NAMES = ALL_ROLES.map((role) => role[0]!.toUpperCase() + role.slice(1));
+  /** Every role but the one held: the menu never offers a no-op. */
+  const otherThan = (held: string) => ROLE_NAMES.filter((name) => name !== held);
 
   test("an admin may change members and developers (to member or developer) and remove them, and nothing else", async () => {
     const detail = detailFor("admin");
     const requests = await mountMembers(detail, membersFor(detail));
-    expect(await offeredFor(LABELS.developer)).toEqual({ roles: ["Member", "Developer"], remove: true });
-    expect(await offeredFor(LABELS.member)).toEqual({ roles: ["Member", "Developer"], remove: true });
+    expect(await offeredFor(LABELS.developer)).toEqual({ roles: ["Member"], remove: true });
+    expect(await offeredFor(LABELS.member)).toEqual({ roles: ["Developer"], remove: true });
     // Admins and owners are not theirs to change or remove, and neither is their own row.
     expect(await offeredFor(LABELS.owner)).toEqual({ roles: null, remove: false });
     expect(await offeredFor(LABELS.admin)).toEqual({ roles: null, remove: false });
@@ -242,30 +238,33 @@ describe("members panel: the member panel's role controls follow the viewer's ro
     expect(requests).toEqual([]);
   });
 
-  test("an owner sees all four roles and Remove on every row but their own", async () => {
+  test("an owner sees every other role and Remove on every row but their own", async () => {
     const detail = detailFor("owner");
     await mountMembers(detail, membersFor(detail));
-    for (const label of [LABELS.owner, LABELS.admin, LABELS.developer, LABELS.member]) {
-      expect(await offeredFor(label)).toEqual({ roles: ROLE_NAMES, remove: true });
-    }
+    expect(await offeredFor(LABELS.owner)).toEqual({ roles: otherThan("Owner"), remove: true });
+    expect(await offeredFor(LABELS.admin)).toEqual({ roles: otherThan("Admin"), remove: true });
+    expect(await offeredFor(LABELS.developer)).toEqual({ roles: otherThan("Developer"), remove: true });
+    expect(await offeredFor(LABELS.member)).toEqual({ roles: otherThan("Member"), remove: true });
     expect(await offeredFor(LABELS.self)).toEqual({ roles: null, remove: false });
   });
 
   test("an organization admin with no membership acts as an owner on every row", async () => {
     const detail = organizationAdminDetail();
     await mountMembers(detail, membersFor(detail));
-    for (const label of [LABELS.owner, LABELS.admin, LABELS.developer, LABELS.member]) {
-      expect(await offeredFor(label)).toEqual({ roles: ROLE_NAMES, remove: true });
-    }
+    expect(await offeredFor(LABELS.owner)).toEqual({ roles: otherThan("Owner"), remove: true });
+    expect(await offeredFor(LABELS.admin)).toEqual({ roles: otherThan("Admin"), remove: true });
+    expect(await offeredFor(LABELS.developer)).toEqual({ roles: otherThan("Developer"), remove: true });
+    expect(await offeredFor(LABELS.member)).toEqual({ roles: otherThan("Member"), remove: true });
     expect(document.body.textContent).not.toContain("You");
   });
 
   test("an organization admin who is also a member uses the capabilities they were granted, not their member role", async () => {
     const detail = { ...organizationAdminDetail(), membership: { membershipId: "wm_self", role: "developer" as const } };
     await mountMembers(detail, membersFor(detail));
-    for (const label of [LABELS.owner, LABELS.admin, LABELS.developer, LABELS.member]) {
-      expect((await offeredFor(label)).roles).toEqual(ROLE_NAMES);
-    }
+    expect((await offeredFor(LABELS.owner)).roles).toEqual(otherThan("Owner"));
+    expect((await offeredFor(LABELS.admin)).roles).toEqual(otherThan("Admin"));
+    expect((await offeredFor(LABELS.developer)).roles).toEqual(otherThan("Developer"));
+    expect((await offeredFor(LABELS.member)).roles).toEqual(otherThan("Member"));
     // Their own row is still theirs alone: another owner or an organization admin changes it.
     expect(await offeredFor(LABELS.self)).toEqual({ roles: null, remove: false });
   });
@@ -278,16 +277,20 @@ describe("members panel: the member panel's role controls follow the viewer's ro
     }
   });
 
-  test("removal asks first, and the panel's Change role is the list's only role control", async () => {
+  test("removal asks first, in a dialog, and the row's menu is the list's only role control", async () => {
     const detail = detailFor("owner");
-    await mountMembers(detail, membersFor(detail));
+    const requests = await mountMembers(detail, membersFor(detail));
     expect(document.querySelectorAll("select")).toHaveLength(0);
-    await click(find(`button[aria-label="Open ${LABELS.developer}"]`));
-    await click(byText("Remove from workspace", "button", panel()));
-    expect(panel().textContent).toContain("Remove dana@acme.test from this workspace?");
-    expect(byText("Confirm remove", "button", panel())).toBeTruthy();
+    await click(find(`button[aria-label="More for ${LABELS.developer}"]`));
+    await click(byText("Remove from workspace", '[role="menuitem"]'));
+    const dialog = find<HTMLDialogElement>("dialog[open]");
+    expect(find("h2", dialog).textContent).toBe("Remove dana@acme.test from this workspace?");
+    expect(byText("Remove", "button", dialog)).toBeTruthy();
+    expect(byText("Cancel", "button", dialog)).toBeTruthy();
     await act(async () => {});
     expect(document.querySelectorAll("select")).toHaveLength(0);
+    // Asking sent nothing.
+    expect(requests).toEqual([]);
   });
 });
 

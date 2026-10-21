@@ -13,9 +13,9 @@ import type { SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
-import { Dialog } from "../../ui/dialog";
 import { Input } from "../../ui/input";
-import { AlertText, Avatar, Count } from "../common";
+import { Avatar, Count } from "../common";
+import { ConfirmDialog } from "../confirm-dialog";
 import { HostedPageButton, memberLabel } from "./parts";
 
 /** Someone who holds a seat: who they are as far as Core knows, and since when. */
@@ -195,8 +195,6 @@ export function SeatRoster({
 }) {
   const [query, setQuery] = useState("");
   const [leaving, setLeaving] = useState<SeatHolder | null>(null);
-  const [pending, setPending] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
   const triggers = useRef(new Map<string, HTMLButtonElement>());
   const returnFocusTo = useRef<string | null>(null);
   // The dialog closed without taking anything back: the row's own button is where the person was.
@@ -206,21 +204,11 @@ export function SeatRoster({
       returnFocusTo.current = null;
     }
   }, [leaving]);
-  const dismiss = () => {
+  // Done: the row is on its way out, so there is nothing to give focus back to. Backed out: the button that asked.
+  const closeDialog = (done: boolean) => {
     if (leaving === null) return;
-    returnFocusTo.current = leaving.membershipId;
+    if (!done) returnFocusTo.current = leaving.membershipId;
     setLeaving(null);
-    setRefusal(null);
-  };
-  const confirm = async () => {
-    if (leaving === null) return;
-    setPending(true);
-    setRefusal(null);
-    const refused = await onUnassign(leaving);
-    setPending(false);
-    // Done: the row is on its way out, so there is nothing to give focus back to.
-    if (refused === null) setLeaving(null);
-    else setRefusal(refused);
   };
   const searchable = holders.length > SEARCH_FROM;
   const needle = query.trim().toLowerCase();
@@ -335,23 +323,14 @@ export function SeatRoster({
       </ul>
       {/* Mounted only while it asks, so a roster holds no dialog of its own until then. */}
       {leaving ? (
-        <Dialog
-          open
-          onClose={dismiss}
-          locked={pending}
+        <ConfirmDialog
           title={t.seats.unassignPrompt(leaving.label)}
           description={t.seats.unassignBody(leaving.label, productName)}
-        >
-          {refusal !== null ? <AlertText tone="neutral">{refusal}</AlertText> : null}
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <Button type="button" variant="secondary" disabled={pending} onClick={dismiss}>
-              {t.seats.cancel}
-            </Button>
-            <Button type="button" variant="destructive" disabled={pending} aria-busy={pending || undefined} onClick={() => void confirm()}>
-              {t.seats.unassign}
-            </Button>
-          </div>
-        </Dialog>
+          cancelLabel={t.seats.cancel}
+          confirmLabel={t.seats.unassign}
+          onConfirm={() => onUnassign(leaving)}
+          onClose={closeDialog}
+        />
       ) : null}
     </div>
   );

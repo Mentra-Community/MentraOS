@@ -4,22 +4,20 @@
  * and the status badge. They carry no words of their own but one (the cue a screen reader gets on a button
  * that leaves the portal, from `strings/licenses.ts`): the screens pass in the rest.
  *
- * Also the pieces the seat screens share (the Members list's panel and Assign licenses): what a member is called,
- * a license Core lists with its seats, why a seat change failed, and what "Add licenses ↗" needs.
+ * Also the pieces the seat screens share (the Members list and the people picker): what a member is called,
+ * a license Core lists with its seats, and why a seat change failed.
  */
 
 import { ArrowUpRightIcon, CircleCheckIcon, CreditCardIcon, TriangleAlertIcon } from "lucide-react";
 import { useId, type ComponentProps, type ReactNode } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
-import type { BillingAction, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 
 import { isLicenseChangedError } from "../../errors";
-import { listedAction, type JoinedLicense, type SeatCounts } from "../../lib/license-join";
+import type { JoinedLicense, SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { AlertText, Badge, ErrorNotice, Spinner, type BadgeTone } from "../common";
-import type { HostedAction, HostedBilling, NavigateOut } from "./hosted-action";
 
 /**
  * A notice inside a card or on the page: amber (`warn`) for a failed or incomplete payment, green (`info`) for
@@ -161,7 +159,7 @@ export function memberLabel(member: Pick<MemberView, "name" | "email" | "mentraU
 }
 
 /**
- * A card whose license Core lists, so its seats are known: what the Members screens show. `joinLicenses` can also
+ * A card whose license Core lists, so its seats are known: what the Members list shows. `joinLicenses` can also
  * return a billing entry Core hasn't received yet (no license, no seats); those are never held, and
  * `isHeldLicense` leaves them out.
  */
@@ -181,38 +179,4 @@ export function SeatErrorNotice({ error }: { error: unknown }) {
   if (error === null || error === undefined) return null;
   if (isLicenseChangedError(error)) return <AlertText tone="neutral">{t.conflict.seatsChanged}</AlertText>;
   return <ErrorNotice error={error} tone="neutral" />;
-}
-
-/**
- * What "Add licenses ↗" needs on the Members screens (the member panel and Assign licenses): the same ingredients as every
- * other ↗ button's `useHostedAction`, so it is the same way out (the tab opened in the click when billing lists
- * `returns: false`, the link when the browser blocked it, refusals in words through `HostedFeedback`). The workspace
- * `api` and the scope come from the screen itself.
- */
-export interface AddSeatsSource {
-  /**
-   * Billing's licenses (`status.licenses`), where the viewer is offered billing. This is what decides "Add licenses ↗":
-   * Core shows a billing button only where billing lists the action, so a license offers it only when its entry
-   * here lists `add_seats`. Without it (not offered billing, still loading, or it failed) no license offers it,
-   * and the sentences drop their "add licenses" half.
-   */
-  billing?: readonly LicenseBilling[] | null;
-  /** The billing client, for the `add_seats` session. */
-  billingApi: HostedBilling;
-  /** The host's two ways out of the portal (`leavePortal` and `openPortalTab`). */
-  navigateOut: NavigateOut;
-}
-
-/**
- * The `add_seats` action billing lists for the license, or null: the Members screens offer "Add licenses ↗" only where
- * it is not null, and fail closed where billing's list is absent.
- */
-export function addSeatsAction(source: Pick<AddSeatsSource, "billing">, card: Pick<JoinedLicense, "licenseId">): BillingAction | null {
-  return listedAction(source.billing?.find((entry) => entry.licenseId === card.licenseId), "add_seats");
-}
-
-/** Whether the session being asked for is this license's `add_seats`: its button is the one that shows it is waiting. */
-export function addingSeatsTo(hosted: Pick<HostedAction, "request">, card: Pick<JoinedLicense, "licenseId">): boolean {
-  const request = hosted.request;
-  return request !== null && "action" in request && request.action.kind === "add_seats" && request.licenseId === card.licenseId;
 }

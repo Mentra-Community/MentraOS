@@ -109,8 +109,8 @@ imported membership still waiting for its person's first sign-in, and
   refusal comes from a count read just before another seat was released; trying
   again succeeds.
 - **Several at once.** `POST /:workspaceId/seat-assignments` takes
-  `{"assignments": [{"licenseId", "membershipId"}]}`, the people picker's and
-  Assign licenses' request. It takes 1 to 500 pairs (`MAX_SEAT_ASSIGNMENTS`);
+  `{"assignments": [{"licenseId", "membershipId"}]}`, the people picker's
+  request. It takes 1 to 500 pairs (`MAX_SEAT_ASSIGNMENTS`);
   any other count, or a pair without both ids, is `400 invalid_request`. Every
   rule of one assignment applies to each pair, and a pair that is refused
   assigns nothing. A repeated pair counts once, and a pair whose member already
@@ -122,27 +122,19 @@ imported membership still waiting for its person's first sign-in, and
   short. Requests that race for the same seats, one seat or several, never
   together exceed a license's quantity. Each seat assigned is its own
   `seat.assigned` event.
-- **Assign licenses.** On the Members page ([Workspaces and
-  keys](workspaces.md#the-workspace-portal)) a license manager ticks members and
-  assigns them licenses for any of the workspace's products in one step. The dialog
-  has a row per product and checks what fits before it sends anything, against the
-  licenses available as Core last listed them. A row is ticked when everyone
-  chosen who needs a license fits: "2 of 5 licenses available: enough for both.",
-  or "Amara Okafor has one. 1 of 3 licenses available, for Luis Ortega." when
-  someone already holds it. A row that cannot fit its people cannot be ticked: "2
-  of 3 fit: remove one or add licenses.", "All 10 licenses are assigned.", or
-  "Everyone you chose has one.". The footer counts the licenses per product ("2
-  Call Unlimited · 1 Example Add-on"), and Assign sends every ticked row as one
+- **What the people picker checks.** Assign licenses on a card of the Licenses page
+  ([In the workspace portal](#in-the-workspace-portal)) gives one product to
+  several people in one step: it checks what fits before it sends anything, against the licenses available as Core last listed them ("2 of 3 fit:
+  remove one or add licenses."), and sends one
   `POST /:workspaceId/seat-assignments`, so the whole choice is given or none of
-  it is. The people picker on a product does the same for one product and several
-  people. Both stay off past `MAX_SEAT_ASSIGNMENTS` licenses, saying "You can
-  assign up to 500 licenses at a time.", since one request takes no more. Core
-  checks again in its transaction: if the counts changed while the person was
-  choosing, it answers `409 no_seats_available`, assigns nothing, and the dialog
-  reads the counts again and says "Licenses changed while you were choosing.
-  Nothing was assigned. Check the counts and try again." Add licenses ↗ is
-  offered in these dialogs only for a product whose billing entry lists
-  `add_seats`.
+  it is. It stays off past `MAX_SEAT_ASSIGNMENTS` licenses, saying "You can assign
+  up to 500 licenses at a time.", since one request takes no more. Core checks
+  again in its transaction: if the counts changed while the person was choosing,
+  it answers `409 no_seats_available`, assigns nothing, and the dialog reads the
+  counts again and says "Licenses changed while you were choosing. Nothing was
+  assigned. Check the counts and try again." Add licenses ↗ is offered in the
+  dialog only for a product whose billing entry lists `add_seats`. The Members list
+  assigns nothing: it only shows who holds what.
 - **Fewer seats.** A write that lowers the quantity below the seats in use frees
   no seat: the license takes no new assignment until the seats in use fall below
   the quantity again, so a license that is `n` over needs `n + 1` unassigned
@@ -297,17 +289,6 @@ what](#who-sees-what)).
   `mentra.testModeNotice.hidden`, so a new session shows it again, and where
   storage throws (a private mode) it is hidden for that page only. Test mode
   itself, the buy dialogs and their words are unchanged.
-- **The member panel's Licenses section.** On the Members page ([Workspaces and
-  keys](workspaces.md#the-workspace-portal)) a member's panel lists every product
-  the workspace holds, with a switch for each ("Turn one on to give Luis Ortega a
-  license."). Switching one on gives the member a license (`PUT`) and off takes
-  it back (`DELETE`), each at once. Under each product's name it says "Has a
-  license · 2 of 5 available" or "3 of 5 licenses available". A product with
-  every license assigned says "All 10 licenses are assigned", its switch is off,
-  and Add licenses ↗ shows where billing lists it; an over-assigned one says "2
-  more assigned than covered". A member who has not signed in sees "<email> can
-  get licenses after their first sign-in." Without `workspace.licenses.assign` the
-  switches only show the state.
 - **Billing.** The person's own page is `/account/billing`, with a Billing entry
   in the account menu. Its sidebar is Your account with Billing under it, and a
   way back to one of the person's workspaces if they have one; a person in no
@@ -422,7 +403,7 @@ the page does.
 | Viewer | The page shows | The page reads |
 | --- | --- | --- |
 | **A plain member** (Member or Developer) | Only the products they hold a license for, each as "Assigned to you" with "Your license" since when, "Given by" the workspace, and the miniapps it works in. No totals, no money, no one else's licenses, no controls. The Licenses item is in their sidebar while they hold a license. | Their licenses from Core, and the catalog for names and icons. Not billing's status, not the members. |
-| **A license manager without billing** (an Admin or Owner who is not offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card or the people picker, and assign licenses from Members. No money, no dates, no total, no billing actions, no buying, no Add licenses. | Core's licenses and the members, and the catalog for names and icons. Not billing's status. |
+| **A license manager without billing** (an Admin or Owner who is not offered billing) | Every product with its licenses and who holds each. They assign and unassign, from a card (Unassign asks in a dialog) or the people picker. No money, no dates, no total, no billing actions, no buying, no Add licenses. | Core's licenses and the members, and the catalog for names and icons. Not billing's status. |
 | **A billing manager** (an Admin or Owner offered billing) | All of that, plus each license's cost and dates, the total, billing's actions and the failed-payment notices, buying, the header actions, and the banner after checkout. | Billing's status as well. |
 | **A person**, on their own | `/account/billing`, where billing is offered to them: products they bought for themselves, with no list of people, and the catalog when they hold none. | Billing's catalog and status for their account. |
 | **Staff, where billing uses a test key** | Where `CLOUD_CORE_ENVIRONMENT` is not `prod`, billing is offered to Organization Admins only. They act as Owner everywhere, so they are billing managers of every workspace and have their own Billing page, under a test-mode banner. | As for a billing manager or a person. |
@@ -440,10 +421,13 @@ the page does.
   price and how many licenses may be bought only for someone who manages the owner's
   billing. A plain member's page needs it for names and icons, so it asks for it
   once Core has listed a product for them to name.
-- **The Members page.** Its Licenses column and the member panel's Licenses
-  section are for a viewer with `workspace.licenses.read` where the catalog can
-  be read; selecting members and Assign licenses need `workspace.licenses.assign`.
-  Without the catalog they are left out and the rest of Members works.
+- **The Members page.** Its Licenses column is for a viewer with
+  `workspace.licenses.read` where the catalog can be read. It only shows: a chip per
+  product, "None", or "After first sign-in", with no checkbox, no bulk Assign
+  licenses and no side panel, and licenses are assigned from the Licenses page. A row's
+  "…" menu (Change role to a role, Remove from workspace, which asks in a dialog)
+  needs `workspace.members.manage`. Without the catalog the column is left out and the
+  rest of Members works.
 
 ## Audit and the change feed
 

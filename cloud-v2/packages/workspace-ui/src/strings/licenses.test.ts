@@ -295,7 +295,7 @@ describe("the people picker", () => {
   });
 });
 
-describe("Members and the member panel", () => {
+describe("Members", () => {
   test("the list", () => {
     expect(t.members.title).toBe("Members");
     expect(t.members.description).toBe("People in this workspace and the role each of them holds.");
@@ -310,37 +310,32 @@ describe("Members and the member panel", () => {
     expect(t.members.none).toBe("None");
     expect(t.members.afterFirstSignIn).toBe("After first sign-in");
     expect(t.members.moreChips(2)).toBe("+2");
-    expect(t.members.selected(2)).toBe("2 selected");
-    expect(t.members.assignLicenses).toBe("Assign licenses");
-    expect(t.members.clearSelection).toBe("Clear selection");
-    expect(t.members.selectMember("Luis Ortega")).toBe("Select Luis Ortega");
-    expect(t.members.openMember("Luis Ortega")).toBe("Open Luis Ortega");
   });
 
-  test("the panel's role and joining", () => {
-    expect([t.memberPanel.role, t.memberPanel.joined, t.memberPanel.changeRole]).toEqual(["Role", "Joined", "Change role"]);
+  test("the list has no selection, no bulk Assign licenses and no member panel", () => {
+    expect("selected" in t.members).toBe(false);
+    expect("assignLicenses" in t.members).toBe(false);
+    expect("clearSelection" in t.members).toBe(false);
+    expect("selectMember" in t.members).toBe(false);
+    expect("openMember" in t.members).toBe(false);
+    expect("memberPanel" in t).toBe(false);
+    expect("title" in t.assign).toBe(false);
   });
 
-  test("the panel's Licenses section", () => {
-    expect(t.memberPanel.licenses).toBe("Licenses");
-    expect(t.memberPanel.intro("Luis Ortega")).toBe("Turn one on to give Luis Ortega a license. Changes apply right away.");
-    expect(t.memberPanel.hasASeat(1, 5)).toBe("Has a license · 1 of 5 available");
-    expect(t.memberPanel.seatsFree(1, 3)).toBe("1 of 3 licenses available");
-    expect(t.memberPanel.allInUse(10)).toBe("All 10 licenses are assigned");
-    expect(t.memberPanel.allInUse(1)).toBe("The license is assigned");
-    expect(t.memberPanel.overAssigned(2)).toBe("2 more assigned than covered");
-    expect(t.memberPanel.afterFirstSignIn("sam@acme.test")).toBe("sam@acme.test can get licenses after their first sign-in.");
-    expect(t.memberPanel.seatSwitch("Mentra Call Unlimited", "Luis Ortega")).toBe("Mentra Call Unlimited license for Luis Ortega");
+  test("the row's menu: a role to change to, and Remove from workspace", () => {
+    expect(t.members.moreFor("Luis Ortega")).toBe("More for Luis Ortega");
+    expect(t.members.changeRoleTo("Admin")).toBe("Change role to Admin");
+    expect(t.members.remove).toBe("Remove from workspace");
   });
 
-  test("removing a member asks first", () => {
-    expect(t.memberPanel.remove).toBe("Remove from workspace");
-    expect(t.memberPanel.removePrompt("Luis Ortega")).toBe("Remove Luis Ortega from this workspace?");
-    expect(t.memberPanel.removeConfirm).toBe("Confirm remove");
+  test("Remove asks first in a dialog: its title, one plain line, Cancel and a destructive Remove", () => {
+    expect(t.members.removePrompt("Luis Ortega")).toBe("Remove Luis Ortega from this workspace?");
+    expect(t.members.removeBody).toBe("They lose access to this workspace, and any licenses assigned to them are freed.");
+    expect(t.members.removeConfirm).toBe("Remove");
+    expect(t.members.cancel).toBe("Cancel");
   });
 
-  test("assigning several licenses to several people", () => {
-    expect(t.assign.title).toBe("Assign licenses");
+  test("what fits, when licenses are given to several people at once (the people picker's lines)", () => {
     expect(t.assign.enough({ free: 2, quantity: 5, chosen: 2 })).toBe("2 of 5 licenses available: enough for both.");
     expect(t.assign.enough({ free: 4, quantity: 5, chosen: 3 })).toBe("4 of 5 licenses available: enough for all 3.");
     expect(t.assign.enough({ free: 4, quantity: 5, chosen: 1 })).toBe("4 of 5 licenses available.");
@@ -351,12 +346,6 @@ describe("Members and the member panel", () => {
       "A and B have one. 1 of 3 licenses available, for C.",
     );
     expect(t.assign.everyoneHolds).toBe("Everyone you chose has one.");
-    expect(t.assign.footer([{ seats: 2, name: "Call Unlimited" }, { seats: 1, name: "Example Add-on" }])).toBe(
-      "2 Call Unlimited · 1 Example Add-on",
-    );
-    expect(t.assign.confirm(3)).toBe("Assign 3 licenses");
-    expect(t.assign.confirm(1)).toBe("Assign 1 license");
-    expect(t.assign.confirm(0)).toBe("Assign");
     expect(t.assign.tooMany(500)).toBe("You can assign up to 500 licenses at a time.");
   });
 });
@@ -482,7 +471,6 @@ describe("refusals", () => {
  * Arguments that exercise each function of the strings, one list per branch, keyed by its path. The walk above
  * calls them all, and fails for a function that has none.
  */
-const BAG = { name: "Dana Reyes", product: "Mentra Call Unlimited" };
 /** A `fitFor` result for each of its kinds, worded with and without the option to add seats. */
 const PERSON = (name: string) => ({ name });
 const NAME_OF = (person: { name: string }) => person.name;
@@ -583,18 +571,10 @@ const SAMPLES: Record<string, unknown[][]> = {
   "picker.chosen": [[2, 3], [1, 1]],
   "picker.assign": [[0], [1], [3]],
   "members.moreChips": [[2]],
-  "members.selectMember": [["Dana Reyes"]],
-  "members.openMember": [["Dana Reyes"]],
   "members.copyIdFor": [["Dana Reyes"]],
-  "members.selected": [[2]],
-  "memberPanel.intro": [["Dana Reyes"]],
-  "memberPanel.hasASeat": [[1, 5]],
-  "memberPanel.seatsFree": [[1, 3]],
-  "memberPanel.allInUse": [[10], [1]],
-  "memberPanel.overAssigned": [[2]],
-  "memberPanel.afterFirstSignIn": [["sam@acme.test"]],
-  "memberPanel.seatSwitch": [[BAG.product, BAG.name]],
-  "memberPanel.removePrompt": [["Dana Reyes"]],
+  "members.moreFor": [["Dana Reyes"]],
+  "members.changeRoleTo": [["Admin"]],
+  "members.removePrompt": [["Dana Reyes"]],
   "assign.enough": [
     [{ free: 2, quantity: 5, chosen: 1 }],
     [{ free: 2, quantity: 5, chosen: 2 }],
@@ -604,8 +584,6 @@ const SAMPLES: Record<string, unknown[][]> = {
     [{ holders: ["A"], free: 1, quantity: 3, recipients: ["B"] }],
     [{ holders: ["A", "B"], free: 1, quantity: 3, recipients: ["C", "D"] }],
   ],
-  "assign.footer": [[[{ seats: 2, name: "Call Unlimited" }, { seats: 1, name: "Example Add-on" }]]],
-  "assign.confirm": [[0], [1], [3]],
   "assign.tooMany": [[500]],
   "purchase.headline": [[true], [false]],
   "purchase.settingUpSeats": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],

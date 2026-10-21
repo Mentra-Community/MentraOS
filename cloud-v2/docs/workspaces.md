@@ -77,30 +77,28 @@ at `/enterprise` until it returns as workspace settings.
 **Members** lists each member by name over email (the email alone where Core has no
 name), with a "You" mark on your own row, "Pending first sign-in" on an imported
 membership, their role, the licenses they hold and when they joined (the date is left
-out on a phone). A row opens the member panel.
+out on a phone). The list is simple: no checkboxes, no side panel, and a row opens
+nothing.
 
 - **Licenses.** Where billing's catalog can be read, and you hold
   `workspace.licenses.read` in a workspace with a product that has not ended, the list
   has a Licenses column: a chip per product the member holds a license for (three chips
-  and "+n" past four), "None", or "After first sign-in" for a pending membership. With
-  `workspace.licenses.assign`, each member who has signed in also has a checkbox, and
-  selecting some shows "2 selected · Assign licenses", which assigns them licenses for
-  any of the workspace's products in one step ([Assigning licenses](licenses.md#assigning-licenses)). Without the
-  catalog, and on a Private Cloud, the list has no column and no selection.
-- **The member panel** is a side panel for one member: their role and when they joined,
-  Change role, Remove from workspace (it asks first), and a Licenses section with a
-  switch for each product the workspace holds
-  ([the portal's Licenses](licenses.md#in-the-workspace-portal)). The address carries
-  which member is open, `?member=<membershipId>`, so a link opens the panel, Back closes
-  it, and an id that names no member opens nothing. Change role offers the roles you
-  may move that member between, and Remove appears where you may remove them; neither is
-  offered on your own row (you leave in Settings, and another Owner or an Organization
-  Admin changes your role). Both carry the revision you last saw
-  (`409 membership_changed`).
-- **The admin portal** has the same list and panel, so role changes and Remove are
+  and "+n" past four), "None", or "After first sign-in" for a pending membership. The
+  chips only show: licenses are assigned from the Licenses page ([the portal's
+  Licenses](licenses.md#in-the-workspace-portal), [Assigning
+  licenses](licenses.md#assigning-licenses)). Without the catalog, and on a Private
+  Cloud, the list has no column.
+- **The row's menu** ("…", named for the member, with `workspace.members.manage`) holds
+  Change role to each role you may move that member to, and Remove from workspace,
+  which asks first in a dialog ("Remove <name> from this workspace?", Cancel and a
+  destructive Remove; a refusal is shown inside it). Neither is offered on your own
+  row (you leave in Settings, and another Owner or an Organization Admin changes your
+  role), and a row has no menu where neither is yours to do. Both carry the revision
+  you last saw (`409 membership_changed`), and a role change that fails says so above
+  the list.
+- **The admin portal** has the same list and menu, so role changes and Remove are
   there too, with each member's Mentra user id and a Copy id button for recovering a
-  workspace's ownership. It has no Licenses column, no selection and no Licenses
-  section, and its panel is not in the address.
+  workspace's ownership. It has no Licenses column.
 
 ## Creating and joining
 

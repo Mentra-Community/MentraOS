@@ -124,7 +124,6 @@ export {
   Notice,
   Skeleton,
   StatusBadge,
-  type AddSeatsSource,
   type HeldLicense,
   type StatusBadgeStatus,
 } from "./components/licenses/parts";
@@ -215,10 +214,9 @@ export {
   type CatalogCardProps,
   type CatalogProps,
 } from "./components/licenses/catalog";
-// The Members list's licenses: the member panel (role, joining, Licenses, Remove), its Licenses section, and Assign
-// licenses for the members chosen in the list. `WorkspaceMembersPanel` takes a `MembersLicenses` source to show them.
-export { AssignLicensesDialog, type AssignLicensesDialogProps } from "./components/licenses/assign-licenses";
-export { MemberPanel, PersonLicenses, type MemberPanelProps, type PersonLicensesProps } from "./components/member-panel";
+// The Members list's licenses: `WorkspaceMembersPanel` takes a `MembersLicenses` source (billing's catalog) to show each
+// member's licenses as chips. A question that can't be taken back (Unassign, Remove) is asked in a `ConfirmDialog`.
+export { ConfirmDialog } from "./components/confirm-dialog";
 export type { MembersLicenses } from "./components/members-panel";
 
 // The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each

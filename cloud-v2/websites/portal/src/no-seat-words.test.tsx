@@ -407,62 +407,36 @@ describe("after checkout", () => {
   });
 });
 
-// ---- the Members list, Assign licenses and the member panel ---------------------------------------------------------
+// ---- the Members list ---------------------------------------------------------------------------------------------
 
 describe("Members", () => {
-  const panelOpen = () => document.querySelector("dialog[data-slot='side-panel']")?.hasAttribute("open") ?? false;
-  const choose = async (...names: string[]) => {
-    for (const name of names) await click(find(`input[aria-label='Select ${name}']`));
-  };
-
-  test("the list, with its licenses column and the selection bar", async () => {
+  test("the list, with its licenses column", async () => {
     await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim");
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     expectNoSeat("the Members list");
-    await choose("Luis Ortega", "Amara Okafor");
-    await until(() => has(t.members.selected(2)), "the selection bar");
-    expectNoSeat("the selection bar");
   });
 
-  test("Assign licenses, with people chosen so each license shows each line it can", async () => {
+  test("the row's menu, for a person, a developer, an admin and one who hasn't signed in", async () => {
     await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim");
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
-    // Call has 2 of 5 free, Fleet none, and Example Add-on has 1 of 3 free with Dana and Amara holding it. Amara alone
-    // already holds it; then Luis with her; then more than Call has room for; then a person who hasn't signed in.
-    for (const names of [["Amara Okafor"], ["Luis Ortega"], ["Sofia Alvarez"], ["Jamal Wright", "Hannah Kim"], ["Grace Oduya"]]) {
-      await choose(...names);
-      await click(one(t.members.assignLicenses));
-      await until(() => has(t.assign.title), "Assign licenses");
-      expectNoSeat(`Assign licenses, with ${names.join(" and ")} added`);
-      await click(one(t.picker.cancel, find("dialog[open]")));
+    for (const name of ["Hannah Kim", "Sofia Alvarez", "Priya Natarajan", "Grace Oduya"]) {
+      const menu = find(`button[aria-label='More for ${name}']`);
+      await click(menu);
+      expectNoSeat(`the menu of ${name}`);
+      await click(menu);
     }
   });
 
-  test("the member panel: a person, one on the Fleet that is full, and one who hasn't signed in", async () => {
-    for (const [member, shown] of [["wm_luis", "Mentra Call Unlimited"], ["wm_hannah", "Mentra Call Unlimited"], ["wm_grace", "after their first sign-in"]] as const) {
-      await open(`/w/${ACME}/members?member=${member}`, SCENARIOS.threeActive(), "Remove from workspace");
-      await until(() => panelOpen() && has(shown), "the panel's licenses");
-      expectNoSeat(`the member panel of ${member}`);
-      await cleanup();
-      mock.restore();
-    }
-  });
-
-  test("the member panel when more are assigned than paid for", async () => {
-    const over = coreLicense(CALL_LICENSE, 2, ["hannah", "tom", "noah"]);
-    const scenario: Scenario = { licenses: [over, FLEET_LICENSE], workspaceStatus: statusOf([entry(CALL_BILLING, { quantity: 2 }), FLEET_BILLING]) };
-    await open(`/w/${ACME}/members?member=wm_luis`, scenario, "Remove from workspace");
-    await until(() => has("Mentra Call Unlimited") && has(t.memberPanel.overAssigned(1)), "the panel's licenses");
-    expectNoSeat("the member panel, over-assigned");
-  });
-
-  test("a refused Add licenses", async () => {
-    await open(`/w/${ACME}/members?member=wm_luis`, { ...SCENARIOS.threeActive(), hosted: () => ({ url: "javascript:alert(1)" }) }, "Remove from workspace");
-    await until(() => named(/Add licenses/).length > 0, "Add licenses in the panel");
-    spyOn(window, "open").mockImplementation((() => null) as unknown as typeof window.open);
-    await click(named(/Add licenses/)[0]!);
-    await until(() => has("Billing couldn't do that"), "the refusal");
-    expectNoSeat("a refusal in the panel");
+  test("Remove's dialog, and a role change", async () => {
+    await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim");
+    await click(find("button[aria-label='More for Tom Becker']"));
+    await click(one(t.members.remove));
+    expectNoSeat("Remove's dialog");
+    await click(one(t.members.cancel, find("dialog[open]")));
+    await click(find("button[aria-label='More for Tom Becker']"));
+    await click(one(t.members.changeRoleTo("Developer")));
+    await until(() => findAll("tbody tr").some(row => row.textContent!.includes("Tom Becker") && row.textContent!.includes("Developer")), "the new role");
+    expectNoSeat("after a role change");
   });
 });
 
@@ -511,10 +485,12 @@ describe("the states were reached", () => {
     ["the personal header button", t.page.buyALicense],
     ["the workspace's catalog dialog", t.catalog.dialog.title],
     ["the personal catalog dialog", t.catalog.dialog.personTitle],
-    ["the member panel", t.memberPanel.intro("Luis Ortega")],
-    ["a pending member", t.memberPanel.afterFirstSignIn("grace@example.com")],
-    ["the panel's over-assigned line", t.memberPanel.overAssigned(1)],
-    ["Assign licenses", t.assign.title],
+    ["the row's menu: Remove", t.members.remove],
+    ["the row's menu: a role", t.members.changeRoleTo("Developer")],
+    ["Remove's dialog", t.members.removePrompt("Tom Becker")],
+    ["Remove's dialog body", t.members.removeBody],
+    ["the unassign dialog's body", " loses "],
+    ["the unassign dialog's Cancel", t.seats.cancel],
     ["test mode", t.testMode.lead],
     ["the test-mode notice's ×", t.testMode.hide],
     ["the page without the notice", "Buy licenses for your members"],
