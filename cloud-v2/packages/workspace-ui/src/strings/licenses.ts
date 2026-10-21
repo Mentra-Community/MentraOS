@@ -235,6 +235,8 @@ export const licenseStrings = {
     dialog: {
       title: "Buy a license",
       description: "Products for your workspace. For one you have, add seats instead.",
+      /** A person's own catalog: there are no seats to add. */
+      personDescription: "Products you can buy for yourself.",
     },
   },
 
