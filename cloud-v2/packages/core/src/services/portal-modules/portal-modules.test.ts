@@ -7,6 +7,7 @@ import {
   portalModuleVisibleTo,
   type ConfigLog,
   type PortalModuleName,
+  type PortalModuleRequest,
 } from "./portal-modules"
 
 const SECRET = "billing-shared-secret-value"
@@ -161,6 +162,137 @@ describe("portalModuleAccess", () => {
   })
 })
 
+/** A request as `portal-modules.api.ts` describes one to the access rules: its method, its family and what follows the scope. */
+const read = (
+  kind: PortalModuleRequest["route"]["kind"],
+  rest: string,
+  method = "GET",
+): PortalModuleRequest => ({method, route: {kind}, rest})
+
+describe("portalModuleAccess for an open read", () => {
+  const url = "https://store.example.test"
+  const staging = (extra: Record<string, string | undefined> = {}) => hosted(url, {CLOUD_CORE_ENVIRONMENT: "staging", ...extra})
+
+  test("is ready for someone the module is hidden from, for GET of a catalog and GET or HEAD of an icon", () => {
+    for (const request of [
+      read("workspace", "catalog"),
+      read("account", "catalog"),
+      read("ui", "icons/mentra.call.unlimited.png"),
+      read("ui", "icons/x.svg"),
+      read("ui", "icons/x.png", "HEAD"),
+    ]) {
+      const access = portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), request)
+      expect([request, access.state]).toEqual([request, "ready"])
+      if (access.state !== "ready") throw new Error("not ready")
+      expect(access.baseUrl.href).toBe(`${url}/`)
+      expect(access.secret).toBe(SECRET)
+    }
+  })
+
+  test("is still hidden for every other request, exact paths only", () => {
+    const closed: PortalModuleRequest[] = [
+      // Other paths and methods under a scope.
+      read("workspace", "status"),
+      read("account", "status"),
+      read("workspace", "summary"),
+      read("workspace", "purchase", "POST"),
+      read("workspace", "session", "POST"),
+      read("workspace", "", "GET"),
+      read("account", "", "GET"),
+      read("workspace", "catalog", "POST"),
+      read("account", "catalog", "POST"),
+      read("workspace", "catalog", "HEAD"),
+      read("account", "catalog", "HEAD"),
+      read("workspace", "catalog", "PUT"),
+      read("workspace", "catalog", "DELETE"),
+      read("workspace", "catalog", "PATCH"),
+      read("workspace", "catalog", "OPTIONS"),
+      read("workspace", "catalog", "get"),
+      // The path is matched as received: no trailing slash, case, encoding or deeper path.
+      read("workspace", "catalog/"),
+      read("workspace", "/catalog"),
+      read("workspace", "Catalog"),
+      read("workspace", "CATALOG"),
+      read("workspace", "catalog/x"),
+      read("workspace", "x/catalog"),
+      read("workspace", "%63atalog"),
+      read("workspace", "catalog%2f"),
+      read("workspace", "catalog "),
+      read("workspace", "catalog;x"),
+      read("workspace", "catalog?x"),
+      read("account", "catalog/"),
+      read("account", "Catalog"),
+      read("account", "%63atalog"),
+      // Assets: icons only, GET and HEAD only, one file.
+      read("ui", "entry.js"),
+      read("ui", "entry.js", "HEAD"),
+      read("ui", "catalog"),
+      read("ui", "icons"),
+      read("ui", "icons/"),
+      read("ui", "iconsx/a.png"),
+      read("ui", "Icons/a.png"),
+      read("ui", "ICONS/a.png"),
+      read("ui", "icons/a/b.png"),
+      read("ui", "icons//a.png"),
+      read("ui", "icons/a.png/"),
+      read("ui", "icons/.."),
+      read("ui", "icons/."),
+      read("ui", "icons/%78.png"),
+      read("ui", "icons/a b.png"),
+      read("ui", "icons/a.png", "POST"),
+      read("ui", "icons/a.png", "PUT"),
+      read("ui", "icons/a.png", "DELETE"),
+      read("ui", "icons/a.png", "PATCH"),
+      read("ui", "icons/a.png", "OPTIONS"),
+      read("ui", "icons/a.png", "head"),
+      // The open paths belong to their own family only.
+      read("ui", "catalog"),
+      read("account", "icons/a.png"),
+      read("workspace", "icons/a.png"),
+      read("workspace", "ui/icons/a.png"),
+      read("account", "ui/icons/a.png"),
+    ]
+    for (const request of closed) {
+      expect([request, portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), request)]).toEqual([
+        request,
+        {state: "hidden"},
+      ])
+    }
+  })
+
+  test("is hidden without a request, as before", () => {
+    expect(portalModuleAccess("billing", everyoneElse, staging(), recordingLog())).toEqual({state: "hidden"})
+    expect(portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), undefined)).toEqual({state: "hidden"})
+  })
+
+  test("does not make an absent module present: not installed stays hidden", () => {
+    expect(portalModuleAccess("billing", everyoneElse, env({CLOUD_CORE_ENVIRONMENT: "staging"}), recordingLog(), read("workspace", "catalog"))).toEqual({
+      state: "hidden",
+    })
+    const secretOnly = env({CLOUD_CORE_ENVIRONMENT: "staging", CLOUD_CORE_BILLING_SECRET: SECRET})
+    expect(portalModuleAccess("billing", everyoneElse, secretOnly, recordingLog(), read("ui", "icons/a.png"))).toEqual({
+      state: "hidden",
+    })
+  })
+
+  test("a module whose settings are unusable is unavailable for an open read and hidden for anything else", () => {
+    const broken = staging({CLOUD_CORE_BILLING_URL: "ftp://nope"})
+    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("workspace", "catalog"))).toEqual({state: "unavailable"})
+    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("ui", "icons/a.png"))).toEqual({state: "unavailable"})
+    expect(portalModuleAccess("billing", everyoneElse, broken, recordingLog(), read("workspace", "status"))).toEqual({state: "hidden"})
+    const noSecret = staging({CLOUD_CORE_BILLING_SECRET: ""})
+    expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("account", "catalog"))).toEqual({state: "unavailable"})
+    expect(portalModuleAccess("billing", everyoneElse, noSecret, recordingLog(), read("ui", "entry.js"))).toEqual({state: "hidden"})
+  })
+
+  test("a request changes nothing for staff or on prod: every request is ready", () => {
+    for (const request of [read("workspace", "status"), read("ui", "entry.js"), read("workspace", "purchase", "POST"), read("workspace", "catalog/x")]) {
+      expect([request, portalModuleAccess("billing", staff, staging(), recordingLog(), request).state]).toEqual([request, "ready"])
+      expect([request, portalModuleAccess("billing", everyoneElse, hosted(url), recordingLog(), request).state]).toEqual([request, "ready"])
+    }
+  })
+})
+
 describe("installedPortalModules and portalModuleAvailability", () => {
   test("a module is installed when it is ready; an unconfigured or broken one is not offered", () => {
     expect(installedPortalModules(env())).toEqual([])
@@ -168,12 +300,23 @@ describe("installedPortalModules and portalModuleAvailability", () => {
     expect(installedPortalModules(hosted("https://store.example.test"))).toEqual(["billing"] satisfies PortalModuleName[])
   })
 
-  test("availability is installed and visible to this person", () => {
+  test("availability is installed and visible to this person, and says separately whether the catalog can be read", () => {
     const ready = (environment: string) => hosted("https://store.example.test", {CLOUD_CORE_ENVIRONMENT: environment})
-    expect(portalModuleAvailability(everyoneElse, ready("prod"))).toEqual({billing: true})
-    expect(portalModuleAvailability(everyoneElse, ready("staging"))).toEqual({billing: false})
-    expect(portalModuleAvailability(staff, ready("staging"))).toEqual({billing: true})
-    expect(portalModuleAvailability(staff, env({CLOUD_CORE_ENVIRONMENT: "prod"}))).toEqual({billing: false})
-    expect(portalModuleAvailability(staff, hosted("ftp://nope"), recordingLog())).toEqual({billing: false})
+    expect(portalModuleAvailability(everyoneElse, ready("prod"))).toEqual({billing: true, billingCatalog: true})
+    // Outside prod the module is for staff, but its catalog is for everyone.
+    expect(portalModuleAvailability(everyoneElse, ready("staging"))).toEqual({billing: false, billingCatalog: true})
+    expect(portalModuleAvailability(everyoneElse, ready("dev"))).toEqual({billing: false, billingCatalog: true})
+    expect(portalModuleAvailability(everyoneElse, ready(""))).toEqual({billing: false, billingCatalog: true})
+    expect(portalModuleAvailability(staff, ready("staging"))).toEqual({billing: true, billingCatalog: true})
+    // Not installed: neither.
+    expect(portalModuleAvailability(staff, env({CLOUD_CORE_ENVIRONMENT: "prod"}))).toEqual({billing: false, billingCatalog: false})
+    expect(portalModuleAvailability(everyoneElse, env({CLOUD_CORE_ENVIRONMENT: "staging"}))).toEqual({billing: false, billingCatalog: false})
+    // Misconfigured: neither, whoever asks.
+    expect(portalModuleAvailability(staff, hosted("ftp://nope"), recordingLog())).toEqual({billing: false, billingCatalog: false})
+    expect(portalModuleAvailability(everyoneElse, hosted("ftp://nope"), recordingLog())).toEqual({billing: false, billingCatalog: false})
+    expect(portalModuleAvailability(everyoneElse, hosted("ftp://nope", {CLOUD_CORE_ENVIRONMENT: "staging"}), recordingLog())).toEqual({
+      billing: false,
+      billingCatalog: false,
+    })
   })
 })

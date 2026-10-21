@@ -28,6 +28,20 @@
  * the value the production release contract requires. Anything else (`dev`, `staging`, `production`, a
  * misspelling, nothing at all) is staff-only: a Core that is not known to be production never shows a test-mode
  * checkout to the public.
+ *
+ * Open reads. Staff-only is for what a person can do with billing, not for what it sells: a member of a
+ * workspace who is not staff still sees what a license is, so the Members list can name the licenses people
+ * hold. A module's `openReads` name the few requests that stay open to everyone who may reach the module's
+ * scope, however staff-only it is, and `portalModuleAccess` answers `ready` for exactly those and nothing else:
+ *  - `scopePaths`: `GET` of `/workspaces/<id>/<path>` and of `/account/<path>`, the path matched exactly as
+ *    received (billing: `catalog`). `HEAD` and every other method, a trailing slash, another case, an encoded
+ *    letter or a deeper path are not it;
+ *  - `assetPrefixes`: `GET` and `HEAD` of `/ui/<prefix><file>`, with one file name after the prefix (billing:
+ *    `icons/`). The rest of `ui/`, a module's `entry.js` above all, is not open.
+ * The scope is untouched: a workspace path still needs a member or an Organization Admin, which the API checks
+ * after this, and a person who may not see the module at all gets what an absent one gives for anything else.
+ * An open read of a module that is not installed is as hidden as any other, and one of a module whose settings
+ * are unusable is `unavailable`.
  */
 
 import {createLogger, type Logger} from "@mentra/cloud-shared"
@@ -43,11 +57,21 @@ const logger: ConfigLog = createLogger("core").child({service: "portal-modules"}
 export const PORTAL_MODULE_NAMES = ["billing"] as const
 export type PortalModuleName = (typeof PORTAL_MODULE_NAMES)[number]
 
+/** The requests a staff-only module still answers to everyone who reaches it (see the file header). */
+interface OpenReads {
+  /** Paths under a scope (`/workspaces/<id>/<path>`, `/account/<path>`) whose `GET` is open, matched exactly as received. */
+  scopePaths: readonly string[]
+  /** Prefixes under `ui/` whose `GET` and `HEAD` are open, for one file name after the prefix. */
+  assetPrefixes: readonly string[]
+}
+
 interface PortalModuleSettings {
   urlVariable: string
   secretVariable: string
   /** Visible to Organization Admins only, unless `CLOUD_CORE_ENVIRONMENT` is `prod`. */
   staffOnlyUnlessProd: boolean
+  /** What a person the module is hidden from may still read. */
+  openReads: OpenReads
 }
 
 const REGISTRY: Record<PortalModuleName, PortalModuleSettings> = {
@@ -55,7 +79,33 @@ const REGISTRY: Record<PortalModuleName, PortalModuleSettings> = {
     urlVariable: "CLOUD_CORE_BILLING_URL",
     secretVariable: "CLOUD_CORE_BILLING_SECRET",
     staffOnlyUnlessProd: true,
+    openReads: {scopePaths: ["catalog"], assetPrefixes: ["icons/"]},
   },
+}
+
+/**
+ * A request to a module, as far as who may make it is concerned: its method, the family of path it is for and
+ * the rest of the path after that family's scope, exactly as received (not decoded, no leading "/", no query):
+ * `catalog` for `/workspaces/ws_1/catalog` and for `/account/catalog`, `icons/a.png` for `/ui/icons/a.png`.
+ */
+export interface PortalModuleRequest {
+  method: string
+  route: {kind: "workspace" | "account" | "ui"}
+  rest: string
+}
+
+/** One file name: the characters an icon's file may have, and not only dots. It is the contract's rule for an icon. */
+const OPEN_ASSET_FILE = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/
+
+/** Whether `request` is one of the reads `name` leaves open to everyone (see the file header). Exact, so anything unlisted is not. */
+function isOpenRead(name: PortalModuleName, request: PortalModuleRequest): boolean {
+  const {scopePaths, assetPrefixes} = REGISTRY[name].openReads
+  const {method, route, rest} = request
+  if (route.kind === "ui") {
+    if (method !== "GET" && method !== "HEAD") return false
+    return assetPrefixes.some(prefix => rest.startsWith(prefix) && OPEN_ASSET_FILE.test(rest.slice(prefix.length)))
+  }
+  return method === "GET" && scopePaths.includes(rest)
 }
 
 /** The value of `CLOUD_CORE_ENVIRONMENT` that makes a Core the production one. */
@@ -147,10 +197,13 @@ export function portalModuleVisibleTo(
 /**
  * What a person can reach of module `name` on this Core, decided once for everything that asks (the routes, the
  * request-body limit before them, and `/me`), so they cannot drift:
- *  - `hidden`: the module is not installed, or is not visible to this person (see the file header). It is
- *    indistinguishable from an absent one, a broken install included;
- *  - `unavailable`: it is visible to them, but its settings are unusable;
+ *  - `hidden`: the module is not installed, or is not visible to this person (see the file header) and the
+ *    request is not an open read. It is indistinguishable from an absent one, a broken install included;
+ *  - `unavailable`: it is visible to them, or the request is an open read, but its settings are unusable;
  *  - `ready`: Core may forward, to `baseUrl`, signing with `secret`.
+ *
+ * `request` is what is being asked. Without one, only what the person may see of the module as a whole counts,
+ * so an open read is `hidden` from someone it is hidden from, unless the request says it is one.
  */
 export type PortalModuleAccess =
   | {state: "hidden"}
@@ -162,20 +215,38 @@ export function portalModuleAccess(
   principal: {isOrganizationAdmin: boolean},
   env: NodeJS.ProcessEnv = processEnvironment(),
   log: ConfigLog = logger,
+  request?: PortalModuleRequest,
 ): PortalModuleAccess {
   const config = portalModuleConfig(name, env, log)
-  if (config.state === "not_installed" || !portalModuleVisibleTo(name, principal, env)) return {state: "hidden"}
+  if (config.state === "not_installed") return {state: "hidden"}
+  if (!portalModuleVisibleTo(name, principal, env) && !(request && isOpenRead(name, request))) return {state: "hidden"}
   if (config.state === "misconfigured") return {state: "unavailable"}
   return {state: "ready", baseUrl: config.baseUrl, secret: config.secret}
 }
 
-/** For each module, whether the portal should offer it to this person: it is installed and usable, and visible to them. */
+/** What `/me` says the portal can offer this person. */
+export interface PortalModuleAvailability {
+  /** Billing is installed and usable, and visible to this person: its pages, and everything it does, are theirs. */
+  billing: boolean
+  /** Billing's catalog can be read: installed and usable, whoever asks, because the catalog is an open read. */
+  billingCatalog: boolean
+}
+
+/** The request `billingCatalog` stands for: a catalog is read the same way under either scope. */
+const CATALOG_READ: PortalModuleRequest = {method: "GET", route: {kind: "account"}, rest: "catalog"}
+
+/**
+ * For each question the portal asks, whether it should offer it to this person: the module is installed and
+ * usable, and visible to them (`billing`), or at least its catalog, an open read, can be reached
+ * (`billingCatalog`).
+ */
 export function portalModuleAvailability(
   principal: {isOrganizationAdmin: boolean},
   env: NodeJS.ProcessEnv = processEnvironment(),
   log: ConfigLog = logger,
-): Record<PortalModuleName, boolean> {
-  return Object.fromEntries(
-    PORTAL_MODULE_NAMES.map(name => [name, portalModuleAccess(name, principal, env, log).state === "ready"]),
-  ) as Record<PortalModuleName, boolean>
+): PortalModuleAvailability {
+  return {
+    billing: portalModuleAccess("billing", principal, env, log).state === "ready",
+    billingCatalog: portalModuleAccess("billing", principal, env, log, CATALOG_READ).state === "ready",
+  }
 }
