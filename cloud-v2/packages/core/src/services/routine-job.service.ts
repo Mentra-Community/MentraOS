@@ -390,14 +390,14 @@ export const routineJobRepository: RoutineJobRepository = {
       // This existing host resource record is the sole byte-claim authority. Snapshot and claim CAS fences race both reports and other lanes.
       if (serializedPreparation) {
         const originals = await resourceReservationRepository.recorderClaims!(requestId), currentHost = await resourceReservationRepository.get(hostId),
-          currentLane = currentHost?.snapshot.lanes.find(value => value.id === laneId);
-        if (!backendRecorderClaimMatches(originals, requestId, fleetInputSha256, hostId, laneId) || originals[0]!.id !== claim.id ||
+          currentLane = currentHost?.snapshot.lanes.find(value => value.id === laneId), checkedAt = Date.now();
+        if (row.fleetDeadline.getTime() <= checkedAt || !backendRecorderClaimMatches(originals, requestId, fleetInputSha256, hostId, laneId) || originals[0]!.id !== claim.id ||
           !currentHost || !currentLane || !hostResourceReservationsSchema.parse(currentHost.resourceReservations ?? [])
             .some(value => requestInputDigest(value) === requestInputDigest(claim)) || currentHost.incarnation !== hostRow.incarnation ||
           currentHost.incarnationGeneration !== hostRow.incarnationGeneration ||
-          !routineResourcesAvailable(currentHost, row, laneId, now.getTime()) ||
+          !routineResourcesAvailable(currentHost, row, laneId, checkedAt) ||
           !compatibleStructuralRoutineLane({...requirements, resources: requirements.resources.map(({storage: _, ...resource}) => resource)},
-            currentLane, routineLaneContext(currentHost.snapshot, row.fleetSelection.build, now.getTime()), now.getTime())) return null;
+            currentLane, routineLaneContext(currentHost.snapshot, row.fleetSelection.build, checkedAt), checkedAt)) return null;
       } else {
         const claimedAt = Date.now();
         if (row.fleetDeadline.getTime() <= claimedAt || !routineResourcesAvailable({hostId: host.hostId, incarnation: host.incarnation,
@@ -412,16 +412,27 @@ export const routineJobRepository: RoutineJobRepository = {
           {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 10_000});
         if (!savedHost) continue;
       }
+      const receiptAt = new Date(Date.now());
+      if (row.fleetDeadline <= receiptAt || !routineResourcesAvailable({hostId: host.hostId, incarnation: host.incarnation,
+        incarnationGeneration: host.incarnationGeneration, sequence: host.sequence, receivedAt: hostRow.receivedAt, snapshot: host,
+        laneControls: hostRow.laneControls, resourceReservations: hostRow.resourceReservations, resourceLifecycleCursor: hostRow.resourceLifecycleCursor},
+        row, laneId, receiptAt.getTime())) {onWaiting?.(RESOURCE_ADMISSION_WAIT, true); return null;}
       if (selected) return row;
       // The request retains only the winning target/receipt. A lost race leaves a conservative host claim for normal reconciliation.
       const selectedRow = await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
         fleetCandidatePreparation: {$exists: false}, fleetResourceAdmission: admission.data, fleetResourceReservation: {$exists: false}, fleetBinding: {$exists: false},
-        fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
+        fleetCancellation: {$exists: false}, fleetDeadline: {$gt: receiptAt}},
         {$set: {fleetResourceReservation: claim, ...(exclusive ? {fleetExclusiveReservation: exclusive} : {})}},
         {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 10_000}) as unknown as StoredRoutineJob | null;
-      if (selectedRow) return selectedRow;
-      const winner = await this.get(requestId);
-      return winner?.fleetResourceReservation?.id === claim.id ? winner : null;
+      const winner = selectedRow ?? await this.get(requestId), returnedAt = Date.now();
+      // A slow successful receipt write is already custody. Refuse later execution
+      // after expiry without deleting its original target or permitting relocation.
+      if (!winner || winner.state !== 'awaiting-runner' || winner.fleetCancellation || winner.fleetBinding || winner.hostId ||
+        winner.fleetResourceReservation?.id !== claim.id || winner.fleetDeadline.getTime() <= returnedAt ||
+        !routineResourcesAvailable({hostId: host.hostId, incarnation: host.incarnation, incarnationGeneration: host.incarnationGeneration,
+          sequence: host.sequence, receivedAt: hostRow.receivedAt, snapshot: host, laneControls: hostRow.laneControls,
+          resourceReservations: hostRow.resourceReservations, resourceLifecycleCursor: hostRow.resourceLifecycleCursor}, winner, laneId, returnedAt)) return null;
+      return winner;
     }
     return null;
   },

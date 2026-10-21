@@ -1298,3 +1298,105 @@ for(const refusal of ['missing-request','changed-digest','active-offer','wrong-p
   }finally{resourceReservationRepository.replace=replace}
  });
 });
+
+
+for(const platform of ['android','ios-on-mac'] as const)for(const phase of ['request','host'] as const)for(const boundary of ['baseline-exact','baseline-expired','deadline'] as const)test(`offline ${platform} repository stage after ${phase} ${boundary} preserves the unclaimed SAME job for a ready alternate`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const snapshots=new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));for(const h of hosts.values())unavailableLocal(h,'out-of-service');await f.prepare();
+  for(const[id,h]of hosts)h.snapshot=structuredClone(snapshots.get(id));const h=hosts.get('mini'),at=h.receivedAt.getTime(),row=structuredClone(f.row!);
+  row.fleetSelection.platform=platform;row.fleetPreparation!.requirements.platform=platform;row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row);f.restore(row);
+  for(const host of hosts.values())host.snapshot.lanes[0].platform=platform;
+  for(const resource of h.snapshot.lanes[0].resources)resource.idleContract.maximumAgeMs=1;
+  const original=structuredClone(f.row!),request=resourceReservationRepository.request,get=resourceReservationRepository.get,clock=spyOn(Date,'now').mockReturnValue(at);
+  let delayed=false;
+  const delay=()=>{if(delayed)return;delayed=true;const after=boundary==='deadline'?row.fleetDeadline.getTime():at+(boundary==='baseline-exact'?1:2);clock.mockReturnValue(after)};
+  resourceReservationRepository.request=async id=>{const value=await request!(id);if(phase==='request')delay();return value};
+  resourceReservationRepository.get=async id=>{const value=await get(id);if(phase==='host')delay();return value};
+  const admission={intent:{operationId:`run:${row.requestId}`,hostId:h.hostId,laneId:'android',inputSha256:row.fleetInputSha256!,owner:{id:row.requestId,kind:'run' as const},
+    controller:{incarnation:h.incarnation,generation:h.incarnationGeneration,sequence:h.sequence},resources:h.snapshot.lanes[0].resources.map((resource:any)=>({id:resource.id,capabilities:resource.capabilities??[]}))},dependencies:[]};
+  try {
+   const staged=await resourceReservationRepository.stage!(row.requestId,row.fleetInputSha256!,admission,h.receivedAt);
+   if(boundary==='baseline-exact'){expect(staged?.fleetResourceAdmission).toEqual(admission);expect(counters.request).toBe(1)}
+   else{expect(staged).toBeNull();expect(counters).toEqual({host:0,request:0});expect(f.row).toEqual(original);expect(h.resourceReservations).toEqual([]);
+    if(boundary==='baseline-expired'){
+     const alternate=hosts.get('air1'),now=Date.now();alternate.receivedAt=new Date(now);alternate.snapshot.observedAt=new Date(now).toISOString();
+     for(const subject of alternate.snapshot.resourceLifecycle.subjects){subject.observedAt=alternate.snapshot.observedAt;subject.idle.checkedAt=alternate.snapshot.observedAt;subject.idle.acceptedCheck.acceptedAt=alternate.snapshot.observedAt}
+     resourceReservationRepository.request=request;resourceReservationRepository.get=get;
+     expect(await new ResourceReservationsService(resourceReservationRepository,()=>Date.now()).reserveFleet(row.requestId,row.fleetInputSha256!,'air1','android')).toBeUndefined();
+     expect(f.row!.fleetResourceAdmission!.intent.hostId).toBe('air1');expect(f.row!.fleetSelection).toEqual(original.fleetSelection);expect(f.row!.fleetPreparation).toEqual(original.fleetPreparation);
+    }
+   }
+   expect(f.row!.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256);expect(f.row!.fleetBinding).toBeUndefined();
+  }finally{resourceReservationRepository.request=request;resourceReservationRepository.get=get;clock.mockRestore()}
+ });
+});
+for(const phase of ['request','recorder','host','final-request','final-host'] as const)for(const boundary of ['baseline-exact','baseline-expired','deadline'] as const)test(`offline serialized Android repository stage after ${phase} ${boundary} retains its original provisional claim`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const prepared=await f.prepare(),target=(prepared as unknown as {resourceTarget:{hostId:string;laneId:string}}).resourceTarget,h=hosts.get(target.hostId),at=h.receivedAt.getTime(),row=structuredClone(f.row!),claim=structuredClone(h.resourceReservations[0]);
+  delete row.fleetResourceAdmission;delete row.fleetResourceReservation;f.restore(row);h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='phone').capabilities=['backend-connectivity'];
+  for(const resource of h.snapshot.lanes[0].resources)resource.idleContract.maximumAgeMs=1;
+  const original=structuredClone(f.row!),request=resourceReservationRepository.request,get=resourceReservationRepository.get,recorder=resourceReservationRepository.recorderClaims,clock=spyOn(Date,'now').mockReturnValue(at),initialWrites={...counters};
+  let requestReads=0,hostReads=0,delayed=false;
+  const delay=()=>{if(delayed)return;delayed=true;clock.mockReturnValue(boundary==='deadline'?row.fleetDeadline.getTime():at+(boundary==='baseline-exact'?1:2))};
+  resourceReservationRepository.request=async id=>{const value=await request!(id);if(phase===(++requestReads===1?'request':'final-request'))delay();return value};
+  resourceReservationRepository.get=async id=>{const value=await get(id);if(phase===(++hostReads===1?'host':'final-host'))delay();return value};
+  resourceReservationRepository.recorderClaims=async id=>{const value=await recorder!(id);if(phase==='recorder')delay();return value};
+  const admission={intent:{operationId:`run:${row.requestId}`,hostId:h.hostId,laneId:'android',inputSha256:row.fleetInputSha256!,owner:{id:row.requestId,kind:'run' as const},
+   controller:{incarnation:h.incarnation,generation:h.incarnationGeneration,sequence:h.sequence},resources:h.snapshot.lanes[0].resources.map((resource:any)=>({id:resource.id,capabilities:resource.capabilities??[]}))},dependencies:[]};
+  try {
+   const staged=await resourceReservationRepository.stageBackend!(row.requestId,row.fleetInputSha256!,admission,structuredClone(h),h.receivedAt);
+   if(boundary==='baseline-exact'){expect(staged?.fleetResourceAdmission).toEqual(admission);expect(counters.request).toBe(initialWrites.request+1)}
+   else{expect(staged).toBeNull();expect(counters).toEqual(initialWrites);expect(f.row).toEqual(original)}
+   expect(h.resourceReservations).toEqual([claim]);expect(f.row!.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256);expect(f.row!.fleetBinding).toBeUndefined();
+  }finally{resourceReservationRepository.request=request;resourceReservationRepository.get=get;resourceReservationRepository.recorderClaims=recorder;clock.mockRestore()}
+ });
+});
+
+
+for(const laneKind of ['mac','android','serialized-android'] as const)for(const phase of (laneKind==='serialized-android'?['admission-request','admission-recorder','admission-host']:['admission-request','recorder-cas']) as ('admission-request'|'admission-recorder'|'admission-host'|'recorder-cas')[])for(const boundary of ['baseline-exact','baseline-expired','deadline'] as const)test(`ordinary offline ${laneKind} post-stage ${phase} ${boundary} never publishes a stale recorder receipt`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const snapshots=new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));for(const h of hosts.values())unavailableLocal(h,'out-of-service');await f.prepare();
+  for(const[id,h]of hosts)h.snapshot=structuredClone(snapshots.get(id));const h=hosts.get('mini'),at=h.receivedAt.getTime(),row=structuredClone(f.row!),platform=laneKind==='mac'?'ios-on-mac':'android';
+  row.fleetSelection.platform=platform;row.fleetPreparation!.requirements.platform=platform;row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row);f.restore(row);h.snapshot.lanes[0].platform=platform;
+  if(laneKind==='serialized-android')h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='phone').capabilities=['backend-connectivity'];
+  for(const resource of h.snapshot.lanes[0].resources)resource.idleContract.maximumAgeMs=1;
+  const original=structuredClone(f.row!),read=TestRequestModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,get=resourceReservationRepository.get,recorder=resourceReservationRepository.recorderClaims,clock=spyOn(Date,'now').mockReturnValue(at);
+  const originalReserveFleet=ResourceReservationsService.prototype.reserveFleet, fleetClock=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(function(...args){return originalReserveFleet.apply(new ResourceReservationsService(resourceReservationRepository,()=>Date.now()),args)});
+  let delayed=false;
+  const delay=()=>{if(delayed)return;delayed=true;clock.mockReturnValue(boundary==='deadline'?row.fleetDeadline.getTime():at+(boundary==='baseline-exact'?1:2))};
+  TestRequestModel.collection.findOne=mock(async(...args:any[])=>{const value=await read.apply(TestRequestModel.collection,args as never);if(phase==='admission-request'&&f.row?.fleetResourceAdmission)delay();return value}) as never;
+  resourceReservationRepository.get=async id=>{const value=await get(id);if(phase==='admission-host'&&f.row?.fleetResourceAdmission)delay();return value};
+  resourceReservationRepository.recorderClaims=async id=>{const value=await recorder!(id);if(phase==='admission-recorder'&&f.row?.fleetResourceAdmission)delay();return value};
+  TestHostStateModel.collection.findOneAndUpdate=mock(async(...args:any[])=>{const value=await hostWrite.apply(TestHostStateModel.collection,args as never);if(phase==='recorder-cas'&&value&&f.row?.fleetResourceAdmission)delay();return value}) as never;
+  try{
+   const selected=await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,'mini','android',new Date(at));expect(delayed).toBe(true);
+   if(boundary==='baseline-exact'){expect(selected?.fleetResourceReservation?.hostId).toBe('mini');expect(f.row!.fleetResourceReservation).toEqual(h.resourceReservations[0])}
+   else{expect(selected).toBeNull();expect(f.row!.fleetResourceReservation).toBeUndefined();if(laneKind==='serialized-android'||phase==='recorder-cas')expect(h.resourceReservations).toHaveLength(1);else expect(h.resourceReservations).toEqual([])}
+   expect(f.row!.fleetResourceAdmission?.intent.hostId).toBe('mini');expect(f.row!.fleetSelection).toEqual(original.fleetSelection);expect(f.row!.fleetPreparation).toEqual(original.fleetPreparation);expect(f.row!.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256);expect(f.row!.fleetBinding).toBeUndefined();
+  }finally{TestRequestModel.collection.findOne=read;TestHostStateModel.collection.findOneAndUpdate=hostWrite;resourceReservationRepository.get=get;resourceReservationRepository.recorderClaims=recorder;fleetClock.mockRestore();clock.mockRestore()}
+ });
+});
+
+
+for(const laneKind of ['mac','android','serialized-android'] as const)for(const phase of ['stage-cas','receipt-cas'] as const)for(const boundary of ['baseline-exact','baseline-expired','deadline'] as const)test(`ordinary offline ${laneKind} delayed ${phase} ${boundary} preserves its actual committed original`,async()=>{
+ await withLocalResources(async(f,hosts,counters)=>{
+  const snapshots=new Map([...hosts].map(([id,h])=>[id,structuredClone(h.snapshot)]));for(const h of hosts.values())unavailableLocal(h,'out-of-service');await f.prepare();
+  for(const[id,h]of hosts)h.snapshot=structuredClone(snapshots.get(id));const h=hosts.get('mini'),at=h.receivedAt.getTime(),row=structuredClone(f.row!),platform=laneKind==='mac'?'ios-on-mac':'android';
+  row.fleetSelection.platform=platform;row.fleetPreparation!.requirements.platform=platform;row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);row.fleetInputSha256=routineJobInputDigest(row);f.restore(row);h.snapshot.lanes[0].platform=platform;
+  if(laneKind==='serialized-android')h.snapshot.lanes[0].resources.find((resource:any)=>resource.kind==='phone').capabilities=['backend-connectivity'];
+  for(const resource of h.snapshot.lanes[0].resources)resource.idleContract.maximumAgeMs=1;
+  const original=structuredClone(f.row!),write=TestRequestModel.collection.findOneAndUpdate,originalReserveFleet=ResourceReservationsService.prototype.reserveFleet,
+   clock=spyOn(Date,'now').mockReturnValue(at),fleetClock=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(function(...args){return originalReserveFleet.apply(new ResourceReservationsService(resourceReservationRepository,()=>Date.now()),args)});
+  let delayed=false;
+  TestRequestModel.collection.findOneAndUpdate=mock(async(...args:any[])=>{const value=await write.apply(TestRequestModel.collection,args as never),update=args[1];
+   if(value&&!delayed&&(phase==='stage-cas'?update.$set.fleetResourceAdmission:update.$set.fleetResourceReservation)){delayed=true;clock.mockReturnValue(boundary==='deadline'?row.fleetDeadline.getTime():at+(boundary==='baseline-exact'?1:2))}return value}) as never;
+  try{
+   const result=await routineJobRepository.reserveResources!(row.requestId,row.fleetInputSha256!,'mini','android',new Date(at));expect(delayed).toBe(true);
+   expect(f.row!.fleetResourceAdmission?.intent.hostId).toBe('mini');expect(counters.request).toBe(phase==='receipt-cas'||boundary==='baseline-exact'?2:1);
+   if(boundary==='baseline-exact')expect(result?.fleetResourceReservation?.hostId).toBe('mini');else expect(result).toBeNull();
+   if(phase==='receipt-cas'||boundary==='baseline-exact'){expect(f.row!.fleetResourceReservation).toEqual(h.resourceReservations[0]);expect(h.resourceReservations).toHaveLength(1)}
+   else{expect(f.row!.fleetResourceReservation).toBeUndefined();expect(h.resourceReservations).toHaveLength(laneKind==='serialized-android'?1:0)}
+   expect(f.row!.fleetSelection).toEqual(original.fleetSelection);expect(f.row!.fleetPreparation).toEqual(original.fleetPreparation);expect(f.row!.fleetDeadline).toEqual(original.fleetDeadline);expect(f.row!.fleetInputSha256).toBe(original.fleetInputSha256);expect(f.row!.fleetBinding).toBeUndefined();
+  }finally{TestRequestModel.collection.findOneAndUpdate=write;fleetClock.mockRestore();clock.mockRestore()}
+ });
+});

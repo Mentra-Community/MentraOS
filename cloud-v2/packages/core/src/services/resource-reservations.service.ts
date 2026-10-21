@@ -37,7 +37,7 @@ function dependencyAvailable(host: ResourceReservationHost, dependency: Exclusiv
 /** Ordinary backend work needs current returned phone proof; other providers keep their idle baseline. */
 export function routineResourcesAvailable(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false) {
   const lane = host.snapshot.lanes.find(value => value.id === laneId)
-  if (!lane || !row.fleetPreparation || !resourceLaneAvailable({resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, laneId,
+  if (!lane || !row.fleetPreparation || (!candidateCheck && (lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic')) || !resourceLaneAvailable({resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, laneId,
     {requestId: row.requestId, inputSha256: row.fleetInputSha256!, hostId: host.hostId})) return false
   const phone = lane.resources.find(value => value.kind === 'phone')
   const backendRequired = requiresBackendConnectivity(row), qualified = backendRequired && qualifiedCandidate(row, host.snapshot, laneId, now, host.receivedAt)
@@ -145,12 +145,10 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     if (row?.fleetCandidatePreparation || row && requiresBackendConnectivity(row) &&
       (!row.fleetCandidateSelection || row.fleetCandidateSelection.hostId !== fleetResourceAdmission.intent.hostId ||
         row.fleetCandidateSelection.laneId !== fleetResourceAdmission.intent.laneId)) return null;
-    let stagedAt = now;
-    if (row && requiresBackendConnectivity(row)) {
-      const host = await this.get(fleetResourceAdmission.intent.hostId), laneId = fleetResourceAdmission.intent.laneId;
+    const host = await this.get(fleetResourceAdmission.intent.hostId), laneId = fleetResourceAdmission.intent.laneId,
       stagedAt = new Date(Date.now());
-      if (!host || !laneId || !routineResourcesAvailable(host, row, laneId, stagedAt.getTime())) return null;
-    }
+    if (!row || !host || !laneId || row.fleetDeadline <= stagedAt ||
+      !routineResourcesAvailable(host, row, laneId, stagedAt.getTime())) return null;
     return await TestRequestModel.collection.findOneAndUpdate({...stageFilter(requestId, digest, stagedAt),
       ...(row && requiresBackendConnectivity(row) ? {fleetCandidateSelection: row.fleetCandidateSelection} : {})},
       {$set: {fleetResourceAdmission}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null
@@ -158,12 +156,12 @@ export const resourceReservationRepository: ResourceReservationRepository = {
   async stageBackend(requestId, digest, fleetResourceAdmission, host, now) {
     const original = await this.request!(requestId), claims = await this.recorderClaims!(requestId),
       current = await this.get(host.hostId), laneId = fleetResourceAdmission.intent.laneId,
-      stagedAt = original && requiresBackendConnectivity(original) ? new Date(Date.now()) : now
+      stagedAt = new Date(Date.now())
     if (!laneId || !current || !backendRecorderClaimMatches(claims, requestId, digest, host.hostId, laneId) ||
       current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration || current.sequence !== host.sequence ||
       !hostResourceReservationsSchema.parse(current.resourceReservations ?? []).some(claim => isDeepStrictEqual(claim, claims[0])) ||
       hasBackendProbe(hostResourceReservationsSchema.parse(current.resourceReservations ?? []), host.hostId, laneId) ||
-      !fresh(current, stagedAt.getTime()) || original && requiresBackendConnectivity(original) &&
+      !fresh(current, stagedAt.getTime()) || !original || original.fleetDeadline <= stagedAt ||
       !routineResourcesAvailable(current, original, laneId, stagedAt.getTime())) return null
     // The retained byte claim already won the same host CAS as phone probes. It survives
     // failed/lost staging replies; this request CAS selects only that original candidate.
@@ -325,7 +323,7 @@ export class ResourceReservationsService {
     if (retainedHost && (!retained.length || retained.some(claim => claim.authorityHostId !== retainedHost.hostId ||
       claim.origin?.fleetInputSha256 !== digest || claim.inputSha256 !== digest || claim.operationId !== intent.operationId ||
       claim.borrowerHostId !== hostId || claim.laneId !== laneId)) || row.fleetExclusiveReservation && !retained.length) return null
-    if (requiresBackendConnectivity(row) && !routineResourcesAvailable(borrower, row, laneId, this.now())) return null
+    if (row.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, row, laneId, this.now())) return null
     if (!selected.length) return retained.length ? null : undefined
     if (retained.length && (retained.length !== selected.length || selected.some(dependency => !retained.some(claim =>
       claim.resourceId === dependency.resourceId && claim.authorityHostId === dependency.authorityHostId)))) return null
@@ -357,7 +355,7 @@ export class ResourceReservationsService {
             generation: originalIntent.controller.generation}, origin, dependencies: selected})
         if (existing.some(claim => claim.intentSha256 !== intentSha256)) return null
         const receipt = fleetExclusiveReservationSchema.parse({origin, intent: originalIntent, intentSha256, claims: existing})
-        if (requiresBackendConnectivity(current) && !routineResourcesAvailable(borrower, current, laneId, this.now())) return null
+        if (current.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, current, laneId, this.now())) return null
         return row.fleetExclusiveReservation && !isDeepStrictEqual(row.fleetExclusiveReservation, receipt) ? null : receipt
       }
       if(selected.some(dependency=>!dependencyAvailable(authority,dependency,this.now()))) return null;
@@ -369,14 +367,14 @@ export class ResourceReservationsService {
           inputSha256: digest, owner: intent.owner, origin, controllerIncarnation: intent.controller.incarnation,
           controllerGeneration: intent.controller.generation, borrowerSequence: intent.controller.sequence, reservedAt: new Date(this.now()).toISOString()}))
       const claimingAt = this.now()
-      if (current.fleetDeadline.getTime() <= claimingAt || requiresBackendConnectivity(current) &&
+      if (current.fleetDeadline.getTime() <= claimingAt ||
         !routineResourcesAvailable(borrower, current, laneId, claimingAt)) return null
       if (await this.rows.replace(authority, [...claims, ...next])) {
         const after = await this.rows.request?.(requestId)
         if (after?.fleetCancellation) await this.reconcileFleetCancellation(requestId)
         if (!after || after.fleetCancellation || after.fleetBinding || after.hostId || after.input || after.inputSha256 ||
           after.state !== 'awaiting-runner' || after.fleetInputSha256 !== digest || !isDeepStrictEqual(after.fleetResourceAdmission, admission) ||
-          after.fleetDeadline.getTime() <= this.now() || requiresBackendConnectivity(after) &&
+          after.fleetDeadline.getTime() <= this.now() ||
           !routineResourcesAvailable(borrower, after, laneId, this.now())) return null
         return fleetExclusiveReservationSchema.parse({origin, intent, intentSha256, claims: next})
       }
