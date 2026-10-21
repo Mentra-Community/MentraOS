@@ -28,7 +28,7 @@ import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.m
 import {UserModel} from "../packages/core/src/models/user.model"
 import {stopOidcBridge} from "../packages/core/src/services/oidc/bridge"
 import {verifyCoreAccessToken} from "../packages/core/src/services/oidc/core-access-token"
-import {registerAfterSignInHook} from "../packages/core/src/services/oidc/interactions"
+import {recordSignIn, registerAfterSignInHook} from "../packages/core/src/services/oidc/interactions"
 import {ensureOidcCollections} from "../packages/core/src/services/oidc/mongo-adapter"
 import {resetUpstreamCaches} from "../packages/core/src/services/oidc/upstream"
 import type {SessionIdentity} from "../packages/core/src/services/signin/browser-session.service"
@@ -452,5 +452,51 @@ describe("a Private Cloud: the customer's Entra behind Core's provider", () => {
     const replay = await signIn.browser.request(callback)
     expect(replay.status).toBe(400)
     expect(hookCalls).toHaveLength(1)
+  })
+})
+
+describe("recording a sign-in", () => {
+  beforeEach(clean)
+
+  test("a sign-in that carries no name keeps the name Core has, and one that carries a name replaces it", async () => {
+    const mentraUserId = `mu_signin_name_${nowSec()}`
+    const signIn = (name: string | null, email: string, at: string) =>
+      recordSignIn({
+        mentraUserId,
+        tenantId: "mentra",
+        sourceId: "supabase",
+        subject: "sub-signin-name",
+        email,
+        emailVerified: true,
+        name,
+        authTime: new Date(at),
+      })
+    const row = () => SigninIdentityModel.findOne({mentraUserId}).lean()
+
+    // A first sign-in without a name records none.
+    await signIn(null, "ada@one.example", "2026-10-01T00:00:00.000Z")
+    expect(await row()).toMatchObject({name: null, email: "ada@one.example"})
+    await signIn("Ada Lovelace", "ada@one.example", "2026-10-02T00:00:00.000Z")
+    expect((await row())!.name).toBe("Ada Lovelace")
+
+    // A sign-in with no name, a blank one or an empty one records everything else it carries, and leaves the name.
+    for (const [index, nameless] of [null, "   ", ""].entries()) {
+      const at = `2026-10-0${3 + index}T00:00:00.000Z`
+      await signIn(nameless, `ada@source-${index}.example`, at)
+      expect(await row()).toMatchObject({
+        name: "Ada Lovelace",
+        email: `ada@source-${index}.example`,
+        signedInAt: new Date(at),
+      })
+    }
+
+    // A later name replaces it.
+    await signIn("Ada King", "ada@one.example", "2026-10-07T00:00:00.000Z")
+    expect((await row())!.name).toBe("Ada King")
+    expect(await SigninIdentityModel.countDocuments({mentraUserId})).toBe(1)
+    // The after-sign-in hooks ran for every sign-in, and never see the name.
+    const calls = hookCalls.filter((identity) => identity.mentraUserId === mentraUserId)
+    expect(calls).toHaveLength(6)
+    for (const identity of calls) expect("name" in identity).toBe(false)
   })
 })
