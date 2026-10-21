@@ -146,3 +146,21 @@ export {
   type SwitcherInvitation,
   type SwitcherWorkspace,
 } from "./shell/workspace-switcher";
+
+// A product's look (its icon, chip and feature chips), and the cards of the Licenses page: Core's licenses, billing's
+// status and its catalog joined and put in order, with the seat counts and what fits a license's free seats.
+export { FeatureChips, ProductChip, ProductIcon, type ProductIdentity } from "./components/licenses/product";
+export {
+  catalogForOwner,
+  fitFor,
+  holdsSeat,
+  joinLicenses,
+  listedAction,
+  seatCounts,
+  type FitKind,
+  type JoinedLicense,
+  type JoinInput,
+  type LicenseFit,
+  type LicenseProblem,
+  type SeatCounts,
+} from "./lib/license-join";

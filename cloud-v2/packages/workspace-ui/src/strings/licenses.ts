@@ -12,6 +12,8 @@
  * here: it arrives localized and is shown as sent. Nothing here names the payment processor.
  */
 
+import type { LicenseFit } from "../lib/license-join";
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const and = (names: readonly string[]) => (names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 
@@ -353,6 +355,33 @@ export const licenseStrings = {
     note: ({ fit, needed, canAddSeats }: { fit: number; needed: number; canAddSeats: boolean }) => {
       const remove = needed - fit === 1 ? "one" : String(needed - fit);
       return `${fit} of ${needed} fit: remove ${remove}${canAddSeats ? " or add seats" : ""}.`;
+    },
+    /**
+     * The line a seat dialog shows for the people chosen (`fitFor`'s result for one license): which of the
+     * spec's sentences the result calls for, with the people by `nameOf`. `canAddSeats` is whether billing lists
+     * `add_seats` for the license. Null when nobody is chosen.
+     */
+    line: <P>(fit: LicenseFit<P>, options: { nameOf: (person: P) => string; canAddSeats: boolean }): string | null => {
+      const names = (people: readonly P[]) => people.map(options.nameOf);
+      switch (fit.kind) {
+        case "nobody":
+          return null;
+        case "all_hold":
+          return licenseStrings.assign.everyoneHolds;
+        case "full":
+          return licenseStrings.seats.allInUse(fit.quantity);
+        case "short":
+          return licenseStrings.fit.note({ fit: fit.fit, needed: fit.needed, canAddSeats: options.canAddSeats });
+        case "some_hold":
+          return licenseStrings.assign.someHold({
+            holders: names(fit.holders),
+            free: fit.free,
+            quantity: fit.quantity,
+            recipients: names(fit.recipients),
+          });
+        case "enough":
+          return licenseStrings.assign.enough({ free: fit.free, quantity: fit.quantity, chosen: fit.needed });
+      }
     },
   },
 
