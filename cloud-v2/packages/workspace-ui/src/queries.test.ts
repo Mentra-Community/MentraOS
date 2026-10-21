@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError, errorMessage } from "./errors";
 import { createWorkspaceApi } from "./api";
-import { ACCOUNT_SCOPE, BillingRefusedError, BillingUnavailableError, createBillingApi, workspaceScope } from "./billing-api";
+import { ACCOUNT_SCOPE, BillingContractError, BillingRefusedError, BillingUnavailableError, createBillingApi, workspaceScope } from "./billing-api";
 import {
   billingCatalogQuery,
   billingKeys,
@@ -261,6 +261,28 @@ describe("billing's queries", () => {
     expect(retry(1, new BillingRefusedError("billing_unavailable", {}, 503))).toBe(false);
     expect(retry(0, new BillingUnavailableError("network"))).toBe(true);
     expect(retry(1, new BillingUnavailableError("network"))).toBe(false);
+  });
+
+  test("an answer that doesn't match the contract isn't retried: it would only mismatch again", async () => {
+    const { billing } = billingFor();
+    const retry = billingStatusQuery(billing, ACCOUNT_SCOPE).retry as (count: number, error: unknown) => boolean;
+    expect(retry(0, new BillingContractError("status doesn't match"))).toBe(false);
+    // Through the query: a mismatch is asked once, while a dropped connection is asked again.
+    const mismatch = billingFor({ locale: "en", products: "none" }, { locale: "en", products: "none" });
+    const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
+    const error = await client.fetchQuery(billingCatalogQuery(mismatch.billing, ACCOUNT_SCOPE)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BillingContractError);
+    expect(mismatch.urls).toHaveLength(1);
+    let asked = 0;
+    const flaky = createBillingApi({
+      locale: "en-US",
+      fetch: (async () => {
+        asked += 1;
+        throw new TypeError("network down");
+      }) as unknown as typeof fetch,
+    });
+    await new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } }).fetchQuery(billingCatalogQuery(flaky, ACCOUNT_SCOPE)).catch(() => {});
+    expect(asked).toBe(2);
   });
 
   /** A client holding one workspace's billing (catalog and status), another's, and the person's own. */

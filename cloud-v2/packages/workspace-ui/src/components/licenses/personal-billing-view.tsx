@@ -34,7 +34,7 @@ import { LicensesUnavailable, PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseBan
 import { canBuy, CatalogDialog, CatalogGrid } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
-import { HeaderButtons, hasOffer, usePurchaseFlow } from "./page-parts";
+import { HeaderButtons, hasOffer, readFailed, readRetrying, readWaiting, usePurchaseFlow } from "./page-parts";
 
 export interface PersonalBillingViewProps {
   /** The billing client: the catalog, the status, and the checkout and hosted-page sessions the ↗ buttons ask for. */
@@ -58,8 +58,8 @@ function usePersonalBilling(billing: BillingApi, purchaseId: string | null) {
   // when `?purchase=` goes (never another owner's or locale's: see `statusPlaceholder`).
   const statusOptions = billingStatusQuery(billing, ACCOUNT_SCOPE, purchaseId);
   const status = useQuery({ ...statusOptions, placeholderData: statusPlaceholder<BillingStatus>(statusOptions.queryKey) });
-  const failed = [catalog, status].some((result) => result.data === undefined && result.isError);
-  const waiting = !failed && [catalog, status].some((result) => result.data === undefined);
+  const failed = [catalog, status].some(readFailed);
+  const waiting = !failed && [catalog, status].some(readWaiting);
   const ready = catalog.data !== undefined && status.data !== undefined ? { products: catalog.data.products, status: status.data } : null;
   return { catalog, status, state: failed ? ("unavailable" as const) : waiting ? ("loading" as const) : ("ready" as const), data: ready };
 }
@@ -94,7 +94,7 @@ export function PersonalBillingView({
           void catalog.refetch();
           void status.refetch();
         }}
-        retrying={(catalog.isFetching && catalog.data === undefined) || (status.isFetching && status.data === undefined)}
+        retrying={readRetrying(catalog) || readRetrying(status)}
       />
     );
   }

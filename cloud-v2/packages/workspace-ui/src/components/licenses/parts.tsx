@@ -5,20 +5,21 @@
  * that leaves the portal, from `strings/licenses.ts`): the screens pass in the rest.
  *
  * Also the pieces the seat screens share (the Members list's panel and Assign licenses): what a member is called,
- * a license Core lists with its seats, why a seat change failed, and "Add seats ↗".
+ * a license Core lists with its seats, why a seat change failed, and what "Add seats ↗" needs.
  */
 
 import { ArrowUpRightIcon, CircleCheckIcon, CreditCardIcon, TriangleAlertIcon } from "lucide-react";
-import { useId, useState, type ComponentProps, type ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
+import type { BillingAction, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 
-import { billingErrorMessage } from "../../billing-errors";
 import { isLicenseChangedError } from "../../errors";
-import type { JoinedLicense, SeatCounts } from "../../lib/license-join";
+import { listedAction, type JoinedLicense, type SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { AlertText, Badge, ErrorNotice, Spinner, type BadgeTone } from "../common";
+import type { HostedAction, HostedBilling, NavigateOut } from "./hosted-action";
 
 /**
  * A notice inside a card or on the page: amber (`warn`) for a failed or incomplete payment, green (`info`) for
@@ -174,34 +175,44 @@ export function isHeldLicense(card: JoinedLicense): card is HeldLicense {
 /**
  * Why a seat change failed. A license that changed under the person (every seat taken, or gone) is "Seats changed
  * while you were choosing. Nothing was assigned." because the screen has already read the counts again; anything
- * else is the server's own words. Nothing when there is no error.
+ * else is the server's own words. Neutral, not amber: amber on these pages is for payments. Nothing when there is no error.
  */
 export function SeatErrorNotice({ error }: { error: unknown }) {
   if (error === null || error === undefined) return null;
-  if (isLicenseChangedError(error)) return <AlertText>{t.conflict.seatsChanged}</AlertText>;
-  return <ErrorNotice error={error} />;
+  if (isLicenseChangedError(error)) return <AlertText tone="neutral">{t.conflict.seatsChanged}</AlertText>;
+  return <ErrorNotice error={error} tone="neutral" />;
 }
 
 /**
- * "Add seats ↗" for a license: asks the host (which asks billing for a session and leaves the portal). While the
- * request is out the button is pending, and a refusal comes back as its words. The host's call is made inside the
- * click, so a tab it opens there isn't blocked.
+ * What "Add seats ↗" needs on the Members screens (the member panel and Assign licenses): the same ingredients as every
+ * other ↗ button's `useHostedAction`, so it is the same way out (the tab opened in the click when billing lists
+ * `returns: false`, the link when the browser blocked it, refusals in words through `HostedFeedback`). The workspace
+ * `api` and the scope come from the screen itself.
  */
-export function useAddSeats(onAddSeats: ((licenseId: string) => unknown) | undefined) {
-  const [state, setState] = useState<{ pending: string | null; message: string | null }>({ pending: null, message: null });
-  function run(card: Pick<JoinedLicense, "licenseId" | "name">) {
-    if (!onAddSeats) return;
-    setState({ pending: card.licenseId, message: null });
-    let result: unknown;
-    try {
-      result = onAddSeats(card.licenseId);
-    } catch (error) {
-      result = Promise.reject(error);
-    }
-    Promise.resolve(result).then(
-      () => setState((current) => (current.pending === card.licenseId ? { pending: null, message: null } : current)),
-      (error: unknown) => setState({ pending: null, message: billingErrorMessage(error, { product: card.name }) }),
-    );
-  }
-  return { pending: state.pending, message: state.message, run };
+export interface AddSeatsSource {
+  /**
+   * Billing's licenses (`status.licenses`), where the viewer is offered billing. This is what decides "Add seats ↗":
+   * Core shows a billing button only where billing lists the action, so a license offers it only when its entry
+   * here lists `add_seats`. Without it (not offered billing, still loading, or it failed) no license offers it,
+   * and the sentences drop their "add seats" half.
+   */
+  billing?: readonly LicenseBilling[] | null;
+  /** The billing client, for the `add_seats` session. */
+  billingApi: HostedBilling;
+  /** The host's two ways out of the portal (`leavePortal` and `openPortalTab`). */
+  navigateOut: NavigateOut;
+}
+
+/**
+ * The `add_seats` action billing lists for the license, or null: the Members screens offer "Add seats ↗" only where
+ * it is not null, and fail closed where billing's list is absent.
+ */
+export function addSeatsAction(source: Pick<AddSeatsSource, "billing">, card: Pick<JoinedLicense, "licenseId">): BillingAction | null {
+  return listedAction(source.billing?.find((entry) => entry.licenseId === card.licenseId), "add_seats");
+}
+
+/** Whether the session being asked for is this license's `add_seats`: its button is the one that shows it is waiting. */
+export function addingSeatsTo(hosted: Pick<HostedAction, "request">, card: Pick<JoinedLicense, "licenseId">): boolean {
+  const request = hosted.request;
+  return request !== null && "action" in request && request.action.kind === "add_seats" && request.licenseId === card.licenseId;
 }

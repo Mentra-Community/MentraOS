@@ -18,8 +18,9 @@
  */
 
 import { MAX_SEAT_ASSIGNMENTS, type MemberView } from "@mentra/workspace-contract";
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { WorkspaceApi } from "../../api";
+import { workspaceScope } from "../../billing-scope";
 import { fitFor } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { useSeatMutation } from "../../queries";
@@ -27,8 +28,8 @@ import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Dialog } from "../../ui/dialog";
-import { AlertText } from "../common";
-import { HostedPageButton, memberLabel, SeatErrorNotice, useAddSeats, type HeldLicense } from "./parts";
+import { HostedFeedback, useHostedAction } from "./hosted-action";
+import { addingSeatsTo, addSeatsAction, HostedPageButton, memberLabel, SeatErrorNotice, type AddSeatsSource, type HeldLicense } from "./parts";
 import { ProductIcon } from "./product";
 
 export interface AssignLicensesDialogProps {
@@ -41,9 +42,8 @@ export interface AssignLicensesDialogProps {
   people: readonly MemberView[];
   /** The licenses the workspace holds, in the order to show them. */
   cards: readonly HeldLicense[];
-  /** Whether "Add seats ↗" is offered for the license: billing lists `add_seats` for it and the host can start it. */
-  canAddSeats(card: HeldLicense): boolean;
-  onAddSeats?(licenseId: string): unknown;
+  /** What "Add seats ↗" needs: it is offered for a license only where `addSeats.billing` lists `add_seats` for it. */
+  addSeats: AddSeatsSource;
   /** Every checked seat was assigned. */
   onAssigned(): void;
 }
@@ -63,19 +63,19 @@ function AssignBody({
   workspaceId,
   people,
   cards,
-  canAddSeats,
-  onAddSeats,
+  addSeats,
   onAssigned,
 }: Omit<AssignLicensesDialogProps, "open">) {
   // What the person turned off. A row is checked when it fits and wasn't turned off, so one that stops fitting
   // (the counts were read again) unchecks itself, and one that fits again goes back on.
   const [unchecked, setUnchecked] = useState<ReadonlySet<string>>(new Set());
   const assign = useSeatMutation(api, workspaceId, (pairs: { licenseId: string; membershipId: string }[]) => api.assignSeats(workspaceId, pairs));
-  const add = useAddSeats(onAddSeats);
+  const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
+  const hosted = useHostedAction({ billing: addSeats.billingApi, scope, navigateOut: addSeats.navigateOut, api });
 
   const rows = cards.map((card) => {
     const fit = fitFor(card.license, people);
-    return { card, fit, checked: fit.ok && !unchecked.has(card.licenseId) };
+    return { card, fit, checked: fit.ok && !unchecked.has(card.licenseId), action: addSeatsAction(addSeats, card) };
   });
   const chosen = rows.filter((row) => row.checked);
   const pairs = chosen.flatMap(({ card, fit }) => fit.recipients.map((person) => ({ licenseId: card.licenseId, membershipId: person.membershipId })));
@@ -87,16 +87,18 @@ function AssignBody({
   return (
     <>
       <ul className="space-y-2">
-        {rows.map(({ card, fit, checked }) => (
+        {rows.map(({ card, fit, checked, action }) => (
           <AssignRow
             key={card.licenseId}
             card={card}
-            note={t.fit.line(fit, { nameOf: memberLabel, canAddSeats: canAddSeats(card) })}
+            note={t.fit.line(fit, { nameOf: memberLabel, canAddSeats: action !== null })}
             checked={checked}
             blocked={!fit.ok}
             // Adding seats helps when there aren't enough, not when everyone chosen already has one.
-            addSeats={(fit.kind === "short" || fit.kind === "full") && canAddSeats(card)}
-            addPending={add.pending === card.licenseId}
+            addSeats={(fit.kind === "short" || fit.kind === "full") && action !== null}
+            newTab={action?.returns === false}
+            addPending={addingSeatsTo(hosted, card)}
+            addDisabled={hosted.pending !== null}
             disabled={assign.isPending}
             onToggle={(on) =>
               setUnchecked((current) => {
@@ -106,12 +108,14 @@ function AssignBody({
                 return next;
               })
             }
-            onAddSeats={() => add.run(card)}
+            onAddSeats={() => {
+              if (action) hosted.run({ action, licenseId: card.licenseId, name: card.name });
+            }}
           />
         ))}
       </ul>
       <SeatErrorNotice error={assign.error} />
-      {add.message ? <AlertText>{add.message}</AlertText> : null}
+      <HostedFeedback action={hosted} />
       <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
         <span data-slot="assign-footer" className="text-muted-foreground text-sm">
           {t.assign.footer(seats)}
@@ -146,7 +150,9 @@ function AssignRow({
   checked,
   blocked,
   addSeats,
+  newTab,
   addPending,
+  addDisabled,
   disabled,
   onToggle,
   onAddSeats,
@@ -156,7 +162,11 @@ function AssignRow({
   checked: boolean;
   blocked: boolean;
   addSeats: boolean;
+  /** The action doesn't return to the portal. */
+  newTab: boolean;
   addPending: boolean;
+  /** A hosted-page request is out: no other can start. */
+  addDisabled: boolean;
   disabled: boolean;
   onToggle(on: boolean): void;
   onAddSeats(): void;
@@ -189,7 +199,7 @@ function AssignRow({
           </span>
         </label>
         {addSeats ? (
-          <HostedPageButton pending={addPending} onClick={onAddSeats}>
+          <HostedPageButton newTab={newTab} pending={addPending} disabled={addDisabled} onClick={onAddSeats}>
             {t.actions.addSeats}
           </HostedPageButton>
         ) : null}

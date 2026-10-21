@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { BillingCatalog, BillingStatus } from "@mentra/workspace-contract/portal-billing";
 import {
   ACCOUNT_SCOPE,
+  BillingContractError,
   BillingRefusedError,
   BillingUnavailableError,
   billingErrorMessage,
@@ -188,6 +189,25 @@ describe("createBillingApi: answers that don't match the contract", () => {
     const billing = createBillingApi({ fetch: rec.fetch, locale: "en-US" });
     await expect(billing.status(WORKSPACE, {})).rejects.toBeInstanceOf(BillingUnavailableError);
     await expect(billing.status(WORKSPACE, {})).rejects.toBeInstanceOf(BillingUnavailableError);
+  });
+
+  test("a mismatch (and a url the portal won't follow) is a BillingContractError, which a dropped connection or a proxy's page is not", async () => {
+    const rec = recordingFetch(
+      Response.json({ locale: "en", products: [{ product: "p" }] }),
+      Response.json({ url: "javascript:alert(1)" }),
+      new Response("<html>bad gateway</html>", { status: 200 }),
+      new Response("<html>bad gateway</html>", { status: 502 }),
+    );
+    const billing = createBillingApi({ fetch: rec.fetch, locale: "en-US" });
+    const errors = [
+      await billing.catalog(WORKSPACE).catch((e: unknown) => e),
+      await billing.session(WORKSPACE, { action: "cancel" }).catch((e: unknown) => e),
+      await billing.status(WORKSPACE, {}).catch((e: unknown) => e),
+      await billing.status(WORKSPACE, {}).catch((e: unknown) => e),
+    ];
+    // Every one is "unavailable" to a screen, but only the first two would be answered the same way again.
+    expect(errors.map((error) => error instanceof BillingUnavailableError)).toEqual([true, true, true, true]);
+    expect(errors.map((error) => error instanceof BillingContractError)).toEqual([true, true, false, false]);
   });
 
   test("a dropped connection and a proxy's error page are 'unavailable' too, not a refusal", async () => {

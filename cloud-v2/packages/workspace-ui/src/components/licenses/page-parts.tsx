@@ -16,6 +16,30 @@ import { Card } from "../../ui/card";
 import { HostedFeedback, type HostedAction } from "./hosted-action";
 import { HostedPageButton } from "./parts";
 
+/** What a page reads of a query to tell whether it has answered, failed or is still on its way. */
+interface ReadResult {
+  data: unknown;
+  isError: boolean;
+  isFetching: boolean;
+  /** When it last failed, or 0: a refetch does not clear it (it is cleared by an answer or by the query being reset). */
+  errorUpdatedAt: number;
+}
+
+/**
+ * Whether a read has no answer and has failed, and stays failed while it is asked again. A refetch that failed after an
+ * answer keeps the answer (it is not "failed" here); but a read that never answered is put back to "pending" by TanStack
+ * Query the moment it is refetched, with its error dropped, so `isError` alone would turn a failed page back into
+ * "Loading…" for as long as every retry and every purchase poll is out. `errorUpdatedAt` survives the refetch, so the
+ * page keeps its "unavailable" card, with Retry, until a read answers.
+ */
+export const readFailed = (result: ReadResult): boolean => result.data === undefined && (result.isError || result.errorUpdatedAt > 0);
+
+/** Whether a read that is wanted has no answer yet and has never failed. */
+export const readWaiting = (result: ReadResult): boolean => result.data === undefined && !readFailed(result);
+
+/** Whether a read that has failed is being asked again (Retry, or a poll), for Retry to show it is busy. */
+export const readRetrying = (result: ReadResult): boolean => result.isFetching && readFailed(result);
+
 /**
  * The page's header actions: "Billing & invoices ↗" (only where billing lists that action for the account) and "Buy a
  * license" (only where `onBuy` is given: there is something to buy, or to add seats to). Billing's refusal of the ↗

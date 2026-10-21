@@ -147,6 +147,11 @@ const status = {
 };
 
 export const licenseStrings = {
+  /** The × that closes a dialog or a side panel, as a screen reader names it. */
+  dialog: {
+    close: "Close",
+  },
+
   count: {
     seats: (n: number) => plural(n, "seat"),
     people: (n: number) => plural(n, "person", "people"),
@@ -499,6 +504,8 @@ export const licenseStrings = {
     timeout: {
       title: (paid: boolean) => (paid ? "Your payment went through" : "Your purchase went through"),
       body: "The seats can take a few minutes to appear.",
+      /** A person's purchase has no seats. */
+      personBody: "Your license can take a few minutes to appear.",
       reload: "Reload",
     },
   },

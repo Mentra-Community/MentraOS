@@ -488,7 +488,7 @@ function SeatsLayout({
   const [open, setOpen] = useState(false);
   const holders = seatHolders(license, members);
   const controls = { holders, counts, canAssign, blocked: counts.over > 0, addSeats, onAssign };
-  const alert = error !== null ? <AlertText>{error}</AlertText> : null;
+  const alert = error !== null ? <AlertText tone="neutral">{error}</AlertText> : null;
   if (folded && !open) {
     return (
       <>

@@ -15,6 +15,18 @@ export class BillingUnavailableError extends Error {
 }
 
 /**
+ * Billing answered, but not as the contract says: the shape doesn't match, or a hosted `url` is one the portal won't
+ * follow. It is "unavailable" to a screen like any {@link BillingUnavailableError}, but asking again gets the same
+ * answer, so the query layer does not retry it.
+ */
+export class BillingContractError extends BillingUnavailableError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "BillingContractError";
+  }
+}
+
+/**
  * A refusal: `{error}` with a code (billing's own, such as `already_licensed`, or Core's, such as
  * `unauthorized`), and whatever else the body carried in `details` (`{licenseId}` for `already_licensed`).
  * `status` is the HTTP status.

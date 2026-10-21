@@ -4,6 +4,12 @@ import { licenseStrings as t, refusalMessage } from "./licenses";
 
 // The spec's copy, word for word, with names and numbers filled in. Amounts and dates arrive formatted.
 
+describe("dialogs and side panels", () => {
+  test("the label of the × that closes a dialog or a side panel", () => {
+    expect(t.dialog.close).toBe("Close");
+  });
+});
+
 describe("counts", () => {
   test("pluralise from one", () => {
     expect([t.count.seats(1), t.count.seats(5), t.count.seats(0)]).toEqual(["1 seat", "5 seats", "0 seats"]);
@@ -374,6 +380,8 @@ describe("banners", () => {
     // A checkout that collected nothing (a trial) claims no payment.
     expect(t.purchase.timeout.title(false)).toBe("Your purchase went through");
     expect(t.purchase.timeout.body).toBe("The seats can take a few minutes to appear.");
+    // A person has no seats: their line is about the license.
+    expect(t.purchase.timeout.personBody).toBe("Your license can take a few minutes to appear.");
     expect(t.purchase.timeout.reload).toBe("Reload");
   });
 

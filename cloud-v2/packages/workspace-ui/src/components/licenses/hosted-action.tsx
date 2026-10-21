@@ -63,14 +63,14 @@ export interface ActionRequest {
 }
 
 /** One press of Buy: `seats` of `product`, which billing answers with the checkout's page. A purchase always returns to the portal. */
-export interface PurchaseRequest {
+export interface HostedPurchase {
   product: string;
   seats: number;
   /** The product, as a refusal names it, where it isn't the hook's own `product`. */
   name?: string;
 }
 
-export type HostedRequest = ActionRequest | PurchaseRequest;
+export type HostedRequest = ActionRequest | HostedPurchase;
 
 /** What `HostedAction.pending` is while a purchase is being asked for (an action's is its `kind`). */
 export const PURCHASE = "purchase";
@@ -235,15 +235,15 @@ export function useHostedAction({
 }
 
 /**
- * What a hosted action left to say: billing's refusal (an alert), and the link for a tab the browser blocked.
- * Renders nothing when there is neither.
+ * What a hosted action left to say: billing's refusal (an alert, in the neutral notice style: amber on these pages is
+ * for payments), and the link for a tab the browser blocked. Renders nothing when there is neither.
  */
 export function HostedFeedback({ action }: { action: Pick<HostedAction, "error" | "link"> }) {
   const hint = useId();
   if (action.error === null && action.link === null) return null;
   return (
     <div className="space-y-3">
-      {action.error !== null ? <AlertText>{action.error}</AlertText> : null}
+      {action.error !== null ? <AlertText tone="neutral">{action.error}</AlertText> : null}
       {action.link !== null ? (
         <p className="flex flex-wrap items-center gap-2">
           <a

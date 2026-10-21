@@ -12,7 +12,7 @@ import { PersonalBillingHeaderActions, PersonalBillingView, type PersonalBilling
 import * as pkg from "./index";
 import { billingKeys, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
-import { cleanup, click, find, findAll, flush, render, setupDom, teardownDom, until } from "./test-dom";
+import { cleanup, click, find, findAll, flush, isNeutral, render, setupDom, teardownDom, until } from "./test-dom";
 import { detailFor, licenseFor, offlineApi, WORKSPACE_ID, WORKSPACE_NAME } from "./test-fixtures";
 
 beforeAll(setupDom);
@@ -296,6 +296,13 @@ const gridProducts = () => findAll("[data-product]").map((element) => element.ge
 const openDialogs = () => findAll<HTMLDialogElement>("dialog").filter((dialog) => dialog.open);
 const unavailable = () => text().includes("Licenses are unavailable") || text().includes("Billing is unavailable");
 const delay = (ms: number) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
+/** Every text the page shows from now on, one per change to it: a state it passes through for a moment is caught too. */
+function watchText() {
+  const seen: string[] = [];
+  const observer = new MutationObserver(() => seen.push(text()));
+  observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+  return { seen, stop: () => observer.disconnect() };
+}
 
 // ---- who sees what ------------------------------------------------------------------------------------------------
 
@@ -412,6 +419,14 @@ describe("who sees what", () => {
 
 // ---- when it can't be shown ---------------------------------------------------------------------------------------
 
+describe("exports", () => {
+  test("the hook's purchase request has its own name, apart from the contract's PurchaseRequest", () => {
+    // A host that imports both `@mentra/workspace-ui` and `@mentra/workspace-contract/portal-billing` can use both.
+    const bought: pkg.HostedPurchase = { product: CALL, seats: 2 };
+    expect(bought).toEqual({ product: "mentra.call.unlimited", seats: 2 });
+  });
+});
+
 describe("unavailable", () => {
   test("when the catalog fails the page says so, with Retry, and draws no cards", async () => {
     const r = rig({ catalog: new Error("catalog down") });
@@ -456,6 +471,51 @@ describe("unavailable", () => {
     expect(r.status.mock.calls.length).toBeGreaterThan(calls);
     expect(unavailable()).toBe(false);
     expect(text()).toContain("2 licenses · $295 a month in total");
+  });
+
+  test("while a failed read is read again, the page keeps saying so: Retry shows it is busy, and Loading never comes back", async () => {
+    const r = rig({ status: new Error("status down") });
+    const { client } = await mountView(r);
+    expect(unavailable()).toBe(true);
+    const hold = deferred();
+    r.gates.status = hold.promise;
+    const calls = r.status.mock.calls.length;
+    const watch = watchText();
+    await click(buttonNamed("Retry"));
+    await until(() => r.status.mock.calls.length > calls, "the read to go out again");
+    // The read is out and has no answer: the card is still the unavailable one, with Retry waiting on it.
+    expect(text()).toContain("Licenses are unavailable");
+    expect(text()).not.toContain("Loading licenses…");
+    expect(buttonNamed("Retry").hasAttribute("disabled")).toBe(true);
+    expect(buttonNamed("Retry").getAttribute("aria-busy")).toBe("true");
+    r.gates.status = null;
+    await act(async () => hold.resolve());
+    await idle(client);
+    // It failed again: the same card, with Retry free to press once more.
+    expect(text()).toContain("Licenses are unavailable");
+    expect(buttonNamed("Retry").hasAttribute("disabled")).toBe(false);
+    watch.stop();
+    expect(watch.seen.filter((shown) => shown.includes("Loading licenses…"))).toEqual([]);
+  });
+
+  test("polling after a purchase doesn't put 'Loading licenses…' back over the unavailable card, whichever read is failing", async () => {
+    const broken: Array<[string, Partial<Answers>]> = [
+      ["status", { status: new Error("status down") }],
+      ["Core's licenses", { licenses: new Error("core down"), status: statusFor({ purchase: purchaseOf() }) }],
+      ["catalog", { catalog: new Error("catalog down"), status: statusFor({ purchase: purchaseOf() }) }],
+    ];
+    for (const [what, answers] of broken) {
+      const r = rig(answers);
+      await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 5_000 });
+      expect([what, unavailable()]).toEqual([what, true]);
+      const watch = watchText();
+      const polled = r.status.mock.calls.length;
+      await until(() => r.status.mock.calls.length >= polled + 4, `${what}: four more polls`);
+      watch.stop();
+      expect([what, watch.seen.filter((shown) => shown.includes("Loading licenses…"))]).toEqual([what, []]);
+      expect([what, unavailable(), hasButton("Retry")]).toEqual([what, true, true]);
+      await cleanup();
+    }
   });
 
   test("when Core's licenses or the people can't be read, it is the same state, not cards without names", async () => {
@@ -736,7 +796,8 @@ describe("purchases", () => {
     ];
     for (const [what, answers] of broken) {
       const r = rig(answers);
-      const { client } = await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 150 });
+      // The deadline is far enough ahead (about 25 polls) that a slow machine still sees the page poll before it comes.
+      const { client } = await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 400 });
       // The page says so, and there is no banner to keep a clock.
       expect([what, text().includes("Licenses are unavailable"), findAll("[data-phase]").length]).toEqual([what, true, 0]);
       // It is still polling behind the card (this is what the deadline has to stop)...
@@ -744,7 +805,7 @@ describe("purchases", () => {
       await until(() => r.status.mock.calls.length >= early + 3, `${what}: polling behind the unavailable card`);
       // ...and stops at the deadline. (React renders what the deadline set when this act scope ends; a read still out,
       // with its retries, is let finish before counting.) After that the count stops growing.
-      await delay(250);
+      await delay(500);
       await idle(client);
       const stopped = r.status.mock.calls.length;
       const stoppedLicenses = r.listLicenses.mock.calls.length;
@@ -1003,6 +1064,38 @@ describe("the personal Billing page", () => {
     expect(text()).toContain("Billing is unavailable");
   });
 
+  test("while a failed read is read again, 'Billing is unavailable' stays up: Retry is busy, and polling never puts Loading back", async () => {
+    const r = personRig({ status: new Error("down") });
+    const { client } = await mountPersonal(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 5_000 });
+    expect(unavailable()).toBe(true);
+    const watch = watchText();
+    const polled = r.status.mock.calls.length;
+    await until(() => r.status.mock.calls.length >= polled + 4, "four more polls");
+    expect(text()).toContain("Billing is unavailable");
+    // A press of Retry while the read is out: busy, not gone.
+    const hold = deferred();
+    r.gates.status = hold.promise;
+    await click(buttonNamed("Retry"));
+    await until(() => r.status.mock.calls.length > polled + 4 && hasButton("Retry") && buttonNamed("Retry").hasAttribute("disabled"), "Retry to be busy");
+    expect(buttonNamed("Retry").getAttribute("aria-busy")).toBe("true");
+    expect(text()).not.toContain("Loading billing…");
+    r.gates.status = null;
+    await act(async () => hold.resolve());
+    await idle(client);
+    watch.stop();
+    expect(watch.seen.filter((shown) => shown.includes("Loading billing…"))).toEqual([]);
+    expect(unavailable()).toBe(true);
+  });
+
+  test("a purchase that is not ready after the minute says the license can take a few minutes, not 'the seats'", async () => {
+    const r = personRig({ status: personStatus({ purchase: purchaseOf({ quantity: 1, status: "processing", licenseId: null }) }) });
+    await mountPersonal(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 120 });
+    await until(() => text().includes("Your payment went through"), "the timeout");
+    expect(text()).toContain("Your license can take a few minutes to appear.");
+    expect(text()).not.toContain("The seats can take a few minutes to appear.");
+    expect(hasButton("Reload")).toBe(true);
+  });
+
   test("with nothing to buy and nothing held it says so, not a blank page", async () => {
     const r = personRig({ catalog: catalogOf([fleetEntry({ ownerTypes: ["workspace"] })]), status: statusFor({ licenses: [], total: null, actions: [] }) });
     await mountPersonal(r);
@@ -1138,6 +1231,8 @@ describe("the Licenses page's header actions", () => {
     await until(() => findAll('[role="alert"]').length === 1, "the refusal");
     expect(r.leave).not.toHaveBeenCalled();
     expect(buttonNamed("Billing & invoices").hasAttribute("disabled")).toBe(false);
+    // Neutral: amber on these pages is for a failed or incomplete payment, and over-assignment.
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
   });
 
   test("'Buy a license' owns its dialog: a held product offers Add seats, any other its price and Buy", async () => {

@@ -34,6 +34,7 @@ export {
 // sentences Core words it with, and the formatting in the portal's locale and the viewer's time zone.
 export {
   ACCOUNT_SCOPE,
+  BillingContractError,
   BillingRefusedError,
   BillingUnavailableError,
   billingErrorMessage,
@@ -116,7 +117,17 @@ export { Switch } from "./ui/switch";
 export { Textarea } from "./ui/textarea";
 
 // The pieces the Licenses and Billing screens are made of.
-export { Fact, HostedPageButton, isHeldLicense, Notice, Skeleton, StatusBadge, type HeldLicense, type StatusBadgeStatus } from "./components/licenses/parts";
+export {
+  Fact,
+  HostedPageButton,
+  isHeldLicense,
+  Notice,
+  Skeleton,
+  StatusBadge,
+  type AddSeatsSource,
+  type HeldLicense,
+  type StatusBadgeStatus,
+} from "./components/licenses/parts";
 
 // The portal's frame, for any Mentra site: the sidebar shell, the workspace switcher, the brand marks
 // and the one-column layout. None of it knows a router: links go through the host's link component.
@@ -174,10 +185,10 @@ export {
   type ActionRequest,
   type HostedAction,
   type HostedBilling,
+  type HostedPurchase,
   type HostedRequest,
   type NavigateOut,
   type PortalTab,
-  type PurchaseRequest,
 } from "./components/licenses/hosted-action";
 export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./components/licenses/seats";
 export { PeoplePickerDialog } from "./components/licenses/people-picker";

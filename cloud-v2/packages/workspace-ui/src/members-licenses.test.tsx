@@ -11,13 +11,15 @@ import type { CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/po
 import { act } from "react";
 import { createWorkspaceApi, type FetchLike, type WorkspaceApi } from "./api";
 import { BillingRefusedError } from "./billing-errors";
+import { workspaceScope } from "./billing-scope";
+import type { HostedBilling } from "./components/licenses/hosted-action";
 import { MemberPanel } from "./components/member-panel";
 import { WorkspaceMembersPanel, type MembersLicenses } from "./components/members-panel";
 import { formatDate } from "./lib/format";
 import { billingKeys } from "./queries";
 import { ROLE_LABELS } from "./roles";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor } from "./test-billing-fixtures";
-import { byText, cleanup, click, find, findAll, flush, press, render, setupDom, teardownDom, until } from "./test-dom";
+import { byText, cleanup, click, find, findAll, flush, isNeutral, press, render, setupDom, teardownDom, until } from "./test-dom";
 import { runtimeImports, SCHEMA_SPECIFIER } from "./test-imports";
 import { detailFor, licenseFor, seedClient, START, WORKSPACE_ID } from "./test-fixtures";
 
@@ -73,6 +75,44 @@ const exampleEntry = (product = "mentra.example", name = "Example Add-on") =>
   catalogEntryFor({ product, name, shortName: undefined, icon: null, features: [], description: "An example add-on." });
 const CATALOG: CatalogEntry[] = [catalogEntryFor(), fleetEntryFor(), exampleEntry(), exampleEntry("mentra.both", "Both Add-on")];
 
+const PAGE = "https://pay.example.test/session";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => (resolve = res));
+  return { promise, resolve };
+}
+
+/**
+ * The host's side of "Add seats ↗": billing's client (answering each session from `answer`, which a test may swap) and
+ * the two ways out of the portal, recording what happens to them in order.
+ */
+function hostRig(answer: (request: Record<string, unknown>) => Promise<{ url: string }> = async () => ({ url: PAGE })) {
+  const events: string[] = [];
+  const tab = {
+    go: mock((url: string) => void events.push(`go:${url}`)),
+    close: mock(() => void events.push("close")),
+  };
+  const openTab = mock(() => {
+    events.push("openTab");
+    return tab as typeof tab | null;
+  });
+  const leave = mock((url: string) => void events.push(`leave:${url}`));
+  const session = mock(async (_scope: unknown, request: Record<string, unknown>) => {
+    events.push(`session:${String(request.action)}`);
+    return answer(request);
+  });
+  const purchase = mock(async (_scope: unknown, _request: { product: string; seats: number }) => ({ url: PAGE }));
+  return { events, tab, openTab, leave, session, purchase, billingApi: { session, purchase } as unknown as HostedBilling, navigateOut: { leave, openTab } };
+}
+type HostRig = ReturnType<typeof hostRig>;
+
+/** Billing lists `add_seats` for these two as an action that opens its page in a tab of its own. */
+const NEW_TAB_BILLING: LicenseBilling[] = BILLING.map((entry) => ({
+  ...entry,
+  actions: entry.actions.map((action) => (action.kind === "add_seats" ? { ...action, returns: false } : action)),
+}));
+
 /** Core's side: the data the screens read, and what they write. */
 interface World {
   detail: WorkspaceDetail;
@@ -80,6 +120,8 @@ interface World {
   licenses: LicenseView[];
   /** Answers a request with this instead of serving it, when it returns a response. */
   fail?: (call: Call) => Response | undefined;
+  /** Holds every change (PATCH) back until it is released, so a test can have one in flight. */
+  gate?: Promise<void>;
 }
 
 interface Call {
@@ -112,6 +154,7 @@ function serve(world: World, calls: Call[], basePath: string): FetchLike {
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     const call = { method, path, body };
     calls.push(call);
+    if (world.gate && method === "PATCH") await world.gate;
     const forced = world.fail?.(call);
     if (forced) return forced;
     const ws = `/${WORKSPACE_ID}`;
@@ -166,8 +209,9 @@ interface MountOptions {
   /** What the host hands over; `false` is a host with no licenses source (the admin portal). */
   source?: MembersLicenses | false;
   catalog?: MembersLicenses["catalog"];
-  onAddSeats?: MembersLicenses["onAddSeats"];
   billing?: MembersLicenses["billing"];
+  /** The host's billing client and ways out; a fresh one that succeeds unless given. */
+  host?: HostRig;
   basePath?: string;
   showUserIds?: boolean;
   locale?: string;
@@ -183,10 +227,16 @@ async function mount(options: MountOptions = {}) {
   const api: WorkspaceApi = createWorkspaceApi({ basePath, fetch: serve(world, calls, basePath) });
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: false } } });
   seedClient(api, structuredClone({ detail, members: world.members, licenses: world.licenses }), client);
+  const host = options.host ?? hostRig();
   const source: MembersLicenses | undefined =
     options.source === false
       ? undefined
-      : (options.source ?? { catalog: "catalog" in options ? options.catalog : CATALOG, billing: options.billing, onAddSeats: options.onAddSeats });
+      : (options.source ?? {
+          catalog: "catalog" in options ? options.catalog : CATALOG,
+          billing: options.billing,
+          billingApi: host.billingApi,
+          navigateOut: host.navigateOut,
+        });
   const props = {
     api,
     workspaceId: WORKSPACE_ID,
@@ -208,6 +258,7 @@ async function mount(options: MountOptions = {}) {
     calls,
     api,
     client,
+    host,
     writes: () => calls.filter((call) => call.method !== "GET"),
     /** A controlled host moves to another member without closing the panel. */
     setMember: (membershipId: string | null) => mounted.rerender(element({ member: membershipId })),
@@ -449,8 +500,7 @@ describe("Assign licenses", () => {
   });
 
   test("says '2 of 3 fit: remove one or add seats.' when too many are chosen, with Add seats where billing offers it", async () => {
-    const onAddSeats = mock(async (_licenseId: string) => {});
-    await mount({ onAddSeats, billing: BILLING });
+    await mount({ billing: BILLING });
     await choose("Luis Ortega", "Amara Okafor", "Zed Young");
     await openAssign();
     const call = assignRow("Mentra Call Unlimited");
@@ -470,7 +520,7 @@ describe("Assign licenses", () => {
       licenseBillingFor({ licenseId: "lic_call", actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] }),
       licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet" }),
     ];
-    await mount({ billing, onAddSeats: async () => {} });
+    await mount({ billing });
     await choose("Luis Ortega", "Amara Okafor", "Zed Young");
     await openAssign();
     const call = assignRow("Mentra Call Unlimited");
@@ -481,19 +531,11 @@ describe("Assign licenses", () => {
     expect(byText("Add seats", "button", assignRow("Fleet"))).toBeTruthy();
   });
 
-  test("without the host's way to add seats there is no Add seats button, even where billing lists it", async () => {
-    await mount({ billing: BILLING });
-    await choose("Luis Ortega", "Amara Okafor");
-    await openAssign();
-    expect(findAll("button", assignDialog()).some((button) => button.textContent === "Add seats")).toBe(false);
-    expect(assignRow("Mentra Call Unlimited").textContent).not.toContain("Add seats");
-  });
-
   test("fails closed: without billing's list nothing offers Add seats, however the host could start it", async () => {
-    const onAddSeats = mock(async (_licenseId: string) => {});
+    const host = hostRig();
     // Not offered billing, billing still loading or failed, and billing listing nothing: none of them offers it.
     for (const billing of [undefined, null, [] as LicenseBilling[]]) {
-      await mount({ onAddSeats, billing });
+      await mount({ host, billing });
       await choose("Luis Ortega", "Amara Okafor", "Zed Young");
       await openAssign();
       const call = assignRow("Mentra Call Unlimited");
@@ -503,17 +545,17 @@ describe("Assign licenses", () => {
       expect(findAll("button", assignDialog()).some((button) => button.textContent === "Add seats")).toBe(false);
       await cleanup();
 
-      await mount({ onAddSeats, billing });
+      await mount({ host, billing });
       await openPanel("Luis Ortega");
       expect(rowText("Fleet")).toContain("All 10 seats are in use");
       expect(findAll("button", panelEl()).some((button) => button.textContent === "Add seats")).toBe(false);
       await cleanup();
     }
-    expect(onAddSeats).not.toHaveBeenCalled();
+    expect([host.session.mock.calls.length, host.openTab.mock.calls.length, host.leave.mock.calls.length]).toEqual([0, 0, 0]);
   });
 
   test("a blocked row can't be checked, and a row that fits starts checked", async () => {
-    await mount({ onAddSeats: async () => {}, billing: BILLING });
+    await mount({ billing: BILLING });
     await choose("Luis Ortega", "Amara Okafor");
     await openAssign();
     for (const name of ["Mentra Call Unlimited", "Example Add-on"]) {
@@ -529,26 +571,94 @@ describe("Assign licenses", () => {
     expect(byText("Add seats", "button", assignRow("Fleet"))).toBeTruthy();
   });
 
-  test("Add seats asks the host, shows it pending, and puts a refusal in words", async () => {
-    let refuse!: (error: unknown) => void;
-    const onAddSeats = mock(
-      (_licenseId: string) =>
-        new Promise<void>((_resolve, reject) => {
-          refuse = reject;
-        }),
-    );
-    await mount({ onAddSeats, billing: BILLING });
-    await choose("Luis Ortega");
-    await openAssign();
-    const button = byText("Add seats", "button", assignRow("Fleet"));
-    await click(button);
-    expect(onAddSeats).toHaveBeenCalledTimes(1);
-    expect(onAddSeats.mock.calls[0]![0]).toBe("lic_fleet");
-    expect(button.getAttribute("aria-busy")).toBe("true");
-    expect(button.hasAttribute("disabled")).toBe(true);
-    await act(async () => refuse(new BillingRefusedError("forbidden", {}, 403)));
-    expect(assignDialog().textContent).toContain("You don't have permission to manage billing here.");
-    expect(button.hasAttribute("disabled")).toBe(false);
+  describe("Add seats ↗ here is the same way out as every other ↗ button", () => {
+    test("it asks billing for this license's add_seats session, shows it pending, and leaves this tab for the page", async () => {
+      const hold = deferred<{ url: string }>();
+      const host = hostRig(() => hold.promise);
+      await mount({ host, billing: BILLING });
+      await choose("Luis Ortega");
+      await openAssign();
+      const button = byText("Add seats", "button", assignRow("Fleet"));
+      await click(button);
+      expect(host.session.mock.calls).toEqual([[workspaceScope(WORKSPACE_ID), { action: "add_seats", licenseId: "lic_fleet" }]]);
+      expect(button.getAttribute("aria-busy")).toBe("true");
+      expect(button.hasAttribute("disabled")).toBe(true);
+      await act(async () => hold.resolve({ url: PAGE }));
+      await flush();
+      // An action that returns leaves this tab, and opens no other.
+      expect(host.events).toEqual(["session:add_seats", `leave:${PAGE}`]);
+      expect(host.openTab).not.toHaveBeenCalled();
+      expect(button.hasAttribute("disabled")).toBe(false);
+    });
+
+    test("a refusal comes back in words, where the person is looking", async () => {
+      const host = hostRig(async () => {
+        throw new BillingRefusedError("forbidden", {}, 403);
+      });
+      await mount({ host, billing: BILLING });
+      await choose("Luis Ortega");
+      await openAssign();
+      const button = byText("Add seats", "button", assignRow("Fleet"));
+      await click(button);
+      await flush();
+      expect(assignDialog().textContent).toContain("You don't have permission to manage billing here.");
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(host.leave).not.toHaveBeenCalled();
+      expect(findAll('[role="alert"]', assignDialog()).map(isNeutral)).toEqual([true]);
+    });
+
+    test("an action billing lists with returns: false opens its tab in the click, and the tab gets the page", async () => {
+      const hold = deferred<{ url: string }>();
+      const host = hostRig(() => hold.promise);
+      await mount({ host, billing: NEW_TAB_BILLING });
+      await choose("Luis Ortega");
+      await openAssign();
+      await click(byText("Add seats", "button", assignRow("Fleet")));
+      // The tab was opened before billing was asked: a browser allows that only while the click is being handled.
+      expect(host.events).toEqual(["openTab", "session:add_seats"]);
+      await act(async () => hold.resolve({ url: PAGE }));
+      await flush();
+      expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
+      expect(host.leave).not.toHaveBeenCalled();
+    });
+
+    test("a tab that billing's refusal leaves empty is closed again", async () => {
+      const host = hostRig(async () => {
+        throw new BillingRefusedError("forbidden", {}, 403);
+      });
+      await mount({ host, billing: NEW_TAB_BILLING });
+      await choose("Luis Ortega");
+      await openAssign();
+      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await flush();
+      expect(host.events).toEqual(["openTab", "session:add_seats", "close"]);
+      expect(assignDialog().textContent).toContain("You don't have permission to manage billing here.");
+    });
+
+    test("a tab the browser blocked leaves the page as a link, in the dialog", async () => {
+      const host = hostRig();
+      host.openTab.mockImplementation(() => null);
+      await mount({ host, billing: NEW_TAB_BILLING });
+      await choose("Luis Ortega");
+      await openAssign();
+      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await flush();
+      const link = findAll<HTMLAnchorElement>("a[data-hosted-page]", assignDialog())[0]!;
+      expect(link.textContent).toContain("Open the payment page");
+      expect(link.getAttribute("href")).toBe(PAGE);
+      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+      expect(host.leave).not.toHaveBeenCalled();
+    });
+
+    test("the purchase route is never used for it", async () => {
+      const host = hostRig();
+      await mount({ host, billing: BILLING });
+      await choose("Luis Ortega");
+      await openAssign();
+      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await flush();
+      expect(host.purchase).not.toHaveBeenCalled();
+    });
   });
 
   test("the footer counts seats per product and 'Assign 3 seats' makes one request with three pairs", async () => {
@@ -620,6 +730,7 @@ describe("Assign licenses", () => {
     await until(() => assignDialog().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
 
     expect(assignDialog().textContent).toContain("Seats changed while you were choosing. Nothing was assigned. Check the counts and try again.");
+    expect(findAll('[role="alert"]', assignDialog()).map(isNeutral)).toEqual([true]);
     expect(writes()).toHaveLength(1);
     expect(world.licenses).toEqual(before);
     // The new counts: Call is full now, and so can't be checked; Example still fits.
@@ -808,6 +919,51 @@ describe("the member panel", () => {
       expect(find('[role="alert"]', panelEl()).textContent).toBe("This workspace changed. Review and try again.");
       expect(panelEl().textContent).toContain(ROLE_LABELS.developer);
     });
+
+    test("and says it in the neutral notice style: amber is for payments", async () => {
+      const { world } = await mount({ role: "admin" });
+      world.fail = (call) => (call.method === "PATCH" ? reply(409, { error: "membership_changed", error_description: "changed" }) : undefined);
+      await openPanel("Dana Reyes");
+      await itemsOf();
+      await click(byText("Member", '[role="menuitem"]'));
+      await until(() => findAll('[role="alert"]', panelEl()).length === 1, "the refusal");
+      expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
+    });
+  });
+
+  test("a members list that can't be read says so in the neutral style, with Try again", async () => {
+    const detail = detailFor("admin");
+    const world: World = { detail, members: [], licenses: [] };
+    world.fail = (call) => (call.method === "GET" && call.path.endsWith("/members") ? reply(403, { error: "forbidden" }) : undefined);
+    const api = createWorkspaceApi({ basePath: BASE, fetch: serve(world, [], BASE) });
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: false } } });
+    seedClient(api, { detail }, client);
+    await render(
+      <QueryClientProvider client={client}>
+        <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />
+      </QueryClientProvider>,
+    );
+    await until(() => findAll('[role="alert"]').length === 1, "the members list to fail");
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
+    expect(byText("Try again", "button")).toBeTruthy();
+  });
+
+  describe("a failure that outlives its panel", () => {
+    test("belongs to no panel: a role change that fails after its panel was closed shows nothing anywhere", async () => {
+      const hold = deferred<void>();
+      const { world, writes } = await mount({ role: "admin" });
+      world.gate = hold.promise;
+      world.fail = (call) => (call.method === "PATCH" ? reply(409, { error: "membership_changed", error_description: "changed" }) : undefined);
+      await openPanel("Dana Reyes");
+      await click(find("button[aria-label='Change role']", panelEl()));
+      await click(byText("Member", '[role="menuitem"]'));
+      await until(() => writes().length === 1, "the role change to be out");
+      await press(panelEl(), "Escape");
+      expect(panelIsOpen()).toBe(false);
+      await act(async () => hold.resolve());
+      await flush();
+      expect(findAll('[role="alert"]')).toHaveLength(0);
+    });
   });
 
   describe("Remove from workspace", () => {
@@ -941,8 +1097,7 @@ describe("the member panel", () => {
     });
 
     test("a full license's switch is off and disabled, in amber, with Add seats", async () => {
-      const onAddSeats = mock(async (_licenseId: string) => {});
-      await mount({ onAddSeats, billing: BILLING });
+      const { host } = await mount({ billing: BILLING });
       await openPanel("Luis Ortega");
       const fleet = rowFor("Fleet");
       expect(fleet.textContent).toContain("All 10 seats are in use");
@@ -951,16 +1106,53 @@ describe("the member panel", () => {
       expect(fleet.querySelector("[data-tone='warn']")?.textContent).toContain("All 10 seats are in use");
       const add = byText("Add seats", "button", fleet);
       await click(add);
-      expect(onAddSeats).toHaveBeenCalledTimes(1);
-      expect(onAddSeats.mock.calls[0]![0]).toBe("lic_fleet");
+      await flush();
+      expect(host.session.mock.calls).toEqual([[workspaceScope(WORKSPACE_ID), { action: "add_seats", licenseId: "lic_fleet" }]]);
+      expect(host.events).toEqual(["session:add_seats", `leave:${PAGE}`]);
     });
 
-    test("Add seats is left out where there is no way to add them, or billing lists none", async () => {
+    test("Add seats in the panel is the same way out: refusals in words, a tab for returns: false, a link when it is blocked", async () => {
+      // A refusal.
+      const refusing = hostRig(async () => {
+        throw new BillingRefusedError("forbidden", {}, 403);
+      });
+      await mount({ host: refusing, billing: BILLING });
+      await openPanel("Luis Ortega");
+      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await flush();
+      expect(panelEl().textContent).toContain("You don't have permission to manage billing here.");
+      expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
+      expect(refusing.leave).not.toHaveBeenCalled();
+      await cleanup();
+
+      // A page with no way back: the tab opens in the click.
+      const newTab = hostRig();
+      await mount({ host: newTab, billing: NEW_TAB_BILLING });
+      await openPanel("Luis Ortega");
+      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await flush();
+      expect(newTab.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
+      expect(newTab.leave).not.toHaveBeenCalled();
+      await cleanup();
+
+      // The browser blocked the tab: the page comes back as a link.
+      const blocked = hostRig();
+      blocked.openTab.mockImplementation(() => null);
+      await mount({ host: blocked, billing: NEW_TAB_BILLING });
+      await openPanel("Luis Ortega");
+      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await flush();
+      const link = findAll<HTMLAnchorElement>("a[data-hosted-page]", panelEl())[0]!;
+      expect(link.getAttribute("href")).toBe(PAGE);
+      expect(link.textContent).toContain("Open the payment page");
+    });
+
+    test("Add seats is left out where billing lists no add_seats (or nothing at all)", async () => {
       await mount();
       await openPanel("Luis Ortega");
       expect(findAll("button", rowFor("Fleet")).some((button) => button.textContent === "Add seats")).toBe(false);
       await cleanup();
-      await mount({ onAddSeats: async () => {}, billing: [licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet", actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] })] });
+      await mount({ billing: [licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet", actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] })] });
       await openPanel("Luis Ortega");
       expect(findAll("button", rowFor("Fleet")).some((button) => button.textContent === "Add seats")).toBe(false);
     });
@@ -1019,6 +1211,7 @@ describe("the member panel", () => {
       giveSeat(world, "lic_example", "wm_luis");
       await click(switchFor("Example Add-on", "Zed Young"));
       await until(() => panelEl().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
+      expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
       expect(writes().filter((call) => call.method === "PUT")).toHaveLength(1);
       await until(() => switchFor("Example Add-on", "Zed Young").disabled, "the new counts");
       expect(switchFor("Example Add-on", "Zed Young").checked).toBe(false);
