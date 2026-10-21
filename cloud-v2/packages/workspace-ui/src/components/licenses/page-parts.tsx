@@ -1,75 +1,76 @@
 /**
- * What the Licenses page and the personal Billing page share: the line above the cards (the total, "Billing &
- * invoices ↗" and "Buy a license"), the sentence a page says in place of cards, and what happens after checkout
- * (which purchase the page is showing, polling for its license, and dismissing it).
+ * What the Licenses page and the personal Billing page share: the header actions ("Billing & invoices ↗" and "Buy a
+ * license"), the sentence a page says in place of cards, and what happens after checkout (which purchase the page is
+ * showing, polling for its license, and dismissing it).
  *
  * No sentence is written here; the words are `strings/licenses.ts`.
  */
 
 import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { BillingAction, BillingTotal, PurchaseStatus } from "@mentra/workspace-contract/portal-billing";
+import type { BillingAction, CatalogEntry, KnownOwnerType, PurchaseStatus } from "@mentra/workspace-contract/portal-billing";
+import { catalogForOwner } from "../../lib/license-join";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Card } from "../../ui/card";
 import { HostedFeedback, type HostedAction } from "./hosted-action";
-import { LicensesSummary } from "./banners";
 import { HostedPageButton } from "./parts";
 
 /**
- * The line above the cards: billing's total on the left where it sent one, and on the right "Billing & invoices ↗"
- * (only where billing lists that action for the account) and "Buy a license" (only where `onBuy` is given: there is
- * something to buy, or to add seats to). Billing's refusal of the ↗ button shows under the line.
+ * The page's header actions: "Billing & invoices ↗" (only where billing lists that action for the account) and "Buy a
+ * license" (only where `onBuy` is given: there is something to buy, or to add seats to). Billing's refusal of the ↗
+ * button, or the link for a tab the browser blocked, shows under them.
  *
- * They are the page's own header actions, drawn inside the page's content: the portal's title bar belongs to the
- * portal, and which of these exist depends on what this page has read.
+ * They are drawn by the pages' header components (`WorkspaceLicensesHeaderActions`, `PersonalBillingHeaderActions`)
+ * for the host to put in its title bar, not by the views.
  */
-export function LicensesToolbar({
-  total,
-  locale,
+export function HeaderButtons({
   invoices,
   onBuy,
   hosted,
 }: {
-  /** Billing's total for the owner; null where it sent none (or for a page that has no total). */
-  total: BillingTotal | null;
-  locale: string;
   /** The account's `billing_and_invoices` as billing listed it, or null. */
   invoices: BillingAction | null;
   /** Opens "Buy a license"; null where there is nothing to open it for. */
   onBuy: (() => void) | null;
-  /** The page's hosted-page flow, which the ↗ button uses. */
+  /** The header's hosted-page flow, which the ↗ button uses. */
   hosted: HostedAction;
 }) {
+  if (invoices === null && onBuy === null) return null;
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-        <LicensesSummary total={total} locale={locale} />
-        {invoices !== null || onBuy !== null ? (
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {invoices !== null ? (
-              <HostedPageButton
-                variant="secondary"
-                newTab={invoices.returns === false}
-                pending={hosted.pending === invoices.kind}
-                disabled={hosted.pending !== null}
-                onClick={() => hosted.run({ action: invoices })}
-              >
-                {t.actions.label(invoices.kind, invoices.fallbackLabel)}
-              </HostedPageButton>
-            ) : null}
-            {onBuy !== null ? (
-              <Button type="button" onClick={onBuy}>
-                <PlusIcon aria-hidden="true" />
-                {t.page.buyALicense}
-              </Button>
-            ) : null}
-          </div>
+    <div className="flex flex-col items-end gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {invoices !== null ? (
+          <HostedPageButton
+            variant="secondary"
+            newTab={invoices.returns === false}
+            pending={hosted.pending === invoices.kind}
+            disabled={hosted.pending !== null}
+            onClick={() => hosted.run({ action: invoices })}
+          >
+            {t.actions.label(invoices.kind, invoices.fallbackLabel)}
+          </HostedPageButton>
+        ) : null}
+        {onBuy !== null ? (
+          <Button type="button" onClick={onBuy}>
+            <PlusIcon aria-hidden="true" />
+            {t.page.buyALicense}
+          </Button>
         ) : null}
       </div>
-      <HostedFeedback action={hosted} />
+      <div className="max-w-sm empty:hidden">
+        <HostedFeedback action={hosted} />
+      </div>
     </div>
   );
+}
+
+/**
+ * Whether billing offers `owner` something to do with the catalog: an entry sold to that owner type with an `offer`.
+ * It is what makes buying copy, and "Buy a license", exist for a viewer at all.
+ */
+export function hasOffer(products: readonly CatalogEntry[], owner: KnownOwnerType): boolean {
+  return catalogForOwner(products, owner).some((entry) => entry.offer !== undefined);
 }
 
 /** A sentence in place of cards, in the page's quiet type. */

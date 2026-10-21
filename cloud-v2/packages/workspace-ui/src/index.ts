@@ -213,6 +213,17 @@ export type { MembersLicenses } from "./components/members-panel";
 
 // The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each
 // needs a `QueryClientProvider` above it, the billing client, and the host's `NavigateOut`; the portal wires them to its
-// routes, its `me` and `?purchase=`.
-export { WorkspaceLicensesView, type WorkspaceLicensesViewProps } from "./components/licenses/licenses-view";
-export { PersonalBillingView, type PersonalBillingViewProps } from "./components/licenses/personal-billing-view";
+// routes, its `me` and `?purchase=`. Each has a header-actions component ("Billing & invoices ↗", "Buy a license") for the
+// host to put in its title bar; it reads under the view's keys, so nothing is requested twice.
+export {
+  WorkspaceLicensesHeaderActions,
+  WorkspaceLicensesView,
+  type WorkspaceLicensesHeaderActionsProps,
+  type WorkspaceLicensesViewProps,
+} from "./components/licenses/licenses-view";
+export {
+  PersonalBillingHeaderActions,
+  PersonalBillingView,
+  type PersonalBillingHeaderActionsProps,
+  type PersonalBillingViewProps,
+} from "./components/licenses/personal-billing-view";

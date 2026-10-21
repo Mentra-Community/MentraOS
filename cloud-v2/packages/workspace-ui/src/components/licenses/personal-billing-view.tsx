@@ -6,14 +6,14 @@
  * It needs a `QueryClientProvider` above it, like every screen of this package: it reads billing through TanStack
  * Query, and refreshes there what a purchase or a hosted page changes. The host shows it only to someone offered
  * billing, so both reads are always wanted. It draws the page's content only: the title ("Billing") and the
- * description (`licenseStrings.personal`) belong to the portal's frame, and "Billing & invoices ↗" and "Buy a
- * license" are drawn here in a line above the cards.
+ * description (`licenseStrings.personal`) belong to the portal's frame, and so do "Billing & invoices ↗" and "Buy a
+ * license": `PersonalBillingHeaderActions` is the component for the frame's title bar. It reads under the same keys as
+ * the view, owns the catalog dialog, and draws nothing where there is nothing to act on.
  *
  * - With nothing yet: "Buy a license for yourself", the products a person can buy, each with its price. Buy goes
  *   straight to payment, with no seats step.
- * - With licenses: one card each (status, Renews or Ends, cost and a "…" menu), the same amber notice and deadline
- *   as a workspace's for a failed payment, and, while there is something left to buy (a product sold to people
- *   that billing will sell), "Buy a license".
+ * - With licenses: one card each (status, Renews or Ends, cost and a "…" menu), and the same amber notice and
+ *   deadline as a workspace's for a failed payment.
  * - Back from checkout: the banner ("Payment received", then "<product> is ready"), polled like the workspace's.
  * - Billing can't be read, or an answer doesn't match the contract: "Billing is unavailable", with Retry.
  *
@@ -33,7 +33,7 @@ import { LicensesUnavailable, PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseBan
 import { canBuy, CatalogDialog, CatalogGrid } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
-import { LicensesToolbar, usePurchaseFlow } from "./page-parts";
+import { HeaderButtons, hasOffer, usePurchaseFlow } from "./page-parts";
 
 export interface PersonalBillingViewProps {
   /** The billing client: the catalog, the status, and the checkout and hosted-page sessions the ↗ buttons ask for. */
@@ -50,6 +50,17 @@ export interface PersonalBillingViewProps {
   timeoutMs?: number;
 }
 
+/** What the personal page and its header read: billing's catalog and status for the person's own account. */
+function usePersonalBilling(billing: BillingApi, purchaseId: string | null) {
+  const catalog = useQuery(billingCatalogQuery(billing, ACCOUNT_SCOPE));
+  // It keeps its last answer while it is read under another key, so nothing swaps out the cards when `?purchase=` goes.
+  const status = useQuery({ ...billingStatusQuery(billing, ACCOUNT_SCOPE, purchaseId), placeholderData: keepPreviousData });
+  const failed = [catalog, status].some((result) => result.data === undefined && result.isError);
+  const waiting = !failed && [catalog, status].some((result) => result.data === undefined);
+  const ready = catalog.data !== undefined && status.data !== undefined ? { products: catalog.data.products, status: status.data } : null;
+  return { catalog, status, state: failed ? ("unavailable" as const) : waiting ? ("loading" as const) : ("ready" as const), data: ready };
+}
+
 export function PersonalBillingView({
   billing,
   purchaseId = null,
@@ -58,11 +69,7 @@ export function PersonalBillingView({
   pollMs = PURCHASE_POLL_MS,
   timeoutMs = PURCHASE_TIMEOUT_MS,
 }: PersonalBillingViewProps) {
-  const catalog = useQuery(billingCatalogQuery(billing, ACCOUNT_SCOPE));
-  // It keeps its last answer while it is read under another key, so nothing swaps out the cards when `?purchase=` goes.
-  const status = useQuery({ ...billingStatusQuery(billing, ACCOUNT_SCOPE, purchaseId), placeholderData: keepPreviousData });
-  const hosted = useHostedAction({ billing, scope: ACCOUNT_SCOPE, navigateOut });
-  const [buying, setBuying] = useState(false);
+  const { catalog, status, state, data } = usePersonalBilling(billing, purchaseId);
   const flow = usePurchaseFlow({
     purchaseId,
     offered: true,
@@ -74,29 +81,24 @@ export function PersonalBillingView({
     onDone: onPurchaseDone,
   });
 
-  const unavailable = (
-    <LicensesUnavailable
-      personal
-      onRetry={() => {
-        void catalog.refetch();
-        void status.refetch();
-      }}
-      retrying={(catalog.isFetching && catalog.data === undefined) || (status.isFetching && status.data === undefined)}
-    />
-  );
-  const results = [catalog, status];
-  if (results.some((result) => result.data === undefined && result.isError)) return unavailable;
-  if (results.some((result) => result.data === undefined)) return <Loading>{t.personal.loading}</Loading>;
-  const products = catalog.data!.products;
-  const current = status.data!;
+  if (state === "loading") return <Loading>{t.personal.loading}</Loading>;
+  if (state === "unavailable" || data === null) {
+    return (
+      <LicensesUnavailable
+        personal
+        onRetry={() => {
+          void catalog.refetch();
+          void status.refetch();
+        }}
+        retrying={(catalog.isFetching && catalog.data === undefined) || (status.isFetching && status.data === undefined)}
+      />
+    );
+  }
+  const { products, status: current } = data;
   const locale = billing.locale;
 
   const cards = joinLicenses({ licenses: [], billing: current.licenses, catalog: products, purchase: flow.purchase, locale });
-  // Billing offers a person something when a product sold to people has an `offer`; "Buy a license" is for what is left to buy.
-  const forPeople = catalogForOwner(products, "person");
-  const offered = forPeople.some((entry) => entry.offer !== undefined);
-  const somethingToBuy = forPeople.some(canBuy);
-  const showCatalog = offered && cards.length === 0;
+  const showCatalog = hasOffer(products, "person") && cards.length === 0;
   const purchase = flow.purchase;
   const productName = purchase ? (products.find((entry) => entry.product === purchase.product)?.name ?? purchase.product) : "";
 
@@ -105,15 +107,6 @@ export function PersonalBillingView({
       {current.testMode ? <TestModeBanner testMode={current.testMode} /> : null}
       {purchase ? (
         <PurchaseBanner purchase={purchase} productName={productName} scope="person" listed onDismiss={flow.dismiss} onTimeout={flow.giveUp} timeoutMs={timeoutMs} />
-      ) : null}
-      {cards.length > 0 ? (
-        <LicensesToolbar
-          total={null}
-          locale={locale}
-          invoices={listedAction(current, "billing_and_invoices")}
-          onBuy={somethingToBuy ? () => setBuying(true) : null}
-          hosted={hosted}
-        />
       ) : null}
       {cards.map((card) => (
         <LicenseCard
@@ -131,17 +124,46 @@ export function PersonalBillingView({
         <CatalogGrid products={products} licenses={current.licenses} scope={ACCOUNT_SCOPE} billing={billing} navigateOut={navigateOut} />
       ) : null}
       {cards.length === 0 && !showCatalog ? <Restricted>{t.personal.nothingToBuy}</Restricted> : null}
-      {somethingToBuy && cards.length > 0 ? (
+    </div>
+  );
+}
+
+export type PersonalBillingHeaderActionsProps = Pick<PersonalBillingViewProps, "billing" | "purchaseId" | "navigateOut">;
+
+/**
+ * The personal Billing page's header actions, for the host to put in its title bar beside the page's title: "Billing &
+ * invoices ↗" and "Buy a license" (which opens the person's catalog as a dialog this component owns). Mount it with the
+ * same `billing` and `purchaseId` as the view: it reads through the same query keys, so each request is made once
+ * however many of the two are mounted. Like the view it needs a `QueryClientProvider` above it.
+ *
+ * It draws nothing until billing has been read, and then only for a person who holds a license: with none the page is
+ * the catalog, which has its own buying copy. "Billing & invoices" is there only once billing lists
+ * `billing_and_invoices` for the account, and "Buy a license" only while something is left to buy:
+ * `catalogForOwner(products, "person").some(canBuy)`. Billing's refusal of the ↗ button shows under the buttons.
+ */
+export function PersonalBillingHeaderActions({ billing, purchaseId = null, navigateOut }: PersonalBillingHeaderActionsProps) {
+  const { data } = usePersonalBilling(billing, purchaseId);
+  const hosted = useHostedAction({ billing, scope: ACCOUNT_SCOPE, navigateOut });
+  const [buying, setBuying] = useState(false);
+  if (data === null) return null;
+  const { products, status } = data;
+  // The same cards the page draws: the buttons are for a person who holds a license.
+  if (joinLicenses({ licenses: [], billing: status.licenses, catalog: products }).length === 0) return null;
+  const somethingToBuy = catalogForOwner(products, "person").some(canBuy);
+  return (
+    <>
+      <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={somethingToBuy ? () => setBuying(true) : null} hosted={hosted} />
+      {somethingToBuy ? (
         <CatalogDialog
           open={buying}
           onClose={() => setBuying(false)}
           products={products}
-          licenses={current.licenses}
+          licenses={status.licenses}
           scope={ACCOUNT_SCOPE}
           billing={billing}
           navigateOut={navigateOut}
         />
       ) : null}
-    </div>
+    </>
   );
 }
