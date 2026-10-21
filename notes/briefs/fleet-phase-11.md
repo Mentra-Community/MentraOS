@@ -89,6 +89,14 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 9. CLI `workspace list`/`use` are gone; ship the CLI only after `scripts/one-workspace-cleanup.ts` has run, or
    legacy multi-workspace accounts are locked out of the CLI.
 10. `/api/portal/fleet` accepts the portal session cookie only (`via === "session"`); a bearer is 403 even if valid.
+11. Portal Fleet host: `cloud-v2/websites/portal/src/pages/fleet.tsx` (`/w/<id>/fleet?fleet=<path>`, apiBase
+    `/api/portal/fleet/workspaces/<id>`, `/me?workspaceId=` gives an Org Admin exactly that workspace). `PortalMe` fields
+    are optional: a Core that predates them reads as "Fleet not installed". `queryFn` must not be passed `fetchPortalMe`
+    directly (react-query hands it a context object).
+12. Portal `public/_headers` CSP is new and unverified in a browser; check sign-in, billing and Fleet load under it.
+13. Admin Workspaces link needs build-time `PORTAL_URL` (set by `scripts/deploy-pages.ts`, public, not a Doppler key).
+14. Portal Decline is `POST /api/{portal/,}workspaces/invitations/decline` (shared handler); the Mentra App uses
+    `/api/client/workspaces/invitations/:id/decline`. Both call `declineInvitation`.
 
 ## Open items
 
