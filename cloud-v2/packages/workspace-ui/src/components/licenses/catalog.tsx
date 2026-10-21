@@ -13,30 +13,31 @@
  *
  * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Add seats, Continue to
  * payment, and a person's Buy, which asks for their one seat and goes straight to payment (a person never sees the
- * seats step). A workspace's Buy only opens the seats step, so it is a plain button. Where the browser goes is the
- * host's `navigateOut`; the client has already refused any address the contract doesn't accept.
+ * seats step). A workspace's Buy only opens the seats step, so it is a plain button. They all leave the way every
+ * other billing button does, through `useHostedAction` and the host's `NavigateOut`: the client has already refused
+ * any address the contract doesn't accept, and an Add seats billing lists with `returns: false` opens its tab in the
+ * click.
  *
  * Words are in `strings/licenses.ts`. This file imports the client's type only, never its schemas.
  */
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { isPerSeat, type Buy, type CatalogEntry, type LicenseBilling, type Offer, type Price } from "@mentra/workspace-contract/portal-billing";
+import { isPerSeat, type Buy, type BillingAction, type CatalogEntry, type LicenseBilling, type Offer, type Price } from "@mentra/workspace-contract/portal-billing";
 import { CircleCheckIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
+import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
-import { BillingRefusedError, billingErrorMessage } from "../../billing-errors";
 import { ownerTypeOf, type BillingScope } from "../../billing-scope";
 import { formatMoney, formatRecurrence, priceLine, renewalCadence, taxNote } from "../../lib/billing-format";
 import { catalogForOwner, listedAction } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
-import { billingKeys } from "../../queries";
 import { licenseStrings as t, type LicenseScope } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Card } from "../../ui/card";
 import { Dialog } from "../../ui/dialog";
 import { Label } from "../../ui/label";
 import { Stepper } from "../../ui/stepper";
+import { HostedFeedback, useHostedAction, type HostedAction, type HostedRequest, type NavigateOut } from "./hosted-action";
 import { HostedPageButton } from "./parts";
 import { ProductIcon } from "./product";
 
@@ -47,8 +48,10 @@ export type CatalogBilling = Pick<BillingApi, "locale" | "purchase" | "session">
 export interface BuyingHost {
   billing: CatalogBilling;
   scope: BillingScope;
-  /** Sends the browser to a hosted page. Billing's client only ever answers an address the contract accepts. */
-  navigateOut(url: string): void;
+  /** How the browser leaves for a hosted page. Billing's client only ever answers an address the contract accepts. */
+  navigateOut: NavigateOut;
+  /** Core's workspace API, so that coming back from a page that doesn't return reads the workspace's licenses again too. */
+  api?: Pick<WorkspaceApi, "basePath">;
 }
 
 export interface CatalogProps extends BuyingHost {
@@ -92,71 +95,21 @@ function seatBounds(buy: Buy, price: Price): SeatBounds {
 
 // ---- asking billing ---------------------------------------------------------------------------------------------
 
-type Request =
-  | { kind: "buy"; entry: CatalogEntry; seats: number }
-  | { kind: "seats"; entry: CatalogEntry; license: LicenseBilling };
+// Each container below (the grid, the dialog's rows, the seats step) has its own `useHostedAction(host)`: one request
+// at a time to billing, for a purchase or for Add seats, and on to the page it answers. A refusal is drawn where its
+// container is, and goes with it.
 
-interface Hosted {
-  /** What billing is being asked now, if anything: nothing else is started meanwhile. */
-  busy: { kind: Request["kind"]; product: string } | null;
-  /** The last refusal in words, with billing's code when it sent one. A new request clears it. */
-  failure: { message: string; code: string | null } | null;
-  buy(entry: CatalogEntry, seats: number): void;
-  addSeats(license: LicenseBilling, entry: CatalogEntry): void;
-}
+/** Add seats on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
+const addSeatsOf = (hosted: HostedAction) => (license: LicenseBilling, entry: CatalogEntry, action: BillingAction) =>
+  hosted.run({ action, licenseId: license.licenseId, name: entry.name });
 
-/**
- * One request at a time to billing for the hosted page of a purchase or of Add seats, and on to it. A request the
- * component has let go of (its dialog closed) doesn't send the browser anywhere when it answers. `already_licensed`
- * means the catalog the screen shows is stale, so billing's answers for the owner are read again.
- */
-function useHosted({ billing, scope, navigateOut }: BuyingHost): Hosted {
-  const client = useQueryClient();
-  // Set the moment a request starts: the mutation's own `isPending` reaches the screen a tick later, and a second
-  // press in that tick must not start a second checkout.
-  const inFlight = useRef(false);
-  const mutation = useMutation({
-    mutationFn: (request: Request) =>
-      request.kind === "buy"
-        ? billing.purchase(scope, { product: request.entry.product, seats: request.seats })
-        : billing.session(scope, { action: "add_seats", licenseId: request.license.licenseId }),
-    onError: (error, request) => {
-      if (request.kind === "buy" && error instanceof BillingRefusedError && error.code === "already_licensed") {
-        void client.invalidateQueries({ queryKey: billingKeys.owner(scope) });
-      }
-    },
-    onSettled: () => {
-      inFlight.current = false;
-    },
-  });
-  const go = (request: Request) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    mutation.mutate(request, { onSuccess: (answer) => navigateOut(answer.url) });
-  };
-  return {
-    busy: mutation.isPending ? { kind: mutation.variables.kind, product: mutation.variables.entry.product } : null,
-    failure: mutation.isError
-      ? {
-          message: billingErrorMessage(mutation.error, { product: mutation.variables.entry.name, scope: ownerTypeOf(scope) }),
-          code: mutation.error instanceof BillingRefusedError ? mutation.error.code : null,
-        }
-      : null,
-    buy: (entry, seats) => go({ kind: "buy", entry, seats }),
-    addSeats: (license, entry) => go({ kind: "seats", entry, license }),
-  };
+/** Whether the request out is the one that `entry`'s button (Buy, or Add seats on its held `license`) made. */
+function isPendingFor(request: HostedRequest | null, entry: CatalogEntry, held: LicenseBilling | null): boolean {
+  if (request === null) return false;
+  return "action" in request ? held !== null && request.licenseId === held.licenseId : request.product === entry.product;
 }
 
 // ---- small pieces -----------------------------------------------------------------------------------------------
-
-/** A refusal in words. It is an alert: the person asked for something and it didn't happen. */
-function RefusalNotice({ message }: { message: string }) {
-  return (
-    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-      {message}
-    </p>
-  );
-}
 
 /** The license the owner holds of a product, preferring one billing lists `add_seats` for. */
 function heldOf(licenses: readonly LicenseBilling[] | undefined, product: string): LicenseBilling | null {
@@ -234,7 +187,7 @@ function AddSeatsButton({
   license: LicenseBilling;
   busy: boolean;
   pending: boolean;
-  onAddSeats(license: LicenseBilling, entry: CatalogEntry): void;
+  onAddSeats(license: LicenseBilling, entry: CatalogEntry, action: BillingAction): void;
   describedBy: string;
   size: "default" | "sm";
   className?: string;
@@ -247,10 +200,11 @@ function AddSeatsButton({
       variant="secondary"
       size={size}
       className={className}
+      newTab={action.returns === false}
       pending={pending}
       disabled={busy}
       aria-describedby={describedBy}
-      onClick={() => onAddSeats(license, entry)}
+      onClick={() => onAddSeats(license, entry, action)}
     >
       {t.actions.label(action.kind, action.fallbackLabel)}
     </HostedPageButton>
@@ -283,7 +237,8 @@ export interface CatalogCardProps {
   /** It is this card's own request that is out. */
   pending: boolean;
   onBuy(entry: CatalogEntry): void;
-  onAddSeats(license: LicenseBilling, entry: CatalogEntry): void;
+  /** Add seats, by the `add_seats` action billing listed for the held license. */
+  onAddSeats(license: LicenseBilling, entry: CatalogEntry, action: BillingAction): void;
 }
 
 /**
@@ -353,19 +308,19 @@ export function CatalogCard({ entry, scope, locale, held, busy, pending, onBuy, 
  * product the scope's owner type is offered. It draws nothing when there is no such product. A workspace's Buy opens
  * the seats step; a person's goes straight to payment.
  */
-export function CatalogGrid({ products, licenses, scope, billing, navigateOut, memberCount }: CatalogProps) {
-  const owner = ownerTypeOf(scope);
+export function CatalogGrid({ products, licenses, memberCount, ...host }: CatalogProps) {
+  const owner = ownerTypeOf(host.scope);
   const entries = catalogForOwner(products, owner);
-  const hosted = useHosted({ billing, scope, navigateOut });
+  const hosted = useHostedAction(host);
   const [buying, setBuying] = useState<CatalogEntry | null>(null);
   const headingId = useId();
   if (entries.length === 0) return null;
   const copy = t.catalog[owner];
-
+  const onAddSeats = addSeatsOf(hosted);
   const onBuy = (entry: CatalogEntry) => {
     if (!canBuy(entry)) return;
     if (owner === "workspace") setBuying(entry);
-    else hosted.buy(entry, seatBounds(entry.offer.buy, entry.offer.price).initial);
+    else hosted.run({ product: entry.product, seats: seatBounds(entry.offer.buy, entry.offer.price).initial, name: entry.name });
   };
 
   return (
@@ -376,29 +331,33 @@ export function CatalogGrid({ products, licenses, scope, billing, navigateOut, m
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">{copy.intro}</p>
       </div>
-      {hosted.failure ? <RefusalNotice message={hosted.failure.message} /> : null}
+      <HostedFeedback action={hosted} />
       <div className={cn("grid gap-4", entries.length >= 3 ? "md:grid-cols-3" : "md:grid-cols-2")}>
-        {entries.map((entry) => (
-          <CatalogCard
-            key={entry.product}
-            entry={entry}
-            scope={owner}
-            locale={billing.locale}
-            held={heldOf(licenses, entry.product)}
-            busy={hosted.busy !== null}
-            pending={hosted.busy?.product === entry.product}
-            onBuy={onBuy}
-            onAddSeats={hosted.addSeats}
-          />
-        ))}
+        {entries.map((entry) => {
+          const held = heldOf(licenses, entry.product);
+          return (
+            <CatalogCard
+              key={entry.product}
+              entry={entry}
+              scope={owner}
+              locale={host.billing.locale}
+              held={held}
+              busy={hosted.pending !== null}
+              pending={isPendingFor(hosted.request, entry, held)}
+              onBuy={onBuy}
+              onAddSeats={onAddSeats}
+            />
+          );
+        })}
       </div>
       {owner === "workspace" ? (
         <BuyDialog
           open={buying !== null}
           product={buying}
-          billing={billing}
-          scope={scope}
-          navigateOut={navigateOut}
+          billing={host.billing}
+          scope={host.scope}
+          navigateOut={host.navigateOut}
+          api={host.api}
           memberCount={memberCount}
           onClose={() => setBuying(null)}
         />
@@ -441,31 +400,40 @@ function CatalogRow({
 }
 
 /** The rows, and the last refusal above them. Drawn inside the dialog, so each opening starts without the last one's. */
-function CatalogRows({ products, licenses, scope, billing, navigateOut, onChoose }: CatalogProps & { onChoose(entry: CatalogEntry): void }) {
-  const owner = ownerTypeOf(scope);
-  const hosted = useHosted({ billing, scope, navigateOut });
+function CatalogRows({
+  products,
+  licenses,
+  host,
+  onChoose,
+}: Pick<CatalogProps, "products" | "licenses"> & { host: BuyingHost; onChoose(entry: CatalogEntry): void }) {
+  const owner = ownerTypeOf(host.scope);
+  const hosted = useHostedAction(host);
+  const onAddSeats = addSeatsOf(hosted);
   const onBuy = (entry: CatalogEntry) => {
     if (!canBuy(entry)) return;
     if (owner === "workspace") onChoose(entry);
-    else hosted.buy(entry, seatBounds(entry.offer.buy, entry.offer.price).initial);
+    else hosted.run({ product: entry.product, seats: seatBounds(entry.offer.buy, entry.offer.price).initial, name: entry.name });
   };
   return (
     <div className="space-y-3">
-      {hosted.failure ? <RefusalNotice message={hosted.failure.message} /> : null}
+      <HostedFeedback action={hosted} />
       <ul className="space-y-2">
-        {catalogForOwner(products, owner).map((entry) => (
-          <CatalogRow
-            key={entry.product}
-            entry={entry}
-            owner={owner}
-            locale={billing.locale}
-            held={heldOf(licenses, entry.product)}
-            busy={hosted.busy !== null}
-            pending={hosted.busy?.product === entry.product}
-            onBuy={onBuy}
-            onAddSeats={hosted.addSeats}
-          />
-        ))}
+        {catalogForOwner(products, owner).map((entry) => {
+          const held = heldOf(licenses, entry.product);
+          return (
+            <CatalogRow
+              key={entry.product}
+              entry={entry}
+              owner={owner}
+              locale={host.billing.locale}
+              held={held}
+              busy={hosted.pending !== null}
+              pending={isPendingFor(hosted.request, entry, held)}
+              onBuy={onBuy}
+              onAddSeats={onAddSeats}
+            />
+          );
+        })}
       </ul>
     </div>
   );
@@ -476,8 +444,8 @@ function CatalogRows({ products, licenses, scope, billing, navigateOut, onChoose
  * Add seats instead of Buy (and says "You have it" for a person); any other shows its price and Buy. A workspace's
  * Buy opens the seats step over the list.
  */
-export function CatalogDialog({ open, onClose, ...props }: CatalogProps & { open: boolean; onClose(): void }) {
-  const owner = ownerTypeOf(props.scope);
+export function CatalogDialog({ open, onClose, products, licenses, memberCount, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
+  const owner = ownerTypeOf(host.scope);
   const [buying, setBuying] = useState<CatalogEntry | null>(null);
   useEffect(() => {
     if (!open) setBuying(null);
@@ -491,16 +459,17 @@ export function CatalogDialog({ open, onClose, ...props }: CatalogProps & { open
         description={owner === "workspace" ? t.catalog.dialog.description : t.catalog.dialog.personDescription}
         className="max-w-[560px]"
       >
-        <CatalogRows {...props} onChoose={setBuying} />
+        <CatalogRows products={products} licenses={licenses} host={host} onChoose={setBuying} />
       </Dialog>
       {owner === "workspace" ? (
         <BuyDialog
           open={open && buying !== null}
           product={buying}
-          billing={props.billing}
-          scope={props.scope}
-          navigateOut={props.navigateOut}
-          memberCount={props.memberCount}
+          billing={host.billing}
+          scope={host.scope}
+          navigateOut={host.navigateOut}
+          api={host.api}
+          memberCount={memberCount}
           onClose={() => setBuying(null)}
         />
       ) : null}
@@ -539,11 +508,11 @@ function BuyForm({
   const locale = host.billing.locale;
   const bounds = seatBounds(buy, price);
   const [seats, setSeats] = useState(bounds.initial);
-  const hosted = useHosted(host);
+  const hosted = useHostedAction(host);
   const stepperId = useId();
-  const pending = hosted.busy !== null;
+  const pending = hosted.pending !== null;
   // Held now, as billing has just said: asking again would only be refused again.
-  const held = hosted.failure?.code === "already_licensed";
+  const held = hosted.code === "already_licensed";
 
   let terms: ReactNode;
   let sum: string | null = null;
@@ -594,7 +563,7 @@ function BuyForm({
           </div>
         </div>
         {sum !== null ? <p className="border-t pt-4 text-sm font-semibold tabular-nums">{sum}</p> : null}
-        {hosted.failure ? <RefusalNotice message={hosted.failure.message} /> : null}
+        <HostedFeedback action={hosted} />
       </div>
       <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
         <span className="text-muted-foreground max-w-[220px] text-xs leading-4">{t.buy.payNote}</span>
@@ -602,7 +571,7 @@ function BuyForm({
           <Button type="button" variant="secondary" onClick={onClose}>
             {t.buy.cancel}
           </Button>
-          <HostedPageButton variant="default" size="default" pending={pending} disabled={held} onClick={() => hosted.buy(product, seats)}>
+          <HostedPageButton variant="default" size="default" pending={pending} disabled={held} onClick={() => hosted.run({ product: product.product, seats, name: product.name })}>
             {t.buy.continue}
           </HostedPageButton>
         </div>

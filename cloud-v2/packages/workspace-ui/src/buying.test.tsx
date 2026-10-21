@@ -128,7 +128,6 @@ const card = (product: string) => find(`[data-product="${product}"]`);
 const buttons = (within: ParentNode = document) => findAll<HTMLButtonElement>("button", within);
 const buttonNamed = (label: string, within: ParentNode = document) => byText<HTMLButtonElement>(label, "button", within);
 const stepper = (within: ParentNode = document) => find<HTMLInputElement>('[role="spinbutton"]', within);
-
 interface GridOptions {
   products?: readonly CatalogEntry[];
   licenses?: readonly LicenseBilling[];
@@ -137,8 +136,23 @@ interface GridOptions {
   memberCount?: number;
 }
 
+/** The host's two ways out, recording what is done with them: `leave` sends this tab on, `openTab` opens another in the click. */
+function ways(options: { blocked?: boolean } = {}) {
+  const events: string[] = [];
+  const tab = {
+    go: mock((url: string) => void events.push(`go:${url}`)),
+    close: mock(() => void events.push("close")),
+  };
+  const leave = mock((url: string) => void events.push(`leave:${url}`));
+  const openTab = mock(() => {
+    events.push("openTab");
+    return options.blocked ? null : tab;
+  });
+  return { events, tab, leave, openTab, navigateOut: { leave, openTab } };
+}
+
 function grid(options: GridOptions = {}) {
-  const navigateOut = mock((_url: string) => {});
+  const out = ways();
   const stub = stubBilling();
   const ui = (
     <CatalogGrid
@@ -146,11 +160,11 @@ function grid(options: GridOptions = {}) {
       licenses={options.licenses}
       scope={options.scope ?? WS}
       billing={options.billing ?? stub.billing}
-      navigateOut={navigateOut}
+      navigateOut={out.navigateOut}
       memberCount={options.memberCount}
     />
   );
-  return { ui, navigateOut, ...stub };
+  return { ui, ...out, ...stub };
 }
 
 // ---- the catalog grid ---------------------------------------------------------------------------------------------
@@ -299,18 +313,37 @@ describe("a product the owner holds", () => {
   });
 
   test("Add seats asks billing for add_seats on that license and goes to its page", async () => {
-    const { ui, session, navigateOut } = grid({ licenses: [licenseBillingFor({ licenseId: "lic_call_9", quantity: 5 })] });
+    const { ui, session, leave, openTab } = grid({ licenses: [licenseBillingFor({ licenseId: "lic_call_9", quantity: 5 })] });
     await mount(ui);
     await click(buttonNamed("Add seats"));
     await settle();
     expect(session).toHaveBeenCalledTimes(1);
     expect(session.mock.calls[0]).toEqual([WS, { action: "add_seats", licenseId: "lic_call_9" }]);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
+    // It returns to the portal, so no other tab is opened for it.
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  test("only the button that was pressed waits, when several products are held", async () => {
+    const pending = deferred<{ url: string }>();
+    const both = [licenseBillingFor({ quantity: 5 }), licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet", quantity: 10 })];
+    const { ui, session } = grid({ licenses: both });
+    session.mockImplementation(() => pending.promise);
+    await mount(ui);
+    await click(buttonNamed("Add seats", card("mentra.fleet")));
+    await settle();
+    expect(session.mock.calls).toEqual([[WS, { action: "add_seats", licenseId: "lic_fleet" }]]);
+    expect(buttonNamed("Add seats", card("mentra.fleet")).getAttribute("aria-busy")).toBe("true");
+    const other = buttonNamed("Add seats", card("mentra.call.unlimited"));
+    expect(other.disabled).toBe(true);
+    expect(other.hasAttribute("aria-busy")).toBe(false);
+    await act(async () => pending.reject(new BillingRefusedError("unknown_action", {}, 400)));
+    await settle();
   });
 
   test("while Add seats is being requested nothing else can be bought, and a refusal is worded", async () => {
     const pending = deferred<{ url: string }>();
-    const { ui, session, navigateOut } = grid({ licenses: held });
+    const { ui, session, leave } = grid({ licenses: held });
     session.mockImplementation(() => pending.promise);
     await mount(ui);
     await click(buttonNamed("Add seats"));
@@ -322,8 +355,88 @@ describe("a product the owner holds", () => {
     await act(async () => pending.reject(new BillingRefusedError("unknown_action", {}, 400)));
     await settle();
     expect(find('[role="alert"]').textContent).toBe("That isn't available for this license any more. Reload the page and try again.");
-    expect(navigateOut).not.toHaveBeenCalled();
+    expect(leave).not.toHaveBeenCalled();
     expect(buttonNamed("Add seats").disabled).toBe(false);
+  });
+});
+
+// ---- Add seats on a page that doesn't return ---------------------------------------------------------------------
+
+describe("Add seats when billing lists it with returns: false", () => {
+  const detached = () => [
+    licenseBillingFor({
+      licenseId: "lic_call_9",
+      quantity: 5,
+      actions: [{ kind: "add_seats", fallbackLabel: "Add seats", returns: false }],
+    }),
+  ];
+  const INVOICE = "https://invoice.example.test/i/9";
+
+  test("opens a tab in the click itself, asks for the session, then sends that tab there", async () => {
+    const pending = deferred<{ url: string }>();
+    const { ui, session, events, leave, tab, openTab } = grid({ licenses: detached() });
+    session.mockImplementation(() => pending.promise);
+    await mount(ui);
+    const button = buttonNamed("Add seats");
+    let openedInTheClick = -1;
+    // Only the synchronous part of the click runs inside this callback: a browser allows the tab only there.
+    act(() => {
+      button.click();
+      openedInTheClick = openTab.mock.calls.length;
+    });
+    expect(openedInTheClick).toBe(1);
+    expect(events).toEqual(["openTab"]);
+    await settle();
+    expect(session.mock.calls).toEqual([[WS, { action: "add_seats", licenseId: "lic_call_9" }]]);
+    await act(async () => pending.resolve({ url: INVOICE }));
+    await settle();
+    expect(events).toEqual(["openTab", `go:${INVOICE}`]);
+    expect(leave).not.toHaveBeenCalled();
+    expect(tab.close).not.toHaveBeenCalled();
+  });
+
+  test("says to a screen reader that it opens in a new tab", async () => {
+    await mount(grid({ licenses: detached() }).ui);
+    const hint = document.getElementById(buttonNamed("Add seats").getAttribute("aria-describedby")!.split(" ").at(-1)!);
+    expect(hint?.textContent).toBe("Opens a secure billing page in a new tab");
+  });
+
+  test("a session that fails closes the tab and says why", async () => {
+    const { ui, session, events, leave } = grid({ licenses: detached() });
+    session.mockImplementation(async () => {
+      throw new BillingRefusedError("unknown_action", {}, 400);
+    });
+    await mount(ui);
+    await click(buttonNamed("Add seats"));
+    await settle();
+    expect(events).toEqual(["openTab", "close"]);
+    expect(leave).not.toHaveBeenCalled();
+    expect(find('[role="alert"]').textContent).toBe("That isn't available for this license any more. Reload the page and try again.");
+  });
+
+  test("a blocked tab gives the page back as a link for a second click", async () => {
+    const out = ways({ blocked: true });
+    const stub = stubBilling();
+    await mount(<CatalogGrid products={WORKSPACE_CATALOG} licenses={detached()} scope={WS} billing={stub.billing} navigateOut={out.navigateOut} />);
+    await click(buttonNamed("Add seats"));
+    await settle();
+    expect(out.leave).not.toHaveBeenCalled();
+    const link = find<HTMLAnchorElement>("a[data-hosted-page]");
+    expect(link.textContent).toBe("Open the payment page");
+    expect(link.getAttribute("href")).toBe(PAY);
+    expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  test("a row in the Buy a license dialog does the same", async () => {
+    const out = ways();
+    const stub = stubBilling();
+    await mount(
+      <CatalogDialog open onClose={() => {}} products={WORKSPACE_CATALOG} licenses={detached()} scope={WS} billing={stub.billing} navigateOut={out.navigateOut} />,
+    );
+    await click(buttonNamed("Add seats", find('[data-product="mentra.call.unlimited"]', topDialog())));
+    await settle();
+    expect(out.events).toEqual(["openTab", `go:${PAY}`]);
+    expect(out.leave).not.toHaveBeenCalled();
   });
 });
 
@@ -429,7 +542,7 @@ describe("the seats step", () => {
 
   test("Continue to payment calls purchase({product, seats}) and goes to the page it answers", async () => {
     const { billing, requests } = payingAt(PAY);
-    const { navigateOut } = await openBuyFleet({ billing });
+    const { leave } = await openBuyFleet({ billing });
     const dialog = topDialog();
     await click(find('[aria-label="One seat more"]', dialog));
     await click(buttonNamed("Continue to payment", dialog));
@@ -437,16 +550,24 @@ describe("the seats step", () => {
     expect(requests).toEqual([
       { method: "POST", path: "/api/portal/billing/workspaces/ws_acme/purchase", body: { product: "mentra.fleet", seats: 11, locale: "en-US" } },
     ]);
-    expect(navigateOut).toHaveBeenCalledTimes(1);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledTimes(1);
+    expect(leave).toHaveBeenCalledWith(PAY);
+  });
+
+  test("a purchase always returns to the portal, so it opens no other tab", async () => {
+    const { leave, openTab } = await openBuyFleet();
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(leave).toHaveBeenCalledWith(PAY);
+    expect(openTab).not.toHaveBeenCalled();
   });
 
   test("it hands the client the workspace's scope and exactly {product, seats}", async () => {
-    const { purchase, navigateOut } = await openBuyFleet();
+    const { purchase, leave } = await openBuyFleet();
     await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
     expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 10 }]]);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
   });
 
   test("Continue is a button that leaves the portal: its label stays the label, and it can't be pressed twice", async () => {
@@ -469,11 +590,11 @@ describe("the seats step", () => {
     expect(go.getAttribute("aria-busy")).toBe("true");
     await act(async () => pending.resolve({ url: PAY }));
     await settle();
-    expect(setup.navigateOut).toHaveBeenCalledTimes(1);
+    expect(setup.leave).toHaveBeenCalledTimes(1);
   });
 
   test("Cancel and Escape close it without buying, and reopening starts fresh", async () => {
-    const { purchase, navigateOut } = await openBuyFleet();
+    const { purchase, leave } = await openBuyFleet();
     await click(find('[aria-label="One seat more"]', topDialog()));
     expect(stepper(topDialog()).value).toBe("11");
     await click(buttonNamed("Cancel", topDialog()));
@@ -483,7 +604,7 @@ describe("the seats step", () => {
     await press(topDialog(), "Escape");
     await act(async () => topDialog()?.dispatchEvent(new Event("cancel", { cancelable: true })));
     expect(purchase).not.toHaveBeenCalled();
-    expect(navigateOut).not.toHaveBeenCalled();
+    expect(leave).not.toHaveBeenCalled();
   });
 
   test("closing it while the request is out doesn't send the browser away afterwards", async () => {
@@ -497,7 +618,7 @@ describe("the seats step", () => {
     expect(openDialogs()).toHaveLength(0);
     await act(async () => pending.resolve({ url: PAY }));
     await settle();
-    expect(setup.navigateOut).not.toHaveBeenCalled();
+    expect(setup.leave).not.toHaveBeenCalled();
   });
 
   test("without a member count the sentence is left out", async () => {
@@ -519,7 +640,7 @@ describe("a person's Buy", () => {
 
   test("skips the seats step: it buys one seat and goes to payment", async () => {
     const { billing, requests } = payingAt(PAY);
-    const { ui, navigateOut } = grid({ scope: ACCOUNT_SCOPE, products: personal(), billing });
+    const { ui, leave } = grid({ scope: ACCOUNT_SCOPE, products: personal(), billing });
     await mount(ui);
     await click(buttonNamed("Buy", card("mentra.call.unlimited")));
     expect(openDialogs()).toHaveLength(0);
@@ -528,7 +649,7 @@ describe("a person's Buy", () => {
     expect(requests).toEqual([
       { method: "POST", path: "/api/portal/billing/account/purchase", body: { product: "mentra.call.unlimited", seats: 1, locale: "en-US" } },
     ]);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
   });
 
   test("buys the offer's seat even if its default is not one", async () => {
@@ -562,7 +683,7 @@ describe("a person's Buy", () => {
   test("BuyDialog is the workspace's step: given a person it draws no seats step at all", async () => {
     const { billing } = stubBilling();
     await mount(
-      <BuyDialog open product={callFor({ offer: personOffer() })} billing={billing} scope={ACCOUNT_SCOPE} navigateOut={() => {}} onClose={() => {}} />,
+      <BuyDialog open product={callFor({ offer: personOffer() })} billing={billing} scope={ACCOUNT_SCOPE} navigateOut={ways().navigateOut} onClose={() => {}} />,
     );
     expect(openDialogs()).toHaveLength(0);
     expect(findAll('[role="spinbutton"]')).toHaveLength(0);
@@ -605,14 +726,14 @@ describe("a price of a scheme the portal doesn't know", () => {
   });
 
   test("it can still be bought: Continue sends the seats chosen", async () => {
-    const { ui, purchase, navigateOut } = grid({ products: [unknown()] });
+    const { ui, purchase, leave } = grid({ products: [unknown()] });
     await mount(ui);
     await click(buttonNamed("Buy"));
     await click(find('[aria-label="One seat fewer"]', topDialog()));
     await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
     expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 9 }]]);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
   });
 
   test("a person's card shows the label too", async () => {
@@ -636,12 +757,12 @@ describe("unsafe purchase addresses", () => {
   ]) {
     test(`a workspace's purchase answered with ${unsafe.slice(0, 28)} goes nowhere and says so`, async () => {
       const { billing } = payingAt(unsafe);
-      const { ui, navigateOut } = grid({ billing, memberCount: 14 });
+      const { ui, leave } = grid({ billing, memberCount: 14 });
       await mount(ui);
       await click(buttonNamed("Buy", card("mentra.fleet")));
       await click(buttonNamed("Continue to payment", topDialog()));
       await settle();
-      expect(navigateOut).not.toHaveBeenCalled();
+      expect(leave).not.toHaveBeenCalled();
       expect(find('[role="alert"]', topDialog()).textContent).toBe(refused);
       // The dialog stays, ready to try again.
       expect(buttonNamed("Continue to payment", topDialog()).disabled).toBe(false);
@@ -649,22 +770,22 @@ describe("unsafe purchase addresses", () => {
 
     test(`a person's purchase answered with ${unsafe.slice(0, 28)} goes nowhere and says so`, async () => {
       const { billing } = payingAt(unsafe);
-      const { ui, navigateOut } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
+      const { ui, leave } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
       await mount(ui);
       await click(buttonNamed("Buy"));
       await settle();
-      expect(navigateOut).not.toHaveBeenCalled();
+      expect(leave).not.toHaveBeenCalled();
       expect(find('[role="alert"]').textContent).toBe(refused);
     });
   }
 
   test("an Add seats session answered with an address the portal won't follow goes nowhere either", async () => {
     const { billing } = payingAt("javascript:alert(1)");
-    const { ui, navigateOut } = grid({ billing, licenses: [licenseBillingFor()] });
+    const { ui, leave } = grid({ billing, licenses: [licenseBillingFor()] });
     await mount(ui);
     await click(buttonNamed("Add seats"));
     await settle();
-    expect(navigateOut).not.toHaveBeenCalled();
+    expect(leave).not.toHaveBeenCalled();
     expect(find('[role="alert"]').textContent).toBe(refused);
   });
 
@@ -676,22 +797,22 @@ describe("unsafe purchase addresses", () => {
       ["  https://pay.example.test/a b", "https://pay.example.test/a%20b"],
     ] as const) {
       const { billing } = payingAt(sent);
-      const { ui, navigateOut } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
+      const { ui, leave } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
       await mount(ui);
       await click(buttonNamed("Buy"));
       await settle();
-      expect(navigateOut).toHaveBeenCalledWith(followed);
+      expect(leave).toHaveBeenCalledWith(followed);
       await cleanup();
     }
   });
 
   test("billing being unreachable is the same generic line", async () => {
     const billing = createBillingApi({ locale: "en-US", fetch: (async () => Promise.reject(new TypeError("offline"))) as never });
-    const { ui, navigateOut } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
+    const { ui, leave } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
     await mount(ui);
     await click(buttonNamed("Buy"));
     await settle();
-    expect(navigateOut).not.toHaveBeenCalled();
+    expect(leave).not.toHaveBeenCalled();
     expect(find('[role="alert"]').textContent).toBe(refused);
   });
 });
@@ -713,10 +834,10 @@ describe("refusals", () => {
   test("already_licensed says 'You already have <product>. Add seats instead.', refetches billing, and stops the purchase", async () => {
     const client = new QueryClient();
     const invalidate = spyOn(client, "invalidateQueries");
-    const { navigateOut } = await buyFleet(refusing(409, "already_licensed", { licenseId: "lic_fleet" }).billing, client);
+    const { leave } = await buyFleet(refusing(409, "already_licensed", { licenseId: "lic_fleet" }).billing, client);
     expect(find('[role="alert"]', topDialog()).textContent).toBe("You already have Fleet. Add seats instead.");
     expect(invalidate).toHaveBeenCalledWith({ queryKey: billingKeys.owner(WS) });
-    expect(navigateOut).not.toHaveBeenCalled();
+    expect(leave).not.toHaveBeenCalled();
     // It is held now: another try would only be refused again.
     expect(buttonNamed("Continue to payment", topDialog()).disabled).toBe(true);
     expect(buttonNamed("Cancel", topDialog()).disabled).toBe(false);
@@ -762,11 +883,11 @@ describe("refusals", () => {
   test("a new attempt clears the last refusal", async () => {
     let attempt = 0;
     const { billing } = realBilling(() => (attempt++ === 0 ? { status: 409, body: { error: "checkout_in_progress" } } : { body: { url: PAY } }));
-    const { navigateOut } = await buyFleet(billing);
+    const { leave } = await buyFleet(billing);
     expect(findAll('[role="alert"]', topDialog())).toHaveLength(1);
     await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
     expect(findAll('[role="alert"]')).toHaveLength(0);
   });
 });
@@ -775,7 +896,7 @@ describe("refusals", () => {
 
 describe("the catalog dialog", () => {
   const dialogFor = (options: GridOptions & { open?: boolean } = {}) => {
-    const navigateOut = mock((_url: string) => {});
+    const out = ways();
     const onClose = mock(() => {});
     const stub = stubBilling();
     const ui = (
@@ -786,11 +907,11 @@ describe("the catalog dialog", () => {
         licenses={options.licenses}
         scope={options.scope ?? WS}
         billing={options.billing ?? stub.billing}
-        navigateOut={navigateOut}
+        navigateOut={out.navigateOut}
         memberCount={options.memberCount}
       />
     );
-    return { ui, navigateOut, onClose, ...stub };
+    return { ui, ...out, onClose, ...stub };
   };
   const row = (product: string) => find(`[data-product="${product}"]`, topDialog());
   const held = [licenseBillingFor({ quantity: 5 }), licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet", quantity: 10 })];
@@ -831,17 +952,17 @@ describe("the catalog dialog", () => {
   });
 
   test("Add seats on a row asks for add_seats and goes to the page", async () => {
-    const { ui, session, navigateOut } = dialogFor({ licenses: held });
+    const { ui, session, leave } = dialogFor({ licenses: held });
     await mount(ui);
     await click(buttonNamed("Add seats", row("mentra.fleet")));
     await settle();
     expect(session.mock.calls).toEqual([[WS, { action: "add_seats", licenseId: "lic_fleet" }]]);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
   });
 
   test("for a person a row's Buy skips the seats step, and a held product says 'You have it'", async () => {
     const products = [callFor({ offer: personOffer() }), addOn({ offer: personOffer(900) })];
-    const { ui, purchase, navigateOut } = dialogFor({ scope: ACCOUNT_SCOPE, products, licenses: [licenseBillingFor({ quantity: 1 })] });
+    const { ui, purchase, leave } = dialogFor({ scope: ACCOUNT_SCOPE, products, licenses: [licenseBillingFor({ quantity: 1 })] });
     await mount(ui);
     expect(topDialog().textContent).toContain("Products you can buy for yourself.");
     expect(topDialog().textContent).not.toContain("workspace");
@@ -852,7 +973,7 @@ describe("the catalog dialog", () => {
     await settle();
     expect(openDialogs()).toHaveLength(1);
     expect(purchase.mock.calls).toEqual([[ACCOUNT_SCOPE, { product: "mentra.example", seats: 1 }]]);
-    expect(navigateOut).toHaveBeenCalledWith(PAY);
+    expect(leave).toHaveBeenCalledWith(PAY);
   });
 
   test("a refusal on a row is shown in the list, and already_licensed refetches", async () => {

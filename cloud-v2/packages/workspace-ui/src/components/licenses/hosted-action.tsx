@@ -1,14 +1,17 @@
 /**
- * Leaving the portal for one of billing's hosted pages: ask billing for a session, then send the person to its
- * URL. Every ↗ button on the Licenses and Billing screens (a card's actions, the roster's Add seats, the over
- * notice's "Add 2 seats", the picker's Add seats) goes through one `useHostedAction`, so they all behave alike.
+ * Leaving the portal for one of billing's hosted pages: ask billing for a session (or a checkout), then send the
+ * person to its URL. Every ↗ button on the Licenses and Billing screens (a card's actions, the roster's Add seats,
+ * the over notice's "Add 2 seats", the picker's Add seats, and the catalog's Buy, Continue to payment and Add
+ * seats) goes through one `useHostedAction`, so they all behave alike.
  *
- * - An action that returns to the portal navigates this tab.
+ * - An action that returns to the portal, and every purchase, navigates this tab.
  * - An action billing lists with `returns: false` (an invoice's payment page has no way back) opens a blank tab
  *   in the click itself, since a browser allows that only while the click is being handled, then sends that tab to
  *   the session's URL; a session that fails closes the tab again. If the browser blocked the tab, the URL comes
  *   back as a link ("Open the payment page ↗") for a second click. Either way the licenses and billing's status
  *   are read again when the window regains focus.
+ * - A screen that has let go of the request (its dialog closed, its card gone) doesn't send this tab anywhere when
+ *   billing answers; the tab a click opened still gets its page.
  *
  * The host supplies the two ways out (`NavigateOut`): this file never touches `window.location`, and the URL it
  * sends them to has already passed the contract's check (billing's client refuses any other).
@@ -23,7 +26,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
-import { billingErrorMessage } from "../../billing-errors";
+import { BillingRefusedError, billingErrorMessage } from "../../billing-errors";
 import { ownerTypeOf, type BillingScope } from "../../billing-scope";
 import { billingKeys, workspaceKeys } from "../../queries";
 import { licenseStrings as t } from "../../strings/licenses";
@@ -46,24 +49,46 @@ export interface NavigateOut {
   openTab(): PortalTab | null;
 }
 
-/** One press of a hosted-page button: the action billing listed, for a license (none for the account's), and how many seats `add_seats` adds. */
-export interface HostedRequest {
+/** What the hook asks billing's client for: a session for an action, or a checkout for a purchase. */
+export type HostedBilling = Pick<BillingApi, "purchase" | "session">;
+
+/** One press of a hosted-page button for an action billing listed: for a license (none for the account's), and how many seats `add_seats` adds. */
+export interface ActionRequest {
   action: BillingAction;
   licenseId?: string;
   seats?: number;
+  /** The product, as a refusal names it, where it isn't the hook's own `product`. */
+  name?: string;
 }
+
+/** One press of Buy: `seats` of `product`, which billing answers with the checkout's page. A purchase always returns to the portal. */
+export interface PurchaseRequest {
+  product: string;
+  seats: number;
+  /** The product, as a refusal names it, where it isn't the hook's own `product`. */
+  name?: string;
+}
+
+export type HostedRequest = ActionRequest | PurchaseRequest;
+
+/** What `HostedAction.pending` is while a purchase is being asked for (an action's is its `kind`). */
+export const PURCHASE = "purchase";
 
 export interface HostedAction {
   /**
-   * Starts the action. Call it from the click itself: a tab for a page that doesn't return can only be opened
+   * Starts the request. Call it from the click itself: a tab for a page that doesn't return can only be opened
    * there. Ignored while one is under way. `surface` names where the press happened (a dialog, say), so that
-   * what the action leaves to say (`error`, `link`) is drawn there and not behind it; none means the card.
+   * what the request leaves to say (`error`, `link`) is drawn there and not behind it; none means the card.
    */
   run(request: HostedRequest, surface?: string): void;
-  /** The `kind` of the action whose session is being requested, else null. */
+  /** The `kind` of the action whose session is being requested (`PURCHASE` for a purchase), else null. */
   pending: string | null;
+  /** The request being asked for, else null: which product's button is the one waiting. */
+  request: HostedRequest | null;
   /** Billing's refusal, in words; null when there is none. */
   error: string | null;
+  /** Billing's code for that refusal when it sent one (`already_licensed`), else null. */
+  code: string | null;
   /** Where a tab the browser blocked would have gone: shown as a link for a second click. */
   link: string | null;
   /** The `surface` of the press that `error` and `link` belong to; null for the card itself. */
@@ -72,8 +97,12 @@ export interface HostedAction {
 
 /**
  * The hosted-page flow for one card or dialog. `product` is the name a refusal may mention ("A purchase of Fleet
- * is already under way"). `api` lets the window-focus refresh read the workspace's licenses again as well as
- * billing's status; without it (a person's page) only the status is refreshed.
+ * is already under way"), for a screen that has one product; a request may name its own. `api` lets the
+ * window-focus refresh read the workspace's licenses again as well as billing's status; without it (a person's
+ * page) only the status is refreshed.
+ *
+ * A purchase refused as `already_licensed` means the catalog on screen is stale, so billing's answers for the owner
+ * are read again.
  */
 export function useHostedAction({
   billing,
@@ -82,15 +111,16 @@ export function useHostedAction({
   api,
   product,
 }: {
-  billing: Pick<BillingApi, "session">;
+  billing: HostedBilling;
   scope: BillingScope;
   navigateOut: NavigateOut;
   api?: Pick<WorkspaceApi, "basePath">;
   product?: string;
 }): HostedAction {
   const client = useQueryClient();
-  const [pending, setPending] = useState<string | null>(null);
+  const [current, setCurrent] = useState<HostedRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [surface, setSurface] = useState<string | null>(null);
   const busy = useRef(false);
@@ -129,10 +159,11 @@ export function useHostedAction({
   }, [client]);
 
   const run = useCallback(
-    ({ action, licenseId, seats }: HostedRequest, from?: string) => {
+    (request: HostedRequest, from?: string) => {
       if (busy.current) return;
-      const { billing: billingApi, scope: owner, navigateOut: out, product: name } = latest.current;
-      const newTab = action.returns === false;
+      const { billing: billingApi, scope: owner, navigateOut: out, product } = latest.current;
+      const purchasing = !("action" in request);
+      const newTab = !purchasing && request.action.returns === false;
       // In the click, before anything is awaited: a browser lets a page open a tab only while it handles one.
       let tab: PortalTab | null = null;
       if (newTab) {
@@ -143,24 +174,26 @@ export function useHostedAction({
         }
       }
       busy.current = true;
-      setPending(action.kind);
+      setCurrent(request);
       setError(null);
+      setCode(null);
       setLink(null);
       setSurface(from ?? null);
-      const request = {
-        action: action.kind,
-        ...(licenseId !== undefined ? { licenseId } : {}),
-        ...(seats !== undefined ? { seats } : {}),
-      };
       void (async () => {
         try {
-          const { url } = await billingApi.session(owner, request);
+          const { url } = await (purchasing
+            ? billingApi.purchase(owner, { product: request.product, seats: request.seats })
+            : billingApi.session(owner, {
+                action: request.action.kind,
+                ...(request.licenseId !== undefined ? { licenseId: request.licenseId } : {}),
+                ...(request.seats !== undefined ? { seats: request.seats } : {}),
+              }));
           if (newTab) {
             if (tab) tab.go(url);
             else if (mounted.current) setLink(url);
             // A card that went away while billing answered has nothing left to refresh, and must not leave listeners behind.
             if (mounted.current) refreshOnReturn();
-          } else {
+          } else if (mounted.current) {
             out.leave(url);
           }
         } catch (cause) {
@@ -170,17 +203,24 @@ export function useHostedAction({
           } catch {
             // A tab that is already gone is the outcome wanted.
           }
-          if (mounted.current) setError(billingErrorMessage(cause, { product: name, scope: ownerTypeOf(owner) }));
+          const refused = cause instanceof BillingRefusedError ? cause.code : null;
+          // Held already: the catalog the person is looking at is out of date, whatever became of the screen that asked.
+          if (purchasing && refused === "already_licensed") void client.invalidateQueries({ queryKey: billingKeys.owner(owner) });
+          if (mounted.current) {
+            setError(billingErrorMessage(cause, { product: request.name ?? product, scope: ownerTypeOf(owner) }));
+            setCode(refused);
+          }
         } finally {
           busy.current = false;
-          if (mounted.current) setPending(null);
+          if (mounted.current) setCurrent(null);
         }
       })();
     },
-    [refreshOnReturn],
+    [client, refreshOnReturn],
   );
 
-  return { run, pending, error, link, surface };
+  const pending = current === null ? null : "action" in current ? current.action.kind : PURCHASE;
+  return { run, pending, request: current, error, code, link, surface };
 }
 
 /**

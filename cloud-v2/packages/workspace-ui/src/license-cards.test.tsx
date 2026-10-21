@@ -495,6 +495,18 @@ describe("a hosted page that doesn't return", () => {
     expect(client.getQueryState(key)?.isInvalidated).toBe(false);
   });
 
+  test("a card that is gone before a session that returns answers doesn't send this tab anywhere", async () => {
+    let answer!: (value: { url: string }) => void;
+    const r = rig({ session: () => new Promise((resolve) => (answer = resolve)) });
+    await mountCard(r, invoice());
+    await press("Update payment method");
+    expect(r.events).toEqual(["session:update_payment"]);
+    await cleanup();
+    await act(async () => answer({ url: PAGE }));
+    expect(r.leave).not.toHaveBeenCalled();
+    expect(r.openTab).not.toHaveBeenCalled();
+  });
+
   test("the tab is opened by the click itself, not after anything is awaited", async () => {
     const r = rig({ session: () => new Promise(() => {}) });
     await mountCard(r, invoice());

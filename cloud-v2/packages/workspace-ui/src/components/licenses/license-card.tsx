@@ -25,7 +25,6 @@ import { useState, type ReactNode } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
 import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
-import type { BillingApi } from "../../billing-api";
 import type { BillingScope } from "../../billing-scope";
 import { errorMessage } from "../../errors";
 import { costFact, formatDay, formatDayShort, renewalCadence } from "../../lib/billing-format";
@@ -37,7 +36,7 @@ import { Menu, type MenuItem } from "../../ui/menu";
 import { Meter } from "../../ui/meter";
 import { Card } from "../../ui/card";
 import { Spinner } from "../common";
-import { HostedFeedback, useHostedAction, type NavigateOut } from "./hosted-action";
+import { HostedFeedback, useHostedAction, type HostedBilling, type NavigateOut } from "./hosted-action";
 import { Fact, HostedPageButton, Notice, Skeleton, StatusBadge, type StatusBadgeStatus } from "./parts";
 import { PeoplePickerDialog } from "./people-picker";
 import { FeatureChips, ProductIcon } from "./product";
@@ -52,7 +51,7 @@ export interface LicenseCardProps {
   view: LicenseCardView;
   /** Whose billing the actions are for: `workspaceScope(id)`, or `ACCOUNT_SCOPE` on the personal page. */
   scope: BillingScope;
-  billing: Pick<BillingApi, "session">;
+  billing: HostedBilling;
   navigateOut: NavigateOut;
   /** The portal's locale, for dates and amounts. */
   locale: string;

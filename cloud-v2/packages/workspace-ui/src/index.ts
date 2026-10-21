@@ -166,9 +166,20 @@ export {
 } from "./lib/license-join";
 
 // The Licenses page's cards: a license with its seats, the people picker that fills them, and the banners and
-// states around them. `useHostedAction` is how every ↗ button leaves the portal (`NavigateOut` is the host's side).
+// states around them. `useHostedAction` is how every ↗ button leaves the portal, including the catalog's (`NavigateOut`
+// is the host's side).
 export { LicenseCard, type LicenseCardProps, type LicenseCardView } from "./components/licenses/license-card";
-export { HostedFeedback, useHostedAction, type HostedAction, type HostedRequest, type NavigateOut, type PortalTab } from "./components/licenses/hosted-action";
+export {
+  HostedFeedback,
+  useHostedAction,
+  type ActionRequest,
+  type HostedAction,
+  type HostedBilling,
+  type HostedRequest,
+  type NavigateOut,
+  type PortalTab,
+  type PurchaseRequest,
+} from "./components/licenses/hosted-action";
 export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./components/licenses/seats";
 export { PeoplePickerDialog } from "./components/licenses/people-picker";
 export {
