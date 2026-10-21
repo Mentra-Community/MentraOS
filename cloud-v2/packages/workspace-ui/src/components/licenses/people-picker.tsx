@@ -1,17 +1,19 @@
 /**
  * "Assign seats": a dialog that searches the workspace's members, chooses several, and gives them all a seat of
  * one license in one request, all or none. People who already hold a seat, or haven't signed in yet, are listed
- * but can't be chosen, with the reason. Nothing caps the choice: when more are chosen than there are seats, the
- * dialog says how many fit ("3 of 4 fit: remove one or add seats.") and Assign stays off, so the person decides
- * between fewer people and more seats.
+ * but can't be chosen, with the reason. The choice isn't capped as it is made: when more are chosen than there are
+ * seats, the dialog says how many fit ("3 of 4 fit: remove one or add seats.") and Assign stays off, so the person
+ * decides between fewer people and more seats. One request takes at most `MAX_SEAT_ASSIGNMENTS` people, so beyond
+ * that Assign stays off too, with "You can assign up to 500 seats at a time." under it, the same as the Assign
+ * licenses dialog says. The request is never split: it is all or none.
  *
  * It asks Core for the assignment only; the counts it shows come from the license it is given, which the host
  * keeps fresh. A request that loses a race (409 `no_seats_available`) assigns nothing, refetches, and says so.
  */
 
 import { SearchIcon } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { LicenseView, MemberView } from "@mentra/workspace-contract";
+import { useId, useMemo, useState } from "react";
+import { MAX_SEAT_ASSIGNMENTS, type LicenseView, type MemberView } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "../../api";
 import { fitFor, holdsSeat, seatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
@@ -108,6 +110,9 @@ function PickerBody({
   const fit = fitFor(license, people);
   const counts = seatCounts(license);
   const overflow = fit.kind === "short" || fit.kind === "full";
+  // One request takes at most MAX_SEAT_ASSIGNMENTS people: beyond that Assign stays off, and says why.
+  const tooMany = people.length > MAX_SEAT_ASSIGNMENTS;
+  const tooManyId = useId();
 
   function toggle(membershipId: string, on: boolean) {
     assign.reset();
@@ -188,8 +193,9 @@ function PickerBody({
           </Button>
           <Button
             type="button"
-            disabled={!fit.ok || assign.isPending}
+            disabled={!fit.ok || tooMany || assign.isPending}
             aria-busy={assign.isPending || undefined}
+            aria-describedby={tooMany ? tooManyId : undefined}
             onClick={() =>
               assign.mutate(
                 people.map((member) => ({ licenseId: license.licenseId, membershipId: member.membershipId })),
@@ -200,6 +206,11 @@ function PickerBody({
             {t.picker.assign(people.length)}
           </Button>
         </div>
+        {tooMany ? (
+          <p id={tooManyId} className="text-muted-foreground basis-full text-right text-sm">
+            {t.assign.tooMany(MAX_SEAT_ASSIGNMENTS)}
+          </p>
+        ) : null}
       </div>
     </>
   );

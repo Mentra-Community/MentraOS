@@ -568,6 +568,70 @@ describe("the seats step", () => {
     expect(stepper(topDialog()).value).toBe("15");
   });
 
+  describe("when the catalog is read again while it is open", () => {
+    const withFleet = (fleetEntry: CatalogEntry) => [callFor(), fleetEntry, addOn()];
+    const gridOf = (billing: BillingApi, client: QueryClient, products: readonly CatalogEntry[]) => (
+      <QueryClientProvider client={client}>
+        <CatalogGrid products={products} scope={WS} billing={billing} navigateOut={ways().navigateOut} memberCount={14} />
+      </QueryClientProvider>
+    );
+    const dialogOf = (billing: BillingApi, client: QueryClient, products: readonly CatalogEntry[]) => (
+      <QueryClientProvider client={client}>
+        <CatalogDialog open onClose={() => {}} products={products} scope={WS} billing={billing} navigateOut={ways().navigateOut} memberCount={14} />
+      </QueryClientProvider>
+    );
+
+    test("the grid's seats step takes the new price and limits, and the choice is held to them", async () => {
+      const client = new QueryClient();
+      const { billing, purchase } = stubBilling();
+      const view = await render(gridOf(billing, client, withFleet(fleet())));
+      await click(buttonNamed("Buy", card("mentra.fleet")));
+      await click(find('[aria-label="One seat more"]', topDialog()));
+      await click(find('[aria-label="One seat more"]', topDialog()));
+      expect(byText("12 seats × $15 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
+      // Billing reads again: a dearer price, and a ceiling under the choice.
+      const dearer = fleet({ offer: workspaceOffer(1800, { buy: { minSeats: 1, maxSeats: 8, defaultSeats: 10 } }) });
+      await view.rerender(gridOf(billing, client, withFleet(dearer)));
+      expect(topDialog().textContent).toContain("$18 per seat a month");
+      expect(stepper(topDialog()).getAttribute("aria-valuemax")).toBe("8");
+      expect(stepper(topDialog()).value).toBe("8");
+      expect(byText("8 seats × $18 · $144 a month · before tax", "p", topDialog())).toBeTruthy();
+      await click(buttonNamed("Continue to payment", topDialog()));
+      await settle();
+      expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 8 }]]);
+    });
+
+    test("so does the Buy a license dialog's", async () => {
+      const client = new QueryClient();
+      const { billing } = stubBilling();
+      const view = await render(dialogOf(billing, client, withFleet(fleet())));
+      await click(buttonNamed("Buy", find('[data-product="mentra.fleet"]', topDialog())));
+      expect(byText("10 seats × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      await view.rerender(dialogOf(billing, client, withFleet(fleet({ offer: workspaceOffer(1800) }))));
+      expect(openDialogs()).toHaveLength(2);
+      expect(byText("10 seats × $18 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
+    });
+
+    test("a product that can no longer be bought keeps the terms it was chosen with, and the step stays open", async () => {
+      const client = new QueryClient();
+      const { billing } = stubBilling();
+      const view = await render(gridOf(billing, client, withFleet(fleet())));
+      await click(buttonNamed("Buy", card("mentra.fleet")));
+      // Billing took the offer away (and for another owner it would be `buy: null`).
+      await view.rerender(gridOf(billing, client, withFleet(fleet({ offer: undefined }))));
+      expect(openDialogs()).toHaveLength(1);
+      expect(find("h2", topDialog()).textContent).toBe("Buy Fleet");
+      expect(byText("10 seats × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      await view.rerender(gridOf(billing, client, withFleet(fleet({ offer: workspaceOffer(1500, { buy: null }) }))));
+      expect(openDialogs()).toHaveLength(1);
+      expect(byText("10 seats × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+      // Gone from the catalog altogether.
+      await view.rerender(gridOf(billing, client, [callFor(), addOn()]));
+      expect(openDialogs()).toHaveLength(1);
+      expect(byText("10 seats × $15 · $150 a month · before tax", "p", topDialog())).toBeTruthy();
+    });
+  });
+
   test("with no maxSeats the sum still never leaves the safe integers", async () => {
     // $10 billion a seat: 9,007 seats is the most whose total a number can hold exactly.
     const huge = fleet({ offer: workspaceOffer(1_000_000_000_000, { buy: { minSeats: 1, defaultSeats: 9000 } }) });

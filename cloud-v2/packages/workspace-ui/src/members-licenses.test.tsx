@@ -4,7 +4,7 @@
  * assigned is a seat the next read lists. Synthetic data only.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MAX_SEAT_ASSIGNMENTS, type LicenseView, type MemberView, type WorkspaceDetail, type WorkspaceRole } from "@mentra/workspace-contract";
 import type { CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
@@ -82,6 +82,12 @@ function deferred<T>() {
   const promise = new Promise<T>((res) => (resolve = res));
   return { promise, resolve };
 }
+
+/** How many times Core's licenses for the workspace have been read: what a return to the window reads again. */
+const licenseReads = (calls: readonly { method: string; path: string }[]) =>
+  calls.filter((call) => call.method === "GET" && call.path === `/${WORKSPACE_ID}/licenses`).length;
+/** The person comes back to this window, from the page billing opened in a tab of its own. */
+const comeBack = () => act(async () => void window.dispatchEvent(new Event("focus")));
 
 /**
  * The host's side of "Add seats ↗": billing's client (answering each session from `answer`, which a test may swap) and
@@ -264,6 +270,9 @@ async function mount(options: MountOptions = {}) {
     setMember: (membershipId: string | null) => mounted.rerender(element({ member: membershipId })),
   };
 }
+
+/** The Members page with billing listing `add_seats` as `billing` says, and a host that succeeds unless given another. */
+const mountWith = (billing: MembersLicenses["billing"], host: HostRig = hostRig()) => mount({ host, billing });
 
 const rowOf = (text: string) => {
   const row = findAll<HTMLTableRowElement>("tbody tr").find((candidate) => candidate.textContent?.includes(text));
@@ -648,6 +657,64 @@ describe("Assign licenses", () => {
       expect(link.getAttribute("href")).toBe(PAGE);
       expect(link.getAttribute("rel")).toBe("noopener noreferrer");
       expect(host.leave).not.toHaveBeenCalled();
+    });
+
+    describe("the return to this window outlives the dialog that asked for it", () => {
+      test("closing the dialog once the tab has its page still reads Core's licenses again on return", async () => {
+        const { host, calls } = await mountWith(NEW_TAB_BILLING);
+        await choose("Luis Ortega");
+        await openAssign();
+        await click(byText("Add seats", "button", assignRow("Fleet")));
+        await flush();
+        expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
+        await click(find("button[aria-label='Close']", assignDialog()));
+        expect(assignIsOpen()).toBe(false);
+        const before = licenseReads(calls);
+        await comeBack();
+        await until(() => licenseReads(calls) > before, "Core's licenses to be read again");
+      });
+
+      test("closing it before billing answers still sends the tab on, and still reads on return", async () => {
+        const hold = deferred<{ url: string }>();
+        const { host, calls } = await mountWith(NEW_TAB_BILLING, hostRig(() => hold.promise));
+        await choose("Luis Ortega");
+        await openAssign();
+        await click(byText("Add seats", "button", assignRow("Fleet")));
+        await click(find("button[aria-label='Close']", assignDialog()));
+        expect(assignIsOpen()).toBe(false);
+        await act(async () => hold.resolve({ url: PAGE }));
+        await flush();
+        expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
+        const before = licenseReads(calls);
+        await comeBack();
+        await until(() => licenseReads(calls) > before, "Core's licenses to be read again");
+      });
+
+      test("it ends at the first return after the Members page is gone, and reads nothing then", async () => {
+        const added = spyOn(window, "addEventListener");
+        const removed = spyOn(window, "removeEventListener");
+        try {
+          const { calls } = await mountWith(NEW_TAB_BILLING);
+          await choose("Luis Ortega");
+          await openAssign();
+          added.mockClear();
+          await click(byText("Add seats", "button", assignRow("Fleet")));
+          await flush();
+          const listener = added.mock.calls.find(([type]) => type === "focus")?.[1];
+          expect(listener).toBeDefined();
+          // The page is still up: a return does not take it away.
+          await comeBack();
+          expect(removed.mock.calls.some(([type, fn]) => type === "focus" && fn === listener)).toBe(false);
+          await cleanup();
+          const before = licenseReads(calls);
+          await comeBack();
+          expect(removed.mock.calls.some(([type, fn]) => type === "focus" && fn === listener)).toBe(true);
+          expect(licenseReads(calls)).toBe(before);
+        } finally {
+          added.mockRestore();
+          removed.mockRestore();
+        }
+      });
     });
 
     test("the purchase route is never used for it", async () => {
@@ -1145,6 +1212,34 @@ describe("the member panel", () => {
       const link = findAll<HTMLAnchorElement>("a[data-hosted-page]", panelEl())[0]!;
       expect(link.getAttribute("href")).toBe(PAGE);
       expect(link.textContent).toContain("Open the payment page");
+    });
+
+    test("closing the panel after Add seats opened a tab still reads Core's licenses again on return", async () => {
+      const { host, calls } = await mountWith(NEW_TAB_BILLING);
+      await openPanel("Luis Ortega");
+      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await flush();
+      expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
+      await click(find("button[aria-label='Close']", panelEl()));
+      expect(panelIsOpen()).toBe(false);
+      const before = licenseReads(calls);
+      await comeBack();
+      await until(() => licenseReads(calls) > before, "Core's licenses to be read again");
+    });
+
+    test("closing the panel before billing answers still sends the tab on, and still reads on return", async () => {
+      const hold = deferred<{ url: string }>();
+      const { host, calls } = await mountWith(NEW_TAB_BILLING, hostRig(() => hold.promise));
+      await openPanel("Luis Ortega");
+      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await click(find("button[aria-label='Close']", panelEl()));
+      expect(panelIsOpen()).toBe(false);
+      await act(async () => hold.resolve({ url: PAGE }));
+      await flush();
+      expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
+      const before = licenseReads(calls);
+      await comeBack();
+      await until(() => licenseReads(calls) > before, "Core's licenses to be read again");
     });
 
     test("Add seats is left out where billing lists no add_seats (or nothing at all)", async () => {

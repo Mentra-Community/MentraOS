@@ -1,9 +1,9 @@
-import { afterAll, afterEach, beforeAll, describe, expect, jest, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, type ReactElement } from "react";
-import type { LicenseView, MemberView } from "@mentra/workspace-contract";
+import { MAX_SEAT_ASSIGNMENTS, type LicenseView, type MemberView } from "@mentra/workspace-contract";
 import type { BillingStatus, CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "./api";
 import { WorkspaceApiError } from "./errors";
@@ -15,6 +15,7 @@ import { LicenseCard, type LicenseCardProps } from "./components/licenses/licens
 import {
   LicensesSummary,
   LicensesUnavailable,
+  PURCHASE_POLL_MS,
   PURCHASE_TIMEOUT_MS,
   PurchaseBanner,
   TestModeBanner,
@@ -30,10 +31,7 @@ import { licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
 
 beforeAll(setupDom);
 afterAll(teardownDom);
-afterEach(async () => {
-  jest.useRealTimers();
-  await cleanup();
-});
+afterEach(cleanup);
 
 // ---- people, licenses and the rig every test stands on -------------------------------------------------------
 
@@ -1322,6 +1320,54 @@ describe("the people picker", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  test("one request takes at most MAX_SEAT_ASSIGNMENTS people: the 501st turns Assign off and says why, 500 are sent whole", async () => {
+    expect(MAX_SEAT_ASSIGNMENTS).toBe(500);
+    const r = rig();
+    const crowd = Array.from({ length: MAX_SEAT_ASSIGNMENTS + 1 }, (_, i) => person(`c${i}`, null));
+    const reason = () => findAll("dialog p").find((paragraph) => text(paragraph).startsWith("You can assign up to"));
+    // Seats enough for every one of them, so it is the request's limit and never the seats that stops it.
+    await mount(
+      <PeoplePickerDialog open onClose={() => {}} api={r.api} workspaceId={WS} license={coreLicense(600, [])} productName="Mentra Call Unlimited" members={crowd} addSeats={null} />,
+    );
+    const boxes = findAll<HTMLInputElement>("dialog input[type=checkbox]");
+    expect(boxes).toHaveLength(MAX_SEAT_ASSIGNMENTS + 1);
+
+    // 500 is the most one request takes: Assign is on and nothing is said.
+    // One act scope for the 500 clicks.
+    await act(async () => {
+      for (const box of boxes.slice(0, MAX_SEAT_ASSIGNMENTS)) box.click();
+    });
+    expect(nameOf(assignButton())).toBe("Assign 500 seats");
+    expect(assignButton().hasAttribute("disabled")).toBe(false);
+    expect(assignButton().hasAttribute("aria-describedby")).toBe(false);
+    expect(reason()).toBeUndefined();
+
+    // The 501st is not stopped from being chosen, but Assign goes off, and the reason sits under it, named by it.
+    await click(boxes[MAX_SEAT_ASSIGNMENTS]!);
+    expect(nameOf(assignButton())).toBe("Assign 501 seats");
+    expect(assignButton().hasAttribute("disabled")).toBe(true);
+    expect(reason()!.textContent).toBe("You can assign up to 500 seats at a time.");
+    expect(assignButton().getAttribute("aria-describedby")).toBe(reason()!.id);
+    // The seats were enough, so this is no "fit" notice, and no request goes out from a disabled button.
+    expect(text(find("dialog"))).not.toContain("fit:");
+    await click(assignButton());
+    await flush();
+    expect(r.assignSeats).not.toHaveBeenCalled();
+
+    // One fewer is 500 again: the reason is gone, and one request carries all 500, never a part of them.
+    await click(boxes[MAX_SEAT_ASSIGNMENTS]!);
+    expect(assignButton().hasAttribute("disabled")).toBe(false);
+    expect(reason()).toBeUndefined();
+    await click(assignButton());
+    await flush();
+    expect(r.assignSeats).toHaveBeenCalledTimes(1);
+    const [workspaceId, pairs] = r.assignSeats.mock.calls[0]!;
+    expect(workspaceId).toBe(WS);
+    expect(pairs).toHaveLength(MAX_SEAT_ASSIGNMENTS);
+    expect(new Set(pairs.map((pair) => pair.membershipId)).size).toBe(MAX_SEAT_ASSIGNMENTS);
+    expect(pairs.every((pair) => pair.licenseId === "lic_call")).toBe(true);
+  }, 120_000); // Drawing 500 chosen rows is seconds in happy-dom, and about 30 s on the CI runner: over bun's default 5 s.
+
   test("a 409 refetches, shows what changed and keeps the dialog open with the choice", async () => {
     const r = rig();
     r.assignSeats.mockImplementation(async () => {
@@ -1566,12 +1612,23 @@ describe("the purchase banner", () => {
   });
 
   test("keeps no clock of its own: the page's flow says when the minute is up", async () => {
-    jest.useFakeTimers();
-    await mount(banner({ purchase: processing, listed: false }));
-    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS * 3));
-    // Two minutes past the deadline, and nobody has said so: it is still setting up.
-    expect(find("section").getAttribute("data-phase")).toBe("processing");
-    expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
+    // Not on fake timers (see `turn` in test-dom): the banner is shown to start no timer on the page's scale, which
+    // is what a clock of its own would be. The library's zero-length turns are not one.
+    const timeouts = spyOn(globalThis, "setTimeout");
+    const intervals = spyOn(globalThis, "setInterval");
+    try {
+      const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
+      await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
+      // Nobody has said the minute is up: it is still setting up.
+      expect(find("section").getAttribute("data-phase")).toBe("processing");
+      expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
+      const started = [...timeouts.mock.calls, ...intervals.mock.calls].map(([, delay]) => Number(delay ?? 0));
+      expect(started.length).toBeGreaterThan(0);
+      expect(started.filter((delay) => delay >= PURCHASE_POLL_MS)).toEqual([]);
+    } finally {
+      timeouts.mockRestore();
+      intervals.mockRestore();
+    }
   });
 
   test("a license that arrives after the minute still turns it ready, and a ready one never reads as timed out", async () => {
@@ -1752,4 +1809,3 @@ describe("a refusal is drawn by the one alert element", () => {
     expect(own).toEqual([]);
   });
 });
-

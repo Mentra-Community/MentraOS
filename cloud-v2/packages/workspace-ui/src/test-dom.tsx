@@ -12,7 +12,6 @@
  * and a browser build that imports it fails on `bun:test`.
  */
 
-import { jest } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, type ReactElement } from "react";
 import type { Root } from "react-dom/client";
@@ -39,14 +38,13 @@ export async function teardownDom(): Promise<void> {
  * One turn of the timer queue, which is what lets a timer-scheduled update (the query cache's notify timer, a
  * zero-delay `setTimeout`) run before the caller carries on.
  *
- * Under `jest.useFakeTimers()` a real timeout never fires, so waiting on one would hang the test for good, and
- * the clock belongs to the test: Bun moves it a millisecond even for `advanceTimersByTime(0)`, which would eat
- * into a deadline the test is counting down to ("one millisecond before the minute is up"). So there the turn
- * leaves the clock alone and yields once to the event loop (`setImmediate`, which Bun doesn't fake), enough for
- * promises and React's own scheduling to run. A timer the test wants fired, it advances to itself.
+ * No test in this package may use `jest.useFakeTimers()`. Every helper here waits on a real `setTimeout`, and on
+ * Linux (Bun 1.3.14, the CI image) the real `setTimeout` stays dead after fake timers were used, even after
+ * `jest.useRealTimers()`: every later test in the run then hangs or never sees its query cache notify. It passes
+ * on macOS, which is how it got in. A test that needs to know a component keeps no clock spies on `setTimeout`
+ * and `setInterval` instead.
  */
 function turn(): Promise<void> {
-  if (jest.isFakeTimers()) return new Promise((resolve) => setImmediate(resolve));
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
@@ -76,8 +74,7 @@ export async function until(check: () => boolean, what: string): Promise<void> {
       return;
     }
     await act(async () => {
-      // Under fake timers the test owns the clock: there is nothing to wait out here, only a turn to give.
-      await (jest.isFakeTimers() ? turn() : new Promise((resolve) => setTimeout(resolve, 5)));
+      await new Promise((resolve) => setTimeout(resolve, 5));
     });
   }
   throw new Error(`timed out waiting for ${what}`);
