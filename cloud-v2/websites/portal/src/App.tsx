@@ -134,7 +134,7 @@ export function PortalRoutes({ route, me }: { route: PortalRoute; me: PortalMe }
     case "account-billing":
       // A person who is not offered billing gets the same page as for any address the portal does not have.
       return me.modules.billing ? (
-        <AccountBillingScreen me={me} />
+        <AccountBillingScreen />
       ) : (
         <PortalShell current={null} nav={[]} activeKey={null}>
           <NotFoundMessage kind="page" />

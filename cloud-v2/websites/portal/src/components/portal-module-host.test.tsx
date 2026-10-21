@@ -30,7 +30,7 @@ const ME: PortalMe = {
   workspaceCreation: { allowed: true, reason: null },
   onboardingRequired: false,
   org: null,
-  modules: { billing: true },
+  modules: { billing: true, billingCatalog: true },
 };
 
 const WORKSPACE: PortalModuleScope = { kind: "workspace", workspaceId: "ws_acme" };
@@ -57,8 +57,8 @@ describe("what the module is told about the caller", () => {
 
 describe("where the module is", () => {
   test("its API is under /api/portal/<module> and its UI entry under ui/, both on this origin", () => {
-    expect(portalModuleApiBase("billing")).toBe("/api/portal/billing");
-    expect(portalModuleEntryUrl("billing")).toBe("/api/portal/billing/ui/entry.js");
+    expect(portalModuleApiBase("fleet")).toBe("/api/portal/fleet");
+    expect(portalModuleEntryUrl("fleet")).toBe("/api/portal/fleet/ui/entry.js");
   });
 });
 
@@ -116,14 +116,14 @@ describe("loading the module", () => {
   test("imports the module's entry from Core, and a retry asks for a URL no earlier attempt used", async () => {
     const { module } = fakeModule();
     const { importEntry, asked } = importerOf(module);
-    expect(await loadPortalModule("billing", importEntry)).toBe(module);
-    await loadPortalModule("billing", importEntry, 17);
-    expect(asked).toEqual(["/api/portal/billing/ui/entry.js", "/api/portal/billing/ui/entry.js?retry=17"]);
+    expect(await loadPortalModule("fleet", importEntry)).toBe(module);
+    await loadPortalModule("fleet", importEntry, 17);
+    expect(asked).toEqual(["/api/portal/fleet/ui/entry.js", "/api/portal/fleet/ui/entry.js?retry=17"]);
   });
 
   test("a module built for another version of the contract is unavailable, and says which versions", async () => {
     const { module } = fakeModule({ version: PORTAL_MODULE_CONTRACT_VERSION + 1 });
-    const error = await loadPortalModule("billing", importerOf(module).importEntry).catch((e: unknown) => e);
+    const error = await loadPortalModule("fleet", importerOf(module).importEntry).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PortalModuleUnavailableError);
     expect((error as Error).message).toContain(`version ${PORTAL_MODULE_CONTRACT_VERSION + 1}`);
     expect((error as Error).message).toContain(`version ${PORTAL_MODULE_CONTRACT_VERSION}`);
@@ -131,16 +131,16 @@ describe("loading the module", () => {
 
   test("an entry that is not a module, or has no mount, is unavailable", async () => {
     for (const entry of [undefined, null, "text", {}, { contractVersion: PORTAL_MODULE_CONTRACT_VERSION }, { mount() {} }]) {
-      const error = await loadPortalModule("billing", importerOf(entry).importEntry).catch((e: unknown) => e);
+      const error = await loadPortalModule("fleet", importerOf(entry).importEntry).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(PortalModuleUnavailableError);
     }
-    const noDefault = await loadPortalModule("billing", async () => ({})).catch((e: unknown) => e);
+    const noDefault = await loadPortalModule("fleet", async () => ({})).catch((e: unknown) => e);
     expect(noDefault).toBeInstanceOf(PortalModuleUnavailableError);
   });
 
-  test("a failed import (Core answers 404 or 503 while billing is off or down) is unavailable, keeping the cause", async () => {
+  test("a failed import (Core answers 404 or 503 while the module is off or down) is unavailable, keeping the cause", async () => {
     const cause = new TypeError("Failed to fetch dynamically imported module");
-    const error = await loadPortalModule("billing", async () => {
+    const error = await loadPortalModule("fleet", async () => {
       throw cause;
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PortalModuleUnavailableError);
@@ -157,7 +157,7 @@ describe("mounting the module", () => {
     let expired = 0;
     const imported = importerOf(options.module);
     const host = createPortalModuleHost({
-      name: "billing",
+      name: "fleet",
       element: fake.element,
       importEntry: options.importEntry ?? imported.importEntry,
       scope: options.scope ?? WORKSPACE,
@@ -181,7 +181,7 @@ describe("mounting the module", () => {
     expect(mounts).toHaveLength(1);
     expect(mounts[0]!.target).toBe(shadow);
     const { context } = mounts[0]!;
-    expect(context.apiBase).toBe("/api/portal/billing");
+    expect(context.apiBase).toBe("/api/portal/fleet");
     expect(context.me).toEqual(portalModuleMe(ME));
     expect(context.scope).toEqual({ kind: "workspace", workspaceId: "ws_acme" });
     expect(context.route).toEqual(ROUTE);
@@ -256,7 +256,7 @@ describe("mounting the module", () => {
     expect(mounts[0]!.context.route).toEqual({ path: "/w/ws_acme/licenses", query: "?checkout=done" });
   });
 
-  test("a version mismatch is the unavailable state, not a mount, and the page says Billing is unavailable and why", async () => {
+  test("a version mismatch is the unavailable state, not a mount, and the page says Fleet Management is unavailable and why", async () => {
     const { module, mounts } = fakeModule({ version: 2 });
     const { host, phases } = hostFor({ module });
     await host.start();
@@ -265,8 +265,8 @@ describe("mounting the module", () => {
     expect(last).toMatchObject({ status: "unavailable" });
     const reason = (last as { reason: string }).reason;
     expect(reason).toContain("version 2");
-    const markup = renderToStaticMarkup(<PortalModuleUnavailable label="Billing" reason={reason} onRetry={() => {}} />);
-    expect(markup).toContain("Billing is unavailable");
+    const markup = renderToStaticMarkup(<PortalModuleUnavailable label="Fleet Management" reason={reason} onRetry={() => {}} />);
+    expect(markup).toContain("Fleet Management is unavailable");
     expect(markup).toContain(reason);
     expect(markup).toMatch(/<button[^>]*>Retry<\/button>/);
   });
@@ -282,7 +282,7 @@ describe("mounting the module", () => {
       };
       const { host, phases, shadow } = hostFor({ module: broken });
       await host.start();
-      expect(phases.at(-1)).toEqual({ status: "unavailable", reason: "Billing could not start." });
+      expect(phases.at(-1)).toEqual({ status: "unavailable", reason: "Fleet Management could not start." });
       expect(shadow.cleared).toBeGreaterThan(0);
       expect(logged).toHaveBeenCalledTimes(1);
     } finally {
@@ -306,8 +306,8 @@ describe("mounting the module", () => {
     expect(first.phases.at(-1)).toMatchObject({ status: "unavailable" });
     await first.host.retry();
     expect(first.phases.at(-1)).toEqual({ status: "ready" });
-    expect(asked[0]).toBe("/api/portal/billing/ui/entry.js");
-    expect(asked[1]).toMatch(/^\/api\/portal\/billing\/ui\/entry\.js\?retry=\d+$/);
+    expect(asked[0]).toBe("/api/portal/fleet/ui/entry.js");
+    expect(asked[1]).toMatch(/^\/api\/portal\/fleet\/ui\/entry\.js\?retry=\d+$/);
 
     // A failed mount: the module was fine to import, so it is not imported twice.
     const logged = spyOn(console, "error").mockImplementation(() => {});
@@ -374,39 +374,43 @@ describe("the page around the module", () => {
     signOut() {},
     signingOut: false,
     developerConsoleUrl: null,
-    modules: { billing: true },
+    modules: { billing: true, billingCatalog: true },
     sessionExpired() {},
   };
 
-  test("the unavailable state says Billing is unavailable, why, and offers Retry", () => {
+  test("the unavailable state says Fleet Management is unavailable, why, and offers Retry", () => {
     const markup = renderToStaticMarkup(
-      <PortalModuleUnavailable label="Billing" reason="The Billing module could not be loaded." onRetry={() => {}} />,
+      <PortalModuleUnavailable label="Fleet Management" reason="The Fleet Management module could not be loaded." onRetry={() => {}} />,
     );
     expect(markup).toContain('role="alert"');
-    expect(markup).toContain("Billing is unavailable");
-    expect(markup).toContain("The Billing module could not be loaded.");
+    expect(markup).toContain("Fleet Management is unavailable");
+    expect(markup).toContain("The Fleet Management module could not be loaded.");
     expect(markup).toMatch(/<button[^>]*>Retry<\/button>/);
   });
 
-  test("before the module has loaded, the page shows that Billing is loading, in a region of its own", () => {
+  test("before the module has loaded, the page shows that Fleet Management is loading, in a region of its own", () => {
     const markup = renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>
         <PortalProvider value={session}>
-          <PortalModuleHost module="billing" me={ME} scope={WORKSPACE} />
+          <PortalModuleHost module="fleet" me={ME} scope={WORKSPACE} />
         </PortalProvider>
       </QueryClientProvider>,
     );
-    expect(markup).toContain('<section aria-label="Billing"');
-    expect(markup).toContain("Loading Billing");
+    expect(markup).toContain('<section aria-label="Fleet Management"');
+    expect(markup).toContain("Loading Fleet Management");
     expect(markup).not.toContain("is unavailable");
   });
 
   test("no text the host shows names the payment processor", () => {
     // Spelled in pieces: the repository's guard keeps that name out of every source file in Cloud V2.
     const processor = new RegExp(["st", "ripe"].join(""), "i");
-    const reasons = ["The Billing module could not be loaded.", "Billing could not start.", "The Billing module uses version 2 of the module interface."];
+    const reasons = [
+      "The Fleet Management module could not be loaded.",
+      "Fleet Management could not start.",
+      "The Fleet Management module uses version 2 of the module interface.",
+    ];
     for (const reason of reasons) {
-      const markup = renderToStaticMarkup(<PortalModuleUnavailable label="Billing" reason={reason} onRetry={() => {}} />);
+      const markup = renderToStaticMarkup(<PortalModuleUnavailable label="Fleet Management" reason={reason} onRetry={() => {}} />);
       expect(markup).toContain(reason);
       expect(markup).not.toMatch(processor);
     }

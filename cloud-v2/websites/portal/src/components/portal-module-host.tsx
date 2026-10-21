@@ -14,7 +14,7 @@ import { usePortal } from "@/lib/portal";
 
 /**
  * A host for a portal module's UI: a screen that a separately deployed service brings to the portal and Core
- * serves (`/api/portal/<module>/ui/entry.js`), such as Billing. The same approach as the admin portal's Fleet
+ * serves (`/api/portal/<module>/ui/entry.js`), such as Fleet Management. The same approach as the admin portal's Fleet
  * page: the page imports the module from this origin, checks that it speaks this page's contract version
  * (`@mentra/workspace-contract/portal-module-ui`), and mounts it into an open shadow root, which keeps the
  * module's styles and the portal's apart. The module calls its API through `apiBase`, with the portal's session
@@ -25,13 +25,16 @@ import { usePortal } from "@/lib/portal";
  * module is told the route when it mounts; after that a change reaches it through the `setRoute` of the handle
  * it returned, and a module without one is unmounted and mounted again, in one synchronous step, in the same
  * shadow root. The module is imported once: a route change or a Retry after a failed mount reuses it.
+ *
+ * The Licenses page and the personal Billing page are not modules: `@mentra/workspace-ui` draws them from billing's
+ * data (`portalBillingApi` in lib/portal). The one module is Fleet Management's UI, which no page mounts yet.
  */
 
 /** The modules the portal can host. */
-export type PortalModuleName = "billing";
+export type PortalModuleName = "fleet";
 
 const MODULE_LABELS: Record<PortalModuleName, string> = {
-  billing: "Billing",
+  fleet: "Fleet Management",
 };
 
 type ModuleRoute = PortalModuleContext["route"];
@@ -162,7 +165,7 @@ export function createPortalModuleHost(options: {
   name: PortalModuleName;
   element: HTMLElement;
   importEntry: ModuleEntryImporter;
-  /** What the page covers: one workspace's licenses and billing, or the person's own. */
+  /** What the page covers: one workspace, or the person's own. */
   scope: PortalModuleScope;
   /** The route at the time the page opened. */
   route: ModuleRoute;

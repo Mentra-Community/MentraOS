@@ -2,6 +2,7 @@ import { XIcon } from "lucide-react";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
+import { licenseStrings as t } from "../strings/licenses";
 import { Button } from "./button";
 
 /**
@@ -71,7 +72,7 @@ export function Dialog({
               variant="ghost"
               size="icon-sm"
               className="text-muted-foreground -mt-1.5 -mr-2"
-              aria-label="Close"
+              aria-label={t.dialog.close}
               onClick={onClose}
             >
               <XIcon />

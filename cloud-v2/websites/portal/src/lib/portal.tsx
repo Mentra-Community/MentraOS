@@ -1,17 +1,34 @@
 /**
  * What every screen of the workspace portal shares: Core's workspace API at `/api/portal/workspaces`
- * (which this portal's session authenticates), the signed-in person, the invitations they can act on,
- * and the Developer Console the sidebar links to.
+ * (which this portal's session authenticates), billing's data module through Core at `/api/portal/billing`
+ * (in the portal's locale), the ways out to a hosted page, the signed-in person, the invitations they can act
+ * on, and the Developer Console the sidebar links to.
  */
 
 import type { QueryClient } from "@tanstack/react-query";
-import { createWorkspaceApi } from "@mentra/workspace-ui";
+import { createBillingApi, createWorkspaceApi, type BillingApi, type FetchLike, type NavigateOut } from "@mentra/workspace-ui";
 import { createContext, useContext } from "react";
 import type { PortalModules } from "./api";
 import type { LinkInvitation, PendingInvitation } from "./invitations";
+import { portalLocale } from "./locale";
+import { leavePortal, openPortalTab } from "./navigation";
 
 /** Core's workspace API, reached with this portal's session. */
 export const portalWorkspaceApi = createWorkspaceApi({ basePath: "/api/portal/workspaces" });
+
+/**
+ * A client for billing's data module, in the portal's locale (lib/locale): every request carries it, as a query
+ * parameter on a read and a body field on a write. `languages` and `fetch` are for a test; the portal uses neither.
+ */
+export function createPortalBillingApi(options: { languages?: readonly string[]; fetch?: FetchLike } = {}): BillingApi {
+  return createBillingApi({ locale: portalLocale(options.languages), ...(options.fetch ? { fetch: options.fetch } : {}) });
+}
+
+/** Billing's data module, reached with this portal's session. One client, so every page asks in the same locale and shares one cache. */
+export const portalBillingApi = createPortalBillingApi();
+
+/** The portal's only ways out for a hosted page: this tab, or a tab opened in the click (lib/navigation). */
+export const portalNavigateOut: NavigateOut = { leave: leavePortal, openTab: openPortalTab };
 
 /**
  * The Mentra Miniapp Store holds a workspace from deletion while it owns any miniapp, a draft included

@@ -1,17 +1,33 @@
 # Portal modules
 
-A portal module is a separately deployed service that brings its own API and its
-own UI to the workspace portal. Core hosts it the way it hosts
+A portal module is a separately deployed service that brings its API to the
+workspace portal, and sometimes its UI. Core hosts it the way it hosts
 [Fleet](fleet-integration.md): Core authenticates the person, decides what the
 request covers, forwards it to the module with a signed statement of that, and
-relays the answer. It also relays the module's UI bundle, which the portal
-mounts. Core stores none of the module's data.
+relays the answer. Core stores none of the module's data.
+
+A module is one of two kinds:
+
+- **A data module** returns typed values and nothing to draw. The portal draws
+  its pages from components of its own and formats every value and every sentence
+  itself. It serves no `ui/entry.js`; its `ui/` holds only the assets those pages
+  show, such as icons.
+- **A UI module** also serves a bundle, `ui/entry.js`, which the portal mounts in
+  a page of its own ([The UI of a UI module](#the-ui-of-a-ui-module)).
 
 There is one portal module:
 
-| Module | Mounted at | Settings | What it is |
-| --- | --- | --- | --- |
-| `billing` | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module, shown on a workspace's Licenses page. Hosted Core only; a Private Cloud leaves it unset. |
+| Module | Kind | Mounted at | Settings | What it is |
+| --- | --- | --- | --- | --- |
+| `billing` | Data | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: what it sells, what each workspace and person holds, and the hosted pages where they pay. The portal draws the Licenses page, the Members list's licenses and the Billing page from its answers. Hosted Core only; a Private Cloud leaves it unset. |
+
+Billing is a data module. Fleet's is the only UI module: the admin portal mounts
+its bundle from `/api/admin/fleet/ui/entry.js` ([Fleet
+integration](fleet-integration.md#the-fleet-ui-module-contract)), and the workspace
+portal keeps a module host (`websites/portal/src/components/portal-module-host.tsx`)
+for Fleet Management's UI. No workspace portal page mounts it, and the registry
+above lists billing alone. [The UI of a UI module](#the-ui-of-a-ui-module) is the
+contract that host speaks.
 
 How a request is signed and sent, what a module receives, how its answer is mapped
 and how its UI assets are relayed are the same as Fleet's, in code
@@ -47,10 +63,17 @@ to answer, body included.
 
 ## Is the module installed, and is it for me?
 
-`GET /api/portal/me` answers `modules: {"billing": true | false}`. It is true when
-billing is ready on this Core and visible to the person who asked (below), so the
-portal offers billing only where it works. A module whose settings are
-unusable is false, not true: the portal could not load its page.
+`GET /api/portal/me` answers `modules: {"billing": true | false,
+"billingCatalog": true | false}`:
+
+- `billing` is true when billing is ready on this Core and visible to the person
+  who asked (below), so the portal offers billing's pages only where they work.
+- `billingCatalog` is true when billing is ready, whoever asks, because the
+  catalog is an open read (below). It tells the portal that licenses can be named
+  for everyone who may see them, on the Licenses page and on the Members list.
+
+A module whose settings are unusable is false in both, not true: the portal could
+not load its page. So is one that is not installed.
 
 ### Who sees billing
 
@@ -60,13 +83,67 @@ it is visible to staff only, because billing sells with a test key there. Staff
 are Organization Admins, as `CLOUD_CORE_ADMIN_EMAILS` and
 `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` decide from a verified email; the forwarded
 principal carries the answer as `isOrganizationAdmin`. For anyone else on such a
-Core, `modules.billing` is `false` and every `/api/portal/billing/*` request
-answers `404 module_not_installed`, with the module never called, exactly as if
-it were not installed.
+Core, `modules.billing` is `false` and every `/api/portal/billing/*` request but
+an open read (below) answers `404 module_not_installed`, with the module never
+called, exactly as if it were not installed.
 
 The module repeats the rule on its side: on a test key it answers `403
 billing_staff_only` to a principal without `isOrganizationAdmin`, before it does
-anything, so Core and the module reach one answer.
+anything, except for the same open reads, so Core and the module reach one
+answer.
+
+### Open reads
+
+Staff-only is for what a person can do with billing, not for what it sells. A
+member of a workspace who is not staff still reads the catalog, so the Members
+list can name the licenses people hold, and the pages can show a product's icon.
+A module's `openReads` in the registry (`services/portal-modules/portal-modules.ts`)
+name the few requests that stay open to every signed-in person, however staff-only
+the module is. Billing's are:
+
+| Open read | Methods | Matched |
+| --- | --- | --- |
+| `/api/portal/billing/workspaces/:workspaceId/catalog` | `GET` | The path after the workspace is exactly `catalog` |
+| `/api/portal/billing/account/catalog` | `GET` | The path after `account` is exactly `catalog` |
+| `/api/portal/billing/ui/icons/<file>` | `GET`, `HEAD` | One file name after `ui/icons/`: 1 to 255 letters, digits, `.`, `_` and `-`, and not only dots. It is the contract's rule for an icon path (`BILLING_ICON_FILE`), so every icon path the portal accepts is open |
+
+Everything else is not open, in any spelling or method: `HEAD`, `POST` and the
+rest of the methods on a catalog; a trailing slash (`catalog/`), another case
+(`Catalog`), an encoded letter (`%63atalog`), a deeper path (`catalog/x`) or a
+doubled slash; `ui/icons` or `ui/icons/` with no file, a file under a deeper path
+or an encoded one, `ui/Icons/...` and `ui/iconsx/...`; and every other `ui/` path.
+Each is the `404 module_not_installed` of an absent module, as is a path Core
+refuses for its form (`invalid_path` goes only to people the module is visible to),
+so a person cannot probe around an open read. The request body of one that is not
+forwarded is not read, so a large one cannot tell them the module is there.
+
+An open read changes only whether a person may see the module. The scope rules
+are the same: a workspace's catalog needs a member of that workspace or an
+Organization Admin (`403 not_a_member`, or `404 workspace_not_found`, with the
+module not called), and the module is called with the scope Core decides. A module
+that is not installed has no open reads (`404`), and one whose settings are
+unusable answers them with `503 module_unavailable`.
+
+On a Core whose environment is `prod`, everything is forwarded, as for staff
+elsewhere.
+
+### Billing's routes
+
+Billing is a data module. Its routes are under
+`/api/portal/billing/{workspaces/:workspaceId | account}/`, and the contract of
+what they send is `@mentra/workspace-contract/portal-billing`:
+
+| Route | What it answers | Who |
+| --- | --- | --- |
+| `GET catalog` | What billing sells to this kind of owner, and what the owner holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many seats may be bought | Open read |
+| `GET status` | The owner's licenses as billing holds them, their dates and actions, the total, and the state of a purchase (`?purchase=`) | The module decides |
+| `POST purchase` | Starts a purchase and answers the hosted payment page's address | The module decides |
+| `POST session` | Opens a hosted billing page for a license or the account and answers its address | The module decides |
+| `GET ui/icons/<file>` | A product's icon | Open read |
+
+Billing serves no `ui/entry.js`. It sends values and the actions it offers, and the
+workspace portal words every sentence and formats every amount, date and count
+from them, and follows only the hosted-page addresses the contract accepts.
 
 ## Forwarding paths
 
@@ -74,7 +151,7 @@ anything, so Core and the module reach one answer.
 | --- | --- | --- | --- |
 | `/api/portal/<module>/workspaces/:workspaceId/<rest>` | `${url}/v1/portal/workspaces/:workspaceId/<rest>` | `{"kind": "workspace", "workspaceId"}` | A member of that workspace, or an Organization Admin |
 | `/api/portal/<module>/account/<rest>` | `${url}/v1/portal/account/<rest>` | `{"kind": "person"}` | Any signed-in person |
-| `/api/portal/<module>/ui/<rest>` | `${url}/v1/portal/ui/<rest>` | `{"kind": "person"}` | Any signed-in person; `GET` and `HEAD` only |
+| `/api/portal/<module>/ui/<rest>` | `${url}/v1/portal/ui/<rest>` | `{"kind": "person"}` | Any signed-in person the module is visible to, or anyone for an open read; `GET` and `HEAD` only |
 
 The method, query string and body are forwarded. The URL may carry a path prefix;
 Core joins it to `/v1/portal/...` with or without a trailing slash. The path and
@@ -90,12 +167,20 @@ Only people reach a module. Core answers, in this order:
    authenticates nothing here. A cookie-authenticated write must come from the
    workspace portal's origin.
 2. **Installed and visible?** `404 module_not_installed` if the module is not
-   installed or is hidden from this person; `503 module_unavailable` if it is
-   misconfigured. Neither learns anything about workspaces: this comes before the
-   scope check.
-3. **Path.** A path with a `.` or `..` segment, an encoded or literal separator
-   (`%2f`, `%5c`, `\`), a control character, a bad escape or a double encoding
-   (`%252e`) is `400 {"error":"invalid_path"}`, as for Fleet.
+   installed or is hidden from this person, unless the request is one of its
+   [open reads](#open-reads); `503 module_unavailable` if it is misconfigured.
+   Neither learns anything about workspaces: this comes before the scope check.
+   Whether a request is an open read is settled from its method and its path as
+   received, before the path is refused for its form, so a refusal of the path
+   never tells a person the module is there.
+3. **Path.** A path with an encoded separator (`%2f`, `%5c`), a control
+   character, a bad escape or a double encoding (`%252e`) is `400
+   {"error":"invalid_path"}`, as for Fleet. The server in front of Core resolves a
+   literal or encoded dot segment (`..`, `%2e%2e`) and turns a backslash into a
+   separator before Core sees the request, as a URL parser does, so Core judges
+   the path it resolves to: `status/../catalog` arrives as `catalog` and is the
+   open read, and `catalog/../status` arrives as `status`. Core's own refusal of a
+   dot segment is a second line, for a server that does not resolve them.
 4. **Scope.** A workspace path needs standing in that workspace: a member of any
    role, or an Organization Admin, who acts as an Owner in every workspace. A
    non-member is `403 {"error":"forbidden","reason":"not_a_member"}`, and an
@@ -105,7 +190,7 @@ Only people reach a module. Core answers, in this order:
 
 Core decides which workspace a request is about, from the path alone. Nothing the
 request carries in its query, body or headers can change the scope Core signs:
-`/api/portal/billing/account/checkout?scope=workspace` is still `{"kind":
+`/api/portal/billing/account/purchase?scope=workspace` is still `{"kind":
 "person"}`. The workspace in the scope is the path's segment decoded once, which
 is what the module decodes the path to.
 
@@ -146,15 +231,21 @@ or a success that is not JSON is `503 {"error":"module_unavailable"}`; an
 upstream `401` reaches the browser as a `403` (a `401` from Core means "sign in
 again"); every JSON answer carries `x-content-type-options: nosniff` and a
 sandbox `content-security-policy`; and the module's `x-request-id` is returned.
+A JSON answer is the module's answer to one person at an address that is the
+same for everyone (billing's catalog lists offers to a billing manager and
+display content to anyone else), so one the module sets no `cache-control` on
+carries `cache-control: private, no-store`; a module's own `cache-control` is
+relayed as it is. UI assets, billing's icons among them, keep the module's.
 Core logs each request that reaches the module once, as `Portal module billing
 request forwarded`, without a body, header, query or secret.
 
-## The module's UI
+## The UI of a UI module
 
-`GET` and `HEAD` `/api/portal/<module>/ui/<rest>` relay the module's UI bundle,
-through Core, so that it loads from the workspace portal's own origin under its
-`script-src 'self'`. What it relays therefore runs in the portal, and the rules
-are the Fleet UI asset rules, with `module_unavailable` for `fleet_unavailable`
+`GET` and `HEAD` `/api/portal/<module>/ui/<rest>` relay the module's assets,
+through Core, so that they load from the workspace portal's own origin under its
+`script-src 'self'`. For a UI module they include the bundle, which therefore runs
+in the portal. A data module's are images, such as billing's icons. The rules are
+the Fleet UI asset rules, with `module_unavailable` for `fleet_unavailable`
 ([Fleet UI assets](fleet-integration.md#fleet-ui-assets)): only `GET` and `HEAD`
 (`405` otherwise); a fixed list of content types (`text/javascript`,
 `text/css`, images, fonts, `application/json`; SVG under Core's own policy; `text/html`
