@@ -865,10 +865,28 @@ MentraOS repo root:
 ./scripts/check-android-compile.sh bluetooth-sdk
 ```
 
-The `android/` folder in this package is source for the generated Expo Android
-project, not the local Gradle entrypoint. The check script prepares
-`mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
-matching the CI release workflow's public SDK dependency mode.
+The check script prepares `mobile/android` and uses its Gradle wrapper with
+`-PmentraPublicSdk=true`, matching the CI release workflow's public SDK
+dependency mode. Inside an Expo app, the `android/` folder in this package is
+included by autolinking as `:mentra-bluetooth-sdk`.
+
+A plain Android app can also build the native SDK from a MentraOS checkout,
+without publishing it to Maven local, through a Gradle composite build. In the
+app's `settings.gradle.kts`:
+
+```kotlin
+includeBuild("/path/to/MentraOS/mobile/modules/bluetooth-sdk/android") {
+    dependencySubstitution {
+        substitute(module("com.mentraglass:bluetooth-sdk")).using(project(":"))
+    }
+}
+```
+
+The app keeps its `com.mentraglass:bluetooth-sdk` dependency; Gradle replaces it
+with the source build. This standalone build has the same dependencies as the
+Maven Central artifact (`-PmentraPublicSdk=true` is its default) and leaves out
+the Expo adapter classes, which need an Expo host. It needs the Android NDK for
+`lc3Lib`.
 
 For bare native iOS or macOS apps, use the public SwiftPM repository:
 
