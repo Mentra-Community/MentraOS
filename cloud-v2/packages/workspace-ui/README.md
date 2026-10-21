@@ -69,7 +69,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `CatalogGrid`, `CatalogDialog`, `BuyDialog`, `CatalogCard`, `canBuy` | Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, a workspace's licenses step, and one product's card |
 | `PurchaseBanner`, `TestModeBanner`, `LicensesSummary`, `LicensesUnavailable`, `PURCHASE_POLL_MS`, `PURCHASE_TIMEOUT_MS` | The banners and states around the cards, and the pace of the poll after checkout (2 seconds, for a minute) |
 | `useHostedAction`, `HostedFeedback`, `NavigateOut`, `PortalTab` | How every ↗ button leaves the portal for a hosted page, its refusal in words, and the host's two ways out (see [Licenses](#licenses)) |
-| `ConfirmDialog` (`title`, `description`, `cancelLabel`, `confirmLabel`, `onConfirm`, `onClose`), `MembersLicenses` | A question in a modal for what can't be taken back (Unassign, Remove): Cancel and a destructive button, a refusal shown inside, busy while the request is out; and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
+| `ConfirmDialog` (`title`, `description`, `cancelLabel`, `confirmLabel`, `onConfirm`, `onClose`), `MembersLicenses` | A question in a modal for what can't be taken back (Unassign, Remove): Cancel and a destructive button, a refusal shown inside (a throw from `onConfirm` becomes the generic one), busy while the request is out; and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
 | `ProductIcon`, `ProductChip`, `FeatureChips` | A product's look: its icon (a letter tile when it has none or it fails to load), icon and short name, and its feature chips (only with more than one feature) |
 | `Notice`, `Fact`, `Skeleton`, `StatusBadge`, `HostedPageButton`, `isHeldLicense` | The pieces the cards are made of: a status notice (`warn`, `info`, `neutral`), a label and value for a `<dl>`, a loading bar, a badge, a button that leaves the portal (its ↗ is an icon, so its name is the label alone), and the guard for a card Core also lists |
 | `joinLicenses`, `fitFor`, `seatCounts`, `holdsSeat`, `listedAction`, `catalogForOwner` | The page's logic, with no schemas at run time: Core's licenses joined to billing's entries and the catalog, in the page's order; what fits a product's available licenses; and the rules that gate what is offered |
@@ -373,12 +373,14 @@ from the Licenses page (its cards and its people picker), so the source is billi
 - **With a source, for a viewer who can read licenses** in a workspace holding a product that has
   not ended, the list gains a Licenses column (a chip per product, "None", "After first sign-in",
   and three chips plus "+n" past four). The chips are read-only: nothing in them is a button, and
-  there is no checkbox, no selection bar, no bulk Assign licenses and no side panel.
+  licenses are assigned from the Licenses page.
 - **The row's menu** (`workspace.members.manage`, never on one's own row) holds "Change role to <role>"
   for exactly the roles `roleOptions` allows (other than the one held) and "Remove from workspace".
   Remove asks first in a `ConfirmDialog`: Cancel, Escape, the × and the backdrop send nothing and give focus
   back to the row's menu button, a refusal is shown inside the dialog, and while the request is out it
-  can't be dismissed. A role change that fails is a neutral notice above the list. Each carries the revision
+  can't be dismissed. Once a removal goes through, focus moves to the next row's menu button (the previous
+  row's if it was the last, skipping rows with no menu), or to the list itself when none is left; Unassign
+  does the same with the next holder's Unassign button, or the roster's heading. A role change that fails is a neutral notice above the list. Each carries the revision
   the viewer last saw. Removing a member frees their licenses, so it marks billing's status stale.
 - **Licenses keep Core's order here** (the order they were bought), not the Licenses page's,
   so chips do not move when a payment fails.
@@ -471,8 +473,8 @@ tab order and Space.
   host owns `open`. Keys from a dialog nested inside it are left to that dialog.
 - **`Notice`** is `role="status"` in every tone, because nothing on these pages interrupts
   the person. A failed action's message is an `ErrorNotice`, the alert.
-- **Amber is for payments.** On the Licenses page, the Members list and its panel, and the
-  personal Billing page, amber marks a failed or incomplete payment and over-assignment, and
+- **Amber is for payments.** On the Licenses page, the Members list, and the personal
+  Billing page, amber marks a failed or incomplete payment and over-assignment, and
   nothing else (the spec's rule; test mode's hazard tape is the design's). So every failure and
   refusal there, billing's included, is an alert in the neutral notice style
   (`tone="neutral"`: the surface of a plain `Notice`, no new token). `AlertText`, `ErrorNotice`

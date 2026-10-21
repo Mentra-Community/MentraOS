@@ -5,11 +5,13 @@
  * The caller mounts it only while it asks, so a page holds no dialog of its own until then. Pressing the button runs
  * `onConfirm`, which answers with the refusal in words or null once it is done: a refusal is shown inside the dialog,
  * which stays open for another try; done closes it. While the request is out the dialog is busy and can't be
- * dismissed. Cancel, Escape, the × and the backdrop close it with no request (`onClose(false)`), and the caller gives
+ * dismissed. An `onConfirm` that throws is a refusal too (the generic "Something went wrong"), so the dialog is never
+ * left busy. Cancel, Escape, the × and the backdrop close it with no request (`onClose(false)`), and the caller gives
  * focus back to the button that asked.
  */
 
 import { useState, type ReactNode } from "react";
+import { errorMessage } from "../errors";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { AlertText } from "./common";
@@ -39,8 +41,14 @@ export function ConfirmDialog({
   async function confirm() {
     setPending(true);
     setRefusal(null);
-    const refused = await onConfirm();
-    setPending(false);
+    let refused: string | null;
+    try {
+      refused = await onConfirm();
+    } catch (error) {
+      refused = errorMessage(error);
+    } finally {
+      setPending(false);
+    }
     if (refused === null) onClose(true);
     else setRefusal(refused);
   }

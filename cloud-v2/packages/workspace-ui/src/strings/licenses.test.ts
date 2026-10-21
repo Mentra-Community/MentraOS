@@ -10,15 +10,6 @@ describe("dialogs and side panels", () => {
   });
 });
 
-describe("counts", () => {
-  test("pluralise from one", () => {
-    expect([t.count.people(1), t.count.people(3)]).toEqual(["1 person", "3 people"]);
-    expect([t.count.members(1), t.count.members(14)]).toEqual(["1 member", "14 members"]);
-    expect([t.count.licenses(1), t.count.licenses(2)]).toEqual(["1 license", "2 licenses"]);
-    expect([t.count.products(1), t.count.products(2)]).toEqual(["1 product", "2 products"]);
-  });
-});
-
 describe("the pages", () => {
   test("the Licenses page", () => {
     expect(t.page.title).toBe("Licenses");
@@ -348,6 +339,17 @@ describe("Members", () => {
     expect(t.assign.everyoneHolds).toBe("Everyone you chose has one.");
     expect(t.assign.tooMany(500)).toBe("You can assign up to 500 licenses at a time.");
   });
+
+  test("one license is one license wherever a count sits beside it: 1 of 1 license, never 1 of 1 licenses", () => {
+    expect(t.assign.enough({ free: 1, quantity: 1, chosen: 1 })).toBe("1 of 1 license available.");
+    expect(t.assign.enough({ free: 1, quantity: 1, chosen: 2 })).toBe("1 of 1 license available: enough for both.");
+    expect(t.assign.enough({ free: 2, quantity: 2, chosen: 1 })).toBe("2 of 2 licenses available.");
+    expect(t.assign.someHold({ holders: ["Amara Okafor"], free: 1, quantity: 1, recipients: ["Luis Ortega"] })).toBe(
+      "Amara Okafor has one. 1 of 1 license available, for Luis Ortega.",
+    );
+    expect(t.assign.someHold({ holders: ["A"], free: 0, quantity: 1, recipients: ["B"] })).toBe("A has one. 0 of 1 license available, for B.");
+    expect(t.assign.tooMany(1)).toBe("You can assign up to 1 license at a time.");
+  });
 });
 
 describe("banners", () => {
@@ -361,10 +363,10 @@ describe("banners", () => {
     expect(p.readyTitle({ seats: 5, product: "Call Unlimited" })).toBe("Your 5 Call Unlimited licenses are ready");
     expect(p.readyTitle({ seats: 1, product: "Call Unlimited" })).toBe("Your 1 Call Unlimited license is ready");
     expect(p.readyBody({ product: "Call Unlimited", paid: true })).toBe(
-      "Payment received, and Call Unlimited is active. Assign the licenses to members below, or from Members.",
+      "Payment received, and Call Unlimited is active. Assign the licenses to members below.",
     );
     expect(p.readyBody({ product: "Call Unlimited", paid: false })).toBe(
-      "Call Unlimited is active. Assign the licenses to members below, or from Members.",
+      "Call Unlimited is active. Assign the licenses to members below.",
     );
     expect(p.settingUp).toBe("Setting up…");
     expect(p.dismiss).toBe("Dismiss");
@@ -462,6 +464,8 @@ describe("refusals", () => {
     // A license is one person's right to a product, and "seat" is not a word a person reads. API and code names keep it
     // (`seats`, `add_seats`), so only the sentences are scanned.
     expect(outputs.filter((text) => /\bseats?\b/i.test(text))).toEqual([]);
+    // A count of one never sits beside a plural noun ("1 of 1 licenses"): every sentence that counts goes through `plural`.
+    expect(outputs.filter((text) => /\b1 (licenses|products|members|users|people|persons|others)\b/.test(text))).toEqual([]);
     // Samples that fit their function leave no hole in a sentence.
     expect(outputs.filter((text) => /undefined|NaN|\[object/.test(text))).toEqual([]);
   });
@@ -488,10 +492,6 @@ const FIT_LINES: unknown[][] = (["enough", "some_hold", "all_hold", "short", "fu
   ]),
 );
 const SAMPLES: Record<string, unknown[][]> = {
-  "count.people": [[1], [3]],
-  "count.members": [[1], [14]],
-  "count.licenses": [[1], [2]],
-  "count.products": [[1], [2]],
   "names.list": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
   "names.holders": [[[]], [["A"]], [["A", "B", "C", "D", "E"]]],
   "nav.backTo": [["Acme Field Services"]],
@@ -557,7 +557,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   "seats.unassignPrompt": [["Dana Reyes"]],
   "seats.unassignBody": [["Dana Reyes", "Mentra Call Unlimited"]],
   "seats.unassignAria": [["Dana Reyes"]],
-  "seats.freeSeats": [[7]],
+  "seats.freeSeats": [[7], [1]],
   "seats.allInUse": [[5], [1]],
   "seats.allInUseHelp": [[true], [false]],
   "seats.moreAvatars": [[3]],
@@ -579,12 +579,15 @@ const SAMPLES: Record<string, unknown[][]> = {
     [{ free: 2, quantity: 5, chosen: 1 }],
     [{ free: 2, quantity: 5, chosen: 2 }],
     [{ free: 4, quantity: 5, chosen: 3 }],
+    [{ free: 1, quantity: 1, chosen: 1 }],
+    [{ free: 1, quantity: 1, chosen: 2 }],
   ],
   "assign.someHold": [
     [{ holders: ["A"], free: 1, quantity: 3, recipients: ["B"] }],
     [{ holders: ["A", "B"], free: 1, quantity: 3, recipients: ["C", "D"] }],
+    [{ holders: ["A"], free: 1, quantity: 1, recipients: ["B"] }],
   ],
-  "assign.tooMany": [[500]],
+  "assign.tooMany": [[500], [1]],
   "purchase.headline": [[true], [false]],
   "purchase.settingUpSeats": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyTitle": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],

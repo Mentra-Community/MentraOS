@@ -158,14 +158,6 @@ export const licenseStrings = {
     close: "Close",
   },
 
-  count: {
-    people: (n: number) => plural(n, "person", "people"),
-    members: (n: number) => plural(n, "member"),
-    licenses: (n: number) => plural(n, "license"),
-    /** What the workspace buys: the page's total counts these, not licenses. */
-    products: (n: number) => plural(n, "product"),
-  },
-
   /** People, in a sentence: "Dana Reyes, Priya Natarajan and 8 others". */
   names: {
     list: nameList,
@@ -455,16 +447,16 @@ export const licenseStrings = {
   /** What fits when licenses are given to several people at once: the people picker's lines. */
   assign: {
     enough: ({ free, quantity, chosen }: { free: number; quantity: number; chosen: number }) => {
-      const licenses = `${free} of ${quantity} licenses available`;
-      if (chosen === 1) return `${licenses}.`;
-      return `${licenses}: enough for ${chosen === 2 ? "both" : `all ${chosen}`}.`;
+      const available = `${free} of ${plural(quantity, "license")} available`;
+      if (chosen === 1) return `${available}.`;
+      return `${available}: enough for ${chosen === 2 ? "both" : `all ${chosen}`}.`;
     },
     /** Some of the people already hold one: who, and who the available licenses are for. */
     someHold: ({ holders, free, quantity, recipients }: { holders: readonly string[]; free: number; quantity: number; recipients: readonly string[] }) =>
-      `${nameList(holders)} ${holders.length === 1 ? "has" : "have"} one. ${free} of ${quantity} licenses available, for ${nameList(recipients)}.`,
+      `${nameList(holders)} ${holders.length === 1 ? "has" : "have"} one. ${free} of ${plural(quantity, "license")} available, for ${nameList(recipients)}.`,
     everyoneHolds: "Everyone you chose has one.",
     /** Under Assign when more licenses are chosen than one request takes (`MAX_SEAT_ASSIGNMENTS`). */
-    tooMany: (max: number) => `You can assign up to ${max} licenses at a time.`,
+    tooMany: (max: number) => `You can assign up to ${plural(max, "license")} at a time.`,
   },
 
   purchase: {
@@ -477,7 +469,7 @@ export const licenseStrings = {
     readyTitle: ({ seats, product }: { seats: number; product: string }) =>
       `Your ${seats} ${product} ${seats === 1 ? "license is" : "licenses are"} ready`,
     readyBody: ({ product, paid }: { product: string; paid: boolean }) =>
-      `${paid ? `Payment received, and ${product} is active.` : `${product} is active.`} Assign the licenses to members below, or from Members.`,
+      `${paid ? `Payment received, and ${product} is active.` : `${product} is active.`} Assign the licenses to members below.`,
     /** A person. */
     personSettingUp: (product: string) => `Setting up ${product}. This takes a few seconds; you can stay on this page.`,
     personReadyTitle: (product: string) => `${product} is ready`,

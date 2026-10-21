@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } f
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { act, type ReactElement } from "react";
+import { act, useState, type ReactElement } from "react";
 import { MAX_SEAT_ASSIGNMENTS, type LicenseView, type MemberView } from "@mentra/workspace-contract";
 import type { BillingStatus, CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "./api";
@@ -22,8 +22,8 @@ import {
 } from "./components/licenses/banners";
 import { PeoplePickerDialog } from "./components/licenses/people-picker";
 import { memberLabel } from "./components/licenses/parts";
-import { seatHolders } from "./components/licenses/seats";
-import { joinLicenses, type JoinedLicense } from "./lib/license-join";
+import { SeatRoster, seatHolders, type SeatHolder } from "./components/licenses/seats";
+import { joinLicenses, seatCounts, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
 import { cleanup, click, find, findAll, isNeutral, press as pressKey, render, setupDom, teardownDom, typeInto } from "./test-dom";
@@ -1313,6 +1313,90 @@ describe("who holds the licenses", () => {
   });
 });
 
+/**
+ * A roster that takes a holder away when Unassign goes through, as the page does once its licenses are read again.
+ * With `when="before"` the list changes before the request's answer reaches the dialog; with "after" it changes only
+ * when the test calls `applyLater`, once the dialog has closed.
+ */
+let applyLater: (() => void) | null = null;
+function Roster({ initial, when }: { initial: readonly MemberView[]; when: "before" | "after" }) {
+  const license = coreLicense(5, initial);
+  const [people, setPeople] = useState(initial);
+  const holders: SeatHolder[] = seatHolders({ seats: seatsOf(people) }, PEOPLE);
+  const without = (holder: SeatHolder) => setPeople((current) => current.filter((member) => member.membershipId !== holder.membershipId));
+  return (
+    <SeatRoster
+      holders={holders}
+      counts={seatCounts({ quantity: license.quantity, seatsUsed: people.length })}
+      locale="en-US"
+      productName="Mentra Call Unlimited"
+      canAssign
+      addSeats={null}
+      onAssign={() => {}}
+      onUnassign={async (holder) => {
+        if (when === "before") without(holder);
+        else applyLater = () => without(holder);
+        return null;
+      }}
+    />
+  );
+}
+
+describe("where focus goes after a confirmed Unassign", () => {
+  async function unassign(name: string, when: "before" | "after") {
+    applyLater = null;
+    await press(`Unassign ${name}`);
+    await press("Unassign", unassignDialog());
+    await flush();
+    expect(openDialogs()).toHaveLength(0);
+    // The list changes now, if it hadn't: focus must already be somewhere that stays.
+    if (when === "after") {
+      expect(hasButton(`Unassign ${name}`)).toBe(true);
+      await act(async () => applyLater!());
+      await flush();
+    }
+    expect(hasButton(`Unassign ${name}`)).toBe(false);
+  }
+
+  for (const when of ["before", "after"] as const) {
+    describe(`when the list changes ${when} the dialog is answered`, () => {
+      test("on the next row's Unassign button", async () => {
+        await mount(<Roster initial={[HANNAH, TOM, NOAH]} when={when} />);
+        await unassign("Hannah Kim", when);
+        expect(document.activeElement).toBe(buttonNamed("Unassign Tom Becker"));
+      });
+
+      test("on the previous row's button when it was the last row", async () => {
+        await mount(<Roster initial={[HANNAH, TOM, NOAH]} when={when} />);
+        await unassign("Noah Fischer", when);
+        expect(document.activeElement).toBe(buttonNamed("Unassign Tom Becker"));
+      });
+
+      test("on the roster's heading when no row is left", async () => {
+        await mount(<Roster initial={[HANNAH]} when={when} />);
+        await unassign("Hannah Kim", when);
+        expect(findAll("ul.divide-y > li").some((row) => text(row).includes("Hannah Kim"))).toBe(false);
+        const heading = find("h3");
+        expect(heading.getAttribute("tabindex")).toBe("-1");
+        expect(document.activeElement).toBe(heading);
+      });
+    });
+  }
+
+  test("a refusal keeps the dialog open and moves nothing", async () => {
+    const r = rig();
+    r.releaseSeat.mockImplementationOnce(async () => {
+      throw new WorkspaceApiError(403, "forbidden", "forbidden");
+    });
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM]), {}));
+    await press("Unassign Hannah Kim");
+    await press("Unassign", unassignDialog());
+    await flush();
+    expect(openDialogs()).toHaveLength(1);
+    expect(document.activeElement).not.toBe(buttonNamed("Unassign Tom Becker"));
+  });
+});
+
 // ---- the people picker ----------------------------------------------------------------------------------------
 
 /** The checkbox in the row of the person with this name. */
@@ -1704,7 +1788,7 @@ describe("the purchase banner", () => {
     const words = text(find("section"));
     expect(find("section").getAttribute("data-phase")).toBe("ready");
     expect(words).toContain("Your 5 Mentra Call Unlimited licenses are ready");
-    expect(words).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below, or from Members.");
+    expect(words).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
     expect(findAll(".animate-spin")).toHaveLength(0);
     await press("Dismiss");
     expect(dismissed).toHaveBeenCalledTimes(1);

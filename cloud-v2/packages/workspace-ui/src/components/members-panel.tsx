@@ -4,7 +4,7 @@
  *
  * A row shows the member's name over their email (the email alone where Core has none), their role as a badge, their
  * licenses and when they joined. Nothing on it opens anything: licenses are assigned from the Licenses page, so the
- * chips only show, and there is no selection, no bulk "Assign licenses" and no side panel. Changing a role and
+ * chips only show. Changing a role and
  * removing a member are in the row's "…" menu, under the rules they always had: Change role offers only the roles
  * `roleOptions` allows the viewer, and Remove from workspace only where removal is theirs to do; neither is ever
  * offered for the viewer's own membership (a stray click must not demote an owner, so their role is changed by
@@ -26,7 +26,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { MoreHorizontalIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
 import type { CatalogEntry } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../api";
@@ -119,17 +119,23 @@ export function WorkspaceMembersPanel({
     { seats: true },
   );
 
-  // Who Remove is asking about, and the menus' buttons, so that a dialog closed without removing gives focus back.
+  // Who Remove is asking about, and the menus' buttons, so that a closed dialog gives focus back.
   const [removing, setRemoving] = useState<MemberView | null>(null);
   const menus = useRef(new Map<string, HTMLElement>());
-  const returnFocusTo = useRef<string | null>(null);
-  useEffect(() => {
-    if (removing === null && returnFocusTo.current !== null) {
-      menus.current.get(returnFocusTo.current)?.querySelector("button")?.focus();
-      returnFocusTo.current = null;
-    }
-  }, [removing]);
+  const list = useRef<HTMLDivElement>(null);
+  // Whose menu button gets focus once the dialog is gone, or null for the list itself.
+  const returnFocusTo = useRef<{ membershipId: string | null } | null>(null);
+  // Where focus goes if the member is removed, worked out when the dialog opens from the rows then on the screen.
+  const afterRemoval = useRef<string | null>(null);
   const busy = changeRole.isPending || remove.isPending;
+  // Waits for `busy` to end too: a menu button is disabled while the removal that just finished is still settling.
+  useEffect(() => {
+    if (removing !== null || busy || returnFocusTo.current === null) return;
+    const { membershipId } = returnFocusTo.current;
+    returnFocusTo.current = null;
+    const button = membershipId === null ? null : menus.current.get(membershipId)?.querySelector("button");
+    (button ?? list.current)?.focus();
+  }, [removing, busy]);
 
   return (
     <Panel
@@ -166,6 +172,7 @@ export function WorkspaceMembersPanel({
                       actionsFor={actionsFor}
                       busy={busy}
                       locale={locale}
+                      listRef={list}
                       registerMenu={(membershipId, element) => {
                         if (element) menus.current.set(membershipId, element);
                         else menus.current.delete(membershipId);
@@ -176,6 +183,7 @@ export function WorkspaceMembersPanel({
                       }}
                       onRemove={(member) => {
                         changeRole.reset();
+                        afterRemoval.current = neighbourWithMenu(members, member, (other) => actionsFor(other) !== null);
                         setRemoving(member);
                       }}
                     />
@@ -195,8 +203,8 @@ export function WorkspaceMembersPanel({
                           }
                         }}
                         onClose={(done) => {
-                          // Backed out: the row's menu button is where the person was. Removed: the row is going.
-                          if (!done) returnFocusTo.current = removing.membershipId;
+                          // Backed out: the row's menu button is where the person was. Removed: the row is going, so the neighbour's.
+                          returnFocusTo.current = { membershipId: done ? afterRemoval.current : removing.membershipId };
                           setRemoving(null);
                         }}
                       />
@@ -210,6 +218,17 @@ export function WorkspaceMembersPanel({
       </QueryGate>
     </Panel>
   );
+}
+
+/**
+ * The row whose menu button gets focus when `member` is removed: the nearest row below that has a menu, else the
+ * nearest above (the last row's neighbour is the one before it). Null when no other row has one.
+ */
+function neighbourWithMenu(members: readonly MemberView[], member: MemberView, hasMenu: (other: MemberView) => boolean): string | null {
+  const at = members.findIndex((other) => other.membershipId === member.membershipId);
+  const below = members.slice(at + 1).find(hasMenu);
+  const above = members.slice(0, Math.max(at, 0)).reverse().find(hasMenu);
+  return (below ?? above)?.membershipId ?? null;
 }
 
 /** The chips of the licenses a member holds: all of them up to four, else three and "+n". */
@@ -247,6 +266,7 @@ function MembersTable({
   actionsFor,
   busy,
   locale,
+  listRef,
   registerMenu,
   onChangeRole,
   onRemove,
@@ -262,18 +282,28 @@ function MembersTable({
   /** A change is out: the menus wait. */
   busy: boolean;
   locale?: string;
+  /** The list as a whole, which takes focus when a removal leaves no row with a menu to give it to. */
+  listRef: RefObject<HTMLDivElement | null>;
   registerMenu(membershipId: string, element: HTMLElement | null): void;
   onChangeRole(member: MemberView, role: WorkspaceRole): void;
   onRemove(member: MemberView): void;
 }) {
-  if (members.length === 0) return <Restricted>{t.members.noMembers}</Restricted>;
+  if (members.length === 0) {
+    return (
+      <div ref={listRef} data-slot="members-list" tabIndex={-1}>
+        <Restricted>{t.members.noMembers}</Restricted>
+      </div>
+    );
+  }
   return (
-    // On a phone each row stacks: the member across the top (with the menu beside them), then their role and their licenses.
-    // A row's menu opens over the list, so the table does not clip it where it has room (a phone, a desktop); only in
-    // between does it scroll sideways.
-    <div className="-mx-6 overflow-x-auto max-sm:overflow-visible max-sm:border-t lg:overflow-visible">
-      <table className="w-full text-left text-sm max-sm:block">
-        <thead className="text-muted-foreground border-y text-xs max-sm:hidden">
+    // Below a desktop each row stacks: the member across the top (with the menu beside them), then their role and their
+    // licenses. The table needs about 620px, and beside the sidebar a tablet leaves less than that, so the stacked rows
+    // go up to `lg` and the table is never scrolled sideways. A row's menu opens over the list, so nothing around the
+    // table may clip it: no `overflow` on the wrapper at any width. Every variant here is `max-lg:`, none is `lg:`, so
+    // that at exactly 1024px (where the browser rounds `max-width: 63.999rem` up) the row is one layout and not both.
+    <div ref={listRef} data-slot="members-list" tabIndex={-1} className="-mx-6 max-lg:border-t">
+      <table className="w-full text-left text-sm max-lg:block">
+        <thead className="text-muted-foreground border-y text-xs max-lg:hidden">
           <tr>
             <th className="py-3 pr-4 pl-6 font-semibold">{t.members.member}</th>
             <th className="py-3 pr-4 font-semibold">{t.members.role}</th>
@@ -282,7 +312,7 @@ function MembersTable({
             {managed ? <th aria-hidden="true" className="w-12 py-3 pr-4" /> : null}
           </tr>
         </thead>
-        <tbody className="max-sm:block">
+        <tbody className="max-lg:block">
           {members.map((member) => {
             const label = memberLabel(member);
             const isSelf = member.membershipId === ownMembershipId;
@@ -301,9 +331,9 @@ function MembersTable({
             return (
               <tr
                 key={member.membershipId}
-                className="border-b last:border-b-0 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:px-5 max-sm:py-4"
+                className="border-b last:border-b-0 max-lg:flex max-lg:flex-wrap max-lg:items-center max-lg:gap-x-3 max-lg:gap-y-2.5 max-lg:px-5 max-lg:py-4"
               >
-                <td className={cn("py-3.5 pr-4 pl-6 max-sm:order-1 max-sm:min-w-0 max-sm:flex-1 max-sm:p-0", managed ? "max-sm:basis-[calc(100%-3rem)]" : "max-sm:basis-full")}>
+                <td className={cn("py-3.5 pr-4 pl-6 max-lg:order-1 max-lg:min-w-0 max-lg:flex-1 max-lg:p-0", managed ? "max-lg:basis-[calc(100%-3rem)]" : "max-lg:basis-full")}>
                   <div className="flex min-w-0 items-center gap-3">
                     <Avatar label={label} />
                     <span className="min-w-0">
@@ -329,19 +359,19 @@ function MembersTable({
                     </div>
                   ) : null}
                 </td>
-                <td className="py-3.5 pr-4 max-sm:order-3 max-sm:p-0">
+                <td className="py-3.5 pr-4 max-lg:order-3 max-lg:p-0">
                   <RoleBadge role={member.role} />
                 </td>
                 {cards ? (
-                  <td className="py-3.5 pr-4 max-sm:order-3 max-sm:min-w-40 max-sm:flex-1 max-sm:p-0">
+                  <td className="py-3.5 pr-4 max-lg:order-3 max-lg:min-w-40 max-lg:flex-1 max-lg:p-0">
                     <LicensesCell member={member} cards={cards} />
                   </td>
                 ) : null}
-                <td className="text-muted-foreground hidden py-3.5 pr-6 whitespace-nowrap sm:table-cell">
+                <td className="text-muted-foreground py-3.5 pr-6 whitespace-nowrap max-lg:hidden">
                   {formatDate(member.startedAt, locale)}
                 </td>
                 {managed ? (
-                  <td className="py-3.5 pr-4 text-right max-sm:order-2 max-sm:w-9 max-sm:p-0">
+                  <td className="py-3.5 pr-4 text-right max-lg:order-2 max-lg:w-9 max-lg:p-0">
                     {items.length > 0 ? (
                       <span ref={(element) => registerMenu(member.membershipId, element)} className="inline-block">
                         <Menu

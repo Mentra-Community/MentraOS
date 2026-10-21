@@ -170,7 +170,9 @@ function FreeSeatIcon() {
  *
  * Unassign opens a modal: "Unassign <name>?" with one plain line, Cancel and a destructive Unassign. Cancel, Escape, the
  * × and the backdrop close it with no request and put focus back on the row's button; a refusal is shown inside it,
- * and while the request is out it can't be dismissed.
+ * and while the request is out it can't be dismissed. Once the license is taken back its row is on its way out, so
+ * focus goes to the next row's Unassign button (the previous row's if it was the last), or to the roster's heading
+ * when no row is left.
  */
 export function SeatRoster({
   holders,
@@ -196,18 +198,22 @@ export function SeatRoster({
   const [query, setQuery] = useState("");
   const [leaving, setLeaving] = useState<SeatHolder | null>(null);
   const triggers = useRef(new Map<string, HTMLButtonElement>());
-  const returnFocusTo = useRef<string | null>(null);
-  // The dialog closed without taking anything back: the row's own button is where the person was.
+  const heading = useRef<HTMLHeadingElement>(null);
+  // Whose Unassign button gets focus when the dialog is gone, or null for the heading.
+  const returnFocusTo = useRef<{ membershipId: string | null } | null>(null);
+  // Where focus goes if the license is taken back, worked out when the dialog opens from the rows then on the screen.
+  const afterTakingBack = useRef<string | null>(null);
   useEffect(() => {
     if (leaving === null && returnFocusTo.current !== null) {
-      triggers.current.get(returnFocusTo.current)?.focus();
+      const { membershipId } = returnFocusTo.current;
       returnFocusTo.current = null;
+      (membershipId === null ? heading.current : (triggers.current.get(membershipId) ?? heading.current))?.focus();
     }
   }, [leaving]);
-  // Done: the row is on its way out, so there is nothing to give focus back to. Backed out: the button that asked.
+  // Backed out: the button that asked. Done: its row is on its way out, so the neighbour's button (or the heading).
   const closeDialog = (done: boolean) => {
     if (leaving === null) return;
-    if (!done) returnFocusTo.current = leaving.membershipId;
+    returnFocusTo.current = { membershipId: done ? afterTakingBack.current : leaving.membershipId };
     setLeaving(null);
   };
   const searchable = holders.length > SEARCH_FROM;
@@ -216,6 +222,11 @@ export function SeatRoster({
     searchable && needle
       ? holders.filter((holder) => `${holder.name ?? ""} ${holder.email ?? ""} ${holder.label}`.toLowerCase().includes(needle))
       : holders;
+  const askToUnassign = (holder: SeatHolder) => {
+    const at = shown.findIndex((candidate) => candidate.membershipId === holder.membershipId);
+    afterTakingBack.current = (shown[at + 1] ?? shown[at - 1])?.membershipId ?? null;
+    setLeaving(holder);
+  };
   const assignable = canAssign && !blocked;
   const searching = searchable && needle !== "";
   const title = (
@@ -227,7 +238,7 @@ export function SeatRoster({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-[15px] font-semibold">
+        <h3 ref={heading} tabIndex={-1} className="text-[15px] font-semibold">
           {onCollapse ? (
             <button type="button" aria-expanded={true} onClick={onCollapse} className="flex cursor-pointer items-center gap-2 font-semibold">
               {title}
@@ -278,7 +289,7 @@ export function SeatRoster({
                 variant="destructive-secondary"
                 size="sm"
                 aria-label={t.seats.unassignAria(holder.label)}
-                onClick={() => setLeaving(holder)}
+                onClick={() => askToUnassign(holder)}
               >
                 {t.seats.unassign}
               </Button>

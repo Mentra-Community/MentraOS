@@ -1,8 +1,7 @@
 /**
  * The Members list: its read-only Licenses column, and the row's "…" menu (Change role, Remove from workspace, which
  * asks first in a dialog), driven in a DOM against an in-memory Core: every request the screens make is answered from
- * `World`. The list has no checkboxes, no bulk Assign licenses and no side panel: licenses are assigned from the
- * Licenses page. Synthetic data only.
+ * `World`. The list assigns nothing: licenses are assigned from the Licenses page. Synthetic data only.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
@@ -11,6 +10,7 @@ import { act } from "react";
 import { type LicenseView, type MemberView, type WorkspaceDetail, type WorkspaceRole } from "@mentra/workspace-contract";
 import type { CatalogEntry } from "@mentra/workspace-contract/portal-billing";
 import { createWorkspaceApi, type FetchLike, type WorkspaceApi } from "./api";
+import { ConfirmDialog } from "./components/confirm-dialog";
 import { WorkspaceMembersPanel, type MembersLicenses } from "./components/members-panel";
 import { formatDate } from "./lib/format";
 import { billingKeys } from "./queries";
@@ -382,11 +382,20 @@ describe("the row's menu: Change role and Remove from workspace", () => {
     expect(await offered("Sam Carter")).toEqual(["Change role to Member", "Change role to Developer", "Change role to Admin", "Remove from workspace"]);
   });
 
-  test("the menu opens over the list: the table doesn't clip it on a phone or a desktop", async () => {
+  test("the menu opens over the list: nothing around the table clips it at any width", async () => {
     await mount({ role: "owner" });
     const wrapper = find("table").parentElement!;
-    expect(wrapper.className).toContain("max-sm:overflow-visible");
-    expect(wrapper.className).toContain("lg:overflow-visible");
+    // No overflow of any kind on the wrapper: an `overflow-x-auto` there would clip the absolutely positioned menu on a
+    // tablet. (The rendered check at 800px is in the report; class names are all a DOM without layout can say.)
+    expect(wrapper.className).not.toMatch(/overflow/);
+    expect(wrapper.getAttribute("data-slot")).toBe("members-list");
+    // Rows stack below a desktop (the table needs about 620px, more than a tablet beside the sidebar leaves) and are a table from `lg`.
+    expect(find("table").className).toContain("max-lg:block");
+    expect(find("thead").className).toContain("max-lg:hidden");
+    expect(wrapper.className).not.toContain("max-sm:");
+    // One direction only: at exactly 1024px a browser matches `max-lg:` and `lg:` together, which would show a hybrid row.
+    const classes = [...findAll("table, table *")].map((element) => element.getAttribute("class") ?? "").join(" ");
+    expect(classes).not.toMatch(/(^|\s)(sm|md|lg|xl):/);
   });
 
   test("without workspace.members.manage the list only shows: no menu, no actions column", async () => {
@@ -563,6 +572,123 @@ describe("the row's menu: Change role and Remove from workspace", () => {
   });
 });
 
+describe("the confirm dialog", () => {
+  const closes: boolean[] = [];
+  const mountDialog = (onConfirm: () => Promise<string | null>) =>
+    render(
+      <ConfirmDialog
+        title="Remove Dana Reyes from this workspace?"
+        description="They lose access."
+        cancelLabel="Cancel"
+        confirmLabel="Remove"
+        onConfirm={onConfirm}
+        onClose={(done) => void closes.push(done)}
+      />,
+    );
+  afterEach(() => void (closes.length = 0));
+
+  test("an onConfirm that rejects says so in words and leaves the dialog usable: Remove again, Cancel, Escape and the × all work", async () => {
+    let attempts = 0;
+    await mountDialog(async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("the connection dropped");
+      return null;
+    });
+    const dialog = removeDialog();
+    await click(byText("Remove", "button", dialog));
+    await flush();
+    // The throw became the generic refusal, shown inside the dialog, in the neutral style; the dialog is not locked.
+    expect(find('[role="alert"]', dialog).textContent).toBe("Something went wrong. Try again.");
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
+    const names = (button: HTMLElement) => button.getAttribute("aria-label") ?? button.textContent!.trim();
+    const dialogButtons = findAll<HTMLButtonElement>("button", dialog);
+    expect(dialogButtons.map(names)).toEqual(["Close", "Cancel", "Remove"]);
+    for (const button of dialogButtons) {
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(button.getAttribute("aria-busy")).toBeNull();
+    }
+    const cancel = new Event("cancel", { cancelable: true });
+    await act(async () => void dialog.dispatchEvent(cancel));
+    expect(cancel.defaultPrevented).toBe(false);
+    expect(closes).toEqual([]);
+    // Another try runs, and the next throw replaces the words rather than stacking them.
+    await click(byText("Remove", "button", dialog));
+    await flush();
+    expect(attempts).toBe(2);
+    expect(findAll('[role="alert"]', dialog)).toHaveLength(1);
+    // Once it goes through the dialog is over, and it says it was done.
+    await click(byText("Remove", "button", dialog));
+    await flush();
+    expect(attempts).toBe(3);
+    expect(closes).toEqual([true]);
+  });
+
+  test("after a throw Cancel still backs out with no request", async () => {
+    await mountDialog(async () => {
+      throw new Error("boom");
+    });
+    await click(byText("Remove", "button", removeDialog()));
+    await flush();
+    await click(byText("Cancel", "button", removeDialog()));
+    expect(closes).toEqual([false]);
+  });
+});
+
+describe("where focus goes after a confirmed Remove", () => {
+  /** Opens the row's menu, chooses Remove from workspace and confirms it. */
+  async function remove(label: string, writes: () => unknown[], count: number) {
+    await click(menuFor(label));
+    await click(item("Remove from workspace"));
+    await click(byText("Remove", "button", removeDialog()));
+    await until(() => writes().length === count, "the removal");
+    await until(() => openDialogs().length === 0, "the dialog to close");
+    await flush();
+  }
+
+  test("on the next row's menu button", async () => {
+    const { writes } = await mount({ role: "admin" });
+    await remove("Luis Ortega", writes, 1);
+    await until(() => !hasMenu("Luis Ortega"), "the row to go");
+    expect(document.activeElement).toBe(menuFor("Amara Okafor"));
+  });
+
+  test("on the previous row's menu button when it was the last row", async () => {
+    const { writes } = await mount({ role: "admin" });
+    await remove("grace@acme.test", writes, 1);
+    await until(() => !hasMenu("grace@acme.test"), "the row to go");
+    expect(document.activeElement).toBe(menuFor("max@acme.test"));
+  });
+
+  test("past a row that has no menu (an Admin can't manage an Admin)", async () => {
+    const { writes } = await mount({ role: "admin", members: [DANA, ADAM, LUIS] });
+    await remove("Dana Reyes", writes, 1);
+    await until(() => !hasMenu("Dana Reyes"), "the row to go");
+    expect(hasMenu("Adam Park")).toBe(false);
+    expect(document.activeElement).toBe(menuFor("Luis Ortega"));
+  });
+
+  test("on the list itself when no row with a menu is left", async () => {
+    const { writes } = await mount({ role: "admin", members: [SAM, DANA] });
+    await remove("Dana Reyes", writes, 1);
+    await until(() => !hasMenu("Dana Reyes"), "the row to go");
+    const list = find("[data-slot='members-list']");
+    expect(list.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(list);
+  });
+
+  test("a refused removal leaves focus where it was: nothing moves while the dialog stays open", async () => {
+    const { world, writes } = await mount({ role: "admin" });
+    world.fail = (call) => (call.method === "DELETE" ? reply(409, { error: "membership_changed", error_description: "changed" }) : undefined);
+    await click(menuFor("Luis Ortega"));
+    await click(item("Remove from workspace"));
+    await click(byText("Remove", "button", removeDialog()));
+    await until(() => findAll('[role="alert"]', removeDialog()).length === 1, "the refusal");
+    expect(writes()).toHaveLength(1);
+    expect(openDialogs()).toHaveLength(1);
+    expect(document.activeElement).not.toBe(menuFor("Amara Okafor"));
+  });
+});
+
 describe("a members list that can't be read", () => {
   test("says so in the neutral style, with Try again", async () => {
     const detail = detailFor("admin");
@@ -629,7 +755,6 @@ describe("what the Members screens carry", () => {
 
   test("the list needs only the catalog from a host: no billing client, no ways out", async () => {
     const source: MembersLicenses = { catalog: CATALOG };
-    expect(Object.keys(source)).toEqual(["catalog"]);
     await mount({ source });
     expect(chipsOf(rowOf("Dana Reyes"))).toEqual(["Call Unlimited", "Example Add-on"]);
   });

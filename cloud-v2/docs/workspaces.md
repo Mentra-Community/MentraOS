@@ -77,8 +77,8 @@ at `/enterprise` until it returns as workspace settings.
 **Members** lists each member by name over email (the email alone where Core has no
 name), with a "You" mark on your own row, "Pending first sign-in" on an imported
 membership, their role, the licenses they hold and when they joined (the date is left
-out on a phone). The list is simple: no checkboxes, no side panel, and a row opens
-nothing.
+out on a tablet or a phone, where each row stacks). Nothing on a row opens anything;
+licenses are assigned from the Licenses page.
 
 - **Licenses.** Where billing's catalog can be read, and you hold
   `workspace.licenses.read` in a workspace with a product that has not ended, the list

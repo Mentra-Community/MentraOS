@@ -1,10 +1,11 @@
 # Licenses
 
-Core holds the licenses people and workspaces buy, and who holds each seat.
-Billing (the Store's billing module) sells them and writes each license into
-Core; Core never changes a license's terms itself. Workspaces, roles and the
-audit trail are described in [Workspaces and keys](workspaces.md), and the
-signed service API in [Store integration](store-integration.md).
+Core holds the products that people and workspaces buy, and the licenses people
+get from them: who holds each one. Billing (the Store's billing module) sells
+the products and writes each license into Core; Core never changes a license's
+terms itself. Workspaces, roles and the audit trail are described in
+[Workspaces and keys](workspaces.md), and the signed service API in
+[Store integration](store-integration.md).
 
 - A **license** is a quantity of one **product** (`mentra.call.unlimited`) for a
   term: valid from `validFrom`, paid through `paidThrough`.
@@ -423,8 +424,8 @@ the page does.
   once Core has listed a product for them to name.
 - **The Members page.** Its Licenses column is for a viewer with
   `workspace.licenses.read` where the catalog can be read. It only shows: a chip per
-  product, "None", or "After first sign-in", with no checkbox, no bulk Assign
-  licenses and no side panel, and licenses are assigned from the Licenses page. A row's
+  product, "None", or "After first sign-in". Licenses are assigned from the
+  Licenses page, never from Members. A row's
   "…" menu (Change role to a role, Remove from workspace, which asks in a dialog)
   needs `workspace.members.manage`. Without the catalog the column is left out and the
   rest of Members works.

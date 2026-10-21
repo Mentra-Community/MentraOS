@@ -718,7 +718,7 @@ describe("purchases", () => {
     r.answers.status = ready();
     r.answers.licenses = [fleetLicense(), callLicense({ seatsUsed: 0, seats: [] })];
     await until(() => text().includes("Your 5 Mentra Call Unlimited licenses are ready"), "the banner to say ready");
-    expect(text()).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below, or from Members.");
+    expect(text()).toContain("Payment received, and Mentra Call Unlimited is active. Assign the licenses to members below.");
     expect(buttons()).toContain("Dismiss");
     // Purchased card first (not by name: Fleet sorts before it), ringed in green, its roster open.
     expect(cardNames()).toEqual(["Mentra Call Unlimited", "Fleet"]);

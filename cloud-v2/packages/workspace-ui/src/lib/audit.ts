@@ -208,7 +208,7 @@ const INTERNAL_FIELD = /(^id$|Ids?$)/;
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
 /** Fields whose name is not the word a person reads: a license is one person's right to a product, so `seatsUsed` counts licenses assigned. */
-const FIELD_LABELS: Record<string, string> = {seatsUsed: "Licenses assigned"};
+const FIELD_LABELS: Record<string, string> = { seatsUsed: "Licenses assigned" };
 
 /** "expiresAt" as "Expires at", "packageNames" as "Package names". */
 function fieldLabel(field: string): string {
