@@ -528,6 +528,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   ],
   "seats.since": [["Oct 20, 2026"]],
   "seats.unassignPrompt": [["Dana Reyes"]],
+  "seats.unassignAria": [["Dana Reyes"]],
   "seats.freeSeats": [[7]],
   "seats.allInUse": [[5]],
   "seats.allInUseHelp": [[true], [false]],

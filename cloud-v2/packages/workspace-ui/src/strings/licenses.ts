@@ -339,6 +339,8 @@ export const licenseStrings = {
     unassign: "Unassign",
     /** The confirm step of Unassign. */
     unassignPrompt: (name: string) => `Unassign ${name}?`,
+    /** Unassign's accessible name: whose seat. */
+    unassignAria: (name: string) => `Unassign ${name}`,
     freeSeat: "Free seat",
     assign: "Assign",
     assignSeats: "Assign seats",
