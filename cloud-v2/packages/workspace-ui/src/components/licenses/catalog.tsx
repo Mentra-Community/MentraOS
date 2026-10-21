@@ -11,8 +11,8 @@
  * seats step's seats × unit. Any other price shows its `fallbackLabel` exactly, with no arithmetic, no renewal
  * claim and no tax note. "before tax" appears only where billing says tax is `excluded`.
  *
- * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Add seats, Continue to
- * payment, and a person's Buy, which asks for their one seat and goes straight to payment (a person never sees the
+ * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Add seats (or, on a product
+ * whose first payment isn't finished, Complete payment), Continue to payment, and a person's Buy, which asks for their one seat and goes straight to payment (a person never sees the
  * seats step). A workspace's Buy only opens the seats step, so it is a plain button. They all leave the way every
  * other billing button does, through `useHostedAction` and the host's `NavigateOut`: the client has already refused
  * any address the contract doesn't accept, and an Add seats billing lists with `returns: false` opens its tab in the
@@ -130,9 +130,26 @@ function heldOf(licenses: readonly LicenseBilling[] | undefined, product: string
   return mine.find((license) => listedAction(license, "add_seats") !== null) ?? mine[0] ?? null;
 }
 
-/** "You have 5 seats" for a workspace, "You have it" for a person. */
-function heldText(owner: LicenseScope, license: LicenseBilling): string {
-  return owner === "workspace" ? t.catalog.youHaveSeats(license.quantity) : t.catalog.youHaveIt;
+/**
+ * What the owner's license of a product says on a card or row. A license in force reads "You have 5 seats" for a
+ * workspace and "You have it" for a person. A first payment that isn't finished (`incomplete`) is not held yet: it
+ * reads as its state, "Payment incomplete" in amber, as the license's own card does, and never as seats the owner
+ * doesn't have.
+ */
+function heldState(owner: LicenseScope, license: LicenseBilling): { text: string; warn: boolean } {
+  if (license.status === "incomplete") return { text: t.status.incomplete, warn: true };
+  return { text: owner === "workspace" ? t.catalog.youHaveSeats(license.quantity) : t.catalog.youHaveIt, warn: false };
+}
+
+/**
+ * The one thing billing lists for a held product that this screen offers: Complete payment for a first payment that
+ * isn't finished (a person's too), else Add seats where the owner is a workspace. Null where billing lists neither.
+ * Nothing is added to a license that isn't paid for, and a person's licenses have no seat count to change, whatever
+ * is listed.
+ */
+function heldAction(owner: LicenseScope, license: LicenseBilling): BillingAction | null {
+  if (license.status === "incomplete") return listedAction(license, "complete_payment");
+  return owner === "workspace" ? listedAction(license, "add_seats") : null;
 }
 
 /** `sentence` as its lead (when it starts with it) and the rest, so a screen can style the lead without rewording the sentence. */
@@ -183,8 +200,12 @@ function BuyButton({
   );
 }
 
-/** Add seats, for a held product whose license billing lists `add_seats` for, in a workspace. Null otherwise. */
-function AddSeatsButton({
+/**
+ * The ↗ button for a held product: Add seats on its license, or Complete payment for a first payment that isn't
+ * finished (see `heldAction`), by the action billing listed. Null where there is none. It opens its page in a tab
+ * where billing lists the action with `returns: false`.
+ */
+function HeldActionButton({
   entry,
   owner,
   license,
@@ -205,12 +226,11 @@ function AddSeatsButton({
   size: "default" | "sm";
   className?: string;
 }) {
-  // A person's licenses have no seat count to change, whatever is listed.
-  const action = owner === "workspace" ? listedAction(license, "add_seats") : null;
+  const action = heldAction(owner, license);
   if (action === null) return null;
   return (
     <HostedPageButton
-      variant="secondary"
+      variant={license.status === "incomplete" ? "default" : "secondary"}
       size={size}
       className={className}
       newTab={action.returns === false}
@@ -250,7 +270,7 @@ export interface CatalogCardProps {
   /** It is this card's own request that is out. */
   pending: boolean;
   onBuy(entry: CatalogEntry): void;
-  /** Add seats, by the `add_seats` action billing listed for the held license. */
+  /** The held license's button was pressed: Add seats, or Complete payment on an unfinished first payment, by the action billing listed. */
   onAddSeats(license: LicenseBilling, entry: CatalogEntry, action: BillingAction): void;
 }
 
@@ -290,8 +310,8 @@ export function CatalogCard({ entry, scope, locale, held, busy, pending, onBuy, 
         {/* A flex column with a gap, not `space-y`: a hosted-page button brings a hidden hint span after it, which would take the last child's place. */}
         {held ? (
           <div className="mt-6 flex flex-col gap-4">
-            <p className="text-[15px] font-semibold">{heldText(scope, held)}</p>
-            <AddSeatsButton
+            <p className={cn("text-[15px] font-semibold", heldState(scope, held).warn && "text-error-foreground")}>{heldState(scope, held).text}</p>
+            <HeldActionButton
               entry={entry}
               owner={scope}
               license={held}
@@ -318,8 +338,10 @@ export function CatalogCard({ entry, scope, locale, held, busy, pending, onBuy, 
 
 /**
  * What this owner can buy: "Buy a license for your members" or "Buy a license for yourself", with one card per
- * product the scope's owner type is offered. It draws nothing when there is no such product. A workspace's Buy opens
- * the seats step; a person's goes straight to payment.
+ * product the scope's owner type is offered. It draws nothing when there is no such product. The heading and its
+ * "You'll pay by card…" line are drawn only when at least one of those products has an `offer` for this viewer; without
+ * one the cards are display content and the grid has no buying copy. A workspace's Buy opens the seats step; a
+ * person's goes straight to payment.
  */
 export function CatalogGrid({ products, licenses, memberCount, ...host }: CatalogProps) {
   const owner = ownerTypeOf(host.scope);
@@ -331,15 +353,20 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
   const copy = t.catalog[owner];
   const onBuy = buyChoice(owner, hosted, setBuying);
   const onAddSeats = addSeatsOf(hosted);
+  // The heading and "You'll pay by card…" are buying copy: they belong to a viewer billing offers something to
+  // (an entry with an `offer`). For anyone else the entries are display content, and say nothing about buying.
+  const offered = entries.some((entry) => entry.offer !== undefined);
 
   return (
-    <section aria-labelledby={headingId} className="space-y-4">
-      <div>
-        <h2 id={headingId} className="text-lg font-semibold">
-          {copy.title}
-        </h2>
-        <p className="text-muted-foreground mt-1 text-sm">{copy.intro}</p>
-      </div>
+    <section aria-labelledby={offered ? headingId : undefined} className="space-y-4">
+      {offered ? (
+        <div>
+          <h2 id={headingId} className="text-lg font-semibold">
+            {copy.title}
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">{copy.intro}</p>
+        </div>
+      ) : null}
       <HostedFeedback action={hosted} />
       <div className={cn("grid gap-4", entries.length >= 3 ? "md:grid-cols-3" : "md:grid-cols-2")}>
         {entries.map((entry) => {
@@ -379,7 +406,8 @@ function CatalogRow({
   onAddSeats,
 }: Omit<CatalogCardProps, "scope"> & { owner: LicenseScope }) {
   const nameId = useId();
-  const second = held ? heldText(owner, held) : entry.offer ? priceLine(entry.offer.price, owner, locale) : null;
+  const state = held ? heldState(owner, held) : null;
+  const second = state ? state.text : entry.offer ? priceLine(entry.offer.price, owner, locale) : null;
   return (
     <li data-product={entry.product} className="flex items-center gap-3 rounded-[16px] border p-3">
       <ProductIcon product={entry} size={40} />
@@ -387,10 +415,10 @@ function CatalogRow({
         <div id={nameId} className="text-[15px] font-semibold">
           {entry.name}
         </div>
-        {second ? <div className="text-muted-foreground truncate text-[13px]">{second}</div> : null}
+        {second ? <div className={cn("truncate text-[13px]", state?.warn ? "text-error-foreground font-semibold" : "text-muted-foreground")}>{second}</div> : null}
       </div>
       {held ? (
-        <AddSeatsButton entry={entry} owner={owner} license={held} busy={busy} pending={pending} onAddSeats={onAddSeats} describedBy={nameId} size="sm" />
+        <HeldActionButton entry={entry} owner={owner} license={held} busy={busy} pending={pending} onAddSeats={onAddSeats} describedBy={nameId} size="sm" />
       ) : canBuy(entry) ? (
         <BuyButton entry={entry} owner={owner} busy={busy} pending={pending} onBuy={onBuy} describedBy={nameId} size="sm" />
       ) : null}

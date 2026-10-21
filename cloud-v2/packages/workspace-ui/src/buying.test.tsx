@@ -1133,6 +1133,155 @@ describe("the catalog dialog", () => {
   });
 });
 
+// ---- the heading is buying copy -----------------------------------------------------------------------------------
+
+describe("the grid's heading and its 'You'll pay by card' line", () => {
+  test("are drawn only when at least one entry has an offer for this viewer", async () => {
+    await mount(grid({ products: [callFor({ offer: undefined }), fleet({ offer: undefined })] }).ui);
+    expect(findAll("h2")).toHaveLength(0);
+    expect(text()).not.toContain("Buy a license");
+    expect(text()).not.toContain("You'll pay by card");
+    // The products themselves are display content: named, described, and nothing to buy.
+    expect(findAll("[data-product]")).toHaveLength(2);
+    expect(buttons()).toHaveLength(0);
+    await cleanup();
+    await mount(grid({ products: [callFor({ offer: undefined }), fleet()] }).ui);
+    expect(find("h2").textContent).toBe("Buy a license for your members");
+    expect(text()).toContain("You'll pay by card on a secure payment page");
+  });
+
+  test("a person's too", async () => {
+    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: undefined })] }).ui);
+    expect(findAll("h2")).toHaveLength(0);
+    expect(text()).not.toContain("Buy a license for yourself");
+    expect(text()).not.toContain("You'll pay by card");
+    await cleanup();
+    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] }).ui);
+    expect(find("h2").textContent).toBe("Buy a license for yourself");
+    expect(text()).toContain("You'll pay by card on a secure payment page, then come back here.");
+  });
+
+  test("follow the offer, not whether Buy is possible: an offer billing won't sell now still has them", async () => {
+    await mount(grid({ products: [callFor({ offer: workspaceOffer(2900, { buy: null }) })] }).ui);
+    expect(find("h2").textContent).toBe("Buy a license for your members");
+  });
+
+  test("an entry for another owner type has no say", async () => {
+    // Only the person's product has an offer, and this is a workspace's grid: nothing here is offered to it.
+    await mount(grid({ products: [callFor({ offer: undefined }), fleet({ ownerTypes: ["person"] })] }).ui);
+    expect(findAll("h2")).toHaveLength(0);
+    expect(text()).not.toContain("You'll pay by card");
+  });
+});
+
+// ---- a first payment that isn't finished --------------------------------------------------------------------------
+
+describe("a product whose first payment isn't finished", () => {
+  const COMPLETE = "https://invoice.example.test/i/first";
+  const incomplete = (extra: Partial<LicenseBilling> = {}) =>
+    licenseBillingFor({
+      status: "incomplete",
+      fallbackStatusLabel: "Incomplete",
+      quantity: 5,
+      renewsAt: undefined,
+      actions: [{ kind: "complete_payment", fallbackLabel: "Complete payment", returns: false }],
+      ...extra,
+    });
+
+  test("reads as its state, 'Payment incomplete', and never as 'You have 5 seats'", async () => {
+    await mount(grid({ licenses: [incomplete()] }).ui);
+    const mine = card("mentra.call.unlimited");
+    expect(mine.textContent).toContain("Payment incomplete");
+    expect(mine.textContent).not.toContain("You have");
+    expect(mine.textContent).not.toContain("5 seats");
+    // Amber, as a payment that needs the buyer.
+    expect(byText("Payment incomplete", "p", mine).className).toContain("text-error-foreground");
+    // Nothing is bought or added to it; the other products are as they were.
+    expect(buttons(mine).map((button) => button.textContent)).toEqual(["Complete payment"]);
+    expect(buttons(card("mentra.fleet")).map((button) => button.textContent)).toEqual(["Buy"]);
+  });
+
+  test("its button is billing's complete_payment: a tab opened in the click, then sent to the payment page", async () => {
+    const pending = deferred<{ url: string }>();
+    const { ui, session, events, leave } = grid({ licenses: [incomplete({ licenseId: "lic_half" })] });
+    session.mockImplementation(() => pending.promise);
+    await mount(ui);
+    const button = buttonNamed("Complete payment");
+    expect(button.hasAttribute("data-hosted-page")).toBe(true);
+    let openedInTheClick = -1;
+    act(() => {
+      button.click();
+      openedInTheClick = events.filter((event) => event === "openTab").length;
+    });
+    expect(openedInTheClick).toBe(1);
+    await settle();
+    expect(session.mock.calls).toEqual([[WS, { action: "complete_payment", licenseId: "lic_half" }]]);
+    await act(async () => pending.resolve({ url: COMPLETE }));
+    await settle();
+    expect(events).toEqual(["openTab", `go:${COMPLETE}`]);
+    expect(leave).not.toHaveBeenCalled();
+  });
+
+  test("a complete_payment that returns navigates this tab, as every action that returns does", async () => {
+    const { ui, leave, openTab } = grid({ licenses: [incomplete({ actions: [{ kind: "complete_payment", fallbackLabel: "Complete payment" }] })] });
+    await mount(ui);
+    await click(buttonNamed("Complete payment"));
+    await settle();
+    expect(leave).toHaveBeenCalledWith(PAY);
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  test("with no complete_payment listed it is the state alone, and no button", async () => {
+    await mount(grid({ licenses: [incomplete({ actions: [] })] }).ui);
+    const mine = card("mentra.call.unlimited");
+    expect(mine.textContent).toContain("Payment incomplete");
+    expect(mine.textContent).not.toContain("You have");
+    expect(buttons(mine)).toHaveLength(0);
+  });
+
+  test("never offers Add seats, even if billing listed it", async () => {
+    const both = incomplete({
+      actions: [
+        { kind: "add_seats", fallbackLabel: "Add seats" },
+        { kind: "complete_payment", fallbackLabel: "Complete payment" },
+      ],
+    });
+    await mount(grid({ licenses: [both] }).ui);
+    expect(buttons(card("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Complete payment"]);
+  });
+
+  test("a person's reads the same", async () => {
+    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })], licenses: [incomplete({ quantity: 1 })] }).ui);
+    const mine = card("mentra.call.unlimited");
+    expect(mine.textContent).toContain("Payment incomplete");
+    expect(mine.textContent).not.toContain("You have it");
+    expect(buttons(mine).map((button) => button.textContent)).toEqual(["Complete payment"]);
+  });
+
+  test("so does its row in the Buy a license dialog", async () => {
+    const out = ways();
+    const stub = stubBilling();
+    await mount(
+      <CatalogDialog open onClose={() => {}} products={WORKSPACE_CATALOG} licenses={[incomplete({ licenseId: "lic_half" })]} scope={WS} billing={stub.billing} navigateOut={out.navigateOut} />,
+    );
+    const row = find('[data-product="mentra.call.unlimited"]', topDialog());
+    expect(row.textContent).toContain("Payment incomplete");
+    expect(row.textContent).not.toContain("You have");
+    expect(buttons(row).map((button) => button.textContent)).toEqual(["Complete payment"]);
+    await click(buttonNamed("Complete payment", row));
+    await settle();
+    expect(stub.session.mock.calls).toEqual([[WS, { action: "complete_payment", licenseId: "lic_half" }]]);
+    expect(out.events).toEqual(["openTab", `go:${PAY}`]);
+  });
+
+  test("a failed payment on an active product is another matter: it still has its seats, and Add seats", async () => {
+    const failed = licenseBillingFor({ status: "past_due", fallbackStatusLabel: "Past due", quantity: 5 });
+    await mount(grid({ licenses: [failed] }).ui);
+    expect(card("mentra.call.unlimited").textContent).toContain("You have 5 seats");
+    expect(buttons(card("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Add seats"]);
+  });
+});
+
 // ---- the pieces ---------------------------------------------------------------------------------------------------
 
 describe("canBuy", () => {
