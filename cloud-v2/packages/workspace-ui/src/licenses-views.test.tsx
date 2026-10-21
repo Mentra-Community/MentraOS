@@ -1585,12 +1585,13 @@ describe("a card stays mounted through a refetch", () => {
 // ---- the package --------------------------------------------------------------------------------------------------
 
 describe("the package", () => {
-  test("exports both views and their header actions, and still the panel and productLabel the portal uses until it moves over", () => {
+  test("exports both views and their header actions, and no longer the older panel or its product labels", () => {
     expect(pkg.WorkspaceLicensesView).toBe(WorkspaceLicensesView);
     expect(pkg.PersonalBillingView).toBe(PersonalBillingView);
     expect(pkg.WorkspaceLicensesHeaderActions).toBe(WorkspaceLicensesHeaderActions);
     expect(pkg.PersonalBillingHeaderActions).toBe(PersonalBillingHeaderActions);
-    expect(typeof pkg.WorkspaceLicensesPanel).toBe("function");
-    expect(typeof pkg.productLabel).toBe("function");
+    // Names come from billing's catalog; Core has no table of them, and no older panel to draw licenses with them.
+    expect(pkg).not.toHaveProperty("WorkspaceLicensesPanel");
+    expect(pkg).not.toHaveProperty("productLabel");
   });
 });

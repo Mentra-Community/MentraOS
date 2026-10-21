@@ -11,7 +11,6 @@ import { BillingRefusedError, type BillingApi } from "./billing-api";
 import { workspaceScope } from "./billing-scope";
 import { formatMoney } from "./lib/billing-format";
 import { LicenseCard, type LicenseCardProps } from "./components/licenses/license-card";
-import { WorkspaceLicensesPanel } from "./components/licenses-panel";
 import {
   LicensesSummary,
   LicensesUnavailable,
@@ -24,7 +23,7 @@ import { joinLicenses, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
 import { cleanup, click, find, findAll, render, setupDom, teardownDom, typeInto } from "./test-dom";
-import { detailFor, licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
+import { licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
 
 beforeAll(setupDom);
 afterAll(teardownDom);
@@ -1609,31 +1608,6 @@ describe("a refusal is drawn by the one alert element", () => {
       .filter((file) => file.endsWith(".tsx"))
       .filter((file) => /role=["']alert["']/.test(readFileSync(join(dir, file), "utf8")));
     expect(own).toEqual([]);
-  });
-});
-
-// ---- the older Licenses panel's seat mutations -------------------------------------------------------------------
-
-describe("the Licenses panel's seat changes mark billing's status stale", () => {
-  test("unassigning from the panel refreshes the licenses and billing's status for the workspace", async () => {
-    const r = rig();
-    const scope = workspaceScope(WS);
-    const client = newClient();
-    const detail = detailFor("owner");
-    const licenses = [coreLicense(5, [HANNAH])];
-    // The panel reads what is seeded and then refetches it; the server has to say the same thing, or the
-    // refetch (which the harness waits for) would replace the seat the test is about with an empty list.
-    r.listLicenses.mockImplementation(async () => licenses);
-    client.setQueryData(workspaceKeys.detail(r.api, WS), detail);
-    client.setQueryData(workspaceKeys.members(r.api, WS), PEOPLE);
-    client.setQueryData(workspaceKeys.licenses(r.api, WS), licenses);
-    client.setQueryData(billingKeys.status(r.billing, scope), EMPTY_STATUS);
-    await mount(<WorkspaceLicensesPanel api={r.api} workspaceId={WS} />, client);
-    await press("Unassign hannah@acme.test");
-    await press("Confirm unassign");
-    await flush();
-    expect(r.releaseSeat).toHaveBeenCalledWith(WS, "lic_call", "wm_hannah");
-    expect(client.getQueryState(billingKeys.status(r.billing, scope))?.isInvalidated).toBe(true);
   });
 });
 

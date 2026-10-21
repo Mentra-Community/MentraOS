@@ -1,37 +1,79 @@
 /**
  * Licenses in one workspace: `/w/<workspaceId>/licenses`.
  *
- * The licenses part is the shared panel (`@mentra/workspace-ui`): the workspace's licenses and who holds
- * each seat, as the viewer's role lets them see it. Below it, where the person is offered the billing
- * module and may manage the workspace's billing (`workspace.billing.manage`: Admins and Owners), is the
- * module itself: buying more, changing or cancelling, payment details and invoices. A member never sees
- * it. The portal knows nothing of how the module does that; it hosts the module's screen and tells it the
- * scope.
+ * The page is `WorkspaceLicensesView` (`@mentra/workspace-ui`): one card per license with its seats, dates, cost and
+ * billing actions, the page total, and buying, as far as the viewer's role and what the portal offers them allow.
+ * Its header buttons ("Billing & invoices ↗", "Buy a license") are `WorkspaceLicensesHeaderActions`, which the
+ * workspace page puts in the title bar; both are given the same props, so billing is asked once.
+ *
+ * The portal wires the view to what it owns: Core's workspace API, billing's client in the portal's locale, `me`
+ * (which says whether billing's catalog can be read, and whether this viewer is offered billing), the
+ * `?purchase=` of a return from checkout, and the two ways out to a hosted page. The view and its header stay
+ * mounted while a request for a hosted page is out. The portal draws everything from billing's data and links out for
+ * anything that needs a payment page.
  */
 
-import type { ReactElement } from "react";
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
-import { can, WorkspaceLicensesPanel } from "@mentra/workspace-ui";
-import { PortalModuleHost } from "@/components/portal-module-host";
+import {
+  can,
+  WorkspaceLicensesHeaderActions,
+  WorkspaceLicensesView,
+  type WorkspaceLicensesHeaderActionsProps,
+} from "@mentra/workspace-ui";
 import type { PortalMe } from "@/lib/api";
-import { portalWorkspaceApi } from "@/lib/portal";
+import { setQueryParam, useSearch } from "@/lib/navigation";
+import { portalBillingApi, portalNavigateOut, portalWorkspaceApi } from "@/lib/portal";
 
-/** Whether the viewer is shown the workspace's billing: the portal offers the module and their role may manage billing. */
+/** Whether the viewer is offered the workspace's billing: billing is ready for them and their role may manage it (`workspace.billing.manage`: Admins and Owners). */
 export function billingOffered(me: PortalMe, detail: Pick<WorkspaceDetail, "capabilities"> | undefined): boolean {
   return me.modules.billing && can(detail, "workspace.billing.manage");
 }
 
-/** The billing module for one workspace, or nothing where the viewer is not shown billing. */
-export function billingPart(me: PortalMe, workspaceId: string, detail: Pick<WorkspaceDetail, "capabilities"> | undefined): ReactElement | null {
-  if (!billingOffered(me, detail)) return null;
-  return <PortalModuleHost module="billing" me={me} scope={{ kind: "workspace", workspaceId }} />;
+/** The `?purchase=` a checkout returned with, from the address's query string; null when there is none. */
+export function purchaseParam(search: string): string | null {
+  return new URLSearchParams(search).get("purchase") || null;
 }
 
-export function LicensesScreen({ workspaceId, me, detail }: { workspaceId: string; me: PortalMe; detail: WorkspaceDetail }) {
+/**
+ * What the view and its header actions are given. The catalog is readable wherever billing is ready (`me.modules.billingCatalog`),
+ * which names the licenses for anyone who may see them; money, dates, actions and buying are for whoever is offered billing.
+ */
+export function licensesPageProps(
+  me: PortalMe,
+  workspaceId: string,
+  detail: Pick<WorkspaceDetail, "capabilities"> | undefined,
+  purchaseId: string | null,
+): WorkspaceLicensesHeaderActionsProps {
+  return {
+    api: portalWorkspaceApi,
+    billing: portalBillingApi,
+    workspaceId,
+    offer: { catalog: me.modules.billingCatalog, manage: billingOffered(me, detail) },
+    purchaseId,
+    navigateOut: portalNavigateOut,
+  };
+}
+
+interface LicensesProps {
+  workspaceId: string;
+  me: PortalMe;
+  detail: WorkspaceDetail;
+}
+
+/** The page's content. */
+export function LicensesScreen({ workspaceId, me, detail }: LicensesProps) {
+  const purchaseId = purchaseParam(useSearch());
   return (
-    <div className="space-y-6">
-      <WorkspaceLicensesPanel api={portalWorkspaceApi} workspaceId={workspaceId} />
-      {billingPart(me, workspaceId, detail)}
-    </div>
+    <WorkspaceLicensesView
+      {...licensesPageProps(me, workspaceId, detail, purchaseId)}
+      // The banner was dismissed: the address loses `?purchase=` in place, so Back does not return to the banner.
+      onPurchaseDone={() => setQueryParam("purchase", null, { replace: true })}
+    />
   );
+}
+
+/** The page's header buttons, for the title bar. They draw nothing where there is nothing to act on. */
+export function LicensesHeaderActions({ workspaceId, me, detail }: LicensesProps) {
+  const purchaseId = purchaseParam(useSearch());
+  return <WorkspaceLicensesHeaderActions {...licensesPageProps(me, workspaceId, detail, purchaseId)} />;
 }

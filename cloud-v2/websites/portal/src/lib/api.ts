@@ -18,11 +18,18 @@ export type PortalUser = {
 };
 
 /**
- * Which portal modules this person is offered: the module is installed and usable on this Core, and visible
- * to them (billing is staff-only on a Core that is not prod). A Private Cloud with no billing says false.
+ * What this person is offered of billing. They are separate because they are not the same people: on a Core that
+ * is not prod billing is staff-only, but its catalog (the products' names and icons, which name the licenses a
+ * workspace holds) is readable by every Admin.
+ *
+ * - `billing`: billing is ready and visible to them. They see money, buy, and manage: the Billing page, the
+ *   Licenses page's totals and actions. A Private Cloud with no billing says false.
+ * - `billingCatalog`: billing is ready, whoever asks. Licenses can be named, so the Licenses page and the
+ *   Members list can draw them. True wherever `billing` is.
  */
 export type PortalModules = {
   billing: boolean;
+  billingCatalog: boolean;
 };
 
 /** `GET /api/portal/me`. */
@@ -36,12 +43,21 @@ export type PortalMe = {
 };
 
 /**
- * `GET /api/portal/me`, with the modules read strictly: only an explicit `true` offers one. A Core that
- * does not send `modules` yet (the portal and Core deploy separately) offers none, rather than failing the page.
+ * The modules as `/api/portal/me` sent them, read strictly: only an explicit `true` offers one, and a Core that
+ * sends no `modules` (the portal and Core deploy separately) offers none, rather than failing the page. A Core
+ * from before `billingCatalog` existed sends only `billing`, and there the catalog was offered with it: an absent
+ * `billingCatalog` takes `billing`'s value. One that is present but is not a boolean offers nothing.
  */
+export function readPortalModules(raw: unknown): PortalModules {
+  const modules = typeof raw === "object" && raw !== null ? (raw as { billing?: unknown; billingCatalog?: unknown }) : {};
+  const billing = modules.billing === true;
+  return { billing, billingCatalog: modules.billingCatalog === undefined ? billing : modules.billingCatalog === true };
+}
+
+/** `GET /api/portal/me`, with the modules read by {@link readPortalModules}. */
 export async function fetchPortalMe(): Promise<PortalMe> {
-  const me = await api<Omit<PortalMe, "modules"> & { modules?: { billing?: unknown } | null }>("/api/portal/me");
-  return { ...me, modules: { billing: me.modules?.billing === true } };
+  const me = await api<Omit<PortalMe, "modules"> & { modules?: unknown }>("/api/portal/me");
+  return { ...me, modules: readPortalModules(me.modules) };
 }
 
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
