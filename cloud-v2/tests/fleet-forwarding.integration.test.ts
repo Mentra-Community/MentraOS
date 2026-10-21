@@ -43,6 +43,9 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
+import * as authorization from "../packages/core/src/services/workspaces/authorization.service"
+import {createWorkspace, deleteWorkspace, type Actor} from "../packages/core/src/services/workspaces/workspace.service"
+import {membershipRow} from "./support/membership-row"
 import {ACCOUNT_EMAIL_MAX_AGE_MS} from "../packages/core/src/services/account/account-email.service"
 import {otc} from "../packages/core/src/services/account/account.service"
 import {resetPhoneEmailCache} from "../packages/core/src/services/fleet/phone-email"
@@ -64,6 +67,8 @@ import {
   coreAccessToken,
   cookieValue,
   HOSTED_ENV,
+  PORTAL_COOKIE,
+  PORTAL_ORIGIN,
   SUPABASE_ISSUER,
   SUPABASE_JWKS,
   SUPABASE_PROJECT,
@@ -1032,5 +1037,340 @@ describe("what Core signs is what it sends", () => {
     } finally {
       restore()
     }
+  })
+})
+
+
+// --- The workspace portal ----------------------------------------------------
+
+/** A person with a workspace portal session (and a bearer), as `person` makes an admin portal one. */
+async function portalPerson(key: string, options: {email?: string} = {}): Promise<Person> {
+  const who = await person(key, options)
+  const {cookieValue} = await createPortalSession("portal", {
+    mentraUserId: who.mentraUserId,
+    tenantId: "mentra",
+    sourceId: "mentra",
+    subject: who.sub,
+    email: who.email,
+    emailVerified: true,
+    authTime: new Date(),
+  })
+  return {...who, cookie: `${PORTAL_COOKIE}=${cookieValue}`}
+}
+
+/** A request to `/api/portal/fleet<rest>` by a person's workspace portal session, or their bearer when `via` is "bearer". */
+function fromPortal(
+  who: Person,
+  method: string,
+  rest: string,
+  opts: {via?: "session" | "bearer"; headers?: Record<string, string>; body?: string} = {},
+) {
+  const {via, ...request} = opts
+  const headers: Record<string, string> = {...opts.headers}
+  if (via === "bearer") headers.authorization = `Bearer ${who.bearer}`
+  else {
+    headers.cookie = who.cookie
+    if (method !== "GET" && method !== "HEAD") headers.origin ??= PORTAL_ORIGIN
+  }
+  return send(method, `/api/portal/fleet${rest}`, {...request, headers})
+}
+
+const actorOf = (who: Person): Actor & {kind: "user"} => ({
+  kind: "user",
+  mentraUserId: who.mentraUserId,
+  email: who.email,
+  emailVerified: true,
+  isOrganizationAdmin: false,
+})
+
+let membershipSeq = 0
+/** A workspace owned by `owner`, and one member per role given. */
+async function workspaceWith(owner: Person, roles: Record<string, Person> = {}) {
+  const {workspaceId} = await createWorkspace(actorOf(owner), {name: "Acme"})
+  for (const [role, who] of Object.entries(roles)) {
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: `wm_portal_${membershipSeq++}`,
+        workspaceId,
+        mentraUserId: who.mentraUserId,
+        email: who.email,
+        role,
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
+  }
+  return workspaceId
+}
+
+describe("the workspace portal", () => {
+  test("an Owner reaches Fleet with the one workspace in the path as scope, as a verified person", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+
+    const reply = await fromPortal(owner, "GET", `/workspaces/${ws}/people?q=m`)
+
+    expect(reply.status).toBe(200)
+    const echo = reply.json as Echo
+    expect(echo.pathWithQuery).toBe(`/v1/portal/workspaces/${ws}/people?q=m`)
+    expect(echo.principal).toEqual({
+      kind: "user",
+      mentraUserId: owner.mentraUserId,
+      email: owner.email,
+      emailVerified: true,
+      isOrganizationAdmin: false,
+      organizationCapabilities: [],
+      scope: {kind: "workspace", workspaceId: ws},
+    })
+    // Nothing of the portal session goes to Fleet.
+    expect(received[0]!.headers.get("cookie")).toBeNull()
+    expect(received[0]!.headers.get("authorization")).toBeNull()
+  })
+
+  test("an Admin reads and writes; a write carries its body and the portal's origin check applies", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-admin")
+    const ws = await workspaceWith(owner, {admin})
+
+    expect((await fromPortal(admin, "GET", `/workspaces/${ws}/overview`)).status).toBe(200)
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      const body = JSON.stringify({packageName: "com.acme.app", method})
+      const reply = await fromPortal(admin, method, `/workspaces/${ws}/assignments`, {
+        headers: {"content-type": "application/json"},
+        body: method === "DELETE" ? undefined : body,
+      })
+      expect({method, status: reply.status}).toEqual({method, status: 200})
+      expect((reply.json as Echo).principal).toMatchObject({scope: {kind: "workspace", workspaceId: ws}})
+    }
+    expect((await fromPortal(admin, "POST", `/workspaces/${ws}/assignments`, {body: "{}", headers: {origin: "https://evil.test"}})).status).toBe(403)
+    expect(received.map(call => call.method)).toEqual(["GET", "POST", "PUT", "PATCH", "DELETE"])
+    expect(received[1]!.body).toBe(JSON.stringify({packageName: "com.acme.app", method: "POST"}))
+  })
+
+  test("a Member and a Developer get 403 on reads and writes, and Fleet is never called", async () => {
+    const owner = await portalPerson("p-owner")
+    const member = await portalPerson("p-member")
+    const developer = await portalPerson("p-dev")
+    const ws = await workspaceWith(owner, {member, developer})
+    for (const who of [member, developer]) {
+      for (const method of ["GET", "HEAD", "POST", "DELETE"]) {
+        const reply = await fromPortal(who, method, `/workspaces/${ws}/people`)
+        expect({method, status: reply.status}).toEqual({method, status: 403})
+      }
+    }
+    expect(received).toEqual([])
+  })
+
+  test("read-only: fleet.read without miniapps.assign can GET and is 403 on POST and DELETE", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    const real = authorization.authorize
+    const spy = spyOn(authorization, "authorize").mockImplementation(async (principal, request) => {
+      const decision = await real(principal, request)
+      if (request.capability !== "miniapps.assign" || !decision.allowed) return decision
+      return {...decision, allowed: false, reason: "capability_missing"}
+    })
+    try {
+      expect((await fromPortal(owner, "GET", `/workspaces/${ws}/people`)).status).toBe(200)
+      expect((await fromPortal(owner, "POST", `/workspaces/${ws}/assignments`, {body: "{}"})).status).toBe(403)
+      expect((await fromPortal(owner, "DELETE", `/workspaces/${ws}/assignments/a1`)).status).toBe(403)
+      expect(received.map(call => call.method)).toEqual(["GET"])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("a non-member is 403, and an unknown or deleted workspace is 404, whatever the method", async () => {
+    const owner = await portalPerson("p-owner")
+    const stranger = await portalPerson("p-stranger")
+    const ws = await workspaceWith(owner)
+    expect((await fromPortal(stranger, "GET", `/workspaces/${ws}/people`)).status).toBe(403)
+    expect((await fromPortal(stranger, "POST", `/workspaces/${ws}/assignments`, {body: "{}"})).status).toBe(403)
+    const missing = await fromPortal(owner, "GET", "/workspaces/ws_missing/people")
+    expect(missing.status).toBe(404)
+    expect(missing.json.error).toBe("workspace_not_found")
+
+    await deleteWorkspace(actorOf(owner), ws, {confirmName: "Acme"})
+    expect((await fromPortal(owner, "GET", `/workspaces/${ws}/people`)).status).toBe(404)
+    expect(received).toEqual([])
+  })
+
+  test("an Organization Admin who is not a member gets the workspace scope and an Owner's reach, with the organization's capabilities named", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    const ws = await workspaceWith(owner)
+
+    const read = await fromPortal(admin, "GET", `/workspaces/${ws}/people`)
+    const write = await fromPortal(admin, "POST", `/workspaces/${ws}/assignments`, {body: "{}"})
+
+    expect(read.status).toBe(200)
+    expect(write.status).toBe(200)
+    expect((read.json as Echo).principal).toEqual({
+      kind: "user",
+      mentraUserId: admin.mentraUserId,
+      email: ADMIN_EMAIL,
+      emailVerified: true,
+      isOrganizationAdmin: true,
+      organizationCapabilities: [...ORGANIZATION_CAPABILITIES],
+      scope: {kind: "workspace", workspaceId: ws},
+    })
+  })
+
+  test("the scope is the path's workspace however the request asks for another", async () => {
+    const owner = await portalPerson("p-owner")
+    const other = await portalPerson("p-other-owner")
+    const mine = await workspaceWith(owner)
+    const theirs = await workspaceWith(other)
+
+    const reply = await fromPortal(owner, "POST", `/workspaces/${mine}/assignments?workspaceId=${theirs}&scope=organization`, {
+      headers: {
+        "content-type": "application/json",
+        "x-mentra-workspace-id": theirs,
+        "x-mentra-principal": Buffer.from(JSON.stringify({kind: "user", scope: {kind: "organization"}})).toString("base64url"),
+        "x-mentra-principal-signature": "forged",
+      },
+      body: JSON.stringify({workspaceId: theirs, scope: {kind: "organization"}}),
+    })
+
+    expect(reply.status).toBe(200)
+    expect((reply.json as Echo).principal).toMatchObject({scope: {kind: "workspace", workspaceId: mine}, isOrganizationAdmin: false})
+    // A path naming another workspace the person is not in is refused before Fleet.
+    expect((await fromPortal(owner, "GET", `/workspaces/${theirs}/people`)).status).toBe(403)
+  })
+
+  test("no organization-scoped route is reachable: only workspaces and ui are routes", async () => {
+    const owner = await portalPerson("p-owner")
+    await workspaceWith(owner)
+    for (const rest of ["", "/", "/organization/overview", "/overview", "/workspaces", "/workspaces/", "/Workspaces/x/people", "/UI/x.js", "/ui", "/ui/"]) {
+      const reply = await fromPortal(owner, "GET", rest)
+      expect({rest, status: reply.status}).toEqual({rest, status: 404})
+    }
+    expect(received).toEqual([])
+  })
+
+  test("a path that tries to escape is 400 and goes nowhere", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    // `..` and `%2e%2e` are collapsed by the URL parser before Core sees them; these spellings survive it.
+    for (const rest of [`/workspaces/${ws}/a%2fb`, `/workspaces/${ws}%2fx/people`, `/workspaces/${ws}/%252e`, `/workspaces/${ws}/a%5cb`, `/workspaces/${ws}/%00`, `/workspaces/${ws}/%zz`]) {
+      expect((await fromPortal(owner, "GET", rest)).status).toBe(400)
+    }
+    expect(received).toEqual([])
+  })
+
+  test("only the portal's own session reaches it: a bearer, the admin cookie, keys and no credentials do not", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    expect((await fromPortal(owner, "GET", `/workspaces/${ws}/people`, {via: "bearer"})).status).toBe(403)
+    // The admin portal's cookie is not read on the workspace portal's routes.
+    const adminCookie = (await person("p-owner-admin-cookie")).cookie
+    expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/people`, {headers: {cookie: adminCookie}})).status).toBe(401)
+    for (const token of [await operatorKey(["organization.testing.read"]), await workspaceKey()]) {
+      const reply = await send("GET", `/api/portal/fleet/workspaces/${ws}/people`, {headers: {authorization: `Bearer ${token}`}})
+      expect(reply.status).toBe(403)
+    }
+    expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/people`)).status).toBe(401)
+    expect((await send("GET", "/api/portal/fleet/ui/main.js")).status).toBe(401)
+    // A phone's token is not a portal session either.
+    const phone = await phoneSession("p-phone")
+    expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/people`, {headers: {authorization: `Bearer ${phone.token}`}})).status).toBe(401)
+    expect(received).toEqual([])
+  })
+
+  test("Fleet's own failures map as on the other surfaces, and a 401 from it is a 403 that does not sign the person out", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    answer = () => new Response("{}", {status: 401, headers: {"content-type": "application/json"}})
+    const refused = await fromPortal(owner, "GET", `/workspaces/${ws}/people`)
+    expect(refused.status).toBe(403)
+    answer = () => new Response("oops", {status: 500})
+    const failed = await fromPortal(owner, "GET", `/workspaces/${ws}/people`)
+    expect(failed.status).toBe(503)
+    expect(failed.json.error).toBe("fleet_unavailable")
+    answer = null
+    // The session still works.
+    expect((await fromPortal(owner, "GET", `/workspaces/${ws}/people`)).status).toBe(200)
+  })
+
+  test("a deployment without Fleet answers 404 fleet_not_installed to a signed-in person, and 503 when it is misconfigured", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    restoreEnv()
+    restoreEnv = applyEnv({...TEST_ENV, CLOUD_CORE_FLEET_URL: undefined, CLOUD_CORE_FLEET_SECRET: undefined})
+    const missing = await fromPortal(owner, "GET", `/workspaces/${ws}/people`)
+    expect(missing.status).toBe(404)
+    expect(missing.json.error).toBe("fleet_not_installed")
+    restoreEnv()
+    restoreEnv = applyEnv({...TEST_ENV, CLOUD_CORE_FLEET_URL: `http://127.0.0.1:${fleet.port}`, CLOUD_CORE_FLEET_SECRET: undefined})
+    const broken = await fromPortal(owner, "GET", `/workspaces/${ws}/people`)
+    expect(broken.status).toBe(503)
+    expect(received).toEqual([])
+  })
+
+  test("the UI assets need only a signed-in person, relay GET and HEAD as the person, and refuse other methods", async () => {
+    const owner = await portalPerson("p-owner")
+    const member = await portalPerson("p-member")
+    await workspaceWith(owner, {member})
+    for (const who of [owner, member]) {
+      const get = await fromPortal(who, "GET", "/ui/entry.js?v=1")
+      const head = await fromPortal(who, "HEAD", "/ui/entry.js?v=1")
+      expect(get.status).toBe(200)
+      expect(head.status).toBe(200)
+      expect((get.json as Echo).pathWithQuery).toBe("/v1/portal/ui/entry.js?v=1")
+      expect((get.json as Echo).principal).toMatchObject({kind: "user", scope: {kind: "person"}})
+      expect(get.headers.get("x-content-type-options")).toBe("nosniff")
+    }
+    expect((await fromPortal(owner, "POST", "/ui/entry.js", {body: "{}"})).status).toBe(405)
+    expect((await fromPortal(owner, "DELETE", "/ui/entry.js")).status).toBe(405)
+  })
+
+  test("Fleet is not a portal module: the module router never forwards to it", async () => {
+    const owner = await portalPerson("p-owner")
+    await workspaceWith(owner)
+    const reply = await send("GET", "/api/portal/billing/ui/x.js", {headers: {cookie: owner.cookie}})
+    expect(reply.status).toBe(404)
+    expect(received).toEqual([])
+  })
+})
+
+describe("the workspace portal's /me", () => {
+  test("carries what Fleet's UI needs: user, organization capabilities, the person's workspace and whether Fleet is installed", async () => {
+    const owner = await portalPerson("p-owner")
+    const ws = await workspaceWith(owner)
+    const reply = await send("GET", "/api/portal/me", {headers: {cookie: owner.cookie}})
+    expect(reply.status).toBe(200)
+    expect(reply.json.user).toMatchObject({mentraUserId: owner.mentraUserId, id: owner.mentraUserId, email: owner.email})
+    expect(reply.json.organization).toEqual({capabilities: []})
+    expect(reply.json.fleet).toEqual({installed: true})
+    expect(reply.json.workspaces).toEqual([
+      {workspaceId: ws, name: "Acme", capabilities: expect.arrayContaining(["fleet.read", "miniapps.assign"])},
+    ])
+  })
+
+  test("a Member's workspace carries no Fleet capability; a person in none has none", async () => {
+    const owner = await portalPerson("p-owner")
+    const member = await portalPerson("p-member")
+    const nobody = await portalPerson("p-nobody")
+    await workspaceWith(owner, {member})
+    const asMember = await send("GET", "/api/portal/me", {headers: {cookie: member.cookie}})
+    expect(asMember.json.workspaces[0].capabilities).not.toContain("fleet.read")
+    expect(asMember.json.workspaces[0].capabilities).not.toContain("miniapps.assign")
+    expect((await send("GET", "/api/portal/me", {headers: {cookie: nobody.cookie}})).json.workspaces).toEqual([])
+  })
+
+  test("an Organization Admin asking about the open workspace gets exactly it, as an Owner; anyone else's ?workspaceId changes nothing", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    const stranger = await portalPerson("p-stranger")
+    const ws = await workspaceWith(owner)
+
+    const asAdmin = await send("GET", `/api/portal/me?workspaceId=${ws}`, {headers: {cookie: admin.cookie}})
+    expect(asAdmin.json.workspaces).toHaveLength(1)
+    expect(asAdmin.json.workspaces[0]).toMatchObject({workspaceId: ws, name: "Acme"})
+    expect(asAdmin.json.workspaces[0].capabilities).toEqual(expect.arrayContaining(["fleet.read", "miniapps.assign"]))
+    expect(asAdmin.json.organization.capabilities.length).toBeGreaterThan(0)
+
+    expect((await send("GET", "/api/portal/me?workspaceId=ws_missing", {headers: {cookie: admin.cookie}})).json.workspaces).toEqual([])
+    expect((await send("GET", `/api/portal/me?workspaceId=${ws}`, {headers: {cookie: stranger.cookie}})).json.workspaces).toEqual([])
   })
 })

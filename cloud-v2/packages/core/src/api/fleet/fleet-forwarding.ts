@@ -6,6 +6,10 @@
  *
  *   /api/client/fleet/<rest>  ->  ${CLOUD_CORE_FLEET_URL}/v1/client/<rest>   (a signed-in phone)
  *   /api/admin/fleet/<rest>   ->  ${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>    (an Organization Admin)
+ *   /api/portal/fleet/workspaces/:workspaceId/<rest>
+ *                             ->  ${CLOUD_CORE_FLEET_URL}/v1/portal/workspaces/:workspaceId/<rest>
+ *                                                                        (a workspace Admin or Owner, or an Organization Admin)
+ *   /api/portal/fleet/ui/<rest>  ->  ${CLOUD_CORE_FLEET_URL}/v1/portal/ui/<rest>   (the workspace portal's Fleet UI assets)
  *
  * What is Fleet's here is who may call, what the request covers and how Fleet is configured. How a request
  * is signed and sent, what Fleet receives, how its answer is mapped and how its UI assets are relayed are
@@ -19,6 +23,13 @@
  *  - `/api/admin/fleet`: a signed-in person (`requireUserPrincipal("admin")`: a workspace key or an
  *    operator key is 403) who holds `organization.fleet.administer` (an Organization Admin; 403
  *    otherwise). The gates are this router's own, so every path under it has them, `ui/*` included.
+ *
+ *  - `/api/portal/fleet`: a person signed in to the workspace portal by its session cookie (a bearer, a workspace
+ *    key or an operator key is 403; the admin portal's cookie is not read here). A workspace path then needs a
+ *    capability in that workspace, decided by Core's `authorize`: `fleet.read` for GET and HEAD, `miniapps.assign`
+ *    for every other method. An Organization Admin holds every workspace capability as an Owner does, member or
+ *    not; a Member or Developer holds neither and gets 403; an unknown or deleted workspace is 404. Fleet is not
+ *    called for a refused request. The UI assets need only the signed-in person.
  *
  * The scope is Core's decision. A person's Fleet request covers the organization (`scope:
  * {kind: "organization"}`) and nothing the request carries, in its query, body or headers, can say
@@ -69,15 +80,17 @@ import {isSafeSuffix, joinUpstreamUrl, rawPathAndQuery} from "../../services/for
 import type {UserPrincipal} from "../../services/signin/principal.service"
 import type {AppContext, AppEnv, AppVariables} from "../../types/hono.types"
 import {InvalidGrant, InvalidRequest} from "../../types/oauth.types"
-import {requireOrganizationCapability, requireUserPrincipal} from "../middleware/principal.middleware"
+import {authorize} from "../../services/workspaces/authorization.service"
+import {denied, requireOrganizationCapability, requireUserPrincipal} from "../middleware/principal.middleware"
 import {userAuth} from "../middleware/user-auth.middleware"
 
-type Audience = "client" | "admin"
+type Audience = "client" | "admin" | "portal"
 
 /** Where each surface is mounted in the app: the part of the path that is not forwarded. */
 const MOUNT_PREFIX: Record<Audience, string> = {
   client: "/api/client/fleet",
   admin: "/api/admin/fleet",
+  portal: "/api/portal/fleet",
 }
 
 /** The `error` of Core's 503 when Fleet is installed but cannot answer. */
@@ -100,7 +113,9 @@ export function upstreamTarget(baseUrl: URL, audience: Audience, suffix: string,
 }
 
 /** The authenticated caller of a forwarded request. */
-type Caller = {audience: "client"; phone: NonNullable<AppVariables["user"]>} | {audience: "admin"; person: UserPrincipal}
+type Caller =
+  | {audience: "client"; phone: NonNullable<AppVariables["user"]>}
+  | {audience: "admin" | "portal"; person: UserPrincipal}
 
 /**
  * The caller, or the refusal to send. Fail closed: the gates in front of a route set the caller, and a
@@ -125,6 +140,9 @@ async function principalOf(caller: Caller, log: Logger): Promise<ForwardedPrinci
     const {mentraUserId, tenantId, sessionId} = caller.phone
     return {kind: "phone", mentraUserId, tenantId, sessionId, email: await phoneEmail(mentraUserId, {log})}
   }
+  // The workspace portal's scope is the authorized workspace in the path (`forwardPortal`); it must never fall
+  // back to the organization's.
+  if (caller.audience === "portal") throw new Error("a portal request's scope comes from its workspace path")
   return forwardedUser(caller.person, ORGANIZATION_SCOPE)
 }
 
@@ -266,3 +284,75 @@ adminFleetApi.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
 adminFleetApi.on(["GET", "HEAD"], `/${UI_ASSET_SEGMENT}/*`, forwardAsset())
 adminFleetApi.all(`/${UI_ASSET_SEGMENT}/*`, methodNotAllowed)
 adminFleetApi.all("/*", limitFleetBody, forward("admin"))
+
+
+// --- The workspace portal ------------------------------------------------------
+
+const WORKSPACES_SEGMENT = "workspaces"
+
+/** A path under the workspace portal's Fleet mount: one workspace's, or the UI assets. */
+type PortalRoute = {kind: "workspace"; workspaceId: string} | {kind: "ui"}
+
+/**
+ * The route for a path suffix (`/workspaces/ws_1/x`, `/ui/main.js`), or null when it is neither. The first
+ * segment is matched exactly, as received: no case folding, no decoding, so a spelling Fleet's own router might
+ * read differently is not a route. `isSafeSuffix` has already decoded every segment once, so this cannot throw.
+ */
+function portalRouteOf(suffix: string): PortalRoute | null {
+  const [, first, second] = suffix.split("/")
+  if (first === UI_ASSET_SEGMENT) {
+    return suffix.length > `/${UI_ASSET_SEGMENT}/`.length && suffix.startsWith(`/${UI_ASSET_SEGMENT}/`) ? {kind: "ui"} : null
+  }
+  if (first === WORKSPACES_SEGMENT && second) return {kind: "workspace", workspaceId: decodeURIComponent(second)}
+  return null
+}
+
+/** Reading is `fleet.read`; every other method changes something, which is `miniapps.assign`. */
+function capabilityFor(method: string): "fleet.read" | "miniapps.assign" {
+  return method === "GET" || method === "HEAD" ? "fleet.read" : "miniapps.assign"
+}
+
+/**
+ * The workspace portal's forwarder, mounted at `/api/portal/fleet` behind the portal's person gate. In this
+ * order: the caller is a person on the portal's session cookie; Fleet is installed and usable; the path is a
+ * workspace path or an asset path; for a workspace path, `authorize` allows the capability the method needs in
+ * that workspace. Only then is anything read, signed or sent.
+ */
+function forwardPortal(): Handler<AppEnv> {
+  return async c => {
+    const caller = callerOf(c, "portal")
+    if (caller instanceof Response) return caller
+    if (caller.audience !== "portal") return c.json({error: "forbidden"}, 403)
+    // Only the portal's own session reaches Fleet from here: a bearer (a Core access token) is not a portal.
+    if (caller.person.via !== "session") return c.json({error: "forbidden", error_description: "sign in to the portal"}, 403)
+
+    const admitted = admit(c, "portal")
+    if (admitted instanceof Response) return admitted
+    const {upstream, suffix, query} = admitted
+    const route = portalRouteOf(suffix)
+    if (!route) return c.json({error: "not_found"}, 404)
+
+    const request = {upstream, path: fleetPath("portal", suffix), query, audience: "portal"}
+    if (route.kind === "ui") {
+      if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed(c)
+      return relayAsset(c, {...request, principal: () => forwardedUser(caller.person, {kind: "person"})})
+    }
+    const decision = await authorize(caller.person, {
+      workspaceId: route.workspaceId,
+      capability: capabilityFor(c.req.method),
+    })
+    if (!decision.allowed) return denied(c, decision)
+    const scope = {kind: "workspace", workspaceId: route.workspaceId} as const
+    return forwardJson(c, {...request, principal: () => forwardedUser(caller.person, scope)})
+  }
+}
+
+/**
+ * The workspace portal's Fleet router, mounted at `/fleet` inside the portal's API, behind `requireUserPrincipal("portal")`
+ * (a workspace key or an operator key is 403, no principal 401). Fleet is not a portal module: it is not in the
+ * portal modules' list, so the module routes never forward to it.
+ */
+export const portalFleetApi = new Hono<AppEnv>()
+portalFleetApi.use("*", jsonAnswerHeaders)
+portalFleetApi.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
+portalFleetApi.all("/*", limitFleetBody, forwardPortal())
