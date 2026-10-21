@@ -50,6 +50,7 @@ import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
+import {canJoinWorkspace, insertGuard} from "./membership-guard.service"
 import {RecentChecks} from "./recent-checks"
 import {isId, roleEntry, type MembershipRow} from "./workspace.service"
 
@@ -77,8 +78,8 @@ export async function claimPendingMemberships(
   session: ClientSession,
   workosUserId: string,
   mentraUserId: string,
-): Promise<{claimed: number; merged: number}> {
-  const result = {claimed: 0, merged: 0}
+): Promise<{claimed: number; merged: number; skipped: number}> {
+  const result = {claimed: 0, merged: 0, skipped: 0}
   if (!isId(workosUserId) || !isId(mentraUserId)) return result
   // Highest role first: if one person has two pending memberships in a workspace, the higher one is
   // claimed and the other merges into it.
@@ -106,11 +107,22 @@ export async function claimPendingMemberships(
   const now = new Date()
 
   for (const row of pending) {
+    // One workspace per person: a pending membership in a workspace other than the one the person is in
+    // (or the first of two this claim could take) stays pending and writes no second membership. It is
+    // looked at again at their next sign-in, so it is claimed if they have left by then.
+    const kept = heldByWorkspace.get(row.workspaceId)
+    if (!kept && !(await canJoinWorkspace(session, mentraUserId))) {
+      result.skipped += 1
+      logger.warn(
+        {workspaceId: row.workspaceId, membershipId: row.membershipId, mentraUserId},
+        "imported membership not claimed: the person is already in a workspace",
+      )
+      continue
+    }
     // Every change to who holds a role writes the workspace document first, once per workspace: it
     // invalidates cached authorization and serializes this claim with any other change there.
     if (!bumped.has(row.workspaceId)) bumped.set(row.workspaceId, await bumpWorkspace(session, row.workspaceId))
     const revision = bumped.get(row.workspaceId)?.authorizationRevision ?? 0
-    const kept = heldByWorkspace.get(row.workspaceId)
     if (kept) {
       if (await mergeDuplicate(session, {duplicate: row, kept, workosUserId, mentraUserId, revision, now})) {
         result.merged += 1
@@ -127,6 +139,7 @@ export async function claimPendingMemberships(
       {session},
     )
     if (claimed.modifiedCount !== 1) continue
+    await insertGuard(session, mentraUserId, {workspaceId: row.workspaceId, membershipId: row.membershipId})
     result.claimed += 1
     heldByWorkspace.set(row.workspaceId, {...row, mentraUserId, pendingWorkosUserId: null})
     await stampCreator(session, row, mentraUserId)

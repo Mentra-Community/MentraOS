@@ -385,37 +385,6 @@ test.each([{ command: ["admin", "publishing-token", "com.example.app"] }, { comm
 const apiRequests = (f: Awaited<ReturnType<typeof fixture>>) =>
   f.requests.filter((request) => !request.path.endsWith("/auth/me")).map((request) => `${request.method} ${request.path}`);
 
-test("workspace list marks the selected workspace and shows the caller's role", async () => {
-  const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
-  f.signIn("ws_2");
-  const result = await f.cli("workspace", "list");
-  expect(result.code).toBe(0);
-  expect(result.stdout).toBe("  ws_1\tTeam ws_1\towner\n* ws_2\tTeam ws_2\towner\n");
-});
-
-test("workspace list marks the workspace the Store reports when none is selected", async () => {
-  const f = await fixture();
-  f.signIn();
-  const result = await f.cli("workspace", "list");
-  expect(result.code).toBe(0);
-  expect(result.stdout).toBe("* ws_1\tTeam ws_1\towner\n");
-});
-
-test("workspace use stores the selection, which later commands send", async () => {
-  const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
-  f.signIn();
-  const used = await f.cli("workspace", "use", "ws_2");
-  expect(used.code).toBe(0);
-  expect(used.stdout).toBe("Using Team ws_2 (ws_2)\n");
-  expect(f.savedLogin()).toMatchObject({ workspaceId: "ws_2", token: "fixture-token" });
-
-  const listed = await f.cli("workspace", "list");
-  expect(listed.stdout).toContain("* ws_2\tTeam ws_2");
-  expect(f.workspaceHeaders.at(-1)).toMatchObject({ path: "/api/console/auth/me", workspaceId: "ws_2" });
-  const whoami = await f.cli("whoami");
-  expect(whoami.stdout).toContain("Workspace: ws_2");
-});
-
 test("whoami shows the person, the Store and the selected workspace", async () => {
   const f = await fixture(undefined, false, ["ws_1"]);
   f.signIn("ws_1");
@@ -426,82 +395,6 @@ test("whoami shows the person, the Store and the selected workspace", async () =
   expect(whoami.stdout).toContain("Workspace: ws_1\n");
 });
 
-test("workspace use with MENTRA_CLI_TOKEN points at MENTRA_CLI_WORKSPACE_ID instead of storing anything", async () => {
-  const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
-  const result = await f.cli("workspace", "use", "ws_2");
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain("MENTRA_CLI_WORKSPACE_ID");
-  expect(existsSync(join(f.cwd, "stored-login.json"))).toBe(false);
-});
-
-test("workspace use refuses a workspace the caller does not belong to", async () => {
-  const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
-  f.signIn("ws_1");
-  const result = await f.cli("workspace", "use", "ws_elsewhere");
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain("You do not have access to that workspace");
-  expect(f.savedLogin().workspaceId).toBe("ws_1");
-});
-
-test("workspace show prints the workspace with its publishing profile", async () => {
-  const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
-  f.signIn("ws_2");
-  const result = await f.cli("workspace", "show");
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain("Workspace: Team ws_2 (ws_2)");
-  expect(result.stdout).toContain("Role: owner");
-  expect(result.stdout).toContain("Package prefix: com.example");
-  expect(result.stdout).toContain("Prefix status: verified");
-  expect(f.workspaceHeaders.find((request) => request.path === "/api/console/publishing-profile")).toMatchObject({
-    method: "GET",
-    workspaceId: "ws_2",
-  });
-});
-
-test("workspace show says a workspace without a package prefix has none, and how to set one", async () => {
-  const f = await fixture();
-  f.clearProfile("ws_1");
-  f.signIn("ws_1");
-  const result = await f.cli("workspace", "show");
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain("Workspace: Team ws_1 (ws_1)");
-  expect(result.stdout).toContain("Package prefix: not set");
-  expect(result.stdout).toContain("mentra workspace set-prefix <prefix>");
-  expect(result.stdout).toContain("Developer Console");
-  expect(result.stdout).not.toContain("Prefix status");
-  expect(result.stderr).toBe("");
-});
-
-test("workspace show says the prefix is not visible to a member instead of failing", async () => {
-  const f = await fixture();
-  f.setRole("ws_1", "member");
-  f.signIn("ws_1");
-  const result = await f.cli("workspace", "show");
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain("Role: member");
-  expect(result.stdout).toContain("Package prefix: not visible to your role");
-  expect(result.stderr).toBe("");
-});
-
-test("a workspace created without a prefix shows none, and set-prefix sets it", async () => {
-  const f = await fixture();
-  f.signIn("ws_1");
-  expect((await f.cli("workspace", "create", "New Team")).code).toBe(0);
-  expect((await f.cli("workspace", "show")).stdout).toContain("Package prefix: not set");
-
-  const set = await f.cli("workspace", "set-prefix", "com.neworg");
-  expect(set.code).toBe(0);
-  expect(set.stdout).toContain("Package prefix: com.neworg (unverified)");
-  expect(f.requests.filter((request) => request.method === "PUT")).toEqual([
-    { method: "PUT", path: "/api/console/publishing-profile", body: { packagePrefix: "com.neworg" } },
-  ]);
-  expect(f.workspaceHeaders.find((request) => request.method === "PUT")?.workspaceId).toBe("ws_new");
-
-  const shown = await f.cli("workspace", "show");
-  expect(shown.stdout).toContain("Package prefix: com.neworg");
-  expect(shown.stdout).toContain("Prefix status: unverified");
-});
-
 test("workspace set-prefix reports a refused prefix and exits non-zero", async () => {
   const f = await fixture();
   f.signIn("ws_1");
@@ -510,12 +403,12 @@ test("workspace set-prefix reports a refused prefix and exits non-zero", async (
   expect(result.stderr).toContain("package_prefix_taken");
 });
 
-test("workspace show asks for a selection instead of guessing among several workspaces", async () => {
+test("workspace show does not guess among several workspaces", async () => {
   const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
   f.signIn();
   const result = await f.cli("workspace", "show");
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain("No workspace selected. Run `mentra workspace list`");
+  expect(result.stdout).toContain("This account has no workspace. Create one with `mentra workspace create <name>`.");
   expect(f.requests.some((request) => request.path === "/api/console/publishing-profile")).toBe(false);
 });
 
@@ -625,10 +518,9 @@ test("tokens list, create and revoke go through the active workspace's credentia
   ]);
 });
 
-test("tokens use the selection saved by workspace use", async () => {
+test("tokens use the workspace the login selected", async () => {
   const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
-  f.signIn();
-  expect((await f.cli("workspace", "use", "ws_1")).code).toBe(0);
+  f.signIn("ws_1");
   expect((await f.cli("tokens", "list")).code).toBe(0);
   expect(apiRequests(f)).toEqual(["GET /api/console/workspaces/ws_1/credentials"]);
 });
@@ -643,11 +535,11 @@ test("tokens create rejects a bad expiry before reserving the output file", asyn
   expect(f.requests).toEqual([]);
 });
 
-test("several workspaces and none selected: tokens say to run `mentra workspace use <id>` and mint nothing", async () => {
+test("several workspaces and none selected: tokens say the account must be brought down to one and mint nothing", async () => {
   const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
   const result = await f.cli("tokens", "create", "--name", "CI", "--output", "token");
   expect(result.code).toBe(1);
-  expect(result.stderr).toContain("Run `mentra workspace use <id>`");
+  expect(result.stderr).toContain("more than one workspace");
   expect(result.stderr).toContain("ws_1");
   expect(result.stderr).toContain("ws_2");
   expect(existsSync(join(f.cwd, "token"))).toBe(false);
@@ -658,7 +550,7 @@ test("a Store 409 workspace_selection_required prints the same instruction for a
   const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
   const result = await f.cli("miniapps", "list");
   expect(result.code).toBe(1);
-  expect(result.stderr).toContain("Run `mentra workspace use <id>`");
+  expect(result.stderr).toContain("more than one workspace");
   expect(result.stderr).toContain("ws_1\tTeam ws_1");
   expect(result.stderr).toContain("ws_2\tTeam ws_2");
 });

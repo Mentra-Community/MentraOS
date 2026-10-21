@@ -162,7 +162,11 @@ async function scenario() {
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId})
   const self = {...actor(mentraUserId), email}
 
+  const solo = await createWorkspace(self, {name: "Solo"})
+  const soloMembershipId = (await WorkspaceMembershipModel.findOne({workspaceId: solo.workspaceId}).lean())!.membershipId
   const team = await createWorkspace(actor("mu_team_owner"), {name: "Team"})
+  // The person is also in "Team": a second membership is legacy data the one-workspace guard predates, so it is
+  // written directly (the guard refuses it through the services).
   const teamMembershipId = await addMember(team.workspaceId, {mentraUserId, email, role: "developer"})
   const otherMembershipId = await addMember(team.workspaceId, {mentraUserId: "mu_other", role: "developer"})
   const teamKey = await createWorkspaceCredential(self, team.workspaceId, {name: "CI"})
@@ -174,8 +178,6 @@ async function scenario() {
     actorEmail: email,
   })
 
-  const solo = await createWorkspace(self, {name: "Solo"})
-  const soloMembershipId = (await WorkspaceMembershipModel.findOne({workspaceId: solo.workspaceId}).lean())!.membershipId
   const soloKey = await createWorkspaceCredential(self, solo.workspaceId, {name: "Solo CI"})
   const sentInvitationId = await invite(solo.workspaceId, "invitee@example.test", {
     membershipId: soloMembershipId,

@@ -142,7 +142,7 @@ async function announceStoreLogin(
   console.log(`Signed in as ${session.user.email}`);
   if (workspaceId) console.log(`Workspace: ${workspaceId}`);
   if (session.workspaces.length > 1 && !workspaceId) {
-    console.log("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
+    console.log("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
   }
   return storage;
 }
@@ -173,52 +173,6 @@ program
 const workspace = program.command("workspace").description("Manage the active workspace");
 
 workspace
-  .command("list")
-  .description("List workspaces available to this account")
-  .action(async () => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      const session = await getConsoleSession(creds);
-      if (session.workspaces.length === 0) {
-        console.log("No workspaces yet. Create one with `mentra workspace create <name>`.");
-        return;
-      }
-      const activeId = creds.workspaceId ?? session.activeWorkspaceId;
-      for (const entry of session.workspaces) {
-        console.log(`${entry.workspaceId === activeId ? "*" : " "} ${entry.workspaceId}\t${entry.name}\t${entry.membership.role}`);
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-workspace
-  .command("use")
-  .argument("<workspaceId>", "workspace id from `mentra workspace list`")
-  .description("Select the workspace used by future CLI commands")
-  .action(async (workspaceId: string) => {
-    const creds = await requireStoreCredentials();
-    if (!creds) return;
-
-    try {
-      if (!isStoredLogin(creds)) {
-        throw new Error("MENTRA_CLI_TOKEN is set: select its workspace with MENTRA_CLI_WORKSPACE_ID instead.");
-      }
-      const session = await getConsoleSession(creds);
-      const selected = session.workspaces.find(candidate => candidate.workspaceId === workspaceId);
-      if (!selected) throw new Error("You do not have access to that workspace");
-      if (!(await selectWorkspace(targetOf(creds), selected.workspaceId, creds))) {
-        throw new Error("The sign-in changed while selecting the workspace. Run the command again.");
-      }
-      console.log(`Using ${selected.name} (${selected.workspaceId})`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-workspace
   .command("show")
   .description("Show the active workspace and its publishing profile")
   .action(async () => {
@@ -230,9 +184,9 @@ workspace
       const active = activeWorkspace(creds, session);
       if (!active) {
         if (creds.workspaceId) {
-          throw new Error(`Workspace ${creds.workspaceId} is not available to this account. Run \`mentra workspace list\`, then \`mentra workspace use <id>\`.`);
+          throw new Error(`Workspace ${creds.workspaceId} is not available to this account. Sign in again with \`mentra login\`.`);
         }
-        console.log("No workspace selected. Run `mentra workspace list`, then `mentra workspace use <id>`, or create one with `mentra workspace create <name>`.");
+        console.log("This account has no workspace. Create one with `mentra workspace create <name>`.");
         return;
       }
 
@@ -289,7 +243,7 @@ workspace
       if (isStoredLogin(next) && !(await selectWorkspace(targetOf(next), created.workspaceId, next))) {
         // Another account signed in on this computer meanwhile: nothing more is done for this one.
         throw new Error(
-          `The sign-in changed while the workspace was being created, so it was not selected${options.packagePrefix ? " and its package prefix was not set" : ""}. Run \`mentra workspace use ${created.workspaceId}\` once signed in as its owner.`,
+          `The sign-in changed while the workspace was being created, so it was not selected${options.packagePrefix ? " and its package prefix was not set" : ""}. Run \`mentra login\` again as its owner to select it.`,
         );
       }
       if (!isStoredLogin(next)) console.log(`Set MENTRA_CLI_WORKSPACE_ID=${created.workspaceId} to use it with MENTRA_CLI_TOKEN.`);

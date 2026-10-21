@@ -325,11 +325,11 @@ describe("createWorkspace", () => {
     })
     await withCreationPolicy("open", async () => {
       expect(workspaceCreationPolicy()).toBe("open")
-      expect((await createWorkspace(user("mu_plain"), {name: "Open"})).name).toBe("Open")
+      expect((await createWorkspace(user("mu_plain_open"), {name: "Open"})).name).toBe("Open")
     })
     await withCreationPolicy(undefined, async () => {
       expect(workspaceCreationPolicy()).toBe("open")
-      expect((await createWorkspace(user("mu_plain"), {name: "Default"})).name).toBe("Default")
+      expect((await createWorkspace(user("mu_plain_default"), {name: "Default"})).name).toBe("Default")
     })
     const names = (await WorkspaceModel.find({}).sort({_id: 1}).lean()).map(row => row.name)
     expect(names).toEqual(["Allowed", "Open", "Default"])
@@ -1415,9 +1415,10 @@ describe("deletion holds", () => {
 
   test("a hold and a delete at the same time: exactly one wins, and a deleted workspace never holds anything", async () => {
     for (let round = 0; round < 6; round++) {
-      const ws = await newWorkspace(user("mu_owner"), "Acme")
+      // One workspace per person: a round whose hold wins leaves its workspace, so each round has its own owner.
+      const ws = await newWorkspace(user(`mu_owner_${round}`), "Acme")
       const [deleted, held] = await Promise.allSettled([
-        deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
+        deleteWorkspace(user(`mu_owner_${round}`), ws, {confirmName: "Acme"}),
         setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}),
       ])
       const status = (await getWorkspace(ws))!.status
@@ -1438,10 +1439,10 @@ describe("deletion holds", () => {
 
   test("a delete and a newer copy of the hold the workspace already has: the delete still waits for the hold", async () => {
     for (let round = 0; round < 4; round++) {
-      const ws = await newWorkspace(user("mu_owner"), "Acme")
+      const ws = await newWorkspace(user(`mu_owner_${round}`), "Acme")
       await setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()})
       const [deleted, held] = await Promise.allSettled([
-        deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"}),
+        deleteWorkspace(user(`mu_owner_${round}`), ws, {confirmName: "Acme"}),
         setDeletionHold("store", ws, {reason: OWNS, count: 1, asOf: asOf()}),
       ])
       expect(deleted.status).toBe("rejected")
@@ -1512,12 +1513,12 @@ describe("queries", () => {
   test("listWorkspacesForUser uses only active memberships of non-deleted workspaces", async () => {
     await newWorkspace(user("mu_owner"), "First")
     const second = await newWorkspace(user("mu_other"), "Second")
-    const third = await newWorkspace(user("mu_other"), "Third")
-    const gone = await newWorkspace(user("mu_other"), "Gone")
+    const third = await newWorkspace(user("mu_other_third"), "Third")
+    const gone = await newWorkspace(user("mu_other_gone"), "Gone")
     await addMember(second, "mu_me", "developer")
     await addMember(third, "mu_me", "member", {status: "ended", endedReason: "removed", endedAt: new Date()})
     await addMember(gone, "mu_me", "admin")
-    await deleteWorkspace(user("mu_other"), gone, {confirmName: "Gone"})
+    await deleteWorkspace(user("mu_other_gone"), gone, {confirmName: "Gone"})
 
     const listed = await listWorkspacesForUser("mu_me")
 

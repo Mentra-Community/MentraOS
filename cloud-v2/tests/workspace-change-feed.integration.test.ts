@@ -229,7 +229,7 @@ describe("seq", () => {
   test("workspace mutations take their numbers in the order they committed", async () => {
     const created = await createWorkspace(owner, {name: "One"})
     await renameWorkspace(owner, created.workspaceId, "Two", 0)
-    const other = await createWorkspace(owner, {name: "Three"})
+    const other = await createWorkspace({...owner, mentraUserId: "mu_second_owner", email: "mu_second_owner@example.test"}, {name: "Three"})
 
     const {events} = await listChanges({})
     expect(events.map(e => [e.seq, e.workspaceId, e.action])).toEqual([

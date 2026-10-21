@@ -40,6 +40,7 @@ import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {clearDeletionHold, setDeletionHold} from "../packages/core/src/services/workspaces/deletion-hold.service"
 import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {membershipRow} from "./support/membership-row"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {nextHoldAsOf} from "./support/hold-as-of"
 import {
@@ -201,6 +202,28 @@ async function createWorkspace(owner: Person, name = "Acme") {
   const reply = await call("POST", "/api/workspaces", {as: owner, body: {name}})
   expect(reply.status).toBe(201)
   return reply.json as {workspaceId: string; authorizationRevision: number; membership: {membershipId: string}}
+}
+
+/**
+ * A workspace made by a second person, in which `holder` also holds the owner role. One workspace per person goes
+ * through the API, so `holder`'s second membership is legacy data and is written directly.
+ */
+let legacySeq = 0
+async function otherWorkspaceOf(holder: Person, name: string) {
+  const maker = await person(`maker-${legacySeq++}`)
+  const created = await createWorkspace(maker, name)
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId: `wm_legacy_${legacySeq++}`,
+      workspaceId: created.workspaceId,
+      mentraUserId: holder.mentraUserId,
+      email: holder.email,
+      role: "owner",
+      status: "active",
+      startedAt: new Date(),
+    }),
+  )
+  return created
 }
 
 /** Invite `invitee` through the API and accept as them. Returns the new membership id. */
@@ -1193,7 +1216,7 @@ describe("members", () => {
 
   test("a membership of another workspace is 404 through this workspace's URL, even for someone who owns both", async () => {
     const ws = await newWorkspace()
-    const other = await createWorkspace(ws.owner, "Other")
+    const other = await otherWorkspaceOf(ws.owner, "Other")
     const stranded = await person("other-member")
     const strandedMembershipId = await join(other.workspaceId, ws.owner, stranded, "member")
     const revisionHere = await revisionOf(ws.workspaceId, ws.owner)
@@ -1288,7 +1311,7 @@ describe("invitations", () => {
 
   test("an invitation of another workspace is 404 through this workspace's URL, and stays pending", async () => {
     const ws = await newWorkspace()
-    const other = await createWorkspace(ws.owner, "Other")
+    const other = await otherWorkspaceOf(ws.owner, "Other")
     const invited = await call("POST", `/api/workspaces/${other.workspaceId}/invitations`, {
       as: ws.owner,
       body: {email: "hire@example.test", role: "member"},
@@ -1531,6 +1554,7 @@ describe("workspace credentials", () => {
 describe("audit", () => {
   test("each event records the id of the request that caused it", async () => {
     const owner = await person("request-id-owner")
+    const secondOwner = await person("request-id-second-owner")
 
     const chosen = await app.request("http://localhost/api/workspaces", {
       method: "POST",
@@ -1539,7 +1563,7 @@ describe("audit", () => {
     })
     const minted = await app.request("http://localhost/api/workspaces", {
       method: "POST",
-      headers: {authorization: `Bearer ${owner.bearer}`, "content-type": "application/json"},
+      headers: {authorization: `Bearer ${secondOwner.bearer}`, "content-type": "application/json"},
       body: JSON.stringify({name: "Minted"}),
     })
     expect([chosen.status, minted.status]).toEqual([201, 201])
