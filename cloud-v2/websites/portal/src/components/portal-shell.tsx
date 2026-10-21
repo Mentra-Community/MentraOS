@@ -3,6 +3,7 @@ import {
   AppShell,
   CenteredLayout,
   CreateWorkspaceDialog,
+  licenseStrings,
   ROLE_LABELS,
   WorkspaceSwitcher,
   workspaceListQuery,
@@ -49,10 +50,10 @@ export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem
   return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
 }
 
-/** The account menu's pages: the person's own Billing, where the billing module is offered to them. */
+/** The account menu's pages: the person's own Billing, where billing is offered to them. */
 export function accountItems(billing: boolean): NavItem[] {
   if (!billing) return [];
-  return [{ key: "billing", label: "Billing", icon: CreditCard, href: ACCOUNT_BILLING_PATH }];
+  return [{ key: "billing", label: licenseStrings.nav.billing, icon: CreditCard, href: ACCOUNT_BILLING_PATH }];
 }
 
 /**

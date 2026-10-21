@@ -7,6 +7,9 @@
  * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
  * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
  * workspace that does not exist, or that the viewer may not see, is one "not found" page.
+ *
+ * Members shows each member's licenses where billing's catalog can be read, and opens a member's panel from
+ * `?member=<membershipId>`: the address says which, so a link opens it and Back closes it.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -15,9 +18,12 @@ import {
   actsAsOrganizationAdmin,
   Button,
   can,
+  billingCatalogQuery,
+  billingStatusQuery,
   effectiveRole,
   errorMessage,
   licensesQuery,
+  licenseStrings,
   ROLE_LABELS,
   Spinner,
   WorkspaceApiError,
@@ -28,16 +34,18 @@ import {
   WorkspaceSettingsPanel,
   workspaceDetailQuery,
   workspaceListQuery,
+  workspaceScope,
+  type MembersLicenses,
   type NavGroup,
 } from "@mentra/workspace-ui";
 import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
-import { navigate, Redirect } from "@/lib/navigation";
-import { portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
+import { closeQueryParam, navigate, openQueryParam, Redirect, useSearch } from "@/lib/navigation";
+import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
 import { forgetWorkspace, rememberWorkspace, workspacePath, type WorkspaceSection } from "@/lib/routes";
-import { billingOffered, LicensesScreen } from "./licenses";
+import { billingOffered, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
 type SectionMeta = {
@@ -45,8 +53,8 @@ type SectionMeta = {
   icon: LucideIcon;
   /** The capability that opens it; null for everyone in the workspace (leaving is in Settings). */
   needs: WorkspaceCapability | null;
-  /** `billing`: the person is shown billing (see `billingOffered`), which the page then hosts. */
-  description(workspaceName: string, billing: boolean): string;
+  /** `manager`: the viewer sees every license (`workspace.licenses.read`), where a member sees their own seats. */
+  description(workspaceName: string, manager: boolean): string;
 };
 
 const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
@@ -69,11 +77,11 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     description: name => `Every change made in ${name}, newest first.`,
   },
   licenses: {
-    label: "Licenses",
+    label: licenseStrings.nav.licenses,
     icon: CreditCard,
     // Open to everyone in the workspace, but offered only where there is something to show (see `licensesPartShown`).
     needs: null,
-    description: (name, billing) => (billing ? `Licenses, seats and billing for ${name}.` : `Licenses and seats for ${name}.`),
+    description: (name, manager) => (manager ? licenseStrings.page.description(name) : licenseStrings.page.memberDescription(name)),
   },
 };
 
@@ -146,6 +154,43 @@ export function isNoAccess(error: unknown): boolean {
   return error instanceof WorkspaceApiError && (error.status === 404 || error.status === 403);
 }
 
+/**
+ * The Members list's licenses source (`WorkspaceMembersPanel`'s `licenses`): billing's catalog, which names and draws the
+ * licenses a member holds, and, for a viewer offered billing, billing's status, which says where "Add seats ↗" is
+ * offered; and the billing client and the portal's ways out, which that button goes through like every other ↗ button
+ * (hosted action: this tab, or a tab opened in the click for a page that does not return). Nothing is asked until the
+ * list can use it: the viewer sees every license (`workspace.licenses.read`) in a workspace that holds one. None where
+ * billing's catalog can't be read (a Private Cloud), so the list is the admin portal's.
+ */
+export function useMembersLicenses({
+  me,
+  workspaceId,
+  detail,
+  licenses,
+  enabled,
+}: {
+  me: PortalMe;
+  workspaceId: string;
+  detail: WorkspaceDetail | undefined;
+  licenses: readonly LicenseView[] | undefined;
+  /** The Members section is open. */
+  enabled: boolean;
+}): MembersLicenses | undefined {
+  const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
+  const wanted = enabled && me.modules.billingCatalog && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
+  const catalog = useQuery({ ...billingCatalogQuery(portalBillingApi, scope), enabled: wanted });
+  const status = useQuery({ ...billingStatusQuery(portalBillingApi, scope), enabled: wanted && billingOffered(me, detail) });
+
+  return useMemo(
+    // The one place the source is built.
+    () =>
+      me.modules.billingCatalog
+        ? { catalog: catalog.data?.products, billing: status.data?.licenses, billingApi: portalBillingApi, navigateOut: portalNavigateOut }
+        : undefined,
+    [me.modules.billingCatalog, catalog.data, status.data],
+  );
+}
+
 export function WorkspaceScreen({
   workspaceId,
   section,
@@ -171,6 +216,9 @@ export function WorkspaceScreen({
   const active = section && sections.includes(section) ? section : null;
   // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
   const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
+  // The Members list shows each member's licenses, and the open member's panel is the address's `?member=`.
+  const membersLicenses = useMembersLicenses({ me, workspaceId, detail: data, licenses: licenses.data, enabled: active === "members" });
+  const openMember = new URLSearchParams(useSearch()).get("member") || null;
 
   useEffect(() => {
     if (data) rememberWorkspace(safeLocalStorage(), workspaceId);
@@ -209,13 +257,15 @@ export function WorkspaceScreen({
       nav={workspaceNav(workspaceId, sections)}
       activeKey={active}
       title={meta?.label ?? name}
-      description={meta?.description(name, billing)}
+      description={meta?.description(name, can(data, "workspace.licenses.read"))}
       headerAction={
         active === "members" && can(data, "workspace.members.manage") ? (
           <Button onClick={() => setInviting(true)}>
             <UserPlus className="size-4" />
             Invite
           </Button>
+        ) : active === "licenses" && data ? (
+          <LicensesHeaderActions workspaceId={workspaceId} me={me} detail={data} />
         ) : null
       }
     >
@@ -242,7 +292,14 @@ export function WorkspaceScreen({
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}
-          <WorkspaceMembersPanel api={api} workspaceId={workspaceId} />
+          <WorkspaceMembersPanel
+            api={api}
+            workspaceId={workspaceId}
+            licenses={membersLicenses}
+            member={openMember}
+            onMemberChange={membershipId => (membershipId === null ? closeQueryParam("member") : openQueryParam("member", membershipId))}
+            locale={portalBillingApi.locale}
+          />
           <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
           <WorkspaceInviteDialog api={api} workspaceId={workspaceId} open={inviting} onClose={() => setInviting(false)} />
         </div>

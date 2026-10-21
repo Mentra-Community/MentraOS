@@ -68,8 +68,9 @@ identity provider.
   `jwks_uri`.
   - Access tokens are JWTs for Core's API: `typ` `at+jwt`, `aud`
     `urn:mentra:core`, with `client_id`. They live an hour.
-  - ID tokens carry the client in `aud`, and the person's `email`,
-    `email_verified` and `name` as recorded at sign-in.
+  - ID tokens carry the client in `aud`, and the person's `email` and
+    `email_verified` as their latest sign-in recorded them, and the last `name`
+    a sign-in carried.
   - Every verifier of Core's tokens pins the key ID and type as well as the
     issuer and audience, so a sign-in server token never passes for a phone,
     runtime or miniapp token, or the other way round.

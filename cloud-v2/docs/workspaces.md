@@ -31,6 +31,13 @@ Roles are cumulative: each holds everything the one before it holds.
   `409 membership_changed`.
 - Membership rows are never deleted. Leaving or removal ends the membership and
   keeps it as history, with every role it held; rejoining starts a new one.
+- The member list (`GET /:workspaceId/members`, the same on the workspace and
+  admin portals' routes) names each member. `name` is the last one a sign-in
+  through Core's provider carried, trimmed, read for the whole list in one
+  query; a sign-in that carries no name keeps the one Core has. It is `null`
+  when no sign-in has carried a name, when the person has not signed in through
+  the provider, and for a pending imported membership; the `email` stays the
+  one the membership was made for.
 - Every member sees the license seats they hold; Admins and Owners see every
   license and assign its seats ([Licenses and seats](licenses.md)). Ending a
   membership frees its seats, and deleting a workspace ends its licenses.
@@ -53,7 +60,8 @@ Admin" when an Organization Admin's powers go beyond it), and lists your other w
 **Create workspace** and your pending invitations with **Accept** and **Dismiss**. Every
 page carries its workspace:
 `/w/<workspaceId>/members` (members, with pending invitations under them),
-`/w/<workspaceId>/settings` and `/w/<workspaceId>/audit`; the sidebar offers only what your
+`/w/<workspaceId>/settings`, `/w/<workspaceId>/audit` and `/w/<workspaceId>/licenses`
+([Licenses and seats](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
 role opens. Above your account, the sidebar links to the environment's Developer Console in a
 new tab; a Private Cloud, which has no Developer Console, shows no link. `/` opens your
 last-used workspace (remembered in the browser, never an authority), else your first, else the
@@ -65,6 +73,34 @@ link's and those addressed to your verified email, each shown once; **Dismiss** 
 in this browser only (Core does not record a refusal, and its link keeps working). Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
+
+**Members** lists each member by name over email (the email alone where Core has no
+name), with a "You" mark on your own row, "Pending first sign-in" on an imported
+membership, their role, the licenses they hold and when they joined (the date is left
+out on a phone). A row opens the member panel.
+
+- **Licenses.** Where billing's catalog can be read, and you hold
+  `workspace.licenses.read` in a workspace with a license that has not ended, the list
+  has a Licenses column: a chip per license the member holds (three chips and "+n" past
+  four), "None", or "After first sign-in" for a pending membership. With
+  `workspace.licenses.assign`, each member who has signed in also has a checkbox, and
+  selecting some shows "2 selected · Assign licenses", which gives them seats of any of
+  the workspace's licenses in one step ([Seats](licenses.md#seats)). Without the
+  catalog, and on a Private Cloud, the list has no column and no selection.
+- **The member panel** is a side panel for one member: their role and when they joined,
+  Change role, Remove from workspace (it asks first), and a Licenses section with a
+  switch for each license the workspace holds
+  ([the portal's Licenses](licenses.md#in-the-workspace-portal)). The address carries
+  which member is open, `?member=<membershipId>`, so a link opens the panel, Back closes
+  it, and an id that names no member opens nothing. Change role offers the roles you
+  may move that member between, and Remove appears where you may remove them; neither is
+  offered on your own row (you leave in Settings, and another Owner or an Organization
+  Admin changes your role). Both carry the revision you last saw
+  (`409 membership_changed`).
+- **The admin portal** has the same list and panel, so role changes and Remove are
+  there too, with each member's Mentra user id and a Copy id button for recovering a
+  workspace's ownership. It has no Licenses column, no selection and no Licenses
+  section, and its panel is not in the address.
 
 ## Creating and joining
 
@@ -92,10 +128,11 @@ at `/enterprise` until it returns as workspace settings.
   ([Store integration](store-integration.md#moving-developer-organizations-from-the-store))
   wait for their person's first sign-in with a matching verified email. Until
   then the member list shows them as pending (`pending: true`, `mentraUserId`
-  null), and the portals mark them "Pending first sign-in". They hold their role
-  meanwhile: a pending Owner counts toward the last Owner while a verified email
-  can still claim it (its legacy identity exists), Admins change or remove them
-  like any other member, and the keys they created validate.
+  and `name` null), and the portals mark them "Pending first sign-in". They
+  hold their role meanwhile: a pending Owner counts toward the last Owner while
+  a verified email can still claim it (its legacy identity exists), Admins
+  change or remove them like any other member, and the keys they created
+  validate.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once. It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the
@@ -160,8 +197,8 @@ session authenticates only its own routes:
 Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
 (by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
-its seats, [Licenses and seats](licenses.md#seats)) are for people; a key
-gets 403. A workspace's detail says whether the caller is an Organization Admin
+its seats and `/seat-assignments`, [Licenses and seats](licenses.md#seats)) are for people;
+a key gets 403. A workspace's detail says whether the caller is an Organization Admin
 (`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
 invitations, `target.name` for keys. Each checks
 the caller's capability in that workspace. A workspace's detail lists what holds it
@@ -187,7 +224,9 @@ and its billing module writes licenses through it ([Licenses and seats](licenses
 `/api/portal/billing/*` forwards the workspace portal's billing requests
 to that module for a signed-in person, with the workspace or the person's own
 account as the scope Core decides ([Portal modules](portal-modules.md)).
-`/api/portal/me` says whether to offer it (`modules.billing`).
+`/api/portal/me` says whether to offer it (`modules.billing`) and whether its catalog
+can be read (`modules.billingCatalog`), which names the licenses on the Members list for
+everyone who may see them.
 
 ## Configuration
 
@@ -199,7 +238,7 @@ account as the scope Core decides ([Portal modules](portal-modules.md)).
 | `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` | Optional. Comma-separated environment labels keys may carry; the first is the one new keys get. Default: this Core's own label (`CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`), which is the label existing keys carry. |
 | `CLOUD_CORE_SERVICE_SECRETS` | Optional. The signed service API's secrets by service (`store`, `fleet`), `{"store": ["<newest>", "<older>"], "fleet": ["<newest>"]}`. Unset: every service call is refused. |
 | `CLOUD_CORE_FLEET_URL`, `CLOUD_CORE_FLEET_SECRET`, `CLOUD_CORE_ENABLED_FEATURES` | Optional. The Fleet service Core forwards to, its shared secret, and (on a Private Cloud) the features the deployment has bought, which must list `fleet.managed` (case-sensitive). Unset: Fleet is not installed. See [Fleet integration](fleet-integration.md). |
-| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Outside `CLOUD_CORE_ENVIRONMENT=prod` it is visible to Organization Admins only. See [Portal modules](portal-modules.md). |
+| `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | Optional, hosted Core only. The billing module Core forwards to, and its shared secret. Unset: billing is not installed. Outside `CLOUD_CORE_ENVIRONMENT=prod` its pages are visible to Organization Admins only, and its catalog stays readable by members. See [Portal modules](portal-modules.md). |
 | `RESEND_API_KEY`, `EMAIL_SENDER` | Invitation emails. Without them, inviting still works and returns the link to copy. |
 
 Workspace writes use multi-document transactions across collections, so they
