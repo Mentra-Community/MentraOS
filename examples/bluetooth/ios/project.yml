@@ -1,0 +1,52 @@
+name: MentraExample
+options:
+  bundleIdPrefix: com.mentra
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    TARGETED_DEVICE_FAMILY: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    GENERATE_INFOPLIST_FILE: "YES"
+    INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+    INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+    INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "This example app uses Bluetooth to connect to smart glasses."
+    INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: "This example app uses Bluetooth to connect to smart glasses."
+    INFOPLIST_KEY_NSCameraUsageDescription: "This example app can trigger camera capture on connected smart glasses."
+    INFOPLIST_KEY_NSLocalNetworkUsageDescription: "This example app can talk to local photo webhook, streaming preview, and direct phone receiver servers."
+    INFOPLIST_KEY_NSMicrophoneUsageDescription: "This example app can stream microphone audio from connected smart glasses."
+
+packages:
+  MentraBluetoothSDK:
+    url: https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
+    exactVersion: 3.4.0-dev.1034
+
+targets:
+  MentraExample:
+    type: application
+    platform: iOS
+    sources:
+      - path: MentraExample
+    dependencies:
+      - package: MentraBluetoothSDK
+        product: MentraBluetoothSDK
+    settings:
+      base:
+        INFOPLIST_FILE: MentraExample-Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.mentra.bluetoothsdk.example.ios
+        PRODUCT_NAME: MentraSdkIosExample
+        CODE_SIGN_ENTITLEMENTS: MentraExample/MentraExample.entitlements
+        INFOPLIST_KEY_CFBundleDisplayName: Mentra SDK iOS
+        SWIFT_OBJC_BRIDGING_HEADER: MentraExample/MentraExample-Bridging-Header.h
+        GSTREAMER_ROOT_IOS: "$(HOME)/Library/Developer/GStreamer/iPhone.sdk"
+        FRAMEWORK_SEARCH_PATHS: "$(inherited) \"$(GSTREAMER_ROOT_IOS)\""
+        HEADER_SEARCH_PATHS: "$(inherited) \"$(GSTREAMER_ROOT_IOS)/GStreamer.framework/Headers\""
+        OTHER_LDFLAGS: "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit"
+    preBuildScripts:
+      - name: Install GStreamer iOS SDK
+        script: |
+          "${PROJECT_DIR}/scripts/setup-gstreamer-ios.sh"

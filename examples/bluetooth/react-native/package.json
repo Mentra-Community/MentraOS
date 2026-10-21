@@ -1,0 +1,58 @@
+{
+  "name": "mentra-bluetooth-sdk-rn-example",
+  "version": "0.1.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "expo": {
+    "autolinking": {
+      "exclude": [
+        "@mentra/crust"
+      ]
+    }
+  },
+  "//": "Use android:dev for local Android development: it starts Metro, installs the dev build, forwards port 8081, and opens the Expo dev-client URL to avoid the first-run blank launcher.",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "bun run ios:setup && expo run:ios",
+    "ios:setup": "bash ./modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh",
+    "android": "node ./scripts/android-run.mjs",
+    "android:dev": "node ./scripts/android-dev.mjs",
+    "test": "bun test",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@mentra/bluetooth-sdk": "3.4.0-dev.1034",
+    "@mentra/engine": "3.4.0-dev.1034",
+    "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
+    "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
+    "expo": "~55.0.24",
+    "expo-audio": "~55.0.14",
+    "expo-battery": "^55.0.13",
+    "expo-build-properties": "~55.0.14",
+    "expo-calendar": "~55.0.14",
+    "expo-clipboard": "~55.0.13",
+    "expo-constants": "~55.0.16",
+    "expo-dev-client": "~55.0.34",
+    "expo-device": "~55.0.17",
+    "expo-file-system": "~55.0.20",
+    "expo-linear-gradient": "~55.0.14",
+    "expo-location": "~55.1.10",
+    "expo-notifications": "~55.0.23",
+    "expo-splash-screen": "~55.0.21",
+    "expo-task-manager": "~55.0.16",
+    "expo-video": "~55.0.17",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-marked": "8.1.1",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-svg": "15.15.3",
+    "react-native-wifi-reborn": "^4.13.6",
+    "react-native-webview": "13.16.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.1.0",
+    "typescript": "~5.9.2",
+    "ws": "^8.20.1"
+  }
+}

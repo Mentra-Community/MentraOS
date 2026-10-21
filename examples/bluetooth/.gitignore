@@ -1,0 +1,64 @@
+node_modules
+ios
+android
+.expo
+dist
+build
+.DS_Store
+__pycache__/
+*.pyc
+.build/
+.swiftpm/
+examples/react-native-macos/macos/Podfile.lock
+examples/macos/Package.resolved
+examples/react-native-macos/macos/Pods/
+examples/react-native-macos/macos/build/
+examples/react-native-macos/macos/*.xcworkspace/
+examples/react-native-macos/macos/**/*.xcuserstate
+examples/react-native-macos/macos/**/xcuserdata/
+examples/react-native-macos/macos/.xcode.env.local
+
+# Keep customer-facing native example source projects even though generic
+# React Native generated `android` / `ios` directories are ignored above.
+!examples/android/
+!examples/android/**
+!examples/ios/
+!examples/ios/**
+!examples/react-native/modules/
+!examples/react-native/modules/**
+!examples/react-native/modules/**/android/
+!examples/react-native/modules/**/android/**
+!examples/react-native/modules/**/ios/
+!examples/react-native/modules/**/ios/**
+
+# Android example generated files.
+examples/android/.gradle/
+examples/android/.idea/
+examples/android/**/build/
+examples/android/**/*.iml
+examples/android/local.properties
+examples/android/.gstreamer/
+examples/android/app/gst-android-build/
+examples/react-native/.gstreamer/
+# Local Bluetooth SDK checkout for MENTRA_BLUETOOTH_SDK_PACKAGE_PATH (not committed).
+examples/react-native/modules/bluetooth-sdk/
+
+examples/react-native/modules/**/android/.gradle/
+examples/react-native/modules/**/android/build/
+examples/react-native/modules/**/android/gst-android-build/
+examples/react-native-elevenlabs-audio/.env*
+!examples/react-native-elevenlabs-audio/.env.example
+
+# Local webhook demo uploads.
+examples/photo-webhook-server/uploads/
+examples/react-native/.barcode-debug/
+
+# iOS example generated files.
+examples/ios/Pods/
+examples/ios/Podfile.lock
+examples/ios/*.xcworkspace/
+examples/ios/DerivedData/
+examples/ios/build/
+examples/ios/**/*.xcuserstate
+examples/ios/**/xcuserdata/
+examples/ios/**/project.xcworkspace/
