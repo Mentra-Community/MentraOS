@@ -71,6 +71,18 @@ export function canBuy(entry: CatalogEntry): entry is BuyableEntry {
   return entry.offer !== undefined && entry.offer.buy !== null;
 }
 
+/**
+ * The product being bought, with the terms billing offers it now. The seats step stays open while the catalog is
+ * read again, so a price or a limit that changed reaches it. A product that can no longer be bought (billing took
+ * its offer away, or the owner now holds it) keeps the terms it was chosen with: the step stays where it is, with
+ * the refusal it may be showing, and billing refuses what it won't sell, in words.
+ */
+function termsNow(chosen: CatalogEntry | null, products: readonly CatalogEntry[]): CatalogEntry | null {
+  if (chosen === null) return null;
+  const now = products.find((entry) => entry.product === chosen.product);
+  return now !== undefined && canBuy(now) ? now : chosen;
+}
+
 // ---- seats ------------------------------------------------------------------------------------------------------
 
 interface SeatBounds {
@@ -387,7 +399,7 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
         })}
       </div>
       {/* A person has no seats step: the dialog draws nothing for one. */}
-      <BuyDialog {...host} open={buying !== null} product={buying} memberCount={memberCount} onClose={() => setBuying(null)} />
+      <BuyDialog {...host} open={buying !== null} product={termsNow(buying, products)} memberCount={memberCount} onClose={() => setBuying(null)} />
     </section>
   );
 }
@@ -485,7 +497,7 @@ export function CatalogDialog({ open, onClose, products, licenses, memberCount, 
         <CatalogRows products={products} licenses={licenses} host={host} onChoose={setBuying} />
       </Dialog>
       {/* Over the list; a person has no seats step, and the dialog draws nothing for one. */}
-      <BuyDialog {...host} open={open && buying !== null} product={buying} memberCount={memberCount} onClose={() => setBuying(null)} />
+      <BuyDialog {...host} open={open && buying !== null} product={termsNow(buying, products)} memberCount={memberCount} onClose={() => setBuying(null)} />
     </>
   );
 }
@@ -494,7 +506,7 @@ export function CatalogDialog({ open, onClose, products, licenses, memberCount, 
 
 export interface BuyDialogProps extends BuyingHost {
   open: boolean;
-  /** The product being bought: it needs an offer with `buy` limits, or nothing is drawn. */
+  /** The product being bought, with the terms billing offers it now: it needs an offer with `buy` limits, or nothing is drawn. */
   product: CatalogEntry | null;
   /** How many members the workspace has. */
   memberCount?: number;
