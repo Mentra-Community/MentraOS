@@ -8,23 +8,40 @@ import {
   BillingActionSchema,
   BillingCatalogSchema,
   BillingStatusSchema,
+  BillingTotalSchema,
+  BuySchema,
   CatalogEntrySchema,
+  CatalogFeatureSchema,
+  FallbackPriceSchema,
   HostedUrlSchema,
   KNOWN_ACTION_KINDS,
   KNOWN_LICENSE_STATUSES,
+  KNOWN_OWNER_TYPES,
   KNOWN_TAX,
   LicenseBillingSchema,
   MoneySchema,
+  OfferSchema,
+  PerSeatPriceSchema,
   PriceSchema,
   PurchaseAnswerSchema,
   PurchaseRequestSchema,
+  PurchaseStatusSchema,
   SessionAnswerSchema,
   SessionRequestSchema,
+  TestModeSchema,
   billingIconPath,
   isPerSeat,
   type BillingCatalog,
   type BillingStatus,
+  type BillingTotal,
+  type Buy,
+  type CatalogFeature,
+  type FallbackPrice,
+  type Offer,
+  type PerSeatPrice,
   type Price,
+  type PurchaseStatus,
+  type TestMode,
 } from "./portal-billing"
 
 const callUnlimited = {
@@ -207,6 +224,13 @@ describe("the spec's example documents", () => {
     expect(parsed.purchase).toMatchObject({status: "processing", paid: false, licenseId: null})
   })
 
+  test("an unknown purchase status parses and keeps its value", () => {
+    const document = copy(statusDocument)
+    document.purchase.status = "refunded"
+    const parsed = BillingStatusSchema.parse(document)
+    expect(parsed.purchase).toMatchObject({status: "refunded", licenseId: "01JZWY3V8N0F2E9GQ4T6KXH5RD"})
+  })
+
   test("every known action kind parses, with returns only when billing sends it", () => {
     for (const action of [addSeats, changeSeats, cancel, renew, updatePayment, completePayment, billingAndInvoices]) {
       expect(BillingActionSchema.parse(action)).toEqual(action)
@@ -323,8 +347,28 @@ describe("a catalog entry", () => {
     expect(CatalogEntrySchema.parse(fleetSuite).offer!.buy).toEqual({minSeats: 1, defaultSeats: 5})
   })
 
-  test("an owner type the contract doesn't have fails the entry", () => {
-    expect(CatalogEntrySchema.safeParse({...callUnlimited, ownerTypes: ["organization"]}).success).toBe(false)
+  test("an owner type the portal doesn't know is dropped and never fails the entry", () => {
+    expect(KNOWN_OWNER_TYPES).toEqual(["workspace", "person"])
+    expect(CatalogEntrySchema.parse({...callUnlimited, ownerTypes: ["workspace", "team"]}).ownerTypes).toEqual([
+      "workspace",
+    ])
+    expect(CatalogEntrySchema.parse({...callUnlimited, ownerTypes: ["organization"]}).ownerTypes).toEqual([])
+    expect(
+      CatalogEntrySchema.parse({...callUnlimited, ownerTypes: ["team", "person", "workspace"]}).ownerTypes,
+    ).toEqual(["person", "workspace"])
+    expect(CatalogEntrySchema.parse({...callUnlimited, ownerTypes: []}).ownerTypes).toEqual([])
+  })
+
+  test("a catalog with an entry for an owner type the portal doesn't know still parses, and keeps the rest", () => {
+    const catalog = copy(catalogDocument)
+    catalog.products[1]!.ownerTypes = ["team"]
+    const parsed = BillingCatalogSchema.parse(catalog)
+    expect(parsed.products.map((product) => product.ownerTypes)).toEqual([["workspace", "person"], [], ["workspace"]])
+  })
+
+  test("an owner type that is not a string still fails the entry", () => {
+    expect(CatalogEntrySchema.safeParse({...callUnlimited, ownerTypes: [3]}).success).toBe(false)
+    expect(CatalogEntrySchema.safeParse({...callUnlimited, ownerTypes: "workspace"}).success).toBe(false)
   })
 })
 
@@ -427,40 +471,93 @@ describe("dates", () => {
 })
 
 describe("billingIconPath", () => {
-  const prefix = "/api/portal/billing/ui/"
+  const icons = "/api/portal/billing/ui/icons/"
 
-  test("keeps billing's own icon path", () => {
+  test("keeps /api/portal/billing/ui/icons/<file> for a file of letters, digits, dots, underscores and hyphens", () => {
     expect(billingIconPath("/api/portal/billing/ui/icons/mentra.call.unlimited.png")).toBe(
       "/api/portal/billing/ui/icons/mentra.call.unlimited.png",
     )
-    expect(billingIconPath(`${prefix}icons/mentra.fleet.suite.svg`)).toBe(`${prefix}icons/mentra.fleet.suite.svg`)
-    expect(billingIconPath(`${prefix}icons/x.png?v=2`)).toBe(`${prefix}icons/x.png?v=2`)
+    for (const file of ["mentra.fleet.suite.svg", "Call_Unlimited-2.PNG", "x", "a-b_c.1.2.webp", ".hidden", "x..png"]) {
+      expect([file, billingIconPath(`${icons}${file}`)]).toEqual([file, `${icons}${file}`])
+    }
+    expect(billingIconPath(`${icons}${"a".repeat(255)}`)).toBe(`${icons}${"a".repeat(255)}`)
   })
 
-  test("is null for an address that is not billing's own path", () => {
+  test("is null for an address that is not billing's own icon path", () => {
     for (const value of [
       "https://files.example.com/x.png",
       "http://localhost:3000/api/portal/billing/ui/icons/x.png",
       "//host/x.png",
       "//host/api/portal/billing/ui/icons/x.png",
       "/api/portal/other/ui/x.png",
-      "/api/portal/billing/ui",
-      "/api/portal/billing/ui/",
+      "/api/portal/other/ui/icons/x.png",
       "/api/portal/billing/uix/icons/x.png",
-      "/api/portal/billing/ui/../../me",
-      "/api/portal/billing/ui/icons/../../../me",
-      "/api/portal/billing/ui/%2e%2e/%2e%2e/me",
-      "/api/portal/billing/ui/icons%2f..%2f..%2fme",
-      "/api/portal/billing/ui/icons\\x.png",
-      "/api/portal/billing/ui/icons/x.png\n",
-      "/api/portal/billing/ui/icons/\u0000x.png",
+      "/api/portal/billing/ui/icon/x.png",
+      "/API/PORTAL/BILLING/UI/ICONS/x.png",
+      "icons/x.png",
       "javascript:alert(1)",
       "data:image/png;base64,AAAA",
-      "icons/x.png",
-      `${prefix}${"a".repeat(3000)}`,
       "",
     ]) {
-      expect(billingIconPath(value)).toBeNull()
+      expect([value, billingIconPath(value)]).toEqual([value, null])
+    }
+  })
+
+  test("is null for the rest of ui/, the legacy entry.js included, and for ui/icons/ with no file", () => {
+    for (const value of [
+      "/api/portal/billing/ui",
+      "/api/portal/billing/ui/",
+      "/api/portal/billing/ui/entry.js",
+      "/api/portal/billing/ui/entry.js?v=1",
+      "/api/portal/billing/ui/x.png",
+      "/api/portal/billing/ui/icons",
+      "/api/portal/billing/ui/icons/",
+      "/api/portal/billing/ui/icons/?x.png",
+    ]) {
+      expect([value, billingIconPath(value)]).toEqual([value, null])
+    }
+  })
+
+  test("is null for a file with a character outside letters, digits, dots, underscores and hyphens", () => {
+    for (const file of [
+      'a"b.png',
+      "a'b.png",
+      "a(1).png",
+      "a)b.png",
+      "a b.png",
+      "a\tb.png",
+      "a\nb.png",
+      "a\u0000b.png",
+      "a\\b.png",
+      "a;b.png",
+      "a,b.png",
+      "a&b.png",
+      "a=b.png",
+      "a+b.png",
+      "a@b.png",
+      "a<b>.png",
+      "a{b}.png",
+      "a:b.png",
+      "é.png",
+      "x.png?v=2",
+      "x.png#frag",
+      "%2e%2e",
+      "%2e%2e%2fme",
+      "x%2epng",
+      "a%20b.png",
+      "sub/x.png",
+      "sub/../x.png",
+      "../x.png",
+      "../../me",
+      "..",
+      ".",
+      "...",
+      "x.png/",
+      "/x.png",
+      "x.png\n",
+      "a".repeat(256),
+    ]) {
+      expect([file, billingIconPath(`${icons}${file}`)]).toEqual([file, null])
     }
   })
 
@@ -471,9 +568,16 @@ describe("billingIconPath", () => {
   })
 
   test("applies in a catalog entry: another address parses to null and does not fail the entry", () => {
-    for (const icon of ["https://files.example.com/x.png", "//host/x.png", "/api/portal/other/ui/x.png"]) {
+    for (const icon of [
+      "https://files.example.com/x.png",
+      "//host/x.png",
+      "/api/portal/other/ui/x.png",
+      "/api/portal/billing/ui/entry.js",
+      "/api/portal/billing/ui/icons/",
+      "/api/portal/billing/ui/icons/a b.png",
+    ]) {
       const parsed = CatalogEntrySchema.parse({...callUnlimited, icon})
-      expect(parsed.icon).toBeNull()
+      expect([icon, parsed.icon]).toEqual([icon, null])
       expect(parsed.name).toBe(callUnlimited.name)
     }
     expect(CatalogEntrySchema.parse(callUnlimited).icon).toBe("/api/portal/billing/ui/icons/mentra.call.unlimited.png")
@@ -536,12 +640,68 @@ describe("hosted URLs", () => {
     }
   })
 
+  test("returns the canonical address, the one the browser follows", () => {
+    for (const url of accepted) {
+      expect([url, HostedUrlSchema.parse(url)]).toEqual([url, new URL(url).href])
+    }
+    expect(HostedUrlSchema.parse("https://billing.example.com")).toBe("https://billing.example.com/")
+    expect(HostedUrlSchema.parse("HTTPS://Billing.Example.COM/Path")).toBe("https://billing.example.com/Path")
+    expect(HostedUrlSchema.parse("https://billing.example.com:443/x")).toBe("https://billing.example.com/x")
+    expect(HostedUrlSchema.parse("https://billing.example.com/p/session/x?a=1#frag")).toBe(
+      "https://billing.example.com/p/session/x?a=1#frag",
+    )
+  })
+
+  test("padding the browser ignores is gone from what is returned", () => {
+    for (const padded of [
+      " https://billing.example.com/p/session/x",
+      "https://billing.example.com/p/session/x ",
+      "  https://billing.example.com/p/session/x  ",
+      "\thttps://billing.example.com/p/session/x\n",
+      "\n\r https://billing.example.com/p/session/x \r\n",
+      "\u0001https://billing.example.com/p/session/x\u0001",
+    ]) {
+      expect([padded, HostedUrlSchema.parse(padded)]).toEqual([padded, "https://billing.example.com/p/session/x"])
+    }
+    expect(HostedUrlSchema.parse(" http://localhost:4010/x ")).toBe("http://localhost:4010/x")
+  })
+
+  test("tabs and newlines inside the address, which the browser drops, are gone from what is returned", () => {
+    for (const [input, expected] of [
+      ["https://billing.example.com/p/ses\tsion/x", "https://billing.example.com/p/session/x"],
+      ["ht\ttps://billing.example.com/x", "https://billing.example.com/x"],
+      ["https://billing.exa\nmple.com/x", "https://billing.example.com/x"],
+      ["https://billing.example.com/x?a=\r\n1", "https://billing.example.com/x?a=1"],
+      ["http://local\thost:4010/x", "http://localhost:4010/x"],
+      ["http://127.0.\t0.1/x", "http://127.0.0.1/x"],
+    ] as const) {
+      expect([input, HostedUrlSchema.parse(input)]).toEqual([input, expected])
+    }
+  })
+
+  test("a tab or padding cannot turn a refused address into an accepted one, nor the other way", () => {
+    for (const input of [
+      " javascript:alert(1)",
+      "\tjava\tscript:alert(1)",
+      " http://example.com/x ",
+      "http://local\thost.evil.com/x",
+      "http://127.0.0.\t1.evil.com/x",
+      "https://user:pass@billing.example.com/x ",
+      " data:text/html,x",
+    ]) {
+      expect([input, HostedUrlSchema.safeParse(input).success]).toEqual([input, false])
+    }
+  })
+
   test("the session answer and the purchase answer check the url the same way", () => {
     for (const schema of [SessionAnswerSchema, PurchaseAnswerSchema]) {
       expect(schema.parse({url: "https://billing.example.com/p/session/x"})).toEqual({
         url: "https://billing.example.com/p/session/x",
       })
       expect(schema.parse({url: "http://localhost:4010/x"})).toEqual({url: "http://localhost:4010/x"})
+      expect(schema.parse({url: " https://billing.example.com/p/session/x "})).toEqual({
+        url: "https://billing.example.com/p/session/x",
+      })
       expect(schema.safeParse({url: "javascript:alert(1)"}).success).toBe(false)
       expect(schema.safeParse({url: "http://example.com"}).success).toBe(false)
       expect(schema.safeParse({url: "data:text/html,x"}).success).toBe(false)
@@ -667,6 +827,41 @@ describe("seat assignments and member names", () => {
   })
 })
 
+describe("the parts of the contract are exported by name", () => {
+  test("the catalog's and the status's inner objects parse and keep their values", () => {
+    const feature: CatalogFeature = CatalogFeatureSchema.parse({key: "call.unlimited", name: "Unlimited calls"})
+    const buy: Buy = BuySchema.parse({minSeats: 1, maxSeats: 500, defaultSeats: 5})
+    const offer: Offer = OfferSchema.parse(callUnlimited.offer)
+    const total: BillingTotal = BillingTotalSchema.parse(statusDocument.total)
+    const testMode: TestMode = TestModeSchema.parse(statusDocument.testMode)
+    const purchase: PurchaseStatus = PurchaseStatusSchema.parse(statusDocument.purchase)
+    expect(feature).toEqual({key: "call.unlimited", name: "Unlimited calls"})
+    expect(buy).toEqual({minSeats: 1, maxSeats: 500, defaultSeats: 5})
+    expect(offer).toEqual(callUnlimited.offer as unknown as Offer)
+    expect(total).toEqual(statusDocument.total as unknown as BillingTotal)
+    expect(testMode).toEqual(statusDocument.testMode)
+    expect(purchase).toEqual(statusDocument.purchase)
+  })
+
+  test("the two price shapes parse apart", () => {
+    const seat: PerSeatPrice = PerSeatPriceSchema.parse(perSeat)
+    const fallback: FallbackPrice = FallbackPriceSchema.parse({scheme: "tiered", fallbackLabel: "From $10"})
+    expect(seat).toEqual(perSeat as unknown as PerSeatPrice)
+    expect(fallback).toEqual({scheme: "tiered", fallbackLabel: "From $10"})
+    expect(PerSeatPriceSchema.safeParse({scheme: "tiered", fallbackLabel: "From $10"}).success).toBe(false)
+    expect(FallbackPriceSchema.safeParse(perSeat).success).toBe(false)
+  })
+
+  test("each part rejects what the whole rejects", () => {
+    expect(BuySchema.safeParse({minSeats: 0, defaultSeats: 1}).success).toBe(false)
+    expect(BillingTotalSchema.safeParse({...statusDocument.total, licenseCount: -1}).success).toBe(false)
+    expect(PurchaseStatusSchema.safeParse({...statusDocument.purchase, paid: "yes"}).success).toBe(false)
+    expect(TestModeSchema.safeParse({cardNumber: "4242424242424242"}).success).toBe(false)
+    expect(OfferSchema.safeParse({...callUnlimited.offer, price: {scheme: "per_seat"}}).success).toBe(false)
+    expect(CatalogFeatureSchema.safeParse({key: "call.unlimited"}).success).toBe(false)
+  })
+})
+
 describe("the package entry points", () => {
   test("portal-billing is a subpath of the package, not part of the root", () => {
     const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"))
@@ -687,6 +882,10 @@ describe("the package entry points", () => {
     })
     expect(result.stderr.toString()).not.toContain("error")
     expect(result.exitCode).toBe(0)
-    expect(result.stdout.toString()).toContain("billingIconPath")
+    const bundle = result.stdout.toString()
+    expect(bundle).toContain("billingIconPath")
+    // zod is inlined: a browser that loads the bundle has nothing else to resolve.
+    expect(bundle).toContain("ZodError")
+    expect(bundle).not.toMatch(/\bfrom\s*["']zod["']|\brequire\(\s*["']zod["']\s*\)/)
   })
 })

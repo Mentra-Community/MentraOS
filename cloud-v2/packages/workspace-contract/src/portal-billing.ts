@@ -13,9 +13,10 @@
  *
  * Values the portal doesn't know don't break a page. A status, an action kind and a tax value are plain
  * strings, with `KNOWN_*` lists to narrow them by; a price of a scheme the portal doesn't know carries a
- * `fallbackLabel`; an unknown field is stripped. A value that is malformed is another matter: a response
- * that doesn't match is the portal's "unavailable" state, so the schemas are strict about what the portal
- * acts on (amounts, dates, addresses it follows) and `icon` is the one value that degrades instead (to null).
+ * `fallbackLabel`; an owner type it doesn't know is dropped from an entry's `ownerTypes`; an unknown field is
+ * stripped. A value that is malformed is another matter: a response that doesn't match is the portal's
+ * "unavailable" state, so the schemas are strict about what the portal acts on (amounts, dates, addresses it
+ * follows) and `icon` is the one value that degrades instead (to null).
  *
  * Import it from `@mentra/workspace-contract/portal-billing`, not the package root.
  */
@@ -24,56 +25,60 @@ import {z} from "zod"
 
 import {LICENSE_OWNER_TYPES} from "./licenses"
 
-/** Where billing serves its own files from, behind Core's portal proxy. A product's `icon` is a path under it. */
+/** Where billing serves its own files from, behind Core's portal proxy. */
 export const BILLING_UI_PATH_PREFIX = "/api/portal/billing/ui/"
 
-/** The longest address the portal follows or shows. Nothing billing sends needs more; a longer one is taken for junk. */
-const MAX_PATH_LENGTH = 2048
+/** Where billing serves product icons: the one path of its `ui/` that every viewer may read (Core's open reads). */
+export const BILLING_ICON_PATH_PREFIX = `${BILLING_UI_PATH_PREFIX}icons/`
 
 /**
- * Whether `value` is an address of this portal as the portal itself reads one: a path from the root, never
- * another origin (`https://…`, `//host/…`), and no control character, backslash or excessive length.
+ * A product icon's file: letters, digits, `.`, `_` and `-`, 1 to 255 of them, and not only dots (`.` and `..`
+ * are directories). Nothing else can lead out of the icons directory or into a style or a script.
  */
-function isRootedPath(value: string): boolean {
-  // eslint-disable-next-line no-control-regex
-  return value.length <= MAX_PATH_LENGTH && /^\/(?!\/)/.test(value) && !/[\u0000-\u001f\u007f\\]/.test(value)
-}
+const ICON_FILE = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/
 
 /**
- * The icon path billing sent, or null when it isn't billing's own: a path under {@link BILLING_UI_PATH_PREFIX}
- * with a file after it, and no `.` or `..` segment or encoded separator that would lead out of it. The portal
- * shows an icon only from there, so its content security policy holds and no page loads another origin's
- * address; a product with no acceptable icon gets a letter tile.
+ * The icon path billing sent, or null when it isn't `/api/portal/billing/ui/icons/<file>` with a file
+ * {@link ICON_FILE} allows: no query, fragment, slash, quote, parenthesis or space, and nothing else under
+ * `ui/` (the legacy `ui/entry.js` included). The portal shows an icon only from there, so its content security
+ * policy holds, no page loads another origin's address, and the path is one Core serves to everyone; a
+ * product with no acceptable icon gets a letter tile.
  */
 export function billingIconPath(value: unknown): string | null {
-  if (typeof value !== "string" || !isRootedPath(value) || !value.startsWith(BILLING_UI_PATH_PREFIX)) return null
-  const path = value.split(/[?#]/, 1)[0]!
-  if (path.length === BILLING_UI_PATH_PREFIX.length) return null
-  if (/(^|\/)\.\.?(\/|$)/.test(path) || /%(2e|2f|5c|00)/i.test(path)) return null
-  return value
+  if (typeof value !== "string" || !value.startsWith(BILLING_ICON_PATH_PREFIX)) return null
+  return ICON_FILE.test(value.slice(BILLING_ICON_PATH_PREFIX.length)) ? value : null
 }
 
 /**
- * Whether the portal may send the browser to `value`: `https:`, or `http:` to `localhost` or `127.0.0.1` for
- * local development, with no credentials in it. Read with the same URL parser the browser uses, so what is
- * checked is what is followed.
+ * The canonical address of `value` (`new URL(value).href`) when the portal may send the browser to it, or null:
+ * `https:`, or `http:` to `localhost` or `127.0.0.1` for local development, with no credentials in it. The
+ * browser's own URL parser reads it, and its result is what is returned, so what is checked is exactly what is
+ * followed: padding, tabs and newlines the parser ignores are gone from it.
  */
-function isHostedUrl(value: string): boolean {
+function hostedUrlHref(value: string): string | null {
   let url: URL
   try {
     url = new URL(value)
   } catch {
-    return false
+    return null
   }
-  if (url.username !== "" || url.password !== "") return false
-  if (url.protocol === "https:") return true
-  return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+  if (url.username !== "" || url.password !== "") return null
+  if (url.protocol === "https:") return url.href
+  return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1") ? url.href : null
 }
 
-/** A purchase's or a session's `url`: the hosted page the portal sends the browser to. See {@link isHostedUrl}. */
-export const HostedUrlSchema = z
-  .string()
-  .refine(isHostedUrl, {message: "not an https: address (or http: to localhost)"})
+/**
+ * A purchase's or a session's `url`: the hosted page the portal sends the browser to, as its canonical address.
+ * See {@link hostedUrlHref}.
+ */
+export const HostedUrlSchema = z.string().transform((value, ctx) => {
+  const href = hostedUrlHref(value)
+  if (href === null) {
+    ctx.addIssue({code: z.ZodIssueCode.custom, message: "not an https: address (or http: to localhost)"})
+    return z.NEVER
+  }
+  return href
+})
 
 /** ISO 8601 with an offset (`Z` or `+01:00`): a time that means one instant wherever it is read. */
 const DateTimeSchema = z.string().datetime({offset: true})
@@ -99,7 +104,7 @@ export const RecurrenceSchema = z.object({
 export type Recurrence = z.infer<typeof RecurrenceSchema>
 
 /** A price per seat, per recurrence. */
-const PerSeatPriceSchema = z.object({
+export const PerSeatPriceSchema = z.object({
   scheme: z.literal("per_seat"),
   unit: MoneySchema,
   recurrence: RecurrenceSchema,
@@ -110,7 +115,7 @@ export type PerSeatPrice = z.infer<typeof PerSeatPriceSchema>
  * A scheme the portal doesn't know, or a `per_seat` price that is malformed but carries its label. It is
  * shown by `fallbackLabel`, in place of the price or the cost line.
  */
-const FallbackPriceSchema = z.object({
+export const FallbackPriceSchema = z.object({
   scheme: z.string(),
   fallbackLabel: z.string(),
 })
@@ -165,35 +170,52 @@ export const BillingActionSchema = z.object({
 export type BillingAction = z.infer<typeof BillingActionSchema>
 
 /** A product's feature: its key, its name, and the miniapp it is for when there is one. */
-const CatalogFeatureSchema = z.object({
+export const CatalogFeatureSchema = z.object({
   key: z.string(),
   name: z.string(),
   appName: z.string().optional(),
 })
+export type CatalogFeature = z.infer<typeof CatalogFeatureSchema>
 
 /** What buying a product allows: the seats within `minSeats` and `maxSeats` (unbounded when absent). */
-const BuySchema = z.object({
+export const BuySchema = z.object({
   minSeats: PositiveIntSchema,
   maxSeats: PositiveIntSchema.optional(),
   defaultSeats: PositiveIntSchema,
 })
+export type Buy = z.infer<typeof BuySchema>
 
 /**
  * What a viewer who may manage the owner's billing sees beside a product: its price and tax treatment, and
  * what buying allows. `buy` is null where billing won't sell the product to this owner now (they hold it, or
  * a purchase of it is in progress).
  */
-const OfferSchema = z.object({
+export const OfferSchema = z.object({
   price: PriceSchema,
   tax: TaxSchema,
   buy: BuySchema.nullable(),
 })
+export type Offer = z.infer<typeof OfferSchema>
+
+/** The owner types the portal has pages for. An entry's other owner types are dropped, so a new one never fails a catalog. */
+export const KNOWN_OWNER_TYPES = LICENSE_OWNER_TYPES
+export type KnownOwnerType = (typeof KNOWN_OWNER_TYPES)[number]
+
+/**
+ * The owner types of an entry that the portal knows: any strings parse, and those not in {@link KNOWN_OWNER_TYPES}
+ * are dropped.
+ */
+const OwnerTypesSchema = z.array(z.string()).transform((types) => types.filter(isKnownOwnerType))
+
+function isKnownOwnerType(value: string): value is KnownOwnerType {
+  return (KNOWN_OWNER_TYPES as readonly string[]).includes(value)
+}
 
 /**
  * One product. `offer` is there only for a viewer who may manage the owner's billing; for anyone else the
  * entry is display content only, the same for every owner of the type, and reveals no price.
  *
- * `icon` is a path under {@link BILLING_UI_PATH_PREFIX} or null: any other address parses to null.
+ * `icon` is a path under {@link BILLING_ICON_PATH_PREFIX} or null: any other address parses to null.
  */
 export const CatalogEntrySchema = z.object({
   /** The license's product key, such as `mentra.call.unlimited`. */
@@ -207,7 +229,8 @@ export const CatalogEntrySchema = z.object({
     .nullable()
     .transform((value) => billingIconPath(value)),
   features: z.array(CatalogFeatureSchema),
-  ownerTypes: z.array(z.enum(LICENSE_OWNER_TYPES)),
+  /** The owners it is for; only the types in {@link KNOWN_OWNER_TYPES} are kept. */
+  ownerTypes: OwnerTypesSchema,
   offer: OfferSchema.optional(),
 })
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>
@@ -243,25 +266,27 @@ export const LicenseBillingSchema = z.object({
 export type LicenseBilling = z.infer<typeof LicenseBillingSchema>
 
 /** The page's total of the licenses billing will charge again; `licenseCount` says how many are in it. */
-const BillingTotalSchema = z.object({
+export const BillingTotalSchema = z.object({
   amount: MoneySchema,
   recurrence: RecurrenceSchema,
   tax: TaxSchema,
   licenseCount: CountSchema,
 })
+export type BillingTotal = z.infer<typeof BillingTotalSchema>
 
 /** Test mode: the card to pay with, and the environment the purchase works in. */
-const TestModeSchema = z.object({
+export const TestModeSchema = z.object({
   cardNumber: z.string(),
   environment: z.string(),
 })
+export type TestMode = z.infer<typeof TestModeSchema>
 
 /**
  * A purchase that a checkout returned to the portal with (`?purchase=<purchaseId>`). `status` is `processing`
  * until Core has accepted the license, then `ready` with its `licenseId`. `paid` is whether the checkout
  * collected a payment: false for a trial.
  */
-const PurchaseStatusSchema = z.object({
+export const PurchaseStatusSchema = z.object({
   purchaseId: z.string(),
   /** `processing` or `ready`, or a status the portal doesn't know. */
   status: z.string(),
@@ -270,6 +295,7 @@ const PurchaseStatusSchema = z.object({
   paid: z.boolean(),
   licenseId: z.string().nullable(),
 })
+export type PurchaseStatus = z.infer<typeof PurchaseStatusSchema>
 
 /** `GET status`: an owner's licenses as billing reads them, with the owner's total, actions and purchase. */
 export const BillingStatusSchema = z.object({
