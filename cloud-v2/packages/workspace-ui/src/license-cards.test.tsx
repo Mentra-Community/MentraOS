@@ -26,7 +26,7 @@ import { seatHolders } from "./components/licenses/seats";
 import { joinLicenses, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
-import { cleanup, click, find, findAll, isNeutral, render, setupDom, teardownDom, typeInto } from "./test-dom";
+import { cleanup, click, find, findAll, isNeutral, press as pressKey, render, setupDom, teardownDom, typeInto } from "./test-dom";
 import { licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
 
 beforeAll(setupDom);
@@ -1671,13 +1671,147 @@ describe("the purchase banner", () => {
 });
 
 describe("the test-mode banner", () => {
-  test("names the environment, shows the card in groups and says only Organization Admins see billing", async () => {
-    await mount(<TestModeBanner testMode={{ cardNumber: "4242424242424242", environment: "Staging" }} />);
+  const STAGING = { cardNumber: "4242424242424242", environment: "Staging" };
+  const HIDDEN_KEY = "mentra.testModeNotice.hidden";
+  const hideButton = () => find<HTMLButtonElement>('[role=note] button[aria-label="Hide the test mode notice"]');
+  const banners = () => findAll("[role=note]");
+  // The session's storage outlives a test's DOM, as it outlives a page: each test starts a new session.
+  afterEach(() => window.sessionStorage.clear());
+
+  test("names the environment and shows the card in groups, in one line of words", async () => {
+    await mount(<TestModeBanner testMode={STAGING} />);
     const words = text(find("[role=note]"));
     expect(words).toContain("Test mode · Staging");
     expect(words).toContain("Nothing here is charged. Pay with the test card 4242 4242 4242 4242, any future date and any CVC.");
-    expect(words).toContain("On dev and staging only Organization Admins see billing, and licenses bought here work only here.");
+    expect(words).toContain("Copy card number");
+    // The second line, about who sees billing and where licenses work, is gone.
+    for (const gone of ["On dev and staging", "Organization Admins", "work only here"]) expect(words).not.toContain(gone);
+    expect(findAll("[role=note] p")).toHaveLength(1);
     expect(find("[role=note]").getAttribute("aria-label")).toBe("Test mode · Staging");
+  });
+
+  test("a small × in the banner's top-right corner is named from the strings", async () => {
+    await mount(<TestModeBanner testMode={STAGING} />);
+    const button = hideButton();
+    expect(button.getAttribute("aria-label")).toBe("Hide the test mode notice");
+    expect(button.getAttribute("type")).toBe("button");
+    expect(button.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    // In the banner's corner, out of the flow of its words and its Copy button.
+    expect(button.className).toContain("absolute");
+    expect(button.className).toMatch(/\btop-/);
+    expect(button.className).toMatch(/\bright-/);
+  });
+
+  test("× hides the banner and remembers it for the session; nothing else on the page changes", async () => {
+    await mount(
+      <>
+        <TestModeBanner testMode={STAGING} />
+        <p>The rest of the page</p>
+      </>,
+    );
+    expect(window.sessionStorage.getItem(HIDDEN_KEY)).toBeNull();
+    await click(hideButton());
+    expect(banners()).toHaveLength(0);
+    expect(window.sessionStorage.getItem(HIDDEN_KEY)).toBe("1");
+    expect(text()).toBe("The rest of the page");
+  });
+
+  test("it stays hidden after a remount in the same session (another page), and a new session shows it again", async () => {
+    await mount(<TestModeBanner testMode={STAGING} />);
+    await click(hideButton());
+    await cleanup();
+    await mount(<TestModeBanner testMode={STAGING} />);
+    expect(banners()).toHaveLength(0);
+    await cleanup();
+    await mount(<TestModeBanner testMode={{ ...STAGING, environment: "Dev" }} />);
+    expect(banners()).toHaveLength(0);
+    await cleanup();
+    window.sessionStorage.clear();
+    await mount(<TestModeBanner testMode={STAGING} />);
+    expect(banners()).toHaveLength(1);
+    expect(text(find("[role=note]"))).toContain("Test mode · Staging");
+  });
+
+  /** Runs `run` with `window.sessionStorage` replaced by what `get` returns (or throws), as a browser's private mode does. */
+  async function withStorage(get: () => unknown, run: () => Promise<void>) {
+    const own = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    Object.defineProperty(window, "sessionStorage", { configurable: true, get });
+    try {
+      await run();
+    } finally {
+      if (own) Object.defineProperty(window, "sessionStorage", own);
+      else delete (window as unknown as Record<string, unknown>).sessionStorage;
+    }
+  }
+
+  test("where storage throws (a private mode) it hides for this page only", async () => {
+    let reads = 0;
+    await withStorage(
+      () => {
+        reads++;
+        throw new DOMException("storage is denied", "SecurityError");
+      },
+      async () => {
+        await mount(<TestModeBanner testMode={STAGING} />);
+        // Reading it failed: the banner shows. Hiding it works for the page it is on.
+        expect(reads).toBeGreaterThan(0);
+        expect(banners()).toHaveLength(1);
+        await click(hideButton());
+        expect(banners()).toHaveLength(0);
+        // Nothing was kept, so the next page shows it again.
+        await cleanup();
+        await mount(<TestModeBanner testMode={STAGING} />);
+        expect(banners()).toHaveLength(1);
+      },
+    );
+  });
+
+  test("a storage that reads but won't write still hides it for the page", async () => {
+    const writes: string[] = [];
+    const full = {
+      getItem: () => null,
+      setItem: (key: string) => {
+        writes.push(key);
+        throw new DOMException("the quota is exceeded", "QuotaExceededError");
+      },
+    };
+    await withStorage(
+      () => full,
+      async () => {
+        await mount(<TestModeBanner testMode={STAGING} />);
+        await click(hideButton());
+        expect(banners()).toHaveLength(0);
+        expect(writes).toEqual([HIDDEN_KEY]);
+        await cleanup();
+        await mount(<TestModeBanner testMode={STAGING} />);
+        expect(banners()).toHaveLength(1);
+      },
+    );
+  });
+
+  test("× is a button in the tab order with its name, and Enter and Space hide the banner", async () => {
+    await mount(<TestModeBanner testMode={STAGING} />);
+    const button = hideButton();
+    expect(button.tagName).toBe("BUTTON");
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(button.getAttribute("tabindex")).toBeNull();
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    expect(await pressKey(button, "Enter")).toBe(false);
+    expect(banners()).toHaveLength(0);
+    await cleanup();
+    window.sessionStorage.clear();
+    await mount(<TestModeBanner testMode={STAGING} />);
+    await pressKey(hideButton(), " ");
+    expect(banners()).toHaveLength(0);
+  });
+
+  test("it is a button in the banner's own tab order: the Copy button first, then the ×", async () => {
+    await mount(<TestModeBanner testMode={STAGING} />);
+    expect(findAll("[role=note] button").map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim())).toEqual([
+      "Copy card number",
+      "Hide the test mode notice",
+    ]);
   });
 
   test("Copy copies the digits, not the groups", async () => {

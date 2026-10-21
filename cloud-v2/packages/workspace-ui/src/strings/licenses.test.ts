@@ -399,8 +399,10 @@ describe("banners", () => {
     expect(t.testMode.lead).toBe("Nothing here is charged.");
     expect(t.testMode.beforeCard).toBe("Pay with the test card");
     expect(t.testMode.afterCard).toBe(", any future date and any CVC.");
-    expect(t.testMode.note).toBe("On dev and staging only Organization Admins see billing, and licenses bought here work only here.");
     expect(t.testMode.copy).toBe("Copy card number");
+    // The banner is one line of words: the note about who sees billing is gone, and a × hides the banner.
+    expect(t.testMode.hide).toBe("Hide the test mode notice");
+    expect("note" in t.testMode).toBe(false);
   });
 
   test("the page total counts products", () => {

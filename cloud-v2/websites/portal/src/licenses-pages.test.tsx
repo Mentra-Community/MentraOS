@@ -22,6 +22,7 @@ import {
   FLEET_PAST_DUE,
   HOSTED,
   SCENARIOS,
+  TEST_MODE,
   fakeCore,
   purchaseOf,
   statusOf,
@@ -591,6 +592,37 @@ describe("leaving for a hosted page", () => {
 });
 
 // ---- nothing leaks ------------------------------------------------------------------------------------------------
+
+describe("the test-mode notice", () => {
+  const HIDE = "[role='note'] button[aria-label='Hide the test mode notice']";
+  const personalWithTestMode = (): Scenario => {
+    const base = SCENARIOS.personalActive();
+    return { ...base, accountStatus: statusOf((base.accountStatus as ReturnType<typeof statusOf>).licenses, { testMode: TEST_MODE }) };
+  };
+  afterEach(() => window.sessionStorage.clear());
+
+  test("× hides it on the Licenses page and, in the same session, on the personal Billing page, and the other way round", async () => {
+    await open(`/w/${ACME}/licenses`, SCENARIOS.testMode(), { ready: "Test mode · Staging" });
+    expect(findAll("[role='note']")).toHaveLength(1);
+    await click(find(HIDE));
+    expect(findAll("[role='note']")).toHaveLength(0);
+    expect(has("Buy licenses for your members")).toBe(true);
+    await cleanup();
+    mock.restore();
+    await open("/account/billing", personalWithTestMode(), { ready: "Mentra Call Unlimited" });
+    expect(findAll("[role='note']")).toHaveLength(0);
+    await cleanup();
+    mock.restore();
+    // A new session shows it again, here, and hiding it here hides it on the Licenses page.
+    window.sessionStorage.clear();
+    await open("/account/billing", personalWithTestMode(), { ready: "Test mode · Staging" });
+    await click(find(HIDE));
+    await cleanup();
+    mock.restore();
+    await open(`/w/${ACME}/licenses`, SCENARIOS.testMode(), { ready: "Buy licenses for your members" });
+    expect(findAll("[role='note']")).toHaveLength(0);
+  });
+});
 
 describe("what no page says", () => {
   const PROCESSOR = new RegExp(["st", "ripe"].join(""), "i");

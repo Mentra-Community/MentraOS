@@ -283,8 +283,13 @@ what](#who-sees-what)).
   purchase that collected no payment says "Purchase complete" and never "Payment
   received". An unknown purchase, or another owner's, shows no banner.
 - **Test mode.** Where billing sells with a test key, a banner above everything
-  names the environment, the test card to pay with (with a copy button), and that
-  only Organization Admins see billing there.
+  names the environment and the test card to pay with (with a copy button). A
+  small × in its top-right corner ("Hide the test mode notice") hides it for the
+  rest of the browser session, on the Licenses page and the personal Billing page
+  alike, so a screenshot comes out clean: it is kept in `sessionStorage` under
+  `mentra.testModeNotice.hidden`, so a new session shows it again, and where
+  storage throws (a private mode) it is hidden for that page only. Test mode
+  itself, the buy dialogs and their words are unchanged.
 - **The member panel's Licenses section.** On the Members page ([Workspaces and
   keys](workspaces.md#the-workspace-portal)) a member's panel lists every product
   the workspace holds, with a switch for each ("Turn one on to give Luis Ortega a

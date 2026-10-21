@@ -527,8 +527,9 @@ export const licenseStrings = {
     lead: "Nothing here is charged.",
     beforeCard: "Pay with the test card",
     afterCard: ", any future date and any CVC.",
-    note: "On dev and staging only Organization Admins see billing, and licenses bought here work only here.",
     copy: "Copy card number",
+    /** The × in the banner's corner: hides the notice for the rest of the browser session. */
+    hide: "Hide the test mode notice",
   },
 
   /** The total above the cards: "2 products" in bold, then "$295 a month in total". What is counted is what the workspace buys. */

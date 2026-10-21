@@ -974,6 +974,46 @@ describe("test mode", () => {
     await mountView(rig());
     expect(findAll('[role="note"]')).toHaveLength(0);
   });
+
+  describe("hiding it", () => {
+    const HIDE = '[role="note"] button[aria-label="Hide the test mode notice"]';
+    // The session's storage outlives a test's DOM, as it outlives a page: each test starts a new session.
+    afterEach(() => window.sessionStorage.clear());
+
+    test("× hides the banner and changes nothing else: the cards, the total, the buttons and the buy dialog are as they were", async () => {
+      const r = rig({ status: statusFor({ testMode }) });
+      await mountHeader(r);
+      const before = { buttons: buttons(), words: text() };
+      await cleanup();
+      await mountView(r);
+      const cards = cardNames();
+      const summary = text();
+      const asked = r.status.mock.calls.length;
+      await click(find(HIDE));
+      expect(findAll('[role="note"]')).toHaveLength(0);
+      expect(cardNames()).toEqual(cards);
+      expect(text()).toBe(summary.replace(/Test mode · Staging.*?Copy card number/, ""));
+      // Test mode itself is unchanged: billing is not asked again for it, and its status still says so.
+      expect(r.status.mock.calls.length).toBe(asked);
+      expect(before.buttons).toEqual(["Billing & invoices", "Buy licenses"]);
+      await cleanup();
+      await mountHeader(r);
+      await click(buttonNamed("Buy licenses"));
+      expect(text()).toContain("Products for your workspace. For one you have, add licenses instead.");
+    });
+
+    test("it stays hidden for the page's remount, and a new session shows it again", async () => {
+      await mountView(rig({ status: statusFor({ testMode }) }));
+      await click(find(HIDE));
+      await cleanup();
+      await mountView(rig({ status: statusFor({ testMode }) }));
+      expect(findAll('[role="note"]')).toHaveLength(0);
+      await cleanup();
+      window.sessionStorage.clear();
+      await mountView(rig({ status: statusFor({ testMode }) }));
+      expect(findAll('[role="note"]')).toHaveLength(1);
+    });
+  });
 });
 
 // ---- the personal Billing page ------------------------------------------------------------------------------------
@@ -1064,6 +1104,29 @@ describe("the personal Billing page", () => {
     const r = personRig({ status: personStatus({ testMode: { cardNumber: "4242424242424242", environment: "Dev" } }) });
     const { container } = await mountPersonal(r);
     expect(container.firstElementChild!.firstElementChild).toBe(find('[role="note"]'));
+  });
+
+  test("hiding the test-mode notice on the Licenses page hides it here too, for the rest of the session", async () => {
+    try {
+      const workspace = rig({ status: statusFor({ testMode: { cardNumber: "4242424242424242", environment: "Dev" } }) });
+      await mountView(workspace);
+      await click(find('[role="note"] button[aria-label="Hide the test mode notice"]'));
+      await cleanup();
+      const r = personRig({ status: personStatus({ testMode: { cardNumber: "4242424242424242", environment: "Dev" } }) });
+      await mountPersonal(r);
+      expect(findAll('[role="note"]')).toHaveLength(0);
+      expect(cardNames()).toEqual(["Mentra Call Unlimited"]);
+      // And the other way: hidden here, hidden on the Licenses page.
+      await cleanup();
+      window.sessionStorage.clear();
+      await mountPersonal(r);
+      await click(find('[role="note"] button[aria-label="Hide the test mode notice"]'));
+      await cleanup();
+      await mountView(workspace);
+      expect(findAll('[role="note"]')).toHaveLength(0);
+    } finally {
+      window.sessionStorage.clear();
+    }
   });
 
   test("'Billing is unavailable' appears when billing can't be read, with Retry", async () => {

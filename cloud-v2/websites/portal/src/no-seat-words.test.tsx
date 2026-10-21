@@ -371,6 +371,9 @@ describe("the catalog grid and the buy dialog", () => {
   test("test mode", async () => {
     await open(`/w/${ACME}/licenses`, SCENARIOS.testMode(), t.testMode.label(TEST_MODE.environment));
     expectNoSeat("test mode");
+    // The × is named, and hiding the notice leaves the rest of the page as it was.
+    await click(find(`[role='note'] button[aria-label='${t.testMode.hide}']`));
+    expectNoSeat("test mode, hidden");
   });
 });
 
@@ -511,7 +514,9 @@ describe("the states were reached", () => {
     ["a pending member", t.memberPanel.afterFirstSignIn("grace@example.com")],
     ["the panel's over-assigned line", t.memberPanel.overAssigned(1)],
     ["Assign licenses", t.assign.title],
-    ["test mode", t.testMode.note],
+    ["test mode", t.testMode.lead],
+    ["the test-mode notice's ×", t.testMode.hide],
+    ["the page without the notice", "Buy licenses for your members"],
     ["setting up", t.purchase.settingUpSeats({ seats: 10, product: "Fleet" })],
     ["ready", t.purchase.readyTitle({ seats: 10, product: "Fleet" })],
     ["a person's purchase", t.purchase.personReadyTitle("Mentra Call Unlimited")],
