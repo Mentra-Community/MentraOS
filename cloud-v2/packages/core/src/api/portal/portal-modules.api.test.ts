@@ -854,8 +854,8 @@ describe("billing's open reads outside prod", () => {
   })
 
   test("a path Core refuses to forward is the same 404 to someone who is not staff, and a 400 to staff: no probing around the open reads", async () => {
-    // Bun resolves a literal or encoded dot segment before Core sees the URL, so those arrive here only as a server
-    // that does not would deliver them; the separators, controls and escapes below arrive raw either way.
+    // Bun resolves literal and encoded dot segments before Core sees the URL; these requests are built raw to cover a
+    // server that would not. The separators, controls and escapes below arrive raw either way.
     configure("staging")
     const base = "http://localhost/api/portal/billing"
     for (const rest of [
