@@ -35,7 +35,7 @@ import { licenseStrings as t } from "../../strings/licenses";
 import { Menu, type MenuItem } from "../../ui/menu";
 import { Meter } from "../../ui/meter";
 import { Card } from "../../ui/card";
-import { Spinner } from "../common";
+import { AlertText, Spinner } from "../common";
 import { HostedFeedback, useHostedAction, type HostedBilling, type NavigateOut } from "./hosted-action";
 import { Fact, HostedPageButton, Notice, Skeleton, StatusBadge, type StatusBadgeStatus } from "./parts";
 import { PeoplePickerDialog } from "./people-picker";
@@ -477,12 +477,7 @@ function SeatsLayout({
   const [open, setOpen] = useState(false);
   const holders = seatHolders(license, members);
   const controls = { holders, counts, canAssign, blocked: counts.over > 0, addSeats, onAssign };
-  const alert =
-    error !== null ? (
-      <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-        {error}
-      </p>
-    ) : null;
+  const alert = error !== null ? <AlertText>{error}</AlertText> : null;
   if (folded && !open) {
     return (
       <>

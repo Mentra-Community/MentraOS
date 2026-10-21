@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, jest, mock, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, type ReactElement } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
@@ -1497,6 +1499,18 @@ describe("the summary and the unavailable state", () => {
     await mount(<LicensesUnavailable personal retrying onRetry={() => {}} />);
     expect(text()).toContain("Billing is unavailable");
     expect(buttonNamed("Retry").hasAttribute("disabled")).toBe(true);
+  });
+});
+
+// ---- one alert element -------------------------------------------------------------------------------------------
+
+describe("a refusal is drawn by the one alert element", () => {
+  test("no Licenses component writes its own role=\"alert\": they all use AlertText (or HostedFeedback, which does)", () => {
+    const dir = join(import.meta.dir, "components", "licenses");
+    const own = readdirSync(dir)
+      .filter((file) => file.endsWith(".tsx"))
+      .filter((file) => /role=["']alert["']/.test(readFileSync(join(dir, file), "utf8")));
+    expect(own).toEqual([]);
   });
 });
 

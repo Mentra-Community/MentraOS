@@ -22,7 +22,7 @@ import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Dialog } from "../../ui/dialog";
 import { Input } from "../../ui/input";
-import { Avatar } from "../common";
+import { AlertText, Avatar } from "../common";
 import { HostedFeedback } from "./hosted-action";
 import { HostedPageButton, Notice } from "./parts";
 import { PersonLabel, type AddSeatsControl } from "./seats";
@@ -152,11 +152,7 @@ function PickerBody({
         ) : null}
         {/* Add seats leaves for billing: when that fails, the person is told here, where they are looking. */}
         <HostedFeedback action={{ error: addSeats?.error ?? null, link: addSeats?.link ?? null }} />
-        {failure ? (
-          <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-            {isLicenseChangedError(failure) ? t.conflict.seatsChanged : errorMessage(failure)}
-          </p>
-        ) : null}
+        {failure ? <AlertText>{isLicenseChangedError(failure) ? t.conflict.seatsChanged : errorMessage(failure)}</AlertText> : null}
         <ul className="-mx-2 max-h-[min(46vh,400px)] space-y-0.5 overflow-y-auto">
           {visible.map(({ member, why, label }) => {
             const off = why !== null || assign.isPending;

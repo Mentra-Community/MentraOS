@@ -31,6 +31,7 @@ import { ownerTypeOf, type BillingScope } from "../../billing-scope";
 import { billingKeys, workspaceKeys } from "../../queries";
 import { licenseStrings as t } from "../../strings/licenses";
 import { buttonVariants } from "../../ui/button";
+import { AlertText } from "../common";
 
 /** A tab opened for a hosted page that doesn't return: sent on once billing has answered, or closed if it won't. */
 export interface PortalTab {
@@ -232,11 +233,7 @@ export function HostedFeedback({ action }: { action: Pick<HostedAction, "error" 
   if (action.error === null && action.link === null) return null;
   return (
     <div className="space-y-3">
-      {action.error !== null ? (
-        <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-          {action.error}
-        </p>
-      ) : null}
+      {action.error !== null ? <AlertText>{action.error}</AlertText> : null}
       {action.link !== null ? (
         <p className="flex flex-wrap items-center gap-2">
           <a
