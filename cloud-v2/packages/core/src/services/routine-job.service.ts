@@ -17,8 +17,7 @@ import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.servi
 import {routineAdmissionInput} from './routine-admission.service';
 import {selectedBuildInput} from '../types/test-build.types';
 import {permissionObservationMatches, permissionContext} from '../types/resource-permissions.types';
-import {backendConnectivityObservationMatches, backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, BACKEND_CANDIDATE_ROUTINE_API_VERSION, type BackendConnectivityContext} from '../types/backend-connectivity.types';
-import type {FrameworkBinding} from '../types/framework-version.types';
+import {backendConnectivityObservationRefusesPreparation, BACKEND_CONNECTIVITY_ROUTINE_API_VERSION, BACKEND_CANDIDATE_ROUTINE_API_VERSION} from '../types/backend-connectivity.types';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {hostStateSchema, TestHostStateService, type RoutingTestHostState, type ReceivedTestHostState} from './test-host-state.service';
@@ -27,7 +26,8 @@ import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type
 import {TestRunError} from './test-result-error';
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {backendRecorderClaimMatches, requiresBackendConnectivity, requiresSerializedAndroidPreparation, resourceReservationRepository, routineResourcesAvailable, ResourceReservationsService} from './resource-reservations.service';
-import {resourceAvailable, resourceLaneAvailable} from './resource-readiness';
+import {resourceLaneBlocker, requiredResourceBlocker} from './resource-readiness';
+import {routineLaneRequirementBlocker, type RoutineLaneEligibilityContext} from './routine-lane-eligibility';
 import {dependencyWaitingReason, recorderWait, RESOURCE_ADMISSION_WAIT, sharedResourceWaitingReason, RECORDER_CAPACITY_WAIT, RECORDER_OBSERVATION_WAIT} from './routine-resource-wait';
 import {candidateRequestCurrent, candidateSettlement, qualifiedCandidate, candidateRenewal, candidateReturnMatches} from './backend-candidate-preparation';
 const exclusiveResources = new ResourceReservationsService();
@@ -762,21 +762,8 @@ export function routineLaneDescriptorRevision(lane: RoutingTestHostState['lanes'
     glasses: (lane.glasses ?? []).map(glasses => ({...glasses, capabilities: [...glasses.capabilities].sort()})).sort((a, b) => a.resourceId.localeCompare(b.resourceId))});
 }
 export function compatibleRoutineLane(requirements: PortableRequirements, lane: RoutingTestHostState['lanes'][number],
-  context?: {now: number; binding: FrameworkBinding; app?: {headSha: string; archiveSha256: string; receiptSha256: string}; backend?: BackendConnectivityContext}, now = context?.now ?? Date.now(), backendHealth = true) {
-  if (lane.platform !== requirements.platform || (lane.glasses?.length ?? 0) > 1 ||
-    new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length) return false;
-  if (!requirements.resources.every(required => lane.resources.some(offered => offered.kind === required.kind &&
-    required.capabilities.every(capability => offered.capabilities?.includes(capability)) &&
-    (required.kind !== 'phone' || !required.capabilities.includes('backend-connectivity') || Boolean(context &&
-      (backendHealth ? backendConnectivityObservationMatches(offered.backendConnectivity, offered.id, context) :
-        context.binding.routineApiVersion >= BACKEND_CONNECTIVITY_ROUTINE_API_VERSION))) &&
-    (!required.storage || recorderStorageAvailable(offered.storage, required.storage, now)) &&
-    (required.permissions ?? []).every(value => Boolean(context && permissionObservationMatches(
-      offered.permissionObservations?.find(observation => observation.permission === value.permission), value.permission,
-      {...context, recipient: value.recipient})))))) return false;
-  if (requirements.glasses && !lane.glasses?.some(offered => requirements.glasses!.models.includes(offered.model) &&
-    requirements.glasses!.capabilities.every(capability => offered.capabilities.includes(capability)))) return false;
-  return true;
+  context?: RoutineLaneEligibilityContext, now = context?.now ?? Date.now(), backendHealth = true) {
+  return routineLaneRequirementBlocker(requirements, lane, context, now, backendHealth) === undefined;
 }
 export function routineLaneContext(host: Pick<RoutingTestHostState, 'hostId' | 'incarnation' | 'incarnationGeneration' | 'frameworkBinding' | 'resourceLifecycle'>,
   build: {headSha: string; archive?: {sha256: string}; receipt?: {sha256: string}}, now: number) {
@@ -859,15 +846,12 @@ function freshRoutineHost(receivedAt: string | Date, now: number) {
 function selectableRoutineResources(host: RoutingTestHostState, requirements: PortableRequirements,
   lane: RoutingTestHostState['lanes'][number], now: number, candidateCheck: boolean,
   original?: {requestId: string; inputSha256: string}) {
-  if (!resourceLaneAvailable(host, lane.id, original && {...original, hostId: host.hostId})) return false
-  return requirements.resources.every(required => {
-    const resource = lane.resources.find(value => value.kind === required.kind)
-    return Boolean(resource && resourceAvailable({hostId: host.hostId, receivedAt: host.receivedAt, snapshot: host,
-      resourceControlRecords: host.resourceControlRecords, resourceLifecycleCursor: host.resourceLifecycleCursor,
-      authorityReservations: host.authorityReservations}, resource.id, now,
-      candidateCheck && (required.kind === 'app' || required.kind === 'phone' && required.capabilities.includes('backend-connectivity')),
-      original && {...original, laneId: lane.id}))
-  })
+  if (resourceLaneBlocker(host, lane.id, original && {...original, hostId: host.hostId})) return false
+  return requiredResourceBlocker({hostId: host.hostId, receivedAt: host.receivedAt, snapshot: host,
+    resourceControlRecords: host.resourceControlRecords, resourceLifecycleCursor: host.resourceLifecycleCursor,
+    authorityReservations: host.authorityReservations}, lane, requirements.resources, now,
+    required => candidateCheck && (required.kind === 'app' || required.kind === 'phone' && required.capabilities.includes('backend-connectivity')),
+    original) === undefined
 }
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});

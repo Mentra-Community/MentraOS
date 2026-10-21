@@ -18,7 +18,7 @@ import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches} from './backend-candidate-preparation'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
-import {resourceAvailable, resourceLaneAvailable} from './resource-readiness'
+import {resourceAvailable, resourceLaneBlocker, requiredResourceBlocker, type ResourceReadinessBlocker} from './resource-readiness'
 import {laneControlRecordSchema, resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
 import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
 
@@ -35,18 +35,24 @@ function dependencyAvailable(host: ResourceReservationHost, dependency: Exclusiv
   return resourceAvailable({...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, dependency.resourceId, now)
 }
 /** Ordinary backend work needs current returned phone proof; other providers keep their idle baseline. */
-export function routineResourcesAvailable(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false) {
+export function routineResourceBlocker(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false):
+  ResourceReadinessBlocker | {code: 'routine-lane-unavailable' | 'routine-preparation-unavailable' | 'routine-lane-not-idle' | 'routine-backend-proof-unavailable'; laneId: string} | undefined {
   const lane = host.snapshot.lanes.find(value => value.id === laneId)
-  if (!lane || !row.fleetPreparation || (!candidateCheck && (lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic')) || !resourceLaneAvailable({resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, laneId,
-    {requestId: row.requestId, inputSha256: row.fleetInputSha256!, hostId: host.hostId})) return false
+  if (!lane) return {code: 'routine-lane-unavailable', laneId}
+  if (!row.fleetPreparation) return {code: 'routine-preparation-unavailable', laneId}
+  if (!candidateCheck && (lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic')) return {code: 'routine-lane-not-idle', laneId}
+  const readinessHost = {...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations},
+    original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
+    laneBlocker = resourceLaneBlocker(readinessHost, laneId, {...original, hostId: host.hostId})
+  if (laneBlocker) return laneBlocker
   const phone = lane.resources.find(value => value.kind === 'phone')
   const backendRequired = requiresBackendConnectivity(row), qualified = backendRequired && qualifiedCandidate(row, host.snapshot, laneId, now, host.receivedAt)
-  if (backendRequired && !candidateCheck && !qualified) return false
-  return row.fleetPreparation.requirements.resources.every(required => {
-    const resource = lane.resources.find(value => value.kind === required.kind)
-    return Boolean(resource && resourceAvailable({...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, resource.id, now,
-      resource.id === phone?.id && Boolean(candidateCheck || qualified), {requestId: row.requestId, inputSha256: row.fleetInputSha256!, laneId}))
-  })
+  if (backendRequired && !candidateCheck && !qualified) return {code: 'routine-backend-proof-unavailable', laneId}
+  return requiredResourceBlocker(readinessHost, lane, row.fleetPreparation.requirements.resources, now,
+    (_required, resource) => resource.id === phone?.id && Boolean(candidateCheck || qualified), original)
+}
+export function routineResourcesAvailable(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false) {
+  return routineResourceBlocker(host, row, laneId, now, candidateCheck) === undefined
 }
 function dependencyEnrolled(host: ResourceReservationHost, dependency: ExclusiveResourceDependency) {
   return dependency.authorityHostId===host.hostId && (host.snapshot.resources?.some(resource=>resource.id===dependency.resourceId &&
