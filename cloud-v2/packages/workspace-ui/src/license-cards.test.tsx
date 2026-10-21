@@ -12,7 +12,6 @@ import { workspaceScope } from "./billing-scope";
 import { formatMoney } from "./lib/billing-format";
 import { AlertText, ErrorNotice } from "./components/common";
 import { LicenseCard, type LicenseCardProps } from "./components/licenses/license-card";
-import { WorkspaceLicensesPanel } from "./components/licenses-panel";
 import {
   LicensesSummary,
   LicensesUnavailable,
@@ -28,7 +27,7 @@ import { joinLicenses, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
 import { cleanup, click, find, findAll, isNeutral, render, setupDom, teardownDom, typeInto } from "./test-dom";
-import { detailFor, licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
+import { licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
 
 beforeAll(setupDom);
 afterAll(teardownDom);
@@ -91,10 +90,14 @@ function joined(license: LicenseView | null, billing: Partial<LicenseBilling> | 
 const EMPTY_STATUS: BillingStatus = { locale: "en-US", licenses: [], total: null, actions: [], testMode: null, purchase: null };
 
 /** Billing, the workspace API and the host's two ways out, all recording what happens to them and in what order. */
-function rig(options: { blocked?: boolean; session?: (request: Record<string, unknown>) => Promise<{ url: string }> } = {}) {
+function rig(options: { blocked?: boolean; gone?: boolean; session?: (request: Record<string, unknown>) => Promise<{ url: string }> } = {}) {
   const events: string[] = [];
   const tab = {
-    go: mock((url: string) => void events.push(`go:${url}`)),
+    // `gone`: the person closed the tab while billing answered, so the host's `go` says so by returning false.
+    go: mock((url: string) => {
+      events.push(`go:${url}`);
+      return options.gone ? false : undefined;
+    }),
     close: mock(() => void events.push("close")),
   };
   const leave = mock((url: string) => void events.push(`leave:${url}`));
@@ -479,6 +482,33 @@ describe("a hosted page that doesn't return", () => {
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
     expect(find(`#${link.getAttribute("aria-describedby")}`).textContent).toBe("Opens a secure billing page in a new tab");
+  });
+
+  test("a tab the person closed while billing answered is not an error: the page comes back as the link", async () => {
+    const r = rig({ gone: true });
+    await mountCard(r, invoice());
+    await press("Complete payment");
+    await flush();
+    // The tab was asked to go (and said it was gone); nothing else leaves, and nothing is called a refusal.
+    expect(r.events).toEqual(["openTab", "session:complete_payment", `go:${PAGE}`]);
+    expect(r.leave).not.toHaveBeenCalled();
+    expect(r.tab.close).not.toHaveBeenCalled();
+    expect(findAll('[role="alert"]')).toHaveLength(0);
+    const link = find<HTMLAnchorElement>("a[data-hosted-page]");
+    expect(link.textContent).toBe("Open the payment page");
+    expect(link.getAttribute("href")).toBe(PAGE);
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    // Another press is possible.
+    expect(buttonNamed("Complete payment").hasAttribute("disabled")).toBe(false);
+  });
+
+  test("a tab whose go says nothing (or true) is the tab that was sent on: no link", async () => {
+    const r = rig();
+    await mountCard(r, invoice());
+    await press("Complete payment");
+    await flush();
+    expect(r.events).toEqual(["openTab", "session:complete_payment", `go:${PAGE}`]);
+    expect(findAll("a[data-hosted-page]")).toHaveLength(0);
   });
 
   test("the licenses and billing's status are read again when the window regains focus", async () => {
@@ -1777,30 +1807,5 @@ describe("a refusal is drawn by the one alert element", () => {
       .filter((file) => file.endsWith(".tsx"))
       .filter((file) => /role=["']alert["']/.test(readFileSync(join(dir, file), "utf8")));
     expect(own).toEqual([]);
-  });
-});
-
-// ---- the older Licenses panel's seat mutations -------------------------------------------------------------------
-
-describe("the Licenses panel's seat changes mark billing's status stale", () => {
-  test("unassigning from the panel refreshes the licenses and billing's status for the workspace", async () => {
-    const r = rig();
-    const scope = workspaceScope(WS);
-    const client = newClient();
-    const detail = detailFor("owner");
-    const licenses = [coreLicense(5, [HANNAH])];
-    // The panel reads what is seeded and then refetches it; the server has to say the same thing, or the
-    // refetch (which the harness waits for) would replace the seat the test is about with an empty list.
-    r.listLicenses.mockImplementation(async () => licenses);
-    client.setQueryData(workspaceKeys.detail(r.api, WS), detail);
-    client.setQueryData(workspaceKeys.members(r.api, WS), PEOPLE);
-    client.setQueryData(workspaceKeys.licenses(r.api, WS), licenses);
-    client.setQueryData(billingKeys.status(r.billing, scope), EMPTY_STATUS);
-    await mount(<WorkspaceLicensesPanel api={r.api} workspaceId={WS} />, client);
-    await press("Unassign hannah@acme.test");
-    await press("Confirm unassign");
-    await flush();
-    expect(r.releaseSeat).toHaveBeenCalledWith(WS, "lic_call", "wm_hannah");
-    expect(client.getQueryState(billingKeys.status(r.billing, scope))?.isInvalidated).toBe(true);
   });
 });

@@ -8,7 +8,8 @@
  * browser would do for the keys a native control owns (it clicks), after giving the page's own handlers the
  * chance to cancel. Everything a component handles itself (arrows, Escape, Tab) goes through unchanged.
  *
- * Not exported from the package: tests only.
+ * Tests only: exported as `@mentra/workspace-ui/test-dom` for the portal's tests, never from the package's root,
+ * and a browser build that imports it fails on `bun:test`.
  */
 
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
