@@ -17,8 +17,18 @@ export const backendLocalPrerequisiteSchema = z.object({operationId: identity, r
 export type BackendLocalPrerequisite = z.infer<typeof backendLocalPrerequisiteSchema>
 export const backendPreparingReceiptSchema = z.object({dispatchIntentSha256: hash, fleetInputSha256: hash,
   bindingSha256: hash, admissionSha256: hash, reservationSha256: hash}).strict()
-export const backendPrerequisiteOrigin = (value: {preparing?: unknown; local?: unknown}) =>
-  Boolean(value.preparing) !== Boolean(value.local)
+export const backendCandidatePrerequisiteSchema = z.object({attemptId: identity, requestedAt: timestamp,
+  fleetInputSha256: hash, selectionSha256: hash,
+  previousAttemptId: identity.optional(),
+  controller: z.object({incarnation: identity, generation: z.number().int().positive().safe()}).strict(),
+}).strict()
+export type BackendCandidatePrerequisite = z.infer<typeof backendCandidatePrerequisiteSchema>
+export const candidatePrerequisiteSettlementSchema = z.object({targetInputSha256: hash, candidate: backendCandidatePrerequisiteSchema,
+  outcome: z.enum(['qualified', 'unqualified', 'unknown']), hostWorkSettled: z.literal(true), checkOperationId: identity.optional(),
+}).strict()
+export type CandidatePrerequisiteSettlement = z.infer<typeof candidatePrerequisiteSettlementSchema>
+export const backendPrerequisiteOrigin = (value: {preparing?: unknown; local?: unknown; candidate?: unknown}) =>
+  [value.preparing, value.local, value.candidate].filter(Boolean).length === 1
 export const backendQualificationPurposeSchema = z.object({kind: z.literal('backend-connectivity'), resourceId: identity}).strict()
 export const backendConnectivityTargetSchema = z.object({schemaVersion: z.literal(1), coreUrl: z.string().url().max(4096)}).strict()
   .refine(value => {
@@ -34,7 +44,7 @@ export const backendConnectivityObservationSchema = z.object({schemaVersion: z.l
   phoneResourceId: identity, binding: frameworkBindingSchema,
   controller: z.object({incarnation: identity, generation: z.number().int().positive().safe()}).strict(),
   app: permissionBuildSchema, target: backendConnectivityTargetSchema, targetSource: z.literal('verified-apk-configuration'),
-  qualification: z.object({jobId: identity, targetInputSha256: hash, inputSha256: hash, preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional()
+  qualification: z.object({jobId: identity, targetInputSha256: hash, inputSha256: hash, preparing: backendPreparingReceiptSchema.optional(), local: backendLocalPrerequisiteSchema.optional(), candidate: backendCandidatePrerequisiteSchema.optional()
   }).strict().refine(backendPrerequisiteOrigin, 'Qualification requires exactly one original cloud or local intent').optional(),
   bootId: z.string().uuid().nullable(), tool: z.object({path: z.string().min(1).max(4096).startsWith('/'), sha256: hash}).strict(),
   check: z.object({operationId: identity, resultSha256: hash, readersSha256: hash, closedAt: timestamp}).strict(),
@@ -44,6 +54,7 @@ export const backendConnectivityObservationSchema = z.object({schemaVersion: z.l
 export type BackendConnectivityObservation = z.infer<typeof backendConnectivityObservationSchema>
 export const BACKEND_CONNECTIVITY_MAX_AGE_MS = 120_000
 export const BACKEND_CONNECTIVITY_ROUTINE_API_VERSION = 61
+export const BACKEND_CANDIDATE_ROUTINE_API_VERSION = 70
 export type BackendConnectivityContext = {hostId: string; incarnation: string; generation: number;
   resourceGenerations: {resourceId: string; generation: number; current: boolean; unowned: boolean}[]}
 
