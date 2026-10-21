@@ -72,7 +72,7 @@ function PortalPage() {
   const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
   const me = useQuery({
     queryKey: PORTAL_ME_KEY,
-    queryFn: fetchPortalMe,
+    queryFn: () => fetchPortalMe(),
     retry: false,
   });
   const accountEmail = me.data?.user.email?.trim() || null;

@@ -2,7 +2,7 @@
  * One workspace in the workspace portal: `/w/<workspaceId>/<section>`, framed by the sidebar.
  *
  * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
- * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
+ * with the pending invitations under it, and Invite in the header), Settings, and Licenses
  * (pages/licenses). The sidebar offers only the sections the viewer's capabilities open, and Licenses only
  * where there is something to show: the person manages billing, or the workspace has licenses (a member sees
  * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
@@ -27,7 +27,6 @@ import {
   ROLE_LABELS,
   Spinner,
   WorkspaceApiError,
-  WorkspaceAuditPanel,
   WorkspaceInviteDialog,
   WorkspaceMembersPanel,
   WorkspacePendingInvitationsPanel,
@@ -38,13 +37,14 @@ import {
   type MembersLicenses,
   type NavGroup,
 } from "@mentra/workspace-ui";
-import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { Boxes, CreditCard, Glasses, LayoutDashboard, Settings, ShieldCheck, UserPlus, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
-import { navigate, Redirect } from "@/lib/navigation";
+import { navigate, Redirect, useSearch } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
-import { forgetWorkspace, rememberWorkspace, workspacePath, type WorkspaceSection } from "@/lib/routes";
+import { fleetItemOf, fleetPath, forgetWorkspace, rememberWorkspace, workspacePath, type FleetItem, type WorkspaceSection } from "@/lib/routes";
+import { FleetScreen } from "./fleet";
 import { billingOffered, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
@@ -70,12 +70,6 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     needs: null,
     description: name => `The name, ID and membership of ${name}.`,
   },
-  audit: {
-    label: "Audit log",
-    icon: ScrollText,
-    needs: "workspace.audit.read",
-    description: name => `Every change made in ${name}, newest first.`,
-  },
   licenses: {
     label: licenseStrings.nav.licenses,
     icon: CreditCard,
@@ -83,15 +77,35 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     needs: null,
     description: () => undefined,
   },
+  fleet: {
+    label: "Fleet Management",
+    icon: LayoutDashboard,
+    // Offered only where Fleet is installed (see `visibleSections`); `fleet.read` also covers an Organization Admin.
+    needs: "fleet.read",
+    description: name => `The people, devices and miniapps of ${name}.`,
+  },
 };
+
+/** The Fleet Management group's items, in sidebar order. */
+const FLEET_NAV: ReadonlyArray<{ item: FleetItem; label: string; icon: LucideIcon }> = [
+  { item: "overview", label: "Overview", icon: LayoutDashboard },
+  { item: "people", label: "People", icon: UsersRound },
+  { item: "devices", label: "Devices", icon: Glasses },
+  { item: "miniapps", label: "Miniapps", icon: Boxes },
+];
+
+/** The sidebar key of a Fleet item. */
+export function fleetNavKey(item: FleetItem): string {
+  return `fleet-${item}`;
+}
 
 /**
  * The sidebar, in groups. A group with nothing the viewer may open renders nothing, label included.
- * Fleet (devices and deployments, behind `fleet.read`) joins as its own group in a later phase.
+ * Fleet Management has its own group, behind `fleet.read` and Fleet being installed.
  */
 export const NAV_GROUPS: ReadonlyArray<{ key: string; label?: string; sections: readonly WorkspaceSection[] }> = [
-  { key: "workspace", sections: ["members", "settings", "audit", "licenses"] },
-  { key: "fleet", label: "Fleet", sections: [] },
+  { key: "workspace", sections: ["members", "settings", "licenses"] },
+  { key: "fleet", label: "Fleet Management", sections: ["fleet"] },
 ];
 
 /**
@@ -109,10 +123,11 @@ export function licensesPartShown(billing: boolean, licenses: readonly LicenseVi
  */
 export function visibleSections(
   detail: Pick<WorkspaceDetail, "capabilities"> | undefined,
-  options: { licenses?: boolean } = {},
+  options: { licenses?: boolean; fleet?: boolean } = {},
 ): WorkspaceSection[] {
   return NAV_GROUPS.flatMap(group => group.sections).filter(section => {
     if (section === "licenses") return options.licenses === true;
+    if (section === "fleet") return options.fleet === true && can(detail, "fleet.read");
     const needs = SECTIONS[section].needs;
     return needs === null || can(detail, needs);
   });
@@ -125,12 +140,15 @@ export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSe
     label: group.label,
     items: group.sections
       .filter(section => sections.includes(section))
-      .map(section => ({
+      .flatMap(section =>
+        section === "fleet"
+          ? FLEET_NAV.map(entry => ({ key: fleetNavKey(entry.item), label: entry.label, icon: entry.icon, href: fleetPath(workspaceId, entry.item) }))
+          : [{
         key: section,
         label: SECTIONS[section].label,
         icon: SECTIONS[section].icon,
         href: workspacePath(workspaceId, section),
-      })),
+      }]),
   }));
 }
 
@@ -207,7 +225,13 @@ export function WorkspaceScreen({
   // A licenses address whose list failed to load still opens the page, which says so and offers to try again,
   // rather than sending the person elsewhere over a dropped connection.
   const licensesFailed = section === "licenses" && licenses.isError && licenses.data === undefined;
-  const sections = data ? visibleSections(data, { licenses: licensesPartShown(billing, licenses.data) || licensesFailed }) : [];
+  const sections = data
+    ? visibleSections(data, {
+        licenses: licensesPartShown(billing, licenses.data) || licensesFailed,
+        fleet: me.fleet?.installed === true,
+      })
+    : [];
+  const search = useSearch();
   const active = section && sections.includes(section) ? section : null;
   // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
   const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
@@ -249,7 +273,7 @@ export function WorkspaceScreen({
       current={current}
       section={active ?? undefined}
       nav={workspaceNav(workspaceId, sections)}
-      activeKey={active}
+      activeKey={active === "fleet" ? fleetNavKey(fleetItemOf(search)) : active}
       title={meta?.label ?? name}
       description={meta?.description(name)}
       headerAction={
@@ -281,8 +305,9 @@ export function WorkspaceScreen({
           <Spinner /> Loading licenses
         </div>
       ) : !active ? (
-        // `/w/<id>`, or a section this viewer does not have: open the first one they do.
-        <Redirect to={workspacePath(workspaceId, sections[0] ?? "settings")} />
+        // `/w/<id>`, or a section this viewer does not have: open the first one they do. The query stays, so a
+        // deep link to a Fleet screen the viewer may not open lands somewhere real without losing the rest.
+        <Redirect to={`${workspacePath(workspaceId, sections[0] ?? "settings")}${search}`} />
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}
@@ -309,7 +334,7 @@ export function WorkspaceScreen({
       ) : active === "licenses" ? (
         <LicensesScreen workspaceId={workspaceId} me={me} detail={data} />
       ) : (
-        <WorkspaceAuditPanel api={api} workspaceId={workspaceId} />
+        <FleetScreen workspaceId={workspaceId} />
       )}
     </PortalShell>
   );

@@ -46,6 +46,7 @@ export function WorkspaceSwitcher({
   canCreate,
   createNotice,
   onCreate,
+  hideCreate = false,
   listFailed = false,
   onRetry,
   linkComponent: Link = PlainLink,
@@ -68,6 +69,8 @@ export function WorkspaceSwitcher({
   /** Why creating is not offered, shown in its place. */
   createNotice: string | null;
   onCreate(): void;
+  /** Leave Create workspace out of the menu entirely (a person belongs to one workspace, so nobody makes a second). */
+  hideCreate?: boolean;
   /** The host's in-app link, for workspaces with an `href`. Defaults to a plain anchor. */
   linkComponent?: ShellLinkComponent;
   /**
@@ -229,7 +232,7 @@ export function WorkspaceSwitcher({
 
           <MenuSeparator />
           {extraItems}
-          {canCreate ? (
+          {hideCreate ? null : canCreate ? (
             <button
               type="button"
               role="menuitem"

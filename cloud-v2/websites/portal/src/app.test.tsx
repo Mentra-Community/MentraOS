@@ -175,20 +175,44 @@ const hrefs = (markup: string) => [...markup.matchAll(/href="([^"]+)"/g)].map(ma
 describe("the sidebar follows the viewer's role", () => {
   const caps = (role: WorkspaceRole) => ({ capabilities: [...capabilitiesForRole(role)] });
 
-  test("members and developers get Settings only; admins and owners add Members and the Audit log", () => {
+  test("members and developers get Settings only; admins and owners add Members", () => {
     expect(visibleSections(caps("member"))).toEqual(["settings"]);
     expect(visibleSections(caps("developer"))).toEqual(["settings"]);
-    expect(visibleSections(caps("admin"))).toEqual(["members", "settings", "audit"]);
-    expect(visibleSections(caps("owner"))).toEqual(["members", "settings", "audit"]);
+    expect(visibleSections(caps("admin"))).toEqual(["members", "settings"]);
+    expect(visibleSections(caps("owner"))).toEqual(["members", "settings"]);
     expect(visibleSections(undefined)).toEqual(["settings"]);
   });
 
-  test("the Fleet group exists for later but has no items, so it renders nothing", () => {
+  test("the Fleet Management group is hidden unless Fleet is installed and the viewer has fleet.read", () => {
     const nav = workspaceNav(ACME, visibleSections(caps("owner")));
     expect(nav.map(group => group.key)).toEqual(["workspace", "fleet"]);
     expect(nav.find(group => group.key === "fleet")?.items).toEqual([]);
+    expect(visibleSections(caps("owner"), { fleet: false })).not.toContain("fleet");
+    for (const role of ["member", "developer"] as const) expect(visibleSections(caps(role), { fleet: true })).not.toContain("fleet");
+    expect(visibleSections(undefined, { fleet: true })).not.toContain("fleet");
     const markup = render(`/w/${ACME}/members`, TWO_WORKSPACES);
-    expect(markup).not.toContain(">Fleet<");
+    expect(markup).not.toContain("Fleet Management");
+  });
+
+  test("Fleet Management shows Overview, People, Devices and Miniapps, each a ?fleet= link, for admins and owners", () => {
+    for (const role of ["admin", "owner"] as const) {
+      expect(visibleSections(caps(role), { fleet: true })).toEqual(["members", "settings", "fleet"]);
+    }
+    const nav = workspaceNav(ACME, visibleSections(caps("admin"), { fleet: true }));
+    const group = nav.find(entry => entry.key === "fleet");
+    expect(group?.label).toBe("Fleet Management");
+    expect(group?.items.map(item => [item.label, item.href])).toEqual([
+      ["Overview", `/w/${ACME}/fleet?fleet=overview`],
+      ["People", `/w/${ACME}/fleet?fleet=people`],
+      ["Devices", `/w/${ACME}/fleet?fleet=devices`],
+      ["Miniapps", `/w/${ACME}/fleet?fleet=miniapps`],
+    ]);
+    expect(nav.flatMap(entry => entry.items).map(item => item.label)).not.toContain("Audit log");
+  });
+
+  test("an Organization Admin who is not a member has Fleet Management through fleet.read", () => {
+    const notMember = detail(ACME, "Acme", "owner", false);
+    expect(visibleSections(notMember, { fleet: true })).toContain("fleet");
   });
 
   test("an Organization Admin who is not a member shows as such", () => {
@@ -203,7 +227,10 @@ describe("a workspace page", () => {
     expect(markup).toContain('aria-label="Workspace: Acme Field Team. Switch workspace"');
     expect(markup).toContain(">Owner<");
     expect(hrefs(markup)).toEqual(
-      expect.arrayContaining([`/w/${ACME}/members`, `/w/${ACME}/settings`, `/w/${ACME}/audit`]),
+      expect.arrayContaining([`/w/${ACME}/members`, `/w/${ACME}/settings`]),
+    );
+    expect(hrefs(markup)).not.toContain(`/w/${ACME}/audit`);
+    expect(markup).not.toContain("Audit log"
     );
     expect(markup).toMatch(/aria-current="page"[^>]*>.*Members/);
     expect(markup).toContain(">Invite<");
@@ -220,7 +247,6 @@ describe("a workspace page", () => {
     expect(markup).toContain('aria-label="Workspace: Northwind Pilot. Switch workspace"');
     expect(hrefs(markup)).toContain(`/w/${NORTHWIND}/settings`);
     expect(hrefs(markup)).not.toContain(`/w/${NORTHWIND}/members`);
-    expect(hrefs(markup)).not.toContain(`/w/${NORTHWIND}/audit`);
     expect(markup).not.toContain(">Invite<");
     expect(markup).toContain("Workspace ID");
     expect(markup).toContain("Leave workspace");
@@ -274,7 +300,7 @@ describe("the Developer Console link", () => {
 
   test("sits under the workspace's sections, above the account", () => {
     const markup = render(`/w/${ACME}/members`, TWO_WORKSPACES, { developerConsoleUrl: CONSOLE });
-    expect(markup.indexOf(`href="/w/${ACME}/audit"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
+    expect(markup.indexOf(`href="/w/${ACME}/settings"`)).toBeLessThan(markup.indexOf(`href="${CONSOLE}"`));
     expect(markup.indexOf(`href="${CONSOLE}"`)).toBeLessThan(markup.indexOf("Open account menu"));
   });
 
@@ -361,6 +387,16 @@ describe("the workspace switcher", () => {
     expect(markup).toContain('href="/invitation"');
     expect(markup).toContain(">Review<");
     expect(markup).not.toContain("Accept the invitation");
+  });
+
+  test("the portal leaves Create workspace out entirely: a person belongs to one workspace", () => {
+    const markup = open({ hideCreate: true, canCreate: false, createNotice: null });
+    expect(markup).not.toContain("Create workspace");
+    expect(markup).toContain("Acme Field Team");
+    for (const path of [`/w/${ACME}/members`, `/w/${ACME}/settings`]) {
+      const page = render(path, TWO_WORKSPACES);
+      expect(page).not.toContain("New workspace");
+    }
   });
 
   test("says why creating is not offered on this deployment", () => {
@@ -720,11 +756,11 @@ const LICENSES_HEADING = /<h1[^>]*>Licenses<\/h1>/;
 
 describe("Licenses in the sidebar", () => {
   test("is the last section, and is offered only where there are licenses to show", () => {
-    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
-    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "audit", "licenses"]);
+    expect(visibleSections(caps("admin"), { licenses: true })).toEqual(["members", "settings", "licenses"]);
+    expect(visibleSections(caps("owner"), { licenses: true })).toEqual(["members", "settings", "licenses"]);
     expect(visibleSections(caps("member"), { licenses: true })).toEqual(["settings", "licenses"]);
-    expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings", "audit"]);
-    expect(visibleSections(caps("owner"))).toEqual(["members", "settings", "audit"]);
+    expect(visibleSections(caps("owner"), { licenses: false })).toEqual(["members", "settings"]);
+    expect(visibleSections(caps("owner"))).toEqual(["members", "settings"]);
   });
 
   test("is called Licenses and goes to the workspace's licenses address", () => {
@@ -907,7 +943,7 @@ describe("Billing in the account menu and the personal Billing page", () => {
     expect(nav).toContain("Your account");
     expect(nav).toMatch(/aria-current="page"[^>]*>.*Billing/);
     expect(hrefs(nav)).toEqual(["/account/billing"]);
-    for (const absent of ["Members", "Settings", "Audit log", LICENSES_ITEM, "Back to"]) expect(markup).not.toContain(absent);
+    for (const absent of ["Members", "Settings", LICENSES_ITEM, "Back to"]) expect(markup).not.toContain(absent);
     expect(hrefs(markup).some(href => href.startsWith("/w/"))).toBe(false);
   });
 
@@ -916,7 +952,7 @@ describe("Billing in the account menu and the personal Billing page", () => {
     const nav = /<nav aria-label="Account"[\s\S]*?<\/nav>/.exec(markup)?.[0] ?? "";
     expect(hrefs(nav)).toEqual(["/account/billing", `/w/${ACME}`]);
     expect(nav).toContain("Back to Acme Field Team");
-    for (const absent of ["Members", "Settings", "Audit log", "Licenses"]) expect(nav).not.toContain(absent);
+    for (const absent of ["Members", "Settings", "Licenses"]) expect(nav).not.toContain(absent);
   });
 
   test("the personal navigation is Your account with Billing, then the way back to a workspace if there is one", () => {

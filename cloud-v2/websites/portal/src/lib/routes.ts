@@ -4,15 +4,21 @@
  *  - `/`                              your last-used workspace, else your first, else the first-run screen
  *  - `/invitation`                    the invitation this tab holds (from an invitation link)
  *  - `/w/<workspaceId>`               the workspace's first section you may open
- *  - `/w/<workspaceId>/<section>`     members, settings, audit or licenses
+ *  - `/w/<workspaceId>/<section>`     members, settings, licenses or fleet
+ *  - `/w/<workspaceId>/fleet?fleet=<item>`  Fleet Management (overview, people, devices, miniapps); the module's own
+ *                                     route lives in `?fleet=`
  *  - `/account/billing`               the person's own billing (when the billing module is offered to them)
  *  - `/enterprise[/environments|/access]`  the enterprise pages, by direct address only (see pages/enterprise)
  *
  * Anything else is "page not found". The address never carries an invitation token (lib/workspace-invite).
  */
 
-export const WORKSPACE_SECTIONS = ["members", "settings", "audit", "licenses"] as const;
+export const WORKSPACE_SECTIONS = ["members", "settings", "licenses", "fleet"] as const;
 export type WorkspaceSection = (typeof WORKSPACE_SECTIONS)[number];
+
+/** The Fleet Management items the sidebar links to, each `/w/<id>/fleet?fleet=<item>`. */
+export const FLEET_ITEMS = ["overview", "people", "devices", "miniapps"] as const;
+export type FleetItem = (typeof FLEET_ITEMS)[number];
 
 export const ENTERPRISE_PAGES = ["overview", "environments", "access"] as const;
 export type EnterprisePage = (typeof ENTERPRISE_PAGES)[number];
@@ -61,6 +67,18 @@ export function parseRoute(pathname: string): PortalRoute {
 
 export function workspacePath(workspaceId: string, section?: WorkspaceSection): string {
   return `/w/${encodeURIComponent(workspaceId)}${section ? `/${section}` : ""}`;
+}
+
+/** The address of a Fleet Management item. The bare `/w/<id>/fleet` opens the overview, but nothing links to it. */
+export function fleetPath(workspaceId: string, item: FleetItem = "overview"): string {
+  return `${workspacePath(workspaceId, "fleet")}?fleet=${item}`;
+}
+
+/** The Fleet item an address's query names: the first segment of `?fleet=`. A blank or unknown one is the overview. */
+export function fleetItemOf(search: string): FleetItem {
+  const value = new URLSearchParams(search).get("fleet") ?? "";
+  const first = value.replace(/^\/+/, "").split(/[/?#]/)[0];
+  return FLEET_ITEMS.find(item => item === first) ?? "overview";
 }
 
 export function enterprisePath(page: EnterprisePage): string {

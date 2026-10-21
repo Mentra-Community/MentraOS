@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   ACCOUNT_BILLING_PATH,
+  fleetItemOf,
+  fleetPath,
   forgetWorkspace,
   homeWorkspace,
   invitationLanding,
@@ -16,7 +18,6 @@ describe("addresses", () => {
     expect(parseRoute("/")).toEqual({ kind: "home" });
     expect(parseRoute("/w/ws_1/members")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "members" });
     expect(parseRoute("/w/ws_1/settings/")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "settings" });
-    expect(parseRoute("/w/ws_1/audit")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "audit" });
     expect(parseRoute("/w/ws_1/licenses")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "licenses" });
     expect(workspacePath("ws_1", "licenses")).toBe("/w/ws_1/licenses");
   });
@@ -32,7 +33,18 @@ describe("addresses", () => {
 
   test("a workspace without a section, or with one the portal does not have, opens its first section", () => {
     expect(parseRoute("/w/ws_1")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: null });
-    expect(parseRoute("/w/ws_1/fleet")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: null });
+    expect(parseRoute("/w/ws_1/audit")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: null });
+  });
+
+  test("fleet is a workspace section whose items live in ?fleet=", () => {
+    expect(parseRoute("/w/ws_1/fleet")).toEqual({ kind: "workspace", workspaceId: "ws_1", section: "fleet" });
+    expect(fleetPath("ws_1")).toBe("/w/ws_1/fleet?fleet=overview");
+    expect(fleetPath("ws_1", "people")).toBe("/w/ws_1/fleet?fleet=people");
+    expect(fleetPath("ws/odd id", "devices")).toBe("/w/ws%2Fodd%20id/fleet?fleet=devices");
+    expect(fleetItemOf("?fleet=people")).toBe("people");
+    expect(fleetItemOf("?fleet=/devices?tab=phones")).toBe("devices");
+    expect(fleetItemOf("?fleet=/miniapps/com.acme.app")).toBe("miniapps");
+    for (const search of ["", "?fleet=", "?fleet=nope", "?x=1"]) expect(fleetItemOf(search)).toBe("overview");
   });
 
   test("the invitation screen and the enterprise pages have their own addresses", () => {

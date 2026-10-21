@@ -341,7 +341,7 @@ function AdminPage() {
           onSessionExpired={() => { void qc.invalidateQueries({ queryKey: ["admin-me"] }); }}
         />
       ) : null}
-      {active === "workspaces" ? <WorkspacesPage /> : null}
+      {active === "workspaces" ? <WorkspacesPage fleetInstalled={principal.fleet?.installed === true} /> : null}
       {active === "licenses" ? <LicensesPage /> : null}
       {active === "operator-keys" ? <OperatorKeysPage /> : null}
       {active === "audit" ? <AuditPage /> : null}

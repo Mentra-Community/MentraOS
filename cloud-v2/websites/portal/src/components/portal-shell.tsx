@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   CenteredLayout,
-  CreateWorkspaceDialog,
   licenseStrings,
   ROLE_LABELS,
   WorkspaceSwitcher,
@@ -15,11 +14,11 @@ import {
   type SwitcherWorkspace,
 } from "@mentra/workspace-ui";
 import { CodeXml, CreditCard } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { SwitcherInvitationActions } from "@/components/pending-invitation";
 import type { PendingInvitation } from "@/lib/invitations";
-import { Link, navigate } from "@/lib/navigation";
-import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
+import { Link } from "@/lib/navigation";
+import { portalWorkspaceApi, usePortal } from "@/lib/portal";
 import { ACCOUNT_BILLING_PATH, workspacePath, type WorkspaceSection } from "@/lib/routes";
 
 /**
@@ -58,8 +57,8 @@ export function accountItems(billing: boolean): NavItem[] {
 
 /**
  * The shared `AppShell` as the portal's: named Mentra Portal, on MentraOS, with the portal's History-API
- * `Link`, the workspace switcher wired to the person's workspaces, this tab's invitation and the
- * create-workspace dialog, and the links out of the portal. A new workspace opens as soon as it exists.
+ * `Link`, the workspace switcher wired to the person's workspace and this tab's invitation, and the links
+ * out of the portal. There is no way to create a second workspace from here.
  */
 export function PortalShell({
   current,
@@ -87,7 +86,6 @@ export function PortalShell({
   const portal = usePortal();
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   const invitations = useSwitcherInvitations();
-  const [creating, setCreating] = useState(false);
 
   const workspaces: SwitcherWorkspace[] | undefined = list.data?.map(item => ({
     workspaceId: item.workspaceId,
@@ -106,9 +104,12 @@ export function PortalShell({
           current={current}
           workspaces={workspaces}
           invitations={invitations}
-          canCreate={portal.creation.allowed}
-          createNotice={creationNotice(portal.creation)}
-          onCreate={() => setCreating(true)}
+          canCreate={false}
+          createNotice={null}
+          onCreate={() => {}}
+          // A person belongs to one workspace, so the portal never offers a second. The first one is made on the
+          // first-run screen (pages/welcome).
+          hideCreate
           listFailed={list.isError}
           onRetry={() => void list.refetch()}
           linkComponent={Link}
@@ -127,12 +128,6 @@ export function PortalShell({
       signingOut={portal.signingOut}
     >
       {children}
-      <CreateWorkspaceDialog
-        api={portalWorkspaceApi}
-        open={creating}
-        onClose={() => setCreating(false)}
-        onCreated={created => navigate(workspacePath(created.workspaceId))}
-      />
     </AppShell>
   );
 }

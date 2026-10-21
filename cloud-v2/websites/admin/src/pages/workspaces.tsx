@@ -16,6 +16,7 @@ import {
 } from "@mentra/workspace-ui";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
+import { fleetOverviewUrl, WORKSPACE_PORTAL_URL } from "../lib/config";
 
 /** The shared workspace screens' card (Mentra's tokens, from @mentra/workspace-ui/mentra.css). */
 const PANEL = "rounded-card border bg-card";
@@ -83,7 +84,7 @@ export async function recoverWorkspaceOwnership(workspaceId: string, target: Own
  * Every workspace in this organization, for Organization Admins: open one to manage it with the shared
  * workspace screens, or recover its ownership. A workspace's own people manage it in the workspace portal.
  */
-export function WorkspacesPage() {
+export function WorkspacesPage({ fleetInstalled = false, portalUrl = WORKSPACE_PORTAL_URL }: { fleetInstalled?: boolean; portalUrl?: string | null } = {}) {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("members");
   const tabsTop = useRef<HTMLDivElement>(null);
@@ -103,7 +104,7 @@ export function WorkspacesPage() {
       <div ref={tabsTop} className="scroll-mt-24 space-y-4">
         {workspaceId ? (
           <>
-            <OpenWorkspaceHeading workspaceId={workspaceId} />
+            <OpenWorkspaceHeading workspaceId={workspaceId} fleetUrl={fleetInstalled ? fleetOverviewUrl(portalUrl, workspaceId) : null} />
             <div role="tablist" aria-label="Workspace sections" className="bg-surface flex flex-wrap items-center gap-1 rounded-[22px] border p-1">
               {TABS.map(([key, label]) => (
                 <button
@@ -150,12 +151,20 @@ export function WorkspacesPage() {
 }
 
 /** The name of the open workspace, which the admin may not belong to. Shares the panels' cached detail query. */
-function OpenWorkspaceHeading({ workspaceId }: { workspaceId: string }) {
+function OpenWorkspaceHeading({ workspaceId, fleetUrl }: { workspaceId: string; fleetUrl: string | null }) {
   const detail = useQuery(workspaceDetailQuery(adminWorkspaceApi, workspaceId));
   return (
-    <div className="px-1">
-      <h2 className="text-xl font-semibold">{detail.data?.name ?? "Workspace"}</h2>
-      <div className="text-muted-foreground truncate font-mono text-xs">{workspaceId}</div>
+    <div className="flex flex-wrap items-end justify-between gap-3 px-1">
+      <div className="min-w-0">
+        <h2 className="text-xl font-semibold">{detail.data?.name ?? "Workspace"}</h2>
+        <div className="text-muted-foreground truncate font-mono text-xs">{workspaceId}</div>
+      </div>
+      {fleetUrl ? (
+        // The workspace portal opens Fleet Management for any workspace to an Organization Admin, member or not.
+        <a href={fleetUrl} target="_blank" rel="noreferrer" className="text-sm font-semibold underline underline-offset-4">
+          Open Fleet Management
+        </a>
+      ) : null}
     </div>
   );
 }

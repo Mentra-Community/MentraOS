@@ -13,6 +13,8 @@ export type EnterpriseOrg = {
 export type PortalUser = {
   /** The Core user ID. */
   id: string;
+  /** The same ID under the Fleet UI contract's name. */
+  mentraUserId?: string;
   email: string | null;
   emailVerified: boolean;
 };
@@ -40,6 +42,14 @@ export type PortalMe = {
   onboardingRequired: boolean;
   org: EnterpriseOrg | null;
   modules: PortalModules;
+  /** The organization capabilities Fleet's UI reads (absent from a Core that predates Fleet in the portal). */
+  organization?: { capabilities: string[] };
+  /**
+   * The workspaces the person may use Fleet in, with their capabilities there. At most one; for an Organization
+   * Admin it is exactly the workspace the request named with `?workspaceId=`, member or not.
+   */
+  workspaces?: Array<{ workspaceId: string; name: string; capabilities: string[] }>;
+  fleet?: { installed: boolean };
 };
 
 /**
@@ -55,9 +65,13 @@ export function readPortalModules(raw: unknown): PortalModules {
   return { billing, billingCatalog: billing || modules.billingCatalog === true };
 }
 
-/** `GET /api/portal/me`, with the modules read by {@link readPortalModules}. */
-export async function fetchPortalMe(): Promise<PortalMe> {
-  const me = await api<Omit<PortalMe, "modules"> & { modules?: unknown }>("/api/portal/me");
+/**
+ * `GET /api/portal/me`, with the modules read by {@link readPortalModules}. `workspaceId` asks Core for that
+ * workspace's Fleet capabilities as well.
+ */
+export async function fetchPortalMe(workspaceId?: string): Promise<PortalMe> {
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+  const me = await api<Omit<PortalMe, "modules"> & { modules?: unknown }>(`/api/portal/me${query}`);
   return { ...me, modules: readPortalModules(me.modules) };
 }
 
