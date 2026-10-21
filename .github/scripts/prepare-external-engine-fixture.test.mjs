@@ -52,6 +52,10 @@ test("pins external Engine native peers to the app's verified version", () => {
 
     assert.match(versions[0], /^\d+\.\d+\.\d+$/, name)
     assert.equal(new Set(versions).size, 1, name)
+    for (const lockfile of ["mobile/bun.lock", "sdk/bun.lock"]) {
+      const lockedPackage = `${JSON.stringify(name)}: [${JSON.stringify(`${name}@${versions[0]}`)}`
+      assert.ok(readFileSync(path.join(root, lockfile), "utf8").includes(lockedPackage), `${lockfile}: ${name}`)
+    }
   }
 })
 
