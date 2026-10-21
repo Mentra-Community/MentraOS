@@ -201,10 +201,23 @@ describe("FeatureChips", () => {
 
   test("shows features only when there is more than one: with one, the feature is the product", async () => {
     await render(<FeatureChips product={catalogEntryFor()} />);
-    expect(document.body.innerHTML).toBe("<div></div>");
+    expect(findAll("ul")).toHaveLength(0);
     await cleanup();
     await render(<FeatureChips product={{ features: [] }} />);
     expect(findAll("ul")).toHaveLength(0);
+  });
+
+  test("a feature billing repeats is drawn each time, with no duplicate-key warning", async () => {
+    const errors: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void errors.push(args);
+    try {
+      await render(<FeatureChips product={{ features: [{ key: "a", name: "One" }, { key: "a", name: "One again" }, { key: "b", name: "Two" }] }} />);
+    } finally {
+      console.error = original;
+    }
+    expect(findAll("li").map((item) => item.textContent)).toEqual(["One", "One again", "Two"]);
+    expect(errors.filter((args) => String(args[0]).includes("same key"))).toEqual([]);
   });
 
   test("renders on the server", () => {

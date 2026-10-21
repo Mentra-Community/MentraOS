@@ -113,12 +113,45 @@ describe("joinLicenses: a card per license", () => {
     expect(card).toMatchObject({ name: "acme.secret", shortName: "acme.secret", description: "", icon: null, features: [], catalog: null });
   });
 
-  test("an entry that isn't sold to the owner type is dropped, so a license of it is shown by its key", () => {
-    const personOnly = catalogEntryFor({ ownerTypes: ["person"] });
-    const [forWorkspace] = joinLicenses({ licenses: [core("lic_call", CALL, 5, 0)], catalog: [personOnly] });
-    expect(forWorkspace).toMatchObject({ name: CALL, catalog: null });
-    const [forPerson] = joinLicenses({ licenses: [core("lic_call", CALL, 5, 0)], catalog: [personOnly], ownerType: "person" });
-    expect(forPerson).toMatchObject({ name: "Mentra Call Unlimited" });
+  test("a held product the catalog lists for another owner type is still named: it has its name, icon and features", () => {
+    // Billing sends every product the owner holds, even one re-scoped since it sold, so that its card has a name.
+    const personOnly = fleetEntryFor({ ownerTypes: ["person"], icon: "/api/portal/billing/ui/icons/fleet.png" });
+    const [card] = joinLicenses({ licenses: [core("lic_fleet", FLEET, 10, 0)], catalog: [personOnly] });
+    expect(card).toMatchObject({
+      name: "Fleet",
+      icon: "/api/portal/billing/ui/icons/fleet.png",
+      description: "Manage your members' phones and glasses, and the miniapps on them.",
+    });
+    expect(card!.catalog).toBe(personOnly);
+    expect(card!.features.map((feature) => feature.key)).toEqual(["fleet.managed", "fleet.assignments", "fleet.usage"]);
+    // An entry with no owner types at all names a license too.
+    const [nowhere] = joinLicenses({ licenses: [core("lic_call", CALL, 5, 0)], catalog: [catalogEntryFor({ ownerTypes: [] })] });
+    expect(nowhere).toMatchObject({ name: "Mentra Call Unlimited" });
+  });
+
+  test("a product listed twice is named by its first entry", () => {
+    const first = catalogEntryFor({ name: "Call (first)", shortName: "First" });
+    const second = catalogEntryFor({ name: "Call (second)", shortName: "Second" });
+    const [card] = joinLicenses({ licenses: [core("lic_call", CALL, 5, 0)], catalog: [first, second] });
+    expect(card).toMatchObject({ name: "Call (first)", shortName: "First" });
+    expect(card!.catalog).toBe(first);
+  });
+
+  test("a license billing lists twice is joined to its first entry", () => {
+    const first = licenseBillingFor({ status: "past_due", fallbackStatusLabel: "first" });
+    const second = licenseBillingFor({ status: "active", fallbackStatusLabel: "second" });
+    const cards = joinLicenses({ licenses: [core("lic_call", CALL, 5, 0)], billing: [first, second], catalog: CATALOG });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.billing).toBe(first);
+    expect(cards[0]!.problem).toBe("past_due");
+    // Two entries for an id Core lacks are one card, not two.
+    const billingOnly = joinLicenses({
+      licenses: [],
+      billing: [licenseBillingFor({ licenseId: "lic_new", status: "processing", fallbackStatusLabel: "first" }), licenseBillingFor({ licenseId: "lic_new", status: "incomplete", fallbackStatusLabel: "second" })],
+      catalog: CATALOG,
+    });
+    expect(billingOnly).toHaveLength(1);
+    expect(billingOnly[0]!.billing!.fallbackStatusLabel).toBe("first");
   });
 
   test("a license that has ended is no card, and neither is billing's entry for it", () => {
@@ -138,7 +171,7 @@ describe("joinLicenses: a card per license", () => {
   });
 
   test("with no Core licenses at all (a person's page), every billing entry is a card", () => {
-    const cards = joinLicenses({ licenses: [], billing: [licenseBillingFor({ licenseId: "lic_me" })], catalog: CATALOG, ownerType: "person" });
+    const cards = joinLicenses({ licenses: [], billing: [licenseBillingFor({ licenseId: "lic_me" })], catalog: CATALOG });
     expect(cards.map((card) => [card.licenseId, card.license, card.seats])).toEqual([["lic_me", null, null]]);
   });
 
@@ -209,6 +242,16 @@ describe("joinLicenses: the order", () => {
       catalog: [...catalog, catalogEntryFor({ product: "p.ten", name: "Plan 10" }), catalogEntryFor({ product: "p.nine", name: "Plan 9" })],
     });
     expect(cards.map((card) => card.name)).toEqual(["Fleet", "Plan 9", "Plan 10", "zed tools"]);
+  });
+
+  test("names sort in the locale given: a letter with a mark sorts where that language puts it", () => {
+    const catalog = [catalogEntryFor({ product: "p.zebra", name: "Zebra" }), catalogEntryFor({ product: "p.apfel", name: "Äpfel" })];
+    const licenses = [license("lic_1", "p.zebra"), license("lic_2", "p.apfel")];
+    // German files Ä with A, Swedish after Z.
+    expect(joinLicenses({ licenses, catalog, locale: "de" }).map((card) => card.name)).toEqual(["Äpfel", "Zebra"]);
+    expect(joinLicenses({ licenses, catalog, locale: "sv" }).map((card) => card.name)).toEqual(["Zebra", "Äpfel"]);
+    // A tag Intl can't use falls back to the default locale instead of throwing.
+    expect(joinLicenses({ licenses, catalog, locale: "not a locale!" }).map((card) => card.name)).toEqual(["Äpfel", "Zebra"]);
   });
 
   test("licenses of the same name keep a fixed order, by id", () => {

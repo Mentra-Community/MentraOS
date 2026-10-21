@@ -91,8 +91,8 @@ export function FeatureChips({ product }: { product: { features: readonly Catalo
   if (product.features.length < 2) return null;
   return (
     <ul className="flex flex-wrap gap-1.5" aria-label={t.card.includes}>
-      {product.features.map((feature) => (
-        <li key={feature.key}>
+      {product.features.map((feature, index) => (
+        <li key={`${feature.key}-${index}`}>
           <Badge tone="neutral" className="gap-1">
             {feature.name}
             {feature.appName ? (

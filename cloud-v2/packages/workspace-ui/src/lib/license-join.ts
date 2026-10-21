@@ -51,8 +51,8 @@ export function listedAction(source: { actions: readonly BillingAction[] } | nul
 }
 
 /**
- * The catalog's entries that are sold to `ownerType`. An entry whose `ownerTypes` lacks it is dropped, so a
- * license of that product is shown by its key.
+ * The catalog's entries that are sold to `ownerType`: what a catalog grid offers. An entry whose `ownerTypes`
+ * lacks it is dropped. Not for naming a license the owner holds (`joinLicenses` reads the whole catalog for that).
  */
 export function catalogForOwner(catalog: readonly CatalogEntry[], ownerType: KnownOwnerType): CatalogEntry[] {
   return catalog.filter((entry) => entry.ownerTypes.includes(ownerType));
@@ -99,10 +99,8 @@ export interface JoinInput {
   licenses: readonly LicenseView[];
   /** Billing's licenses (`status.licenses`); null or absent where the viewer isn't offered billing. */
   billing?: readonly LicenseBilling[] | null;
-  /** Billing's catalog (`catalog.products`). */
+  /** Billing's catalog (`catalog.products`), all of it: it names what is held, not what is offered. */
   catalog: readonly CatalogEntry[];
-  /** Whose licenses these are: it picks the catalog's entries. A workspace unless said. */
-  ownerType?: KnownOwnerType;
   /** The purchase the page was opened with (`status.purchase`): its license is the one just bought. */
   purchase?: Pick<PurchaseStatus, "licenseId"> | null;
   /** For sorting names; the portal's locale. */
@@ -128,13 +126,16 @@ function rank(card: JoinedLicense): number {
  * just bought (or being set up), then by name; the license's id settles a tie.
  *
  * - A card is a Core license that hasn't ended, joined to billing's entry by `licenseId` and to the catalog by
- *   `product`. A product the catalog lacks keeps its key as its name.
+ *   `product`. The whole catalog names what is held: billing sends every product the owner holds, even one whose
+ *   `ownerTypes` no longer include the owner, so that its card has a name. (What is *offered* is a different
+ *   list: `catalogForOwner`.) When a product is listed twice the first entry wins. A product the catalog lacks
+ *   keeps its key as its name.
  * - A billing entry with no Core license yet (`processing`, `incomplete`) is a card of its own, with no seats.
  *   An entry for a Core license that has ended is not.
  */
-export function joinLicenses({ licenses, billing, catalog, ownerType = "workspace", purchase, locale = DEFAULT_LOCALE }: JoinInput): JoinedLicense[] {
+export function joinLicenses({ licenses, billing, catalog, purchase, locale = DEFAULT_LOCALE }: JoinInput): JoinedLicense[] {
   const entries = new Map<string, CatalogEntry>();
-  for (const entry of catalogForOwner(catalog, ownerType)) if (!entries.has(entry.product)) entries.set(entry.product, entry);
+  for (const entry of catalog) if (!entries.has(entry.product)) entries.set(entry.product, entry);
 
   const billed = new Map<string, LicenseBilling>();
   for (const license of billing ?? []) if (!billed.has(license.licenseId)) billed.set(license.licenseId, license);
