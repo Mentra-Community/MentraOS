@@ -45,6 +45,7 @@
  */
 
 import {createLogger, type Logger} from "@mentra/cloud-shared"
+import {BILLING_ICON_FILE} from "@mentra/workspace-contract/portal-billing"
 import {isDeployedEnvironment} from "../signin/config"
 import {parseUpstreamUrl} from "../forwarding/upstream-url"
 
@@ -61,8 +62,11 @@ export type PortalModuleName = (typeof PORTAL_MODULE_NAMES)[number]
 interface OpenReads {
   /** Paths under a scope (`/workspaces/<id>/<path>`, `/account/<path>`) whose `GET` is open, matched exactly as received. */
   scopePaths: readonly string[]
-  /** Prefixes under `ui/` whose `GET` and `HEAD` are open, for one file name after the prefix. */
-  assetPrefixes: readonly string[]
+  /**
+   * Prefixes under `ui/` whose `GET` and `HEAD` are open, for one file name after the prefix. Each ends with "/":
+   * the type refuses one that does not, because `icons` would open `ui/iconsa.png` as well.
+   */
+  assetPrefixes: ReadonlyArray<`${string}/`>
 }
 
 interface PortalModuleSettings {
@@ -94,16 +98,17 @@ export interface PortalModuleRequest {
   rest: string
 }
 
-/** One file name: the characters an icon's file may have, and not only dots. It is the contract's rule for an icon. */
-const OPEN_ASSET_FILE = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/
-
-/** Whether `request` is one of the reads `name` leaves open to everyone (see the file header). Exact, so anything unlisted is not. */
+/**
+ * Whether `request` is one of the reads `name` leaves open to everyone (see the file header). Exact, so anything
+ * unlisted is not. The one file name after an asset prefix is the contract's rule for a billing icon, the same
+ * one that decides which `icon` paths the portal shows, so a contract-valid icon is always an open one.
+ */
 function isOpenRead(name: PortalModuleName, request: PortalModuleRequest): boolean {
   const {scopePaths, assetPrefixes} = REGISTRY[name].openReads
   const {method, route, rest} = request
   if (route.kind === "ui") {
     if (method !== "GET" && method !== "HEAD") return false
-    return assetPrefixes.some(prefix => rest.startsWith(prefix) && OPEN_ASSET_FILE.test(rest.slice(prefix.length)))
+    return assetPrefixes.some(prefix => rest.startsWith(prefix) && BILLING_ICON_FILE.test(rest.slice(prefix.length)))
   }
   return method === "GET" && scopePaths.includes(rest)
 }
@@ -233,7 +238,11 @@ export interface PortalModuleAvailability {
 }
 
 /** The request `billingCatalog` stands for: a catalog is read the same way under either scope. */
-const CATALOG_READ: PortalModuleRequest = {method: "GET", route: {kind: "account"}, rest: "catalog"}
+const CATALOG_READ: PortalModuleRequest = {
+  method: "GET",
+  route: {kind: "account"},
+  rest: REGISTRY.billing.openReads.scopePaths[0],
+}
 
 /**
  * For each question the portal asks, whether it should offer it to this person: the module is installed and

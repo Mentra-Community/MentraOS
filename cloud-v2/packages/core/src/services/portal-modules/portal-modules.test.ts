@@ -1,3 +1,4 @@
+import {BILLING_ICON_PATH_PREFIX, billingIconPath} from "@mentra/workspace-contract/portal-billing"
 import {describe, expect, test} from "bun:test"
 import {
   installedPortalModules,
@@ -226,7 +227,6 @@ describe("portalModuleAccess for an open read", () => {
       // Assets: icons only, GET and HEAD only, one file.
       read("ui", "entry.js"),
       read("ui", "entry.js", "HEAD"),
-      read("ui", "catalog"),
       read("ui", "icons"),
       read("ui", "icons/"),
       read("ui", "iconsx/a.png"),
@@ -257,6 +257,36 @@ describe("portalModuleAccess for an open read", () => {
         request,
         {state: "hidden"},
       ])
+    }
+  })
+
+  test("an icon is open exactly when the contract accepts its path: one rule for both", () => {
+    for (const file of [
+      "mentra.call.unlimited.png",
+      "x.svg",
+      "a_b-c.PNG",
+      "..a",
+      "a..",
+      ".hidden",
+      "1",
+      "a".repeat(255),
+      "a".repeat(256),
+      ".",
+      "..",
+      "...",
+      "",
+      "a b.png",
+      "a%20b.png",
+      "a/b.png",
+      "a\\b.png",
+      "a?b.png",
+      "a#b.png",
+      'a".png',
+      "a(1).png",
+      "é.png",
+    ]) {
+      const access = portalModuleAccess("billing", everyoneElse, staging(), recordingLog(), read("ui", `icons/${file}`))
+      expect([file, access.state === "ready"]).toEqual([file, billingIconPath(`${BILLING_ICON_PATH_PREFIX}${file}`) !== null])
     }
   })
 

@@ -97,7 +97,7 @@ the module is. Billing's are:
 | --- | --- | --- |
 | `/api/portal/billing/workspaces/:workspaceId/catalog` | `GET` | The path after the workspace is exactly `catalog` |
 | `/api/portal/billing/account/catalog` | `GET` | The path after `account` is exactly `catalog` |
-| `/api/portal/billing/ui/icons/<file>` | `GET`, `HEAD` | One file name after `ui/icons/`: letters, digits, `.`, `_` and `-` |
+| `/api/portal/billing/ui/icons/<file>` | `GET`, `HEAD` | One file name after `ui/icons/`: 1 to 255 letters, digits, `.`, `_` and `-`, and not only dots. It is the contract's rule for an icon path (`BILLING_ICON_FILE`), so every icon path the portal accepts is open |
 
 Everything else is not open, in any spelling or method: `HEAD`, `POST` and the
 rest of the methods on a catalog; a trailing slash (`catalog/`), another case
@@ -165,9 +165,14 @@ Only people reach a module. Core answers, in this order:
    Whether a request is an open read is settled from its method and its path as
    received, before the path is refused for its form, so a refusal of the path
    never tells a person the module is there.
-3. **Path.** A path with a `.` or `..` segment, an encoded or literal separator
-   (`%2f`, `%5c`, `\`), a control character, a bad escape or a double encoding
-   (`%252e`) is `400 {"error":"invalid_path"}`, as for Fleet.
+3. **Path.** A path with an encoded separator (`%2f`, `%5c`), a control
+   character, a bad escape or a double encoding (`%252e`) is `400
+   {"error":"invalid_path"}`, as for Fleet. The server in front of Core resolves a
+   literal or encoded dot segment (`..`, `%2e%2e`) and turns a backslash into a
+   separator before Core sees the request, as a URL parser does, so Core judges
+   the path it resolves to: `status/../catalog` arrives as `catalog` and is the
+   open read, and `catalog/../status` arrives as `status`. Core's own refusal of a
+   dot segment is a second line, for a server that does not resolve them.
 4. **Scope.** A workspace path needs standing in that workspace: a member of any
    role, or an Organization Admin, who acts as an Owner in every workspace. A
    non-member is `403 {"error":"forbidden","reason":"not_a_member"}`, and an
