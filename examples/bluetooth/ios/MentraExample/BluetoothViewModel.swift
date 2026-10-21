@@ -4032,15 +4032,15 @@ func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
 }
 
 func localRtmpSetupMessage(_ detail: String) -> String {
-    "Local RTMP/HLS server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL."
+    "Local RTMP/HLS server not reachable (\(detail)). Run python3 local-demo-cloud/server.py and paste the printed RTMP publish URL."
 }
 
 func localSrtSetupMessage(_ detail: String) -> String {
-    "Local SRT/HLS server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed SRT publish URL."
+    "Local SRT/HLS server not reachable (\(detail)). Run python3 local-demo-cloud/server.py and paste the printed SRT publish URL."
 }
 
 func localWebrtcSetupMessage(_ detail: String) -> String {
-    "Local WebRTC server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."
+    "Local WebRTC server not reachable (\(detail)). Run python3 local-demo-cloud/server.py and paste the printed WHIP publish URL."
 }
 
 func streamUrlValidationMessage(_ streamUrl: String) -> String? {

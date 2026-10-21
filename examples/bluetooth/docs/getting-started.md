@@ -1,7 +1,7 @@
 # Getting Started
 
-For a native Mac app, use the [AppKit/SwiftPM example](../examples/macos/README.md)
-or [react-native-macos example](../examples/react-native-macos/README.md). Their
+For a native Mac app, use the [AppKit/SwiftPM example](../macos/README.md)
+or [react-native-macos example](../react-native-macos/README.md). Their
 macOS setup, sandbox permissions, and compatible native host versions are
 separate from the phone instructions below. An iOS app installed on an Apple
 silicon Mac through TestFlight still follows the iOS path.
@@ -150,7 +150,7 @@ when the local source package version does not match the published version in
 folder directly.
 
 ```bash
-cd examples/react-native
+cd react-native
 SDK_PATH="/path/to/MentraOS-dev/mobile/modules/bluetooth-sdk"
 
 mkdir -p node_modules/@mentra
@@ -174,7 +174,7 @@ package, unset the Metro override, remove the symlinked package folder, and
 install the published SDK version:
 
 ```bash
-cd examples/react-native
+cd react-native
 
 unset MENTRA_BLUETOOTH_SDK_PACKAGE_PATH
 rm -rf node_modules/@mentra/bluetooth-sdk
@@ -220,7 +220,7 @@ Declare Core Bluetooth background mode in your iOS app's `Info.plist`. Without
 it, iOS suspends your app when the phone locks and delivers no Bluetooth events
 to it, so the glasses link stops working in the background. A Swift package
 cannot declare background modes for your app. The native example declares it in
-`examples/ios/MentraExample-Info.plist`.
+`ios/MentraExample-Info.plist`.
 
 An upcoming SDK release, tracked in Mentra-Community/MentraOS#4386, also
 reconnects in the background after the glasses drop the link, for example while
@@ -431,17 +431,17 @@ cd <starter-kit-directory>
 Run one of:
 
 ```bash
-cd examples/android
+cd android
 ./gradlew installDebug
 ```
 
 ```bash
-cd examples/ios
+cd ios
 open MentraExample.xcodeproj
 ```
 
 ```bash
-cd examples/react-native
+cd react-native
 bun install
 bun run ios:setup
 bunx expo prebuild
@@ -452,10 +452,10 @@ bun run android:dev
 
 `bun run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview.
 
-For photo/video upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
+For photo/video upload and RTMP/SRT/WebRTC demos, start the local helper from the Starter Kit root:
 
 ```bash
-python3 examples/local-demo-cloud/server.py
+python3 local-demo-cloud/server.py
 ```
 
 Paste the printed LAN URLs into the example apps. Do not use `localhost`; the glasses and phone need a reachable LAN address.

@@ -12,7 +12,7 @@ OTA availability checking. The complete update UI remains in the phone example.
 Build with the exact published SwiftPM version in `Package.swift`:
 
 ```bash
-cd examples/macos
+cd macos
 bash run.sh
 ```
 
@@ -32,7 +32,7 @@ so macOS reads the Bluetooth and microphone usage descriptions.
 Enter a webhook that returns `photoUrl` in its successful upload response. The
 example displays that URL after the request completes. A webhook without a
 preview URL still receives the photo, but cannot supply an image preview.
-The repository's `examples/photo-webhook-server` is suitable for local testing.
+The repository's `photo-webhook-server` is suitable for local testing.
 Keep glasses and Mac on a network that can reach the server.
 
 ## Integration Notes

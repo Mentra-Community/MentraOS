@@ -1461,7 +1461,7 @@ private func localCameraSetupHint(webhookUrl: String, status: String) -> String?
     if !needsSetup {
         return nil
     }
-    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Media upload URL here. It looks like http://<computer-ip>:8787/upload."
+    return "Cloud server setup: run python3 local-demo-cloud/server.py from the Starter Kit root, then paste the printed Media upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
 struct CameraOptionGroup<Content: View>: View {

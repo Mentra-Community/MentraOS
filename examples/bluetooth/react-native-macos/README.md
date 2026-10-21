@@ -19,7 +19,7 @@ host dependencies with the phone example's newer Expo/React Native versions.
 Use the exact published npm dependency in `package.json` and `bun.lock`:
 
 ```bash
-cd examples/react-native-macos
+cd react-native-macos
 bun install --frozen-lockfile
 cd macos
 pod install

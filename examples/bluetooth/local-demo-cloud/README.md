@@ -28,7 +28,7 @@ brew install ffmpeg
 From this repository:
 
 ```bash
-python3 examples/local-demo-cloud/server.py
+python3 local-demo-cloud/server.py
 ```
 
 The command prints URLs like:
@@ -98,36 +98,36 @@ installing streaming dependencies.
 If the script picks the wrong network interface, pass the host IP explicitly:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --host-ip 192.168.1.42
+python3 local-demo-cloud/server.py --host-ip 192.168.1.42
 ```
 
 You can also change ports or the stream path:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --srt-port 8891 --hls-port 8887 --rtmp-path live/my-stream --srt-path my-stream --webrtc-path my-stream
+python3 local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --srt-port 8891 --hls-port 8887 --rtmp-path live/my-stream --srt-path my-stream --webrtc-path my-stream
 ```
 
 Run only the media webhook:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --photo-only
+python3 local-demo-cloud/server.py --photo-only
 ```
 
 Run only the streaming helper:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --streaming-only
+python3 local-demo-cloud/server.py --streaming-only
 ```
 
 CI or streaming-specific demos can fail hard when MediaMTX is unavailable:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --require-streaming
+python3 local-demo-cloud/server.py --require-streaming
 ```
 
 ## Lower-Level Helpers
 
 The underlying helpers are still available if you want to run only one side:
 
-- `examples/photo-webhook-server/server.py`
-- `examples/local-webrtc-server/run-mediamtx.sh`
+- `photo-webhook-server/server.py`
+- `local-webrtc-server/run-mediamtx.sh`

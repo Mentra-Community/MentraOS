@@ -37,12 +37,12 @@ Fix:
 - React Native / Expo example: set `MENTRA_IOS_BUNDLE_ID` to your own reverse-DNS identifier and regenerate the native project:
 
   ```bash
-  cd examples/react-native
+  cd react-native
   MENTRA_IOS_BUNDLE_ID=com.yourname.mentrasdkrn bunx expo prebuild --clean --platform ios
   bunx expo run:ios --device
   ```
 
-- Native iOS example: open `examples/ios/MentraExample.xcodeproj` in Xcode, select the `MentraExample` target, and change the Bundle Identifier under **Signing & Capabilities** before selecting your team.
+- Native iOS example: open `ios/MentraExample.xcodeproj` in Xcode, select the `MentraExample` target, and change the Bundle Identifier under **Signing & Capabilities** before selecting your team.
 
 If the error also lists a Push Notifications capability, that entitlement is not part of the examples. Remove the capability from the target in Xcode or regenerate the native project.
 
@@ -111,11 +111,11 @@ No app-level framing changes are required; negotiation is internal to the SDK. S
 - Confirm Mentra Live is connected to Wi-Fi before starting the stream.
 - For RTMP, the native iOS example embeds the derived HLS preview URL while live. You can also open or refresh the printed HLS preview URL on your computer after tapping **Start stream**.
 - If Docker is running in bridge mode, confirm UDP ports `8890` and `8189` are published.
-- If the helper picked the wrong network interface, restart it with `python3 examples/local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
+- If the helper picked the wrong network interface, restart it with `python3 local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
 
 ## React Native Or Expo Apps
 
-React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run as development builds or production native builds. Expo Go cannot load the native SDK. Start from `examples/react-native` for Expo, `examples/android` for bare Android, or `examples/ios` for bare iOS.
+React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run as development builds or production native builds. Expo Go cannot load the native SDK. Start from `react-native` for Expo, `android` for bare Android, or `ios` for bare iOS.
 
 If Android prebuild succeeds but native linking fails, confirm the generated project includes `:lc3Lib` in `android/settings.gradle`. The SDK plugin adds this module automatically during prebuild.
 

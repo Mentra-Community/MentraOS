@@ -37,13 +37,13 @@ the SDK throws an error.
 ## Run
 
 ```bash
-cd examples/ios
+cd ios
 open MentraExample.xcodeproj
 ```
 
 In Xcode, select the `MentraExample` scheme and run on a physical iPhone. Simulators are useful for UI and compile checks only.
 
-The committed bundle identifier, `com.mentra.bluetoothsdk.example.ios`, is registered to Mentra's Apple Developer team, and Apple App IDs are globally unique. Before selecting your own team under **Signing & Capabilities**, change the Bundle Identifier to your own reverse-DNS string. Otherwise automatic signing fails with provisioning profile errors about the Wi-Fi entitlements, and the Apple Developer portal refuses to register the App ID. See [Troubleshooting](../../docs/troubleshooting.md#ios-device-build-fails-with-provisioning-profile-or-app-id-errors).
+The committed bundle identifier, `com.mentra.bluetoothsdk.example.ios`, is registered to Mentra's Apple Developer team, and Apple App IDs are globally unique. Before selecting your own team under **Signing & Capabilities**, change the Bundle Identifier to your own reverse-DNS string. Otherwise automatic signing fails with provisioning profile errors about the Wi-Fi entitlements, and the Apple Developer portal refuses to register the App ID. See [Troubleshooting](../docs/troubleshooting.md#ios-device-build-fails-with-provisioning-profile-or-app-id-errors).
 
 The first build downloads the official GStreamer iOS SDK if it is not already present under `~/Library/Developer/GStreamer/iPhone.sdk`. The package is checksum-verified and not committed. To use an existing install:
 
@@ -52,7 +52,7 @@ export GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk
 open MentraExample.xcodeproj
 ```
 
-For production iOS apps that need BLE or microphone behavior while backgrounded or locked, see [Background Operation On iOS](../../docs/getting-started.md#background-operation-on-ios).
+For production iOS apps that need BLE or microphone behavior while backgrounded or locked, see [Background Operation On iOS](../docs/getting-started.md#background-operation-on-ios).
 
 ## App Walkthrough
 
@@ -66,10 +66,10 @@ The example has five tabs:
 
 ## Local Media And Streaming Helper
 
-From the repo root:
+From the Starter Kit root:
 
 ```bash
-python3 examples/local-demo-cloud/server.py
+python3 local-demo-cloud/server.py
 ```
 
 Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper still starts the media webhook and skips streaming with a warning.

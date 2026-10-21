@@ -2153,7 +2153,7 @@ function localCameraSetupHint(webhookUrl: string, status: string) {
   if (!needsSetup) {
     return null;
   }
-  return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Media upload URL here. It looks like http://<computer-ip>:8787/upload.';
+  return 'Local setup: run python3 local-demo-cloud/server.py from the Starter Kit root, then paste the printed Media upload URL here. It looks like http://<computer-ip>:8787/upload.';
 }
 
 function OptionGroup({ children, label }: { children: React.ReactNode; label: string }) {

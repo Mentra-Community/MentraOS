@@ -9,56 +9,54 @@ __pycache__/
 *.pyc
 .build/
 .swiftpm/
-examples/react-native-macos/macos/Podfile.lock
-examples/macos/Package.resolved
-examples/react-native-macos/macos/Pods/
-examples/react-native-macos/macos/build/
-examples/react-native-macos/macos/*.xcworkspace/
-examples/react-native-macos/macos/**/*.xcuserstate
-examples/react-native-macos/macos/**/xcuserdata/
-examples/react-native-macos/macos/.xcode.env.local
+/react-native-macos/macos/Podfile.lock
+/macos/Package.resolved
+/react-native-macos/macos/Pods/
+/react-native-macos/macos/build/
+/react-native-macos/macos/*.xcworkspace/
+/react-native-macos/macos/**/*.xcuserstate
+/react-native-macos/macos/**/xcuserdata/
+/react-native-macos/macos/.xcode.env.local
 
 # Keep customer-facing native example source projects even though generic
 # React Native generated `android` / `ios` directories are ignored above.
-!examples/android/
-!examples/android/**
-!examples/ios/
-!examples/ios/**
-!examples/react-native/modules/
-!examples/react-native/modules/**
-!examples/react-native/modules/**/android/
-!examples/react-native/modules/**/android/**
-!examples/react-native/modules/**/ios/
-!examples/react-native/modules/**/ios/**
+!/android/
+!/android/**
+!/ios/
+!/ios/**
+!/react-native/modules/
+!/react-native/modules/**
+!/react-native/modules/**/android/
+!/react-native/modules/**/android/**
+!/react-native/modules/**/ios/
+!/react-native/modules/**/ios/**
 
 # Android example generated files.
-examples/android/.gradle/
-examples/android/.idea/
-examples/android/**/build/
-examples/android/**/*.iml
-examples/android/local.properties
-examples/android/.gstreamer/
-examples/android/app/gst-android-build/
-examples/react-native/.gstreamer/
-# Local Bluetooth SDK checkout for MENTRA_BLUETOOTH_SDK_PACKAGE_PATH (not committed).
-examples/react-native/modules/bluetooth-sdk/
+/android/.gradle/
+/android/.idea/
+/android/**/build/
+/android/**/*.iml
+/android/local.properties
+/android/.gstreamer/
+/android/app/gst-android-build/
+/react-native/.gstreamer/
 
-examples/react-native/modules/**/android/.gradle/
-examples/react-native/modules/**/android/build/
-examples/react-native/modules/**/android/gst-android-build/
-examples/react-native-elevenlabs-audio/.env*
-!examples/react-native-elevenlabs-audio/.env.example
+/react-native/modules/**/android/.gradle/
+/react-native/modules/**/android/build/
+/react-native/modules/**/android/gst-android-build/
+/react-native-elevenlabs-audio/.env*
+!/react-native-elevenlabs-audio/.env.example
 
 # Local webhook demo uploads.
-examples/photo-webhook-server/uploads/
-examples/react-native/.barcode-debug/
+/photo-webhook-server/uploads/
+/react-native/.barcode-debug/
 
 # iOS example generated files.
-examples/ios/Pods/
-examples/ios/Podfile.lock
-examples/ios/*.xcworkspace/
-examples/ios/DerivedData/
-examples/ios/build/
-examples/ios/**/*.xcuserstate
-examples/ios/**/xcuserdata/
-examples/ios/**/project.xcworkspace/
+/ios/Pods/
+/ios/Podfile.lock
+/ios/*.xcworkspace/
+/ios/DerivedData/
+/ios/build/
+/ios/**/*.xcuserstate
+/ios/**/xcuserdata/
+/ios/**/project.xcworkspace/

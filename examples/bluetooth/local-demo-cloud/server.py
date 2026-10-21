@@ -26,8 +26,8 @@ MEDIA_MTX_IMAGE = "bluenviron/mediamtx:1"
 MEDIA_MTX_HLS_VARIANT = "mpegts"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
-PHOTO_SERVER = REPO_ROOT / "examples" / "photo-webhook-server" / "server.py"
+STARTER_KIT_ROOT = SCRIPT_DIR.parent
+PHOTO_SERVER = STARTER_KIT_ROOT / "photo-webhook-server" / "server.py"
 
 
 def parse_options() -> argparse.Namespace:

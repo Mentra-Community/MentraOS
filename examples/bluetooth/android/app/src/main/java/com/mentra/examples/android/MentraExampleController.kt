@@ -4083,13 +4083,13 @@ fun webrtcPreviewUrl(whipUrlText: String): String {
 }
 
 fun localRtmpSetupMessage(detail: String): String =
-    "Local RTMP/HLS server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL."
+    "Local RTMP/HLS server not reachable ($detail). Run python3 local-demo-cloud/server.py and paste the printed RTMP publish URL."
 
 fun localSrtSetupMessage(detail: String): String =
-    "Local SRT/HLS server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed SRT publish URL."
+    "Local SRT/HLS server not reachable ($detail). Run python3 local-demo-cloud/server.py and paste the printed SRT publish URL."
 
 fun localWebrtcSetupMessage(detail: String): String =
-    "Local WebRTC server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."
+    "Local WebRTC server not reachable ($detail). Run python3 local-demo-cloud/server.py and paste the printed WHIP publish URL."
 
 fun streamUrlValidationMessage(streamUrl: String): String? = when {
     streamUrl.isEmpty() -> "Stream URL is required."

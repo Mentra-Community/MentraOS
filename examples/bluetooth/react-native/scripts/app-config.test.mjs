@@ -12,7 +12,7 @@ function fixture(t, dependencies) {
   mkdirSync(engine, {recursive: true})
   writeFileSync(path.join(engine, 'package.json'), JSON.stringify({name: '@mentra/engine', dependencies}))
   const configPath = path.join(root, 'app.config.js')
-  copyFileSync(new URL('../../examples/react-native/app.config.js', import.meta.url), configPath)
+  copyFileSync(new URL('../app.config.js', import.meta.url), configPath)
   return {engine, configure: createRequire(configPath)(configPath)}
 }
 

@@ -7,7 +7,7 @@ The ElevenLabs API key stays on your Mac. The app asks a local signing server fo
 ## Run On Android
 
 ```bash
-cd examples/react-native-elevenlabs-audio
+cd react-native-elevenlabs-audio
 bun install
 cp .env.example .env.local
 ```

@@ -43,7 +43,7 @@ python3 scripts/check-foreground-service.py app/build/intermediates/merged_manif
 
 ### Android Studio
 
-1. Open this `examples/android` folder in Android Studio.
+1. Open this `android` folder in Android Studio.
 2. Let Gradle sync and install any missing Android SDK packages.
 3. Select a physical Android phone.
 4. Run the `app` configuration.
@@ -51,7 +51,7 @@ python3 scripts/check-foreground-service.py app/build/intermediates/merged_manif
 ### Command Line
 
 ```bash
-cd examples/android
+cd android
 ./gradlew installDebug
 ```
 
@@ -108,10 +108,10 @@ The example has five tabs:
 
 ## Local Media And Streaming Helper
 
-From the repo root:
+From the Starter Kit root:
 
 ```bash
-python3 examples/local-demo-cloud/server.py
+python3 local-demo-cloud/server.py
 ```
 
 Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper still starts the media webhook and skips streaming with a warning.

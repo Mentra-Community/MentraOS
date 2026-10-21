@@ -6,11 +6,11 @@ The SDK is available in these first-class forms:
 
 | Platform | Package | Example |
 | --- | --- | --- |
-| Android | `com.mentraglass:bluetooth-sdk` | [`examples/android`](examples/android/README.md) |
-| iOS | `MentraBluetoothSDK` Swift package | [`examples/ios`](examples/ios/README.md) |
-| Native macOS (AppKit / SwiftUI) | `MentraBluetoothSDK` Swift package | [`examples/macos`](examples/macos/README.md) |
-| React Native / Expo | `@mentra/bluetooth-sdk` | [`examples/react-native`](examples/react-native/README.md) |
-| React Native macOS | `@mentra/bluetooth-sdk` | [`examples/react-native-macos`](examples/react-native-macos/README.md) |
+| Android | `com.mentraglass:bluetooth-sdk` | [`android`](android/README.md) |
+| iOS | `MentraBluetoothSDK` Swift package | [`ios`](ios/README.md) |
+| Native macOS (AppKit / SwiftUI) | `MentraBluetoothSDK` Swift package | [`macos`](macos/README.md) |
+| React Native / Expo | `@mentra/bluetooth-sdk` | [`react-native`](react-native/README.md) |
+| React Native macOS | `@mentra/bluetooth-sdk` | [`react-native-macos`](react-native-macos/README.md) |
 
 Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
 
@@ -26,12 +26,12 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 
 1. Read [Getting Started](docs/getting-started.md) for install, permissions, and minimal connection flows.
 2. Run the example that matches your app stack:
-   - [Android Kotlin / Jetpack Compose](examples/android/README.md)
-   - [iOS SwiftUI](examples/ios/README.md)
-   - [Native macOS AppKit](examples/macos/README.md)
-   - [React Native / Expo](examples/react-native/README.md)
-   - [React Native macOS](examples/react-native-macos/README.md)
-   - [React Native ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md)
+   - [Android Kotlin / Jetpack Compose](android/README.md)
+   - [iOS SwiftUI](ios/README.md)
+   - [Native macOS AppKit](macos/README.md)
+   - [React Native / Expo](react-native/README.md)
+   - [React Native macOS](react-native-macos/README.md)
+   - [React Native ElevenLabs audio repro](react-native-elevenlabs-audio/README.md)
 3. Keep [API Reference](docs/api-reference.md), [Display Guide](docs/display-guide.md), [Audio Guide](docs/audio-guide.md), and [Hardware Integration Notes](docs/hardware-integration.md) nearby while building.
 4. Use [Troubleshooting](docs/troubleshooting.md) and the [Production Checklist](docs/production-checklist.md) before shipping.
 
@@ -85,7 +85,7 @@ hardware. Click a screenshot for the full-size image.
 The React Native Android capture also demonstrates successful Bluetooth fallback
 when Wi-Fi photo delivery fails.
 
-The [ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md) is
+The [ElevenLabs audio repro](react-native-elevenlabs-audio/README.md) is
 audio-only and has no camera preview. See the [capture notes](docs/images/examples/README.md)
 for screenshot provenance.
 
@@ -99,10 +99,10 @@ for screenshot provenance.
 - `docs/mentra-live-ble-wire-protocol.md`: Mentra Live BLE wire v2, K900 endian negotiation, and SDK/firmware pairing notes.
 - `docs/production-checklist.md`: release-readiness checklist.
 - `docs/troubleshooting.md`: build, permission, scan, stream, and React Native issues.
-- `examples/local-demo-cloud`: recommended local helper for media upload and stream preview.
-- `examples/react-native-elevenlabs-audio`: focused Mentra Live PCM to ElevenLabs WebSocket repro app.
-- `examples/photo-webhook-server`: focused media upload webhook server.
-- `examples/local-webrtc-server`: lower-level MediaMTX helper.
+- `local-demo-cloud`: recommended local helper for media upload and stream preview.
+- `react-native-elevenlabs-audio`: focused Mentra Live PCM to ElevenLabs WebSocket repro app.
+- `photo-webhook-server`: focused media upload webhook server.
+- `local-webrtc-server`: lower-level MediaMTX helper.
 
 ## Local SDK Development
 

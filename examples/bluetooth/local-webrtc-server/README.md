@@ -21,7 +21,7 @@ MediaMTX provides the local ingest and playback endpoints needed for a demo:
 From this repository:
 
 ```bash
-examples/local-webrtc-server/run-mediamtx.sh
+local-webrtc-server/run-mediamtx.sh
 ```
 
 The script prints URLs like:
@@ -70,13 +70,13 @@ Use the LAN URL printed by the script, not `localhost`, from the example app. Th
 If the script picks the wrong interface, set the IP explicitly:
 
 ```bash
-MENTRA_STREAM_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
+MENTRA_STREAM_HOST_IP=192.168.1.42 local-webrtc-server/run-mediamtx.sh
 ```
 
 You can also change the stream paths:
 
 ```bash
-MENTRA_RTMP_STREAM_PATH=live/my-stream MENTRA_SRT_STREAM_PATH=my-stream MENTRA_WEBRTC_STREAM_PATH=my-stream examples/local-webrtc-server/run-mediamtx.sh
+MENTRA_RTMP_STREAM_PATH=live/my-stream MENTRA_SRT_STREAM_PATH=my-stream MENTRA_WEBRTC_STREAM_PATH=my-stream local-webrtc-server/run-mediamtx.sh
 ```
 
 That changes the URLs to:

@@ -577,12 +577,12 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
         return null
     }
     if (protocol == "rtmp") {
-        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the derived HLS URL; the printed ffplay command is optional for debugging."
+        return "Local RTMP setup: run python3 local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the derived HLS URL; the printed ffplay command is optional for debugging."
     }
     if (protocol == "srt") {
-        return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging."
+        return "Local SRT setup: run python3 local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging."
     }
-    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
+    return "Local WebRTC setup: run python3 local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
 }
 
 private fun streamResolvedConfigSummary(config: StreamResolvedConfig?): String {

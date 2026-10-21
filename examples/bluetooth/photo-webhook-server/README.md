@@ -9,7 +9,7 @@ It receives `requestPhoto` and video-recording webhook uploads, saves the media 
 From this repository:
 
 ```bash
-python3 examples/photo-webhook-server/server.py
+python3 photo-webhook-server/server.py
 ```
 
 The server prints URLs like:
@@ -28,4 +28,4 @@ Use the LAN URL, not `localhost`, in the Android, iOS, or React Native example a
 - `GET /photos/<requestId>.jpg`: serves the saved photo.
 - `GET /media/<requestId>.mp4`: serves the saved video.
 
-Uploaded media is written to `examples/photo-webhook-server/uploads/`, which is ignored by git.
+Uploaded media is written to `photo-webhook-server/uploads/`, which is ignored by git.

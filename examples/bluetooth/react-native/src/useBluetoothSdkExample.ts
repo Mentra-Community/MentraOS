@@ -4298,15 +4298,15 @@ function webrtcPreviewUrl(whipUrlText: string) {
 }
 
 function localWebrtcSetupMessage(detail: string) {
-  return `Local WebRTC server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL.`;
+  return `Local WebRTC server not reachable (${detail}). Run python3 local-demo-cloud/server.py and paste the printed WHIP publish URL.`;
 }
 
 function localRtmpSetupMessage(detail: string) {
-  return `Local RTMP/HLS server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL.`;
+  return `Local RTMP/HLS server not reachable (${detail}). Run python3 local-demo-cloud/server.py and paste the printed RTMP publish URL.`;
 }
 
 function localSrtSetupMessage(detail: string) {
-  return `Local SRT/HLS server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed SRT publish URL.`;
+  return `Local SRT/HLS server not reachable (${detail}). Run python3 local-demo-cloud/server.py and paste the printed SRT publish URL.`;
 }
 
 function streamUrlValidationMessage(streamUrl: string) {

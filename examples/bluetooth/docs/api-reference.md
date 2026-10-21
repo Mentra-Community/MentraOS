@@ -85,7 +85,7 @@ iOS apps commonly need:
 <string>This app uses the microphone when you enable audio features.</string>
 ```
 
-Expo apps configure those permissions in `app.json`; see `examples/react-native/app.json`.
+Expo apps configure those permissions in `app.json`; see `react-native/app.json`.
 
 ## Connection
 
@@ -538,7 +538,7 @@ console.log('Photo delivered', photo.photoUrl ?? photo.uploadUrl);
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
-For local development, run `python3 examples/local-demo-cloud/server.py` from the repo root and use the printed LAN `/upload` URL. Do not use `localhost`.
+For local development, run `python3 local-demo-cloud/server.py` from the Starter Kit root and use the printed LAN `/upload` URL. Do not use `localhost`.
 
 ## Camera Video Recording
 
@@ -679,7 +679,7 @@ const stopped = await BluetoothSdk.stopStream();
 console.log('Stream stopped', stopped.status);
 ```
 
-The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. For local streaming development, use `examples/local-demo-cloud` and paste the printed RTMP, SRT, or WHIP publish URL into the example app.
+The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. For local streaming development, use `local-demo-cloud` and paste the printed RTMP, SRT, or WHIP publish URL into the example app.
 
 ## Wi-Fi And Hotspot
 

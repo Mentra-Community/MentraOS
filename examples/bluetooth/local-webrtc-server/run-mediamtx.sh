@@ -46,7 +46,7 @@ detect_host_ip() {
 Could not detect a LAN IP address.
 
 Set it explicitly, for example:
-  MENTRA_STREAM_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
+  MENTRA_STREAM_HOST_IP=192.168.1.42 local-webrtc-server/run-mediamtx.sh
 EOF
   exit 1
 }

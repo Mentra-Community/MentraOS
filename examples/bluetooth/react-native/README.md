@@ -17,7 +17,7 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 ## Install
 
 ```bash
-cd examples/react-native
+cd react-native
 bun install
 ```
 
@@ -35,7 +35,7 @@ Android, and iOS all resolve the same local package.
 ## Run On iOS
 
 ```bash
-cd examples/react-native
+cd react-native
 bun run ios:setup
 bunx expo prebuild
 bunx expo run:ios
@@ -73,7 +73,7 @@ GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk bunx expo run:ios
 ## Run On Android
 
 ```bash
-cd examples/react-native
+cd react-native
 bunx expo prebuild
 bun run android:dev
 ```
@@ -155,7 +155,7 @@ The plugins configure the native project so Expo can register the SDK modules. T
 from Expo autolinking so it does not package the unrelated navigation and
 miniapp-runtime native libraries.
 
-For production Expo apps that need BLE or microphone behavior while iOS is backgrounded or locked, see [Background Operation On iOS](../../docs/getting-started.md#background-operation-on-ios).
+For production Expo apps that need BLE or microphone behavior while iOS is backgrounded or locked, see [Background Operation On iOS](../docs/getting-started.md#background-operation-on-ios).
 
 ## Local SDK Override
 
@@ -165,7 +165,7 @@ clean checkout still works, then replace the installed package folder locally
 with your SDK source checkout.
 
 ```bash
-cd examples/react-native
+cd react-native
 SDK_PATH="/path/to/MentraOS-dev/mobile/modules/bluetooth-sdk"
 
 mkdir -p node_modules/@mentra
@@ -201,10 +201,10 @@ The example has five tabs:
 
 ## Local Media And Streaming Helper
 
-From the repo root:
+From the Starter Kit root:
 
 ```bash
-python3 examples/local-demo-cloud/server.py
+python3 local-demo-cloud/server.py
 ```
 
 Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper still starts the media webhook and skips streaming with a warning.
