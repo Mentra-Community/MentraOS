@@ -10,7 +10,7 @@ The client is `createCoreWorkspaceClient` from
 `@mentra/workspace-contract/server`; the request and response types are in
 `@mentra/workspace-contract`. The Store's billing module also writes licenses
 into Core through `/api/internal/licenses/*`, signed the same way
-([Licenses and seats](licenses.md#writing-licenses)).
+([Licenses](licenses.md#writing-licenses)).
 
 ## Signing
 

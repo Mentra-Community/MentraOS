@@ -72,7 +72,7 @@ const STATUS: BillingStatus = {
       quantity: 5,
       total: usd(14500),
       tax: "excluded",
-      actions: [{ kind: "add_seats", fallbackLabel: "Add seats" }],
+      actions: [{ kind: "add_seats", fallbackLabel: "Add licenses" }],
     },
   ],
   total: { amount: usd(14500), recurrence: { interval: "month", count: 1 }, tax: "excluded", licenseCount: 1 },
@@ -259,7 +259,7 @@ describe("createBillingApi: values it doesn't know", () => {
           status: "paused",
           fallbackStatusLabel: "Paused",
           tax: "reverse_charge",
-          price: { scheme: "tiered", fallbackLabel: "From $10 per seat a month" },
+          price: { scheme: "tiered", fallbackLabel: "From $10 per user a month" },
           total: null,
           actions: [{ kind: "pause_collection", fallbackLabel: "Pause billing", returns: false }],
           extra: 1,
@@ -272,7 +272,7 @@ describe("createBillingApi: values it doesn't know", () => {
       status: "paused",
       fallbackStatusLabel: "Paused",
       tax: "reverse_charge",
-      price: { scheme: "tiered", fallbackLabel: "From $10 per seat a month" },
+      price: { scheme: "tiered", fallbackLabel: "From $10 per user a month" },
       total: null,
       actions: [{ kind: "pause_collection", fallbackLabel: "Pause billing", returns: false }],
     });
@@ -327,7 +327,7 @@ describe("billingErrorMessage", () => {
 
   test("words the refusals the screens act on, with the product's name", () => {
     expect(billingErrorMessage(refused("already_licensed"), { product: "Mentra Call Unlimited" })).toBe(
-      "You already have Mentra Call Unlimited. Add seats instead.",
+      "You already have Mentra Call Unlimited. Add licenses instead.",
     );
     expect(billingErrorMessage(refused("already_licensed"), { product: "Mentra Call Unlimited", scope: "person" })).toBe(
       "You already have Mentra Call Unlimited.",

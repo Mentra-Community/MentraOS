@@ -26,7 +26,7 @@ function focusables(root: HTMLElement): HTMLElement[] {
 }
 
 /**
- * A modal sheet on the right-hand side, full-screen on a phone: the member panel. It is built like `Dialog`, on
+ * A modal sheet on the right-hand side, full-screen on a phone. It is built like `Dialog`, on
  * the platform's `<dialog>` (`showModal()` makes the rest of the page inert, dims it and puts the sheet in the
  * top layer), and the open state is the host's (`open`, `onClose`), so the host can tie it to an address:
  *

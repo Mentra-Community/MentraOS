@@ -71,7 +71,7 @@ Optional `features`: the licensed feature keys the user holds for this audience'
 package (sorted, unique), omitted when there are none. A failed lookup, or one
 that takes longer than 1.5 s, answers `503 {"error":"features_unavailable"}` and
 issues no token. See
-[Licenses and seats](../../../licenses.md#features-in-miniapp-tokens).
+[Licenses](../../../licenses.md#features-in-miniapp-tokens).
 
 ## Endpoints
 

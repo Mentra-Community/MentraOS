@@ -36,7 +36,7 @@ every Core variable.
 - `CLOUD_CORE_ENABLED_FEATURES`: how a Private Cloud switches first-party
   features on, as comma-separated `feature[:package+package]` entries. Fleet
   reads only the feature names; the packages are for the features in miniapp
-  tokens ([Licenses and seats](licenses.md#features-in-miniapp-tokens)). Blank or
+  tokens ([Licenses](licenses.md#features-in-miniapp-tokens)). Blank or
   unset, as on the hosted Core, leaves the installation to the URL and the
   secret. Set, it must list `fleet.managed` for
   Fleet to be installed; a Core that lists other features and not `fleet.managed`
@@ -539,7 +539,7 @@ Notes:
   `license.ended` and `seat.released` event.
 - `license.written`, `license.ended`, `seat.assigned` and `seat.released` are a
   workspace license's and its seats' changes; their shapes are in
-  [Licenses and seats](licenses.md#audit-and-the-change-feed). A membership's
+  [Licenses](licenses.md#audit-and-the-change-feed). A membership's
   seats are released just before its `membership.removed` or `membership.left`
   event.
 - `workspace.deletion_hold_*` events say which service holds the workspace from

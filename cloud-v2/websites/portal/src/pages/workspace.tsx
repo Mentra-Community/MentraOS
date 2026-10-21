@@ -8,8 +8,8 @@
  * their own seats, never billing). A Private Cloud has neither. Every request is still checked by Core. A
  * workspace that does not exist, or that the viewer may not see, is one "not found" page.
  *
- * Members shows each member's licenses where billing's catalog can be read, and opens a member's panel from
- * `?member=<membershipId>`: the address says which, so a link opens it and Back closes it.
+ * Members shows each member's licenses where billing's catalog can be read, and only shows them: licenses are
+ * assigned from the Licenses page. A row's "…" menu changes a role or removes the member.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -42,7 +42,7 @@ import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type Lu
 import { useEffect, useMemo, useState } from "react";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
-import { closeQueryParam, navigate, openQueryParam, Redirect, useSearch } from "@/lib/navigation";
+import { navigate, Redirect } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
 import { forgetWorkspace, rememberWorkspace, workspacePath, type WorkspaceSection } from "@/lib/routes";
 import { billingOffered, LicensesHeaderActions, LicensesScreen } from "./licenses";
@@ -53,8 +53,8 @@ type SectionMeta = {
   icon: LucideIcon;
   /** The capability that opens it; null for everyone in the workspace (leaving is in Settings). */
   needs: WorkspaceCapability | null;
-  /** `manager`: the viewer sees every license (`workspace.licenses.read`), where a member sees their own seats. */
-  description(workspaceName: string, manager: boolean): string;
+  /** The line under the title; none for Licenses, whose title stands alone. */
+  description(workspaceName: string): string | undefined;
 };
 
 const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
@@ -81,7 +81,7 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     icon: CreditCard,
     // Open to everyone in the workspace, but offered only where there is something to show (see `licensesPartShown`).
     needs: null,
-    description: (name, manager) => (manager ? licenseStrings.page.description(name) : licenseStrings.page.memberDescription(name)),
+    description: () => undefined,
   },
 };
 
@@ -156,11 +156,10 @@ export function isNoAccess(error: unknown): boolean {
 
 /**
  * The Members list's licenses source (`WorkspaceMembersPanel`'s `licenses`): billing's catalog, which names and draws the
- * licenses a member holds, and, for a viewer offered billing, billing's status, which says where "Add seats ↗" is
- * offered; and the billing client and the portal's ways out, which that button goes through like every other ↗ button
- * (hosted action: this tab, or a tab opened in the click for a page that does not return). Nothing is asked until the
- * list can use it: the viewer sees every license (`workspace.licenses.read`) in a workspace that holds one. None where
- * billing's catalog can't be read (a Private Cloud), so the list is the admin portal's.
+ * licenses a member holds. The list only shows them, so billing's status, the billing client and the portal's ways out
+ * are not part of it. Nothing is asked until the list can use it: the viewer sees every license
+ * (`workspace.licenses.read`) in a workspace that holds one. None where billing's catalog can't be read (a Private
+ * Cloud), so the list is the admin portal's.
  */
 export function useMembersLicenses({
   me,
@@ -179,15 +178,11 @@ export function useMembersLicenses({
   const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
   const wanted = enabled && me.modules.billingCatalog && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
   const catalog = useQuery({ ...billingCatalogQuery(portalBillingApi, scope), enabled: wanted });
-  const status = useQuery({ ...billingStatusQuery(portalBillingApi, scope), enabled: wanted && billingOffered(me, detail) });
 
   return useMemo(
     // The one place the source is built.
-    () =>
-      me.modules.billingCatalog
-        ? { catalog: catalog.data?.products, billing: status.data?.licenses, billingApi: portalBillingApi, navigateOut: portalNavigateOut }
-        : undefined,
-    [me.modules.billingCatalog, catalog.data, status.data],
+    () => (me.modules.billingCatalog ? { catalog: catalog.data?.products } : undefined),
+    [me.modules.billingCatalog, catalog.data],
   );
 }
 
@@ -216,9 +211,8 @@ export function WorkspaceScreen({
   const active = section && sections.includes(section) ? section : null;
   // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
   const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
-  // The Members list shows each member's licenses, and the open member's panel is the address's `?member=`.
+  // The Members list shows each member's licenses.
   const membersLicenses = useMembersLicenses({ me, workspaceId, detail: data, licenses: licenses.data, enabled: active === "members" });
-  const openMember = new URLSearchParams(useSearch()).get("member") || null;
 
   useEffect(() => {
     if (data) rememberWorkspace(safeLocalStorage(), workspaceId);
@@ -257,7 +251,7 @@ export function WorkspaceScreen({
       nav={workspaceNav(workspaceId, sections)}
       activeKey={active}
       title={meta?.label ?? name}
-      description={meta?.description(name, can(data, "workspace.licenses.read"))}
+      description={meta?.description(name)}
       headerAction={
         active === "members" && can(data, "workspace.members.manage") ? (
           <Button onClick={() => setInviting(true)}>
@@ -296,8 +290,6 @@ export function WorkspaceScreen({
             api={api}
             workspaceId={workspaceId}
             licenses={membersLicenses}
-            member={openMember}
-            onMemberChange={membershipId => (membershipId === null ? closeQueryParam("member") : openQueryParam("member", membershipId))}
             locale={portalBillingApi.locale}
           />
           <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />

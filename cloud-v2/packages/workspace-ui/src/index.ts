@@ -124,7 +124,6 @@ export {
   Notice,
   Skeleton,
   StatusBadge,
-  type AddSeatsSource,
   type HeldLicense,
   type StatusBadgeStatus,
 } from "./components/licenses/parts";
@@ -200,7 +199,7 @@ export {
   PurchaseBanner,
   TestModeBanner,
 } from "./components/licenses/banners";
-// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy a license" dialog, and the
+// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, and the
 // seats step. Each takes billing's client and the host's `navigateOut`, and sends the browser to a hosted page.
 export {
   BuyDialog,
@@ -215,15 +214,14 @@ export {
   type CatalogCardProps,
   type CatalogProps,
 } from "./components/licenses/catalog";
-// The Members list's licenses: the member panel (role, joining, Licenses, Remove), its Licenses section, and Assign
-// licenses for the members chosen in the list. `WorkspaceMembersPanel` takes a `MembersLicenses` source to show them.
-export { AssignLicensesDialog, type AssignLicensesDialogProps } from "./components/licenses/assign-licenses";
-export { MemberPanel, PersonLicenses, type MemberPanelProps, type PersonLicensesProps } from "./components/member-panel";
+// The Members list's licenses: `WorkspaceMembersPanel` takes a `MembersLicenses` source (billing's catalog) to show each
+// member's licenses as chips. A question that can't be taken back (Unassign, Remove) is asked in a `ConfirmDialog`.
+export { ConfirmDialog } from "./components/confirm-dialog";
 export type { MembersLicenses } from "./components/members-panel";
 
 // The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each
 // needs a `QueryClientProvider` above it, the billing client, and the host's `NavigateOut`; the portal wires them to its
-// routes, its `me` and `?purchase=`. Each has a header-actions component ("Billing & invoices ↗", "Buy a license") for the
+// routes, its `me` and `?purchase=`. Each has a header-actions component ("Billing & invoices ↗", "Buy licenses" or "Buy a license") for the
 // host to put in its title bar; it reads under the view's keys, so nothing is requested twice.
 export {
   WorkspaceLicensesHeaderActions,

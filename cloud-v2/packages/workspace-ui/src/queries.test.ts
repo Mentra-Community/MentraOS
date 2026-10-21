@@ -79,7 +79,7 @@ describe("workspaceMutationOptions", () => {
 
   test("a license that changed under the caller (every seat taken, or gone) is read again, and the error still reaches them", async () => {
     for (const changed of [
-      new WorkspaceApiError(409, "no_seats_available", "every seat of this license is assigned"),
+      new WorkspaceApiError(409, "no_seats_available", "every license is assigned"),
       new WorkspaceApiError(404, "license_not_found", "license not found"),
     ]) {
       const { api, client } = seeded();
@@ -350,7 +350,7 @@ describe("billing's queries", () => {
         api,
         WORKSPACE_ID,
         async () => {
-          throw new WorkspaceApiError(409, "no_seats_available", "not enough seats");
+          throw new WorkspaceApiError(409, "no_seats_available", "too few licenses are available for these assignments; nothing was assigned");
         },
         { seats: true },
       ),
