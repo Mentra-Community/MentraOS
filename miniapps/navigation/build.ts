@@ -5,15 +5,12 @@
  *   dist/background/index.js  — JSContext entry (no DOM, IIFE).
  *   dist/ui/index.html + ...  — WebView entry (full DOM, Tailwind v4).
  *
- * Env vars whose name starts with `EXPO_PUBLIC_` are inlined into both
- * bundles via `define`. Anything inlined into the UI bundle is visible
- * in WebView source maps; secrets MUST live behind the developer's own
- * backend, not in EXPO_PUBLIC_*.
+ * PUBLIC_MAPBOX_TOKEN (see .env.example) is inlined into the UI bundle via
+ * `define`. Anything inlined into the UI bundle is visible in WebView source
+ * maps; secrets MUST live behind the developer's own backend.
  */
 
 import {rm} from "fs/promises"
-
-import {resolveMapboxBuildToken} from "./buildConfig"
 
 const distDir = "./dist"
 
@@ -25,12 +22,12 @@ await rm(distDir, {recursive: true, force: true})
 const miniapp = (await import("./miniapp.json")) as {version?: string}
 const appVersion = miniapp.version ?? "0.0.0"
 
-// Mapbox GL JS needs a public tiles token in the UI bundle. The native app's
-// EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is a fallback for bundled builds. Mobile CI
-// ships the already-packed ZIP, so rotating its native token does not change
-// the token embedded here; rebuild and repack the miniapp after a rotation.
-const mapboxToken = resolveMapboxBuildToken(process.env)
-if (!mapboxToken) console.warn("WARN: No public Mapbox token is set — Mapbox GL JS map will fail to load.")
+// Mapbox GL JS needs a public tiles token in the UI bundle.
+const mapboxToken = process.env.PUBLIC_MAPBOX_TOKEN
+if (!mapboxToken) {
+  console.error("Missing PUBLIC_MAPBOX_TOKEN. Run `cp .env.example .env` or set it in the environment.")
+  process.exit(1)
+}
 
 const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "development"
 // Only announce when we're in production — that's the unusual case
