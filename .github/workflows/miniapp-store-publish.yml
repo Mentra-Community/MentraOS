@@ -50,8 +50,7 @@ jobs:
       matrix:
         miniapp: [captions, translation, teleprompter, navigation, recorder]
     env:
-      # Public Mapbox tiles token baked into the Maps UI bundle. Pull requests
-      # without it (forks) fall back to the dev value in .env.example.
+      # Public Mapbox tiles token baked into the Maps UI bundle.
       PUBLIC_MAPBOX_TOKEN: ${{ vars.PUBLIC_MAPBOX_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -65,10 +64,6 @@ jobs:
       - name: Build the Mentra Miniapp SDK
         working-directory: mobile/modules/miniapp
         run: bun run build
-      - name: Use the dev public build values
-        if: github.event_name == 'pull_request'
-        working-directory: miniapps/${{ matrix.miniapp }}
-        run: if [ -f .env.example ]; then cp .env.example .env; fi
       - name: Typecheck
         working-directory: miniapps/${{ matrix.miniapp }}
         run: bun run typecheck
@@ -78,10 +73,7 @@ jobs:
         run: bun run test
       - name: Production pack
         working-directory: miniapps/${{ matrix.miniapp }}
-        run: |
-          # An empty variable would hide the .env value from Bun.
-          [ -n "$PUBLIC_MAPBOX_TOKEN" ] || unset PUBLIC_MAPBOX_TOKEN
-          NODE_ENV=production bun run pack
+        run: NODE_ENV=production bun run pack
       - uses: ./.github/actions/publish-miniapp
         with:
           operation: prepare

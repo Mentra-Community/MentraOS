@@ -9,8 +9,9 @@
  * `App.tsx`, `RawMapPage`, and `NavMap` can switch over with minimal
  * changes.
  *
- * Token: build.ts inlines `PUBLIC_MAPBOX_TOKEN` via `define` (dev and
- * release builds both run build.ts).
+ * Token: build.ts inlines `PUBLIC_MAPBOX_TOKEN` via `define` for release
+ * builds; dev fetches `/api/config` (`mapboxToken`) from the local server,
+ * mirroring how the Google key was resolved.
  *
  * The CSS (`mapbox-gl/dist/mapbox-gl.css`) is MANDATORY — without it
  * markers/controls/canvas render incorrectly.
@@ -70,7 +71,31 @@ export class MapboxManager {
   }
 
   private async resolveToken(): Promise<string> {
-    return process.env.PUBLIC_MAPBOX_TOKEN ?? ""
+    // `bun run release` substitutes this at build time via define in
+    // build.ts. `bun run dev` ships the source unchanged — `process` is
+    // undefined in the WebView, so fall through to /api/config.
+    try {
+      const fromEnv = process.env.PUBLIC_MAPBOX_TOKEN
+      if (fromEnv) {
+        console.log("[NAV-MINI] mapbox token from build-time env")
+        return fromEnv
+      }
+    } catch {
+      // process is not defined in the dev WebView — fall through.
+    }
+    try {
+      console.log("[NAV-MINI] mapbox token: fetching /api/config from origin", window.location.origin)
+      const res = await fetch("/api/config")
+      if (res.ok) {
+        const {mapboxToken} = (await res.json()) as {mapboxToken?: string}
+        if (!mapboxToken) console.warn("[NAV-MINI] /api/config returned no mapboxToken")
+        return mapboxToken ?? ""
+      }
+      console.warn("[NAV-MINI] /api/config returned status", res.status)
+    } catch (err) {
+      console.warn("[NAV-MINI] /api/config fetch failed:", err)
+    }
+    return ""
   }
 }
 
