@@ -38,9 +38,9 @@ Roles are cumulative: each holds everything the one before it holds.
   when no sign-in has carried a name, when the person has not signed in through
   the provider, and for a pending imported membership; the `email` stays the
   one the membership was made for.
-- Every member sees the license seats they hold; Admins and Owners see every
-  license and assign its seats ([Licenses and seats](licenses.md)). Ending a
-  membership frees its seats, and deleting a workspace ends its licenses.
+- Every member sees the licenses they hold; Admins and Owners see every product and
+  assign its licenses ([Licenses and seats](licenses.md)). Ending a membership frees
+  its licenses, and deleting a workspace ends its products.
 
 **Organization Admins** are the people whose verified email is on
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
@@ -80,16 +80,16 @@ membership, their role, the licenses they hold and when they joined (the date is
 out on a phone). A row opens the member panel.
 
 - **Licenses.** Where billing's catalog can be read, and you hold
-  `workspace.licenses.read` in a workspace with a license that has not ended, the list
-  has a Licenses column: a chip per license the member holds (three chips and "+n" past
-  four), "None", or "After first sign-in" for a pending membership. With
+  `workspace.licenses.read` in a workspace with a product that has not ended, the list
+  has a Licenses column: a chip per product the member holds a license for (three chips
+  and "+n" past four), "None", or "After first sign-in" for a pending membership. With
   `workspace.licenses.assign`, each member who has signed in also has a checkbox, and
-  selecting some shows "2 selected · Assign licenses", which gives them seats of any of
-  the workspace's licenses in one step ([Seats](licenses.md#seats)). Without the
+  selecting some shows "2 selected · Assign licenses", which assigns them licenses for
+  any of the workspace's products in one step ([Seats](licenses.md#seats)). Without the
   catalog, and on a Private Cloud, the list has no column and no selection.
 - **The member panel** is a side panel for one member: their role and when they joined,
   Change role, Remove from workspace (it asks first), and a Licenses section with a
-  switch for each license the workspace holds
+  switch for each product the workspace holds
   ([the portal's Licenses](licenses.md#in-the-workspace-portal)). The address carries
   which member is open, `?member=<membershipId>`, so a link opens the panel, Back closes
   it, and an id that names no member opens nothing. Change role offers the roles you

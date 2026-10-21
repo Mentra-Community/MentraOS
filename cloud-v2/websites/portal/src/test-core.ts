@@ -163,7 +163,7 @@ export function accountCatalog(): BillingCatalog {
 }
 
 const action = (kind: string, fallbackLabel: string, returns?: boolean): BillingAction => ({ kind, fallbackLabel, ...(returns === false ? { returns } : {}) });
-const SEAT_ACTIONS = [action("add_seats", "Add seats"), action("change_seats", "Change seats"), action("cancel", "Cancel")];
+const SEAT_ACTIONS = [action("add_seats", "Add licenses"), action("change_seats", "Change license count"), action("cancel", "Cancel")];
 export const INVOICES = action("billing_and_invoices", "Billing & invoices");
 
 const licenseBilling = (licenseId: string, product: string, unit: number, quantity: number, renewsAt: string, extra: Partial<LicenseBilling> = {}): LicenseBilling => ({

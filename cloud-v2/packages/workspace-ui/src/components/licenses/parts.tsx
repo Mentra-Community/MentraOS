@@ -5,7 +5,7 @@
  * that leaves the portal, from `strings/licenses.ts`): the screens pass in the rest.
  *
  * Also the pieces the seat screens share (the Members list's panel and Assign licenses): what a member is called,
- * a license Core lists with its seats, why a seat change failed, and what "Add seats ↗" needs.
+ * a license Core lists with its seats, why a seat change failed, and what "Add licenses ↗" needs.
  */
 
 import { ArrowUpRightIcon, CircleCheckIcon, CreditCardIcon, TriangleAlertIcon } from "lucide-react";
@@ -173,7 +173,7 @@ export function isHeldLicense(card: JoinedLicense): card is HeldLicense {
 }
 
 /**
- * Why a seat change failed. A license that changed under the person (every seat taken, or gone) is "Seats changed
+ * Why a seat change failed. A license that changed under the person (every seat taken, or gone) is "Licenses changed
  * while you were choosing. Nothing was assigned." because the screen has already read the counts again; anything
  * else is the server's own words. Neutral, not amber: amber on these pages is for payments. Nothing when there is no error.
  */
@@ -184,17 +184,17 @@ export function SeatErrorNotice({ error }: { error: unknown }) {
 }
 
 /**
- * What "Add seats ↗" needs on the Members screens (the member panel and Assign licenses): the same ingredients as every
+ * What "Add licenses ↗" needs on the Members screens (the member panel and Assign licenses): the same ingredients as every
  * other ↗ button's `useHostedAction`, so it is the same way out (the tab opened in the click when billing lists
  * `returns: false`, the link when the browser blocked it, refusals in words through `HostedFeedback`). The workspace
  * `api` and the scope come from the screen itself.
  */
 export interface AddSeatsSource {
   /**
-   * Billing's licenses (`status.licenses`), where the viewer is offered billing. This is what decides "Add seats ↗":
+   * Billing's licenses (`status.licenses`), where the viewer is offered billing. This is what decides "Add licenses ↗":
    * Core shows a billing button only where billing lists the action, so a license offers it only when its entry
    * here lists `add_seats`. Without it (not offered billing, still loading, or it failed) no license offers it,
-   * and the sentences drop their "add seats" half.
+   * and the sentences drop their "add licenses" half.
    */
   billing?: readonly LicenseBilling[] | null;
   /** The billing client, for the `add_seats` session. */
@@ -204,7 +204,7 @@ export interface AddSeatsSource {
 }
 
 /**
- * The `add_seats` action billing lists for the license, or null: the Members screens offer "Add seats ↗" only where
+ * The `add_seats` action billing lists for the license, or null: the Members screens offer "Add licenses ↗" only where
  * it is not null, and fail closed where billing's list is absent.
  */
 export function addSeatsAction(source: Pick<AddSeatsSource, "billing">, card: Pick<JoinedLicense, "licenseId">): BillingAction | null {

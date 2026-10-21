@@ -139,7 +139,7 @@ export function TestModeBanner({ testMode }: { testMode: Pick<TestMode, "cardNum
 }
 
 /**
- * The line above the cards: "2 licenses · $295 a month in total", from billing's own total of the licenses it
+ * The line above the cards: "2 products · $295 a month in total", from billing's own total of the licenses it
  * will charge again. Where billing sends none (the licenses don't share a currency, a recurrence and a tax
  * treatment) there is no line: Core adds nothing up.
  */

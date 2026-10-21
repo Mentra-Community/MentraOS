@@ -117,21 +117,21 @@ describe("taxNote", () => {
 });
 
 describe("priceLine", () => {
-  test("a workspace pays per seat, a person doesn't", () => {
-    expect(priceLine(perSeat(1500), "workspace", "en-US")).toBe("$15 per seat a month");
+  test("a workspace pays per user, a person doesn't", () => {
+    expect(priceLine(perSeat(1500), "workspace", "en-US")).toBe("$15 per user a month");
     expect(priceLine(perSeat(2900), "person", "en-US")).toBe("$29 a month");
   });
 
   test("a longer recurrence reads as 'every 3 months'", () => {
     const quarterly: Price = { scheme: "per_seat", unit: usd(2900), recurrence: { interval: "month", count: 3 } };
-    expect(priceLine(quarterly, "workspace", "en-US")).toBe("$29 per seat every 3 months");
+    expect(priceLine(quarterly, "workspace", "en-US")).toBe("$29 per user every 3 months");
     expect(priceLine(quarterly, "person", "en-US")).toBe("$29 every 3 months");
   });
 
   test("an unknown scheme shows billing's own label", () => {
-    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per seat a month" };
-    expect(priceLine(tiered, "workspace", "en-US")).toBe("From $10 per seat a month");
-    expect(priceLine(tiered, "person", "en-US")).toBe("From $10 per seat a month");
+    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user a month" };
+    expect(priceLine(tiered, "workspace", "en-US")).toBe("From $10 per user a month");
+    expect(priceLine(tiered, "person", "en-US")).toBe("From $10 per user a month");
   });
 });
 
@@ -168,13 +168,13 @@ describe("costFact", () => {
   });
 
   test("an unknown scheme is billing's label with no foot, whatever its total", () => {
-    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per seat a month" };
-    expect(costFact(license({ price: tiered, total: null }), "en-US")).toEqual({ value: "From $10 per seat a month", foot: null });
-    expect(costFact(license({ price: tiered, total: usd(100) }), "en-US")).toEqual({ value: "From $10 per seat a month", foot: null });
+    const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user a month" };
+    expect(costFact(license({ price: tiered, total: null }), "en-US")).toEqual({ value: "From $10 per user a month", foot: null });
+    expect(costFact(license({ price: tiered, total: usd(100) }), "en-US")).toEqual({ value: "From $10 per user a month", foot: null });
   });
 
-  test("a per-seat price with no total from billing shows the unit price, and adds nothing up", () => {
-    expect(costFact(license({ total: null }), "en-US")).toEqual({ value: "$29 per seat a month", foot: "before tax" });
+  test("a per-user price with no total from billing shows the unit price, and adds nothing up", () => {
+    expect(costFact(license({ total: null }), "en-US")).toEqual({ value: "$29 per user a month", foot: "before tax" });
   });
 });
 
@@ -187,19 +187,19 @@ describe("totalSummary", () => {
     ...overrides,
   });
 
-  test("reads '2 licenses · $295 a month in total'", () => {
-    expect(totalSummary(total(), "en-US")).toEqual({ lead: "2 licenses", rest: "$295 a month in total" });
+  test("reads '2 products · $295 a month in total'", () => {
+    expect(totalSummary(total(), "en-US")).toEqual({ lead: "2 products", rest: "$295 a month in total" });
   });
 
-  test("one license is singular, and a longer recurrence is spelled out", () => {
-    expect(totalSummary(total({ licenseCount: 1 }), "en-US").lead).toBe("1 license");
+  test("one product is singular, and a longer recurrence is spelled out", () => {
+    expect(totalSummary(total({ licenseCount: 1 }), "en-US").lead).toBe("1 product");
     expect(totalSummary(total({ recurrence: { interval: "year", count: 1 } }), "en-US").rest).toBe("$295 a year in total");
   });
 });
 
 describe("holderNames and nameList", () => {
   test("lists up to three, then the first two and a count", () => {
-    expect(holderNames([])).toBe("Nobody has a seat yet");
+    expect(holderNames([])).toBe("No one has a license yet");
     expect(holderNames(["Dana Reyes"])).toBe("Dana Reyes");
     expect(holderNames(["Dana Reyes", "Priya Natarajan"])).toBe("Dana Reyes and Priya Natarajan");
     expect(holderNames(["A", "B", "C"])).toBe("A, B and C");
@@ -218,8 +218,8 @@ describe("holderNames and nameList", () => {
 
 describe("fitNote", () => {
   test("says how many fit and what to do about the rest", () => {
-    expect(fitNote({ fit: 3, needed: 4, canAddSeats: true })).toBe("3 of 4 fit: remove one or add seats.");
-    expect(fitNote({ fit: 2, needed: 5, canAddSeats: true })).toBe("2 of 5 fit: remove 3 or add seats.");
+    expect(fitNote({ fit: 3, needed: 4, canAddSeats: true })).toBe("3 of 4 fit: remove one or add licenses.");
+    expect(fitNote({ fit: 2, needed: 5, canAddSeats: true })).toBe("2 of 5 fit: remove 3 or add licenses.");
   });
 
   test("drops the 'add seats' half where billing lists no add_seats", () => {

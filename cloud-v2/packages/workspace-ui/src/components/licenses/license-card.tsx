@@ -6,7 +6,7 @@
  * It has three views of the same license:
  * - `workspace`: a manager's. Core's seats and, where the viewer is offered billing, billing's dates and cost.
  *   Without billing's entry the card shows only its Seats: no money, no actions.
- * - `member`: a person who holds a seat. "You have a seat", since when, and where it works: no totals, no money,
+ * - `member`: a person who holds a seat. "Assigned to you", since when, and where it works: no totals, no money,
  *   nothing about anyone else.
  * - `person`: a personal license. Billing's facts and actions, and no seats.
  *
@@ -330,7 +330,7 @@ export function LicenseCard({
   const badge = badgeFor(card, view, locale);
   const { columns, facts } = factsFor(card, view, locale, workspaceName, clock);
   const ring = card.problem === "past_due" ? "warn" : highlight ? "highlight" : null;
-  // Add seats from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
+  // Add licenses from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
   const fromPicker = hosted.surface === PICKER;
   const addSeatsFrom = (surface?: string): AddSeatsControl | null =>
     addSeatsAction

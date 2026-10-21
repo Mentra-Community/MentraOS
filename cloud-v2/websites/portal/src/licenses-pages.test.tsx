@@ -136,14 +136,14 @@ describe("the Licenses page", () => {
   test("/w/<id>/licenses renders the view: the cards, the total and the header actions, with billing's data", async () => {
     const { core } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(find("h1").textContent).toBe("Licenses");
-    expect(has("What Acme Field Services pays for, and who has each seat.")).toBe(true);
+    expect(has("What Acme Field Services pays for, and who has each license.")).toBe(true);
     expect(has("Fleet")).toBe(true);
-    expect(has("2 licenses")).toBe(true);
+    expect(has("2 products")).toBe(true);
     expect(has("$295 a month in total")).toBe(true);
     // The header actions are in the title bar, beside the title.
     const header = find("header");
     expect(header.textContent).toContain("Billing & invoices");
-    expect(header.textContent).toContain("Buy a license");
+    expect(header.textContent).toContain("Buy a product");
     // Billing was asked in the portal's locale, for this workspace.
     const asked = billingRequests(core);
     expect(asked.map(request => request.path)).toEqual(expect.arrayContaining([`/api/portal/billing/workspaces/${ACME}/catalog`, `/api/portal/billing/workspaces/${ACME}/status`]));
@@ -170,10 +170,10 @@ describe("the Licenses page", () => {
   test("an Owner offered billing sees the money, and may buy; the page is the view, not the old panel", async () => {
     await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(has("$145")).toBe(true);
-    expect(buttonNamed(/^Buy a license$/)).toBeDefined();
+    expect(buttonNamed(/^Buy a product$/)).toBeDefined();
     expect(buttonNamed(/Billing & invoices/)).toBeDefined();
-    // Core's seat roster is the new card's: the folded strip of holders.
-    expect(has("Seat holders")).toBe(true);
+    // Core's roster of who holds a license is the new card's: the folded strip of people.
+    expect(has("Assigned to")).toBe(true);
   });
 
   test("a non-staff Admin on staging (licenses, no billing) gets the Licenses item and cards without money", async () => {
@@ -181,12 +181,12 @@ describe("the Licenses page", () => {
     const { core } = await open(`/w/${ACME}/licenses`, scenario, { modules: CATALOG_ONLY, ready: "Mentra Call Unlimited" });
     expect(hrefs()).toContain(`/w/${ACME}/licenses`);
     expect(find("h1").textContent).toBe("Licenses");
-    // Names and seats, and none of billing's: no money, no dates, no actions, no buying.
+    // Names and licenses, and none of billing's: no money, no dates, no actions, no buying.
     expect(has("Fleet")).toBe(true);
     expect(text()).not.toMatch(/\$\d/);
     expect(buttonNamed(/Billing & invoices/)).toBeUndefined();
-    expect(buttonNamed(/Buy a license/)).toBeUndefined();
-    expect(buttonNamed(/Add seats/)).toBeUndefined();
+    expect(buttonNamed(/Buy a product/)).toBeUndefined();
+    expect(buttonNamed(/Add licenses/)).toBeUndefined();
     // Only the catalog, which anyone may read, was asked of billing: never its status.
     expect(billingRequests(core).map(request => request.path)).toEqual([`/api/portal/billing/workspaces/${ACME}/catalog`]);
     // And the account menu, once opened, has no Billing page for them (it is offered by `billing`, not by the catalog).
@@ -217,17 +217,17 @@ describe("the Licenses page", () => {
     expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(true);
   });
 
-  test("a Member sees the licenses they hold a seat in, and nothing of billing's", async () => {
+  test("a Member sees the products they hold a license for, and nothing of billing's", async () => {
     const scenario: Scenario = {
       ...SCENARIOS.twoActive(),
       role: "member",
       licenses: [CALL_LICENSE].map(license => ({ ...license, seats: license.seats!.slice(0, 1), seatsUsed: 3 })),
       workspaceCatalog: workspaceCatalog(false),
     };
-    const { core } = await open(`/w/${ACME}/licenses`, scenario, { modules: BILLING_ON, ready: "You have a seat" });
+    const { core } = await open(`/w/${ACME}/licenses`, scenario, { modules: BILLING_ON, ready: "Assigned to you" });
     expect(has("Mentra Call Unlimited")).toBe(true);
     expect(has("What Acme Field Services pays for")).toBe(false);
-    expect(has("Your seats in Acme Field Services.")).toBe(true);
+    expect(has("Your licenses in Acme Field Services.")).toBe(true);
     expect(text()).not.toMatch(/\$\d/);
     expect(buttonNamed(/Billing & invoices/)).toBeUndefined();
     expect(billingRequests(core).some(request => request.path.endsWith("/status"))).toBe(false);
@@ -241,8 +241,8 @@ describe("the Licenses page", () => {
 describe("coming back from checkout", () => {
   const bought = SCENARIOS.purchased;
 
-  test("?purchase=pur_1 reaches the view: billing is asked about it and the banner says the seats are ready", async () => {
-    const { core } = await open(`/w/${ACME}/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet seats are ready" });
+  test("?purchase=pur_1 reaches the view: billing is asked about it and the banner says the licenses are ready", async () => {
+    const { core } = await open(`/w/${ACME}/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
     const statuses = billingRequests(core).filter(request => request.path.endsWith("/status"));
     expect(statuses.length).toBeGreaterThan(0);
     for (const request of statuses) expect(request.query.get("purchase")).toBe("pur_1");
@@ -251,14 +251,14 @@ describe("coming back from checkout", () => {
   });
 
   test("dismissing the banner takes ?purchase= out of the address, and billing is asked without it from then on", async () => {
-    const { core } = await open(`/w/${ACME}/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet seats are ready" });
+    const { core } = await open(`/w/${ACME}/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
     const before = window.history.length;
     await click(buttonNamed(/^Dismiss$/)!);
     expect(search()).toBe("");
     expect(window.location.pathname).toBe(`/w/${ACME}/licenses`);
     // The address was changed in place: Back does not return to the banner.
     expect(window.history.length).toBe(before);
-    expect(has("Your 10 Fleet seats are ready")).toBe(false);
+    expect(has("Your 10 Fleet licenses are ready")).toBe(false);
     await until(() => billingRequests(core).filter(request => request.path.endsWith("/status")).some(request => request.query.get("purchase") === null), "a status read without the purchase");
     // The cards stayed.
     expect(has("Mentra Call Unlimited")).toBe(true);
@@ -271,7 +271,7 @@ describe("the personal Billing page", () => {
   test("/account/billing renders the personal view for someone offered billing", async () => {
     const { core } = await open("/account/billing", SCENARIOS.personalActive(), { ready: "Mentra Call Unlimited" });
     expect(find("h1").textContent).toBe("Billing");
-    expect(has("Licenses you buy for yourself, apart from any workspace's.")).toBe(true);
+    expect(has("Products you buy for yourself, apart from any workspace's.")).toBe(true);
     expect(has("$29")).toBe(true);
     expect(find("header").textContent).toContain("Billing & invoices");
     // Billing's account routes, not a workspace's.
@@ -376,21 +376,21 @@ describe("Members with licenses", () => {
     expect(has("Hannah Kim")).toBe(true);
   });
 
-  test("Add seats ↗ is offered only where billing lists add_seats, and asks billing for that session", async () => {
+  test("Add licenses ↗ is offered only where billing lists add_seats, and asks billing for that session", async () => {
     const { core } = await open(`/w/${ACME}/members?member=wm_luis`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     const out = ways();
-    await until(() => buttonNamed(/Add seats/) !== undefined, "Add seats in the panel");
-    // Fleet is full; Call and Example Add-on have free seats and no button.
-    expect(findAll("button, a").filter(element => /Add seats/.test(element.textContent ?? ""))).toHaveLength(1);
-    await click(buttonNamed(/Add seats/)!);
+    await until(() => buttonNamed(/Add licenses/) !== undefined, "Add licenses in the panel");
+    // Fleet is full; Call and Example Add-on have licenses available and no button.
+    expect(findAll("button, a").filter(element => /Add licenses/.test(element.textContent ?? ""))).toHaveLength(1);
+    await click(buttonNamed(/Add licenses/)!);
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);
     const posted = core.requests.find(request => request.method === "POST" && request.path.endsWith("/session"))!;
     expect(posted.body).toEqual({ action: "add_seats", licenseId: "lic_fleet", locale: "en-US" });
   });
 
-  test("Add seats ↗ is a hosted action like any other: one billing lists with returns: false opens a tab in the click", async () => {
-    const seatsPage: BillingAction = { kind: "add_seats", fallbackLabel: "Add seats", returns: false };
+  test("Add licenses ↗ is a hosted action like any other: one billing lists with returns: false opens a tab in the click", async () => {
+    const seatsPage: BillingAction = { kind: "add_seats", fallbackLabel: "Add licenses", returns: false };
     const scenario: Scenario = {
       ...SCENARIOS.threeActive(),
       workspaceStatus: statusOf([CALL_BILLING, { ...FLEET_BILLING, actions: [seatsPage] }, EXAMPLE_BILLING]),
@@ -398,8 +398,8 @@ describe("Members with licenses", () => {
     };
     await open(`/w/${ACME}/members?member=wm_luis`, scenario, { ready: "Hannah Kim" });
     const out = ways();
-    await until(() => buttonNamed(/Add seats/) !== undefined, "Add seats in the panel");
-    await click(buttonNamed(/Add seats/)!);
+    await until(() => buttonNamed(/Add licenses/) !== undefined, "Add licenses in the panel");
+    await click(buttonNamed(/Add licenses/)!);
     // The tab was opened in the click itself, before billing answered; this tab stays.
     expect(out.events[0]).toBe("open");
     await until(() => out.events.includes(`replace:${HOSTED.seats}`), "the tab to be sent on");
@@ -407,12 +407,12 @@ describe("Members with licenses", () => {
     expect(out.tab.opener).toBeNull();
   });
 
-  test("a refused Add seats ↗ says so in the panel, in the neutral notice, and goes nowhere", async () => {
+  test("a refused Add licenses ↗ says so in the panel, in the neutral notice, and goes nowhere", async () => {
     const scenario: Scenario = { ...SCENARIOS.threeActive(), hosted: () => ({ url: "javascript:alert(1)" }) };
     await open(`/w/${ACME}/members?member=wm_luis`, scenario, { ready: "Hannah Kim" });
     const out = ways();
-    await until(() => buttonNamed(/Add seats/) !== undefined, "Add seats in the panel");
-    await click(buttonNamed(/Add seats/)!);
+    await until(() => buttonNamed(/Add licenses/) !== undefined, "Add licenses in the panel");
+    await click(buttonNamed(/Add licenses/)!);
     await until(() => has("Billing couldn't do that. Try again."), "the refusal");
     const alerts = findAll("dialog [role='alert']");
     expect(alerts.map(alert => alert.textContent)).toEqual(["Billing couldn't do that. Try again."]);
@@ -421,32 +421,32 @@ describe("Members with licenses", () => {
     expect(out.openWindow).not.toHaveBeenCalled();
   });
 
-  test("Add seats ↗ in the Assign licenses dialog goes the same way", async () => {
+  test("Add licenses ↗ in the Assign licenses dialog goes the same way", async () => {
     const { core } = await open(`/w/${ACME}/members`, { ...SCENARIOS.threeActive(), hosted: () => ({ url: HOSTED.seats }) }, { ready: "Call Unlimited" });
     const out = ways();
     await click(find("input[aria-label='Select Luis Ortega']"));
     await click(find("input[aria-label='Select Amara Okafor']"));
     await click(buttonNamed(/^Assign licenses$/)!);
-    await until(() => findAll("dialog button").some(button => /Add seats/.test(button.textContent ?? "")), "Add seats in the dialog");
-    await click(findAll("dialog button").find(button => /Add seats/.test(button.textContent ?? ""))!);
+    await until(() => findAll("dialog button").some(button => /Add licenses/.test(button.textContent ?? "")), "Add licenses in the dialog");
+    await click(findAll("dialog button").find(button => /Add licenses/.test(button.textContent ?? ""))!);
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(out.assign.mock.calls).toEqual([[HOSTED.seats]]);
     const posted = core.requests.find(request => request.method === "POST" && request.path.endsWith("/session"))!;
     expect(posted.body).toEqual({ action: "add_seats", licenseId: "lic_fleet", locale: "en-US" });
   });
 
-  test("a license billing lists no add_seats for offers no Add seats ↗ (a failed payment's)", async () => {
+  test("a license billing lists no add_seats for offers no Add licenses ↗ (a failed payment's)", async () => {
     const scenario: Scenario = { ...SCENARIOS.paymentFailed() };
     await open(`/w/${ACME}/members?member=wm_luis`, scenario, { ready: "Hannah Kim" });
     await until(() => (panel()?.textContent ?? "").includes("Fleet"), "the panel's Licenses section");
-    expect(buttonNamed(/Add seats/)).toBeUndefined();
+    expect(buttonNamed(/Add licenses/)).toBeUndefined();
   });
 
-  test("without billing (a non-staff Admin) the list still has its chips, and no Add seats and no status request", async () => {
+  test("without billing (a non-staff Admin) the list still has its chips, and no Add licenses and no status request", async () => {
     const scenario: Scenario = { ...SCENARIOS.threeActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
     const { core } = await open(`/w/${ACME}/members?member=wm_luis`, scenario, { modules: CATALOG_ONLY, ready: "Hannah Kim" });
     await until(() => (panel()?.textContent ?? "").includes("Mentra Call Unlimited"), "the panel's Licenses section");
-    expect(buttonNamed(/Add seats/)).toBeUndefined();
+    expect(buttonNamed(/Add licenses/)).toBeUndefined();
     expect(billingRequests(core).some(request => request.path.endsWith("/status"))).toBe(false);
   });
 
@@ -581,7 +581,7 @@ describe("leaving for a hosted page", () => {
     const { core } = await open(`/w/${ACME}/licenses`, answering(HOSTED.checkout, SCENARIOS.catalog()), { ready: "Mentra Call Unlimited" });
     const out = ways();
     await click(findAll<HTMLElement>("button").find(button => button.textContent?.trim() === "Buy")!);
-    await until(() => has("Continue to payment"), "the seats step");
+    await until(() => has("Continue to payment"), "the licenses step");
     await click(buttonNamed(/Continue to payment/)!);
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);

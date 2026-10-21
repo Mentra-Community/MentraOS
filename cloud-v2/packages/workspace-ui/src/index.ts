@@ -200,7 +200,7 @@ export {
   PurchaseBanner,
   TestModeBanner,
 } from "./components/licenses/banners";
-// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy a license" dialog, and the
+// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy a product" dialog, and the
 // seats step. Each takes billing's client and the host's `navigateOut`, and sends the browser to a hosted page.
 export {
   BuyDialog,
@@ -223,7 +223,7 @@ export type { MembersLicenses } from "./components/members-panel";
 
 // The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each
 // needs a `QueryClientProvider` above it, the billing client, and the host's `NavigateOut`; the portal wires them to its
-// routes, its `me` and `?purchase=`. Each has a header-actions component ("Billing & invoices ↗", "Buy a license") for the
+// routes, its `me` and `?purchase=`. Each has a header-actions component ("Billing & invoices ↗", "Buy a product") for the
 // host to put in its title bar; it reads under the view's keys, so nothing is requested twice.
 export {
   WorkspaceLicensesHeaderActions,

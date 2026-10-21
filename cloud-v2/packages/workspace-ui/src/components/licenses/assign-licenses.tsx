@@ -3,8 +3,8 @@
  *
  * Each row says what fits, checked against the seats free before anything is confirmed (`fitFor` and
  * `licenseStrings.fit.line`, which hold the spec's five sentences). A row that fits starts checked; one that
- * doesn't ("2 of 3 fit: remove one or add seats.", "All 10 seats are in use.", "Everyone you chose has one.") can't
- * be checked, and where adding seats would help it has "Add seats ↗". The footer counts the seats per product and
+ * doesn't ("2 of 3 fit: remove one or add licenses.", "All 10 seats are in use.", "Everyone you chose has one.") can't
+ * be checked, and where adding seats would help it has "Add licenses ↗". The footer counts the seats per product and
  * "Assign <n> seats" sends every checked row in one `assignSeats` request, which Core assigns all or nothing. When
  * seats changed meanwhile (a 409) nothing was assigned: the counts are read again and the dialog says so, and a row
  * that no longer fits unchecks itself.
@@ -42,7 +42,7 @@ export interface AssignLicensesDialogProps {
   people: readonly MemberView[];
   /** The licenses the workspace holds, in the order to show them. */
   cards: readonly HeldLicense[];
-  /** What "Add seats ↗" needs: it is offered for a license only where `addSeats.billing` lists `add_seats` for it. */
+  /** What "Add licenses ↗" needs: it is offered for a license only where `addSeats.billing` lists `add_seats` for it. */
   addSeats: AddSeatsSource;
   /** Every checked seat was assigned. */
   onAssigned(): void;
@@ -143,7 +143,7 @@ function AssignBody({
   );
 }
 
-/** One license: a checkbox that spans the row, its icon and name, what fits, and Add seats where it would help. */
+/** One license: a checkbox that spans the row, its icon and name, what fits, and Add licenses where it would help. */
 function AssignRow({
   card,
   note,

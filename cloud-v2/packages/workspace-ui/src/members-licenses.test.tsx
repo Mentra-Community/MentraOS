@@ -502,26 +502,26 @@ describe("Assign licenses", () => {
     await mount();
     await choose("Luis Ortega", "Amara Okafor");
     await openAssign();
-    expect(assignRow("Mentra Call Unlimited").textContent).toContain("2 of 5 seats free: enough for both.");
-    expect(assignRow("Example Add-on").textContent).toContain("Amara Okafor has one. 1 of 3 seats free, for Luis Ortega.");
+    expect(assignRow("Mentra Call Unlimited").textContent).toContain("2 of 5 licenses available: enough for both.");
+    expect(assignRow("Example Add-on").textContent).toContain("Amara Okafor has one. 1 of 3 licenses available, for Luis Ortega.");
     expect(assignRow("Both Add-on").textContent).toContain("Everyone you chose has one.");
-    expect(assignRow("Fleet").textContent).toContain("All 10 seats are in use.");
+    expect(assignRow("Fleet").textContent).toContain("All 10 licenses are assigned.");
   });
 
-  test("says '2 of 3 fit: remove one or add seats.' when too many are chosen, with Add seats where billing offers it", async () => {
+  test("says '2 of 3 fit: remove one or add licenses.' when too many are chosen, with Add licenses where billing offers it", async () => {
     await mount({ billing: BILLING });
     await choose("Luis Ortega", "Amara Okafor", "Zed Young");
     await openAssign();
     const call = assignRow("Mentra Call Unlimited");
-    expect(call.textContent).toContain("2 of 3 fit: remove one or add seats.");
+    expect(call.textContent).toContain("2 of 3 fit: remove one or add licenses.");
     expect(rowCheckbox(call).disabled).toBe(true);
     expect(rowCheckbox(call).checked).toBe(false);
-    expect(byText("Add seats", "button", call)).toBeTruthy();
+    expect(byText("Add licenses", "button", call)).toBeTruthy();
     // Four need a seat against two free: "remove 2".
     await click(find("button[aria-label='Close']", assignDialog()));
     await choose("Sam Carter");
     await openAssign();
-    expect(assignRow("Mentra Call Unlimited").textContent).toContain("2 of 4 fit: remove 2 or add seats.");
+    expect(assignRow("Mentra Call Unlimited").textContent).toContain("2 of 4 fit: remove 2 or add licenses.");
   });
 
   test("the sentences drop 'add seats' where billing lists no add_seats for the license", async () => {
@@ -534,13 +534,13 @@ describe("Assign licenses", () => {
     await openAssign();
     const call = assignRow("Mentra Call Unlimited");
     expect(call.textContent).toContain("2 of 3 fit: remove one.");
-    expect(call.textContent).not.toContain("add seats");
-    expect(findAll("button", call).some((button) => button.textContent === "Add seats")).toBe(false);
+    expect(call.textContent).not.toContain("add licenses");
+    expect(findAll("button", call).some((button) => button.textContent === "Add licenses")).toBe(false);
     // Fleet's billing lists it, so its row keeps the button.
-    expect(byText("Add seats", "button", assignRow("Fleet"))).toBeTruthy();
+    expect(byText("Add licenses", "button", assignRow("Fleet"))).toBeTruthy();
   });
 
-  test("fails closed: without billing's list nothing offers Add seats, however the host could start it", async () => {
+  test("fails closed: without billing's list nothing offers Add licenses, however the host could start it", async () => {
     const host = hostRig();
     // Not offered billing, billing still loading or failed, and billing listing nothing: none of them offers it.
     for (const billing of [undefined, null, [] as LicenseBilling[]]) {
@@ -549,15 +549,15 @@ describe("Assign licenses", () => {
       await openAssign();
       const call = assignRow("Mentra Call Unlimited");
       expect(call.textContent).toContain("2 of 3 fit: remove one.");
-      expect(call.textContent).not.toContain("add seats");
-      expect(assignRow("Fleet").textContent).toContain("All 10 seats are in use.");
-      expect(findAll("button", assignDialog()).some((button) => button.textContent === "Add seats")).toBe(false);
+      expect(call.textContent).not.toContain("add licenses");
+      expect(assignRow("Fleet").textContent).toContain("All 10 licenses are assigned.");
+      expect(findAll("button", assignDialog()).some((button) => button.textContent === "Add licenses")).toBe(false);
       await cleanup();
 
       await mount({ host, billing });
       await openPanel("Luis Ortega");
-      expect(rowText("Fleet")).toContain("All 10 seats are in use");
-      expect(findAll("button", panelEl()).some((button) => button.textContent === "Add seats")).toBe(false);
+      expect(rowText("Fleet")).toContain("All 10 licenses are assigned");
+      expect(findAll("button", panelEl()).some((button) => button.textContent === "Add licenses")).toBe(false);
       await cleanup();
     }
     expect([host.session.mock.calls.length, host.openTab.mock.calls.length, host.leave.mock.calls.length]).toEqual([0, 0, 0]);
@@ -576,18 +576,18 @@ describe("Assign licenses", () => {
       expect(rowCheckbox(assignRow(name)).disabled).toBe(true);
     }
     // Everyone already holds the Both add-on: adding seats wouldn't help, so it has no button.
-    expect(findAll("button", assignRow("Both Add-on")).some((button) => button.textContent === "Add seats")).toBe(false);
-    expect(byText("Add seats", "button", assignRow("Fleet"))).toBeTruthy();
+    expect(findAll("button", assignRow("Both Add-on")).some((button) => button.textContent === "Add licenses")).toBe(false);
+    expect(byText("Add licenses", "button", assignRow("Fleet"))).toBeTruthy();
   });
 
-  describe("Add seats ↗ here is the same way out as every other ↗ button", () => {
+  describe("Add licenses ↗ here is the same way out as every other ↗ button", () => {
     test("it asks billing for this license's add_seats session, shows it pending, and leaves this tab for the page", async () => {
       const hold = deferred<{ url: string }>();
       const host = hostRig(() => hold.promise);
       await mount({ host, billing: BILLING });
       await choose("Luis Ortega");
       await openAssign();
-      const button = byText("Add seats", "button", assignRow("Fleet"));
+      const button = byText("Add licenses", "button", assignRow("Fleet"));
       await click(button);
       expect(host.session.mock.calls).toEqual([[workspaceScope(WORKSPACE_ID), { action: "add_seats", licenseId: "lic_fleet" }]]);
       expect(button.getAttribute("aria-busy")).toBe("true");
@@ -607,7 +607,7 @@ describe("Assign licenses", () => {
       await mount({ host, billing: BILLING });
       await choose("Luis Ortega");
       await openAssign();
-      const button = byText("Add seats", "button", assignRow("Fleet"));
+      const button = byText("Add licenses", "button", assignRow("Fleet"));
       await click(button);
       await flush();
       expect(assignDialog().textContent).toContain("You don't have permission to manage billing here.");
@@ -622,7 +622,7 @@ describe("Assign licenses", () => {
       await mount({ host, billing: NEW_TAB_BILLING });
       await choose("Luis Ortega");
       await openAssign();
-      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await click(byText("Add licenses", "button", assignRow("Fleet")));
       // The tab was opened before billing was asked: a browser allows that only while the click is being handled.
       expect(host.events).toEqual(["openTab", "session:add_seats"]);
       await act(async () => hold.resolve({ url: PAGE }));
@@ -638,7 +638,7 @@ describe("Assign licenses", () => {
       await mount({ host, billing: NEW_TAB_BILLING });
       await choose("Luis Ortega");
       await openAssign();
-      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await click(byText("Add licenses", "button", assignRow("Fleet")));
       await flush();
       expect(host.events).toEqual(["openTab", "session:add_seats", "close"]);
       expect(assignDialog().textContent).toContain("You don't have permission to manage billing here.");
@@ -650,7 +650,7 @@ describe("Assign licenses", () => {
       await mount({ host, billing: NEW_TAB_BILLING });
       await choose("Luis Ortega");
       await openAssign();
-      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await click(byText("Add licenses", "button", assignRow("Fleet")));
       await flush();
       const link = findAll<HTMLAnchorElement>("a[data-hosted-page]", assignDialog())[0]!;
       expect(link.textContent).toContain("Open the payment page");
@@ -664,7 +664,7 @@ describe("Assign licenses", () => {
         const { host, calls } = await mountWith(NEW_TAB_BILLING);
         await choose("Luis Ortega");
         await openAssign();
-        await click(byText("Add seats", "button", assignRow("Fleet")));
+        await click(byText("Add licenses", "button", assignRow("Fleet")));
         await flush();
         expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
         await click(find("button[aria-label='Close']", assignDialog()));
@@ -679,7 +679,7 @@ describe("Assign licenses", () => {
         const { host, calls } = await mountWith(NEW_TAB_BILLING, hostRig(() => hold.promise));
         await choose("Luis Ortega");
         await openAssign();
-        await click(byText("Add seats", "button", assignRow("Fleet")));
+        await click(byText("Add licenses", "button", assignRow("Fleet")));
         await click(find("button[aria-label='Close']", assignDialog()));
         expect(assignIsOpen()).toBe(false);
         await act(async () => hold.resolve({ url: PAGE }));
@@ -698,7 +698,7 @@ describe("Assign licenses", () => {
           await choose("Luis Ortega");
           await openAssign();
           added.mockClear();
-          await click(byText("Add seats", "button", assignRow("Fleet")));
+          await click(byText("Add licenses", "button", assignRow("Fleet")));
           await flush();
           const listener = added.mock.calls.find(([type]) => type === "focus")?.[1];
           expect(listener).toBeDefined();
@@ -722,13 +722,13 @@ describe("Assign licenses", () => {
       await mount({ host, billing: BILLING });
       await choose("Luis Ortega");
       await openAssign();
-      await click(byText("Add seats", "button", assignRow("Fleet")));
+      await click(byText("Add licenses", "button", assignRow("Fleet")));
       await flush();
       expect(host.purchase).not.toHaveBeenCalled();
     });
   });
 
-  test("the footer counts seats per product and 'Assign 3 seats' makes one request with three pairs", async () => {
+  test("the footer counts licenses per product and 'Assign 3 licenses' makes one request with three pairs", async () => {
     const { world, writes, client, api } = await mount();
     // Billing's status for the workspace is cached by a page that reads it: assigning must mark it stale.
     const statusKey = billingKeys.status({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
@@ -739,7 +739,7 @@ describe("Assign licenses", () => {
     await choose("Luis Ortega", "Amara Okafor");
     await openAssign();
     expect(footerText()).toBe("2 Call Unlimited · 1 Example Add-on");
-    const confirm = byText("Assign 3 seats", "button", assignDialog());
+    const confirm = byText("Assign 3 licenses", "button", assignDialog());
     expect(confirm.hasAttribute("disabled")).toBe(false);
     await click(confirm);
     await until(() => writes().length > 0, "the assignment");
@@ -767,7 +767,7 @@ describe("Assign licenses", () => {
     await openAssign();
     await click(rowCheckbox(assignRow("Example Add-on")));
     expect(footerText()).toBe("2 Call Unlimited");
-    await click(byText("Assign 2 seats", "button", assignDialog()));
+    await click(byText("Assign 2 licenses", "button", assignDialog()));
     await until(() => writes().length === 1, "the assignment");
     const pairs = (writes()[0]!.body as { assignments: { licenseId: string }[] }).assignments;
     expect(pairs.map((pair) => pair.licenseId)).toEqual(["lic_call", "lic_call"]);
@@ -788,25 +788,25 @@ describe("Assign licenses", () => {
     const { world, writes } = await mount();
     await choose("Luis Ortega", "Amara Okafor");
     await openAssign();
-    expect(assignRow("Mentra Call Unlimited").textContent).toContain("2 of 5 seats free: enough for both.");
+    expect(assignRow("Mentra Call Unlimited").textContent).toContain("2 of 5 licenses available: enough for both.");
     // Another admin takes the two free seats while the dialog is open.
     giveSeat(world, "lic_call", "wm_zed");
     giveSeat(world, "lic_call", "wm_grace");
     const before = structuredClone(world.licenses);
-    await click(byText("Assign 3 seats", "button", assignDialog()));
-    await until(() => assignDialog().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
+    await click(byText("Assign 3 licenses", "button", assignDialog()));
+    await until(() => assignDialog().textContent!.includes("Licenses changed while you were choosing."), "the conflict notice");
 
-    expect(assignDialog().textContent).toContain("Seats changed while you were choosing. Nothing was assigned. Check the counts and try again.");
+    expect(assignDialog().textContent).toContain("Licenses changed while you were choosing. Nothing was assigned. Check the counts and try again.");
     expect(findAll('[role="alert"]', assignDialog()).map(isNeutral)).toEqual([true]);
     expect(writes()).toHaveLength(1);
     expect(world.licenses).toEqual(before);
     // The new counts: Call is full now, and so can't be checked; Example still fits.
-    await until(() => assignRow("Mentra Call Unlimited").textContent!.includes("All 5 seats are in use."), "the new counts");
+    await until(() => assignRow("Mentra Call Unlimited").textContent!.includes("All 5 licenses are assigned."), "the new counts");
     expect(rowCheckbox(assignRow("Mentra Call Unlimited")).checked).toBe(false);
     expect(rowCheckbox(assignRow("Mentra Call Unlimited")).disabled).toBe(true);
     expect(footerText()).toBe("1 Example Add-on");
     // The dialog stays for another try; nothing was chosen for the list.
-    expect(byText("Assign 1 seat", "button", assignDialog())).toBeTruthy();
+    expect(byText("Assign 1 license", "button", assignDialog())).toBeTruthy();
   });
 
   test("Cancel and × close it without a request, and keep the selection", async () => {
@@ -834,15 +834,15 @@ describe("Assign licenses", () => {
     });
     expect(MAX_SEAT_ASSIGNMENTS).toBe(500);
     await openAssign();
-    const confirm = byText("Assign 504 seats", "button", assignDialog());
+    const confirm = byText("Assign 504 licenses", "button", assignDialog());
     expect(confirm.hasAttribute("disabled")).toBe(true);
-    const reason = byText("You can assign up to 500 seats at a time.", "p", assignDialog());
+    const reason = byText("You can assign up to 500 licenses at a time.", "p", assignDialog());
     expect(confirm.getAttribute("aria-describedby")).toBe(reason.id);
     // One fewer person is exactly 500 pairs: it is on, and the reason is gone.
     await click(find("button[aria-label='Close']", assignDialog()));
     await click(tick(many[0]!.email!));
     await openAssign();
-    expect(byText("Assign 500 seats", "button", assignDialog()).hasAttribute("disabled")).toBe(false);
+    expect(byText("Assign 500 licenses", "button", assignDialog()).hasAttribute("disabled")).toBe(false);
     expect(assignDialog().textContent).not.toContain("You can assign up to");
   });
 
@@ -1049,7 +1049,7 @@ describe("the member panel", () => {
       await until(() => findAll("tbody tr").every((row) => !row.textContent!.includes("max@acme.test")), "the row to go");
     });
 
-    test("removing a member frees their seats, so billing's status is marked stale", async () => {
+    test("removing a member frees their licenses, so billing's status is marked stale", async () => {
       const { client, writes } = await mount({ role: "admin" });
       const statusKey = billingKeys.status({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
       const catalogKey = billingKeys.catalog({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
@@ -1106,28 +1106,28 @@ describe("the member panel", () => {
 
   describe("Licenses", () => {
     const switches = () => findAll<HTMLInputElement>('input[role="switch"]', panelEl());
-    const switchFor = (product: string, name: string) => find<HTMLInputElement>(`input[role="switch"][aria-label="${product} seat for ${name}"]`, panelEl());
+    const switchFor = (product: string, name: string) => find<HTMLInputElement>(`input[role="switch"][aria-label="${product} license for ${name}"]`, panelEl());
     const rowFor = (product: string) => {
       const found = findAll("li", panelEl()).find((li) => li.textContent?.includes(product));
       if (!found) throw new Error(`no licenses row for ${product}`);
       return found;
     };
 
-    test("says what a switch does, and lists one row per license with the seats left", async () => {
+    test("says what a switch does, and lists one row per product with the licenses left", async () => {
       await mount();
       await openPanel("Luis Ortega");
       const panel = panelEl();
-      expect(panel.textContent).toContain("Turn one on to give Luis Ortega a seat. Changes apply right away.");
+      expect(panel.textContent).toContain("Turn one on to give Luis Ortega a license. Changes apply right away.");
       expect(findAll("li", panel).map((li) => li.querySelector("[data-slot='license-name']")?.textContent)).toEqual([
         "Mentra Call Unlimited",
         "Fleet",
         "Example Add-on",
         "Both Add-on",
       ]);
-      expect(rowFor("Mentra Call Unlimited").textContent).toContain("2 of 5 seats free");
-      expect(rowFor("Example Add-on").textContent).toContain("1 of 3 seats free");
+      expect(rowFor("Mentra Call Unlimited").textContent).toContain("2 of 5 licenses available");
+      expect(rowFor("Example Add-on").textContent).toContain("1 of 3 licenses available");
       // Luis holds the Both add-on: on, and with the seats left after his.
-      expect(rowFor("Both Add-on").textContent).toContain("Has a seat · 2 of 4 free");
+      expect(rowFor("Both Add-on").textContent).toContain("Has a license · 2 of 4 available");
       expect(switchFor("Both Add-on", "Luis Ortega").checked).toBe(true);
       expect(switchFor("Mentra Call Unlimited", "Luis Ortega").checked).toBe(false);
     });
@@ -1141,7 +1141,7 @@ describe("the member panel", () => {
       await until(() => writes().length === 1, "the assignment");
       expect(writes()[0]).toEqual({ method: "PUT", path: `/${WORKSPACE_ID}/licenses/lic_call/seats/wm_luis`, body: undefined });
       expect(world.licenses.find((candidate) => candidate.licenseId === "lic_call")!.seats!.some((held) => held.membershipId === "wm_luis")).toBe(true);
-      await until(() => switchFor("Mentra Call Unlimited", "Luis Ortega").checked && rowFor("Mentra Call Unlimited").textContent!.includes("Has a seat · 1 of 5 free"), "the new state");
+      await until(() => switchFor("Mentra Call Unlimited", "Luis Ortega").checked && rowFor("Mentra Call Unlimited").textContent!.includes("Has a license · 1 of 5 available"), "the new state");
       // Billing's status is stale after a seat change, so the Licenses page reads it again.
       expect(client.getQueryState(statusKey)?.isInvalidated).toBe(true);
 
@@ -1149,10 +1149,10 @@ describe("the member panel", () => {
       await until(() => writes().length === 2, "the release");
       expect(writes()[1]).toEqual({ method: "DELETE", path: `/${WORKSPACE_ID}/licenses/lic_both/seats/wm_luis`, body: undefined });
       await until(() => !switchFor("Both Add-on", "Luis Ortega").checked, "the switch to turn off");
-      expect(rowFor("Both Add-on").textContent).toContain("3 of 4 seats free");
+      expect(rowFor("Both Add-on").textContent).toContain("3 of 4 licenses available");
     });
 
-    test("giving up a seat marks billing's status stale too", async () => {
+    test("giving up a license marks billing's status stale too", async () => {
       const { client, writes } = await mount();
       const statusKey = billingKeys.status({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
       client.setQueryData(statusKey, { licenses: [] });
@@ -1163,29 +1163,29 @@ describe("the member panel", () => {
       expect(client.getQueryState(statusKey)?.isInvalidated).toBe(true);
     });
 
-    test("a full license's switch is off and disabled, in amber, with Add seats", async () => {
+    test("a full license's switch is off and disabled, in amber, with Add licenses", async () => {
       const { host } = await mount({ billing: BILLING });
       await openPanel("Luis Ortega");
       const fleet = rowFor("Fleet");
-      expect(fleet.textContent).toContain("All 10 seats are in use");
+      expect(fleet.textContent).toContain("All 10 licenses are assigned");
       expect(switchFor("Fleet", "Luis Ortega").disabled).toBe(true);
       expect(switchFor("Fleet", "Luis Ortega").checked).toBe(false);
-      expect(fleet.querySelector("[data-tone='warn']")?.textContent).toContain("All 10 seats are in use");
-      const add = byText("Add seats", "button", fleet);
+      expect(fleet.querySelector("[data-tone='warn']")?.textContent).toContain("All 10 licenses are assigned");
+      const add = byText("Add licenses", "button", fleet);
       await click(add);
       await flush();
       expect(host.session.mock.calls).toEqual([[workspaceScope(WORKSPACE_ID), { action: "add_seats", licenseId: "lic_fleet" }]]);
       expect(host.events).toEqual(["session:add_seats", `leave:${PAGE}`]);
     });
 
-    test("Add seats in the panel is the same way out: refusals in words, a tab for returns: false, a link when it is blocked", async () => {
+    test("Add licenses in the panel is the same way out: refusals in words, a tab for returns: false, a link when it is blocked", async () => {
       // A refusal.
       const refusing = hostRig(async () => {
         throw new BillingRefusedError("forbidden", {}, 403);
       });
       await mount({ host: refusing, billing: BILLING });
       await openPanel("Luis Ortega");
-      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await click(byText("Add licenses", "button", rowFor("Fleet")));
       await flush();
       expect(panelEl().textContent).toContain("You don't have permission to manage billing here.");
       expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
@@ -1196,7 +1196,7 @@ describe("the member panel", () => {
       const newTab = hostRig();
       await mount({ host: newTab, billing: NEW_TAB_BILLING });
       await openPanel("Luis Ortega");
-      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await click(byText("Add licenses", "button", rowFor("Fleet")));
       await flush();
       expect(newTab.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
       expect(newTab.leave).not.toHaveBeenCalled();
@@ -1207,17 +1207,17 @@ describe("the member panel", () => {
       blocked.openTab.mockImplementation(() => null);
       await mount({ host: blocked, billing: NEW_TAB_BILLING });
       await openPanel("Luis Ortega");
-      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await click(byText("Add licenses", "button", rowFor("Fleet")));
       await flush();
       const link = findAll<HTMLAnchorElement>("a[data-hosted-page]", panelEl())[0]!;
       expect(link.getAttribute("href")).toBe(PAGE);
       expect(link.textContent).toContain("Open the payment page");
     });
 
-    test("closing the panel after Add seats opened a tab still reads Core's licenses again on return", async () => {
+    test("closing the panel after Add licenses opened a tab still reads Core's licenses again on return", async () => {
       const { host, calls } = await mountWith(NEW_TAB_BILLING);
       await openPanel("Luis Ortega");
-      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await click(byText("Add licenses", "button", rowFor("Fleet")));
       await flush();
       expect(host.events).toEqual(["openTab", "session:add_seats", `go:${PAGE}`]);
       await click(find("button[aria-label='Close']", panelEl()));
@@ -1231,7 +1231,7 @@ describe("the member panel", () => {
       const hold = deferred<{ url: string }>();
       const { host, calls } = await mountWith(NEW_TAB_BILLING, hostRig(() => hold.promise));
       await openPanel("Luis Ortega");
-      await click(byText("Add seats", "button", rowFor("Fleet")));
+      await click(byText("Add licenses", "button", rowFor("Fleet")));
       await click(find("button[aria-label='Close']", panelEl()));
       expect(panelIsOpen()).toBe(false);
       await act(async () => hold.resolve({ url: PAGE }));
@@ -1242,14 +1242,14 @@ describe("the member panel", () => {
       await until(() => licenseReads(calls) > before, "Core's licenses to be read again");
     });
 
-    test("Add seats is left out where billing lists no add_seats (or nothing at all)", async () => {
+    test("Add licenses is left out where billing lists no add_seats (or nothing at all)", async () => {
       await mount();
       await openPanel("Luis Ortega");
-      expect(findAll("button", rowFor("Fleet")).some((button) => button.textContent === "Add seats")).toBe(false);
+      expect(findAll("button", rowFor("Fleet")).some((button) => button.textContent === "Add licenses")).toBe(false);
       await cleanup();
       await mount({ billing: [licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet", actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] })] });
       await openPanel("Luis Ortega");
-      expect(findAll("button", rowFor("Fleet")).some((button) => button.textContent === "Add seats")).toBe(false);
+      expect(findAll("button", rowFor("Fleet")).some((button) => button.textContent === "Add licenses")).toBe(false);
     });
 
     test("an over-assigned license says by how many, and its switch is off and disabled", async () => {
@@ -1266,10 +1266,10 @@ describe("the member panel", () => {
       expect(switchFor("Example Add-on", "Dana Reyes").checked).toBe(true);
     });
 
-    test("a member who hasn't signed in is told when they can get seats, with no switches", async () => {
+    test("a member who hasn't signed in is told when they can get licenses, with no switches", async () => {
       await mount();
       await openPanel("grace@acme.test");
-      expect(panelEl().textContent).toContain("grace@acme.test can get seats after their first sign-in.");
+      expect(panelEl().textContent).toContain("grace@acme.test can get licenses after their first sign-in.");
       expect(switches()).toHaveLength(0);
       expect(panelEl().textContent).not.toContain("Turn one on");
     });
@@ -1299,30 +1299,30 @@ describe("the member panel", () => {
       expect(panelEl().textContent).not.toContain("Licenses");
     });
 
-    test("a seat taken by someone else in the meantime is a conflict in words, and the counts are fresh", async () => {
+    test("a license taken by someone else in the meantime is a conflict in words, and the counts are fresh", async () => {
       const { world, writes } = await mount();
       await openPanel("Zed Young");
       // The example add-on had one free seat; another admin takes it first.
       giveSeat(world, "lic_example", "wm_luis");
       await click(switchFor("Example Add-on", "Zed Young"));
-      await until(() => panelEl().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
+      await until(() => panelEl().textContent!.includes("Licenses changed while you were choosing."), "the conflict notice");
       expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
       expect(writes().filter((call) => call.method === "PUT")).toHaveLength(1);
       await until(() => switchFor("Example Add-on", "Zed Young").disabled, "the new counts");
       expect(switchFor("Example Add-on", "Zed Young").checked).toBe(false);
-      expect(rowFor("Example Add-on").textContent).toContain("All 3 seats are in use");
+      expect(rowFor("Example Add-on").textContent).toContain("All 3 licenses are assigned");
     });
 
-    test("a new member starts without the failure of the last one's seat change", async () => {
+    test("a new member starts without the failure of the last one's change", async () => {
       const onMemberChange = mock((_membershipId: string | null) => {});
       const { world, setMember } = await mount({ member: "wm_zed", onMemberChange });
       giveSeat(world, "lic_example", "wm_luis");
       await click(switchFor("Example Add-on", "Zed Young"));
-      await until(() => panelEl().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
+      await until(() => panelEl().textContent!.includes("Licenses changed while you were choosing."), "the conflict notice");
       // The host moves to another member without closing the panel.
       await setMember("wm_amara");
       expect(panelEl().querySelector("h2")!.textContent).toBe("Amara Okafor");
-      expect(panelEl().textContent).not.toContain("Seats changed while you were choosing.");
+      expect(panelEl().textContent).not.toContain("Licenses changed while you were choosing.");
     });
 
     test("has no native <select>", async () => {

@@ -742,20 +742,20 @@ describe("Licenses in the sidebar", () => {
 });
 
 describe("the Licenses page", () => {
-  test("is titled and described in the portal's words: what the workspace pays for to those who manage it, their seats to anyone else", () => {
+  test("is titled and described in the portal's words: what the workspace pays for to those who manage it, their licenses to anyone else", () => {
     const manager = renderAs(true, `/w/${ACME}/licenses`, withLicenses([LICENSE]));
     expect(hrefs(manager)).toContain(`/w/${ACME}/licenses`);
     expect(manager).toMatch(ACTIVE_LICENSES_ITEM);
     expect(manager).toMatch(LICENSES_HEADING);
-    expect(manager).toContain("What Acme Field Team pays for, and who has each seat.");
+    expect(manager).toContain("What Acme Field Team pays for, and who has each license.");
     // A non-staff Admin on staging sees the same page (licenses, no billing).
     const admin = render(`/w/${ACME}/licenses`, adminOfAcme([LICENSE]), { modules: meWith(false, true).modules }, undefined, meWith(false, true));
     expect(admin).toMatch(LICENSES_HEADING);
-    expect(admin).toContain("What Acme Field Team pays for, and who has each seat.");
+    expect(admin).toContain("What Acme Field Team pays for, and who has each license.");
     const member = renderAs(true, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
     expect(hrefs(member)).toContain(`/w/${ACME}/licenses`);
     expect(member).toMatch(ACTIVE_LICENSES_ITEM);
-    expect(member).toContain("Your seats in Acme Field Team.");
+    expect(member).toContain("Your licenses in Acme Field Team.");
     expect(member).not.toContain("pays for");
   });
 
@@ -894,7 +894,7 @@ describe("Billing in the account menu and the personal Billing page", () => {
   test("renders for a person in no workspace: their account and Billing, and no workspace navigation", () => {
     const markup = renderAs(true, "/account/billing", { list: [] });
     expect(markup).toMatch(/<h1[^>]*>Billing<\/h1>/);
-    expect(markup).toContain("Licenses you buy for yourself, apart from any workspace&#x27;s.");
+    expect(markup).toContain("Products you buy for yourself, apart from any workspace&#x27;s.");
     // The personal view, loading; no module is hosted.
     expect(markup).toContain("Loading billing…");
     expect(markup).not.toContain('<section aria-label="Billing"');

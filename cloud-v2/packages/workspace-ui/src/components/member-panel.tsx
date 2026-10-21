@@ -12,7 +12,7 @@
  *
  * Every sentence is in `strings/licenses.ts`. This file imports no runtime code from the contract's billing
  * schemas, so the admin portal doesn't carry zod for it. What the seat screens share (`memberLabel`, `HeldLicense`,
- * `SeatErrorNotice`, `AddSeatsSource`) is in `licenses/parts.tsx`. "Add seats ↗" is a `useHostedAction` like every
+ * `SeatErrorNotice`, `AddSeatsSource`) is in `licenses/parts.tsx`. "Add licenses ↗" is a `useHostedAction` like every
  * other ↗ button, so its refusals, its tab and its link come from `HostedFeedback`.
  */
 
@@ -43,7 +43,7 @@ export interface PersonLicensesProps {
   cards: readonly HeldLicense[];
   /** Whether the viewer may give and take seats (`workspace.licenses.assign`). Without it the switches show the state only. */
   canAssign: boolean;
-  /** What "Add seats ↗" needs: it is offered for a license only where `addSeats.billing` lists `add_seats` for it. */
+  /** What "Add licenses ↗" needs: it is offered for a license only where `addSeats.billing` lists `add_seats` for it. */
   addSeats: AddSeatsSource;
 }
 

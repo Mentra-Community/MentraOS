@@ -60,7 +60,7 @@ describe("Checkbox and Switch are native inputs", () => {
   test("a controlled one shows what it is given and asks to change", async () => {
     function Controlled() {
       const [on, setOn] = useState(false);
-      return <Switch aria-label="Seat" checked={on} onChange={(event) => setOn(event.target.checked)} />;
+      return <Switch aria-label="License" checked={on} onChange={(event) => setOn(event.target.checked)} />;
     }
     await render(<Controlled />);
     const input = find<HTMLInputElement>("input");
@@ -141,7 +141,7 @@ describe("Meter", () => {
     expect(markup).not.toContain("error-foreground");
   });
 
-  test("past the quantity, the covered part stays dark and the seats past it are amber", () => {
+  test("past the quantity, the covered part stays dark and the licenses past it are amber", () => {
     const markup = renderToStaticMarkup(<Meter used={10} total={8} />);
     expect(widths(markup)).toEqual([80]);
     expect(markup).toContain("bg-error-foreground");
@@ -157,9 +157,9 @@ describe("Stepper", () => {
     const [n, setN] = useState(props.start ?? 5);
     return (
       <Stepper
-        label="Seats"
-        decrementLabel="One seat fewer"
-        incrementLabel="One seat more"
+        label="Licenses"
+        decrementLabel="One license fewer"
+        incrementLabel="One license more"
         min={props.min}
         max={props.max}
         value={n}
@@ -170,9 +170,9 @@ describe("Stepper", () => {
       />
     );
   }
-  const field = () => find<HTMLInputElement>('input[aria-label="Seats"]');
-  const fewer = () => find<HTMLButtonElement>('button[aria-label="One seat fewer"]');
-  const more = () => find<HTMLButtonElement>('button[aria-label="One seat more"]');
+  const field = () => find<HTMLInputElement>('input[aria-label="Licenses"]');
+  const fewer = () => find<HTMLButtonElement>('button[aria-label="One license fewer"]');
+  const more = () => find<HTMLButtonElement>('button[aria-label="One license more"]');
 
   test("shows − n + and moves one at a time", async () => {
     await render(<Seats />);
@@ -237,7 +237,7 @@ describe("Stepper", () => {
     expect(onChange.mock.calls.map((call) => call[0])).toEqual([12, 50, 1]);
   });
 
-  test("something that isn't a number goes back to the last seats", async () => {
+  test("something that isn't a number goes back to the last count", async () => {
     await render(<Seats start={5} />);
     const input = field();
     await focus(input);
@@ -263,7 +263,7 @@ describe("Stepper", () => {
 
 describe("Menu", () => {
   const items = (onSelect: (key: string) => void = () => {}) => [
-    { key: "change", label: "Change seats", onSelect: () => onSelect("change") },
+    { key: "change", label: "Change license count", onSelect: () => onSelect("change") },
     { key: "cancel", label: "Cancel", onSelect: () => onSelect("cancel") },
     { key: "locked", label: "Locked", disabled: true, onSelect: () => onSelect("locked") },
     { key: "other", label: "Pause billing", onSelect: () => onSelect("other") },
@@ -292,7 +292,7 @@ describe("Menu", () => {
     await focus(trigger());
     await press(trigger(), "Enter");
     expect(trigger().getAttribute("aria-expanded")).toBe("true");
-    expect(menuItems().map((item) => item.textContent)).toEqual(["Change seats", "Cancel", "Locked", "Pause billing"]);
+    expect(menuItems().map((item) => item.textContent)).toEqual(["Change license count", "Cancel", "Locked", "Pause billing"]);
     expect(activeElement()).toBe(menuItems()[0]!);
   });
 
@@ -588,7 +588,7 @@ describe("SidePanel", () => {
 describe("the licenses' small pieces", () => {
   test("a Notice is a status in every tone: nothing on these pages interrupts the person, so none is an alert", () => {
     const warn = renderToStaticMarkup(
-      <Notice tone="warn" title="Seats stop on Nov 23, 2026 unless payment goes through." action={<button>Update payment method</button>}>
+      <Notice tone="warn" title="Licenses stop working on Nov 23, 2026 unless payment goes through." action={<button>Update payment method</button>}>
         Update the payment method to keep them.
       </Notice>,
     );
@@ -602,7 +602,7 @@ describe("the licenses' small pieces", () => {
 
   test("a Notice's buttons wrap on a row of their own on a phone instead of running out of the notice", () => {
     const markup = renderToStaticMarkup(
-      <Notice tone="warn" title="Seats stop" action={<><button>Update payment method</button><button>Complete payment</button></>} />,
+      <Notice tone="warn" title="Licenses stop working" action={<><button>Update payment method</button><button>Complete payment</button></>} />,
     );
     const actions = /<div class="([^"]*)"><button>Update payment method/.exec(markup)?.[1] ?? "";
     expect(actions).toContain("flex-wrap");
@@ -621,7 +621,7 @@ describe("the licenses' small pieces", () => {
   test("Facts sit validly in a <dl>: a div per group, holding only the term and its descriptions", async () => {
     await render(
       <dl>
-        <Fact label="Seats" value="3 of 5 in use" foot="2 free">
+        <Fact label="Licenses" value="3 of 5 assigned" foot="2 available">
           <Meter used={3} total={5} />
         </Fact>
         <Fact label="Renews" value="Nov 20, 2026" foot="Every month" />
@@ -641,9 +641,9 @@ describe("the licenses' small pieces", () => {
     expect([...groups[1]!.children].map((child) => child.tagName)).toEqual(["DT", "DD", "DD"]);
     expect([...groups[2]!.children].map((child) => child.tagName)).toEqual(["DT", "DD"]);
     // The meter sits in a description of its own, and what each says is in its place.
-    expect(groups[0]!.children[1]!.textContent).toBe("3 of 5 in use");
+    expect(groups[0]!.children[1]!.textContent).toBe("3 of 5 assigned");
     expect(find("[data-slot=meter]", groups[0]!.children[2]!)).toBeDefined();
-    expect(groups[0]!.children[3]!.textContent).toBe("2 free");
+    expect(groups[0]!.children[3]!.textContent).toBe("2 available");
   });
 
   test("a Skeleton is a placeholder with no text", () => {
@@ -661,9 +661,9 @@ describe("the licenses' small pieces", () => {
 
   test("a HostedPageButton is a button marked ↗, named by its label alone", async () => {
     const onClick = mock(() => {});
-    await render(<HostedPageButton onClick={onClick}>Add seats</HostedPageButton>);
+    await render(<HostedPageButton onClick={onClick}>Add licenses</HostedPageButton>);
     const button = find<HTMLButtonElement>("button");
-    expect(button.textContent).toBe("Add seats");
+    expect(button.textContent).toBe("Add licenses");
     expect(button.hasAttribute("data-hosted-page")).toBe(true);
     expect(find("svg", button).getAttribute("aria-hidden")).toBe("true");
     expect(button.type).toBe("button");
@@ -672,13 +672,13 @@ describe("the licenses' small pieces", () => {
   });
 
   test("a HostedPageButton tells a screen reader it leaves the portal, in visually hidden text it is described by", async () => {
-    await render(<HostedPageButton>Add seats</HostedPageButton>);
+    await render(<HostedPageButton>Add licenses</HostedPageButton>);
     const button = find<HTMLButtonElement>("button");
     const hint = find(`#${CSS.escape(button.getAttribute("aria-describedby")!)}`);
     expect(hint.textContent).toBe("Opens a secure billing page");
     expect(hint.className).toContain("sr-only");
     // The name stays the label: only the description carries the cue.
-    expect(button.textContent).toBe("Add seats");
+    expect(button.textContent).toBe("Add licenses");
     expect(button.contains(hint)).toBe(false);
   });
 
@@ -693,7 +693,7 @@ describe("the licenses' small pieces", () => {
   test("two HostedPageButtons describe themselves by two different hints", async () => {
     await render(
       <>
-        <HostedPageButton>Add seats</HostedPageButton>
+        <HostedPageButton>Add licenses</HostedPageButton>
         <HostedPageButton>Cancel</HostedPageButton>
       </>,
     );
@@ -705,7 +705,7 @@ describe("the licenses' small pieces", () => {
     const onClick = mock(() => {});
     await render(
       <HostedPageButton pending onClick={onClick}>
-        Add seats
+        Add licenses
       </HostedPageButton>,
     );
     const button = find<HTMLButtonElement>("button");

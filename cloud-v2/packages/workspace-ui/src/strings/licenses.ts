@@ -10,6 +10,12 @@
  *
  * Billing's own content (product, feature and miniapp names, descriptions, `fallback*` labels) is never worded
  * here: it arrives localized and is shown as sent. Nothing here names the payment processor.
+ *
+ * The words are Microsoft 365's. A license is one person's right to use a product; a workspace buys some number
+ * of licenses for a product, and each license is assigned to one member. What the workspace buys is a product (or a
+ * subscription), never "a license", and the count above the cards counts products. A price per license is "per
+ * user"; a person's own price has no unit. "Seat" is not a word anyone reads: the API and the code keep their names
+ * (`seats`, `seatsUsed`, `add_seats`, the keys of this object), and the strings test scans every sentence for it.
  */
 
 import type { LicenseFit } from "../lib/license-join";
@@ -39,20 +45,20 @@ export function refusalMessage(code: string, context: RefusalContext = {}): stri
     case "not_for_sale":
       return product ? `${product} isn't for sale right now.` : "That isn't for sale right now.";
     case "invalid_seats":
-      return "That number of seats isn't available. Choose a different number.";
+      return "That number of licenses isn't available. Choose a different number.";
     case "unknown_action":
-      return "That isn't available for this license any more. Reload the page and try again.";
+      return "That isn't available for this subscription any more. Reload the page and try again.";
     case "forbidden":
       return "You don't have permission to manage billing here.";
     case "billing_staff_only":
       return "Only Organization Admins can use billing on this environment.";
     case "license_not_found":
-      return "That license no longer exists. Reload the page.";
+      return "That subscription no longer exists. Reload the page.";
     case "no_billing_account":
       return "There's no billing account yet. It's created with the first purchase.";
     case "already_licensed": {
       const held = product ? `You already have ${product}.` : "You already have that.";
-      return scope === "person" ? held : `${held} Add seats instead.`;
+      return scope === "person" ? held : `${held} Add licenses instead.`;
     }
     case "checkout_in_progress":
       return `A purchase of ${product ?? "that"} is already under way. Finish it, or try again in a minute.`;
@@ -76,10 +82,10 @@ function nameList(names: readonly string[]): string {
 
 /** What billing's actions say. `label` returns these, so a wording changes in one place. */
 const actions = {
-  addSeats: "Add seats",
-  /** "Add 2 seats": the over-assigned notice's button. */
-  addSeatsCount: (n: number) => `Add ${plural(n, "seat")}`,
-  changeSeats: "Change seats",
+  addSeats: "Add licenses",
+  /** "Add 2 licenses": the over-assigned notice's button. */
+  addSeatsCount: (n: number) => `Add ${plural(n, "license")}`,
+  changeSeats: "Change license count",
   cancel: "Cancel",
   renew: "Renew",
   updatePayment: "Update payment method",
@@ -122,7 +128,7 @@ const status = {
   incomplete: "Payment incomplete",
   processing: "Setting up",
   over: (n: number) => `${n} over`,
-  youHaveASeat: "You have a seat",
+  youHaveASeat: "Assigned to you",
   /**
    * The badge's words for a license's billing status: Core's for a status it knows, and billing's own
    * `fallbackStatusLabel` for any other. `shortEndDate` (the day an `ending` license ends, without the year)
@@ -153,16 +159,17 @@ export const licenseStrings = {
   },
 
   count: {
-    seats: (n: number) => plural(n, "seat"),
     people: (n: number) => plural(n, "person", "people"),
     members: (n: number) => plural(n, "member"),
     licenses: (n: number) => plural(n, "license"),
+    /** What the workspace buys: the page's total counts these, not licenses. */
+    products: (n: number) => plural(n, "product"),
   },
 
   /** People, in a sentence: "Dana Reyes, Priya Natarajan and 8 others". */
   names: {
     list: nameList,
-    holders: (names: readonly string[]) => (names.length === 0 ? "Nobody has a seat yet" : nameList(names)),
+    holders: (names: readonly string[]) => (names.length === 0 ? "No one has a license yet" : nameList(names)),
   },
 
   nav: {
@@ -174,18 +181,19 @@ export const licenseStrings = {
 
   page: {
     title: "Licenses",
-    description: (workspace: string) => `What ${workspace} pays for, and who has each seat.`,
-    /** A Member's or Developer's page: only the licenses they hold a seat in. */
-    memberDescription: (workspace: string) => `Your seats in ${workspace}.`,
-    adminsGiveOutSeats: (workspace: string) => `${workspace}'s Admins and Owners give out seats.`,
+    description: (workspace: string) => `What ${workspace} pays for, and who has each license.`,
+    /** A Member's or Developer's page: only the licenses they hold. */
+    memberDescription: (workspace: string) => `Your licenses in ${workspace}.`,
+    adminsGiveOutSeats: (workspace: string) => `${workspace}'s Admins and Owners assign licenses.`,
     noSeat: {
-      title: (workspace: string) => `You don't have a seat in ${workspace}`,
-      body: "Its Admins and Owners give out seats. Once you have one, it works the next time you open the miniapp it's for.",
+      title: (workspace: string) => `You don't have a license in ${workspace}`,
+      body: "Its Admins and Owners assign licenses. Once you have one, it works the next time you open the miniapp it's for.",
     },
     billingAndInvoices: "Billing & invoices",
-    buyALicense: "Buy a license",
-    /** A manager's page for a workspace with no license, where billing offers nothing to buy. */
-    noLicenses: "This workspace has no licenses yet.",
+    /** What the header button says, for a workspace or a person: what is bought is a product. */
+    buyALicense: "Buy a product",
+    /** A manager's page for a workspace with no product, where billing offers nothing to buy. */
+    noLicenses: "This workspace has no products yet.",
     loading: "Loading licenses…",
     unavailable: {
       title: "Licenses are unavailable",
@@ -196,7 +204,7 @@ export const licenseStrings = {
 
   personal: {
     title: "Billing",
-    description: "Licenses you buy for yourself, apart from any workspace's.",
+    description: "Products you buy for yourself, apart from any workspace's.",
     /** The page of someone with no license, where billing sells a person nothing. */
     nothingToBuy: "There is nothing to buy for yourself right now.",
     loading: "Loading billing…",
@@ -223,43 +231,43 @@ export const licenseStrings = {
   },
 
   price: {
-    /** "$15 per seat a month". */
-    perSeat: (unit: string, rate: string) => `${unit} per seat ${rate}`,
-    /** "$29 a month": a person's one seat. */
+    /** "$15 per user a month". */
+    perSeat: (unit: string, rate: string) => `${unit} per user ${rate}`,
+    /** "$29 a month": a person's own price has no unit. */
     perPerson: (unit: string, rate: string) => `${unit} ${rate}`,
   },
 
   catalog: {
     workspace: {
-      title: "Buy a license for your members",
-      intro: "You'll pay by card on a secure payment page, then come back here to give out the seats.",
+      title: "Buy a product for your members",
+      intro: "You'll pay by card on a secure payment page, then come back here to assign the licenses.",
     },
     person: {
-      title: "Buy a license for yourself",
+      title: "Buy a product for yourself",
       intro: "You'll pay by card on a secure payment page, then come back here.",
     },
     buy: "Buy",
     youHaveIt: "You have it",
-    youHaveSeats: (n: number) => `You have ${plural(n, "seat")}`,
+    youHaveSeats: (n: number) => `You have ${plural(n, "license")}`,
     dialog: {
-      title: "Buy a license",
-      description: "Products for your workspace. For one you have, add seats instead.",
-      /** A person's own catalog: there are no seats to add. */
+      title: "Buy a product",
+      description: "Products for your workspace. For one you have, add licenses instead.",
+      /** A person's own catalog: there are no licenses to add. */
       personDescription: "Products you can buy for yourself.",
     },
   },
 
   buy: {
     title: (product: string) => `Buy ${product}`,
-    /** "$15 per seat a month · Renews every month. Change the seats or cancel at any time." */
-    terms: (price: string, cadence: string) => `${price} · Renews every ${cadence}. Change the seats or cancel at any time.`,
-    seats: "Seats",
-    fewer: "One seat fewer",
-    more: "One seat more",
+    /** "$15 per user a month · Renews every month. Change the number of licenses or cancel at any time." */
+    terms: (price: string, cadence: string) => `${price} · Renews every ${cadence}. Change the number of licenses or cancel at any time.`,
+    seats: "Licenses",
+    fewer: "One license fewer",
+    more: "One license more",
     members: (n: number) => `Your workspace has ${plural(n, "member")}.`,
-    /** "10 seats × $15 · $150 a month · before tax": the one sum Core shows. */
+    /** "10 licenses × $15 · $150 a month · before tax": the one sum Core shows. */
     summary: (parts: { seats: number; unit: string; total: string; rate: string; note: string | null }) =>
-      `${plural(parts.seats, "seat")} × ${parts.unit} · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
+      `${plural(parts.seats, "license")} × ${parts.unit} · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
     payNote: "You'll pay by card on a secure payment page.",
     cancel: "Cancel",
     continue: "Continue to payment",
@@ -276,9 +284,9 @@ export const licenseStrings = {
 
   facts: {
     seats: {
-      label: "Seats",
-      inUse: (used: number, quantity: number) => `${used} of ${quantity} in use`,
-      free: (n: number) => (n > 0 ? `${n} free` : "None free"),
+      label: "Licenses",
+      inUse: (used: number, quantity: number) => `${used} of ${quantity} assigned`,
+      free: (n: number) => (n > 0 ? `${n} available` : "None available"),
       assigned: (used: number) => `${used} assigned`,
       moreThanCovered: (over: number, quantity: number) => `${over} more than the ${quantity} covered`,
     },
@@ -305,7 +313,7 @@ export const licenseStrings = {
     },
     /** A member's own card. */
     own: {
-      seat: "Your seat",
+      seat: "Your license",
       since: (date: string) => `Since ${date}`,
       givenBy: (workspace: string) => `Given by ${workspace}`,
       worksIn: "Works in",
@@ -314,29 +322,29 @@ export const licenseStrings = {
   },
 
   notice: {
-    /** A failed payment: the day the seats stop (or stopped), and what to do. `date` is null when billing sent none. */
+    /** A failed payment: the day the licenses stop working (or stopped), and what to do. `date` is null when billing sent none. */
     pastDue: ({ date, stopped }: { date: string | null; stopped: boolean }): { title: string; body: string | null } => {
       if (date === null) {
-        return { title: "The last payment didn't go through.", body: "Update the payment method to keep the seats." };
+        return { title: "The last payment didn't go through.", body: "Update the payment method to keep the licenses." };
       }
       if (stopped) {
-        return { title: `Seats stopped on ${date}. They come back once payment goes through.`, body: null };
+        return { title: `Licenses stopped working on ${date}. They come back once payment goes through.`, body: null };
       }
-      return { title: `Seats stop on ${date} unless payment goes through.`, body: "Update the payment method to keep them." };
+      return { title: `Licenses stop working on ${date} unless payment goes through.`, body: "Update the payment method to keep them." };
     },
     incomplete: (product: string) => ({
       title: `The first payment for ${product} isn't finished.`,
-      body: "Finish it to start the license.",
+      body: "Finish it to start the subscription.",
     }),
-    /** More seats are assigned than the license covers. */
+    /** More licenses are assigned than the product has paid for. */
     over: ({ used, quantity, canAddSeats }: { used: number; quantity: number; canAddSeats: boolean }) => {
       const extra = used - quantity;
       const unassign = `Unassign ${extra} of them`;
       return {
-        title: `${used === 1 ? "1 person has" : `${used} people have`} a seat, but the license covers ${quantity}.`,
+        title: `${used === 1 ? "1 person is" : `${used} people are`} assigned but only ${plural(quantity, "license")} ${quantity === 1 ? "is" : "are"} paid for.`,
         body: canAddSeats
-          ? `${unassign}, or add ${plural(extra, "seat")}. No one else can get a seat until then.`
-          : `${unassign}. No one else can get a seat until then.`,
+          ? `${unassign}, or add ${plural(extra, "license")}. No one else can get a license until then.`
+          : `${unassign}. No one else can get a license until then.`,
       };
     },
   },
@@ -344,33 +352,33 @@ export const licenseStrings = {
   actions,
 
   seats: {
-    title: "Seat holders",
-    searchPlaceholder: "Search seat holders",
+    title: "Assigned to",
+    searchPlaceholder: "Search people with a license",
     since: (date: string) => `Since ${date}`,
     unassign: "Unassign",
     /** The confirm step of Unassign. */
     unassignPrompt: (name: string) => `Unassign ${name}?`,
-    /** Unassign's accessible name: whose seat. */
+    /** Unassign's accessible name: whose license. */
     unassignAria: (name: string) => `Unassign ${name}`,
-    freeSeat: "Free seat",
+    freeSeat: "Available license",
     assign: "Assign",
-    assignSeats: "Assign seats",
-    freeSeats: (n: number) => `${n} free seats`,
-    nobodyYet: "Nobody has a seat yet.",
-    allInUse: (quantity: number) => `All ${quantity} seats are in use.`,
+    assignSeats: "Assign licenses",
+    freeSeats: (n: number) => plural(n, "available license"),
+    nobodyYet: "No one has a license yet.",
+    allInUse: (quantity: number) => (quantity === 1 ? "The license is assigned." : `All ${quantity} licenses are assigned.`),
     allInUseHelp: (canAddSeats: boolean) =>
-      canAddSeats ? "Add seats to give one to someone else, or unassign someone to free theirs." : "Unassign someone to free their seat.",
+      canAddSeats ? "Add licenses to give one to someone else, or unassign someone to free theirs." : "Unassign someone to free their license.",
     moreAvatars: (n: number) => `+${n}`,
   },
 
-  /** How many of the people chosen fit in the seats that are free. */
+  /** How many of the people chosen fit in the licenses that are available. */
   fit: {
     note: ({ fit, needed, canAddSeats }: { fit: number; needed: number; canAddSeats: boolean }) => {
       const remove = needed - fit === 1 ? "one" : String(needed - fit);
-      return `${fit} of ${needed} fit: remove ${remove}${canAddSeats ? " or add seats" : ""}.`;
+      return `${fit} of ${needed} fit: remove ${remove}${canAddSeats ? " or add licenses" : ""}.`;
     },
     /**
-     * The line a seat dialog shows for the people chosen (`fitFor`'s result for one license): which of the
+     * The line a license dialog shows for the people chosen (`fitFor`'s result for one license): which of the
      * spec's sentences the result calls for, with the people by `nameOf`. `canAddSeats` is whether billing lists
      * `add_seats` for the license. Null when nobody is chosen.
      */
@@ -399,20 +407,20 @@ export const licenseStrings = {
   },
 
   picker: {
-    title: "Assign seats",
-    description: (product: string, free: number) => `${product} · ${free} free ${free === 1 ? "seat" : "seats"}`,
+    title: "Assign licenses",
+    description: (product: string, free: number) => `${product} · ${plural(free, "available license")}`,
     search: "Search by name or email",
     noMatches: "No one matches your search.",
-    hasASeat: "Has a seat",
+    hasASeat: "Has a license",
     afterFirstSignIn: "After first sign-in",
-    chosen: (chosen: number, free: number) => `${chosen} of ${free} free seats chosen`,
-    assign: (n: number) => (n === 0 ? "Assign" : `Assign ${plural(n, "seat")}`),
+    chosen: (chosen: number, free: number) => `${chosen} of ${plural(free, "available license")} chosen`,
+    assign: (n: number) => (n === 0 ? "Assign" : `Assign ${plural(n, "license")}`),
     cancel: "Cancel",
   },
 
   /** What a bulk assignment says when the counts it was built on changed. */
   conflict: {
-    seatsChanged: "Seats changed while you were choosing. Nothing was assigned. Check the counts and try again.",
+    seatsChanged: "Licenses changed while you were choosing. Nothing was assigned. Check the counts and try again.",
   },
 
   /** The Members list. */
@@ -451,15 +459,15 @@ export const licenseStrings = {
     joined: "Joined",
     changeRole: "Change role",
     licenses: "Licenses",
-    intro: (name: string) => `Turn one on to give ${name} a seat. Changes apply right away.`,
-    /** On, with the seats left after theirs. */
-    hasASeat: (free: number, quantity: number) => `Has a seat · ${free} of ${quantity} free`,
-    seatsFree: (free: number, quantity: number) => `${free} of ${quantity} seats free`,
-    allInUse: (quantity: number) => `All ${quantity} seats are in use`,
+    intro: (name: string) => `Turn one on to give ${name} a license. Changes apply right away.`,
+    /** On, with the licenses left after theirs. */
+    hasASeat: (free: number, quantity: number) => `Has a license · ${free} of ${quantity} available`,
+    seatsFree: (free: number, quantity: number) => `${free} of ${quantity} licenses available`,
+    allInUse: (quantity: number) => (quantity === 1 ? "The license is assigned" : `All ${quantity} licenses are assigned`),
     overAssigned: (n: number) => `${n} more assigned than covered`,
-    afterFirstSignIn: (email: string) => `${email} can get seats after their first sign-in.`,
-    /** A switch's accessible name: which license, for whom. */
-    seatSwitch: (product: string, name: string) => `${product} seat for ${name}`,
+    afterFirstSignIn: (email: string) => `${email} can get licenses after their first sign-in.`,
+    /** A switch's accessible name: which product, for whom. */
+    seatSwitch: (product: string, name: string) => `${product} license for ${name}`,
     remove: "Remove from workspace",
     removePrompt: (name: string) => `Remove ${name} from this workspace?`,
     removeConfirm: "Confirm remove",
@@ -469,19 +477,19 @@ export const licenseStrings = {
   assign: {
     title: "Assign licenses",
     enough: ({ free, quantity, chosen }: { free: number; quantity: number; chosen: number }) => {
-      const seats = `${free} of ${quantity} seats free`;
-      if (chosen === 1) return `${seats}.`;
-      return `${seats}: enough for ${chosen === 2 ? "both" : `all ${chosen}`}.`;
+      const licenses = `${free} of ${quantity} licenses available`;
+      if (chosen === 1) return `${licenses}.`;
+      return `${licenses}: enough for ${chosen === 2 ? "both" : `all ${chosen}`}.`;
     },
-    /** Some of the people already hold one: who, and who the free seats are for. */
+    /** Some of the people already hold one: who, and who the available licenses are for. */
     someHold: ({ holders, free, quantity, recipients }: { holders: readonly string[]; free: number; quantity: number; recipients: readonly string[] }) =>
-      `${nameList(holders)} ${holders.length === 1 ? "has" : "have"} one. ${free} of ${quantity} seats free, for ${nameList(recipients)}.`,
+      `${nameList(holders)} ${holders.length === 1 ? "has" : "have"} one. ${free} of ${quantity} licenses available, for ${nameList(recipients)}.`,
     everyoneHolds: "Everyone you chose has one.",
-    /** The seats per product: "2 Call Unlimited · 1 Example Add-on". */
+    /** The licenses per product: "2 Call Unlimited · 1 Example Add-on". */
     footer: (parts: ReadonlyArray<{ seats: number; name: string }>) => parts.map((part) => `${part.seats} ${part.name}`).join(" · "),
-    confirm: (n: number) => (n === 0 ? "Assign" : `Assign ${plural(n, "seat")}`),
-    /** Under Assign when more seats are chosen than one request takes (`MAX_SEAT_ASSIGNMENTS`). */
-    tooMany: (max: number) => `You can assign up to ${max} seats at a time.`,
+    confirm: (n: number) => (n === 0 ? "Assign" : `Assign ${plural(n, "license")}`),
+    /** Under Assign when more licenses are chosen than one request takes (`MAX_SEAT_ASSIGNMENTS`). */
+    tooMany: (max: number) => `You can assign up to ${max} licenses at a time.`,
   },
 
   purchase: {
@@ -490,21 +498,21 @@ export const licenseStrings = {
     dismiss: "Dismiss",
     /** A workspace, while billing writes the license into Core. */
     settingUpSeats: ({ seats, product }: { seats: number; product: string }) =>
-      `Setting up ${seats} ${product} ${seats === 1 ? "seat" : "seats"}. This takes a few seconds; you can stay on this page.`,
+      `Setting up ${seats} ${product} ${seats === 1 ? "license" : "licenses"}. This takes a few seconds; you can stay on this page.`,
     readyTitle: ({ seats, product }: { seats: number; product: string }) =>
-      `Your ${seats} ${product} ${seats === 1 ? "seat is" : "seats are"} ready`,
+      `Your ${seats} ${product} ${seats === 1 ? "license is" : "licenses are"} ready`,
     readyBody: ({ product, paid }: { product: string; paid: boolean }) =>
-      `${paid ? `Payment received, and ${product} is active.` : `${product} is active.`} Give the seats to members below, or from Members.`,
+      `${paid ? `Payment received, and ${product} is active.` : `${product} is active.`} Assign the licenses to members below, or from Members.`,
     /** A person. */
     personSettingUp: (product: string) => `Setting up ${product}. This takes a few seconds; you can stay on this page.`,
     personReadyTitle: (product: string) => `${product} is ready`,
     personReadyBody: ({ product, paid }: { product: string; paid: boolean }) =>
       paid ? `Payment received, and ${product} is active on your account.` : `${product} is active on your account.`,
-    /** The license hasn't reached Core after a minute. */
+    /** The purchase hasn't reached Core after a minute. */
     timeout: {
       title: (paid: boolean) => (paid ? "Your payment went through" : "Your purchase went through"),
-      body: "The seats can take a few minutes to appear.",
-      /** A person's purchase has no seats. */
+      body: "The licenses can take a few minutes to appear.",
+      /** A person's purchase is one license. */
       personBody: "Your license can take a few minutes to appear.",
       reload: "Reload",
     },
@@ -515,13 +523,13 @@ export const licenseStrings = {
     lead: "Nothing here is charged.",
     beforeCard: "Pay with the test card",
     afterCard: ", any future date and any CVC.",
-    note: "On dev and staging only Organization Admins see billing, and seats bought here work only here.",
+    note: "On dev and staging only Organization Admins see billing, and licenses bought here work only here.",
     copy: "Copy card number",
   },
 
-  /** The total above the cards: "2 licenses" in bold, then "$295 a month in total". */
+  /** The total above the cards: "2 products" in bold, then "$295 a month in total". What is counted is what the workspace buys. */
   summary: ({ count, amount, rate }: { count: number; amount: string; rate: string }) => ({
-    lead: plural(count, "license"),
+    lead: plural(count, "product"),
     rest: `${amount} ${rate} in total`,
   }),
 

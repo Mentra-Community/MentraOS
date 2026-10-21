@@ -41,10 +41,10 @@ const ACTION_LABELS: Record<string, string> = {
   "invitation.revoked": "Invitation revoked",
   "credential.created": "Key created",
   "credential.revoked": "Key revoked",
-  "license.written": "License created or changed",
-  "license.ended": "License ended",
-  "seat.assigned": "Seat assigned",
-  "seat.released": "Seat released",
+  "license.written": "Product added or changed",
+  "license.ended": "Product ended",
+  "seat.assigned": "License assigned",
+  "seat.released": "License released",
 };
 
 /** A readable name for an audit action; an action this UI does not know shows as its raw name. */
@@ -207,9 +207,12 @@ export function describeAuditEvent(event: AuditEventView): AuditDescription {
 const INTERNAL_FIELD = /(^id$|Ids?$)/;
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
+/** Fields whose name is not the word a person reads: a license is one person's right to a product, so `seatsUsed` counts licenses assigned. */
+const FIELD_LABELS: Record<string, string> = {seatsUsed: "Licenses assigned"};
+
 /** "expiresAt" as "Expires at", "packageNames" as "Package names". */
 function fieldLabel(field: string): string {
-  return capitalize(field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase());
+  return FIELD_LABELS[field] ?? capitalize(field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase());
 }
 
 /** A value in words: roles capitalised, dates formatted, lists as lists; null for nothing at all. */

@@ -157,7 +157,7 @@ function LicenseTable({ licenses }: { licenses: AdminLicenseView[] }) {
           <tr>
             <th className="px-6 py-3 font-medium">Owner</th>
             <th className="py-3 pr-4 font-medium">Product</th>
-            <th className="py-3 pr-4 font-medium">Seats used</th>
+            <th className="py-3 pr-4 font-medium">Assigned</th>
             <th className="py-3 pr-4 font-medium">Paid through</th>
             <th className="py-3 pr-6 font-medium">Status</th>
           </tr>

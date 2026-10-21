@@ -42,7 +42,7 @@ export const readRetrying = (result: ReadResult): boolean => result.isFetching &
 
 /**
  * The page's header actions: "Billing & invoices ↗" (only where billing lists that action for the account) and "Buy a
- * license" (only where `onBuy` is given: there is something to buy, or to add seats to). Billing's refusal of the ↗
+ * license" (only where `onBuy` is given: there is something to buy, or to add licenses to). Billing's refusal of the ↗
  * button, or the link for a tab the browser blocked, shows under them.
  *
  * They are drawn by the pages' header components (`WorkspaceLicensesHeaderActions`, `PersonalBillingHeaderActions`)
@@ -55,7 +55,7 @@ export function HeaderButtons({
 }: {
   /** The account's `billing_and_invoices` as billing listed it, or null. */
   invoices: BillingAction | null;
-  /** Opens "Buy a license"; null where there is nothing to open it for. */
+  /** Opens "Buy a product"; null where there is nothing to open it for. */
   onBuy: (() => void) | null;
   /** The header's hosted-page flow, which the ↗ button uses. */
   hosted: HostedAction;
@@ -91,7 +91,7 @@ export function HeaderButtons({
 
 /**
  * Whether billing offers `owner` something to do with the catalog: an entry sold to that owner type with an `offer`.
- * It is what makes buying copy, and "Buy a license", exist for a viewer at all.
+ * It is what makes buying copy, and "Buy a product", exist for a viewer at all.
  */
 export function hasOffer(products: readonly CatalogEntry[], owner: KnownOwnerType): boolean {
   return catalogForOwner(products, owner).some((entry) => entry.offer !== undefined);

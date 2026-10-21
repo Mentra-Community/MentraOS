@@ -78,7 +78,7 @@ export function taxNote(tax: Tax): string | null {
 }
 
 /**
- * A price as the catalog shows it: "$15 per seat a month" for a workspace, "$29 a month" for a person. A price of
+ * A price as the catalog shows it: "$15 per user a month" for a workspace, "$29 a month" for a person. A price of
  * a scheme Core doesn't know is billing's own `fallbackLabel`.
  */
 export function priceLine(price: Price, scope: LicenseScope, locale: string): string {
@@ -116,7 +116,7 @@ export function costFact(
   };
 }
 
-/** The line above the cards: "2 licenses" (for bold) and "$295 a month in total", from billing's own total. */
+/** The line above the cards: "2 products" (for bold) and "$295 a month in total", from billing's own total. */
 export function totalSummary(total: BillingTotal, locale: string): { lead: string; rest: string } {
   return t.summary({
     count: total.licenseCount,
@@ -125,7 +125,7 @@ export function totalSummary(total: BillingTotal, locale: string): { lead: strin
   });
 }
 
-/** Who holds the seats, for a strip: "Dana Reyes, Priya Natarajan and 8 others", or "Nobody has a seat yet". */
+/** Who holds the seats, for a strip: "Dana Reyes, Priya Natarajan and 8 others", or "No one has a license yet". */
 export function holderNames(names: readonly string[]): string {
   return t.names.holders(names);
 }
@@ -136,7 +136,7 @@ export function nameList(names: readonly string[]): string {
 }
 
 /**
- * How many of the people chosen fit in the free seats: "3 of 4 fit: remove one or add seats.", or, where billing
+ * How many of the people chosen fit in the free seats: "3 of 4 fit: remove one or add licenses.", or, where billing
  * lists no `add_seats`, "3 of 4 fit: remove one."
  */
 export function fitNote(args: { fit: number; needed: number; canAddSeats: boolean }): string {

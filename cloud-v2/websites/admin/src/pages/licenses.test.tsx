@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ORGANIZATION_CAPABILITIES, type AdminLicenseView } from "@mentra/workspace-contract";
 import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import { visiblePages, type AdminMe } from "../lib/admin-access";
 import { LICENSES_QUERY_KEY, LicenseListing, licensesPath, licenseState } from "./licenses";
 
@@ -121,12 +124,15 @@ describe("the Licenses page lists every license", () => {
     expect(markup).toContain("ws_unnamed");
   });
 
-  test("shows the product, the seats used of the quantity, and the paid-through date", () => {
+  test("shows the product, the licenses assigned of the quantity, and the paid-through date", () => {
     const markup = render([{ items: [workspaceLicense, namedPerson], next: null }]);
     expect(markup).toContain("mentra.call.unlimited");
     expect(markup).toMatch(/4(<!-- --> of <!-- -->| of )10/);
     expect(markup).toMatch(/1(<!-- --> of <!-- -->| of )1</);
     expect(markup).toContain("Jan 31, 2099");
+    // The column counts the licenses assigned: a license is one person's right to a product, and "seat" is not a word anyone reads.
+    expect(markup).toContain(">Assigned</th>");
+    expect(markup).not.toMatch(/\bseats?\b/i);
   });
 
   test("says which licenses are active, expired or ended and why", () => {
@@ -186,7 +192,7 @@ describe("the Licenses page lists every license", () => {
   });
 });
 
-describe("the Licenses page offers no seat change or payment", () => {
+describe("the Licenses page offers no license change or payment", () => {
   test("its only controls are search, refresh and load more", () => {
     const markup = render([{ items: everyLicense, next: "lic_next" }]);
     const buttons = [...markup.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map(
@@ -200,9 +206,10 @@ describe("the Licenses page offers no seat change or payment", () => {
     for (const element of ["<select", "<textarea"]) expect(markup).not.toContain(element);
   });
 
-  test("never names an action on seats or money", () => {
+  test("never names an action on licenses or money", () => {
     const text = render([{ items: everyLicense, next: "lic_next" }]).replace(/<[^>]+>/g, " ");
-    for (const word of [/assign/i, /release/i, /revoke/i, /refund/i, /checkout/i, /\bpay/i, /cancel/i, /upgrade/i, /renew/i, /\bbuy\b/i, /purchase/i]) {
+    // "Assigned" is the count's column; the verb (assign, assigns, assigning) is the action a read-only page doesn't offer.
+    for (const word of [/\bassign(?!ed)/i, /release/i, /revoke/i, /refund/i, /checkout/i, /\bpay/i, /cancel/i, /upgrade/i, /renew/i, /\bbuy\b/i, /purchase/i]) {
       expect([word.source, word.test(text)]).toEqual([word.source, false]);
     }
   });
@@ -289,5 +296,39 @@ describe("the Licenses item in the admin portal's navigation", () => {
     const { visibleNav } = await loadNav();
     expect(visibleNav(visiblePages(orgAdmin({ available: false }))).map(item => item.key)).not.toContain("licenses");
     expect(visibleNav(visiblePages(orgAdmin())).map(item => item.key)).not.toContain("licenses");
+  });
+});
+
+describe("the admin portal says nothing about seats", () => {
+  // The portal's pages, their titles and descriptions: every string, template and piece of JSX text in its source,
+  // whether or not a screen draws it today. API and code names (`seatsUsed`) are identifiers, not words.
+  const SRC = join(import.meta.dir, "..");
+  const sources = (dir: string): string[] =>
+    readdirSync(dir).flatMap(name => {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) return name === "assets" ? [] : sources(path);
+      return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
+    });
+  const sentences = (file: string): Array<{ line: number; text: string }> => {
+    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const found: Array<{ line: number; text: string }> = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
+      const isText =
+        ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node) || ts.isJsxText(node);
+      if (isText && !ts.isLiteralTypeNode(node.parent)) found.push({ line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, text: node.getText().trim() });
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return found;
+  };
+
+  test("no sentence in the portal's source has the word, and the Licenses page's description counts licenses assigned", () => {
+    const files = sources(SRC);
+    expect(files.map(file => relative(SRC, file))).toEqual(expect.arrayContaining(["App.tsx", "pages/licenses.tsx"]));
+    const all = files.flatMap(file => sentences(file).map(entry => ({ file: relative(SRC, file), ...entry })));
+    expect(all.length).toBeGreaterThan(300);
+    expect(all.filter(entry => /\bseats?\b/i.test(entry.text)).map(entry => `${entry.file}:${entry.line} ${entry.text}`)).toEqual([]);
+    expect(all.some(entry => entry.file === "App.tsx" && entry.text.includes("how many licenses are assigned"))).toBe(true);
   });
 });

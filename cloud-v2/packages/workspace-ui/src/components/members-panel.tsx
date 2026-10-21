@@ -17,7 +17,7 @@
  * column (a chip per license held, "None", or "After first sign-in"; past four, three chips and "+n"), and the
  * panel its Licenses section. With `workspace.licenses.assign` it also gains a checkbox per member who has signed
  * in and a bar "<n> selected · Assign licenses · ×". If billing's catalog can't be read the host passes none, and
- * the list works without any of it. "Add seats ↗" is offered only for a license billing lists `add_seats` for
+ * the list works without any of it. "Add licenses ↗" is offered only for a license billing lists `add_seats` for
  * (`licenses.billing`).
  *
  * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need it to
@@ -50,7 +50,7 @@ import { MemberPanel, PersonLicenses } from "./member-panel";
 /**
  * What the host knows about licenses, for the Members list. The workspace portal passes it; the admin portal doesn't.
  *
- * "Add seats ↗" is one of the portal's hosted-page buttons like any other (`useHostedAction`), so the host gives what
+ * "Add licenses ↗" is one of the portal's hosted-page buttons like any other (`useHostedAction`), so the host gives what
  * that needs, as it does for the Licenses page: the billing client (`billingApi`) and the two ways out (`navigateOut`).
  * The workspace API is the panel's own `api` prop. Whether a license offers the button is `billing`'s to say.
  */

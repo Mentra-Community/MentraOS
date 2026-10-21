@@ -156,7 +156,7 @@ export function isNoAccess(error: unknown): boolean {
 
 /**
  * The Members list's licenses source (`WorkspaceMembersPanel`'s `licenses`): billing's catalog, which names and draws the
- * licenses a member holds, and, for a viewer offered billing, billing's status, which says where "Add seats ↗" is
+ * licenses a member holds, and, for a viewer offered billing, billing's status, which says where "Add licenses ↗" is
  * offered; and the billing client and the portal's ways out, which that button goes through like every other ↗ button
  * (hosted action: this tab, or a tab opened in the click for a page that does not return). Nothing is asked until the
  * list can use it: the viewer sees every license (`workspace.licenses.read`) in a workspace that holds one. None where

@@ -2,7 +2,7 @@
  * A license's seats as the Licenses page draws them (the design's `parts.tsx` and `parts2.tsx`): who holds each
  * one, as a roster, or folded into a strip on a page with several licenses. They only draw. The card (and the
  * people picker) own the data and the requests, and pass in what to run: assigning opens the picker, Unassign
- * asks first, and "Add seats ↗" is there only where billing lists the action.
+ * asks first, and "Add licenses ↗" is there only where billing lists the action.
  */
 
 import { ChevronDownIcon, ChevronUpIcon, CheckIcon, PlusIcon, SearchIcon } from "lucide-react";
@@ -110,8 +110,8 @@ interface SeatControls {
 }
 
 /**
- * The seats, folded: who holds them at a glance, the next action ("Assign seats" while seats are free, "Add
- * seats ↗" when none are), and "Seat holders ⌄", which opens the roster.
+ * The seats, folded: who holds them at a glance, the next action ("Assign licenses" while seats are free, "Add
+ * seats ↗" when none are), and "Assigned to ⌄", which opens the roster.
  */
 export function SeatStrip({
   holders,
@@ -163,8 +163,8 @@ function FreeSeatIcon() {
 
 /**
  * The roster: who holds each seat (their name over their email, since when, and Unassign, which asks first), then
- * the free seats: up to three as a row each with Assign, more folded into "<n> free seats". With every seat taken
- * it says so and offers "Add seats ↗" where billing lists it. With more holders than seats (`blocked`) nobody
+ * the free seats: up to three as a row each with Assign, more folded into "<n> available licenses". With every seat taken
+ * it says so and offers "Add licenses ↗" where billing lists it. With more holders than seats (`blocked`) nobody
  * can be assigned, so no assigning control shows; Unassign still does.
  */
 export function SeatRoster({
