@@ -125,11 +125,15 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
 }
 
 /**
- * Set the name `who`'s last sign-in through Core's provider carried (`signin_identities`), the row the member
- * list reads names from. `person()` already records that sign-in, with no name, as `coreAccessToken` does.
+ * Set the name Core holds from `who`'s sign-ins through its provider (`signin_identities`), the row the member
+ * list reads names from, and, when given, the email that sign-in carried. `person()` already records a
+ * sign-in, with no name, as `coreAccessToken` does.
  */
-async function signedInAs(who: Person, name: string | null) {
-  const updated = await SigninIdentityModel.updateOne({mentraUserId: who.mentraUserId}, {$set: {name}})
+async function signedInAs(who: Person, name: string | null, options: {email?: string} = {}) {
+  const updated = await SigninIdentityModel.updateOne(
+    {mentraUserId: who.mentraUserId},
+    {$set: {name, ...(options.email ? {email: options.email} : {})}},
+  )
   expect(updated.matchedCount).toBe(1)
 }
 
@@ -986,7 +990,8 @@ describe("members", () => {
   test("a member who signed in through Core's provider with a name has it; every other member has name null", async () => {
     const ws = await newWorkspace()
     // The owner and the member signed in with a name, the admin with none, the developer has not signed in at all.
-    await signedInAs(ws.owner, "Olivia Owner")
+    // The owner's sign-in carried another email than the one the membership was made for.
+    await signedInAs(ws.owner, "Olivia Owner", {email: "olivia@personal.example"})
     await signedInAs(ws.admin, null)
     await signedInAs(ws.member, "Mel Member")
     await neverSignedIn(ws.developer)
@@ -1016,6 +1021,7 @@ describe("members", () => {
     expect(nameOf.get("wm_name_pending")).toBeNull()
     expect(nameOf.size).toBe(5)
     // The email stays what the membership holds, whatever the sign-in says.
+    expect(ws.owner.email).not.toBe("olivia@personal.example")
     expect(reply.json.items.find((item: any) => item.membershipId === ws.ownerMembershipId).email).toBe(ws.owner.email)
   })
 

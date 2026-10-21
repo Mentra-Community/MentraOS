@@ -32,11 +32,12 @@ Roles are cumulative: each holds everything the one before it holds.
 - Membership rows are never deleted. Leaving or removal ends the membership and
   keeps it as history, with every role it held; rejoining starts a new one.
 - The member list (`GET /:workspaceId/members`, the same on the workspace and
-  admin portals' routes) names each member. `name` is the one their last
-  sign-in through Core's provider carried, read for the whole list in one
-  query. It is `null` when that sign-in carried no name, when the person has not
-  signed in through the provider, and for a pending imported membership; the
-  `email` stays the one the membership was made for.
+  admin portals' routes) names each member. `name` is the last one a sign-in
+  through Core's provider carried, trimmed, read for the whole list in one
+  query; a sign-in that carries no name keeps the one Core has. It is `null`
+  when no sign-in has carried a name, when the person has not signed in through
+  the provider, and for a pending imported membership; the `email` stays the
+  one the membership was made for.
 - Every member sees the license seats they hold; Admins and Owners see every
   license and assign its seats ([Licenses and seats](licenses.md)). Ending a
   membership frees its seats, and deleting a workspace ends its licenses.
@@ -98,10 +99,11 @@ at `/enterprise` until it returns as workspace settings.
   ([Store integration](store-integration.md#moving-developer-organizations-from-the-store))
   wait for their person's first sign-in with a matching verified email. Until
   then the member list shows them as pending (`pending: true`, `mentraUserId`
-  and `name` null), and the portals mark them "Pending first sign-in". They hold their role
-  meanwhile: a pending Owner counts toward the last Owner while a verified email
-  can still claim it (its legacy identity exists), Admins change or remove them
-  like any other member, and the keys they created validate.
+  and `name` null), and the portals mark them "Pending first sign-in". They
+  hold their role meanwhile: a pending Owner counts toward the last Owner while
+  a verified email can still claim it (its legacy identity exists), Admins
+  change or remove them like any other member, and the keys they created
+  validate.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once. It is refused (`409 workspace_has_holds`) while a
   service holds the workspace, whoever asks, Organization Admins included: the

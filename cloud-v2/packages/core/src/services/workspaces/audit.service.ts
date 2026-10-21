@@ -85,9 +85,11 @@ export async function recordWorkspaceEvent(session: ClientSession, event: Worksp
  * Append `events` inside the caller's transaction, in order, and return their `eventId`s in that order.
  * The events are the ones {@link recordWorkspaceEvent} would record for each in turn: the same
  * documents, with contiguous `seq` in the same order and `eventId`s minted in it. They take two writes
- * whatever their number, one increment of the feed's counter by `events.length` and then one insert,
- * so the counter is held for those two writes rather than for a pair of writes per event. An empty list
- * writes nothing and takes no counter.
+ * whatever their number, one increment of the feed's counter by `events.length` and then one insert. As
+ * with {@link recordWorkspaceEvent}, the counter is held from that increment until the transaction ends,
+ * so record the batch as late as you can: as the transaction's last write, only its insert and the commit
+ * hold the counter, rather than a pair of writes per event. An empty list writes nothing and takes no
+ * counter.
  */
 export async function recordWorkspaceEvents(
   session: ClientSession,

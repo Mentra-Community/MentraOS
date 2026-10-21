@@ -178,10 +178,10 @@ phone. The list is read-only: no admin route changes a license or a seat.
   of the next page, or `null` on the last. A license written while an admin pages
   never moves a row between pages.
 - **Owners.** A workspace shows by its name, also once deleted. A person shows by
-  the name and email of their latest sign-in through Core's sign-in server, or by
-  Core's copy of their verified email when they have not signed in through it;
-  both are null for a deleted account, and the portal shows the id. A page's
-  owners are read in one query per collection.
+  the last name a sign-in through Core's sign-in server carried and the email of
+  their latest sign-in there, or by Core's copy of their verified email when they
+  have not signed in through it; both are null for a deleted account, and the
+  portal shows the id. A page's owners are read in one query per collection.
 - **Search.** `query` is plain text of up to 100 characters, compared without
   regard to case as a substring of the owner's name, email or id, or of the
   product. A search reads the owners that hold a license, not only a page's, so

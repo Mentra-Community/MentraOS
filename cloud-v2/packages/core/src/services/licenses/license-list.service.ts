@@ -4,9 +4,10 @@
  * Read-only. It lists what billing last wrote (`license.service.ts`) and changes nothing: no seat, no term.
  *
  * **Who holds a license.** A workspace shows by its name (`workspaces`), also after it is deleted. A person
- * shows by the name and email of their latest sign-in through Core's sign-in server (`signin_identities`), and
- * by Core's copy of their verified email (`account_emails`) when they have not signed in through it. Core's
- * `users` collection holds no name or email. Both rows go with a deleted account, so its license shows the id.
+ * shows by the last name a sign-in through Core's sign-in server carried and the email of their latest sign-in
+ * there (`signin_identities`), and by Core's copy of their verified email (`account_emails`) when they have not
+ * signed in through it. Core's `users` collection holds no name or email. Both rows go with a deleted account,
+ * so its license shows the id.
  * The owners of a page are read in one query per collection, however many rows the page has.
  *
  * **Paging.** Newest first by license id (a ULID, so by creation), `LICENSE_PAGE_SIZE` at a time. The cursor is

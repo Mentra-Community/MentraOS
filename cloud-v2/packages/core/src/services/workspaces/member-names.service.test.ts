@@ -29,11 +29,26 @@ describe("memberNames", () => {
       {mentraUserId: "mu_blank", name: "   "},
       {mentraUserId: "mu_empty", name: ""},
       {mentraUserId: "mu_missing"},
+      {mentraUserId: "mu_padded", name: "  Katherine Johnson\n"},
     ])
 
-    const names = await memberNames(["mu_ada", "mu_grace", "mu_blank", "mu_empty", "mu_missing", "mu_never_signed_in"])
+    const names = await memberNames([
+      "mu_ada",
+      "mu_grace",
+      "mu_blank",
+      "mu_empty",
+      "mu_missing",
+      "mu_padded",
+      "mu_never_signed_in",
+    ])
 
-    expect(names).toEqual(new Map([["mu_ada", "Ada Lovelace"]]))
+    // A name comes back trimmed, as a list shows it.
+    expect(names).toEqual(
+      new Map([
+        ["mu_ada", "Ada Lovelace"],
+        ["mu_padded", "Katherine Johnson"],
+      ]),
+    )
   })
 
   test("reads signin_identities once for the whole list, however long, each person once", async () => {

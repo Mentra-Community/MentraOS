@@ -1030,6 +1030,16 @@ describe("assigning several seats at once", () => {
       expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 5, seatsUsed: 5})
     }
     expect(await audit("seat.assigned")).toHaveLength(15)
+
+    // The feed came through the retries whole: every stored `seq` runs from 1 to the counter's, each exactly once,
+    // and a poller paging the feed reads the same numbers.
+    const counter = (await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq
+    const everyNumber = Array.from({length: counter}, (_, n) => n + 1)
+    const stored = await WorkspaceAuditEventModel.find({seq: {$exists: true}})
+      .select({_id: 0, seq: 1})
+      .lean()
+    expect(stored.map((event) => event.seq).sort((a, b) => a! - b!)).toEqual(everyNumber)
+    expect((await feed()).map((event) => Number(event.seq))).toEqual(everyNumber)
   })
 
   test("20 one-pair requests at once for 10 free seats: exactly 10 succeed, and none is refused for a write conflict", async () => {
@@ -1259,16 +1269,44 @@ describe("assigning several seats at once", () => {
     ])
     expect(pairs).toHaveLength(500)
 
-    const counterWrites = spyOn(WorkspaceAuditCounterModel, "findOneAndUpdate")
+    // What a request does, in order, to the licenses, the seats and the feed. The originals are taken before
+    // the spies replace them.
+    const steps: string[] = []
+    const logged =
+      (step: string, original: (...args: any[]) => unknown) =>
+      (...args: any[]) => {
+        steps.push(step)
+        return original(...args)
+      }
+    const originals = {
+      counter: WorkspaceAuditCounterModel.findOneAndUpdate.bind(WorkspaceAuditCounterModel),
+      events: WorkspaceAuditEventModel.insertMany.bind(WorkspaceAuditEventModel),
+      licenses: LicenseModel.find.bind(LicenseModel),
+      seats: LicenseSeatModel.find.bind(LicenseSeatModel),
+    }
+    const spies = [
+      spyOn(WorkspaceAuditCounterModel, "findOneAndUpdate").mockImplementation(
+        logged("counter", originals.counter) as never,
+      ),
+      spyOn(WorkspaceAuditEventModel, "insertMany").mockImplementation(logged("events", originals.events) as never),
+      spyOn(LicenseModel, "find").mockImplementation(logged("read licenses", originals.licenses) as never),
+      spyOn(LicenseSeatModel, "find").mockImplementation(logged("read seats", originals.seats) as never),
+    ]
     try {
       await assignSeats(actorOf(ws.admin), ws.workspaceId, pairs)
-      expect(counterWrites).toHaveBeenCalledTimes(1)
-      // As many as one seat takes.
-      counterWrites.mockClear()
+      expect(steps.filter((step) => step === "counter")).toHaveLength(1)
+      // The feed counter is taken by the transaction's last two writes, with nothing read after it: the answer's
+      // licenses and seats are read before.
+      expect(steps.slice(-2)).toEqual(["counter", "events"])
+      expect(steps.slice(0, -2)).toEqual(expect.arrayContaining(["read licenses", "read seats"]))
+      // A single seat takes the counter as often, and as late.
+      steps.length = 0
       await assignSeat(actorOf(ws.admin), ws.workspaceId, calls.licenseId, ws.memberMembershipId)
-      expect(counterWrites).toHaveBeenCalledTimes(1)
+      expect(steps.filter((step) => step === "counter")).toHaveLength(1)
+      expect(steps.slice(-2)).toEqual(["counter", "events"])
+      expect(steps.slice(0, -2)).toEqual(expect.arrayContaining(["read licenses", "read seats"]))
     } finally {
-      counterWrites.mockRestore()
+      for (const spy of spies) spy.mockRestore()
     }
 
     const events = (await WorkspaceAuditEventModel.find({action: "seat.assigned"}).sort({seq: 1}).lean()).slice(0, 500)

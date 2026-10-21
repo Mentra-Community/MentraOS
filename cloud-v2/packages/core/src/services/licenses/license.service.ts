@@ -41,8 +41,9 @@
  * assignment applied to each pair. Each license takes all of its new seats in one conditional increment
  * (`seatsUsed + n <= quantity`); if any license's matches nothing, the whole transaction is aborted and
  * the refusal lists every license that falls short, so a refused request assigns nothing. Its events are
- * recorded together (`recordWorkspaceEvents`), so it holds the feed counter for two writes, not for two
- * per seat.
+ * recorded together (`recordWorkspaceEvents`) as the transaction's last two writes, after the answer is
+ * read, as a single assignment's event is: the feed counter, held from its increment until the commit,
+ * is held across one insert of every event and nothing else, however many seats there are.
  *
  * **Seats end with their membership.** A seat belongs to one membership (`license_seats`): ending the
  * membership (`endMembership`: removal, leaving, account deletion) releases its seats inside that
@@ -490,13 +491,20 @@ export async function assignSeat(
     await requireSeatManager(session, actor, workspaceId)
     await loadWorkspaceLicense(session, workspaceId, licenseId)
     const [holder] = await loadSeatHolders(session, workspaceId, [membershipId])
+    let events: WorkspaceAuditEventInput[] = []
     if (!(await LicenseSeatModel.exists({licenseId, membershipId}).session(session))) {
       await touchWorkspace(session, workspaceId)
       const taken = await takeSeats(session, licenseId, 1)
       if (!taken) fail("no_seats_available", "every seat of this license is assigned")
-      await recordWorkspaceEvents(session, await insertSeats(session, actor, workspaceId, taken, [holder!]))
+      events = await insertSeats(session, actor, workspaceId, taken, [holder!])
     }
-    return (await listWorkspaceLicenses(workspaceId, "everyone", session)).find((view) => view.licenseId === licenseId)!
+    // The answer is read first, so the event's writes are the transaction's last: the feed counter is held
+    // only from its increment to the commit.
+    const answer = (await listWorkspaceLicenses(workspaceId, "everyone", session)).find(
+      (view) => view.licenseId === licenseId,
+    )!
+    await recordWorkspaceEvents(session, events)
+    return answer
   })
 }
 
@@ -568,6 +576,8 @@ export async function assignSeats(
         holders: [...ids].filter((id) => !isHeld.has(pairKey(licenseId, id))).map((id) => holders.get(id)!),
       }))
       .filter((entry) => entry.holders.length > 0)
+    // Every new seat's event, recorded in one batch as the transaction's last writes (below).
+    const events: WorkspaceAuditEventInput[] = []
     if (fresh.length > 0) {
       await touchWorkspace(session, workspaceId)
       const taken: Array<{license: LicenseRow; holders: SeatHolder[]}> = []
@@ -589,14 +599,17 @@ export async function assignSeats(
           licenses: short,
         })
       }
-      // Every seat's event in one batch, after every insert: the feed counter is taken as late as it can be.
-      const events: WorkspaceAuditEventInput[] = []
       for (const entry of taken) {
         events.push(...(await insertSeats(session, actor, workspaceId, entry.license, entry.holders)))
       }
-      await recordWorkspaceEvents(session, events)
     }
-    return (await listWorkspaceLicenses(workspaceId, "everyone", session)).filter((view) => wanted.has(view.licenseId))
+    // The answer is read first, so the events' two writes are the transaction's last: the feed counter is held
+    // only from its increment to the commit.
+    const answer = (await listWorkspaceLicenses(workspaceId, "everyone", session)).filter((view) =>
+      wanted.has(view.licenseId),
+    )
+    await recordWorkspaceEvents(session, events)
+    return answer
   })
 }
 

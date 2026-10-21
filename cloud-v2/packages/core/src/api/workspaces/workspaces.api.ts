@@ -23,8 +23,8 @@
  * DELETE (or any other call with nothing to say) is 204. The response types are
  * the contract's (`@mentra/workspace-contract`), shared with the portals and the Developer Console.
  *
- * Members: `GET /:workspaceId/members` names each member with the name their last sign-in through Core's
- * provider carried (`name`, null when there is none), all of them read in one query.
+ * Members: `GET /:workspaceId/members` names each member with the last name a sign-in through Core's
+ * provider carried, trimmed (`name`, null when none has), all of them read in one query.
  *
  * Licenses: `GET /:workspaceId/licenses` answers every license and seat to a
  * caller with `workspace.licenses.read` (Admins and Owners), and to any other
