@@ -7,7 +7,7 @@ import type {RoutineJobRepository} from './routine-job.service'
 import type {StoredRoutineJob, FleetCandidatePreparation} from '../types/routine-job.types'
 import {hostStateSchema, type ReceivedTestHostState} from './test-host-state.service'
 import {TestRequestModel} from '../models/test-request.model'
-import {type ResourceReservationHost, ResourceReservationsService, resourceReservationRepository} from './resource-reservations.service'
+import {type ResourceReservationHost, ResourceReservationsService, resourceReservationRepository, routineResourcesAvailable} from './resource-reservations.service'
 import {mock} from 'bun:test'
 import {createTestRequestsApi} from '../api/internal/test-requests.api'
 import {TestHostStateModel} from '../models/test-host-state.model'
@@ -15,11 +15,12 @@ import {hostResourceReservationsSchema,isExclusiveHostReservation} from '../type
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
 
 const initialNow = Date.parse('2026-10-20T12:00:00Z'), hash = (c: string) => c.repeat(64)
-function fixture() {
+function fixture(exclusive = false) {
   let now = initialNow, writes = 0, bindWrites = 0
-  const definition = {id:'probe',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',requirements:[],fixtures:[],
-    steps:[{id:'check',instruction:'Check',expected:'Checked'}],execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024}},
-    resourceRequirements:[{kind:'phone',capabilities:['backend-connectivity']},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
+  const definition = {id:'probe',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',requirements:[],fixtures:exclusive?[{provider:'google-authentication',description:'Use the existing test account'}]:[],
+    steps:[{id:'check',instruction:'Check',expected:'Checked'}],execution:{resourceKinds:['phone','app','recorder','network',...(exclusive?['fixture-data']:[])],policy:{estimatedOutputBytes:1024}},
+    resourceRequirements:[{kind:'phone',capabilities:['backend-connectivity']},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']},
+      ...(exclusive?[{kind:'fixture-data',capabilities:['google-authentication']}]:[])],
     source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:'a'.repeat(40),path:'routines/probe/routine.ts'}}
   const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttempt:1}, build = {kind:'android-apk' as const,repository:'Mentra-Community/MentraOS',channel:'pr',prNumber:12,source,headSha:'b'.repeat(40),
     archive:{name:'app.apk',size:100,sha256:hash('c'),url:'https://artifactscdn.mentraglass.com/app.apk'}, receipt:{size:10,sha256:hash('d'),url:'https://artifactscdn.mentraglass.com/receipt.json'}}
@@ -32,7 +33,9 @@ function fixture() {
     resourceReservations:{claims:[],returns:[],candidatePrerequisites:[]},authorityReservations:[],lanes:[{id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
       {id:`${hostId}:phone`,kind:'phone',capabilities:['backend-connectivity']},{id:`${hostId}:app`,kind:'app'},
       {id:`${hostId}:recorder`,kind:'recorder',storage:{poolId:`${hostId}:disk`,observedAt:new Date(now).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}},
-      {id:`${hostId}:network`,kind:'network',capabilities:['independent-uplink']}]}],resourceLifecycle:{schemaVersion:1,history:[],subjects:[{
+      {id:`${hostId}:network`,kind:'network',capabilities:['independent-uplink']},
+      ...(exclusive?[{id:`${hostId}:fixtures`,kind:'fixture-data',capabilities:['google-authentication'],exclusiveDependencies:[{resourceId:'conference-account',authorityHostId:'air2',capability:'google-authentication'}]}]:[])]}],
+      ...(exclusive?{resources:[{id:'conference-account',kind:'fixture-data',capabilities:['google-authentication']}]}:{}),resourceLifecycle:{schemaVersion:1,history:[],subjects:[{
         subject:{kind:'resource',id:`${hostId}:phone`,authorityHostId:hostId},generation:1,current:true,status:'unknown',owner:null,
         observedAt:new Date(now).toISOString(),receivedAt:null,reason:null,
         idle:{contractVersion:'phone-baseline',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'same-controller',controllerId:hostId},evidenceRefs:[]},
@@ -259,11 +262,110 @@ function repositoryEnvelope(f: ReturnType<typeof fixture>): ResourceReservationH
    repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'phone',capabilities:['backend-connectivity'],memberships:[{hostId:h.hostId,laneId:'android'}],dependencies:[],placement:'installed'}},...snapshot.resourceLifecycle!.subjects.filter(value=>value.subject.id!==subject.subject.id)];
  return {hostId:h.hostId,incarnation:h.incarnation!,incarnationGeneration:h.incarnationGeneration!,sequence:h.sequence!,receivedAt:new Date(receivedAt),snapshot:hostStateSchema.parse(snapshot),resourceReservations:[structuredClone(f.row.fleetResourceReservation!)]};
 }
-async function returnedFixture() {
- const f=fixture();await f.service.preparation('job-one');f.settle('qualified');await f.service.preparation('job-one');
+async function returnedFixture(exclusive = false) {
+ const f=fixture(exclusive);await f.service.preparation('job-one');f.settle('qualified');await f.service.preparation('job-one');
  f.row.fleetResourceReservation!.minimumAvailableBytes=recorderCapacityRequirements(f.row.fleetPreparation!).resources.find(r=>r.kind==='recorder')!.storage!.minimumAvailableBytes;
  return f;
 }
+for(const phase of ['recorder-read','request-read','host-cas'] as const)for(const elapsed of [1,2])test(`ordinary backend binding ${phase} ${elapsed===1?'keeps exact-age proof':'refuses expired proof despite a newer physical baseline'}`,async()=>{
+ const f=await returnedFixture();f.advance(119999);
+ const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),bindingNow=f.now;
+ const admission=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},async recorderClaims(){return [claim]},
+  async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},async claimedHosts(){return []},async replace(){throw Error('Unexpected dependency claim')}},()=>f.now);
+ expect(await admission.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android')).toBeUndefined();
+ const original=structuredClone(f.row),find=TestRequestModel.collection.findOne,write=TestRequestModel.collection.findOneAndUpdate,
+  read=resourceReservationRepository.get,claims=resourceReservationRepository.recorderClaims,replace=resourceReservationRepository.replace,
+  clock=spyOn(Date,'now').mockImplementation(()=>f.now);
+ let requestReads=0,recorderReads=0,hostCas=0,bindingWrites=0;
+ TestRequestModel.collection.findOne=mock(async()=>{if(++requestReads===2&&phase==='request-read')f.advance(elapsed);return structuredClone(f.row)}) as never;
+ resourceReservationRepository.get=async()=>structuredClone(host);
+ resourceReservationRepository.recorderClaims=async()=>{if(++recorderReads===1&&phase==='recorder-read')f.advance(elapsed);return [structuredClone(claim)]};
+ resourceReservationRepository.replace=async(_host,next)=>{hostCas++;expect(next).toEqual([claim]);host.resourceReservationVersion=(host.resourceReservationVersion??0)+1;if(phase==='host-cas')f.advance(elapsed);return true};
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{
+  bindingWrites++;expect(filter.fleetResourceReservation).toEqual(claim);expect(filter.fleetResourceAdmission).toEqual(original.fleetResourceAdmission);
+  expect(filter.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(filter.fleetDeadline).toEqual({$gt:new Date(f.now)});
+  f.row={...f.row,...structuredClone(update.$set)};return structuredClone(f.row);
+ }) as never;
+ try{
+  const bound=await routineJobRepository.bind(original.requestId,original.fleetInputSha256!,{jobId:original.requestId,requestId:original.requestId,
+   hostId:'air1',laneId:'android',descriptorRevision:routineLaneDescriptorRevision(host.snapshot.lanes[0]!),actionsRunId:'1',actionsJobId:'2',boundAt:new Date(bindingNow).toISOString()}, {},new Date(bindingNow));
+  expect(qualifiedCandidate(original,host.snapshot,'android',f.now,host.receivedAt)!==undefined).toBe(elapsed===1);
+  expect(host.snapshot.resourceLifecycle!.subjects[0]!.idle.checkedAt).toBe(new Date(bindingNow).toISOString());
+  expect(f.now-Date.parse(host.snapshot.lanes[0]!.resources[0]!.backendConnectivity!.observedAt)).toBe(119999+elapsed);
+  expect(bindingWrites).toBe(elapsed===1?1:0);expect(hostCas).toBe(elapsed===1||phase==='host-cas'?1:0);
+  if(elapsed===1){expect(bound?.state).toBe('preparing');expect(bound?.fleetBinding?.hostId).toBe('air1')}
+  else{expect(bound).toBeNull();expect(f.row).toEqual(original)}
+  expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);
+  expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
+ }finally{TestRequestModel.collection.findOne=find;TestRequestModel.collection.findOneAndUpdate=write;resourceReservationRepository.get=read;
+  resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.replace=replace;clock.mockRestore()}
+});
+for(const elapsed of [1,2])test(`ordinary backend staging after recorder read ${elapsed===1?'keeps exact-age proof':'refuses expired proof despite a newer physical baseline'}`,async()=>{
+ const f=await returnedFixture();f.advance(119999);
+ const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),original=structuredClone(f.row);let stages=0;
+ const service=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},
+  async recorderClaims(){f.advance(elapsed);return [claim]},async stageBackend(_id,_digest,value){stages++;f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},
+  async claimedHosts(){return []},async replace(){throw Error('Unexpected dependency claim')}},()=>f.now);
+ const admitted=await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
+ expect(qualifiedCandidate(original,host.snapshot,'android',f.now,host.receivedAt)!==undefined).toBe(elapsed===1);
+ expect(stages).toBe(elapsed===1?1:0);expect(host.resourceReservations).toEqual([claim]);
+ if(elapsed===1)expect(admitted).toBeUndefined();else{expect(admitted).toBeNull();expect(f.row).toEqual(original)}
+});
+for(const phase of ['stage-request','stage-recorder','stage-host','final-stage-request','final-stage-host'] as const)for(const elapsed of [1,2])test(`ordinary backend repository staging ${phase} ${elapsed===1?'keeps exact-age proof':'refuses expired proof despite a newer physical baseline'}`,async()=>{
+ const f=await returnedFixture();f.advance(119999);
+ const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),original=structuredClone(f.row),stageNow=f.now;
+ const admission={intent:{operationId:`run:${f.row.requestId}`,hostId:'air1',laneId:'android',inputSha256:f.row.fleetInputSha256!,owner:{id:f.row.requestId,kind:'run' as const},
+  resources:host.snapshot.lanes[0]!.resources.map(resource=>({id:resource.id,capabilities:resource.capabilities??[]})),controller:{incarnation:host.incarnation,generation:host.incarnationGeneration,sequence:host.sequence}},dependencies:[]};
+ const request=resourceReservationRepository.request,recorder=resourceReservationRepository.recorderClaims,get=resourceReservationRepository.get,
+  write=TestRequestModel.collection.findOneAndUpdate,clock=spyOn(Date,'now').mockImplementation(()=>f.now);
+ let requestReads=0,hostReads=0,stages=0,stagedDeadline:unknown;
+ resourceReservationRepository.request=async()=>{requestReads++;if(phase===(requestReads===1?'stage-request':'final-stage-request'))f.advance(elapsed);return structuredClone(f.row)};
+ resourceReservationRepository.recorderClaims=async()=>{if(phase==='stage-recorder')f.advance(elapsed);return [structuredClone(claim)]};
+ resourceReservationRepository.get=async()=>{hostReads++;if(phase===(hostReads===1?'stage-host':'final-stage-host'))f.advance(elapsed);return structuredClone(host)};
+ TestRequestModel.collection.findOneAndUpdate=mock(async(filter:any,update:any)=>{stages++;expect(filter.fleetCandidateSelection).toEqual(original.fleetCandidateSelection);
+  stagedDeadline=filter.fleetDeadline;f.row={...f.row,...structuredClone(update.$set)};return structuredClone(f.row)}) as never;
+ try{
+  const staged=await resourceReservationRepository.stageBackend!(f.row.requestId,f.row.fleetInputSha256!,admission,host,new Date(stageNow));
+  expect(qualifiedCandidate(original,host.snapshot,'android',f.now,host.receivedAt)!==undefined).toBe(elapsed===1);
+  expect(stages).toBe(elapsed===1?1:0);if(elapsed===1){expect(staged?.fleetResourceAdmission).toEqual(admission);expect(stagedDeadline).toEqual({$gt:new Date(f.now)})}else{expect(staged).toBeNull();expect(f.row).toEqual(original)}
+  expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
+ }finally{resourceReservationRepository.request=request;resourceReservationRepository.recorderClaims=recorder;resourceReservationRepository.get=get;
+  TestRequestModel.collection.findOneAndUpdate=write;clock.mockRestore()}
+});
+for(const phase of ['stage-return','retained-read','claim-request','claim-host','post-cas'] as const)for(const elapsed of [1,2])test(`ordinary backend exclusive admission ${phase} ${elapsed===1?'keeps exact-age proof':'refuses expired proof and retains any original committed custody'}`,async()=>{
+ const f=await returnedFixture(true);f.advance(119999);
+ const host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!),{receivedAt,authorityReservations,...snapshot}=structuredClone(f.hosts[1]!);
+ snapshot.frameworkAcceptedAt=snapshot.observedAt;snapshot.frameworkProcess={pid:124,startedAt:snapshot.observedAt};
+ const authority={...structuredClone(host),hostId:'air2',incarnation:'air2-one',resourceReservations:[] as unknown[],receivedAt:new Date(receivedAt),
+  snapshot:hostStateSchema.parse(snapshot)},original=structuredClone(f.row);let requestReads=0,writes=0;
+ const service=new ResourceReservationsService({async request(){if(++requestReads===2&&phase==='claim-request')f.advance(elapsed);return structuredClone(f.row)},
+  async get(id){if(id==='air2'&&phase==='claim-host')f.advance(elapsed);return structuredClone(id==='air1'?host:authority)},async recorderClaims(){return [claim]},
+  async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);if(phase==='stage-return')f.advance(elapsed);return structuredClone(f.row)},
+  async claimedHosts(){if(phase==='retained-read')f.advance(elapsed);return []},
+  async replace(_host,next){writes++;authority.resourceReservations=structuredClone(next);if(phase==='post-cas')f.advance(elapsed);return true}},()=>f.now);
+ const admitted=await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
+ expect(qualifiedCandidate(original,host.snapshot,'android',f.now,host.receivedAt)!==undefined).toBe(elapsed===1);
+ expect(writes).toBe(elapsed===1||phase==='post-cas'?1:0);expect(authority.resourceReservations).toHaveLength(writes);
+ if(elapsed===1){expect(admitted?.claims).toEqual(hostResourceReservationsSchema.parse(authority.resourceReservations).filter(isExclusiveHostReservation));expect(admitted?.intent.owner).toEqual({id:original.requestId,kind:'run'})}else expect(admitted).toBeNull();
+ expect(host.resourceReservations).toEqual([claim]);expect(f.row.fleetResourceReservation).toEqual(claim);expect(f.row.fleetResourceAdmission?.intent.hostId).toBe('air1');
+ expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetDeadline).toEqual(original.fleetDeadline);
+});
+test('an existing ordinary admission never substitutes fresh physical readiness for expired backend proof; unassigned candidate and offline checks remain available',async()=>{
+ const f=await returnedFixture(),claim=structuredClone(f.row.fleetResourceReservation!);let host=repositoryEnvelope(f);
+ const service=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},async recorderClaims(){return [claim]},
+  async stageBackend(_id,_digest,value){f.row.fleetResourceAdmission=structuredClone(value);return structuredClone(f.row)},async claimedHosts(){return []},async replace(){throw Error('Unexpected dependency claim')}},()=>f.now);
+ expect(await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android')).toBeUndefined();
+ f.advance(120001);host=repositoryEnvelope(f);const original=structuredClone(f.row);
+ expect(routineResourcesAvailable(host,f.row,'android',f.now)).toBe(false);
+ expect(await service.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android')).toBeNull();expect(f.row).toEqual(original);expect(host.resourceReservations).toEqual([claim]);
+ const unassigned=fixture(),candidateHost=repositoryEnvelope(unassigned);candidateHost.resourceReservations=[];
+ delete candidateHost.snapshot.lanes[0]!.resources[0]!.idleContract;candidateHost.snapshot.resourceLifecycle!.subjects[0]!.status='unknown';
+ candidateHost.snapshot.resourceLifecycle!.subjects[0]!.idle.outcome='not-checked';candidateHost.snapshot.resourceLifecycle!.subjects[0]!.idle.checkedAt=null;candidateHost.snapshot.resourceLifecycle!.subjects[0]!.idle.acceptedCheck=null;
+ expect(routineResourcesAvailable(candidateHost,unassigned.row,'android',unassigned.now,true)).toBe(true);
+ expect(routineResourcesAvailable(candidateHost,unassigned.row,'android',unassigned.now)).toBe(false);
+ const offline=structuredClone(f.row);offline.fleetPreparation!.requirements.resources.find(value=>value.kind==='phone')!.capabilities=[];
+ expect(routineResourcesAvailable(host,offline,'android',f.now)).toBe(true);
+});
 for (const winner of ['renewal','binding'] as const) test(`final binding and readiness renewal serialize when ${winner} wins`,async()=>{
  const f=await returnedFixture(),host=repositoryEnvelope(f),claim=structuredClone(f.row.fleetResourceReservation!);
  const admission=new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},async recorderClaims(){return [claim]},

@@ -830,6 +830,8 @@ describe("Assign licenses", () => {
     expect(assignIsOpen()).toBe(false);
   });
 
+  // This aggregate DOM scenario dispatches 126 real checkbox clicks. Its test
+  // envelope is not a product deadline; keep the 504-to-500 transition intact.
   test("Assign is off above one request's most, and says so under the button", () => {
     assignmentLimitBody = (async () => {
       // 126 members × 4 licenses = 504 pairs; 125 × 4 = 500 is the most one request takes.
@@ -855,7 +857,7 @@ describe("Assign licenses", () => {
       expect(assignDialog().textContent).not.toContain("You can assign up to");
     })();
     return assignmentLimitBody;
-  });
+  }, 15_000);
 
   test("has no native <select>", async () => {
     await mount();
