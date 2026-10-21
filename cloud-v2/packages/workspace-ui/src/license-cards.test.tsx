@@ -293,7 +293,8 @@ describe("a payment that failed", () => {
     });
 
   test("is ringed in amber with the badge, the notice and the unpaid renewal", async () => {
-    await mountCard(rig(), failed());
+    // The renewal came (Oct 30) and was not paid; the clock is Nov 1.
+    await mountCard(rig(), failed({ renewsAt: "2026-10-30T12:00:00.000Z" }));
     expect(theCard().getAttribute("data-ring")).toBe("warn");
     expect(theCard().className).toContain("ring-error");
     const card = text(theCard());
@@ -301,9 +302,58 @@ describe("a payment that failed", () => {
     expect(card).toContain("Seats stop on Nov 23, 2026 unless payment goes through.");
     expect(card).toContain("Update the payment method to keep them.");
     expect(card).toContain("Renewal");
-    expect(card).toContain("Nov 2, 2026");
+    expect(card).toContain("Oct 30, 2026");
     expect(card).toContain("Not paid");
     expect(card).not.toContain("Renews");
+  });
+
+  test("says Not paid for a renewal due this very moment", async () => {
+    await mountCard(rig(), failed({ renewsAt: new Date(NOW).toISOString() }));
+    const card = text(theCard());
+    expect(card).toContain("Renewal");
+    expect(card).toContain("Nov 1, 2026");
+    expect(card).toContain("Not paid");
+  });
+
+  test("shows the plain renewal date while the renewal is still to come: a mid-period charge failed, the period was paid", async () => {
+    // Nov 2 is after the clock (Nov 1): billing's past_due is a charge for added seats, not this period's.
+    await mountCard(rig(), failed({ renewsAt: "2026-11-02T12:00:00.000Z" }));
+    const card = text(theCard());
+    expect(card).toContain("Renews");
+    expect(card).toContain("Nov 2, 2026");
+    expect(card).toContain("Every month");
+    expect(card).not.toContain("Not paid");
+    expect(card).not.toContain("Renewal");
+    // The failure is still the card's state: the badge, the ring, the notice and its deadline.
+    expect(theCard().getAttribute("data-ring")).toBe("warn");
+    expect(card).toContain("Payment failed");
+    expect(card).toContain("Seats stop on Nov 23, 2026 unless payment goes through.");
+    expect(buttons(find(".rounded-notice"))).toEqual(["Update payment method", "Complete payment"]);
+  });
+
+  test("a renewal still to come keeps a scheduled end as it does for an active license", async () => {
+    await mountCard(rig(), failed({ renewsAt: "2026-11-02T12:00:00.000Z", endsAt: "2026-12-02T12:00:00.000Z" }));
+    const card = text(theCard());
+    expect(card).toContain("Renews");
+    expect(card).toContain("Until Dec 2, 2026");
+    expect(card).not.toContain("Not paid");
+  });
+
+  test("the same license says Not paid once the clock passes the renewal", async () => {
+    const license = failed({ renewsAt: "2026-11-02T12:00:00.000Z" });
+    await mountCard(rig(), license, { now: Date.parse("2026-11-02T11:59:59.000Z") });
+    expect(text(theCard())).not.toContain("Not paid");
+    await cleanup();
+    await mountCard(rig(), license, { now: Date.parse("2026-11-02T12:00:01.000Z") });
+    expect(text(theCard())).toContain("Not paid");
+    expect(text(theCard())).toContain("Renewal");
+  });
+
+  test("a failed payment with no renewal date shows neither", async () => {
+    await mountCard(rig(), failed({ renewsAt: undefined }));
+    const card = text(theCard());
+    expect(card).not.toContain("Not paid");
+    expect(card).toContain("Payment failed");
   });
 
   test("Update payment method is the primary button, with Complete payment beside it", async () => {

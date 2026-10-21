@@ -121,12 +121,18 @@ function SeatsFact({ seats }: { seats: SeatCounts }) {
   );
 }
 
-/** Where the license's term stands: its renewal, its end, or the renewal a failed payment left unpaid. */
-function TermFact({ card, locale }: { card: JoinedLicense; locale: string }) {
+/**
+ * Where the license's term stands: its renewal, its end, or the renewal a failed payment left unpaid.
+ *
+ * "Not paid" belongs to a renewal that has come (`renewsAt` at or before `now`) and wasn't paid. A `past_due` license
+ * whose renewal is still ahead failed a charge in the middle of its period (added seats, say): the period itself was
+ * paid, so it shows its plain renewal date like any other. The failure is the card's badge, ring and notice either way.
+ */
+function TermFact({ card, locale, now }: { card: JoinedLicense; locale: string; now: number }) {
   const billing = card.billing;
   if (billing === null || billing.status === "processing") return <Pending label={t.facts.term.renews} />;
   const day = (iso: string) => formatDay(iso, locale);
-  if (billing.status === "past_due" && billing.renewsAt) {
+  if (billing.status === "past_due" && billing.renewsAt && Date.parse(billing.renewsAt) <= now) {
     return (
       <Fact
         label={t.facts.term.renewal}
@@ -170,7 +176,7 @@ function miniappsOf(card: JoinedLicense): string[] {
 }
 
 /** The strip of facts for the view, and how many columns it has. */
-function factsFor(card: JoinedLicense, view: LicenseCardView, locale: string, workspaceName: string | undefined) {
+function factsFor(card: JoinedLicense, view: LicenseCardView, locale: string, workspaceName: string | undefined, now: number) {
   if (view === "member") {
     const seat = card.license?.seats?.[0];
     const apps = miniappsOf(card);
@@ -194,7 +200,7 @@ function factsFor(card: JoinedLicense, view: LicenseCardView, locale: string, wo
       columns: 2,
       facts: (
         <>
-          <TermFact card={card} locale={locale} />
+          <TermFact card={card} locale={locale} now={now} />
           <CostFactView card={card} view={view} locale={locale} />
         </>
       ),
@@ -207,7 +213,7 @@ function factsFor(card: JoinedLicense, view: LicenseCardView, locale: string, wo
     facts: (
       <>
         {seats}
-        <TermFact card={card} locale={locale} />
+        <TermFact card={card} locale={locale} now={now} />
         <CostFactView card={card} view={view} locale={locale} />
       </>
     ),
@@ -322,7 +328,7 @@ export function LicenseCard({
   }));
 
   const badge = badgeFor(card, view, locale);
-  const { columns, facts } = factsFor(card, view, locale, workspaceName);
+  const { columns, facts } = factsFor(card, view, locale, workspaceName, clock);
   const ring = card.problem === "past_due" ? "warn" : highlight ? "highlight" : null;
   // Add seats from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
   const fromPicker = hosted.surface === PICKER;
