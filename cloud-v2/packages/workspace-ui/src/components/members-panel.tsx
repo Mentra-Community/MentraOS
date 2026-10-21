@@ -1,44 +1,115 @@
 /**
- * The workspace's members and their roles.
+ * The workspace's members: who they are, the role each holds, when they joined and, where the host has a
+ * licenses source, the licenses they hold.
  *
- * Role selectors offer only the transitions `canChangeRole` allows the viewer, and Remove only appears
- * where removal is theirs to do. The API enforces the same rules; this just never offers a control
- * that is certain to be refused. The viewer's own row never has a role selector: a select commits on
- * change, and one stray keystroke must not demote an owner, so their role is changed by another owner
- * or an Organization Admin. Each change carries the revision the viewer last saw, so a stale view
- * ends in "This workspace changed" and a refetch rather than in an overwrite.
+ * A row shows the member's name over their email (the email alone where Core has none), their role as a badge and
+ * when they joined, and opens the member panel (`MemberPanel`). Changing a role and removing a member are in that
+ * panel, under the same rules as before: Change role offers only the roles `roleOptions` allows the viewer, and
+ * Remove only appears where removal is theirs to do; neither is ever offered for the viewer's own membership
+ * (a stray click must not demote an owner, so their role is changed by another owner or an Organization Admin).
+ * Each change carries the revision the viewer last saw, so a stale view ends in "This workspace changed" and a
+ * refetch rather than in an overwrite. The panel is controlled through `member` and `onMemberChange` when the
+ * host passes them (the workspace portal ties it to `?member=<membershipId>`), and by its own state otherwise
+ * (the admin portal).
  *
- * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need
- * it to recover a workspace's ownership. Leave it off anywhere else.
+ * `licenses` is the host's licenses source (the workspace portal passes it, the admin portal doesn't). Given it,
+ * and for a viewer with `workspace.licenses.read` in a workspace that holds licenses, the list gains a Licenses
+ * column (a chip per license held, "None", or "After first sign-in"; past four, three chips and "+n"), and the
+ * panel its Licenses section. With `workspace.licenses.assign` it also gains a checkbox per member who has signed
+ * in and a bar "<n> selected · Assign licenses · ×". Licenses are shown in the order Core lists them. If billing's
+ * catalog can't be read the host passes none, and the list works without any of it.
  *
- * A member imported from the Store who has not signed in yet is marked "Pending first sign-in". They
- * hold their role and are managed like anyone else, but have no Mentra user id until they sign in.
+ * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need it to
+ * recover a workspace's ownership. Leave it off anywhere else.
+ *
+ * A member imported from the Store who has not signed in yet is marked "Pending first sign-in". They hold their
+ * role and are managed like anyone else, but have no Mentra user id and can hold no seat until they sign in.
  */
 
 import { useQuery } from "@tanstack/react-query";
-import type { MemberView, WorkspaceDetail, WorkspaceRole } from "@mentra/workspace-contract";
+import { XIcon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
+import type { CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../api";
 import { formatDate } from "../lib/format";
-import { membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
-import { can, canRemoveRole, effectiveRole, ROLE_LABELS, roleOptions } from "../roles";
-import { NativeSelect } from "../ui/native-select";
-import { Avatar, Badge, ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { holdsSeat, joinLicenses, listedAction, type JoinedLicense } from "../lib/license-join";
+import { cn } from "../lib/utils";
+import { licensesQuery, membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
+import { can, canRemoveRole, effectiveRole, roleOptions } from "../roles";
+import { licenseStrings as t } from "../strings/licenses";
+import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
+import { Avatar, Badge, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { AssignLicensesDialog } from "./licenses/assign-licenses";
+import { ProductChip } from "./licenses/product";
+import { MemberPanel, memberLabel, PersonLicenses } from "./member-panel";
+
+/** What the host knows about licenses, for the Members list. The workspace portal passes it; the admin portal doesn't. */
+export interface MembersLicenses {
+  /**
+   * Billing's catalog (`catalog.products`): what names and draws each license. Null or undefined while it can't be
+   * read (still loading, or it failed): the Licenses column, the selection and the panel's section are left out.
+   */
+  catalog: readonly CatalogEntry[] | null | undefined;
+  /**
+   * Billing's licenses (`status.licenses`), where the viewer is offered billing. Given it, "Add seats ↗" appears
+   * only for a license billing lists `add_seats` for. Without it, `onAddSeats` alone decides.
+   */
+  billing?: readonly LicenseBilling[] | null;
+  /**
+   * Asks billing for an `add_seats` session for the license and leaves the portal for it; rejects with billing's
+   * refusal. Leave it out where the viewer isn't offered billing: there is then no "Add seats ↗".
+   */
+  onAddSeats?(licenseId: string): unknown;
+}
+
+/** How many chips a member's Licenses cell shows before it folds the rest into "+n". */
+const MAX_CHIPS = 4;
 
 export function WorkspaceMembersPanel({
   api,
   workspaceId,
   showUserIds = false,
+  licenses,
+  member: openMemberId,
+  onMemberChange,
+  locale,
 }: {
   api: WorkspaceApi;
   workspaceId: string;
   /** Show each member's Mentra user id (Organization Admins, for ownership recovery). */
   showUserIds?: boolean;
+  /** The licenses source. Leave it out where the host shows no licenses (the admin portal). */
+  licenses?: MembersLicenses;
+  /** The membership whose panel is open (null or undefined: closed). Pass it with `onMemberChange` to control the panel; leave both out to let it keep its own. */
+  member?: string | null;
+  onMemberChange?(membershipId: string | null): void;
+  /** The portal's locale, for dates. */
+  locale?: string;
 }) {
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
+  const detail = detailResult.data;
   const membersResult = useQuery({
     ...membersQuery(api, workspaceId),
-    enabled: can(detailResult.data, "workspace.members.read"),
+    enabled: can(detail, "workspace.members.read"),
   });
+
+  const catalog = licenses?.catalog ?? undefined;
+  const licensesResult = useQuery({
+    ...licensesQuery(api, workspaceId),
+    enabled: catalog !== undefined && can(detail, "workspace.licenses.read"),
+  });
+  // The licenses the workspace holds, named from the catalog, in the order Core lists them.
+  const cards = useMemo(() => {
+    if (catalog === undefined || !licensesResult.data) return [];
+    const order = new Map(licensesResult.data.map((license, index) => [license.licenseId, index]));
+    return joinLicenses({ licenses: licensesResult.data, catalog, locale })
+      .filter((card) => card.license !== null)
+      .sort((a, b) => order.get(a.licenseId)! - order.get(b.licenseId)!);
+  }, [catalog, licensesResult.data, locale]);
+  const licensesShown = can(detail, "workspace.licenses.read") && cards.length > 0;
+  const canSelect = licensesShown && can(detail, "workspace.licenses.assign");
 
   const changeRole = useWorkspaceMutation(
     api,
@@ -50,142 +121,304 @@ export function WorkspaceMembersPanel({
     api.removeMember(workspaceId, target.membershipId, target.expectedRevision),
   );
 
+  // Which member's panel is open: the host's when it passes `member` or `onMemberChange`, else this panel's own.
+  const controlled = openMemberId !== undefined || onMemberChange !== undefined;
+  const [ownOpenId, setOwnOpenId] = useState<string | null>(null);
+  const openId = controlled ? (openMemberId ?? null) : ownOpenId;
+  const setOpenId = (membershipId: string | null) => {
+    if (controlled) onMemberChange?.(membershipId);
+    else setOwnOpenId(membershipId);
+  };
+  // A failure belongs to the panel it happened in.
+  const resetChangeRole = changeRole.reset;
+  const resetRemove = remove.reset;
+  useEffect(() => {
+    resetChangeRole();
+    resetRemove();
+  }, [openId, resetChangeRole, resetRemove]);
+
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [assigning, setAssigning] = useState(false);
+  // Who is chosen: only members still listed who have signed in, in the list's order.
+  const chosen = useMemo(
+    () => (canSelect ? (membersResult.data ?? []).filter((member) => selectedIds.has(member.membershipId) && !member.pending) : []),
+    [canSelect, membersResult.data, selectedIds],
+  );
+
+  const canAddSeats = (card: JoinedLicense) => {
+    if (!licenses?.onAddSeats) return false;
+    if (licenses.billing === null || licenses.billing === undefined) return true;
+    return listedAction(licenses.billing.find((entry) => entry.licenseId === card.licenseId), "add_seats") !== null;
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setAssigning(false);
+  };
+
   return (
     <Panel
-      title="Members"
-      count={can(detailResult.data, "workspace.members.read") ? membersResult.data?.length : undefined}
+      title={t.members.title}
+      count={can(detail, "workspace.members.read") ? membersResult.data?.length : undefined}
       description="People in this workspace and the role each of them holds."
+      actions={
+        chosen.length > 0 ? (
+          <div
+            data-slot="selection-bar"
+            // On a phone it floats at the bottom of the screen: the header has no room for it.
+            className="bg-foreground text-background flex items-center gap-3 rounded-full py-1.5 pr-1.5 pl-4 text-sm whitespace-nowrap max-sm:fixed max-sm:inset-x-4 max-sm:bottom-4 max-sm:z-30 max-sm:justify-between max-sm:shadow-dialog"
+          >
+            <span aria-live="polite" className="font-semibold">
+              {t.members.selected(chosen.length)}
+            </span>
+            <Button type="button" size="sm" className="bg-background text-foreground" onClick={() => setAssigning(true)}>
+              {t.members.assignLicenses}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t.members.clearSelection}
+              className="text-background enabled:hover:bg-white/15"
+              onClick={clearSelection}
+            >
+              <XIcon />
+            </Button>
+          </div>
+        ) : undefined
+      }
     >
       <QueryGate result={detailResult}>
-        {(detail) =>
-          !can(detail, "workspace.members.read") ? (
+        {(workspace) =>
+          !can(workspace, "workspace.members.read") ? (
             <Restricted>Only workspace admins can see the member list.</Restricted>
           ) : (
             <QueryGate result={membersResult}>
-              {(members) => (
-                <MembersTable
-                  detail={detail}
-                  members={members}
-                  showUserIds={showUserIds}
-                  busy={changeRole.isPending || remove.isPending}
-                  onChangeRole={(membershipId, role) => {
-                    remove.reset();
-                    changeRole.mutate({ membershipId, role, expectedRevision: detail.authorizationRevision });
-                  }}
-                  onRemove={(membershipId) => {
-                    changeRole.reset();
-                    remove.mutate({ membershipId, expectedRevision: detail.authorizationRevision });
-                  }}
-                />
-              )}
+              {(members) => {
+                const viewer = effectiveRole(workspace);
+                const canManage = can(workspace, "workspace.members.manage");
+                const ownMembershipId = workspace.membership?.membershipId ?? null;
+                const target = members.find((candidate) => candidate.membershipId === openId) ?? null;
+                const targetIsOther = target !== null && canManage && target.membershipId !== ownMembershipId;
+                return (
+                  <>
+                    <MembersTable
+                      members={members}
+                      ownMembershipId={ownMembershipId}
+                      showUserIds={showUserIds}
+                      cards={licensesShown ? cards : null}
+                      selectable={canSelect}
+                      selected={selectedIds}
+                      locale={locale}
+                      onOpen={setOpenId}
+                      onToggle={(membershipId) =>
+                        setSelectedIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(membershipId)) next.delete(membershipId);
+                          else next.add(membershipId);
+                          return next;
+                        })
+                      }
+                    />
+                    <MemberPanel
+                      member={target}
+                      onClose={() => setOpenId(null)}
+                      roleOptions={targetIsOther ? roleOptions(viewer, target.role) : []}
+                      canRemove={targetIsOther && canRemoveRole(viewer, target.role)}
+                      busy={changeRole.isPending || remove.isPending}
+                      onChangeRole={(role) => {
+                        if (!target) return;
+                        remove.reset();
+                        changeRole.mutate({ membershipId: target.membershipId, role, expectedRevision: workspace.authorizationRevision });
+                      }}
+                      onRemove={() => {
+                        if (!target) return;
+                        changeRole.reset();
+                        remove.mutate(
+                          { membershipId: target.membershipId, expectedRevision: workspace.authorizationRevision },
+                          { onSuccess: () => setOpenId(null) },
+                        );
+                      }}
+                      error={changeRole.error ?? remove.error}
+                      locale={locale}
+                      licenses={
+                        target && licensesShown ? (
+                          <PersonLicenses
+                            api={api}
+                            workspaceId={workspaceId}
+                            member={target}
+                            cards={cards}
+                            canAssign={canSelect}
+                            canAddSeats={canAddSeats}
+                            onAddSeats={licenses?.onAddSeats}
+                          />
+                        ) : null
+                      }
+                    />
+                    <AssignLicensesDialog
+                      open={assigning && chosen.length > 0}
+                      onClose={() => setAssigning(false)}
+                      api={api}
+                      workspaceId={workspaceId}
+                      people={chosen}
+                      cards={cards}
+                      canAddSeats={canAddSeats}
+                      onAddSeats={licenses?.onAddSeats}
+                      onAssigned={clearSelection}
+                    />
+                  </>
+                );
+              }}
             </QueryGate>
           )
         }
       </QueryGate>
-      <ErrorNotice error={changeRole.error ?? remove.error} />
+      {/* The panel is modal, so a failure in it shows there; this is for one that happened with it closed. */}
+      {openId === null ? <ErrorNotice error={changeRole.error ?? remove.error} /> : null}
     </Panel>
   );
 }
 
-function MembersTable({
-  detail,
-  members,
-  showUserIds,
-  busy,
-  onChangeRole,
-  onRemove,
-}: {
-  detail: WorkspaceDetail;
-  members: MemberView[];
-  showUserIds: boolean;
-  busy: boolean;
-  onChangeRole(membershipId: string, role: WorkspaceRole): void;
-  onRemove(membershipId: string): void;
-}) {
-  const viewer = effectiveRole(detail);
-  const canManage = can(detail, "workspace.members.manage");
-  const ownMembershipId = detail.membership?.membershipId ?? null;
+/** The chips of the licenses a member holds: all of them up to four, else three and "+n". */
+function LicenseChips({ held }: { held: readonly JoinedLicense[] }) {
+  const folded = held.length > MAX_CHIPS;
+  const shown = folded ? held.slice(0, MAX_CHIPS - 1) : held;
+  const hidden = folded ? held.slice(MAX_CHIPS - 1) : [];
+  return (
+    <ul aria-label={t.members.licenses} className="flex flex-wrap gap-1.5">
+      {shown.map((card) => (
+        <li key={card.licenseId}>
+          <ProductChip product={card} />
+        </li>
+      ))}
+      {folded ? (
+        <li>
+          <span
+            title={hidden.map((card) => card.name).join(", ")}
+            className="bg-background inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-semibold whitespace-nowrap"
+          >
+            {t.members.moreChips(hidden.length)}
+          </span>
+        </li>
+      ) : null}
+    </ul>
+  );
+}
 
+function MembersTable({
+  members,
+  ownMembershipId,
+  showUserIds,
+  cards,
+  selectable,
+  selected,
+  locale,
+  onOpen,
+  onToggle,
+}: {
+  members: MemberView[];
+  ownMembershipId: string | null;
+  showUserIds: boolean;
+  /** The licenses the workspace holds, for the Licenses column; null leaves the column out. */
+  cards: readonly JoinedLicense[] | null;
+  selectable: boolean;
+  selected: ReadonlySet<string>;
+  locale?: string;
+  onOpen(membershipId: string): void;
+  onToggle(membershipId: string): void;
+}) {
   if (members.length === 0) return <Restricted>No members yet.</Restricted>;
   return (
-    // On a phone each row stacks: the member across the top, their role and Remove under it.
+    // On a phone each row stacks: the member across the top, then their role and their licenses.
     <div className="-mx-6 overflow-x-auto max-sm:border-t">
       <table className="w-full text-left text-sm max-sm:block">
         <thead className="text-muted-foreground border-y text-xs max-sm:hidden">
           <tr>
-            <th className="py-3 pr-4 pl-6 font-semibold">Member</th>
-            <th className="py-3 pr-4 font-semibold">Role</th>
-            <th className="hidden py-3 pr-4 font-semibold sm:table-cell">Joined</th>
-            <th className="py-3 pr-6 font-semibold">
-              <span className="sr-only">Actions</span>
-            </th>
+            {selectable ? <th aria-hidden="true" className="w-10 py-3 pl-6" /> : null}
+            <th className={cn("py-3 pr-4 font-semibold", selectable ? "pl-2" : "pl-6")}>{t.members.member}</th>
+            <th className="py-3 pr-4 font-semibold">{t.members.role}</th>
+            {cards ? <th className="py-3 pr-4 font-semibold">{t.members.licenses}</th> : null}
+            <th className="py-3 pr-6 font-semibold">{t.members.joined}</th>
           </tr>
         </thead>
         <tbody className="max-sm:block">
           {members.map((member) => {
-            const label = member.email ?? member.mentraUserId ?? "Imported member";
+            const label = memberLabel(member);
             const isSelf = member.membershipId === ownMembershipId;
-            const options = canManage && !isSelf ? roleOptions(viewer, member.role) : [];
+            const isSelected = selected.has(member.membershipId);
+            const email = member.name?.trim() && member.email ? member.email : null;
             return (
               <tr
                 key={member.membershipId}
-                className="border-b last:border-b-0 max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-3 max-sm:px-6 max-sm:py-4"
+                data-selected={isSelected ? "true" : undefined}
+                // A click anywhere on the row opens the panel, except on what has a click of its own.
+                onClick={(event) => {
+                  if (event.target instanceof Element && event.target.closest("button, input, a, label, code")) return;
+                  onOpen(member.membershipId);
+                }}
+                className={cn(
+                  "cursor-pointer border-b last:border-b-0 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:px-5 max-sm:py-4",
+                  isSelected && "bg-hover",
+                )}
               >
-                <td className="py-3.5 pr-4 pl-6 max-sm:col-span-2 max-sm:p-0">
-                  <div className="flex items-center gap-3">
+                {selectable ? (
+                  <td className="w-10 py-3.5 pl-6 max-sm:w-5 max-sm:p-0">
+                    <label className="-m-2.5 flex size-10 cursor-pointer items-center justify-center has-[input:disabled]:cursor-not-allowed">
+                      <Checkbox
+                        aria-label={t.members.selectMember(label)}
+                        checked={isSelected}
+                        disabled={member.pending}
+                        onChange={() => onToggle(member.membershipId)}
+                      />
+                    </label>
+                  </td>
+                ) : null}
+                <td
+                  className={cn(
+                    "py-3.5 pr-4 max-sm:min-w-0 max-sm:flex-1 max-sm:p-0",
+                    selectable ? "pl-2 max-sm:basis-[calc(100%-2.25rem)]" : "pl-6 max-sm:basis-full",
+                  )}
+                >
+                  <button
+                    type="button"
+                    aria-label={t.members.openMember(label)}
+                    onClick={() => onOpen(member.membershipId)}
+                    className="flex min-w-0 cursor-pointer items-center gap-3 rounded-[12px] text-left"
+                  >
                     <Avatar label={label} />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[15px] font-semibold [overflow-wrap:anywhere]">{label}</span>
-                        {isSelf ? <Badge>You</Badge> : null}
-                        {member.pending ? <Badge>Pending first sign-in</Badge> : null}
-                      </div>
-                      {showUserIds && member.mentraUserId ? (
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
-                          <CopyButton
-                            text={member.mentraUserId}
-                            label="Copy id"
-                            ariaLabel={`Copy the Mentra user id of ${label}`}
-                          />
-                        </div>
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span data-slot="member-name" className="text-[15px] font-semibold [overflow-wrap:anywhere]">
+                          {label}
+                        </span>
+                        {isSelf ? <Badge>{t.members.you}</Badge> : null}
+                        {member.pending ? <Badge>{t.members.pendingFirstSignIn}</Badge> : null}
+                      </span>
+                      {email ? (
+                        <span data-slot="member-email" className="text-muted-foreground block text-[13px] [overflow-wrap:anywhere]">
+                          {email}
+                        </span>
                       ) : null}
+                    </span>
+                  </button>
+                  {showUserIds && member.mentraUserId ? (
+                    // Under the name, not under the avatar: the avatar is 36px and the gap 12px.
+                    <div className="mt-1 ml-12 flex flex-wrap items-center gap-2">
+                      <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
+                      <CopyButton text={member.mentraUserId} label="Copy id" ariaLabel={`Copy the Mentra user id of ${label}`} />
                     </div>
-                  </div>
+                  ) : null}
                 </td>
                 <td className="py-3.5 pr-4 max-sm:p-0">
-                  {options.length > 0 ? (
-                    <NativeSelect
-                      compact
-                      aria-label={`Role for ${label}`}
-                      value={member.role}
-                      disabled={busy}
-                      onChange={(event) => onChangeRole(member.membershipId, event.target.value as WorkspaceRole)}
-                    >
-                      {options.map((role) => (
-                        <option key={role} value={role}>
-                          {ROLE_LABELS[role]}
-                        </option>
-                      ))}
-                    </NativeSelect>
-                  ) : (
-                    <RoleBadge role={member.role} />
-                  )}
+                  <RoleBadge role={member.role} />
                 </td>
-                <td className="text-muted-foreground hidden py-3.5 pr-4 whitespace-nowrap sm:table-cell">
-                  {formatDate(member.startedAt)}
-                </td>
-                <td className="py-3.5 pr-6 text-right max-sm:p-0">
-                  {canManage && !isSelf && canRemoveRole(viewer, member.role) ? (
-                    <ConfirmButton
-                      label="Remove"
-                      ariaLabel={`Remove ${label}`}
-                      prompt={`Remove ${label} from this workspace?`}
-                      confirmLabel="Confirm remove"
-                      disabled={busy}
-                      onConfirm={() => onRemove(member.membershipId)}
-                    />
-                  ) : null}
+                {cards ? (
+                  <td className="py-3.5 pr-4 max-sm:min-w-40 max-sm:flex-1 max-sm:p-0">
+                    <LicensesCell member={member} cards={cards} />
+                  </td>
+                ) : null}
+                <td className="text-muted-foreground hidden py-3.5 pr-6 whitespace-nowrap sm:table-cell">
+                  {formatDate(member.startedAt, locale)}
                 </td>
               </tr>
             );
@@ -194,4 +427,12 @@ function MembersTable({
       </table>
     </div>
   );
+}
+
+/** What a member holds: a chip per license, "None", or "After first sign-in" for someone who has no account yet. */
+function LicensesCell({ member, cards }: { member: MemberView; cards: readonly JoinedLicense[] }) {
+  if (member.pending) return <span className="text-muted-foreground">{t.members.afterFirstSignIn}</span>;
+  const held = cards.filter((card) => holdsSeat(card.license!, member.membershipId));
+  if (held.length === 0) return <span className="text-muted-foreground">{t.members.none}</span>;
+  return <LicenseChips held={held} />;
 }
