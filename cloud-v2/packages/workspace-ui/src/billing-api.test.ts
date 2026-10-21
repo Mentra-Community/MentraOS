@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { BillingCatalog, BillingStatus } from "@mentra/workspace-contract/portal-billing";
 import {
   ACCOUNT_SCOPE,
@@ -320,5 +322,48 @@ describe("billingErrorMessage", () => {
     expect(billingErrorMessage(refused("something_new"), {})).toBe("Billing couldn't do that. Try again.");
     expect(billingErrorMessage(new BillingUnavailableError("mismatch"), {})).toBe("Billing couldn't do that. Try again.");
     expect(billingErrorMessage(new Error("boom"), {})).toBe("Billing couldn't do that. Try again.");
+  });
+});
+
+describe("what a screen that doesn't use billing pulls in", () => {
+  /** Every module `entry` reaches through runtime imports (type-only imports are gone), as written in the source. */
+  function runtimeImports(entry: string): { files: string[]; specifiers: string[] } {
+    const files = new Set<string>();
+    const specifiers = new Set<string>();
+    const visit = (file: string) => {
+      if (files.has(file)) return;
+      files.add(file);
+      const loader = file.endsWith(".tsx") ? "tsx" : "ts";
+      for (const { path } of new Bun.Transpiler({ loader }).scanImports(readFileSync(file, "utf8"))) {
+        specifiers.add(path);
+        if (!path.startsWith(".")) continue;
+        const base = join(dirname(file), path);
+        const next = [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")].find((candidate) => existsSync(candidate));
+        if (next) visit(next);
+      }
+    };
+    visit(join(import.meta.dir, entry));
+    return { files: [...files], specifiers: [...specifiers] };
+  }
+
+  test("the query layer reaches neither the contract's schemas nor zod, so embedders that don't use billing don't carry them", () => {
+    const { files, specifiers } = runtimeImports("queries.ts");
+    expect(specifiers.filter((specifier) => /portal-billing|^zod/.test(specifier))).toEqual([]);
+    expect(files.some((file) => file.endsWith("billing-api.ts"))).toBe(false);
+  });
+
+  test("the scope and the errors are in modules of their own, and billing-api still re-exports them", async () => {
+    for (const entry of ["billing-scope.ts", "billing-errors.ts"]) {
+      expect(runtimeImports(entry).specifiers.filter((specifier) => /portal-billing|^zod/.test(specifier))).toEqual([]);
+    }
+    const scope = await import("./billing-scope");
+    const errors = await import("./billing-errors");
+    const api = await import("./billing-api");
+    expect(api.BillingRefusedError).toBe(errors.BillingRefusedError);
+    expect(api.BillingUnavailableError).toBe(errors.BillingUnavailableError);
+    expect(api.billingErrorMessage).toBe(errors.billingErrorMessage);
+    expect(api.workspaceScope).toBe(scope.workspaceScope);
+    expect(api.ACCOUNT_SCOPE).toBe(scope.ACCOUNT_SCOPE);
+    expect(api.ownerTypeOf).toBe(scope.ownerTypeOf);
   });
 });

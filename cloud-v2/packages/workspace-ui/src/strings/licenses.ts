@@ -72,6 +72,78 @@ function nameList(names: readonly string[]): string {
   return `${names.slice(0, 2).join(", ")} and ${names.length - 2} others`;
 }
 
+/** What billing's actions say. `label` returns these, so a wording changes in one place. */
+const actions = {
+  addSeats: "Add seats",
+  /** "Add 2 seats": the over-assigned notice's button. */
+  addSeatsCount: (n: number) => `Add ${plural(n, "seat")}`,
+  changeSeats: "Change seats",
+  cancel: "Cancel",
+  renew: "Renew",
+  updatePayment: "Update payment method",
+  completePayment: "Complete payment",
+  billingAndInvoices: "Billing & invoices",
+  /** The link for a hosted page the browser wouldn't open in a new tab. */
+  openPaymentPage: "Open the payment page",
+  /** What a screen reader hears after a button that leaves the portal for a hosted page (its ↗). */
+  opensSecureBillingPage: "Opens a secure billing page",
+  /** The same, for a page that opens in a new tab (an action listed with `returns: false`). */
+  opensSecureBillingPageInNewTab: "Opens a secure billing page in a new tab",
+  /** The words for an action: Core's for a kind it knows, billing's own label for any other. */
+  label: (kind: string, fallbackLabel: string): string => {
+    switch (kind) {
+      case "add_seats":
+        return actions.addSeats;
+      case "change_seats":
+        return actions.changeSeats;
+      case "cancel":
+        return actions.cancel;
+      case "renew":
+        return actions.renew;
+      case "update_payment":
+        return actions.updatePayment;
+      case "complete_payment":
+        return actions.completePayment;
+      case "billing_and_invoices":
+        return actions.billingAndInvoices;
+      default:
+        return fallbackLabel;
+    }
+  },
+};
+
+/** A license's badges. `label` returns these, so a wording changes in one place. */
+const status = {
+  active: "Active",
+  ending: (date: string) => `Ends ${date}`,
+  pastDue: "Payment failed",
+  incomplete: "Payment incomplete",
+  processing: "Setting up",
+  over: (n: number) => `${n} over`,
+  youHaveASeat: "You have a seat",
+  /**
+   * The badge's words for a license's billing status: Core's for a status it knows, and billing's own
+   * `fallbackStatusLabel` for any other. `shortEndDate` (the day an `ending` license ends, without the year)
+   * is what "Ends <date>" needs; an `ending` status without one shows billing's label.
+   */
+  label: (value: string, fallbackLabel: string, shortEndDate?: string): string => {
+    switch (value) {
+      case "active":
+        return status.active;
+      case "ending":
+        return shortEndDate ? status.ending(shortEndDate) : fallbackLabel;
+      case "past_due":
+        return status.pastDue;
+      case "incomplete":
+        return status.incomplete;
+      case "processing":
+        return status.processing;
+      default:
+        return fallbackLabel;
+    }
+  },
+};
+
 export const licenseStrings = {
   count: {
     seats: (n: number) => plural(n, "seat"),
@@ -187,15 +259,7 @@ export const licenseStrings = {
     featureIn: (app: string) => `in ${app}`,
   },
 
-  status: {
-    active: "Active",
-    ending: (date: string) => `Ends ${date}`,
-    pastDue: "Payment failed",
-    incomplete: "Payment incomplete",
-    processing: "Setting up",
-    over: (n: number) => `${n} over`,
-    youHaveASeat: "You have a seat",
-  },
+  status,
 
   facts: {
     seats: {
@@ -264,40 +328,7 @@ export const licenseStrings = {
     },
   },
 
-  actions: {
-    addSeats: "Add seats",
-    /** "Add 2 seats": the over-assigned notice's button. */
-    addSeatsCount: (n: number) => `Add ${plural(n, "seat")}`,
-    changeSeats: "Change seats",
-    cancel: "Cancel",
-    renew: "Renew",
-    updatePayment: "Update payment method",
-    completePayment: "Complete payment",
-    billingAndInvoices: "Billing & invoices",
-    /** The link for a hosted page the browser wouldn't open in a new tab. */
-    openPaymentPage: "Open the payment page",
-    /** The words for an action: Core's for a kind it knows, billing's own label for any other. */
-    label: (kind: string, fallbackLabel: string): string => {
-      switch (kind) {
-        case "add_seats":
-          return "Add seats";
-        case "change_seats":
-          return "Change seats";
-        case "cancel":
-          return "Cancel";
-        case "renew":
-          return "Renew";
-        case "update_payment":
-          return "Update payment method";
-        case "complete_payment":
-          return "Complete payment";
-        case "billing_and_invoices":
-          return "Billing & invoices";
-        default:
-          return fallbackLabel;
-      }
-    },
-  },
+  actions,
 
   seats: {
     title: "Seat holders",
@@ -342,17 +373,34 @@ export const licenseStrings = {
     seatsChanged: "Seats changed while you were choosing. Nothing was assigned. Check the counts and try again.",
   },
 
+  /** The Members list. */
   members: {
+    title: "Members",
+    member: "Member",
+    role: "Role",
+    joined: "Joined",
+    /** The badge on the viewer's own row. */
+    you: "You",
+    pendingFirstSignIn: "Pending first sign-in",
+    importedMember: "Imported member",
+    /** The Licenses column. */
     licenses: "Licenses",
     none: "None",
     afterFirstSignIn: "After first sign-in",
     moreChips: (n: number) => `+${n}`,
+    /** The row's checkbox, and the control that opens the member panel from a row. */
+    selectMember: (name: string) => `Select ${name}`,
+    openMember: (name: string) => `Open ${name}`,
     selected: (n: number) => `${n} selected`,
     assignLicenses: "Assign licenses",
     clearSelection: "Clear selection",
   },
 
+  /** The member panel: the member's role and joining, their licenses, and removing them. */
   memberPanel: {
+    role: "Role",
+    joined: "Joined",
+    changeRole: "Change role",
     licenses: "Licenses",
     intro: (name: string) => `Turn one on to give ${name} a seat. Changes apply right away.`,
     /** On, with the seats left after theirs. */
@@ -361,8 +409,11 @@ export const licenseStrings = {
     allInUse: (quantity: number) => `All ${quantity} seats are in use`,
     overAssigned: (n: number) => `${n} more assigned than covered`,
     afterFirstSignIn: (email: string) => `${email} can get seats after their first sign-in.`,
-    changeRole: "Change role",
+    /** A switch's accessible name: which license, for whom. */
+    seatSwitch: (product: string, name: string) => `${product} seat for ${name}`,
     remove: "Remove from workspace",
+    removePrompt: (name: string) => `Remove ${name} from this workspace?`,
+    removeConfirm: "Confirm remove",
   },
 
   /** Assign licenses: several people, several licenses, one request. */

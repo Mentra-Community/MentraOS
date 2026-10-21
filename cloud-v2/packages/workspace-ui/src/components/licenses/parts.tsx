@@ -1,20 +1,22 @@
 /**
  * The small pieces every Licenses and Billing screen is made of, as the approved design draws them (its
  * `parts.tsx`): a notice, a fact in a card's strip, a placeholder, the ↗ button that leaves for a hosted page,
- * and the status badge. They carry no words of their own: the screens pass in sentences from
- * `strings/licenses.ts`.
+ * and the status badge. They carry no words of their own but one (the cue a screen reader gets on a button
+ * that leaves the portal, from `strings/licenses.ts`): the screens pass in the rest.
  */
 
 import { ArrowUpRightIcon, CircleCheckIcon, CreditCardIcon, TriangleAlertIcon } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Badge, Spinner, type BadgeTone } from "../common";
 
 /**
  * A notice inside a card or on the page: amber (`warn`) for a failed or incomplete payment, green (`info`) for
- * good news, grey (`neutral`) for plain facts. A problem is announced (`role="alert"`); the rest are statuses.
+ * good news, grey (`neutral`) for plain facts. Every tone is a status (`role="status"`), not an alert: they are
+ * part of the page, several can be on it at once, and none interrupts the person.
  */
 export function Notice({
   tone,
@@ -40,7 +42,7 @@ export function Notice({
   const Icon = tone === "warn" ? TriangleAlertIcon : tone === "info" ? CircleCheckIcon : CreditCardIcon;
   return (
     <div
-      role={tone === "warn" ? "alert" : "status"}
+      role="status"
       className={cn("rounded-notice flex flex-wrap items-center gap-x-3 gap-y-3 px-4 py-3.5 text-sm", tones[tone], className)}
     >
       <span className="self-start pt-0.5">{icon ?? <Icon aria-hidden="true" className="size-[18px] shrink-0" />}</span>
@@ -48,15 +50,17 @@ export function Notice({
         {title ? <p className="font-semibold">{title}</p> : null}
         {children ? <p className={title ? "mt-0.5" : undefined}>{children}</p> : null}
       </div>
-      {action ? <div className="flex shrink-0 flex-wrap gap-2 max-sm:pl-[30px]">{action}</div> : null}
+      {/* On a phone the buttons take a row of their own, under the text and in line with it, and wrap there. */}
+      {action ? <div className="flex flex-wrap gap-2 max-sm:basis-full max-sm:pl-[30px] sm:shrink-0">{action}</div> : null}
     </div>
   );
 }
 
 /**
- * One fact in a card's strip: a label, a value and a line under it. It is a term and its description, for a
- * `<dl>`; on a phone the strip stacks as label · value rows. `children` sit between the value and the foot (the
- * seats' meter).
+ * One fact in a card's strip: a label, a value and a line under it. It is one group of a `<dl>`: the outer
+ * `div` holds the term (`dt`) and its descriptions (`dd`: the value, `children`, the foot) as its direct
+ * children, which is how HTML allows a group in a description list. Laid out as a grid so that on a phone the
+ * strip stacks as label · value rows, with `children` (the seats' meter) and the foot under them.
  */
 export function Fact({
   label,
@@ -70,13 +74,11 @@ export function Fact({
   children?: ReactNode;
 }) {
   return (
-    <div className="min-w-0 px-6 py-4 max-sm:px-5 max-sm:py-3">
-      <div className="flex items-baseline justify-between gap-3 sm:block">
-        <dt className="text-muted-foreground text-xs font-semibold">{label}</dt>
-        <dd className="text-[15px] font-semibold tabular-nums sm:mt-1">{value}</dd>
-      </div>
-      {children}
-      {foot ? <dd className="text-muted-foreground mt-1.5 text-xs max-sm:text-right">{foot}</dd> : null}
+    <div className="grid min-w-0 grid-cols-[auto_1fr] items-baseline gap-x-3 px-6 py-4 max-sm:px-5 max-sm:py-3 sm:block">
+      <dt className="text-muted-foreground text-xs font-semibold">{label}</dt>
+      <dd className="text-[15px] font-semibold tabular-nums max-sm:text-right sm:mt-1">{value}</dd>
+      {children ? <dd className="col-span-2">{children}</dd> : null}
+      {foot ? <dd className="text-muted-foreground col-span-2 mt-1.5 text-xs max-sm:text-right">{foot}</dd> : null}
     </div>
   );
 }
@@ -87,32 +89,44 @@ export function Skeleton({ className = "w-24" }: { className?: string }) {
 }
 
 /**
- * A button that leaves the portal for a hosted page: its arrow (↗) says so, as it must on every such button.
- * It is a plain button, `data-hosted-page` marks it, and its name is its label alone (the arrow is decoration).
+ * A button that leaves the portal for a hosted page: its arrow (↗) says so to the eye, as it must on every such
+ * button, and visually hidden text says so to a screen reader ("Opens a secure billing page", or "... in a new
+ * tab" with `newTab`, for an action listed with `returns: false`). The text is the button's description, not
+ * part of it: the button's name and `textContent` stay its label alone. `data-hosted-page` marks it.
+ *
  * While `pending` (the session is being requested) it shows a spinner and can't be pressed again. What it does
  * on click is the caller's: ask billing for a session, then go there.
  */
 export function HostedPageButton({
   children,
   pending = false,
+  newTab = false,
   variant = "secondary",
   size = "sm",
   disabled,
+  "aria-describedby": describedBy,
   ...props
-}: ComponentProps<typeof Button> & { pending?: boolean }) {
+}: ComponentProps<typeof Button> & { pending?: boolean; newTab?: boolean }) {
+  const hint = useId();
   return (
-    <Button
-      type="button"
-      data-hosted-page=""
-      variant={variant}
-      size={size}
-      disabled={disabled || pending}
-      aria-busy={pending || undefined}
-      {...props}
-    >
-      {children}
-      {pending ? <Spinner className="size-4" /> : <ArrowUpRightIcon aria-hidden="true" />}
-    </Button>
+    <>
+      <Button
+        type="button"
+        data-hosted-page=""
+        variant={variant}
+        size={size}
+        disabled={disabled || pending}
+        aria-busy={pending || undefined}
+        aria-describedby={describedBy ? `${describedBy} ${hint}` : hint}
+        {...props}
+      >
+        {children}
+        {pending ? <Spinner className="size-4" /> : <ArrowUpRightIcon aria-hidden="true" />}
+      </Button>
+      <span id={hint} className="sr-only">
+        {newTab ? t.actions.opensSecureBillingPageInNewTab : t.actions.opensSecureBillingPage}
+      </span>
+    </>
   );
 }
 

@@ -4,13 +4,24 @@ import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "re
 import { cn } from "../lib/utils";
 import { Button } from "./button";
 
-/** What a person can tab to inside the panel. */
-const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+/** What can take focus inside the panel; `isReachable` keeps the ones a person can get to with Tab. */
+const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]';
+
+/**
+ * Whether Tab can land on `element`: not taken out of the tab order (`tabindex` below zero, as a menu's items
+ * are), not disabled (itself, or by a disabled `fieldset`, except in its legend), and not inside anything
+ * `hidden`, `inert` or `aria-hidden`.
+ */
+function isReachable(element: HTMLElement): boolean {
+  const tabindex = element.getAttribute("tabindex");
+  if (tabindex !== null && Number(tabindex) < 0) return false;
+  if (element.hasAttribute("disabled")) return false;
+  if (element.closest("fieldset[disabled]") && !element.closest("legend")) return false;
+  return element.closest('[hidden], [inert], [aria-hidden="true"]') === null;
+}
 
 function focusables(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
-  );
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(isReachable);
 }
 
 /**
@@ -22,7 +33,8 @@ function focusables(root: HTMLElement): HTMLElement[] {
  *   it when it closes. A browser does most of that for a modal `<dialog>` already; it is done here too so the
  *   sheet behaves the same wherever it runs.
  * - Escape, the ×, a click on the dimmed page and the browser's own close request all call `onClose`. The panel
- *   stays open until the host sets `open` to false, so a host can ask first.
+ *   stays open until the host sets `open` to false, so a host can ask first. One press of Escape calls it once,
+ *   even in a browser that sends its own close request for the same press.
  * - Escape in a menu or a dialog opened from inside the panel closes that, not the panel.
  *
  * The content renders only while open, so a form inside starts fresh each time.
@@ -47,6 +59,22 @@ export function SidePanel({
   const opener = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const descriptionId = useId();
+  // Set while one press of Escape is being handled: its keydown and a browser's own cancel are one request.
+  const escapePending = useRef(false);
+
+  useEffect(() => {
+    escapePending.current = false;
+  }, [open]);
+
+  function requestEscapeClose() {
+    if (escapePending.current) return;
+    escapePending.current = true;
+    // Both events of a press arrive in one task. A later press, for a host that stayed open to ask first, is a new request.
+    setTimeout(() => {
+      escapePending.current = false;
+    }, 0);
+    onClose();
+  }
 
   useEffect(() => {
     const dialog = ref.current;
@@ -71,7 +99,7 @@ export function SidePanel({
     if (!isOwn(event)) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      requestEscapeClose();
     } else if (event.key === "Tab") {
       const dialog = event.currentTarget;
       const controls = focusables(dialog);
@@ -103,7 +131,7 @@ export function SidePanel({
       // The browser's close request (Escape, an Android back gesture): the host decides, so it isn't closed here.
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        requestEscapeClose();
       }}
       // A close the host didn't ask for (the dialog closed itself). Closing it from `open` fires this too: not a request.
       onClose={() => {

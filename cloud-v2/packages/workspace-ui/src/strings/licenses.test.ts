@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BILLING_ERROR_CODES, KNOWN_ACTION_KINDS } from "@mentra/workspace-contract/portal-billing";
+import { BILLING_ERROR_CODES, KNOWN_ACTION_KINDS, KNOWN_LICENSE_STATUSES } from "@mentra/workspace-contract/portal-billing";
 import { licenseStrings as t, refusalMessage } from "./licenses";
 
 // The spec's copy, word for word, with names and numbers filled in. Amounts and dates arrive formatted.
@@ -98,6 +98,19 @@ describe("a license's card", () => {
     expect(t.status.youHaveASeat).toBe("You have a seat");
   });
 
+  test("a license's status is worded by its named badge, and an unknown one keeps billing's label", () => {
+    const s = t.status;
+    expect(s.label("active", "x")).toBe(s.active);
+    expect(s.label("ending", "x", "Nov 20")).toBe(s.ending("Nov 20"));
+    expect(s.label("past_due", "x")).toBe(s.pastDue);
+    expect(s.label("incomplete", "x")).toBe(s.incomplete);
+    expect(s.label("processing", "x")).toBe(s.processing);
+    for (const known of KNOWN_LICENSE_STATUSES) expect(s.label(known, "FALLBACK", "Nov 20")).not.toBe("FALLBACK");
+    expect(s.label("paused", "Paused")).toBe("Paused");
+    // An ending license billing sent no end for can't say "Ends <date>": billing's own label stands.
+    expect(s.label("ending", "Ending soon")).toBe("Ending soon");
+  });
+
   test("the seats fact", () => {
     expect(t.facts.seats.label).toBe("Seats");
     expect(t.facts.seats.inUse(3, 5)).toBe("3 of 5 in use");
@@ -175,16 +188,32 @@ describe("a license's card", () => {
 });
 
 describe("billing's actions", () => {
-  test("every kind Core knows has its own label, and an unknown kind keeps billing's", () => {
-    expect(t.actions.label("add_seats", "x")).toBe("Add seats");
-    expect(t.actions.label("change_seats", "x")).toBe("Change seats");
-    expect(t.actions.label("cancel", "x")).toBe("Cancel");
-    expect(t.actions.label("renew", "x")).toBe("Renew");
-    expect(t.actions.label("update_payment", "x")).toBe("Update payment method");
-    expect(t.actions.label("complete_payment", "x")).toBe("Complete payment");
-    expect(t.actions.label("billing_and_invoices", "x")).toBe("Billing & invoices");
-    expect(t.actions.label("pause_collection", "Pause billing")).toBe("Pause billing");
-    for (const kind of KNOWN_ACTION_KINDS) expect(t.actions.label(kind, "FALLBACK")).not.toBe("FALLBACK");
+  test("every kind Core knows is worded by its named constant, and an unknown kind keeps billing's label", () => {
+    const a = t.actions;
+    expect(a.label("add_seats", "x")).toBe(a.addSeats);
+    expect(a.label("change_seats", "x")).toBe(a.changeSeats);
+    expect(a.label("cancel", "x")).toBe(a.cancel);
+    expect(a.label("renew", "x")).toBe(a.renew);
+    expect(a.label("update_payment", "x")).toBe(a.updatePayment);
+    expect(a.label("complete_payment", "x")).toBe(a.completePayment);
+    expect(a.label("billing_and_invoices", "x")).toBe(a.billingAndInvoices);
+    expect(a.label("pause_collection", "Pause billing")).toBe("Pause billing");
+    for (const kind of KNOWN_ACTION_KINDS) expect(a.label(kind, "FALLBACK")).not.toBe("FALLBACK");
+    // The words themselves, as the spec has them.
+    expect([a.addSeats, a.changeSeats, a.cancel, a.renew, a.updatePayment, a.completePayment, a.billingAndInvoices]).toEqual([
+      "Add seats",
+      "Change seats",
+      "Cancel",
+      "Renew",
+      "Update payment method",
+      "Complete payment",
+      "Billing & invoices",
+    ]);
+  });
+
+  test("a button that leaves the portal says so to a screen reader", () => {
+    expect(t.actions.opensSecureBillingPage).toBe("Opens a secure billing page");
+    expect(t.actions.opensSecureBillingPageInNewTab).toBe("Opens a secure billing page in a new tab");
   });
 
   test("adding a number of seats, and the link for a blocked tab", () => {
@@ -244,12 +273,23 @@ describe("the people picker", () => {
 
 describe("Members and the member panel", () => {
   test("the list", () => {
+    expect(t.members.title).toBe("Members");
+    expect([t.members.member, t.members.role, t.members.joined, t.members.you]).toEqual(["Member", "Role", "Joined", "You"]);
+    expect(t.members.pendingFirstSignIn).toBe("Pending first sign-in");
+    expect(t.members.importedMember).toBe("Imported member");
     expect(t.members.licenses).toBe("Licenses");
     expect(t.members.none).toBe("None");
     expect(t.members.afterFirstSignIn).toBe("After first sign-in");
     expect(t.members.moreChips(2)).toBe("+2");
     expect(t.members.selected(2)).toBe("2 selected");
     expect(t.members.assignLicenses).toBe("Assign licenses");
+    expect(t.members.clearSelection).toBe("Clear selection");
+    expect(t.members.selectMember("Luis Ortega")).toBe("Select Luis Ortega");
+    expect(t.members.openMember("Luis Ortega")).toBe("Open Luis Ortega");
+  });
+
+  test("the panel's role and joining", () => {
+    expect([t.memberPanel.role, t.memberPanel.joined, t.memberPanel.changeRole]).toEqual(["Role", "Joined", "Change role"]);
   });
 
   test("the panel's Licenses section", () => {
@@ -260,8 +300,13 @@ describe("Members and the member panel", () => {
     expect(t.memberPanel.allInUse(10)).toBe("All 10 seats are in use");
     expect(t.memberPanel.overAssigned(2)).toBe("2 more assigned than covered");
     expect(t.memberPanel.afterFirstSignIn("sam@acme.test")).toBe("sam@acme.test can get seats after their first sign-in.");
+    expect(t.memberPanel.seatSwitch("Mentra Call Unlimited", "Luis Ortega")).toBe("Mentra Call Unlimited seat for Luis Ortega");
+  });
+
+  test("removing a member asks first", () => {
     expect(t.memberPanel.remove).toBe("Remove from workspace");
-    expect(t.memberPanel.changeRole).toBe("Change role");
+    expect(t.memberPanel.removePrompt("Luis Ortega")).toBe("Remove Luis Ortega from this workspace?");
+    expect(t.memberPanel.removeConfirm).toBe("Confirm remove");
   });
 
   test("assigning several licenses to several people", () => {
@@ -355,16 +400,161 @@ describe("refusals", () => {
     expect(t.refusal.generic).toBe("Billing couldn't do that. Try again.");
   });
 
-  test("no sentence names the payment processor, and none says \"Paid through\"", () => {
-    const everything: string[] = [];
-    const walk = (value: unknown) => {
-      if (typeof value === "string") everything.push(value);
-      else if (typeof value === "object" && value !== null) Object.values(value).forEach(walk);
+  test("no sentence names the payment processor, and none says \"Paid through\": every string, and every function's output", () => {
+    const outputs: string[] = [];
+    const functions: string[] = [];
+    const collect = (value: unknown) => {
+      if (typeof value === "string") outputs.push(value);
+      else if (Array.isArray(value)) value.forEach(collect);
+      else if (typeof value === "object" && value !== null) Object.values(value).forEach(collect);
     };
-    walk(t);
-    for (const code of BILLING_ERROR_CODES) everything.push(refusalMessage(code, { product: "Fleet" }));
+    const walk = (value: unknown, path: string) => {
+      if (typeof value === "function") {
+        functions.push(path);
+        const samples = SAMPLES[path];
+        if (!samples) throw new Error(`no sample for t.${path}: add one to SAMPLES so its sentences are scanned`);
+        for (const args of samples) collect((value as (...a: unknown[]) => unknown)(...args));
+      } else if (typeof value === "object" && value !== null) {
+        for (const [key, child] of Object.entries(value)) walk(child, path ? `${path}.${key}` : key);
+      } else collect(value);
+    };
+    walk(t, "");
+    // A sample for a function that no longer exists would only pretend to scan something.
+    expect(Object.keys(SAMPLES).filter((path) => !functions.includes(path))).toEqual([]);
+    for (const code of BILLING_ERROR_CODES) {
+      for (const context of [{ product: "Fleet" }, { product: "Fleet", scope: "person" as const }, {}]) outputs.push(refusalMessage(code, context));
+    }
+    // A floor, so a walk that reached nothing can't pass.
+    expect(outputs.length).toBeGreaterThan(250);
     // The word is assembled so that this file doesn't name it either.
     const processor = new RegExp(["str", "ipe"].join(""), "i");
-    expect(everything.filter((text) => processor.test(text) || /paid through/i.test(text))).toEqual([]);
+    expect(outputs.filter((text) => processor.test(text) || /paid through/i.test(text))).toEqual([]);
+    // Samples that fit their function leave no hole in a sentence.
+    expect(outputs.filter((text) => /undefined|NaN|\[object/.test(text))).toEqual([]);
   });
 });
+
+/**
+ * Arguments that exercise each function of the strings, one list per branch, keyed by its path. The walk above
+ * calls them all, and fails for a function that has none.
+ */
+const BAG = { name: "Dana Reyes", product: "Mentra Call Unlimited" };
+const SAMPLES: Record<string, unknown[][]> = {
+  "count.seats": [[0], [1], [5]],
+  "count.people": [[1], [3]],
+  "count.members": [[1], [14]],
+  "count.licenses": [[1], [2]],
+  "names.list": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
+  "names.holders": [[[]], [["A"]], [["A", "B", "C", "D", "E"]]],
+  "nav.backTo": [["Acme Field Services"]],
+  "page.description": [["Acme Field Services"]],
+  "page.memberDescription": [["Acme Field Services"]],
+  "page.adminsGiveOutSeats": [["Acme Field Services"]],
+  "page.noSeat.title": [["Acme Field Services"]],
+  "recurrence.rate": [["month", 1], ["month", 3], ["year", 2, "2"]],
+  "recurrence.cadence": [["month", 1], ["month", 3], ["week", 2, "2"]],
+  "price.perSeat": [["$15", "a month"]],
+  "price.perPerson": [["$29", "every 3 months"]],
+  "catalog.youHaveSeats": [[1], [5]],
+  "buy.title": [["Fleet"]],
+  "buy.terms": [["$15 per seat a month", "month"]],
+  "buy.members": [[1], [14]],
+  "buy.summary": [
+    [{ seats: 10, unit: "$15", total: "$150", rate: "a month", note: "before tax" }],
+    [{ seats: 1, unit: "$15", total: "$15", rate: "a month", note: null }],
+  ],
+  "card.moreFor": [["Fleet"]],
+  "card.featureIn": [["Mentra Call"]],
+  "status.ending": [["Nov 20"]],
+  "status.over": [[2]],
+  "status.label": [
+    ["active", "x"],
+    ["ending", "x", "Nov 20"],
+    ["ending", "Ending"],
+    ["past_due", "x"],
+    ["incomplete", "x"],
+    ["processing", "x"],
+    ["paused", "Paused"],
+  ],
+  "facts.seats.inUse": [[3, 5]],
+  "facts.seats.free": [[2], [0]],
+  "facts.seats.assigned": [[7]],
+  "facts.seats.moreThanCovered": [[2, 5]],
+  "facts.term.every": [["month"], ["3 months"]],
+  "facts.term.until": [["Dec 1, 2026"]],
+  "facts.cost.value": [["$145", "a month"]],
+  "facts.cost.multiple": [[5, "$29"]],
+  "facts.cost.foot": [[["5 × $29", "before tax"]], [["5 × $29", null]], [[null, null]]],
+  "facts.own.since": [["Oct 20, 2026"]],
+  "facts.own.givenBy": [["Acme Field Services"]],
+  "notice.pastDue": [
+    [{ date: "Nov 23, 2026", stopped: false }],
+    [{ date: "Nov 23, 2026", stopped: true }],
+    [{ date: null, stopped: false }],
+  ],
+  "notice.incomplete": [["Fleet"]],
+  "notice.over": [
+    [{ used: 7, quantity: 5, canAddSeats: true }],
+    [{ used: 7, quantity: 5, canAddSeats: false }],
+    [{ used: 6, quantity: 5, canAddSeats: true }],
+    [{ used: 1, quantity: 0, canAddSeats: true }],
+  ],
+  "actions.addSeatsCount": [[1], [2]],
+  "actions.label": [
+    ["add_seats", "x"],
+    ["change_seats", "x"],
+    ["cancel", "x"],
+    ["renew", "x"],
+    ["update_payment", "x"],
+    ["complete_payment", "x"],
+    ["billing_and_invoices", "x"],
+    ["something_new", "Something new"],
+  ],
+  "seats.since": [["Oct 20, 2026"]],
+  "seats.unassignPrompt": [["Dana Reyes"]],
+  "seats.freeSeats": [[7]],
+  "seats.allInUse": [[5]],
+  "seats.allInUseHelp": [[true], [false]],
+  "seats.moreAvatars": [[3]],
+  "fit.note": [
+    [{ fit: 3, needed: 4, canAddSeats: true }],
+    [{ fit: 3, needed: 4, canAddSeats: false }],
+    [{ fit: 2, needed: 5, canAddSeats: true }],
+  ],
+  "picker.description": [["Fleet", 1], ["Fleet", 3]],
+  "picker.chosen": [[2, 3]],
+  "picker.assign": [[0], [1], [3]],
+  "members.moreChips": [[2]],
+  "members.selectMember": [["Dana Reyes"]],
+  "members.openMember": [["Dana Reyes"]],
+  "members.selected": [[2]],
+  "memberPanel.intro": [["Dana Reyes"]],
+  "memberPanel.hasASeat": [[1, 5]],
+  "memberPanel.seatsFree": [[1, 3]],
+  "memberPanel.allInUse": [[10]],
+  "memberPanel.overAssigned": [[2]],
+  "memberPanel.afterFirstSignIn": [["sam@acme.test"]],
+  "memberPanel.seatSwitch": [[BAG.product, BAG.name]],
+  "memberPanel.removePrompt": [["Dana Reyes"]],
+  "assign.enough": [
+    [{ free: 2, quantity: 5, chosen: 1 }],
+    [{ free: 2, quantity: 5, chosen: 2 }],
+    [{ free: 4, quantity: 5, chosen: 3 }],
+  ],
+  "assign.someHold": [
+    [{ holders: ["A"], free: 1, quantity: 3, recipients: ["B"] }],
+    [{ holders: ["A", "B"], free: 1, quantity: 3, recipients: ["C", "D"] }],
+  ],
+  "assign.footer": [[[{ seats: 2, name: "Call Unlimited" }, { seats: 1, name: "Example Add-on" }]]],
+  "assign.confirm": [[0], [1], [3]],
+  "purchase.headline": [[true], [false]],
+  "purchase.settingUpSeats": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
+  "purchase.readyTitle": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
+  "purchase.readyBody": [[{ product: "Call Unlimited", paid: true }], [{ product: "Call Unlimited", paid: false }]],
+  "purchase.personSettingUp": [["Call Unlimited"]],
+  "purchase.personReadyTitle": [["Call Unlimited"]],
+  "purchase.personReadyBody": [[{ product: "Call Unlimited", paid: true }], [{ product: "Call Unlimited", paid: false }]],
+  "purchase.timeout.title": [[true], [false]],
+  "testMode.label": [["Staging"]],
+  summary: [[{ count: 1, amount: "$29", rate: "a month" }], [{ count: 2, amount: "$295", rate: "a month" }]],
+};

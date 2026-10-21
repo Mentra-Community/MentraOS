@@ -16,7 +16,9 @@ import {
 } from "@tanstack/react-query";
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "./api";
-import { BillingRefusedError, workspaceScope, type BillingApi, type BillingScope } from "./billing-api";
+import type { BillingApi } from "./billing-api";
+import { BillingRefusedError } from "./billing-errors";
+import { workspaceScope, type BillingScope } from "./billing-scope";
 import { isLicenseChangedError, isWorkspaceChangedError, isWorkspaceHeldError, WorkspaceApiError } from "./errors";
 
 type ApiScope = Pick<WorkspaceApi, "basePath">;
@@ -44,19 +46,21 @@ export const workspaceKeys = {
 
 /**
  * Billing's answers, which are not part of the workspace API's cache but belong to an owner: a workspace's start
- * with its id, so a change to that workspace (a seat given or taken) refreshes them with the rest, and the
- * person's own sit apart. The billing client's base path and locale are in each key, so two embeddings, or a
- * locale change, never share an answer.
+ * with its id, and the person's own sit apart. The billing client's base path and locale are in each key, so two
+ * embeddings, or a locale change, never share an answer. Status and catalog are separate branches under the
+ * owner, so a seat change can refresh the one it affects (`statuses`) and leave the other.
  */
 export const billingKeys = {
   root: ["workspace-ui", "billing"] as const,
-  /** Everything billing said about one owner: invalidate or remove this to refresh or forget all of it. */
+  /** Everything billing said about one owner: remove this to forget all of it. */
   owner: (scope: BillingScope): readonly string[] =>
     scope.kind === "workspace" ? [...billingKeys.root, "workspace", scope.workspaceId] : [...billingKeys.root, "account"],
+  /** Every status billing gave about one owner, for any purchase, locale or base path: invalidate this to refresh them. */
+  statuses: (scope: BillingScope): readonly string[] => [...billingKeys.owner(scope), "status"],
   catalog: (billing: Pick<BillingApi, "base" | "locale">, scope: BillingScope) =>
-    [...billingKeys.owner(scope), billing.base, billing.locale, "catalog"] as const,
+    [...billingKeys.owner(scope), "catalog", billing.base, billing.locale] as const,
   status: (billing: Pick<BillingApi, "base" | "locale">, scope: BillingScope, purchase?: string | null) =>
-    [...billingKeys.owner(scope), billing.base, billing.locale, "status", purchase ?? null] as const,
+    [...billingKeys.statuses(scope), billing.base, billing.locale, purchase ?? null] as const,
 };
 
 /**
@@ -199,10 +203,13 @@ export const myInvitationsQuery = (api: WorkspaceApi) =>
  * still reaches the caller, whose message is `WORKSPACE_CHANGED_MESSAGE`. A 409 `workspace_has_holds` (a
  * service placed a hold since the screen loaded) refetches too, so the screen shows what holds the
  * workspace, and so does a license that changed under the caller (every seat taken, or gone), so the
- * licenses show their real seats. Billing's answers for the workspace (its catalog and status) are marked stale
- * with the rest, and read again in the background where a screen shows them. With `workspaceGone` (deleted or
- * left) a success drops the workspace's data, billing's included, instead, since fetching it again would only
- * fail.
+ * licenses show their real seats. With `workspaceGone` (deleted or left) a success drops the workspace's data,
+ * billing's included, instead, since fetching it again would only fail.
+ *
+ * `seats` marks a seat mutation (assign, release, assign in bulk). Wherever the workspace's data is refreshed
+ * for one, billing's status for the workspace is marked stale too, and read again in the background where a
+ * screen shows it: nothing the caller does next builds on it, so it doesn't wait for a read that goes out to the
+ * payment backend. Billing's catalog and every other mutation (rename, invite, role change) leave billing alone.
  *
  * `gcTime: 0` keeps results out of the shared mutation cache once the screen lets go of them.
  */
@@ -211,13 +218,11 @@ export function workspaceMutationOptions<TVariables, TData>(
   api: WorkspaceApi,
   workspaceId: string,
   mutationFn: (variables: TVariables) => Promise<TData>,
-  extra: { workspaceGone?: boolean } = {},
+  extra: { workspaceGone?: boolean; seats?: boolean } = {},
 ): UseMutationOptions<TData, Error, TVariables> {
-  const billing = billingKeys.owner(workspaceScope(workspaceId));
+  const scope = workspaceScope(workspaceId);
   const refresh = () => {
-    // Billing's answers are marked stale and refetched in the background: nothing the mutation's caller does next
-    // builds on them, so it doesn't wait for a read that goes out to the payment backend.
-    void client.invalidateQueries({ queryKey: billing });
+    if (extra.seats) void client.invalidateQueries({ queryKey: billingKeys.statuses(scope) });
     return client.invalidateQueries({ queryKey: workspaceKeys.workspace(api, workspaceId) });
   };
   return {
@@ -226,7 +231,7 @@ export function workspaceMutationOptions<TVariables, TData>(
     onSuccess: async () => {
       if (extra.workspaceGone) {
         client.removeQueries({ queryKey: workspaceKeys.workspace(api, workspaceId) });
-        client.removeQueries({ queryKey: billing });
+        client.removeQueries({ queryKey: billingKeys.owner(scope) });
       } else await refresh();
       await client.invalidateQueries({ queryKey: workspaceKeys.list(api) });
     },
@@ -241,8 +246,20 @@ export function useWorkspaceMutation<TVariables, TData>(
   api: WorkspaceApi,
   workspaceId: string,
   mutationFn: (variables: TVariables) => Promise<TData>,
-  extra?: { workspaceGone?: boolean },
+  extra?: { workspaceGone?: boolean; seats?: boolean },
 ) {
   const client = useQueryClient();
   return useMutation(workspaceMutationOptions(client, api, workspaceId, mutationFn, extra));
+}
+
+/**
+ * `useWorkspaceMutation` for a seat: assigning one, releasing one, or assigning several at once. It refreshes the
+ * workspace's licenses and members and billing's status for the workspace; use it for every seat mutation.
+ */
+export function useSeatMutation<TVariables, TData>(
+  api: WorkspaceApi,
+  workspaceId: string,
+  mutationFn: (variables: TVariables) => Promise<TData>,
+) {
+  return useWorkspaceMutation(api, workspaceId, mutationFn, { seats: true });
 }

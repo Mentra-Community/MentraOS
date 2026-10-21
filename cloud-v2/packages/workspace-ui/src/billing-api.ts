@@ -22,55 +22,13 @@ import {
   type SessionAnswer,
 } from "@mentra/workspace-contract/portal-billing";
 import type { FetchLike } from "./api";
-import { refusalMessage, type LicenseScope, type RefusalContext } from "./strings/licenses";
+import { BillingRefusedError, BillingUnavailableError } from "./billing-errors";
+import type { BillingScope } from "./billing-scope";
 
-/** Whose billing: a workspace's, or the signed-in person's own (the personal Billing page). */
-export type BillingScope = { kind: "workspace"; workspaceId: string } | { kind: "account" };
-
-/** The signed-in person's own billing. */
-export const ACCOUNT_SCOPE: BillingScope = { kind: "account" };
-
-export const workspaceScope = (workspaceId: string): BillingScope => ({ kind: "workspace", workspaceId });
-
-/** The owner type a scope sells to: a workspace's licenses, or a person's own. */
-export const ownerTypeOf = (scope: BillingScope): LicenseScope => (scope.kind === "workspace" ? "workspace" : "person");
-
-/**
- * Billing couldn't be read: the connection dropped, a gateway answered instead of billing, or what billing sent
- * doesn't match the contract (including a hosted `url` the portal won't follow). The screens show their
- * "unavailable" state, or the generic refusal line for an action.
- */
-export class BillingUnavailableError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = "BillingUnavailableError";
-  }
-}
-
-/**
- * A refusal: `{error}` with a code (billing's own, such as `already_licensed`, or Core's, such as
- * `unauthorized`), and whatever else the body carried in `details` (`{licenseId}` for `already_licensed`).
- * `status` is the HTTP status.
- */
-export class BillingRefusedError extends Error {
-  constructor(
-    readonly code: string,
-    readonly details: Record<string, unknown> = {},
-    readonly status = 0,
-  ) {
-    super(code);
-    this.name = "BillingRefusedError";
-  }
-}
-
-/**
- * The words for a failed billing call: Core's line for a refusal it knows, and "Billing couldn't do that. Try
- * again." for any other refusal, an unavailable answer or anything else. `context` names the product and whether
- * it is a workspace's or a person's, for the refusals that say so.
- */
-export function billingErrorMessage(error: unknown, context: RefusalContext = {}): string {
-  return refusalMessage(error instanceof BillingRefusedError ? error.code : "", context);
-}
+// The scope and the errors live in schema-free modules (the query layer imports those, not this file); they are
+// re-exported here so a screen that uses the client has one place to import from.
+export { billingErrorMessage, BillingRefusedError, BillingUnavailableError } from "./billing-errors";
+export { ACCOUNT_SCOPE, ownerTypeOf, workspaceScope, type BillingScope } from "./billing-scope";
 
 export interface BillingApi {
   /** The base path without a trailing slash. It also scopes this client's query-cache keys. */

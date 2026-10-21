@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
-import { act, useState } from "react";
+import { act, useState, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Notice, Fact, HostedPageButton, Skeleton, StatusBadge } from "./components/licenses/parts";
 import { Checkbox } from "./ui/checkbox";
@@ -84,6 +84,28 @@ describe("Checkbox and Switch are native inputs", () => {
       expect(input.checked).toBe(false);
     }
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test("given a label, the whole label is the click target and the checkbox's name", async () => {
+    const seen: boolean[] = [];
+    await render(<Checkbox label="Luis Ortega" onChange={(event) => seen.push(event.target.checked)} />);
+    const label = find<HTMLLabelElement>("label");
+    const input = find<HTMLInputElement>("input");
+    expect(label.contains(input)).toBe(true);
+    expect(label.textContent).toBe("Luis Ortega");
+    // At least 24px tall, so the label is a target a thumb can hit.
+    expect(label.className).toMatch(/\bmin-h-6\b/);
+    await click(byText("Luis Ortega", "span"));
+    expect(input.checked).toBe(true);
+    await click(label);
+    expect(input.checked).toBe(false);
+    expect(seen).toEqual([true, false]);
+  });
+
+  test("a labelled Checkbox that is disabled can't be toggled from its label either", async () => {
+    await render(<Checkbox label="Hannah Kim" disabled />);
+    await click(find("label"));
+    expect(find<HTMLInputElement>("input").checked).toBe(false);
   });
 
   test("the text beside one toggles it, when it is in a label", async () => {
@@ -494,6 +516,62 @@ describe("SidePanel", () => {
     expect(onClosed).not.toHaveBeenCalled();
   });
 
+  // Whatever follows the last reachable control must not be taken for the end of the tab order.
+  const UNREACHABLE: Array<[string, ReactNode]> = [
+    ["a control with tabindex -1 (a menu's items)", <button type="button" tabIndex={-1}>Only by script</button>],
+    ["a control in a disabled fieldset", <fieldset disabled><button type="button">In a fieldset</button></fieldset>],
+    ["a control in hidden content", <div hidden><button type="button">Hidden</button></div>],
+    ["a control in inert content", <div inert><button type="button">Inert</button></div>],
+    ["a control in aria-hidden content", <div aria-hidden="true"><button type="button">Decoration</button></div>],
+  ];
+
+  for (const [name, trailing] of UNREACHABLE) {
+    test(`Tab wraps at the last control a person can reach, not at ${name}`, async () => {
+      await render(
+        <SidePanel open onClose={() => {}} title="Luis Ortega">
+          <button type="button">First action</button>
+          <button type="button">Last action</button>
+          {trailing}
+        </SidePanel>,
+      );
+      const last = byText("Last action", "button");
+      await focus(last);
+      expect(await press(last, "Tab")).toBe(true);
+      expect(activeElement()).toBe(find<HTMLElement>('button[aria-label="Close"]'));
+      await press(activeElement()!, "Tab", { shift: true });
+      expect(activeElement()).toBe(last);
+    });
+  }
+
+  test("Escape calls onClose once, even when the browser also sends its own cancel for the same press", async () => {
+    const onClosed = mock(() => {});
+    await render(
+      <SidePanel open onClose={onClosed} title="Luis Ortega">
+        <input aria-label="Notes" />
+      </SidePanel>,
+    );
+    await act(async () => {
+      const input = find("input", dialog());
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      // A browser that doesn't honour the cancelled keydown sends the close request as well.
+      dialog().dispatchEvent(new Event("cancel", { cancelable: true }));
+    });
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("and a later Escape asks again, for a host that stayed open to ask the person first", async () => {
+    const onClosed = mock(() => {});
+    await render(
+      <SidePanel open onClose={onClosed} title="Luis Ortega">
+        <input aria-label="Notes" />
+      </SidePanel>,
+    );
+    await press(find("input", dialog()), "Escape");
+    await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 20))));
+    await press(find("input", dialog()), "Escape");
+    expect(onClosed).toHaveBeenCalledTimes(2);
+  });
+
   test("is full-screen on a phone and a right-hand sheet from the small breakpoint", () => {
     const markup = renderToStaticMarkup(
       <SidePanel open onClose={() => {}} title="Luis Ortega">
@@ -508,24 +586,64 @@ describe("SidePanel", () => {
 });
 
 describe("the licenses' small pieces", () => {
-  test("a Notice is an alert when it is a problem and a status otherwise", () => {
+  test("a Notice is a status in every tone: nothing on these pages interrupts the person, so none is an alert", () => {
     const warn = renderToStaticMarkup(
       <Notice tone="warn" title="Seats stop on Nov 23, 2026 unless payment goes through." action={<button>Update payment method</button>}>
         Update the payment method to keep them.
       </Notice>,
     );
-    expect(warn).toContain('role="alert"');
+    expect(warn).toContain('role="status"');
+    expect(warn).not.toContain('role="alert"');
     expect(warn).toContain("bg-error");
     expect(warn).toContain("Update the payment method to keep them.");
     expect(renderToStaticMarkup(<Notice tone="info" title="Payment received" />)).toContain('role="status"');
     expect(renderToStaticMarkup(<Notice tone="neutral" title="Nothing yet" />)).toContain('role="status"');
   });
 
-  test("a Fact is a term and its value, with a foot", () => {
+  test("a Notice's buttons wrap on a row of their own on a phone instead of running out of the notice", () => {
+    const markup = renderToStaticMarkup(
+      <Notice tone="warn" title="Seats stop" action={<><button>Update payment method</button><button>Complete payment</button></>} />,
+    );
+    const actions = /<div class="([^"]*)"><button>Update payment method/.exec(markup)?.[1] ?? "";
+    expect(actions).toContain("flex-wrap");
+    expect(actions).toContain("max-sm:basis-full");
+    // Not unshrinkable on a phone: that is what pushed the second button out of the notice.
+    expect(actions).not.toMatch(/(^| )shrink-0/);
+  });
+
+  test("a Fact is a term and its values, with a foot", () => {
     const markup = renderToStaticMarkup(<Fact label="Cost" value="$145 a month" foot="5 × $29 · before tax" />);
     expect(markup).toMatch(/<dt[^>]*>Cost<\/dt>/);
     expect(markup).toMatch(/<dd[^>]*>\$145 a month<\/dd>/);
     expect(markup).toContain("5 × $29 · before tax");
+  });
+
+  test("Facts sit validly in a <dl>: a div per group, holding only the term and its descriptions", async () => {
+    await render(
+      <dl>
+        <Fact label="Seats" value="3 of 5 in use" foot="2 free">
+          <Meter used={3} total={5} />
+        </Fact>
+        <Fact label="Renews" value="Nov 20, 2026" foot="Every month" />
+        <Fact label="Cost" value="$145 a month" />
+      </dl>,
+    );
+    const list = find("dl");
+    const groups = [...list.children];
+    expect(groups.map((group) => group.tagName)).toEqual(["DIV", "DIV", "DIV"]);
+    for (const group of groups) {
+      expect([...group.children].every((child) => child.tagName === "DT" || child.tagName === "DD")).toBe(true);
+      expect(findAll("dt", group)).toHaveLength(1);
+      // The term comes first, then its descriptions.
+      expect(group.children[0]!.tagName).toBe("DT");
+    }
+    expect([...groups[0]!.children].map((child) => child.tagName)).toEqual(["DT", "DD", "DD", "DD"]);
+    expect([...groups[1]!.children].map((child) => child.tagName)).toEqual(["DT", "DD", "DD"]);
+    expect([...groups[2]!.children].map((child) => child.tagName)).toEqual(["DT", "DD"]);
+    // The meter sits in a description of its own, and what each says is in its place.
+    expect(groups[0]!.children[1]!.textContent).toBe("3 of 5 in use");
+    expect(find("[data-slot=meter]", groups[0]!.children[2]!)).toBeDefined();
+    expect(groups[0]!.children[3]!.textContent).toBe("2 free");
   });
 
   test("a Skeleton is a placeholder with no text", () => {
@@ -551,6 +669,36 @@ describe("the licenses' small pieces", () => {
     expect(button.type).toBe("button");
     await click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  test("a HostedPageButton tells a screen reader it leaves the portal, in visually hidden text it is described by", async () => {
+    await render(<HostedPageButton>Add seats</HostedPageButton>);
+    const button = find<HTMLButtonElement>("button");
+    const hint = find(`#${CSS.escape(button.getAttribute("aria-describedby")!)}`);
+    expect(hint.textContent).toBe("Opens a secure billing page");
+    expect(hint.className).toContain("sr-only");
+    // The name stays the label: only the description carries the cue.
+    expect(button.textContent).toBe("Add seats");
+    expect(button.contains(hint)).toBe(false);
+  });
+
+  test("and, for a hosted page that opens in a new tab, says so", async () => {
+    await render(<HostedPageButton newTab>Complete payment</HostedPageButton>);
+    const button = find<HTMLButtonElement>("button");
+    expect(find(`#${CSS.escape(button.getAttribute("aria-describedby")!)}`).textContent).toBe(
+      "Opens a secure billing page in a new tab",
+    );
+  });
+
+  test("two HostedPageButtons describe themselves by two different hints", async () => {
+    await render(
+      <>
+        <HostedPageButton>Add seats</HostedPageButton>
+        <HostedPageButton>Cancel</HostedPageButton>
+      </>,
+    );
+    const ids = findAll<HTMLButtonElement>("button").map((button) => button.getAttribute("aria-describedby"));
+    expect(new Set(ids).size).toBe(2);
   });
 
   test("a HostedPageButton that is waiting for its session shows a spinner and can't be pressed again", async () => {
