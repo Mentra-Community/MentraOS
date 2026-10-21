@@ -11,17 +11,16 @@
  * `PUT` and take it back with `DELETE` at once, through `useSeatMutation` so billing's status is read again.
  *
  * Every sentence is in `strings/licenses.ts`. This file imports no runtime code from the contract's billing
- * schemas, so the admin portal doesn't carry zod for it.
+ * schemas, so the admin portal doesn't carry zod for it. What the seat screens share (`memberLabel`, `HeldLicense`,
+ * `SeatErrorNotice`, `useAddSeats`) is in `licenses/parts.tsx`.
  */
 
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "../api";
-import { billingErrorMessage } from "../billing-errors";
-import { isLicenseChangedError } from "../errors";
 import { formatDate } from "../lib/format";
-import { holdsSeat, type JoinedLicense } from "../lib/license-join";
+import { holdsSeat } from "../lib/license-join";
 import { cn } from "../lib/utils";
 import { useSeatMutation } from "../queries";
 import { ROLE_LABELS } from "../roles";
@@ -29,69 +28,20 @@ import { licenseStrings as t } from "../strings/licenses";
 import { Menu, type MenuItem } from "../ui/menu";
 import { SidePanel } from "../ui/side-panel";
 import { Switch } from "../ui/switch";
-import { Avatar, Badge, ConfirmButton, ErrorNotice } from "./common";
-import { HostedPageButton } from "./licenses/parts";
+import { Avatar, AlertText, Badge, ConfirmButton, ErrorNotice } from "./common";
+import { HostedPageButton, memberLabel, SeatErrorNotice, useAddSeats, type HeldLicense } from "./licenses/parts";
 import { ProductIcon } from "./licenses/product";
-
-/** What a member is called: their name, else their email, else their Mentra user id, else "Imported member". */
-export function memberLabel(member: Pick<MemberView, "name" | "email" | "mentraUserId">): string {
-  return member.name?.trim() || member.email || member.mentraUserId || t.members.importedMember;
-}
-
-/** A failure in the page's amber: `role="alert"`, because it is the answer to something the person just did. */
-export function AlertText({ children }: { children: ReactNode }) {
-  return (
-    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-      {children}
-    </p>
-  );
-}
-
-/**
- * Why a seat change failed. A license that changed under the person (every seat taken, or gone) is "Seats changed
- * while you were choosing. Nothing was assigned." because the screen has already read the counts again; anything
- * else is the server's own words. Nothing when there is no error.
- */
-export function SeatErrorNotice({ error }: { error: unknown }) {
-  if (error === null || error === undefined) return null;
-  if (isLicenseChangedError(error)) return <AlertText>{t.conflict.seatsChanged}</AlertText>;
-  return <ErrorNotice error={error} />;
-}
-
-/**
- * "Add seats ↗" for a license: asks the host (which asks billing for a session and leaves the portal). While the
- * request is out the button is pending, and a refusal comes back as its words. The host's call is made inside the
- * click, so a tab it opens there isn't blocked.
- */
-export function useAddSeats(onAddSeats: ((licenseId: string) => unknown) | undefined) {
-  const [state, setState] = useState<{ pending: string | null; message: string | null }>({ pending: null, message: null });
-  function run(card: Pick<JoinedLicense, "licenseId" | "name">) {
-    if (!onAddSeats) return;
-    setState({ pending: card.licenseId, message: null });
-    let result: unknown;
-    try {
-      result = onAddSeats(card.licenseId);
-    } catch (error) {
-      result = Promise.reject(error);
-    }
-    Promise.resolve(result).then(
-      () => setState((current) => (current.pending === card.licenseId ? { pending: null, message: null } : current)),
-      (error: unknown) => setState({ pending: null, message: billingErrorMessage(error, { product: card.name }) }),
-    );
-  }
-  return { pending: state.pending, message: state.message, run };
-}
 
 export interface PersonLicensesProps {
   api: WorkspaceApi;
   workspaceId: string;
   member: MemberView;
-  /** The licenses the workspace holds, in the order to show them. Each has Core's license. */
-  cards: readonly JoinedLicense[];
+  /** The licenses the workspace holds, in the order to show them. */
+  cards: readonly HeldLicense[];
   /** Whether the viewer may give and take seats (`workspace.licenses.assign`). Without it the switches show the state only. */
   canAssign: boolean;
   /** Whether "Add seats ↗" is offered for the license: billing lists `add_seats` for it and the host can start it. */
-  canAddSeats(card: JoinedLicense): boolean;
+  canAddSeats(card: HeldLicense): boolean;
   onAddSeats?(licenseId: string): unknown;
 }
 
@@ -122,8 +72,8 @@ export function PersonLicenses({ api, workspaceId, member, cards, canAssign, can
       {signedIn ? (
         <ul className="divide-y overflow-hidden rounded-notice border">
           {cards.map((card) => {
-            const counts = card.seats!;
-            const held = holdsSeat(card.license!, member.membershipId);
+            const counts = card.seats;
+            const held = holdsSeat(card.license, member.membershipId);
             const on = moving?.licenseId === card.licenseId ? moving.on : held;
             const over = !on && counts.over > 0;
             const full = !on && !over && counts.free === 0;

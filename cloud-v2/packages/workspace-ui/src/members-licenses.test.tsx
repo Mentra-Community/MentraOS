@@ -6,7 +6,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { LicenseView, MemberView, WorkspaceDetail, WorkspaceRole } from "@mentra/workspace-contract";
+import { MAX_SEAT_ASSIGNMENTS, type LicenseView, type MemberView, type WorkspaceDetail, type WorkspaceRole } from "@mentra/workspace-contract";
 import type { CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 import { act } from "react";
 import { createWorkspaceApi, type FetchLike, type WorkspaceApi } from "./api";
@@ -17,7 +17,7 @@ import { formatDate } from "./lib/format";
 import { billingKeys } from "./queries";
 import { ROLE_LABELS } from "./roles";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor } from "./test-billing-fixtures";
-import { byText, cleanup, click, find, findAll, press, render, setupDom, teardownDom } from "./test-dom";
+import { byText, cleanup, click, find, findAll, flush, press, render, setupDom, teardownDom, until } from "./test-dom";
 import { runtimeImports, SCHEMA_SPECIFIER } from "./test-imports";
 import { detailFor, licenseFor, seedClient, START, WORKSPACE_ID } from "./test-fixtures";
 
@@ -60,6 +60,14 @@ const CALL = () => license("lic_call", "mentra.call.unlimited", 5, ["wm_dana", "
 const FLEET = () => license("lic_fleet", "mentra.fleet", 10, Array.from({ length: 10 }, (_, i) => `wm_f${i}`));
 const EXAMPLE = () => license("lic_example", "mentra.example", 3, ["wm_amara", "wm_dana"]);
 const BOTH = () => license("lic_both", "mentra.both", 4, ["wm_luis", "wm_amara"]);
+
+/** What a host reads from `status.licenses` for a viewer who is offered billing: each license lists add_seats. */
+const BILLING: LicenseBilling[] = [
+  ["lic_call", "mentra.call.unlimited"],
+  ["lic_fleet", "mentra.fleet"],
+  ["lic_example", "mentra.example"],
+  ["lic_both", "mentra.both"],
+].map(([licenseId, product]) => licenseBillingFor({ licenseId: licenseId!, product: product! }));
 
 const exampleEntry = (product = "mentra.example", name = "Example Add-on") =>
   catalogEntryFor({ product, name, shortName: undefined, icon: null, features: [], description: "An example add-on." });
@@ -188,27 +196,23 @@ async function mount(options: MountOptions = {}) {
     ...("member" in options ? { member: options.member } : {}),
     ...(options.onMemberChange ? { onMemberChange: options.onMemberChange } : {}),
   };
-  await render(
+  const element = (extra: { member?: string | null } = {}) => (
     <QueryClientProvider client={client}>
-      <WorkspaceMembersPanel {...props} />
-    </QueryClientProvider>,
+      <WorkspaceMembersPanel {...props} {...extra} />
+    </QueryClientProvider>
   );
-  await settle();
-  return { world, calls, api, client, writes: () => calls.filter((call) => call.method !== "GET") };
+  const mounted = await render(element());
+  await flush();
+  return {
+    world,
+    calls,
+    api,
+    client,
+    writes: () => calls.filter((call) => call.method !== "GET"),
+    /** A controlled host moves to another member without closing the panel. */
+    setMember: (membershipId: string | null) => mounted.rerender(element({ member: membershipId })),
+  };
 }
-
-/** Lets pending requests and the renders they cause finish. */
-async function until(check: () => boolean, what: string) {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    if (check()) return;
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
-  }
-  throw new Error(`timed out waiting for ${what}`);
-}
-
-const settle = () => act(async () => void (await new Promise((resolve) => setTimeout(resolve, 20))));
 
 const rowOf = (text: string) => {
   const row = findAll<HTMLTableRowElement>("tbody tr").find((candidate) => candidate.textContent?.includes(text));
@@ -236,6 +240,12 @@ const assignRow = (name: string, within: HTMLElement = assignDialog()) => {
   const found = findAll("li", within).find((candidate) => candidate.textContent?.includes(name));
   if (!found) throw new Error(`no row for ${name}`);
   return found;
+};
+/** The text of the panel's Licenses row for `product`. */
+const rowText = (product: string) => {
+  const found = findAll("li", panelEl()).find((li) => li.textContent?.includes(product));
+  if (!found) throw new Error(`no licenses row for ${product}`);
+  return found.textContent!;
 };
 const rowCheckbox = (row: HTMLElement) => find<HTMLInputElement>('input[type="checkbox"]', row);
 const footerText = () => find("[data-slot='assign-footer']", assignDialog()).textContent!.trim();
@@ -440,7 +450,7 @@ describe("Assign licenses", () => {
 
   test("says '2 of 3 fit: remove one or add seats.' when too many are chosen, with Add seats where billing offers it", async () => {
     const onAddSeats = mock(async (_licenseId: string) => {});
-    await mount({ onAddSeats });
+    await mount({ onAddSeats, billing: BILLING });
     await choose("Luis Ortega", "Amara Okafor", "Zed Young");
     await openAssign();
     const call = assignRow("Mentra Call Unlimited");
@@ -471,16 +481,39 @@ describe("Assign licenses", () => {
     expect(byText("Add seats", "button", assignRow("Fleet"))).toBeTruthy();
   });
 
-  test("without a way to add seats there is no Add seats button at all", async () => {
-    await mount();
+  test("without the host's way to add seats there is no Add seats button, even where billing lists it", async () => {
+    await mount({ billing: BILLING });
     await choose("Luis Ortega", "Amara Okafor");
     await openAssign();
     expect(findAll("button", assignDialog()).some((button) => button.textContent === "Add seats")).toBe(false);
     expect(assignRow("Mentra Call Unlimited").textContent).not.toContain("Add seats");
   });
 
+  test("fails closed: without billing's list nothing offers Add seats, however the host could start it", async () => {
+    const onAddSeats = mock(async (_licenseId: string) => {});
+    // Not offered billing, billing still loading or failed, and billing listing nothing: none of them offers it.
+    for (const billing of [undefined, null, [] as LicenseBilling[]]) {
+      await mount({ onAddSeats, billing });
+      await choose("Luis Ortega", "Amara Okafor", "Zed Young");
+      await openAssign();
+      const call = assignRow("Mentra Call Unlimited");
+      expect(call.textContent).toContain("2 of 3 fit: remove one.");
+      expect(call.textContent).not.toContain("add seats");
+      expect(assignRow("Fleet").textContent).toContain("All 10 seats are in use.");
+      expect(findAll("button", assignDialog()).some((button) => button.textContent === "Add seats")).toBe(false);
+      await cleanup();
+
+      await mount({ onAddSeats, billing });
+      await openPanel("Luis Ortega");
+      expect(rowText("Fleet")).toContain("All 10 seats are in use");
+      expect(findAll("button", panelEl()).some((button) => button.textContent === "Add seats")).toBe(false);
+      await cleanup();
+    }
+    expect(onAddSeats).not.toHaveBeenCalled();
+  });
+
   test("a blocked row can't be checked, and a row that fits starts checked", async () => {
-    await mount({ onAddSeats: async () => {} });
+    await mount({ onAddSeats: async () => {}, billing: BILLING });
     await choose("Luis Ortega", "Amara Okafor");
     await openAssign();
     for (const name of ["Mentra Call Unlimited", "Example Add-on"]) {
@@ -504,7 +537,7 @@ describe("Assign licenses", () => {
           refuse = reject;
         }),
     );
-    await mount({ onAddSeats });
+    await mount({ onAddSeats, billing: BILLING });
     await choose("Luis Ortega");
     await openAssign();
     const button = byText("Add seats", "button", assignRow("Fleet"));
@@ -609,6 +642,30 @@ describe("Assign licenses", () => {
     await openAssign();
     await click(find("button[aria-label='Close']", assignDialog()));
     expect(assignIsOpen()).toBe(false);
+  });
+
+  test("Assign is off above one request's most, and says so under the button", async () => {
+    // 126 members × 4 licenses = 504 pairs; 125 × 4 = 500 is the most one request takes.
+    const many = Array.from({ length: 126 }, (_, i) => member(`wm_m${i}`, `m${i}@acme.test`, null));
+    const keys = ["a", "b", "c", "d"];
+    const licenses = keys.map((key) => license(`lic_${key}`, `mentra.${key}`, 1000, []));
+    const catalog = keys.map((key) => exampleEntry(`mentra.${key}`, `Product ${key.toUpperCase()}`));
+    await mount({ members: [SAM, ...many], licenses, catalog });
+    await act(async () => {
+      for (const person of many) tick(person.email!).click();
+    });
+    expect(MAX_SEAT_ASSIGNMENTS).toBe(500);
+    await openAssign();
+    const confirm = byText("Assign 504 seats", "button", assignDialog());
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    const reason = byText("You can assign up to 500 seats at a time.", "p", assignDialog());
+    expect(confirm.getAttribute("aria-describedby")).toBe(reason.id);
+    // One fewer person is exactly 500 pairs: it is on, and the reason is gone.
+    await click(find("button[aria-label='Close']", assignDialog()));
+    await click(tick(many[0]!.email!));
+    await openAssign();
+    expect(byText("Assign 500 seats", "button", assignDialog()).hasAttribute("disabled")).toBe(false);
+    expect(assignDialog().textContent).not.toContain("You can assign up to");
   });
 
   test("has no native <select>", async () => {
@@ -769,6 +826,32 @@ describe("the member panel", () => {
       await until(() => findAll("tbody tr").every((row) => !row.textContent!.includes("max@acme.test")), "the row to go");
     });
 
+    test("removing a member frees their seats, so billing's status is marked stale", async () => {
+      const { client, writes } = await mount({ role: "admin" });
+      const statusKey = billingKeys.status({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
+      const catalogKey = billingKeys.catalog({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
+      client.setQueryData(statusKey, { licenses: [] });
+      client.setQueryData(catalogKey, { products: [] });
+      await openPanel("max@acme.test");
+      await click(byText("Remove from workspace", "button", panelEl()));
+      await click(byText("Confirm remove", "button", panelEl()));
+      await until(() => writes().length === 1, "the removal");
+      await until(() => client.getQueryState(statusKey)?.isInvalidated === true, "billing's status to be marked stale");
+      expect(client.getQueryState(catalogKey)?.isInvalidated).toBe(false);
+    });
+
+    test("a role change leaves billing alone", async () => {
+      const { client, writes } = await mount({ role: "admin" });
+      const statusKey = billingKeys.status({ base: "/api/portal/billing", locale: "en-US" }, { kind: "workspace", workspaceId: WORKSPACE_ID });
+      client.setQueryData(statusKey, { licenses: [] });
+      await openPanel("Dana Reyes");
+      await click(find("button[aria-label='Change role']", panelEl()));
+      await click(byText("Member", '[role="menuitem"]'));
+      await until(() => writes().length === 1, "the role change");
+      await flush();
+      expect(client.getQueryState(statusKey)?.isInvalidated).toBe(false);
+    });
+
     test("asks a host that controls the panel to close it once the member is gone", async () => {
       const onMemberChange = mock((_membershipId: string | null) => {});
       const { writes } = await mount({ role: "admin", member: "wm_dana", onMemberChange });
@@ -859,7 +942,7 @@ describe("the member panel", () => {
 
     test("a full license's switch is off and disabled, in amber, with Add seats", async () => {
       const onAddSeats = mock(async (_licenseId: string) => {});
-      await mount({ onAddSeats });
+      await mount({ onAddSeats, billing: BILLING });
       await openPanel("Luis Ortega");
       const fleet = rowFor("Fleet");
       expect(fleet.textContent).toContain("All 10 seats are in use");
@@ -940,6 +1023,18 @@ describe("the member panel", () => {
       await until(() => switchFor("Example Add-on", "Zed Young").disabled, "the new counts");
       expect(switchFor("Example Add-on", "Zed Young").checked).toBe(false);
       expect(rowFor("Example Add-on").textContent).toContain("All 3 seats are in use");
+    });
+
+    test("a new member starts without the failure of the last one's seat change", async () => {
+      const onMemberChange = mock((_membershipId: string | null) => {});
+      const { world, setMember } = await mount({ member: "wm_zed", onMemberChange });
+      giveSeat(world, "lic_example", "wm_luis");
+      await click(switchFor("Example Add-on", "Zed Young"));
+      await until(() => panelEl().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
+      // The host moves to another member without closing the panel.
+      await setMember("wm_amara");
+      expect(panelEl().querySelector("h2")!.textContent).toBe("Amara Okafor");
+      expect(panelEl().textContent).not.toContain("Seats changed while you were choosing.");
     });
 
     test("has no native <select>", async () => {

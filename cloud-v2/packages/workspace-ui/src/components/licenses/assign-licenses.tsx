@@ -9,6 +9,9 @@
  * seats changed meanwhile (a 409) nothing was assigned: the counts are read again and the dialog says so, and a row
  * that no longer fits unchecks itself.
  *
+ * One request takes at most `MAX_SEAT_ASSIGNMENTS` pairs. Beyond that Assign stays off, with "You can assign up to
+ * 500 seats at a time." under it.
+ *
  * It is a seat mutation (`useSeatMutation`), so billing's status for the workspace is read again too. The body
  * renders only while the dialog is open, so each opening starts fresh. This file imports no runtime code from the
  * contract's billing schemas.
@@ -17,15 +20,15 @@
 import { MAX_SEAT_ASSIGNMENTS, type MemberView } from "@mentra/workspace-contract";
 import { useId, useState } from "react";
 import type { WorkspaceApi } from "../../api";
-import { fitFor, type JoinedLicense } from "../../lib/license-join";
+import { fitFor } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { useSeatMutation } from "../../queries";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Dialog } from "../../ui/dialog";
-import { AlertText, memberLabel, SeatErrorNotice, useAddSeats } from "../member-panel";
-import { HostedPageButton } from "./parts";
+import { AlertText } from "../common";
+import { HostedPageButton, memberLabel, SeatErrorNotice, useAddSeats, type HeldLicense } from "./parts";
 import { ProductIcon } from "./product";
 
 export interface AssignLicensesDialogProps {
@@ -36,10 +39,10 @@ export interface AssignLicensesDialogProps {
   workspaceId: string;
   /** The members chosen who can be given a seat (they have signed in), in the order to name them. */
   people: readonly MemberView[];
-  /** The licenses the workspace holds, in the order to show them. Each has Core's license. */
-  cards: readonly JoinedLicense[];
+  /** The licenses the workspace holds, in the order to show them. */
+  cards: readonly HeldLicense[];
   /** Whether "Add seats ↗" is offered for the license: billing lists `add_seats` for it and the host can start it. */
-  canAddSeats(card: JoinedLicense): boolean;
+  canAddSeats(card: HeldLicense): boolean;
   onAddSeats?(licenseId: string): unknown;
   /** Every checked seat was assigned. */
   onAssigned(): void;
@@ -71,13 +74,15 @@ function AssignBody({
   const add = useAddSeats(onAddSeats);
 
   const rows = cards.map((card) => {
-    const fit = fitFor(card.license!, people);
+    const fit = fitFor(card.license, people);
     return { card, fit, checked: fit.ok && !unchecked.has(card.licenseId) };
   });
   const chosen = rows.filter((row) => row.checked);
   const pairs = chosen.flatMap(({ card, fit }) => fit.recipients.map((person) => ({ licenseId: card.licenseId, membershipId: person.membershipId })));
   const seats = chosen.map(({ card, fit }) => ({ seats: fit.needed, name: card.shortName }));
+  // One request takes at most MAX_SEAT_ASSIGNMENTS pairs: beyond that Assign stays off, and says why.
   const tooMany = pairs.length > MAX_SEAT_ASSIGNMENTS;
+  const tooManyId = useId();
 
   return (
     <>
@@ -118,11 +123,17 @@ function AssignBody({
           <Button
             type="button"
             disabled={pairs.length === 0 || tooMany || assign.isPending}
+            aria-describedby={tooMany ? tooManyId : undefined}
             onClick={() => assign.mutate(pairs, { onSuccess: onAssigned })}
           >
             {t.assign.confirm(chosen.reduce((sum, row) => sum + row.fit.needed, 0))}
           </Button>
         </div>
+        {tooMany ? (
+          <p id={tooManyId} className="text-muted-foreground basis-full text-right text-sm">
+            {t.assign.tooMany(MAX_SEAT_ASSIGNMENTS)}
+          </p>
+        ) : null}
       </div>
     </>
   );
@@ -140,7 +151,7 @@ function AssignRow({
   onToggle,
   onAddSeats,
 }: {
-  card: JoinedLicense;
+  card: HeldLicense;
   note: string | null;
   checked: boolean;
   blocked: boolean;

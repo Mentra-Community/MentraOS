@@ -16,8 +16,9 @@
  * and for a viewer with `workspace.licenses.read` in a workspace that holds licenses, the list gains a Licenses
  * column (a chip per license held, "None", or "After first sign-in"; past four, three chips and "+n"), and the
  * panel its Licenses section. With `workspace.licenses.assign` it also gains a checkbox per member who has signed
- * in and a bar "<n> selected · Assign licenses · ×". Licenses are shown in the order Core lists them. If billing's
- * catalog can't be read the host passes none, and the list works without any of it.
+ * in and a bar "<n> selected · Assign licenses · ×". If billing's catalog can't be read the host passes none, and
+ * the list works without any of it. "Add seats ↗" is offered only for a license billing lists `add_seats` for
+ * (`licenses.billing`).
  *
  * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need it to
  * recover a workspace's ownership. Leave it off anywhere else.
@@ -33,7 +34,7 @@ import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
 import type { CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../api";
 import { formatDate } from "../lib/format";
-import { holdsSeat, joinLicenses, listedAction, type JoinedLicense } from "../lib/license-join";
+import { holdsSeat, joinLicenses, listedAction } from "../lib/license-join";
 import { cn } from "../lib/utils";
 import { licensesQuery, membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can, canRemoveRole, effectiveRole, roleOptions } from "../roles";
@@ -42,8 +43,9 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Avatar, Badge, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
 import { AssignLicensesDialog } from "./licenses/assign-licenses";
+import { isHeldLicense, memberLabel, type HeldLicense } from "./licenses/parts";
 import { ProductChip } from "./licenses/product";
-import { MemberPanel, memberLabel, PersonLicenses } from "./member-panel";
+import { MemberPanel, PersonLicenses } from "./member-panel";
 
 /** What the host knows about licenses, for the Members list. The workspace portal passes it; the admin portal doesn't. */
 export interface MembersLicenses {
@@ -53,13 +55,16 @@ export interface MembersLicenses {
    */
   catalog: readonly CatalogEntry[] | null | undefined;
   /**
-   * Billing's licenses (`status.licenses`), where the viewer is offered billing. Given it, "Add seats ↗" appears
-   * only for a license billing lists `add_seats` for. Without it, `onAddSeats` alone decides.
+   * Billing's licenses (`status.licenses`), where the viewer is offered billing. This is what decides "Add seats ↗":
+   * Core shows a billing button only where billing lists the action, so a license offers it only when its entry
+   * here lists `add_seats`. Without it (not offered billing, still loading, or it failed) no license offers it,
+   * and the sentences drop their "add seats" half.
    */
   billing?: readonly LicenseBilling[] | null;
   /**
-   * Asks billing for an `add_seats` session for the license and leaves the portal for it; rejects with billing's
-   * refusal. Leave it out where the viewer isn't offered billing: there is then no "Add seats ↗".
+   * How "Add seats ↗" works: asks billing for an `add_seats` session for the license and leaves the portal for it;
+   * rejects with billing's refusal. It says how, not whether: without `billing` listing the action, it is never
+   * called.
    */
   onAddSeats?(licenseId: string): unknown;
 }
@@ -100,12 +105,15 @@ export function WorkspaceMembersPanel({
     ...licensesQuery(api, workspaceId),
     enabled: catalog !== undefined && can(detail, "workspace.licenses.read"),
   });
-  // The licenses the workspace holds, named from the catalog, in the order Core lists them.
-  const cards = useMemo(() => {
+  // The licenses the workspace holds, named from the catalog. The Members screens deliberately keep Core's own order
+  // (the order the licenses were bought, `_id` ascending) and not the Licenses page's (a problem first, then by
+  // name): a member's chips, the rows of Assign licenses and the panel's switches stay where they are when a
+  // payment fails. `joinLicenses` sorts for the page, so its order is put back.
+  const cards = useMemo<HeldLicense[]>(() => {
     if (catalog === undefined || !licensesResult.data) return [];
     const order = new Map(licensesResult.data.map((license, index) => [license.licenseId, index]));
     return joinLicenses({ licenses: licensesResult.data, catalog, locale })
-      .filter((card) => card.license !== null)
+      .filter(isHeldLicense)
       .sort((a, b) => order.get(a.licenseId)! - order.get(b.licenseId)!);
   }, [catalog, licensesResult.data, locale]);
   const licensesShown = can(detail, "workspace.licenses.read") && cards.length > 0;
@@ -117,8 +125,12 @@ export function WorkspaceMembersPanel({
     (change: { membershipId: string; role: WorkspaceRole; expectedRevision: number }) =>
       api.changeMemberRole(workspaceId, change.membershipId, change.role, change.expectedRevision),
   );
-  const remove = useWorkspaceMutation(api, workspaceId, (target: { membershipId: string; expectedRevision: number }) =>
-    api.removeMember(workspaceId, target.membershipId, target.expectedRevision),
+  // Removing a member frees their seats in the same transaction, so it refreshes billing's status like a seat change.
+  const remove = useWorkspaceMutation(
+    api,
+    workspaceId,
+    (target: { membershipId: string; expectedRevision: number }) => api.removeMember(workspaceId, target.membershipId, target.expectedRevision),
+    { seats: true },
   );
 
   // Which member's panel is open: the host's when it passes `member` or `onMemberChange`, else this panel's own.
@@ -145,11 +157,12 @@ export function WorkspaceMembersPanel({
     [canSelect, membersResult.data, selectedIds],
   );
 
-  const canAddSeats = (card: JoinedLicense) => {
-    if (!licenses?.onAddSeats) return false;
-    if (licenses.billing === null || licenses.billing === undefined) return true;
-    return listedAction(licenses.billing.find((entry) => entry.licenseId === card.licenseId), "add_seats") !== null;
-  };
+  // Only where billing lists `add_seats` for the license, and fails closed: with no `billing` (not offered it, still
+  // loading, or failed) there is no button. `onAddSeats` is how it works, not whether it is offered.
+  const canAddSeats = (card: HeldLicense) =>
+    licenses?.onAddSeats !== undefined &&
+    licenses.billing != null &&
+    listedAction(licenses.billing.find((entry) => entry.licenseId === card.licenseId), "add_seats") !== null;
 
   const clearSelection = () => {
     setSelectedIds(new Set());
@@ -160,7 +173,7 @@ export function WorkspaceMembersPanel({
     <Panel
       title={t.members.title}
       count={can(detail, "workspace.members.read") ? membersResult.data?.length : undefined}
-      description="People in this workspace and the role each of them holds."
+      description={t.members.description}
       actions={
         chosen.length > 0 ? (
           <div
@@ -191,7 +204,7 @@ export function WorkspaceMembersPanel({
       <QueryGate result={detailResult}>
         {(workspace) =>
           !can(workspace, "workspace.members.read") ? (
-            <Restricted>Only workspace admins can see the member list.</Restricted>
+            <Restricted>{t.members.adminsOnly}</Restricted>
           ) : (
             <QueryGate result={membersResult}>
               {(members) => {
@@ -244,6 +257,8 @@ export function WorkspaceMembersPanel({
                       licenses={
                         target && licensesShown ? (
                           <PersonLicenses
+                            // A new member starts with no failure of the last one's.
+                            key={target.membershipId}
                             api={api}
                             workspaceId={workspaceId}
                             member={target}
@@ -280,7 +295,7 @@ export function WorkspaceMembersPanel({
 }
 
 /** The chips of the licenses a member holds: all of them up to four, else three and "+n". */
-function LicenseChips({ held }: { held: readonly JoinedLicense[] }) {
+function LicenseChips({ held }: { held: readonly HeldLicense[] }) {
   const folded = held.length > MAX_CHIPS;
   const shown = folded ? held.slice(0, MAX_CHIPS - 1) : held;
   const hidden = folded ? held.slice(MAX_CHIPS - 1) : [];
@@ -320,14 +335,14 @@ function MembersTable({
   ownMembershipId: string | null;
   showUserIds: boolean;
   /** The licenses the workspace holds, for the Licenses column; null leaves the column out. */
-  cards: readonly JoinedLicense[] | null;
+  cards: readonly HeldLicense[] | null;
   selectable: boolean;
   selected: ReadonlySet<string>;
   locale?: string;
   onOpen(membershipId: string): void;
   onToggle(membershipId: string): void;
 }) {
-  if (members.length === 0) return <Restricted>No members yet.</Restricted>;
+  if (members.length === 0) return <Restricted>{t.members.noMembers}</Restricted>;
   return (
     // On a phone each row stacks: the member across the top, then their role and their licenses.
     <div className="-mx-6 overflow-x-auto max-sm:border-t">
@@ -405,7 +420,7 @@ function MembersTable({
                     // Under the name, not under the avatar: the avatar is 36px and the gap 12px.
                     <div className="mt-1 ml-12 flex flex-wrap items-center gap-2">
                       <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
-                      <CopyButton text={member.mentraUserId} label="Copy id" ariaLabel={`Copy the Mentra user id of ${label}`} />
+                      <CopyButton text={member.mentraUserId} label={t.members.copyId} ariaLabel={t.members.copyIdFor(label)} />
                     </div>
                   ) : null}
                 </td>
@@ -430,9 +445,9 @@ function MembersTable({
 }
 
 /** What a member holds: a chip per license, "None", or "After first sign-in" for someone who has no account yet. */
-function LicensesCell({ member, cards }: { member: MemberView; cards: readonly JoinedLicense[] }) {
+function LicensesCell({ member, cards }: { member: MemberView; cards: readonly HeldLicense[] }) {
   if (member.pending) return <span className="text-muted-foreground">{t.members.afterFirstSignIn}</span>;
-  const held = cards.filter((card) => holdsSeat(card.license!, member.membershipId));
+  const held = cards.filter((card) => holdsSeat(card.license, member.membershipId));
   if (held.length === 0) return <span className="text-muted-foreground">{t.members.none}</span>;
   return <LicenseChips held={held} />;
 }
