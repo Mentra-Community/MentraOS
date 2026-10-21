@@ -55,7 +55,7 @@ import { LicensesSummary, LicensesUnavailable, PURCHASE_POLL_MS, PURCHASE_TIMEOU
 import { CatalogDialog, CatalogGrid } from "./catalog";
 import { useHostedAction, type NavigateOut } from "./hosted-action";
 import { LicenseCard } from "./license-card";
-import { HeaderButtons, hasOffer, NoSeat, PageNote, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
+import { HeaderButtons, hasOffer, NoSeat, PageNote, readFailed, readRetrying, readWaiting, usePurchaseFlow, type PurchaseFlow } from "./page-parts";
 
 export interface WorkspaceLicensesViewProps {
   /** Core's workspace API: the workspace, its licenses and members, and the seat changes. */
@@ -81,11 +81,6 @@ export interface WorkspaceLicensesViewProps {
   timeoutMs?: number;
 }
 
-/** Whether a read has no answer and has failed (a refetch that failed after an answer keeps the answer). */
-const failed = (result: { data: unknown; isError: boolean }) => result.data === undefined && result.isError;
-/** Whether a read that is wanted has no answer yet and hasn't failed. */
-const waiting = (result: { data: unknown; isError: boolean }) => result.data === undefined && !result.isError;
-
 /** What the page and its header read, as the viewer's page needs it, once every read that is wanted has answered. */
 interface LicensesPageData {
   workspace: WorkspaceDetail;
@@ -109,8 +104,10 @@ interface LicensesPageData {
  * however many of them are mounted, and they agree on whether there is anything to show.
  *
  * - `loading` / `unavailable`: a read that is wanted has no answer yet, or has failed with none (a refetch that
- *   fails after an answer keeps the answer). Nothing is wanted that the viewer's page doesn't need: a member's page
- *   asks for no status and no members, and a viewer with nothing to name and nothing to buy asks for no catalog.
+ *   fails after an answer keeps the answer, and a read that failed with none stays failed while it is asked again,
+ *   by Retry or the purchase poll: see `readFailed`). Nothing is wanted that the viewer's page doesn't need: a
+ *   member's page asks for no status and no members, and a viewer with nothing to name and nothing to buy asks for
+ *   no catalog.
  * - `ready`: `data` is what the page and the header draw from.
  */
 function useLicensesPage(
@@ -143,12 +140,12 @@ function useLicensesPage(
 
   let state: "loading" | "unavailable" | "ready" = "ready";
   let data: LicensesPageData | null = null;
-  if (failed(detail) || failed(licenses)) state = "unavailable";
-  else if (waiting(detail) || waiting(licenses) || shown === null) state = "loading";
+  if (readFailed(detail) || readFailed(licenses)) state = "unavailable";
+  else if (readWaiting(detail) || readWaiting(licenses) || shown === null) state = "loading";
   else {
     const required = [...(needsCatalog && offer.catalog ? [catalog] : []), ...(offer.manage ? [status] : []), ...(reads && shown.length > 0 ? [members] : [])];
-    if ((needsCatalog && !offer.catalog) || required.some(failed)) state = "unavailable";
-    else if (required.some(waiting)) state = "loading";
+    if ((needsCatalog && !offer.catalog) || required.some(readFailed)) state = "unavailable";
+    else if (required.some(readWaiting)) state = "loading";
     else {
       data = {
         workspace: detail.data!,
@@ -200,7 +197,7 @@ export function WorkspaceLicensesView({
     const retry = () => {
       for (const result of [detail, licenses, ...(offer.catalog ? [catalog] : []), ...(offer.manage ? [status] : []), ...(canRead ? [members] : [])]) void result.refetch();
     };
-    const retrying = [detail, licenses, catalog, status, members].some((result) => result.isFetching && result.data === undefined);
+    const retrying = [detail, licenses, catalog, status, members].some(readRetrying);
     return <LicensesUnavailable onRetry={retry} retrying={retrying} />;
   }
 
