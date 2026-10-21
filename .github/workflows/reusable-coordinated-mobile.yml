@@ -86,11 +86,11 @@ on:
         required: false
       MATCH_GIT_BASIC_AUTHORIZATION:
         required: false
-      MAPBOX_PUBLIC_TOKEN:
-        required: false
       MAPBOX_DOWNLOADS_TOKEN:
         required: false
       DOPPLER_TOKEN_MOBILE_DEV:
+        required: false
+      DOPPLER_TOKEN_MOBILE_STG:
         required: false
       DOPPLER_TOKEN_MOBILE_PRD:
         required: false
@@ -409,33 +409,30 @@ jobs:
         env:
           BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
           DOPPLER_TOKEN_MOBILE_DEV: ${{ secrets.DOPPLER_TOKEN_MOBILE_DEV }}
+          DOPPLER_TOKEN_MOBILE_STG: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
           DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
-          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
           case "$BACKEND_ENVIRONMENT" in
             dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
-            # Staging has no separate mobile Doppler token. This token only
-            # reads the public Sentry DSN; checked-in staging URLs are rendered
-            # by prepare-mobile-release-env.mjs below.
-            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_STG" ;;
             prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
           esac
           test -n "$DOPPLER_TOKEN"
-          test -n "$MAPBOX_PUBLIC_TOKEN"
-          response=$(curl --fail --silent --show-error --retry 3 -u "$DOPPLER_TOKEN:" \
-            "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN")
-          sentry_dsn=$(jq -er '.value.computed // .computed' <<< "$response")
-          echo "::add-mask::$sentry_dsn"
-          cp mobile/.env.example mobile/.env
-          node .github/scripts/prepare-mobile-release-env.mjs \
-            --plan release-intent/release-plan.json \
-            --env-file mobile/.env \
-            --backend-environment "${{ inputs.backend_environment }}" \
-            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
-            --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
-            --sentry-dsn "$sentry_dsn"
+          # The app's environment comes only from the backend's Doppler config,
+          # never from .env.example, so a missing value fails here.
+          doppler_archive="$RUNNER_TEMP/doppler_3.76.6_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 -o "$doppler_archive" \
+            "https://github.com/DopplerHQ/cli/releases/download/3.76.6/doppler_3.76.6_linux_amd64.tar.gz"
+          echo "67e4e020761adf3ffe5a030712d61721b4e2752182670bf90de5a2a88e4961e3  $doppler_archive" | shasum -a 256 -c -
+          tar -xzf "$doppler_archive" -C "$RUNNER_TEMP" doppler
+          DOPPLER_TOKEN="$DOPPLER_TOKEN" "$RUNNER_TEMP/doppler" secrets download --no-file --format json --no-check-version |
+            node .github/scripts/prepare-mobile-release-env.mjs \
+              --plan release-intent/release-plan.json \
+              --output mobile/.env \
+              --backend-environment "${{ inputs.backend_environment }}" \
+              --ota-manifest-url "${{ inputs.ota_manifest_url }}"
           if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
             identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
             sed -i "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
@@ -794,33 +791,30 @@ jobs:
         env:
           BACKEND_ENVIRONMENT: ${{ inputs.backend_environment }}
           DOPPLER_TOKEN_MOBILE_DEV: ${{ secrets.DOPPLER_TOKEN_MOBILE_DEV }}
+          DOPPLER_TOKEN_MOBILE_STG: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
           DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
-          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           set -euo pipefail
           case "$BACKEND_ENVIRONMENT" in
             dev) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_DEV" ;;
-            # Staging has no separate mobile Doppler token. This token only
-            # reads the public Sentry DSN; checked-in staging URLs are rendered
-            # by prepare-mobile-release-env.mjs below.
-            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
+            staging) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_STG" ;;
             prod) DOPPLER_TOKEN="$DOPPLER_TOKEN_MOBILE_PRD" ;;
             *) echo "Unsupported mobile backend environment: $BACKEND_ENVIRONMENT" >&2; exit 1 ;;
           esac
           test -n "$DOPPLER_TOKEN"
-          test -n "$MAPBOX_PUBLIC_TOKEN"
-          response=$(curl --fail --silent --show-error --retry 3 -u "$DOPPLER_TOKEN:" \
-            "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN")
-          sentry_dsn=$(jq -er '.value.computed // .computed' <<< "$response")
-          echo "::add-mask::$sentry_dsn"
-          cp mobile/.env.example mobile/.env
-          node .github/scripts/prepare-mobile-release-env.mjs \
-            --plan release-intent/release-plan.json \
-            --env-file mobile/.env \
-            --backend-environment "${{ inputs.backend_environment }}" \
-            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
-            --mapbox-public-token "$MAPBOX_PUBLIC_TOKEN" \
-            --sentry-dsn "$sentry_dsn"
+          # The app's environment comes only from the backend's Doppler config,
+          # never from .env.example, so a missing value fails here.
+          doppler_archive="$RUNNER_TEMP/doppler_3.76.6_macOS_arm64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 -o "$doppler_archive" \
+            "https://github.com/DopplerHQ/cli/releases/download/3.76.6/doppler_3.76.6_macOS_arm64.tar.gz"
+          echo "0023854e5e19a871234b9b705287483265eb65a64c0560b3eaafa7143ecc4e4b  $doppler_archive" | shasum -a 256 -c -
+          tar -xzf "$doppler_archive" -C "$RUNNER_TEMP" doppler
+          DOPPLER_TOKEN="$DOPPLER_TOKEN" "$RUNNER_TEMP/doppler" secrets download --no-file --format json --no-check-version |
+            node .github/scripts/prepare-mobile-release-env.mjs \
+              --plan release-intent/release-plan.json \
+              --output mobile/.env \
+              --backend-environment "${{ inputs.backend_environment }}" \
+              --ota-manifest-url "${{ inputs.ota_manifest_url }}"
           if [[ "${{ inputs.compatibility_lab }}" == "true" ]]; then
             identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
             sed -i '' "s/^EXPO_PUBLIC_MENTRAOS_VERSION=.*/EXPO_PUBLIC_MENTRAOS_VERSION=${identity}-COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/" mobile/.env
@@ -953,6 +947,7 @@ jobs:
           # on "sentry reported an error: unknown error (http status: 503)".
           SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          APPLE_TEAM_ID: T5XXXL6N36
           MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
           MENTRA_NATIVE_BUILD_CACHE: ${{ steps.native-cache.outputs.scope != '' }}
         run: |

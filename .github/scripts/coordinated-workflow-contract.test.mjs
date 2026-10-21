@@ -1054,24 +1054,21 @@ test("external example review replacements are manual and exact-build only", () 
   assert.doesNotMatch(manual, /xcodebuild|npm publish|porter apply/)
 })
 
-test("mobile release selects an existing Doppler token for its backend", () => {
+test("mobile release reads its environment from the backend's Doppler config only", () => {
   const mobile = workflow("reusable-coordinated-mobile.yml")
 
-  assert.match(mobile, /DOPPLER_TOKEN_MOBILE_DEV:/)
-  assert.match(mobile, /DOPPLER_TOKEN_MOBILE_PRD:/)
-  assert.equal(
-    [...mobile.matchAll(/DOPPLER_TOKEN_MOBILE_DEV: \$\{\{ secrets\.DOPPLER_TOKEN_MOBILE_DEV \}\}/g)].length,
-    2,
-  )
-  assert.equal(
-    [...mobile.matchAll(/DOPPLER_TOKEN_MOBILE_PRD: \$\{\{ secrets\.DOPPLER_TOKEN_MOBILE_PRD \}\}/g)].length,
-    2,
-  )
+  for (const suffix of ["DEV", "STG", "PRD"]) {
+    assert.match(mobile, new RegExp(`DOPPLER_TOKEN_MOBILE_${suffix}:\\n        required: false`))
+    const env = new RegExp(`DOPPLER_TOKEN_MOBILE_${suffix}: \\$\\{\\{ secrets\\.DOPPLER_TOKEN_MOBILE_${suffix} \\}\\}`, "g")
+    assert.equal([...mobile.matchAll(env)].length, 2)
+  }
   assert.equal([...mobile.matchAll(/case "\$BACKEND_ENVIRONMENT" in/g)].length, 2)
   assert.equal([...mobile.matchAll(/dev\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_DEV"/g)].length, 2)
-  assert.equal([...mobile.matchAll(/staging\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
+  assert.equal([...mobile.matchAll(/staging\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_STG"/g)].length, 2)
   assert.equal([...mobile.matchAll(/prod\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
-  assert.doesNotMatch(mobile, /DOPPLER_TOKEN_MOBILE_PRD \|\|/)
+  assert.equal([...mobile.matchAll(/shasum -a 256 -c -/g)].length, 2)
+  assert.equal([...mobile.matchAll(/secrets download --no-file --format json[^\n]*\|\n\s+node \.github\/scripts\/prepare-mobile-release-env\.mjs/g)].length, 2)
+  assert.doesNotMatch(mobile, /cp mobile\/\.env\.example|DOPPLER_TOKEN_MOBILE_PRD \|\||api\.doppler\.com/)
 })
 
 test("Maven generation builds every local config plugin before Expo prebuild", () => {
