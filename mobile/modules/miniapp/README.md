@@ -67,7 +67,7 @@ function App() {
 
 ```ts
 const session = new MiniappSession(options?)
-await session.connect()       // idempotent; same Promise on repeat calls
+await session.connect()       // same Promise while in flight or connected; a failed attempt can be retried
 session.isConnected()
 session.disconnect()
 ```
@@ -87,7 +87,7 @@ session.off("ready", handler)
 
 | Event          | Signature                                     |
 | -------------- | --------------------------------------------- |
-| `ready`        | `() => void` — fires after CONNECT_ACK        |
+| `ready`        | `() => void` — fires once, on the handshake   |
 | `disconnect`   | `(reason: string) => void`                    |
 | `error`        | `(err: Error) => void`                        |
 | `visibility`   | `("foreground" \| "background") => void`      |

@@ -34,13 +34,12 @@ export const ORGANIZATION_WORKSPACES_KEY = [...workspaceKeys.list(adminWorkspace
 const ALL_WORKSPACES_PAGE_SIZE = 50;
 
 /**
- * The Mentra Miniapp Store holds a workspace from deletion while it owns published miniapps (the settings
- * screen says so instead of offering the delete). Whatever the workspace still has there when it is
- * deleted (miniapps that are not published, or published ones the Store had not held it for) stays, so
- * the page says what happens to it.
+ * The Mentra Miniapp Store holds a workspace from deletion while it owns any miniapp, a draft included
+ * (the settings screen then says how many, instead of offering the delete). While nothing holds the
+ * workspace, the page still states the rule.
  */
 export const STORE_DELETE_NOTICE =
-  "Miniapps this workspace still has in the Mentra Miniapp Store stay there, and nobody can manage them until a Store operator assigns them to another workspace.";
+  "A workspace that owns miniapps in the Mentra Miniapp Store can't be deleted. Delete its miniapps first.";
 
 type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";
 const TABS: ReadonlyArray<readonly [TabKey, string]> = [

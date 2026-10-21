@@ -20,6 +20,11 @@ const DEFAULT_URL = "ws://127.0.0.1:8765"
 export class LocalSocketTransport implements Transport {
   private url: string
   private ws: WebSocket | null = null
+  /**
+   * The socket an open() in progress is connecting. A later open() or close()
+   * abandons it, so a socket that connects late cannot replace the active one.
+   */
+  private connecting: WebSocket | null = null
   private messageHandler: TransportMessageHandler | null = null
   private disconnectHandler: TransportDisconnectHandler | null = null
 
@@ -32,9 +37,11 @@ export class LocalSocketTransport implements Transport {
     if (typeof WebSocket === "undefined") {
       throw new Error("LocalSocketTransport: browser WebSocket global not available")
     }
+    this.abandonConnecting()
 
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(this.url)
+      this.connecting = ws
       let settled = false
       const settle = (fn: () => void) => {
         if (settled) return
@@ -43,6 +50,11 @@ export class LocalSocketTransport implements Transport {
       }
 
       ws.onopen = () => {
+        if (this.connecting !== ws) {
+          settle(() => reject(new Error("LocalSocketTransport: open was superseded")))
+          return
+        }
+        this.connecting = null
         this.ws = ws
         settle(() => resolve())
       }
@@ -52,11 +64,16 @@ export class LocalSocketTransport implements Transport {
         )
       }
       ws.onmessage = (ev: MessageEvent) => {
+        if (this.ws !== ws) return
         const data = ev.data
         if (typeof data === "string") this.messageHandler?.(data)
       }
       ws.onclose = (ev) => {
-        if (this.ws === ws) this.ws = null
+        if (this.connecting === ws) this.connecting = null
+        settle(() => reject(new Error(`LocalSocketTransport: closed before opening: ${ev.code} ${ev.reason}`)))
+        // Only the active socket's close is a disconnect; an abandoned one was never in use.
+        if (this.ws !== ws) return
+        this.ws = null
         this.disconnectHandler?.(`closed: ${ev.code} ${ev.reason}`)
       }
     })
@@ -78,6 +95,7 @@ export class LocalSocketTransport implements Transport {
   }
 
   close(): void {
+    this.abandonConnecting()
     if (!this.ws) return
     try {
       this.ws.close()
@@ -89,5 +107,16 @@ export class LocalSocketTransport implements Transport {
 
   isOpen(): boolean {
     return !!this.ws && this.ws.readyState === WebSocket.OPEN
+  }
+
+  private abandonConnecting(): void {
+    const ws = this.connecting
+    this.connecting = null
+    if (!ws) return
+    try {
+      ws.close()
+    } catch {
+      // ignore
+    }
   }
 }

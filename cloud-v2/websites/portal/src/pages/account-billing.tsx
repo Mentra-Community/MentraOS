@@ -8,10 +8,9 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { workspaceListQuery } from "@mentra/workspace-ui";
+import { workspaceListQuery, type NavGroup } from "@mentra/workspace-ui";
 import { ArrowLeft, CreditCard } from "lucide-react";
 import type { ReactElement } from "react";
-import type { NavGroup } from "@/components/app-shell";
 import { PortalModuleHost } from "@/components/portal-module-host";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";

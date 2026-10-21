@@ -8,22 +8,23 @@ import {
   type WorkspaceRole,
 } from "@mentra/workspace-contract";
 import {
+  AccountFooter,
   invitationPreviewQuery,
   licensesQuery,
   workspaceDetailQuery,
   WorkspaceApiError,
   workspaceKeys,
+  WorkspaceSwitcher,
   type InvitationPreview,
   type WorkspaceListItem,
 } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoginGate, PortalRoutes } from "./App";
-import { AccountFooter } from "./components/app-shell";
 import { PortalModuleHost } from "./components/portal-module-host";
 import { accountItems, portalLinks, switcherInvitation } from "./components/portal-shell";
-import { WorkspaceSwitcher } from "./components/workspace-switcher";
 import type { PortalMe } from "./lib/api";
 import type { PendingInvitation } from "./lib/invitations";
+import { Link } from "./lib/navigation";
 import {
   creationNotice,
   expireSession,
@@ -312,6 +313,8 @@ describe("a workspace the viewer may not see", () => {
   });
 });
 
+// The switcher's own rendering (the list, loading, a failed list, the closed state) is tested in
+// packages/workspace-ui. These are the portal's entries in it: its invitations and its creation notice.
 describe("the workspace switcher", () => {
   const workspaces = [
     { workspaceId: ACME, name: "Acme Field Team", roleLabel: "Owner", href: `/w/${ACME}/members` },
@@ -330,23 +333,13 @@ describe("the workspace switcher", () => {
             canCreate
             createNotice={null}
             onCreate={() => {}}
+            linkComponent={Link}
             defaultOpen
             {...props}
           />
         </PortalProvider>
       </QueryClientProvider>,
     );
-
-  test("lists your workspaces with the current one checked, then Create workspace", () => {
-    const markup = open();
-    expect(markup).toContain('role="menu"');
-    expect(markup).toContain("Northwind Pilot");
-    expect(markup).toContain(`href="/w/${NORTHWIND}/members"`);
-    expect(markup).toContain('aria-label="Current workspace"');
-    expect(markup).toContain("Create workspace");
-    expect(markup).not.toContain("Pending invitations");
-    expect(markup.indexOf("Northwind Pilot")).toBeLessThan(markup.indexOf("Create workspace"));
-  });
 
   test("pending invitations come last, with a count, who sent them, and Accept and Dismiss", () => {
     const markup = open({ invitations: [invitation] });
@@ -368,39 +361,11 @@ describe("the workspace switcher", () => {
     expect(markup).not.toContain("Accept the invitation");
   });
 
-  test("no invitations, no badge and no section", () => {
-    const markup = open({ invitations: [] });
-    expect(markup).not.toContain("Pending invitations");
-    expect(markup).not.toContain("pending invitation");
-    expect(markup).not.toContain("ring-background absolute");
-  });
-
   test("says why creating is not offered on this deployment", () => {
     const creation: WorkspaceCreation = { allowed: false, reason: "organization_admins_only" };
     const markup = open({ canCreate: false, createNotice: creationNotice(creation) });
     expect(markup).toContain('aria-disabled="true"');
     expect(markup).toContain("created by its administrators");
-  });
-
-  test("while the list loads, the menu says so", () => {
-    const markup = open({ workspaces: undefined });
-    expect(markup).toContain("Loading…");
-    expect(markup).not.toContain("Retry");
-  });
-
-  test("when the list cannot be loaded, the menu says so and offers a retry instead of loading forever", () => {
-    const markup = open({ workspaces: undefined, listFailed: true, onRetry: () => {} });
-    expect(markup).toContain("load your workspaces");
-    expect(markup).toContain("Retry");
-    expect(markup).not.toContain("Loading…");
-    expect(markup).toContain("Create workspace");
-  });
-
-  test("closed, it shows only the current workspace and your role", () => {
-    const markup = open({ defaultOpen: false });
-    expect(markup).toContain("Acme Field Team");
-    expect(markup).toContain("Owner");
-    expect(markup).not.toContain('role="menu"');
   });
 });
 
@@ -651,13 +616,18 @@ describe("deleting a workspace a service holds", () => {
     };
     const markup = render(`/w/${ACME}/settings`, { ...TWO_WORKSPACES, details: [held] });
     const section = /<section aria-label="Delete workspace"[\s\S]*?<\/section>/.exec(markup)?.[0] ?? "";
-    expect(section).toContain("This workspace still owns 2 published miniapps. Delete them in the Developer Console first.");
+    expect(section).toContain("This workspace still owns 2 miniapps. Delete them in the Developer Console first.");
+    // Held, the sentence above says why; the standing rule is not repeated beside it.
+    expect(section).not.toContain("can&#x27;t be deleted");
     expect(section).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
 
-    // Without a hold, the page warns what deleting does to the miniapps the workspace still has in the Store.
+    // Without a hold, the page still states the rule for miniapps in the Store.
     const free = render(`/w/${ACME}/settings`, TWO_WORKSPACES);
     expect(free).not.toContain("still owns");
-    expect(free).toContain("Miniapps this workspace still has in the Mentra Miniapp Store stay there");
+    expect(free).toContain(
+      "A workspace that owns miniapps in the Mentra Miniapp Store can&#x27;t be deleted. Delete its miniapps first.",
+    );
+    expect(free).not.toContain("stay there");
   });
 });
 

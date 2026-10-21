@@ -271,13 +271,17 @@ literal zero-internet air-gapped profile.
 
 ## Mentra Call
 
-The reference manifest (`mentra-deployment.json`) pins the Mentra Call version. Its
-ZIP is included in the Runtime image under `miniapps/` and is byte-identical to the Mentra App's bundled ZIP.
-The coordinated deployment passes that managed list to Bicep and verifies the
-served bundle's SHA-256. `scripts/sync-miniapp.mjs` updates only the Mentra App
-copy and generated bundle list. For each Call update, mirror the same ZIP to
+The reference manifest (`mentra-deployment.json`) pins its own Mentra Call build,
+independent of the Call that the Mentra App bundles, so its private-workspace
+behavior changes only when the pin does. The pinned ZIP is included in the Runtime
+image under `miniapps/`, and the manifest's `version`, `bundleUrl`, and SHA-256 must
+match that ZIP. The Runtime test checks the SHA-256, the file name, and the package
+and version in the ZIP's `miniapp.json`. The coordinated deployment passes the
+managed list to Bicep and verifies the served bundle's SHA-256. The reference adopts
+a newer Call deliberately: put the new ZIP in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` and update the version,
-`bundleUrl`, and SHA-256 pin in `mentra-deployment.json`.
+`bundleUrl`, and SHA-256 together. `scripts/sync-miniapp.mjs` updates only the
+Mentra App copy and generated bundle list, never the reference.
 
 Use the matching Mentra App native build from this change, then re-select the
 workspace to refresh an already cached deployment manifest. Call uses the selected
