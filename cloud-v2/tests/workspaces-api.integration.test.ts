@@ -456,6 +456,7 @@ describe("authentication", () => {
       ["GET", `/api/workspaces/${workspaceId}/audit`],
       ["POST", "/api/workspaces/invitations/peek"],
       ["POST", "/api/workspaces/invitations/accept"],
+      ["POST", "/api/workspaces/invitations/decline"],
       ["GET", "/api/portal/workspaces"],
       ["GET", "/api/organization"],
       ["GET", "/api/organization/workspaces"],
@@ -1386,6 +1387,34 @@ describe("invitations", () => {
     const missing = await call("POST", "/api/workspaces/invitations/accept", {as: outsider, body: {token: "nope"}})
     expect(missing.status).toBe(404)
     expect(missing.json.error).toBe("invitation_not_found")
+  })
+
+  test("declining turns an invitation down for the person it is addressed to, once, and changes no membership", async () => {
+    const ws = await newWorkspace()
+    const invitee = await person("decliner")
+    const outsider = await person("decline-outsider")
+    const invited = await call("POST", `/api/workspaces/${ws.workspaceId}/invitations`, {
+      as: ws.owner,
+      body: {email: invitee.email, role: "member"},
+    })
+    expect(invited.status).toBe(201)
+    const mine = await call("GET", "/api/workspaces/invitations/mine", {as: invitee})
+    const invitationId = mine.json.items[0].invitationId as string
+
+    expect((await call("POST", "/api/workspaces/invitations/decline", {as: invitee, body: {}})).status).toBe(400)
+    const wrong = await call("POST", "/api/workspaces/invitations/decline", {as: outsider, body: {invitationId}})
+    expect(wrong.status).toBe(403)
+    expect(wrong.json.error).toBe("email_mismatch")
+
+    const declined = await call("POST", "/api/workspaces/invitations/decline", {as: invitee, body: {invitationId}})
+    expect(declined.status).toBe(200)
+    expect(declined.json).toEqual({invitationId, declined: true})
+    // Declining twice is the same answer, and the invitation no longer lists or accepts.
+    expect((await call("POST", "/api/workspaces/invitations/decline", {as: invitee, body: {invitationId}})).status).toBe(200)
+    expect((await call("GET", "/api/workspaces/invitations/mine", {as: invitee})).json.items).toEqual([])
+    const accept = await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {invitationId}})
+    expect(accept.status).toBe(404)
+    expect((await call("GET", "/api/workspaces", {as: invitee})).json.items).toEqual([])
   })
 
   test("accepting needs the invited address verified by the identity provider", async () => {

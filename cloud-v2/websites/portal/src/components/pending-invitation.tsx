@@ -13,7 +13,9 @@ import {
   buttonVariants,
   InvitationAcceptCard,
   useAcceptInvitation,
+  workspaceKeys,
 } from "@mentra/workspace-ui";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { PendingInvitation } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { portalWorkspaceApi, usePortal } from "@/lib/portal";
@@ -31,8 +33,20 @@ function useInvitationActions(invitation: PendingInvitation) {
     },
     onGone: () => portal.forgetInvitation(which, "gone"),
   });
+  const client = useQueryClient();
+  // Decline turns it down on the server; it then no longer lists, here or in the Mentra App.
+  const decline = useMutation({
+    mutationFn: () => portalWorkspaceApi.declineInvitation(preview.invitationId),
+    gcTime: 0,
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: workspaceKeys.myInvitations(portalWorkspaceApi) });
+      portal.forgetInvitation(which, "gone");
+      if (window.location.pathname === INVITATION_PATH) navigate("/", { replace: true });
+    },
+  });
   return {
     accept,
+    decline,
     dismiss() {
       portal.forgetInvitation(which, "dismissed");
       // The invitation page is about this one invitation: once it is dismissed, go home.
@@ -44,15 +58,17 @@ function useInvitationActions(invitation: PendingInvitation) {
 /** The invitation as a card: who invited you to what, and Accept (or Switch account) and Dismiss. */
 export function PendingInvitationCard({ invitation }: { invitation: PendingInvitation }) {
   const portal = usePortal();
-  const { accept, dismiss } = useInvitationActions(invitation);
+  const { accept, decline, dismiss } = useInvitationActions(invitation);
   return (
     <InvitationAcceptCard
       load={{ status: "ready", preview: invitation.preview }}
       onRetry={() => {}}
       onAccept={() => accept.mutate()}
       onDismiss={dismiss}
+      onDecline={() => decline.mutate()}
+      declining={decline.isPending || decline.isSuccess}
       accepting={accept.isPending || accept.isSuccess}
-      acceptError={accept.error}
+      acceptError={accept.error ?? decline.error}
       viewerEmail={portal.accountEmail}
       onSwitchAccount={portal.signOut}
       switchingAccount={portal.signingOut}

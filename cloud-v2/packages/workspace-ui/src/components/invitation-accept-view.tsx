@@ -133,6 +133,8 @@ export function InvitationAcceptCard({
   onRetry,
   onAccept,
   onDismiss,
+  onDecline,
+  declining = false,
   accepting,
   acceptError,
   viewerEmail,
@@ -143,6 +145,9 @@ export function InvitationAcceptCard({
   onRetry(): void;
   onAccept(): void;
   onDismiss?(): void;
+  /** Offer Decline: turns the invitation down for good (unlike Dismiss, which only hides it here). */
+  onDecline?(): void;
+  declining?: boolean;
   accepting: boolean;
   acceptError: unknown;
   /** Who is signed in. When known and not the invited address, Accept gives way to Switch account. */
@@ -240,9 +245,16 @@ export function InvitationAcceptCard({
       </Button>,
     );
   }
+  if (onDecline && !otherAccount) {
+    actions.push(
+      <Button key="decline" type="button" variant="secondary" size="lg" disabled={declining || accepting} onClick={onDecline}>
+        {declining ? "Declining…" : "Decline"}
+      </Button>,
+    );
+  }
   if (!otherAccount) {
     actions.push(
-      <Button key="accept" type="button" size="lg" disabled={accepting} onClick={onAccept}>
+      <Button key="accept" type="button" size="lg" disabled={accepting || declining} onClick={onAccept}>
         {accepting ? "Joining…" : "Accept invitation"}
       </Button>,
     );
@@ -280,7 +292,7 @@ export function InvitationAcceptCard({
       </div>
       {notice}
       {actions.length > 0 ? (
-        <div className={actions.length === 2 ? "mt-6 grid grid-cols-2 gap-2.5" : "mt-6 grid"}>{actions}</div>
+        <div className={actions.length >= 2 ? `mt-6 grid gap-2.5 ${actions.length === 2 ? "grid-cols-2" : "sm:grid-cols-3"}` : "mt-6 grid"}>{actions}</div>
       ) : null}
       {acceptError ? (
         <p role="alert" className="rounded-notice bg-error text-error-foreground mt-4 px-4 py-3 text-sm">
@@ -298,5 +310,9 @@ export function acceptErrorMessage(error: unknown, invitedEmail: string): string
     return `This invitation is for ${invitedEmail}. To accept it, sign in with that address and make sure it's verified.`;
   }
   if (error instanceof WorkspaceApiError && error.code === "already_member") return "You're already in this workspace.";
+  // A person belongs to one workspace: they leave the current one (Settings, then Leave workspace) and come back.
+  if (error instanceof WorkspaceApiError && error.code === "already_in_workspace") {
+    return "You're already in a workspace. Leave it in Settings first, then accept this invitation.";
+  }
   return errorMessage(error);
 }

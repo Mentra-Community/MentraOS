@@ -22,8 +22,10 @@ import {
   billingStatusQuery,
   effectiveRole,
   errorMessage,
+  invitationsQuery,
   licensesQuery,
   licenseStrings,
+  membersQuery,
   ROLE_LABELS,
   Spinner,
   WorkspaceApiError,
@@ -311,13 +313,7 @@ export function WorkspaceScreen({
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}
-          <WorkspaceMembersPanel
-            api={api}
-            workspaceId={workspaceId}
-            licenses={membersLicenses}
-            locale={portalBillingApi.locale}
-          />
-          <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
+          <MembersTabs workspaceId={workspaceId} detail={data} licenses={membersLicenses} locale={portalBillingApi.locale} />
           <WorkspaceInviteDialog api={api} workspaceId={workspaceId} open={inviting} onClose={() => setInviting(false)} />
         </div>
       ) : active === "settings" ? (
@@ -337,6 +333,67 @@ export function WorkspaceScreen({
         <FleetScreen workspaceId={workspaceId} />
       )}
     </PortalShell>
+  );
+}
+
+export type MembersTab = "members" | "invited";
+
+/** "Members <n>" and "Invited <n>": the people in the workspace, and the invitations sent but not accepted. */
+export function MembersTabs({
+  workspaceId,
+  detail,
+  licenses,
+  locale,
+  initialTab = "members",
+}: {
+  workspaceId: string;
+  detail: WorkspaceDetail;
+  /** The Members list's licenses source, as `WorkspaceMembersPanel` takes it. */
+  licenses?: MembersLicenses;
+  locale?: string;
+  initialTab?: MembersTab;
+}) {
+  const api = portalWorkspaceApi;
+  const [tab, setTab] = useState<MembersTab>(initialTab);
+  const mayManage = can(detail, "workspace.members.manage");
+  const members = useQuery({ ...membersQuery(api, workspaceId), enabled: can(detail, "workspace.members.read") });
+  const invited = useQuery({ ...invitationsQuery(api, workspaceId), enabled: mayManage });
+  // Only someone who manages members sees who was invited; everyone else just has the member list.
+  const tabs: Array<[MembersTab, string, number | undefined]> = [["members", "Members", members.data?.length]];
+  if (mayManage) tabs.push(["invited", "Invited", invited.data?.length]);
+  const shown = mayManage ? tab : "members";
+  return (
+    <div className="space-y-4">
+      {tabs.length > 1 ? (
+        <div role="tablist" aria-label="Members" className="bg-surface flex w-fit items-center gap-1 rounded-full border p-1">
+          {tabs.map(([key, label, count]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={shown === key}
+              onClick={() => setTab(key)}
+              className={`h-9 cursor-pointer whitespace-nowrap rounded-full px-4 text-sm font-semibold ${
+                shown === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+              {count === undefined ? null : <span className="text-muted-foreground ml-2">{count}</span>}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {shown === "members" ? (
+        <WorkspaceMembersPanel api={api} workspaceId={workspaceId} licenses={licenses} locale={locale} />
+      ) : invited.data?.length === 0 ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          No invitations are waiting. Invite someone to add them here.
+        </p>
+      ) : (
+        // Resend and Revoke are on each row's menu.
+        <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
+      )}
+    </div>
   );
 }
 

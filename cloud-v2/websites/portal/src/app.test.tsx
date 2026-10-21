@@ -12,6 +12,7 @@ import {
   invitationPreviewQuery,
   licensesQuery,
   workspaceDetailQuery,
+  InvitationAcceptCard,
   WorkspaceApiError,
   workspaceKeys,
   WorkspaceSwitcher,
@@ -215,6 +216,17 @@ describe("the sidebar follows the viewer's role", () => {
     expect(visibleSections(notMember, { fleet: true })).toContain("fleet");
   });
 
+  test("the members page has Members and Invited tabs with counts for someone who manages members, and no tabs otherwise", () => {
+    const owner = render(`/w/${ACME}/members`, TWO_WORKSPACES);
+    expect(owner).toContain('role="tablist"');
+    expect(owner).toMatch(/aria-selected="true"[^>]*>Members<span[^>]*>2<\/span>/);
+    expect(owner).toMatch(/aria-selected="false"[^>]*>Invited<span[^>]*>0<\/span>/);
+    // Nobody is waiting, so the Invited tab's panel is not drawn until chosen; the member list is shown.
+    expect(owner).toContain("priya@acme.test");
+    const developer = render(`/w/${NORTHWIND}/settings`, TWO_WORKSPACES);
+    expect(developer).not.toContain('role="tablist"');
+  });
+
   test("an Organization Admin who is not a member shows as such", () => {
     expect(roleLabel(detail(ACME, "Acme", "owner", false))).toBe("Organization Admin");
     expect(roleLabel(detail(ACME, "Acme", "admin"))).toBe("Admin");
@@ -404,6 +416,44 @@ describe("the workspace switcher", () => {
     const markup = open({ canCreate: false, createNotice: creationNotice(creation) });
     expect(markup).toContain('aria-disabled="true"');
     expect(markup).toContain("created by its administrators");
+  });
+});
+
+describe("the invitation card's Decline and leave-first", () => {
+  const card = (props: Partial<Parameters<typeof InvitationAcceptCard>[0]> = {}) =>
+    renderToStaticMarkup(
+      <InvitationAcceptCard
+        load={{ status: "ready", preview: invitationTo("Contoso") }}
+        onRetry={() => {}}
+        onAccept={() => {}}
+        accepting={false}
+        acceptError={null}
+        viewerEmail="sam@acme.test"
+        {...props}
+      />,
+    );
+
+  test("offers Decline beside Accept when the host provides it, and not for another account's invitation", () => {
+    expect(card({ onDecline: () => {} })).toContain(">Decline<");
+    expect(card()).not.toContain(">Decline<");
+    const other = card({
+      load: { status: "ready", preview: invitationTo("Contoso", { email: "b@else.test" }) },
+      onDecline: () => {},
+      onSwitchAccount: () => {},
+    });
+    expect(other).not.toContain(">Decline<");
+    expect(other).not.toContain("Accept invitation");
+  });
+
+  test("shows Declining… and disables both while a decline is in flight", () => {
+    const markup = card({ onDecline: () => {}, declining: true });
+    expect(markup).toContain("Declining…");
+    expect(markup.match(/disabled=""/g)?.length).toBe(2);
+  });
+
+  test("a person already in a workspace is told to leave it first; nothing else changes", () => {
+    const error = new WorkspaceApiError(409, "already_in_workspace", "leave your current workspace first");
+    expect(card({ acceptError: error })).toContain("Leave it in Settings first, then accept this invitation.");
   });
 });
 

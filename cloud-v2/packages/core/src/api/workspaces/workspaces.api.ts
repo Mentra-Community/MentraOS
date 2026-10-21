@@ -74,6 +74,7 @@ import {
   acceptInvitation,
   acceptInvitationById,
   createInvitation,
+  declineInvitation,
   listPendingInvitations,
   listInvitationsForPerson,
   peekInvitation,
@@ -168,6 +169,13 @@ export function createWorkspacesApi(): Hono<AppEnv> {
         ? await acceptInvitation(actor, requiredString(body, "token"))
         : await acceptInvitationById(actor, requiredString(body, "invitationId")),
     )
+  })
+
+  // Turn down one of `/invitations/mine` by its id (idempotent; no membership changes). Authorized as accepting is.
+  app.post("/invitations/decline", async (c) => {
+    const body = await readJsonObject(c)
+    c.header("cache-control", "no-store")
+    return c.json(await declineInvitation(userActor(c), requiredString(body, "invitationId")))
   })
 
   // --- One workspace ---------------------------------------------------------
