@@ -79,13 +79,23 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 3. `membership.replaced` is emitted only by `scripts/migrate-store-developer-orgs.ts` (close plus open).
 4. Round-1/2 review: an `unmanaged` answer on a failed Core membership check is wrong; it is 503.
 5. Automatic update path in `miniappReleaseInstall.ts` calls `assertStillInstalled`, so it cannot first-install.
+6. One-workspace guard = raw doc in `workspace_memberships` (`membership-guard.service.ts`, `_id: ows:<userId>`). It
+   carries none of `workspaceId`/`mentraUserId`/`status`/`role`, so no membership query matches it. A duplicate-key
+   error inside a transaction aborts it, so non-throwing paths (claim) pre-check with `canJoinWorkspace`.
+7. Claim of imported memberships now skips a pending row when the person is in another workspace (stays pending,
+   retried at later sign-ins). A person with several imported orgs gets the highest role claimed first.
+8. Tests that need one person in several workspaces must write the extra membership directly (legacy state); the
+   services refuse it. Create the guarded one through `createWorkspace` first.
+9. CLI `workspace list`/`use` are gone; ship the CLI only after `scripts/one-workspace-cleanup.ts` has run, or
+   legacy multi-workspace accounts are locked out of the CLI.
+10. `/api/portal/fleet` accepts the portal session cookie only (`via === "session"`); a bearer is 403 even if valid.
 
 ## Open items
 
 - Dates: OS-2099 includes Phase 12; Oct 30 / Nov 11 / Nov 19 are meeting evidence, not checked commitments.
-- Cosmos boundary for the one-workspace guard; named owners O1-O6; harness host readiness is uninspected.
+- Cosmos boundary for the one-workspace guard (design is Cosmos-safe on paper; spike on Cosmos staging NOT run); named owners O1-O6; harness host readiness is uninspected.
 
 ## Tests and verification
 
-- Protocol: `cd cloud-v2/packages/protocol && bun test`. Core: `cd cloud-v2 && bun run test`.
+- Guard/cleanup: `tests/one-workspace-{guard,cleanup}.integration.test.ts`. Protocol: `cd cloud-v2/packages/protocol && bun test`. Core: `cd cloud-v2 && bun run test`.
 - Device evidence follows the plan's checkpoint gate; none exists yet.
