@@ -181,10 +181,10 @@ function grid(options: GridOptions = {}) {
 // ---- the catalog grid ---------------------------------------------------------------------------------------------
 
 describe("the catalog grid", () => {
-  test("a workspace's reads 'Buy a product for your members', with one card per product, its price and Buy", async () => {
+  test("a workspace's reads 'Buy licenses for your members', with one card per product, its price and Buy", async () => {
     const { ui } = grid();
     await mount(ui);
-    expect(find("h2").textContent).toBe("Buy a product for your members");
+    expect(find("h2").textContent).toBe("Buy licenses for your members");
     expect(text()).toContain("You'll pay by card on a secure payment page, then come back here to assign the licenses.");
     expect(findAll("[data-product]").map((element) => element.getAttribute("data-product"))).toEqual([
       "mentra.call.unlimited",
@@ -199,10 +199,10 @@ describe("the catalog grid", () => {
     for (const element of findAll("[data-product]")) expect(buttons(element).map((button) => button.textContent)).toEqual(["Buy"]);
   });
 
-  test("a person's reads 'Buy a product for yourself', with a price that has no unit in it", async () => {
+  test("a person's reads 'Buy a license for yourself', with a price that has no unit in it", async () => {
     const { ui } = grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer(2900) }), addOn({ offer: personOffer(900) })] });
     await mount(ui);
-    expect(find("h2").textContent).toBe("Buy a product for yourself");
+    expect(find("h2").textContent).toBe("Buy a license for yourself");
     expect(text()).toContain("You'll pay by card on a secure payment page, then come back here.");
     expect(text()).not.toContain("assign the licenses");
     expect(byText("$29 a month", "p", card("mentra.call.unlimited"))).toBeTruthy();
@@ -438,7 +438,7 @@ describe("Add licenses when billing lists it with returns: false", () => {
     expect(link.getAttribute("target")).toBe("_blank");
   });
 
-  test("a row in the Buy a product dialog does the same", async () => {
+  test("a row in the Buy licenses dialog does the same", async () => {
     const out = ways();
     const stub = stubBilling();
     await mount(
@@ -601,7 +601,7 @@ describe("the licenses step", () => {
       expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 8 }]]);
     });
 
-    test("so does the Buy a product dialog's", async () => {
+    test("so does the Buy licenses dialog's", async () => {
       const client = new QueryClient();
       const { billing } = stubBilling();
       const view = await render(dialogOf(billing, client, withFleet(fleet())));
@@ -1054,9 +1054,9 @@ describe("the catalog dialog", () => {
   const row = (product: string) => find(`[data-product="${product}"]`, topDialog());
   const held = [licenseBillingFor({ quantity: 5 }), licenseBillingFor({ licenseId: "lic_fleet", product: "mentra.fleet", quantity: 10 })];
 
-  test("is 'Buy a product', with what to do for a product you have", async () => {
+  test("is 'Buy licenses', with what to do for a product you have", async () => {
     await mount(dialogFor({ licenses: held }).ui);
-    expect(find("h2", topDialog()).textContent).toBe("Buy a product");
+    expect(find("h2", topDialog()).textContent).toBe("Buy licenses");
     expect(topDialog().textContent).toContain("Products for your workspace. For one you have, add licenses instead.");
   });
 
@@ -1086,7 +1086,7 @@ describe("the catalog dialog", () => {
     expect(byText("10 licenses × $9 · $90 a month · before tax", "p", topDialog())).toBeTruthy();
     await click(buttonNamed("Cancel", topDialog()));
     expect(openDialogs()).toHaveLength(1);
-    expect(find("h2", topDialog()).textContent).toBe("Buy a product");
+    expect(find("h2", topDialog()).textContent).toBe("Buy licenses");
   });
 
   test("Add licenses on a row asks for add_seats and goes to the page", async () => {
@@ -1102,6 +1102,7 @@ describe("the catalog dialog", () => {
     const products = [callFor({ offer: personOffer() }), addOn({ offer: personOffer(900) })];
     const { ui, purchase, leave } = dialogFor({ scope: ACCOUNT_SCOPE, products, licenses: [licenseBillingFor({ quantity: 1 })] });
     await mount(ui);
+    expect(find("h2", topDialog()).textContent).toBe("Buy a license");
     expect(topDialog().textContent).toContain("Products you can buy for yourself.");
     expect(topDialog().textContent).not.toContain("workspace");
     expect(row("mentra.call.unlimited").textContent).toContain("You have it");
@@ -1205,31 +1206,31 @@ describe("the grid's heading and its 'You'll pay by card' line", () => {
   test("are drawn only when at least one entry has an offer for this viewer", async () => {
     await mount(grid({ products: [callFor({ offer: undefined }), fleet({ offer: undefined })] }).ui);
     expect(findAll("h2")).toHaveLength(0);
-    expect(text()).not.toContain("Buy a product");
+    expect(text()).not.toContain("Buy licenses");
     expect(text()).not.toContain("You'll pay by card");
     // The products themselves are display content: named, described, and nothing to buy.
     expect(findAll("[data-product]")).toHaveLength(2);
     expect(buttons()).toHaveLength(0);
     await cleanup();
     await mount(grid({ products: [callFor({ offer: undefined }), fleet()] }).ui);
-    expect(find("h2").textContent).toBe("Buy a product for your members");
+    expect(find("h2").textContent).toBe("Buy licenses for your members");
     expect(text()).toContain("You'll pay by card on a secure payment page");
   });
 
   test("a person's too", async () => {
     await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: undefined })] }).ui);
     expect(findAll("h2")).toHaveLength(0);
-    expect(text()).not.toContain("Buy a product for yourself");
+    expect(text()).not.toContain("Buy a license for yourself");
     expect(text()).not.toContain("You'll pay by card");
     await cleanup();
     await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] }).ui);
-    expect(find("h2").textContent).toBe("Buy a product for yourself");
+    expect(find("h2").textContent).toBe("Buy a license for yourself");
     expect(text()).toContain("You'll pay by card on a secure payment page, then come back here.");
   });
 
   test("follow the offer, not whether Buy is possible: an offer billing won't sell now still has them", async () => {
     await mount(grid({ products: [callFor({ offer: workspaceOffer(2900, { buy: null }) })] }).ui);
-    expect(find("h2").textContent).toBe("Buy a product for your members");
+    expect(find("h2").textContent).toBe("Buy licenses for your members");
   });
 
   test("an entry for another owner type has no say", async () => {
@@ -1324,7 +1325,7 @@ describe("a product whose first payment isn't finished", () => {
     expect(buttons(mine).map((button) => button.textContent)).toEqual(["Complete payment"]);
   });
 
-  test("so does its row in the Buy a product dialog", async () => {
+  test("so does its row in the Buy licenses dialog", async () => {
     const out = ways();
     const stub = stubBilling();
     await mount(

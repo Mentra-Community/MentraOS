@@ -110,6 +110,8 @@ describe("the Licenses page lists every license", () => {
   test("shows a workspace owner by its name and a person owner by name and email", () => {
     const markup = render();
     expect(markup).toContain("Acme Robotics");
+    // Each row is a product a workspace or a person pays for; its Assigned column counts licenses.
+    expect(markup).toContain("All products");
     expect(markup).toContain("Ada Lovelace");
     expect(markup).toContain("ada@analytical.test");
     // A person with an email but no name is shown by the email.
@@ -173,8 +175,8 @@ describe("the Licenses page lists every license", () => {
   });
 
   test("a list still loading, an empty one and a failed one each say so", () => {
-    expect(render(null)).toContain("Loading licenses");
-    expect(render([{ items: [], next: null }])).toContain("No licenses yet.");
+    expect(render(null)).toContain("Loading products");
+    expect(render([{ items: [], next: null }])).toContain("No products yet.");
     const failed = render(null, { failure: "organization.licenses.read is required" });
     expect(failed).toContain('role="alert"');
     expect(failed).toContain("organization.licenses.read is required");
@@ -182,7 +184,7 @@ describe("the Licenses page lists every license", () => {
 
   test("a search that finds nothing says so, and the search box holds the text searched for", () => {
     const markup = render([{ items: [], next: null }], { query: "nobody" });
-    expect(markup).toContain("No licenses match &quot;nobody&quot;.");
+    expect(markup).toContain("No products match &quot;nobody&quot;.");
     expect(markup).toMatch(/<input[^>]*value="nobody"/);
   });
 
@@ -198,7 +200,7 @@ describe("the Licenses page offers no license change or payment", () => {
     const buttons = [...markup.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map(
       match => match[1]!.replace(/<[^>]+>/g, "").trim() || (match[0].match(/aria-label="([^"]*)"/)?.[1] ?? ""),
     );
-    expect(buttons.sort()).toEqual(["Load more", "Refresh licenses", "Search"]);
+    expect(buttons.sort()).toEqual(["Load more", "Refresh products", "Search"]);
     // A search form only filters the list; there is no link out and no other field.
     expect(markup).not.toContain("<a ");
     expect(markup.match(/<input/g)).toHaveLength(1);

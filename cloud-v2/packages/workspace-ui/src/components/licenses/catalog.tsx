@@ -1,6 +1,6 @@
 /**
  * Buying from billing's catalog, as the approved design draws it (its `parts2.tsx`): the grid of products an owner
- * with nothing yet is offered, the "Buy a product" dialog an owner with licenses opens, and the seats step.
+ * with nothing yet is offered, the "Buy licenses" dialog an owner with licenses opens, and the seats step.
  *
  * Everything is drawn from what billing sent for each product: its name, description, icon and features, and, for
  * a viewer who may manage the owner's billing, its `offer` (the price, the tax treatment and what buying allows).
@@ -349,7 +349,7 @@ export function CatalogCard({ entry, scope, locale, held, busy, pending, onBuy, 
 }
 
 /**
- * What this owner can buy: "Buy a product for your members" or "Buy a product for yourself", with one card per
+ * What this owner can buy: "Buy licenses for your members" or "Buy a license for yourself", with one card per
  * product the scope's owner type is offered. It draws nothing when there is no such product. The heading and its
  * "You'll pay by card…" line are drawn only when at least one of those products has an `offer` for this viewer; without
  * one the cards are display content and the grid has no buying copy. A workspace's Buy opens the seats step; a
@@ -404,7 +404,7 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
   );
 }
 
-// ---- Buy a product, as a dialog ---------------------------------------------------------------------------------
+// ---- Buy licenses, as a dialog ---------------------------------------------------------------------------------
 
 /** One product as a row: icon and name, then what you have or what it costs, and Buy or Add licenses. */
 function CatalogRow({
@@ -475,7 +475,7 @@ function CatalogRows({
 }
 
 /**
- * "Buy a product": the same catalog as rows, for an owner that already holds licenses. A product it holds offers
+ * "Buy licenses" ("Buy a license" for a person): the same catalog as rows, for an owner that already holds licenses. A product it holds offers
  * Add licenses instead of Buy (and says "You have it" for a person); any other shows its price and Buy. A workspace's
  * Buy opens the seats step over the list.
  */
@@ -490,7 +490,7 @@ export function CatalogDialog({ open, onClose, products, licenses, memberCount, 
       <Dialog
         open={open}
         onClose={onClose}
-        title={t.catalog.dialog.title}
+        title={owner === "workspace" ? t.catalog.dialog.title : t.catalog.dialog.personTitle}
         description={owner === "workspace" ? t.catalog.dialog.description : t.catalog.dialog.personDescription}
         className="max-w-[560px]"
       >

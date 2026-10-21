@@ -207,8 +207,8 @@ describe("audit events as sentences", () => {
 
   test("product and license events read as plain labels, not their action names", () => {
     expect(["license.written", "license.ended", "seat.assigned", "seat.released"].map(actionLabel)).toEqual([
-      "Product added or changed",
-      "Product ended",
+      "Licenses bought or changed",
+      "Licenses ended",
       "License assigned",
       "License released",
     ]);

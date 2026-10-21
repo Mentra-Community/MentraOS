@@ -10,7 +10,7 @@
  * license": `PersonalBillingHeaderActions` is the component for the frame's title bar. It reads under the same keys as
  * the view, owns the catalog dialog, and draws nothing where there is nothing to act on.
  *
- * - With nothing yet: "Buy a product for yourself", the products a person can buy, each with its price. Buy goes
+ * - With nothing yet: "Buy a license for yourself", the products a person can buy, each with its price. Buy goes
  *   straight to payment, with no seats step.
  * - With licenses: one card each (status, Renews or Ends, cost and a "…" menu), and the same amber notice and
  *   deadline as a workspace's for a failed payment.
@@ -136,13 +136,13 @@ export type PersonalBillingHeaderActionsProps = Pick<PersonalBillingViewProps, "
 
 /**
  * The personal Billing page's header actions, for the host to put in its title bar beside the page's title: "Billing &
- * invoices ↗" and "Buy a product" (which opens the person's catalog as a dialog this component owns). Mount it with the
+ * invoices ↗" and "Buy a license" (which opens the person's catalog as a dialog this component owns). Mount it with the
  * same `billing` and `purchaseId` as the view: it reads through the same query keys, so each request is made once
  * however many of the two are mounted. Like the view it needs a `QueryClientProvider` above it.
  *
  * It draws nothing until billing has been read, and then only for a person who holds a license: with none the page is
  * the catalog, which has its own buying copy. "Billing & invoices" is there only once billing lists
- * `billing_and_invoices` for the account, and "Buy a product" only while something is left to buy:
+ * `billing_and_invoices` for the account, and "Buy a license" only while something is left to buy:
  * `catalogForOwner(products, "person").some(canBuy)`. Billing's refusal of the ↗ button shows under the buttons.
  */
 export function PersonalBillingHeaderActions({ billing, purchaseId = null, navigateOut }: PersonalBillingHeaderActionsProps) {
@@ -156,7 +156,7 @@ export function PersonalBillingHeaderActions({ billing, purchaseId = null, navig
   const somethingToBuy = catalogForOwner(products, "person").some(canBuy);
   return (
     <>
-      <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={somethingToBuy ? () => setBuying(true) : null} hosted={hosted} />
+      <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={somethingToBuy ? () => setBuying(true) : null} buyLabel={t.page.buyALicense} hosted={hosted} />
       {somethingToBuy ? (
         <CatalogDialog
           open={buying}

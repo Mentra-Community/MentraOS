@@ -3,7 +3,7 @@
  *
  * The page is `WorkspaceLicensesView` (`@mentra/workspace-ui`): one card per license with its seats, dates, cost and
  * billing actions, the page total, and buying, as far as the viewer's role and what the portal offers them allow.
- * Its header buttons ("Billing & invoices ↗", "Buy a product") are `WorkspaceLicensesHeaderActions`, which the
+ * Its header buttons ("Billing & invoices ↗", "Buy licenses") are `WorkspaceLicensesHeaderActions`, which the
  * workspace page puts in the title bar; both are given the same props, so billing is asked once.
  *
  * The portal wires the view to what it owns: Core's workspace API, billing's client in the portal's locale, `me`

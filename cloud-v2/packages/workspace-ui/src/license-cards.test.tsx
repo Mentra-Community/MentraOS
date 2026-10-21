@@ -1289,7 +1289,7 @@ describe("the people picker", () => {
   test("its failures are neutral too: the conflict, and anything else", async () => {
     const r = rig();
     r.assignSeats.mockImplementation(async () => {
-      throw new WorkspaceApiError(409, "no_seats_available", "every seat is taken");
+      throw new WorkspaceApiError(409, "no_seats_available", "every license is assigned");
     });
     await mount(picker(r, coreLicense(5, [DANA])));
     await click(checkboxFor("Luis Ortega"));

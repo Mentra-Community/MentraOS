@@ -62,11 +62,11 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `WorkspaceCredentialsPanel` | The workspace's `msk_` keys; the token is shown once, with a copy button |
 | `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Name and workspace ID (with copy), then a danger zone to leave or delete |
 | `WorkspaceAuditPanel` | The workspace's audit log, paged: each event a sentence ("Changed priya@… from Member to Developer"), with the raw record behind Show details |
-| `WorkspaceLicensesView`, `WorkspaceLicensesHeaderActions` | The workspace's Licenses page, and the buttons for the title bar (Billing & invoices ↗, Buy a product); props in [Licenses](#licenses) |
+| `WorkspaceLicensesView`, `WorkspaceLicensesHeaderActions` | The workspace's Licenses page, and the buttons for the title bar (Billing & invoices ↗, Buy licenses, or Buy a license on the personal page); props in [Licenses](#licenses) |
 | `PersonalBillingView`, `PersonalBillingHeaderActions` | The signed-in person's own Billing page, and its title-bar buttons |
 | `LicenseCard` (`card`, `view`, `scope`, `billing`, `navigateOut`, `locale`, …) | One product's card: status badge, facts (Licenses, Renews or Ends, Cost), the notices for a failed or unfinished payment, who holds its licenses, and a "…" menu for billing's other actions; `view` is `workspace`, `member` or `person` |
 | `SeatStrip`, `SeatRoster`, `AvatarStack`, `PeoplePickerDialog`, `seatHolders` | A product's licenses: the folded strip, the roster (Unassign, available licenses, search past 8 people), and the people picker that assigns them; `seatHolders` names who holds them |
-| `CatalogGrid`, `CatalogDialog`, `BuyDialog`, `CatalogCard`, `canBuy` | Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy a product" dialog, a workspace's licenses step, and one product's card |
+| `CatalogGrid`, `CatalogDialog`, `BuyDialog`, `CatalogCard`, `canBuy` | Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy licenses" dialog, a workspace's licenses step, and one product's card |
 | `PurchaseBanner`, `TestModeBanner`, `LicensesSummary`, `LicensesUnavailable`, `PURCHASE_POLL_MS`, `PURCHASE_TIMEOUT_MS` | The banners and states around the cards, and the pace of the poll after checkout (2 seconds, for a minute) |
 | `useHostedAction`, `HostedFeedback`, `NavigateOut`, `PortalTab` | How every ↗ button leaves the portal for a hosted page, its refusal in words, and the host's two ways out (see [Licenses](#licenses)) |
 | `AssignLicensesDialog`, `MemberPanel`, `PersonLicenses`, `MembersLicenses` | The Members list's licenses: Assign licenses for the members chosen, the member panel (role, joining, Licenses, Remove), its Licenses switches, and the source `WorkspaceMembersPanel` takes (see [Members' licenses](#members-licenses)) |
@@ -237,7 +237,7 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
 signed-in person's own Billing page. Each is composed from the cards, rosters, dialogs and
 banners in the table above, and each draws the page's content only. The title and
 description belong to the host's frame (`licenseStrings.page` and `licenseStrings.personal`),
-and so do the page's buttons: "Billing & invoices ↗" and "Buy a product" come as a second
+and so do the page's buttons: "Billing & invoices ↗" and "Buy licenses" ("Buy a license" on the personal page) come as a second
 component, `WorkspaceLicensesHeaderActions` or `PersonalBillingHeaderActions`, for the
 frame's title bar.
 
@@ -321,7 +321,7 @@ const shared = {
 - **The workspace page follows the viewer.**
   - An Admin or Owner who is offered billing (`offer.manage`) sees every product with who
     holds its licenses, dates, cost and billing's actions, the page total ("2 products ·
-    $295 a month in total"), the test-mode banner, and buying: "Buy a product", or the
+    $295 a month in total"), the test-mode banner, and buying: "Buy licenses", or the
     catalog itself while there are no products.
   - An Admin or Owner who is not offered billing sees every product with its licenses and
     who holds them, and can assign and unassign. Billing is read for names only: no money, no
@@ -345,7 +345,7 @@ const shared = {
 - **The header actions draw nothing until what they need has been read,** and nothing where
   there is nothing to act on or while the page says "unavailable", so the host mounts them
   unconditionally. A viewer who is not offered billing makes them ask for nothing at all.
-  Each owns its "Buy a product" dialog and its "Billing & invoices ↗" request, and a refusal
+  Each owns its "Buy licenses" ("Buy a license") dialog and its "Billing & invoices ↗" request, and a refusal
   of that request shows in words under the buttons.
 - **Every ↗ button goes through `useHostedAction`,** the Members screens' "Add licenses ↗"
   included (see [Members' licenses](#members-licenses)). It marks the pressed

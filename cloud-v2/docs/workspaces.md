@@ -39,7 +39,7 @@ Roles are cumulative: each holds everything the one before it holds.
   the provider, and for a pending imported membership; the `email` stays the
   one the membership was made for.
 - Every member sees the licenses they hold; Admins and Owners see every product and
-  assign its licenses ([Licenses and seats](licenses.md)). Ending a membership frees
+  assign its licenses ([Licenses](licenses.md)). Ending a membership frees
   its licenses, and deleting a workspace ends its products.
 
 **Organization Admins** are the people whose verified email is on
@@ -61,7 +61,7 @@ Admin" when an Organization Admin's powers go beyond it), and lists your other w
 page carries its workspace:
 `/w/<workspaceId>/members` (members, with pending invitations under them),
 `/w/<workspaceId>/settings`, `/w/<workspaceId>/audit` and `/w/<workspaceId>/licenses`
-([Licenses and seats](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
+([Licenses](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
 role opens. Above your account, the sidebar links to the environment's Developer Console in a
 new tab; a Private Cloud, which has no Developer Console, shows no link. `/` opens your
 last-used workspace (remembered in the browser, never an authority), else your first, else the
@@ -85,7 +85,7 @@ out on a phone). A row opens the member panel.
   and "+n" past four), "None", or "After first sign-in" for a pending membership. With
   `workspace.licenses.assign`, each member who has signed in also has a checkbox, and
   selecting some shows "2 selected · Assign licenses", which assigns them licenses for
-  any of the workspace's products in one step ([Seats](licenses.md#seats)). Without the
+  any of the workspace's products in one step ([Assigning licenses](licenses.md#assigning-licenses)). Without the
   catalog, and on a Private Cloud, the list has no column and no selection.
 - **The member panel** is a side panel for one member: their role and when they joined,
   Change role, Remove from workspace (it asks first), and a Licenses section with a
@@ -197,7 +197,7 @@ session authenticates only its own routes:
 Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
 (by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
-its seats and `/seat-assignments`, [Licenses and seats](licenses.md#seats)) are for people;
+its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people;
 a key gets 403. A workspace's detail says whether the caller is an Organization Admin
 (`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
 invitations, `target.name` for keys. Each checks
@@ -220,7 +220,7 @@ Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwar
 to the optional Fleet service for a person holding `organization.fleet.administer`
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
-and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
+and its billing module writes licenses through it ([Licenses](licenses.md)).
 `/api/portal/billing/*` forwards the workspace portal's billing requests
 to that module for a signed-in person, with the workspace or the person's own
 account as the scope Core decides ([Portal modules](portal-modules.md)).

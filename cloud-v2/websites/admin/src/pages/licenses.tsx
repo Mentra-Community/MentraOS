@@ -88,7 +88,7 @@ export function LicenseListing({ query, onSearch }: { query: string; onSearch(qu
     <section className={PANEL}>
       <div className="flex flex-wrap items-end justify-between gap-4 border-b p-6">
         <div>
-          <h2 className="text-xl font-semibold">All licenses</h2>
+          <h2 className="text-xl font-semibold">All products</h2>
           <p className="text-muted-foreground mt-1 text-sm">Newest first, held by workspaces and by people. This list is read-only.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -114,7 +114,7 @@ export function LicenseListing({ query, onSearch }: { query: string; onSearch(qu
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Refresh licenses"
+            aria-label="Refresh products"
             disabled={licenses.isFetching}
             onClick={() => void licenses.refetch()}
           >
@@ -129,10 +129,10 @@ export function LicenseListing({ query, onSearch }: { query: string; onSearch(qu
         </p>
       ) : rows === undefined ? (
         <div role="status" className="text-muted-foreground flex items-center gap-2.5 p-6 text-sm">
-          <Spinner /> Loading licenses
+          <Spinner /> Loading products
         </div>
       ) : rows.length === 0 ? (
-        <p className="text-muted-foreground p-6 text-sm">{query ? `No licenses match "${query}".` : "No licenses yet."}</p>
+        <p className="text-muted-foreground p-6 text-sm">{query ? `No products match "${query}".` : "No products yet."}</p>
       ) : (
         <LicenseTable licenses={rows} />
       )}

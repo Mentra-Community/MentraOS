@@ -894,7 +894,7 @@ describe("Billing in the account menu and the personal Billing page", () => {
   test("renders for a person in no workspace: their account and Billing, and no workspace navigation", () => {
     const markup = renderAs(true, "/account/billing", { list: [] });
     expect(markup).toMatch(/<h1[^>]*>Billing<\/h1>/);
-    expect(markup).toContain("Products you buy for yourself, apart from any workspace&#x27;s.");
+    expect(markup).toContain("Licenses you buy for yourself, apart from any workspace&#x27;s.");
     // The personal view, loading; no module is hosted.
     expect(markup).toContain("Loading billing…");
     expect(markup).not.toContain('<section aria-label="Billing"');

@@ -41,8 +41,8 @@ const ACTION_LABELS: Record<string, string> = {
   "invitation.revoked": "Invitation revoked",
   "credential.created": "Key created",
   "credential.revoked": "Key revoked",
-  "license.written": "Product added or changed",
-  "license.ended": "Product ended",
+  "license.written": "Licenses bought or changed",
+  "license.ended": "Licenses ended",
   "seat.assigned": "License assigned",
   "seat.released": "License released",
 };

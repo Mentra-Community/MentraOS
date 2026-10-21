@@ -30,7 +30,9 @@ describe("the pages", () => {
       "Its Admins and Owners assign licenses. Once you have one, it works the next time you open the miniapp it's for.",
     );
     expect(t.page.billingAndInvoices).toBe("Billing & invoices");
-    expect(t.page.buyALicense).toBe("Buy a product");
+    // A workspace buys several licenses; a person buys their own.
+    expect(t.page.buyLicenses).toBe("Buy licenses");
+    expect(t.page.buyALicense).toBe("Buy a license");
   });
 
   test("the two sentences the spec leaves unwritten: no products where nothing is offered, and nothing to buy for a person", () => {
@@ -50,7 +52,7 @@ describe("the pages", () => {
 
   test("the personal Billing page and the navigation to it", () => {
     expect(t.personal.title).toBe("Billing");
-    expect(t.personal.description).toBe("Products you buy for yourself, apart from any workspace's.");
+    expect(t.personal.description).toBe("Licenses you buy for yourself, apart from any workspace's.");
     expect(t.nav).toMatchObject({ licenses: "Licenses", billing: "Billing", yourAccount: "Your account" });
     expect(t.nav.backTo("Acme Field Services")).toBe("Back to Acme Field Services");
   });
@@ -59,18 +61,19 @@ describe("the pages", () => {
 describe("the catalog and buying", () => {
   test("the catalog's headings differ for a workspace and a person", () => {
     expect(t.catalog.workspace).toEqual({
-      title: "Buy a product for your members",
+      title: "Buy licenses for your members",
       intro: "You'll pay by card on a secure payment page, then come back here to assign the licenses.",
     });
     expect(t.catalog.person).toEqual({
-      title: "Buy a product for yourself",
+      title: "Buy a license for yourself",
       intro: "You'll pay by card on a secure payment page, then come back here.",
     });
     expect(t.catalog.buy).toBe("Buy");
   });
 
   test("the catalog dialog and its held rows", () => {
-    expect(t.catalog.dialog.title).toBe("Buy a product");
+    expect(t.catalog.dialog.title).toBe("Buy licenses");
+    expect(t.catalog.dialog.personTitle).toBe("Buy a license");
     expect(t.catalog.dialog.description).toBe("Products for your workspace. For one you have, add licenses instead.");
     expect(t.catalog.youHaveSeats(5)).toBe("You have 5 licenses");
     expect(t.catalog.youHaveSeats(1)).toBe("You have 1 license");

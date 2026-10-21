@@ -190,8 +190,10 @@ export const licenseStrings = {
       body: "Its Admins and Owners assign licenses. Once you have one, it works the next time you open the miniapp it's for.",
     },
     billingAndInvoices: "Billing & invoices",
-    /** What the header button says, for a workspace or a person: what is bought is a product. */
-    buyALicense: "Buy a product",
+    /** The workspace's header button: it buys several licenses for a product. */
+    buyLicenses: "Buy licenses",
+    /** The personal page's header button: a person buys their own license. */
+    buyALicense: "Buy a license",
     /** A manager's page for a workspace with no product, where billing offers nothing to buy. */
     noLicenses: "This workspace has no products yet.",
     loading: "Loading licenses…",
@@ -204,7 +206,7 @@ export const licenseStrings = {
 
   personal: {
     title: "Billing",
-    description: "Products you buy for yourself, apart from any workspace's.",
+    description: "Licenses you buy for yourself, apart from any workspace's.",
     /** The page of someone with no license, where billing sells a person nothing. */
     nothingToBuy: "There is nothing to buy for yourself right now.",
     loading: "Loading billing…",
@@ -239,18 +241,20 @@ export const licenseStrings = {
 
   catalog: {
     workspace: {
-      title: "Buy a product for your members",
+      title: "Buy licenses for your members",
       intro: "You'll pay by card on a secure payment page, then come back here to assign the licenses.",
     },
     person: {
-      title: "Buy a product for yourself",
+      title: "Buy a license for yourself",
       intro: "You'll pay by card on a secure payment page, then come back here.",
     },
     buy: "Buy",
     youHaveIt: "You have it",
     youHaveSeats: (n: number) => `You have ${plural(n, "license")}`,
     dialog: {
-      title: "Buy a product",
+      title: "Buy licenses",
+      /** A person's own catalog dialog. */
+      personTitle: "Buy a license",
       description: "Products for your workspace. For one you have, add licenses instead.",
       /** A person's own catalog: there are no licenses to add. */
       personDescription: "Products you can buy for yourself.",

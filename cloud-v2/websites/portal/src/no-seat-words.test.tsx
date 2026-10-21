@@ -359,7 +359,7 @@ describe("the catalog grid and the buy dialog", () => {
 
   test("the dialog from the header, with a product the workspace holds and ones it doesn't", async () => {
     await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), "Mentra Call Unlimited");
-    await click(one(t.page.buyALicense));
+    await click(one(t.page.buyLicenses));
     await until(() => has(t.catalog.dialog.description), "the catalog dialog");
     expectNoSeat("the catalog dialog");
     expect(has(t.catalog.youHaveSeats(5))).toBe(true);
@@ -503,6 +503,10 @@ describe("the states were reached", () => {
     ["a member's own card", t.facts.own.seat],
     ["a member's badge", t.status.youHaveASeat],
     ["the catalog's held row", t.catalog.youHaveSeats(5)],
+    ["the workspace's header button", t.page.buyLicenses],
+    ["the personal header button", t.page.buyALicense],
+    ["the workspace's catalog dialog", t.catalog.dialog.title],
+    ["the personal catalog dialog", t.catalog.dialog.personTitle],
     ["the member panel", t.memberPanel.intro("Luis Ortega")],
     ["a pending member", t.memberPanel.afterFirstSignIn("grace@example.com")],
     ["the panel's over-assigned line", t.memberPanel.overAssigned(1)],

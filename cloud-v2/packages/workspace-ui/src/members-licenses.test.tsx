@@ -171,7 +171,7 @@ function serve(world: World, calls: Call[], basePath: string): FetchLike {
     if (seatRoute && method === "PUT") {
       const target = world.licenses.find((candidate) => candidate.licenseId === seatRoute[1])!;
       const held = target.seats!.some((candidateSeat) => candidateSeat.membershipId === seatRoute[2]);
-      if (!held && target.seatsUsed >= target.quantity) return reply(409, { error: "no_seats_available", error_description: "every seat is assigned" });
+      if (!held && target.seatsUsed >= target.quantity) return reply(409, { error: "no_seats_available", error_description: "every license is assigned" });
       return reply(200, giveSeat(world, seatRoute[1]!, seatRoute[2]!));
     }
     if (seatRoute && method === "DELETE") {
@@ -188,7 +188,7 @@ function serve(world: World, calls: Call[], basePath: string): FetchLike {
           return { licenseId: candidate.licenseId, needed, free: Math.max(0, candidate.quantity - candidate.seatsUsed) };
         })
         .filter((row) => row.needed > row.free);
-      if (short.length > 0) return reply(409, { error: "no_seats_available", error_description: "not enough seats", licenses: short });
+      if (short.length > 0) return reply(409, { error: "no_seats_available", error_description: "too few licenses are available for these assignments; nothing was assigned", licenses: short });
       const touched = new Set<LicenseView>();
       for (const pair of pairs) touched.add(giveSeat(world, pair.licenseId, pair.membershipId));
       return reply(200, { licenses: [...touched] });

@@ -143,7 +143,7 @@ describe("the Licenses page", () => {
     // The header actions are in the title bar, beside the title.
     const header = find("header");
     expect(header.textContent).toContain("Billing & invoices");
-    expect(header.textContent).toContain("Buy a product");
+    expect(header.textContent).toContain("Buy licenses");
     // Billing was asked in the portal's locale, for this workspace.
     const asked = billingRequests(core);
     expect(asked.map(request => request.path)).toEqual(expect.arrayContaining([`/api/portal/billing/workspaces/${ACME}/catalog`, `/api/portal/billing/workspaces/${ACME}/status`]));
@@ -170,7 +170,7 @@ describe("the Licenses page", () => {
   test("an Owner offered billing sees the money, and may buy; the page is the view, not the old panel", async () => {
     await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(has("$145")).toBe(true);
-    expect(buttonNamed(/^Buy a product$/)).toBeDefined();
+    expect(buttonNamed(/^Buy licenses$/)).toBeDefined();
     expect(buttonNamed(/Billing & invoices/)).toBeDefined();
     // Core's roster of who holds a license is the new card's: the folded strip of people.
     expect(has("Assigned to")).toBe(true);
@@ -185,7 +185,7 @@ describe("the Licenses page", () => {
     expect(has("Fleet")).toBe(true);
     expect(text()).not.toMatch(/\$\d/);
     expect(buttonNamed(/Billing & invoices/)).toBeUndefined();
-    expect(buttonNamed(/Buy a product/)).toBeUndefined();
+    expect(buttonNamed(/Buy licenses/)).toBeUndefined();
     expect(buttonNamed(/Add licenses/)).toBeUndefined();
     // Only the catalog, which anyone may read, was asked of billing: never its status.
     expect(billingRequests(core).map(request => request.path)).toEqual([`/api/portal/billing/workspaces/${ACME}/catalog`]);
@@ -271,7 +271,7 @@ describe("the personal Billing page", () => {
   test("/account/billing renders the personal view for someone offered billing", async () => {
     const { core } = await open("/account/billing", SCENARIOS.personalActive(), { ready: "Mentra Call Unlimited" });
     expect(find("h1").textContent).toBe("Billing");
-    expect(has("Products you buy for yourself, apart from any workspace's.")).toBe(true);
+    expect(has("Licenses you buy for yourself, apart from any workspace's.")).toBe(true);
     expect(has("$29")).toBe(true);
     expect(find("header").textContent).toContain("Billing & invoices");
     // Billing's account routes, not a workspace's.

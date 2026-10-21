@@ -1,4 +1,4 @@
-# Licenses and seats
+# Licenses
 
 Core holds the licenses people and workspaces buy, and who holds each seat.
 Billing (the Store's billing module) sells them and writes each license into
@@ -82,9 +82,9 @@ Core ends the license and answers `404 owner_not_found`. So a write that races
 the person's account deletion is ended at once, or, should that request fail
 first, by billing's next attempt.
 
-## Seats
+## Assigning licenses
 
-People assign seats through the workspace routes, under each portal's route
+People assign licenses (Core calls an assigned license a seat) through the workspace routes, under each portal's route
 group ([APIs](workspaces.md#apis)):
 
 | Route | Who | Answers |
@@ -240,15 +240,15 @@ what](#who-sees-what)).
   holds a license or has not signed in is listed but cannot be ticked ("Has a
   license", "After first sign-in"). When more are ticked than there are licenses
   available, it says "3 of 4 fit: remove one or add licenses." and Assign stays
-  off. Assign sends one `POST /:workspaceId/seat-assignments` ([Seats](#seats)),
+  off. Assign sends one `POST /:workspaceId/seat-assignments` ([Assigning licenses](#assigning-licenses)),
   so everyone ticked gets a license or no one does.
 - **Buying.** What can be bought comes from the catalog's `offer`, which billing
   sends only to a viewer who manages the owner's billing. Anyone else gets
   display content: no price and no Buy.
-  - A workspace with no products shows the catalog as its page, "Buy a product for
+  - A workspace with no products shows the catalog as its page, "Buy licenses for
     your members", a card per product with its price ("$15 per user a month") and
     Buy; where billing offers it nothing, the page says "This workspace has no
-    products yet." With products, the header's Buy a product opens the same
+    products yet." With products, the header's Buy licenses opens the same
     products in a dialog. A product the workspace holds shows "You have 5
     licenses" and Add licenses ↗ where billing lists it, not Buy. A product whose
     first payment is not finished shows "Payment incomplete" and Complete
@@ -266,7 +266,7 @@ what](#who-sees-what)).
     Unlimited. Add licenses instead." and "A purchase of Call Unlimited is already
     under way. Finish it, or try again in a minute."
 - **The header actions.** The page's title bar has Billing & invoices ↗, where
-  billing lists that action for the account, and Buy a product, where billing
+  billing lists that action for the account, and Buy licenses, where billing
   offers the workspace something to buy or to add licenses to. They are drawn only
   for a person offered billing, in a workspace that has products (with none, the
   page is the catalog). A refusal shows under them.
@@ -303,10 +303,10 @@ what](#who-sees-what)).
   billing's account scope: a card for each license the person bought for
   themselves, with the status, term, cost, failed-payment notice and "…" menu of
   a workspace's card, and no list of people. With none, the catalog ("Buy a
-  product for yourself"), where Buy goes straight to the hosted payment page,
+  license for yourself"), where Buy goes straight to the hosted payment page,
   since a person's one license needs no licenses step. For a person who holds a
   product, the title bar has Billing & invoices ↗ and, while something is left to
-  buy, Buy a product. Back from checkout shows the same banner ("Call Unlimited
+  buy, Buy a license. Back from checkout shows the same banner ("Call Unlimited
   is ready").
   Where the person is not offered billing, the menu has no Billing entry and the
   address is "Page not found".
