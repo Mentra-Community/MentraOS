@@ -285,7 +285,10 @@ const shared = {
   - `openTab()` is called synchronously inside the click, and only for an action billing
     lists with `returns: false` (a page that does not send the person back). It returns
     `{go(url), close()}`, or null when the browser blocked the tab, and the view then offers
-    an "Open the payment page ↗" link. A refused session closes the tab.
+    an "Open the payment page ↗" link. A refused session closes the tab. `go` returns false
+    when the person closed the blank tab while billing answered: that is not a failure, and
+    the view offers the same link. (It throws for an address the host won't follow, and the
+    view shows the generic refusal.)
   - After a page that does not return, the licenses and billing's status are read again
     when the window regains focus.
 - **The locale.** The one `createBillingApi` was made with: billing words its content in
@@ -299,6 +302,10 @@ const shared = {
   "Your payment went through" with Reload, and the polling stops), or until the banner is
   dismissed. Dismiss calls `onPurchaseDone`, where the host removes `?purchase=`. Leave
   `pollMs` and `timeoutMs` unset; they are for tests.
+- **`onRetry`** (workspace page, optional). Called when Retry is pressed on the unavailable
+  page, after the view has read its own data again. A host re-reads what the view takes as
+  given: the portal invalidates its `me`, so a page opened before billing was ready
+  (`offer.catalog` false, with licenses to name) can recover.
 - **`offer`** (workspace page only). `catalog` is whether billing's catalog can be read at
   all, and `manage` whether this viewer is offered billing for this workspace. Neither is
   decided here; the host knows them from its own `/me`.
@@ -503,7 +510,9 @@ holds the frame (`app-shell`, `workspace-switcher`, `brand`, `centered-layout`, 
 `assign-licenses`, `banners`, `hosted-action`, `parts`, `product`); `src/strings/licenses.ts`
 holds every sentence they show, and `src/lib/` the formatting (`billing-format`, `format`)
 and the join (`license-join`). Tests for the DOM use `src/test-dom.tsx` (happy-dom, with
-`act` around every helper), which the package does not export.
+`act` around every helper). It is for tests only: the package exports it as the subpath
+`@mentra/workspace-ui/test-dom`, so a host's own DOM tests (the workspace portal's) use the
+same DOM and the same React as the components, and no host app imports it.
 
 Billing's client is `billing-api.ts`, and the scope and error types it re-exports live in
 `billing-scope.ts` and `billing-errors.ts`, which carry no schemas. The query layer, the

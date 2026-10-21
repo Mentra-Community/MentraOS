@@ -112,10 +112,15 @@ export function leavePortal(url: string): void {
 /**
  * Opens a blank tab for a hosted page that does not return (an invoice's payment page), and must be called in the
  * click itself: a browser lets a page open a tab only while it handles one. The tab is sent on once billing has
- * answered (`go`) or closed if it won't (`close`). Null when the browser blocked it.
+ * answered (`go`) or closed if it won't (`close`). Null when the browser blocked it, and then the caller offers the page
+ * as a link.
  *
  * Not opened with `noopener`, which would leave nothing to send on; the tab's `opener` is cleared at once instead,
- * while it is still blank and ours, so the hosted page cannot reach back to the portal.
+ * while it is still blank and ours, so the hosted page cannot reach back to the portal. A tab that won't let go of its
+ * opener is closed and not used (null), so the link, which is `rel="noopener"`, is the way there instead.
+ *
+ * `go` returns false when the person closed the blank tab while billing answered, which is not a failure: the caller
+ * offers the page as a link for a second click. An address the portal won't follow closes the tab and throws.
  */
 export function openPortalTab(): PortalTab | null {
   let tab: Window | null;
@@ -125,12 +130,18 @@ export function openPortalTab(): PortalTab | null {
     return null;
   }
   if (!tab || tab.closed) return null;
-  try {
-    tab.opener = null;
-  } catch {
-    // A window that will not let go of its opener is still one to close.
-  }
   const opened = tab;
+  try {
+    opened.opener = null;
+  } catch {
+    // The hosted page would keep a way back to the portal: not a tab to send anywhere.
+    try {
+      opened.close();
+    } catch {
+      // A tab that is already gone is the outcome wanted.
+    }
+    return null;
+  }
   return {
     go(url) {
       let href: string;
@@ -140,7 +151,9 @@ export function openPortalTab(): PortalTab | null {
         opened.close();
         throw error;
       }
+      if (opened.closed) return false;
       opened.location.replace(href);
+      return true;
     },
     close() {
       opened.close();

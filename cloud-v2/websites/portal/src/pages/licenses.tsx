@@ -13,6 +13,7 @@
  * anything that needs a payment page.
  */
 
+import { useQueryClient } from "@tanstack/react-query";
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import {
   can,
@@ -22,7 +23,7 @@ import {
 } from "@mentra/workspace-ui";
 import type { PortalMe } from "@/lib/api";
 import { setQueryParam, useSearch } from "@/lib/navigation";
-import { portalBillingApi, portalNavigateOut, portalWorkspaceApi } from "@/lib/portal";
+import { PORTAL_ME_KEY, portalBillingApi, portalNavigateOut, portalWorkspaceApi } from "@/lib/portal";
 
 /** Whether the viewer is offered the workspace's billing: billing is ready for them and their role may manage it (`workspace.billing.manage`: Admins and Owners). */
 export function billingOffered(me: PortalMe, detail: Pick<WorkspaceDetail, "capabilities"> | undefined): boolean {
@@ -63,11 +64,15 @@ interface LicensesProps {
 /** The page's content. */
 export function LicensesScreen({ workspaceId, me, detail }: LicensesProps) {
   const purchaseId = purchaseParam(useSearch());
+  const client = useQueryClient();
   return (
     <WorkspaceLicensesView
       {...licensesPageProps(me, workspaceId, detail, purchaseId)}
       // The banner was dismissed: the address loses `?purchase=` in place, so Back does not return to the banner.
       onPurchaseDone={() => setQueryParam("purchase", null, { replace: true })}
+      // Retry also asks who the person is again: a page opened before billing was ready (`billingCatalog` false, with
+      // licenses to name) can only recover when `me` says it is.
+      onRetry={() => void client.invalidateQueries({ queryKey: PORTAL_ME_KEY })}
     />
   );
 }

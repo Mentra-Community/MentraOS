@@ -35,7 +35,12 @@ import { AlertText } from "../common";
 
 /** A tab opened for a hosted page that doesn't return: sent on once billing has answered, or closed if it won't. */
 export interface PortalTab {
-  go(url: string): void;
+  /**
+   * Sends the tab to the hosted page. Returns false when the tab is gone (the person closed the blank tab while billing
+   * answered), and the page then comes back as the "Open the payment page" link for a second click; anything else
+   * means it was sent on. It throws for an address the host refuses, which is shown as the generic refusal.
+   */
+  go(url: string): boolean | void;
   close(): void;
 }
 
@@ -192,8 +197,10 @@ export function useHostedAction({
                 ...(request.seats !== undefined ? { seats: request.seats } : {}),
               }));
           if (newTab) {
-            if (tab) tab.go(url);
-            else if (mounted.current) setLink(url);
+            // A tab that is gone has nowhere to go: the page comes back as a link, like the tab a browser blocked.
+            if (tab) {
+              if (tab.go(url) === false && mounted.current) setLink(url);
+            } else if (mounted.current) setLink(url);
             // A card that went away while billing answered has nothing left to refresh, and must not leave listeners behind.
             if (mounted.current) refreshOnReturn();
           } else if (mounted.current) {

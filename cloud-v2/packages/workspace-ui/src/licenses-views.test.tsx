@@ -473,6 +473,22 @@ describe("unavailable", () => {
     expect(text()).toContain("2 licenses · $295 a month in total");
   });
 
+  test("Retry also tells the host, so it can read what the page takes as given (whether billing is ready)", async () => {
+    const r = rig({ status: new Error("status down") });
+    const onRetry = mock(() => {});
+    await mountView(r, { onRetry });
+    expect(onRetry).not.toHaveBeenCalled();
+    await click(buttonNamed("Retry"));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    // A host that asks for nothing gets the same Retry.
+    await cleanup();
+    const plain = rig({ status: new Error("status down") });
+    await mountView(plain);
+    const calls = plain.status.mock.calls.length;
+    await click(buttonNamed("Retry"));
+    await until(() => plain.status.mock.calls.length > calls, "the read to be repeated");
+  });
+
   test("while a failed read is read again, the page keeps saying so: Retry shows it is busy, and Loading never comes back", async () => {
     const r = rig({ status: new Error("status down") });
     const { client } = await mountView(r);

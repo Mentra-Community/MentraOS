@@ -44,14 +44,15 @@ export type PortalMe = {
 
 /**
  * The modules as `/api/portal/me` sent them, read strictly: only an explicit `true` offers one, and a Core that
- * sends no `modules` (the portal and Core deploy separately) offers none, rather than failing the page. A Core
- * from before `billingCatalog` existed sends only `billing`, and there the catalog was offered with it: an absent
- * `billingCatalog` takes `billing`'s value. One that is present but is not a boolean offers nothing.
+ * sends no `modules` (the portal and Core deploy separately) offers none, rather than failing the page. Billing
+ * implies its catalog (decision 4: the catalog is readable wherever billing is ready, whoever asks), so
+ * `billingCatalog` is true where `billing` is, whatever it says itself. That also reads a Core from before
+ * `billingCatalog` existed, which sent only `billing`. A `billingCatalog` that is there but isn't true offers nothing of its own.
  */
 export function readPortalModules(raw: unknown): PortalModules {
   const modules = typeof raw === "object" && raw !== null ? (raw as { billing?: unknown; billingCatalog?: unknown }) : {};
   const billing = modules.billing === true;
-  return { billing, billingCatalog: modules.billingCatalog === undefined ? billing : modules.billingCatalog === true };
+  return { billing, billingCatalog: billing || modules.billingCatalog === true };
 }
 
 /** `GET /api/portal/me`, with the modules read by {@link readPortalModules}. */

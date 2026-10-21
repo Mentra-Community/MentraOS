@@ -73,6 +73,12 @@ export interface WorkspaceLicensesViewProps {
   purchaseId?: string | null;
   /** The purchase banner was dismissed: remove `?purchase=` from the address. */
   onPurchaseDone(): void;
+  /**
+   * Retry was pressed on the unavailable page, after the view has read its own data again: a host re-reads what the
+   * view takes as given (the portal's `me`, which says whether billing is ready and so whether `offer.catalog` can
+   * turn true).
+   */
+  onRetry?(): void;
   /** How the browser leaves for a hosted page: `leavePortal` and `openPortalTab`, the portal's only ways out. */
   navigateOut: NavigateOut;
   /** How often to read after a purchase, in ms; `PURCHASE_POLL_MS` (2 s) unless a host or a test needs another pace. */
@@ -169,6 +175,7 @@ export function WorkspaceLicensesView({
   offer,
   purchaseId = null,
   onPurchaseDone,
+  onRetry,
   navigateOut,
   pollMs = PURCHASE_POLL_MS,
   timeoutMs = PURCHASE_TIMEOUT_MS,
@@ -196,6 +203,7 @@ export function WorkspaceLicensesView({
   if (data === null) {
     const retry = () => {
       for (const result of [detail, licenses, ...(offer.catalog ? [catalog] : []), ...(offer.manage ? [status] : []), ...(canRead ? [members] : [])]) void result.refetch();
+      onRetry?.();
     };
     const retrying = [detail, licenses, catalog, status, members].some(readRetrying);
     return <LicensesUnavailable onRetry={retry} retrying={retrying} />;

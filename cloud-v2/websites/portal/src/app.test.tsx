@@ -891,11 +891,6 @@ describe("Billing in the account menu and the personal Billing page", () => {
     expect(catalogOnly).not.toContain("Loading billing");
   });
 
-  test("the account menu has Billing only with billing, not with the catalog alone", () => {
-    expect(accountItems(meWith(false, true).modules.billing)).toEqual([]);
-    expect(accountItems(meWith(true).modules.billing)).toHaveLength(1);
-  });
-
   test("renders for a person in no workspace: their account and Billing, and no workspace navigation", () => {
     const markup = renderAs(true, "/account/billing", { list: [] });
     expect(markup).toMatch(/<h1[^>]*>Billing<\/h1>/);

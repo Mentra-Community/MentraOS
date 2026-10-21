@@ -92,10 +92,14 @@ function joined(license: LicenseView | null, billing: Partial<LicenseBilling> | 
 const EMPTY_STATUS: BillingStatus = { locale: "en-US", licenses: [], total: null, actions: [], testMode: null, purchase: null };
 
 /** Billing, the workspace API and the host's two ways out, all recording what happens to them and in what order. */
-function rig(options: { blocked?: boolean; session?: (request: Record<string, unknown>) => Promise<{ url: string }> } = {}) {
+function rig(options: { blocked?: boolean; gone?: boolean; session?: (request: Record<string, unknown>) => Promise<{ url: string }> } = {}) {
   const events: string[] = [];
   const tab = {
-    go: mock((url: string) => void events.push(`go:${url}`)),
+    // `gone`: the person closed the tab while billing answered, so the host's `go` says so by returning false.
+    go: mock((url: string) => {
+      events.push(`go:${url}`);
+      return options.gone ? false : undefined;
+    }),
     close: mock(() => void events.push("close")),
   };
   const leave = mock((url: string) => void events.push(`leave:${url}`));
@@ -480,6 +484,33 @@ describe("a hosted page that doesn't return", () => {
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
     expect(find(`#${link.getAttribute("aria-describedby")}`).textContent).toBe("Opens a secure billing page in a new tab");
+  });
+
+  test("a tab the person closed while billing answered is not an error: the page comes back as the link", async () => {
+    const r = rig({ gone: true });
+    await mountCard(r, invoice());
+    await press("Complete payment");
+    await flush();
+    // The tab was asked to go (and said it was gone); nothing else leaves, and nothing is called a refusal.
+    expect(r.events).toEqual(["openTab", "session:complete_payment", `go:${PAGE}`]);
+    expect(r.leave).not.toHaveBeenCalled();
+    expect(r.tab.close).not.toHaveBeenCalled();
+    expect(findAll('[role="alert"]')).toHaveLength(0);
+    const link = find<HTMLAnchorElement>("a[data-hosted-page]");
+    expect(link.textContent).toBe("Open the payment page");
+    expect(link.getAttribute("href")).toBe(PAGE);
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    // Another press is possible.
+    expect(buttonNamed("Complete payment").hasAttribute("disabled")).toBe(false);
+  });
+
+  test("a tab whose go says nothing (or true) is the tab that was sent on: no link", async () => {
+    const r = rig();
+    await mountCard(r, invoice());
+    await press("Complete payment");
+    await flush();
+    expect(r.events).toEqual(["openTab", "session:complete_payment", `go:${PAGE}`]);
+    expect(findAll("a[data-hosted-page]")).toHaveLength(0);
   });
 
   test("the licenses and billing's status are read again when the window regains focus", async () => {

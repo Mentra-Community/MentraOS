@@ -11,7 +11,7 @@ import { act } from "react";
 import { PortalRoutes } from "./App";
 import { fetchPortalMe, type PortalMe, type PortalModules } from "./lib/api";
 import { usePathname } from "./lib/navigation";
-import { PortalProvider, type PortalSession } from "./lib/portal";
+import { PORTAL_ME_KEY, PortalProvider, type PortalSession } from "./lib/portal";
 import { parseRoute } from "./lib/routes";
 import {
   ACME,
@@ -28,7 +28,7 @@ import {
   workspaceCatalog,
   type Scenario,
 } from "./test-core";
-import { byText, cleanup, click, find, findAll, isNeutral, render, setupDom, teardownDom, until } from "../../../packages/workspace-ui/src/test-dom";
+import { byText, cleanup, click, find, findAll, isNeutral, render, setupDom, teardownDom, until } from "@mentra/workspace-ui/test-dom";
 import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 
 beforeAll(setupDom);
@@ -101,16 +101,23 @@ async function open(path: string, scenario: Scenario, options: { modules?: Porta
   return { core, client };
 }
 
-/** The window's two ways out, replaced by recorders. */
-function ways() {
+/**
+ * The window's two ways out, replaced by recorders. `closeAfterOpen` is a person closing the blank tab while billing
+ * answers: it reads as open when the portal checks it first, closed after.
+ */
+function ways(options: { closeAfterOpen?: boolean } = {}) {
   const assign = spyOn(window.location, "assign").mockImplementation(() => {});
   const events: string[] = [];
+  let reads = 0;
   const tab = {
     opener: "set" as unknown,
-    closed: false,
+    _closed: false,
+    get closed() {
+      return options.closeAfterOpen ? reads++ > 0 : tab._closed;
+    },
     location: { replace: (url: string) => void events.push(`replace:${url}`) },
     close() {
-      tab.closed = true;
+      tab._closed = true;
       events.push("close");
     },
   };
@@ -165,8 +172,8 @@ describe("the Licenses page", () => {
     expect(has("$145")).toBe(true);
     expect(buttonNamed(/^Buy a license$/)).toBeDefined();
     expect(buttonNamed(/Billing & invoices/)).toBeDefined();
-    // Core's seat roster is the new card's: the strip of holders, and Add seats.
-    expect(has("seats used") || has("Seat holders")).toBe(true);
+    // Core's seat roster is the new card's: the folded strip of holders.
+    expect(has("Seat holders")).toBe(true);
   });
 
   test("a non-staff Admin on staging (licenses, no billing) gets the Licenses item and cards without money", async () => {
@@ -182,8 +189,32 @@ describe("the Licenses page", () => {
     expect(buttonNamed(/Add seats/)).toBeUndefined();
     // Only the catalog, which anyone may read, was asked of billing: never its status.
     expect(billingRequests(core).map(request => request.path)).toEqual([`/api/portal/billing/workspaces/${ACME}/catalog`]);
-    // And the account menu has no Billing page for them.
+    // And the account menu, once opened, has no Billing page for them (it is offered by `billing`, not by the catalog).
+    await click(find("button[aria-label='Open account menu']"));
+    expect(has("Sign out")).toBe(true);
     expect(hrefs()).not.toContain("/account/billing");
+    expect(buttonNamed(/^Billing$/)).toBeUndefined();
+  });
+
+  test("and the account menu has Billing for someone offered billing", async () => {
+    await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
+    expect(hrefs()).not.toContain("/account/billing");
+    await click(find("button[aria-label='Open account menu']"));
+    const item = findAll<HTMLAnchorElement>("a[href='/account/billing']");
+    expect(item.map(anchor => anchor.textContent?.trim())).toEqual(["Billing"]);
+    expect(has("Sign out")).toBe(true);
+  });
+
+  test("Retry on the Licenses page also reads who the person is again, so a page opened before billing was ready can recover", async () => {
+    // Billing wasn't ready when `me` was read (`billingCatalog: false`), and the workspace already holds licenses.
+    const { client } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), {
+      modules: { billing: false, billingCatalog: false },
+      ready: "Licenses are unavailable",
+    });
+    client.setQueryData(PORTAL_ME_KEY, meWith({ billing: false, billingCatalog: false }));
+    expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(false);
+    await click(buttonNamed(/^Retry$/)!);
+    expect(client.getQueryState(PORTAL_ME_KEY)?.isInvalidated).toBe(true);
   });
 
   test("a Member sees the licenses they hold a seat in, and nothing of billing's", async () => {
@@ -520,6 +551,19 @@ describe("leaving for a hosted page", () => {
       expect(out.assign).not.toHaveBeenCalled();
     },
   );
+
+  test("a tab the person closed while billing answered is not an error: the link to the page is offered instead", async () => {
+    await open(`/w/${ACME}/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
+    const out = ways({ closeAfterOpen: true });
+    await click(buttonNamed(/Complete payment/)!);
+    await until(() => has("Open the payment page"), "the link");
+    const link = findAll<HTMLAnchorElement>("a").find(anchor => anchor.textContent?.includes("Open the payment page"))!;
+    expect(link.getAttribute("href")).toBe(HOSTED.invoice);
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(has("Billing couldn't do that")).toBe(false);
+    expect(out.events).toEqual(["open"]);
+    expect(out.assign).not.toHaveBeenCalled();
+  });
 
   test("a tab the browser blocked leaves a link to the page for a second click", async () => {
     await open(`/w/${ACME}/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });

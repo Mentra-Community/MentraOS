@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { act } from "react";
-import { cleanup, find, render, setupDom, teardownDom } from "../../../../packages/workspace-ui/src/test-dom";
+import { cleanup, find, render, setupDom, teardownDom } from "@mentra/workspace-ui/test-dom";
 import { closeQueryParam, leavePortal, openPortalTab, openQueryParam, setQueryParam, useSearch } from "./navigation";
 
 // A DOM for the address and the window (happy-dom, as the workspace-ui package's tests use). Synthetic addresses only.
@@ -48,15 +48,32 @@ describe("leaving the portal in this tab", () => {
   });
 });
 
-/** A window the portal opened, as far as the portal touches it. */
-function fakeTab() {
+/**
+ * A window the portal opened, as far as the portal touches it. `closeAfterOpen` is a person closing the blank tab
+ * while billing answers: it reads as open at first, closed after. `stuckOpener` is a window that won't let go of its opener.
+ */
+function fakeTab(options: { closeAfterOpen?: boolean; stuckOpener?: boolean } = {}) {
   const events: string[] = [];
+  let reads = 0;
   const tab = {
-    opener: "set" as unknown,
-    closed: false,
+    _opener: "set" as unknown,
+    get opener() {
+      return tab._opener;
+    },
+    set opener(value: unknown) {
+      if (options.stuckOpener) throw new Error("opener is read-only here");
+      tab._opener = value;
+    },
+    _closed: false,
+    get closed() {
+      return options.closeAfterOpen ? reads++ > 0 : tab._closed;
+    },
+    set closed(value: boolean) {
+      tab._closed = value;
+    },
     location: { replace: (url: string) => void events.push(`replace:${url}`) },
     close() {
-      tab.closed = true;
+      tab._closed = true;
       events.push("close");
     },
   };
@@ -100,6 +117,35 @@ describe("leaving the portal in a tab opened during the click", () => {
     const handle = openPortalTab()!;
     expect(() => handle.go(url)).toThrow();
     expect(events).toEqual(["close"]);
+  });
+
+  test("a tab that won't let go of its opener is closed and not used: the caller gets the link instead", () => {
+    const { tab, events } = fakeTab({ stuckOpener: true });
+    spyOn(window, "open").mockImplementation((() => tab) as unknown as typeof window.open);
+    expect(openPortalTab()).toBeNull();
+    expect(events).toEqual(["close"]);
+  });
+
+  test("a tab the person closed while billing answered is not navigated, and the caller is told it is gone", () => {
+    const { tab, events } = fakeTab({ closeAfterOpen: true });
+    spyOn(window, "open").mockImplementation((() => tab) as unknown as typeof window.open);
+    const handle = openPortalTab()!;
+    expect(handle).not.toBeNull();
+    expect(handle.go("https://billing.example.test/invoice/1")).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  test("a tab that is still open is navigated, and go says so", () => {
+    const { tab } = fakeTab();
+    spyOn(window, "open").mockImplementation((() => tab) as unknown as typeof window.open);
+    expect(openPortalTab()!.go("https://billing.example.test/invoice/1")).toBe(true);
+  });
+
+  test("a closed tab is told the address is refused before it is told it is gone: junk is junk", () => {
+    const { tab } = fakeTab({ closeAfterOpen: true });
+    spyOn(window, "open").mockImplementation((() => tab) as unknown as typeof window.open);
+    const handle = openPortalTab()!;
+    expect(() => handle.go("javascript:alert(1)")).toThrow();
   });
 
   test("is null when the browser blocked the tab, or would not open one", () => {
