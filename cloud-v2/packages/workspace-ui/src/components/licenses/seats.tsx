@@ -50,6 +50,12 @@ export interface AddSeatsControl {
   /** The action doesn't return to the portal. */
   newTab?: boolean;
   disabled?: boolean;
+  /**
+   * Billing's refusal, and the link for a tab the browser blocked, for a surface that has to show them itself
+   * (the people picker is a modal: the card behind it is out of sight). Absent where the card draws them.
+   */
+  error?: string | null;
+  link?: string | null;
 }
 
 function AddSeatsButton({ control, variant = "secondary" }: { control: AddSeatsControl; variant?: "default" | "secondary" }) {

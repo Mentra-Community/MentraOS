@@ -54,14 +54,20 @@ export interface HostedRequest {
 }
 
 export interface HostedAction {
-  /** Starts the action. Call it from the click itself: a tab for a page that doesn't return can only be opened there. Ignored while one is under way. */
-  run(request: HostedRequest): void;
+  /**
+   * Starts the action. Call it from the click itself: a tab for a page that doesn't return can only be opened
+   * there. Ignored while one is under way. `surface` names where the press happened (a dialog, say), so that
+   * what the action leaves to say (`error`, `link`) is drawn there and not behind it; none means the card.
+   */
+  run(request: HostedRequest, surface?: string): void;
   /** The `kind` of the action whose session is being requested, else null. */
   pending: string | null;
   /** Billing's refusal, in words; null when there is none. */
   error: string | null;
   /** Where a tab the browser blocked would have gone: shown as a link for a second click. */
   link: string | null;
+  /** The `surface` of the press that `error` and `link` belong to; null for the card itself. */
+  surface: string | null;
 }
 
 /**
@@ -86,6 +92,7 @@ export function useHostedAction({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
+  const [surface, setSurface] = useState<string | null>(null);
   const busy = useRef(false);
   const mounted = useRef(true);
   const stopWaiting = useRef<(() => void) | null>(null);
@@ -122,9 +129,9 @@ export function useHostedAction({
   }, [client]);
 
   const run = useCallback(
-    ({ action, licenseId, seats }: HostedRequest) => {
+    ({ action, licenseId, seats }: HostedRequest, from?: string) => {
       if (busy.current) return;
-      const { billing: api, scope: owner, navigateOut: out, product: name } = latest.current;
+      const { billing: billingApi, scope: owner, navigateOut: out, product: name } = latest.current;
       const newTab = action.returns === false;
       // In the click, before anything is awaited: a browser lets a page open a tab only while it handles one.
       let tab: PortalTab | null = null;
@@ -139,6 +146,7 @@ export function useHostedAction({
       setPending(action.kind);
       setError(null);
       setLink(null);
+      setSurface(from ?? null);
       const request = {
         action: action.kind,
         ...(licenseId !== undefined ? { licenseId } : {}),
@@ -146,11 +154,12 @@ export function useHostedAction({
       };
       void (async () => {
         try {
-          const { url } = await api.session(owner, request);
+          const { url } = await billingApi.session(owner, request);
           if (newTab) {
             if (tab) tab.go(url);
             else if (mounted.current) setLink(url);
-            refreshOnReturn();
+            // A card that went away while billing answered has nothing left to refresh, and must not leave listeners behind.
+            if (mounted.current) refreshOnReturn();
           } else {
             out.leave(url);
           }
@@ -171,7 +180,7 @@ export function useHostedAction({
     [refreshOnReturn],
   );
 
-  return { run, pending, error, link };
+  return { run, pending, error, link, surface };
 }
 
 /**

@@ -36,6 +36,7 @@ import { licenseStrings as t } from "../../strings/licenses";
 import { Menu, type MenuItem } from "../../ui/menu";
 import { Meter } from "../../ui/meter";
 import { Card } from "../../ui/card";
+import { Spinner } from "../common";
 import { HostedFeedback, useHostedAction, type NavigateOut } from "./hosted-action";
 import { Fact, HostedPageButton, Notice, Skeleton, StatusBadge, type StatusBadgeStatus } from "./parts";
 import { PeoplePickerDialog } from "./people-picker";
@@ -70,6 +71,9 @@ export interface LicenseCardProps {
   /** The time a failed payment's date is compared with (ms since the epoch); now unless given. */
   now?: number;
 }
+
+/** The surface name of a press inside the people picker, whose refusals the picker draws itself. */
+const PICKER = "picker";
 
 const WARN_RING = "border-error-foreground/35 ring-error ring-4";
 const GREEN_RING = "border-brand/45 ring-info ring-4";
@@ -229,6 +233,7 @@ export function LicenseCard({
   now,
 }: LicenseCardProps) {
   const hosted = useHostedAction({ billing, scope, navigateOut, api, product: card.name });
+  const [picking, setPicking] = useState(false);
   const clock = now ?? Date.now();
 
   // Billing's entry is for those offered billing; a member's card has none.
@@ -303,9 +308,9 @@ export function LicenseCard({
   if (addSeatsAction) placed.add(addSeatsAction.kind);
 
   // The "…" menu: every listed action that isn't already on the card, billing's own label for any kind unknown here.
-  const items: MenuItem[] = listed
-    .filter((action) => !placed.has(action.kind))
-    .map((action, index) => ({
+  const menuActions = listed.filter((action) => !placed.has(action.kind));
+  const menuPending = hosted.pending !== null && menuActions.some((action) => action.kind === hosted.pending);
+  const items: MenuItem[] = menuActions.map((action, index) => ({
       key: `${action.kind}-${index}`,
       onSelect: () => hosted.run({ action, licenseId: card.licenseId }),
       label: (
@@ -320,14 +325,20 @@ export function LicenseCard({
   const badge = badgeFor(card, view, locale);
   const { columns, facts } = factsFor(card, view, locale, workspaceName);
   const ring = card.problem === "past_due" ? "warn" : highlight ? "highlight" : null;
-  const addSeats: AddSeatsControl | null = addSeatsAction
-    ? {
-        onClick: () => hosted.run({ action: addSeatsAction, licenseId: card.licenseId }),
-        pending: hosted.pending === addSeatsAction.kind,
-        newTab: addSeatsAction.returns === false,
-        disabled: busy && hosted.pending !== addSeatsAction.kind,
-      }
-    : null;
+  // Add seats from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
+  const fromPicker = hosted.surface === PICKER;
+  const addSeatsFrom = (surface?: string): AddSeatsControl | null =>
+    addSeatsAction
+      ? {
+          onClick: () => hosted.run({ action: addSeatsAction, licenseId: card.licenseId }, surface),
+          pending: hosted.pending === addSeatsAction.kind,
+          newTab: addSeatsAction.returns === false,
+          disabled: busy && hosted.pending !== addSeatsAction.kind,
+          ...(surface === PICKER ? { error: fromPicker ? hosted.error : null, link: fromPicker ? hosted.link : null } : {}),
+        }
+      : null;
+  // While the picker is open it shows what its own press left; once it is closed the card does, so nothing is lost.
+  const onCard = fromPicker && picking ? { error: null, link: null } : hosted;
 
   return (
     <Card
@@ -352,17 +363,17 @@ export function LicenseCard({
         {items.length > 0 ? (
           <Menu
             label={t.card.moreFor(card.name)}
-            trigger={<MoreHorizontalIcon aria-hidden="true" />}
+            trigger={menuPending ? <Spinner className="size-4" /> : <MoreHorizontalIcon aria-hidden="true" />}
             items={items}
             disabled={busy}
             className="text-muted-foreground -mt-1 -mr-2"
           />
         ) : null}
       </div>
-      {notices.length > 0 || hosted.error !== null || hosted.link !== null ? (
+      {notices.length > 0 || onCard.error !== null || onCard.link !== null ? (
         <div className="space-y-3 px-6 pb-5 max-sm:px-5">
           {notices}
-          <HostedFeedback action={hosted} />
+          <HostedFeedback action={onCard} />
         </div>
       ) : null}
       {facts ? (
@@ -379,7 +390,10 @@ export function LicenseCard({
           members={members}
           canAssign={canAssign}
           folded={folded}
-          addSeats={addSeats}
+          addSeats={addSeatsFrom()}
+          pickerAddSeats={addSeatsFrom(PICKER)}
+          picking={picking}
+          onPicking={setPicking}
         />
       ) : null}
     </Card>
@@ -397,6 +411,11 @@ interface CardSeatsProps {
   canAssign: boolean;
   folded: boolean;
   addSeats: AddSeatsControl | null;
+  /** The same action, started from the people picker. */
+  pickerAddSeats: AddSeatsControl | null;
+  /** Whether the people picker is open. The card owns it, so it knows where a refusal should be drawn. */
+  picking: boolean;
+  onPicking(open: boolean): void;
 }
 
 /** The card's seats: read-only where the card has no way to change them, else with assigning and unassigning. */
@@ -408,14 +427,13 @@ function CardSeats(props: CardSeatsProps) {
 
 /** The seats with their requests: unassigning, and the people picker that assigns. Both are seat mutations, so billing's status refreshes too. */
 function ManagedSeats(props: CardSeatsProps & { api: WorkspaceApi; workspaceId: string }) {
-  const { api, workspaceId, license, members, productName, addSeats } = props;
-  const [picking, setPicking] = useState(false);
+  const { api, workspaceId, license, members, productName, pickerAddSeats, picking, onPicking } = props;
   const release = useSeatMutation(api, workspaceId, (holder: SeatHolder) => api.releaseSeat(workspaceId, license.licenseId, holder.membershipId));
   return (
     <>
       <SeatsLayout
         {...props}
-        onAssign={() => setPicking(true)}
+        onAssign={() => onPicking(true)}
         onUnassign={(holder) => {
           release.reset();
           release.mutate(holder);
@@ -426,13 +444,13 @@ function ManagedSeats(props: CardSeatsProps & { api: WorkspaceApi; workspaceId: 
       {props.canAssign ? (
         <PeoplePickerDialog
           open={picking}
-          onClose={() => setPicking(false)}
+          onClose={() => onPicking(false)}
           api={api}
           workspaceId={workspaceId}
           license={license}
           productName={productName}
           members={members}
-          addSeats={addSeats}
+          addSeats={pickerAddSeats}
         />
       ) : null}
     </>

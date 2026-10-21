@@ -7,6 +7,7 @@ import type { WorkspaceApi } from "./api";
 import { WorkspaceApiError } from "./errors";
 import { BillingRefusedError, type BillingApi } from "./billing-api";
 import { workspaceScope } from "./billing-scope";
+import { formatMoney } from "./lib/billing-format";
 import { LicenseCard, type LicenseCardProps } from "./components/licenses/license-card";
 import { WorkspaceLicensesPanel } from "./components/licenses-panel";
 import {
@@ -475,6 +476,135 @@ describe("a hosted page that doesn't return", () => {
     await act(async () => void window.dispatchEvent(new Event("focus")));
     await flush();
     expect(r.status).toHaveBeenCalledTimes(1);
+  });
+
+  test("a card that is gone before its session answers sends the tab on and registers nothing", async () => {
+    let answer!: (value: { url: string }) => void;
+    const r = rig({ session: () => new Promise((resolve) => (answer = resolve)) });
+    const client = newClient();
+    const key = billingKeys.status(r.billing, workspaceScope(WS));
+    client.setQueryData(key, EMPTY_STATUS);
+    await mountCard(r, invoice(), {}, client);
+    await press("Complete payment");
+    await cleanup();
+    await act(async () => answer({ url: "https://invoice.example.test/i/1" }));
+    expect(r.tab.go).toHaveBeenCalledWith("https://invoice.example.test/i/1");
+    // Nothing is left listening: coming back to the window reads nothing.
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await flush();
+    expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+  });
+
+  test("the tab is opened by the click itself, not after anything is awaited", async () => {
+    const r = rig({ session: () => new Promise(() => {}) });
+    await mountCard(r, invoice());
+    const button = buttonNamed("Complete payment");
+    let openedInTheClick = -1;
+    // Only the synchronous part of the click runs inside this callback.
+    act(() => {
+      button.click();
+      openedInTheClick = r.openTab.mock.calls.length;
+    });
+    expect(openedInTheClick).toBe(1);
+    expect(r.events).toEqual(["openTab", "session:complete_payment"]);
+  });
+
+  test("so is the tab for a menu item that doesn't return", async () => {
+    let answer!: (value: { url: string }) => void;
+    const r = rig({ session: () => new Promise((resolve) => (answer = resolve)) });
+    await mountCard(r, joined(coreLicense(5, [HANNAH]), { actions: [{ kind: "view_invoice", fallbackLabel: "View invoice", returns: false }] }));
+    await openMenu();
+    expect(menuItems()).toEqual(["View invoiceOpens a secure billing page in a new tab"]);
+    const item = find('[role="menuitem"]');
+    let openedInTheClick = -1;
+    act(() => {
+      item.click();
+      openedInTheClick = r.openTab.mock.calls.length;
+    });
+    expect(openedInTheClick).toBe(1);
+    expect(r.events).toEqual(["openTab", "session:view_invoice"]);
+    await act(async () => answer({ url: "https://invoice.example.test/i/2" }));
+    expect(r.events).toEqual(["openTab", "session:view_invoice", "go:https://invoice.example.test/i/2"]);
+    expect(r.leave).not.toHaveBeenCalled();
+  });
+
+  test("a failed session from the menu closes the tab and says why on the card", async () => {
+    const r = rig({
+      session: async () => {
+        throw new BillingRefusedError("unknown_action", {}, 400);
+      },
+    });
+    await mountCard(r, joined(coreLicense(5, [HANNAH]), { actions: [{ kind: "view_invoice", fallbackLabel: "View invoice", returns: false }] }));
+    await openMenu();
+    await click(find('[role="menuitem"]'));
+    await flush();
+    expect(r.events).toEqual(["openTab", "session:view_invoice", "close"]);
+    expect(find('[role="alert"]', theCard()).textContent).toBe("That isn't available for this license any more. Reload the page and try again.");
+  });
+});
+
+describe("the … menu while a session is requested", () => {
+  const deferred = () => {
+    let answer!: (value: { url: string }) => void;
+    const session = () => new Promise<{ url: string }>((resolve) => (answer = resolve));
+    return { session, answer: (url = PAGE) => act(async () => answer({ url })) };
+  };
+
+  test("shows a spinner on its trigger, which can't be pressed, until billing answers", async () => {
+    const d = deferred();
+    await mountCard(rig({ session: d.session }), joined(coreLicense(5, [HANNAH]), { actions: [{ kind: "cancel", fallbackLabel: "Cancel" }] }));
+    expect(findAll(".animate-spin", menuTrigger())).toHaveLength(0);
+    await openMenu();
+    await click(find('[role="menuitem"]'));
+    expect(findAll(".animate-spin", menuTrigger())).toHaveLength(1);
+    expect(menuTrigger().hasAttribute("disabled")).toBe(true);
+    await d.answer();
+    expect(findAll(".animate-spin", menuTrigger())).toHaveLength(0);
+    expect(menuTrigger().hasAttribute("disabled")).toBe(false);
+  });
+
+  test("shows none for a button elsewhere on the card, though the menu waits too", async () => {
+    const d = deferred();
+    await mountCard(
+      rig({ session: d.session }),
+      joined(coreLicense(5, [HANNAH]), {
+        status: "past_due",
+        fallbackStatusLabel: "x",
+        actions: [{ kind: "update_payment", fallbackLabel: "Update payment method" }, { kind: "cancel", fallbackLabel: "Cancel" }],
+      }),
+    );
+    await press("Update payment method");
+    expect(findAll(".animate-spin", menuTrigger())).toHaveLength(0);
+    expect(menuTrigger().hasAttribute("disabled")).toBe(true);
+    await d.answer();
+  });
+});
+
+describe("the portal's locale", () => {
+  test("reaches a card's dates, the roster's 'Since' and the cost", async () => {
+    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), {}), { locale: "de-DE" });
+    const card = text(theCard());
+    expect(card).toContain("20.11.2026");
+    expect(card).not.toContain("Nov 20, 2026");
+    expect(card).toContain("Since 20.10.2026");
+    expect(card).not.toContain("Oct 20, 2026");
+    // German puts a no-break space before the currency sign; the card's text has plain spaces.
+    const euros = (minor: number) => formatMoney(usd(minor), "de-DE").replace(/\s+/g, " ");
+    expect(card).toContain(`${euros(14500)} a month`);
+    expect(card).toContain(`5 × ${euros(2900)} · before tax`);
+    expect(card).not.toContain("$145");
+  });
+
+  test("and the badge's short date", async () => {
+    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { status: "ending", fallbackStatusLabel: "Ending", endsAt: "2026-11-20T12:00:00.000Z", actions: [] }), { locale: "en-GB" });
+    expect(text(theCard())).toContain("Ends 20 Nov");
+    expect(text(theCard())).toContain("20 Nov 2026");
+  });
+
+  test("a member's 'Since' follows it too", async () => {
+    const own = coreLicense(5, [], { seats: [{ membershipId: "wm_me", mentraUserId: "u_me", assignedAt: "2026-10-20T12:00:00.000Z" }], seatsUsed: 1 });
+    await mountCard(rig(), joined(own, null), { view: "member", api: undefined, locale: "de-DE" });
+    expect(text(theCard())).toContain("Since 20.10.2026");
   });
 });
 
@@ -1136,6 +1266,61 @@ describe("the people picker", () => {
       </QueryClientProvider>,
     );
     expect(findAll("dialog input[type=checkbox]")).toHaveLength(0);
+  });
+
+  test("a failed Add seats pressed in the picker says why inside the picker, not behind it", async () => {
+    const r = rig({
+      session: async () => {
+        throw new BillingRefusedError("license_not_found", {}, 404);
+      },
+    });
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
+    await press("Assign seats", theCard());
+    for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
+    expect(text(find("dialog"))).toContain("2 of 3 fit: remove one or add seats.");
+    await press("Add seats", find("dialog"));
+    await flush();
+    expect(r.session).toHaveBeenCalledTimes(1);
+    expect(r.session).toHaveBeenCalledWith(workspaceScope(WS), { action: "add_seats", licenseId: "lic_call" });
+    // The one alert is in the dialog, which is where the person is looking.
+    const alerts = findAll('[role="alert"]');
+    expect(alerts.map((alert) => alert.textContent)).toEqual(["That license no longer exists. Reload the page."]);
+    expect(alerts[0]!.closest("dialog")).not.toBeNull();
+    // The choice is still there to act on, and the button can be pressed again.
+    expect(checkboxFor("Luis Ortega").checked).toBe(true);
+    expect(buttonNamed("Add seats", find("dialog")).hasAttribute("disabled")).toBe(false);
+    // Closing the dialog doesn't lose it: the card shows it.
+    await click(find('dialog button[aria-label="Close"]'));
+    const after = findAll('[role="alert"]');
+    expect(after.map((alert) => alert.textContent)).toEqual(["That license no longer exists. Reload the page."]);
+    expect(after[0]!.closest("dialog")).toBeNull();
+    expect(theCard().contains(after[0]!)).toBe(true);
+  });
+
+  test("a refusal of Add seats from the card's roster stays on the card, with nothing in the dialog", async () => {
+    const r = rig({
+      session: async () => {
+        throw new BillingRefusedError("license_not_found", {}, 404);
+      },
+    });
+    await mountCard(r, joined(coreLicense(3, [HANNAH, TOM, NOAH]), {}));
+    await press("Add seats", theCard());
+    await flush();
+    expect(findAll("dialog [role='alert']")).toHaveLength(0);
+    expect(find('[role="alert"]', theCard()).textContent).toBe("That license no longer exists. Reload the page.");
+  });
+
+  test("a blocked tab for Add seats pressed in the picker gives its link inside the picker", async () => {
+    const r = rig({ blocked: true });
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), { actions: [{ kind: "add_seats", fallbackLabel: "Add seats", returns: false }] }));
+    await press("Assign seats", theCard());
+    for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
+    await press("Add seats", find("dialog"));
+    await flush();
+    const links = findAll<HTMLAnchorElement>("a[data-hosted-page]");
+    expect(links).toHaveLength(1);
+    expect(links[0]!.closest("dialog")).not.toBeNull();
+    expect(links[0]!.getAttribute("href")).toBe(PAGE);
   });
 
   test("a full license says so, and offers nothing to assign", async () => {
