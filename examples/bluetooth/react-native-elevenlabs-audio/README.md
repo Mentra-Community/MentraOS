@@ -6,19 +6,23 @@ The ElevenLabs API key stays on your Mac. The app asks a local signing server fo
 
 ## Run On Android
 
-In MentraOS this example is a member of the `sdk/` Bun workspace, which links
-`@mentra/bluetooth-sdk` to the SDK source in `mobile/modules/bluetooth-sdk`.
-From the MentraOS root, install the workspace and build the SDK's config plugin:
+From the MentraOS root:
 
 ```bash
-cd sdk && bun install && cd ..
-(cd mobile/modules/bluetooth-sdk && bun run build:plugin)
-cd examples/bluetooth/react-native-elevenlabs-audio
+cd examples
+bun install
+cd bluetooth/react-native-elevenlabs-audio
 cp .env.example .env.local
 ```
 
-`metro.config.js` watches `mobile/modules`, `cloud-v2/packages`, and the `sdk/`
-workspace store so Metro can serve the SDK source.
+In MentraOS, this example builds against the SDK source. It is a member of the `examples/` Bun workspace
+([`examples/package.json`](../../package.json)), which links `@mentra/*`
+(`workspace:*`) to the SDK source in `mobile/modules` and `cloud-v2/packages`
+and keeps one Expo / React Native version for all the examples. Install from
+`examples/`; installing also runs the linked packages' `prepare` scripts, which
+build them.
+`metro.config.js` watches `examples/node_modules`, `mobile/modules` and
+`cloud-v2/packages` so Metro can serve the SDK source.
 
 Put your ElevenLabs API key in `.env.local`, then run:
 

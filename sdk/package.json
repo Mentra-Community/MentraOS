@@ -15,11 +15,7 @@
     "../mobile/modules/bluetooth-sdk",
     "../mobile/modules/acs-meeting",
     "../mobile/modules/glasses-media",
-    "../miniapps/*",
-    "../examples/oem-app",
-    "../examples/bluetooth/react-native",
-    "../examples/bluetooth/react-native-elevenlabs-audio",
-    "../examples/bluetooth/react-native-macos"
+    "../miniapps/*"
   ],
   "scripts": {
     "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",

@@ -24,5 +24,11 @@ target 'mentra-bluetooth-sdk-macos-example-macOS' do
 
   post_install do |installer|
     react_native_post_install(installer, '../node_modules/react-native-macos')
+    # Some pods (including their resource bundles) still declare macOS 11.0,
+    # which current Xcode rejects. Raise them to the app's deployment target.
+    (installer.pods_project.build_configurations + installer.pods_project.targets.flat_map(&:build_configurations)).each do |build_configuration|
+      target = build_configuration.build_settings['MACOSX_DEPLOYMENT_TARGET']
+      build_configuration.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '14.0' if target.nil? || target.to_f < 14.0
+    end
   end
 end

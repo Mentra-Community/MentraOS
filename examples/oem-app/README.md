@@ -32,15 +32,15 @@ can see each call's result or error without a Metro terminal attached.
 This app pulls in native code (via engine's bluetooth-sdk dependency), so
 **Expo Go cannot load it** — you need a development build on a physical phone.
 
-The app is a member of the `sdk/` Bun workspace, which links the `@mentra/*`
-packages to their source in this monorepo (`mobile/modules`,
-`cloud-v2/packages`). Install from the workspace root, not from this folder:
+The app is a member of the `examples/` Bun workspace
+([`examples/package.json`](../package.json)), which links the `@mentra/*`
+packages (`workspace:*`) to their source in this monorepo (`mobile/modules`,
+`cloud-v2/packages`). Install from `examples/`; installing runs the linked
+packages' `prepare` scripts, which build them:
 
 ```sh
 # from the MentraOS root
-cd sdk && bun install && cd ..
-(cd mobile/modules/bluetooth-sdk && bun run build)
-(cd mobile/modules/crust && bun run build)
+cd examples && bun install && cd ..
 (cd mobile/modules/engine && bun run build)
 cd examples/oem-app
 bunx expo prebuild

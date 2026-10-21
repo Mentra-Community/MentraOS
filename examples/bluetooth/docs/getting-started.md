@@ -148,7 +148,7 @@ bunx expo run:android
 
 The React Native starter example also includes `bun run android:dev`, which starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
 
-For unreleased SDK development, use the examples inside MentraOS (`examples/bluetooth`): they are members of its `sdk/` Bun workspace, so `@mentra/bluetooth-sdk` resolves to the SDK source, and the native Android and Apple examples reference the SDK source directly. Each example's README describes the setup.
+For unreleased SDK development, use the examples inside MentraOS (`examples/bluetooth`): the React Native examples are members of the `examples/` Bun workspace, which links `@mentra/bluetooth-sdk` to the SDK source, and the native Android and Apple examples reference the SDK source directly. Each example's README describes the setup.
 
 ## Permissions
 
@@ -390,8 +390,8 @@ cd <starter-kit-directory>
 ```
 
 Inside MentraOS, run the commands below from `examples/bluetooth`, and install
-the React Native examples' dependencies from the `sdk/` workspace instead of
-running `bun install` in the example; see the
+the React Native examples' dependencies once with `bun install` in `examples/`
+instead of in each example; see the
 [React Native example README](../react-native/README.md#install).
 
 Run one of:

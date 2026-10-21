@@ -25,8 +25,8 @@ on:
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
       - "examples/oem-app/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - ".github/workflows/oem-app-apk.yml"
   pull_request:
     paths:
@@ -100,7 +100,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/oem-app/app.json', 'sdk/bun.lock') }}
+          key: gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/oem-app/app.json', 'examples/bun.lock') }}
           restore-keys: |
             gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
             gradle-oem-${{ runner.environment }}-${{ runner.os }}-
@@ -109,21 +109,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-oem-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('sdk/bun.lock') }}
+          key: bun-oem-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('examples/bun.lock') }}
           restore-keys: |
             bun-oem-${{ runner.environment }}-${{ runner.os }}-
 
-      - name: Install SDK workspace
-        working-directory: sdk
+      - name: Install the examples workspace
+        # The workspace links the @mentra packages to their source; installing
+        # runs their prepare scripts, which build bluetooth-sdk, crust,
+        # acs-meeting and miniapp.
+        working-directory: examples
         run: bun install --frozen-lockfile
-
-      - name: Build bluetooth-sdk
-        working-directory: mobile/modules/bluetooth-sdk
-        run: bun run build
-
-      - name: Build crust
-        working-directory: mobile/modules/crust
-        run: bun run build
 
       - name: Build engine
         working-directory: mobile/modules/engine

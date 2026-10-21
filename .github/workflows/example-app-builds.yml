@@ -1,9 +1,10 @@
 name: Example App Builds
 
 # Builds the integrator examples in examples/ against the SDK source in this
-# repository: no published packages, no version pins. Each React Native
-# example is a member of the sdk/ Bun workspace, so @mentra/* resolve to
-# mobile/modules and cloud-v2/packages. The native Android example includes
+# repository: no published packages, no version pins. The React Native
+# examples are members of the examples/ Bun workspace, which links @mentra/*
+# to mobile/modules and cloud-v2/packages; installing it runs those packages'
+# prepare scripts, which build them. The native Android example includes
 # mobile/modules/bluetooth-sdk/android as a Gradle composite build, and the
 # Apple examples use mobile/modules/bluetooth-sdk as a local Swift package.
 # The engine example (examples/oem-app) has its own gates: oem-host-gate.yml
@@ -13,6 +14,8 @@ name: Example App Builds
   pull_request:
     paths:
       - "examples/bluetooth/**"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/engine/**"
       - "mobile/modules/crust/**"
@@ -21,14 +24,14 @@ name: Example App Builds
       - "mobile/modules/miniapp/**"
       - "cloud-v2/packages/protocol/**"
       - "cloud-v2/packages/cloud-client/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
       - ".github/workflows/example-app-builds.yml"
   push:
     branches:
       - dev
     paths:
       - "examples/bluetooth/**"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/engine/**"
       - "mobile/modules/crust/**"
@@ -37,8 +40,6 @@ name: Example App Builds
       - "mobile/modules/miniapp/**"
       - "cloud-v2/packages/protocol/**"
       - "cloud-v2/packages/cloud-client/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
       - ".github/workflows/example-app-builds.yml"
   workflow_dispatch:
 
@@ -140,17 +141,15 @@ jobs:
           path: examples/bluetooth/react-native/.gstreamer/Android.sdk
           key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
 
-      - name: Install the sdk/ workspace
-        # The sdk postinstall builds @mentra/miniapp, which Engine imports.
-        working-directory: sdk
+      - name: Install the examples workspace
+        # Also builds the linked SDK packages through their prepare scripts.
+        working-directory: examples
         run: bun install --frozen-lockfile
 
-      - name: Build SDK types and config plugin
-        run: |
-          set -euo pipefail
-          (cd mobile/modules/bluetooth-sdk && bun run build && bun run build:plugin)
-          (cd mobile/modules/crust && bun run build)
-          (cd mobile/modules/engine && bun run build)
+      - name: Build Engine types
+        # Engine has no prepare script; tsc reads its build/*.d.ts.
+        working-directory: mobile/modules/engine
+        run: bun run build
 
       - name: Type check TypeScript
         working-directory: examples/bluetooth/react-native
@@ -218,15 +217,10 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      - name: Install the sdk/ workspace
-        working-directory: sdk
+      - name: Install the examples workspace
+        # Also builds the linked SDK packages through their prepare scripts.
+        working-directory: examples
         run: bun install --frozen-lockfile
-
-      - name: Build SDK types and config plugin
-        working-directory: mobile/modules/bluetooth-sdk
-        run: |
-          bun run build
-          bun run build:plugin
 
       - name: Type check TypeScript
         working-directory: examples/bluetooth/react-native-elevenlabs-audio
@@ -348,13 +342,10 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      - name: Install the sdk/ workspace
-        working-directory: sdk
+      - name: Install the examples workspace
+        # Also builds the linked SDK packages through their prepare scripts.
+        working-directory: examples
         run: bun install --frozen-lockfile
-
-      - name: Build SDK types
-        working-directory: mobile/modules/bluetooth-sdk
-        run: bun run build
 
       - name: Type check TypeScript
         working-directory: examples/bluetooth/react-native-macos

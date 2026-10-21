@@ -1,0 +1,18 @@
+{
+  "private": true,
+  "workspaces": [
+    "oem-app",
+    "bluetooth/react-native",
+    "bluetooth/react-native-elevenlabs-audio",
+    "bluetooth/react-native-macos",
+    "../mobile/modules/bluetooth-sdk",
+    "../mobile/modules/engine",
+    "../mobile/modules/crust",
+    "../mobile/modules/jspolyfill",
+    "../mobile/modules/acs-meeting",
+    "../mobile/modules/glasses-media",
+    "../mobile/modules/miniapp",
+    "../cloud-v2/packages/cloud-client",
+    "../cloud-v2/packages/protocol"
+  ]
+}

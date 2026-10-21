@@ -16,31 +16,34 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 
 ## Install
 
-In MentraOS this example is a member of the `sdk/` Bun workspace, which links
-`@mentra/bluetooth-sdk`, `@mentra/engine` and Engine's `@mentra/*` dependencies
-to their source in `mobile/modules` and `cloud-v2/packages`. From the MentraOS
-root, install the workspace and build the SDK's config plugin:
+From the MentraOS root:
 
 ```bash
-cd sdk && bun install && cd ..
-(cd mobile/modules/bluetooth-sdk && bun run build:plugin)
-cd examples/bluetooth/react-native
+cd examples
+bun install
+cd bluetooth/react-native
 ```
 
-The `sdk/` postinstall builds `@mentra/miniapp`, which Engine imports. To type
-check, first build the declarations the example's imports resolve to:
+In MentraOS, this example builds against the SDK source. It is a member of the `examples/` Bun workspace
+([`examples/package.json`](../../package.json)), which links `@mentra/*`
+(`workspace:*`) to the SDK source in `mobile/modules` and `cloud-v2/packages`
+and keeps one Expo / React Native version for all the examples. Install from
+`examples/`; installing also runs the linked packages' `prepare` scripts, which
+build them.
+The linked packages here are `@mentra/bluetooth-sdk`, `@mentra/engine` and
+Engine's `@mentra/*` dependencies.
+
+To type check, also build Engine's declarations, which the example's imports
+resolve to:
 
 ```bash
-(cd ../../../mobile/modules/bluetooth-sdk && bun run build)
-(cd ../../../mobile/modules/crust && bun run build)
 (cd ../../../mobile/modules/engine && bun run build)
 bunx tsc --noEmit
 ```
 
-Metro and the native builds use the SDK source directly; the type declarations
-are only for `tsc`. `metro.config.js` watches `mobile/modules`,
-`cloud-v2/packages`, and the `sdk/` workspace store so Metro can serve those
-files, and resolves React, React Native and Expo to the app's own copies.
+Metro and the native builds use the SDK source directly. `metro.config.js`
+watches `examples/node_modules`, `mobile/modules` and `cloud-v2/packages` so Metro can serve those files,
+and resolves React, React Native and Expo to the app's own copies.
 
 `app.config.js` enables the ACS native build plugin when the installed Engine
 includes ACS. It uses Engine's exact dependency for Android desugaring and iOS

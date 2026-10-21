@@ -7,33 +7,35 @@ via TestFlight.
 ## Requirements
 
 - macOS 14+, Xcode, CocoaPods, Node 20.19.4+ and Bun 1.4.
-- React Native macOS 0.81.9, React Native 0.81.6, React 19.1.4 and Expo SDK 54
-  are pinned as a compatible host set, separately from the phone example.
+- React Native macOS 0.83.0 with React Native 0.83.6, React 19.2.0 and Expo SDK
+  55, the same React Native and Expo versions as the phone examples.
 - A Bluetooth-capable Mac for real device testing.
 
-Microsoft's Expo Modules integration is experimental. Do not replace these
-host dependencies with the phone example's newer Expo/React Native versions.
+Microsoft's Expo Modules integration is experimental. Keep
+`react-native-macos` on the release line matching the `react-native` version.
 
 ## Run
 
-In MentraOS this example is a member of the `sdk/` Bun workspace, which links
-`@mentra/bluetooth-sdk` to the SDK source in `mobile/modules/bluetooth-sdk`.
-From the MentraOS root, install the workspace, build the SDK's type
-declarations, then install pods and run:
+From the MentraOS root:
 
 ```bash
-cd sdk && bun install && cd ..
-(cd mobile/modules/bluetooth-sdk && bun run build)
-cd examples/bluetooth/react-native-macos
-cd macos
+cd examples
+bun install
+cd bluetooth/react-native-macos/macos
 pod install
 cd ..
 bun run macos
 ```
 
+In MentraOS, this example builds against the SDK source. It is a member of the `examples/` Bun workspace
+([`examples/package.json`](../../package.json)), which links `@mentra/*`
+(`workspace:*`) to the SDK source in `mobile/modules` and `cloud-v2/packages`
+and keeps one Expo / React Native version for all the examples. Install from
+`examples/`; installing also runs the linked packages' `prepare` scripts, which
+build them.
 Metro, TypeScript, and CocoaPods all resolve the SDK from that source folder.
-`metro.config.js` watches `mobile/modules`, `cloud-v2/packages`, and the `sdk/`
-workspace store so Metro can serve those files.
+`metro.config.js` watches `examples/node_modules`, `mobile/modules` and
+`cloud-v2/packages` so Metro can serve those files.
 
 To run Metro separately:
 
@@ -73,7 +75,7 @@ integration, see [`../macos`](../macos/README.md).
 ## Pull Request CI
 
 The `React Native macOS example` job in MentraOS's `Example App Builds`
-workflow installs the `sdk/` workspace, type checks the sample against the SDK
+workflow installs the `examples/` workspace, type checks the sample against the SDK
 source, installs CocoaPods, and builds the native app in Release mode. It also
 verifies that the resulting app contains `main.jsbundle`; no running Metro
 server is needed. It does not upload a Mac app or use release signing keys.

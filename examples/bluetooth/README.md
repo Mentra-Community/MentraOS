@@ -26,7 +26,7 @@ checkout, with no published packages and no version pins:
 | --- | --- |
 | `android` | Gradle composite build of `mobile/modules/bluetooth-sdk/android`, substituted for `com.mentraglass:bluetooth-sdk` |
 | `ios`, `macos` | Local Swift package `mobile/modules/bluetooth-sdk` |
-| `react-native`, `react-native-elevenlabs-audio`, `react-native-macos` | Members of the `sdk/` Bun workspace; `@mentra/*` are workspace links to `mobile/modules` and `cloud-v2/packages` |
+| `react-native`, `react-native-elevenlabs-audio`, `react-native-macos` | Members of the `examples/` Bun workspace; `@mentra/*` are `workspace:*` links to `mobile/modules` and `cloud-v2/packages` |
 
 Paths in this folder's docs are relative to the Starter Kit root, which is
 `examples/bluetooth` in MentraOS. The `Example App Builds` workflow in MentraOS

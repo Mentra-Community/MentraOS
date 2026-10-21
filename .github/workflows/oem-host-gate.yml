@@ -21,8 +21,8 @@ on:
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
       - "examples/oem-app/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
   push:
     branches:
@@ -35,8 +35,8 @@ on:
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
       - "examples/oem-app/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
   workflow_dispatch:
 
@@ -63,23 +63,12 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install SDK workspace
-        working-directory: sdk
-        # The sdk postinstall builds @mentra/miniapp, whose types engine's
-        # build imports — let it run.
+      - name: Install the examples workspace
+        # The workspace links the @mentra packages to their source; installing
+        # runs their prepare scripts, which build the bluetooth-sdk, crust and
+        # miniapp types that engine's build imports.
+        working-directory: examples
         run: bun install --frozen-lockfile
-
-      - name: Build bluetooth-sdk types
-        # engine's public entry re-exports event types from
-        # @mentra/bluetooth-sdk, so its build/*.d.ts must exist first.
-        working-directory: mobile/modules/bluetooth-sdk
-        run: bun run build
-
-      - name: Build crust types
-        # engine's services import @mentra/crust, whose types point at its
-        # build output.
-        working-directory: mobile/modules/crust
-        run: bun run build
 
       - name: Build engine public types
         working-directory: mobile/modules/engine

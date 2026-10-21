@@ -28,16 +28,16 @@ const appPackageRoots = Object.fromEntries(
 const config = getDefaultConfig(projectRoot);
 const defaultResolveRequest = config.resolver.resolveRequest;
 
-// Inside MentraOS, @mentra/bluetooth-sdk, @mentra/engine and their @mentra
-// dependencies are Bun workspace links to the SDK source in mobile/modules and
-// cloud-v2/packages, and their npm dependencies live in the sdk/ workspace
-// store. Metro only serves files inside watched folders, so watch those trees.
-// In a standalone copy of this example every package is under node_modules.
+// Inside MentraOS this app is a member of the examples/ Bun workspace, which
+// links the @mentra packages to the SDK source in mobile/modules and
+// cloud-v2/packages and keeps npm packages in examples/node_modules. Metro
+// only serves files inside watched folders, so watch those trees. In a
+// standalone copy of this example every package is under its node_modules.
 const repoRoot = path.resolve(projectRoot, "..", "..", "..");
 const sourceFolders = [
+  path.join(repoRoot, "examples", "node_modules"),
   path.join(repoRoot, "mobile", "modules"),
   path.join(repoRoot, "cloud-v2", "packages"),
-  path.join(repoRoot, "sdk", "node_modules"),
 ];
 if (fs.existsSync(path.join(repoRoot, "mobile", "modules", "bluetooth-sdk"))) {
   config.watchFolders = Array.from(

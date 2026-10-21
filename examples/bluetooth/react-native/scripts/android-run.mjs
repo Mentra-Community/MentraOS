@@ -107,12 +107,8 @@ function applyFastGradleDefaults() {
 const target = resolveAndroidPhoneTarget()
 const expoDevice = expoDeviceName(target)
 
-// Inside MentraOS this example is a member of the sdk/ Bun workspace, which
-// links @mentra/* to the SDK source; install from that workspace root.
-const mentraOsWorkspace = path.resolve(projectRoot, "../../../sdk")
-const installRoot = fs.existsSync(path.join(mentraOsWorkspace, "package.json")) ? mentraOsWorkspace : projectRoot
-console.log(`Installing dependencies in ${installRoot}...`)
-run("bun", ["install"], {cwd: installRoot})
+console.log("Installing dependencies...")
+run("bun", ["install"], {cwd: projectRoot})
 
 const sdkRoot = fs.realpathSync(
   path.dirname(output("node", ["--print", "require.resolve('@mentra/bluetooth-sdk/package.json')"]).trim()),
