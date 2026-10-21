@@ -1133,7 +1133,7 @@ async function candidatePrecheckFixture() {
     async recordCandidateReturn(_id,p,r){original.fleetCandidatePreparation!.returnReceipt=structuredClone(r);return true},
     async recordCandidateNoAcquisition(_id,p,r){original.fleetCandidatePreparation!.noAcquisitionReceipt=structuredClone(r);return true}}
   const service=new ResourceReservationsService(repo,()=>time,(id,owned)=>jobsService.qualificationTargets(id,owned))
-  return {observed,original,row,intent,digest,writes,service,jobsService,
+  return {observed,original,row,intent,digest,writes,repo,service,jobsService,
     ended(){time+=1;row.sequence++;row.snapshot.sequence=row.sequence;row.snapshot.observedAt=new Date(time).toISOString();row.receivedAt=new Date(time)
       const j=row.snapshot.resourceReservations!.resourceChecks![0]!;j.state='never-began';j.eventId='actual-never-began';j.observedAt=row.snapshot.observedAt;return j},
     publish(){Object.assign(observed,structuredClone(row.snapshot),{receivedAt:row.receivedAt.toISOString(),authorityReservations:structuredClone(row.resourceReservations)})},
@@ -1169,4 +1169,61 @@ test('committed never-began candidate settles only after original claim return A
   ]){const p=structuredClone(saved);mutate(p);expect(candidateSettlement(p,f.observed,[],now+1)).toBeUndefined()}
   const originalJournal=f.observed.resourceReservations!.resourceChecks![0]!
   f.observed.resourceReservations!.resourceChecks![0]={...originalJournal,state:'began'};expect(candidateSettlement(saved,f.observed,[],now+1)).toBeUndefined()
+})
+
+test('candidate target checkpoint survives a lost host CAS or interrupted writer and settles only exact acknowledged no-start',async()=>{
+  for(const outcome of ['manual-cas-wins','writer-interrupted'] as const) {
+    const f=await candidatePrecheckFixture(),identity={job:f.original.requestId,input:f.original.fleetInputSha256,
+      selection:structuredClone(f.original.fleetSelection),deadline:f.original.fleetDeadline.toISOString()},replace=f.repo.replace.bind(f.repo)
+    const checkpoint=spyOn(TestRequestModel.collection,'findOneAndUpdate').mockImplementation((async(filter:Record<string,unknown>,update:{$set:Record<string,unknown>})=>{
+      expect(filter.requestId).toBe(f.original.requestId);expect(filter.fleetCandidatePreparation).toEqual(f.original.fleetCandidatePreparation)
+      expect(filter.state).toBe('awaiting-runner');expect(filter.fleetBinding).toEqual({$exists:false})
+      expect(filter.fleetResourceAdmission).toEqual({$exists:false});expect(filter.fleetCancellation).toEqual({$exists:false})
+      expect(filter.fleetDeadline).toEqual({$gt:new Date(now)})
+      f.original.fleetCandidatePreparation!.backendTarget=structuredClone(update.$set['fleetCandidatePreparation.backendTarget']) as FleetCandidatePreparation['backendTarget']
+      return structuredClone(f.original)
+    }) as never)
+    let claimAttempts=0
+    f.repo.replaceBackend=resourceReservationRepository.replaceBackend!
+    f.repo.replace=async(previous,claims)=>{
+      if(claims.length) {
+        claimAttempts++
+        if(outcome==='writer-interrupted')throw Error('Original host writer interrupted after target checkpoint')
+        f.row.laneControlVersion!++
+        f.row.laneControls=[{command:{operationId:'721f7bb2-1210-45b8-9a64-95c513733210',hostId:'mini',operatorId:hash,
+          subject:{resourceId:'phone',subjectGeneration:2},expiresAt:now+120000,action:'reserve',purpose:'Earlier operator authority wins claim CAS'}}]
+      }
+      return replace(previous,claims)
+    }
+    try {
+      if(outcome==='writer-interrupted')await expect(f.service.acquire(f.intent,'mini')).rejects.toThrow('Original host writer interrupted')
+      else expect((await f.service.acquire(f.intent,'mini')).status).toBe('unknown')
+      expect(claimAttempts).toBe(1);expect(checkpoint).toHaveBeenCalledTimes(1)
+      expect(f.original.fleetCandidatePreparation!.backendTarget).toEqual(f.intent.prerequisite!.target)
+      expect(f.original.fleetCandidatePreparation!.claimReceipt).toBeUndefined();expect(f.original.fleetCandidatePreparation!.returnReceipt).toBeUndefined()
+      expect(f.row.resourceReservations).toEqual([]);expect(f.writes).toEqual([])
+      f.ended();f.publish();f.observed.resourceReservations!.candidatePrerequisites=[f.unknownReceipt()]
+      expect(candidateSettlement(f.original.fleetCandidatePreparation!,f.observed,[],now+1)).toBeUndefined()
+      // A reconstructed service observes the same immutable intent; it never repeats acquire.
+      const restarted=new ResourceReservationsService(f.repo,()=>now+1),response=await restarted.observe({intent:f.intent,
+        controller:{incarnation:'controller',generation:1,sequence:f.row.sequence}},'mini')
+      expect(response.status).toBe('not-acquired');expect(claimAttempts).toBe(1);expect(f.writes).toEqual([[]])
+      f.publish();f.observed.resourceReservations!.candidatePrerequisites=[f.unknownReceipt()]
+      const saved=structuredClone(f.original.fleetCandidatePreparation!),settled=candidateSettlement(saved,f.observed,[],now+1)
+      expect(settled?.outcome).toBe('unknown')
+      for(const change of [
+        (p:FleetCandidatePreparation)=>{p.backendTarget={...p.backendTarget!,coreUrl:'https://other.dev.mentraglass.com'}},
+        (p:FleetCandidatePreparation)=>{delete p.noAcquisitionReceipt},
+        (p:FleetCandidatePreparation)=>{p.claimReceipt={unexpected:'unacknowledged claim'}},
+        (p:FleetCandidatePreparation)=>{p.returnReceipt={unexpected:'unacknowledged return'}},
+      ]){const p=structuredClone(saved);change(p);expect(candidateSettlement(p,f.observed,[],now+1)).toBeUndefined()}
+      const producer=f.observed.resourceReservations!.candidatePrerequisites;f.observed.resourceReservations!.candidatePrerequisites=[]
+      expect(candidateSettlement(saved,f.observed,[],now+1)).toBeUndefined();f.observed.resourceReservations!.candidatePrerequisites=producer
+      f.original.fleetCandidatePreparations=[{...saved,settlement:settled}];delete f.original.fleetCandidatePreparation
+      expect(completedCandidatePreparationForHost(f.original,'mini')).toBe(true);expect(completedCandidatePreparationForHost(f.original,'foreign')).toBe(false)
+      expect(f.original.fleetBinding).toBeUndefined();expect(f.original.fleetResourceAdmission).toBeUndefined()
+      expect({job:f.original.requestId,input:f.original.fleetInputSha256,selection:f.original.fleetSelection,
+        deadline:f.original.fleetDeadline.toISOString()}).toEqual(identity)
+    } finally {checkpoint.mockRestore()}
+  }
 })

@@ -58,7 +58,8 @@ export function candidateNeverBegan(pending: FleetCandidatePreparation, journal:
   const parsed = z.object({intent: exclusiveResourceIntentSchema, journal: z.unknown(), observation: z.object({status: z.literal('not-acquired'), intentSha256: z.string(),
     claims: z.array(z.unknown()).length(0), fence: z.object({hostId:z.string(),resourceId:z.string(),resourceReservationVersion:z.number().int().positive(),
       subjectGeneration:z.number().int().nonnegative(),controller:z.object({incarnation:z.string(),generation:z.number().int().positive(),sequence:z.number().int().nonnegative()}).strict()}).strict()}).strict()}).strict().safeParse(pending.noAcquisitionReceipt)
-  return Boolean(parsed.success && !pending.backendTarget && isDeepStrictEqual(parsed.data.journal, journal) && isDeepStrictEqual(parsed.data.intent, journal.intent) &&
+  return Boolean(parsed.success && (pending.backendTarget === undefined || isDeepStrictEqual(pending.backendTarget, journal.intent.prerequisite.target)) &&
+    isDeepStrictEqual(parsed.data.journal, journal) && isDeepStrictEqual(parsed.data.intent, journal.intent) &&
     parsed.data.observation.intentSha256 === journal.intentSha256 && parsed.data.observation.fence.hostId === pending.hostId &&
     parsed.data.observation.fence.resourceId === journal.resourceId && parsed.data.observation.fence.controller.incarnation === pending.candidate.controller.incarnation &&
     parsed.data.observation.fence.controller.generation === pending.candidate.controller.generation &&
