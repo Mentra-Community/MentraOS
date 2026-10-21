@@ -1,9 +1,10 @@
 import {useState, useEffect} from "react"
-import {View, Platform, Pressable, Alert, TextInput, ViewStyle, TextStyle} from "react-native"
+import {View, Platform, Pressable, TextInput, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
 
 type NumberSettingProps = {
   label: string
@@ -91,7 +92,7 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
 
     const numValue = parseFloat(localValue)
     if (isNaN(numValue)) {
-      Alert.alert("Invalid Input", "Please enter a valid number.")
+      showAlert("Invalid Input", "Please enter a valid number.")
       setLocalValue(value.toString())
       setIsEditing(false)
       return
