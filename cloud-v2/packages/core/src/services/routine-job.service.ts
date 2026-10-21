@@ -215,7 +215,7 @@ export const routineJobRepository: RoutineJobRepository = {
     if (rows.length > 1000) throw new TestRunError(503, 'Selected lane inventory exceeds its bounded routing read');
     return rows.map(row => {
       const requestId = frameworkIdentitySchema.parse(row.requestId), admission = fleetResourceAdmissionSchema.parse(row.fleetResourceAdmission);
-      if (admission.intent.owner.kind !== 'run' || admission.intent.owner.id !== requestId)
+      if (admission.intent.owner.kind !== 'run' || admission.intent.owner.id !== requestId || !admission.intent.laneId)
         throw new TestRunError(503, 'Selected lane inventory has inconsistent request identity');
       return {requestId, hostId: admission.intent.hostId, laneId: admission.intent.laneId};
     });

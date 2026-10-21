@@ -164,13 +164,14 @@ function projectFleetResourceAuthorities(rows:ResourceLifecycleRow[],subjects:Re
         owner:claim?{...claim.owner,generation:null,hostId:claim.borrowerHostId,laneId:claim.laneId}:null,
         idle:{contractVersion:'not-commissioned',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'unqualified'},evidenceRefs:[]},
         repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'exclusive-dependency',capabilities:[...offer.capabilities],memberships:[],dependencies:[],placement:'fleet'}};
-      if (claim?.prerequisite && existing >= 0) {
+      if ((claim?.prerequisite || claim?.resourceCheck) && existing >= 0) {
         const phone = subjects[existing]!;
         // The raw claim fences this installed phone. Preserve its real local generation and idle/repair semantics.
         Object.assign(value, {...phone, status: 'reserved', supportedActions: [],
           owner: phone.owner?.id === claim.owner.id && phone.owner.kind === claim.owner.kind ? phone.owner :
             {...claim.owner, generation: null, hostId: claim.borrowerHostId, laneId: claim.laneId},
-          reason: {code: 'retained-backend-prerequisite', message: 'The original phone prerequisite claim remains retained until its resource-check return is accepted.'}});
+          reason: claim.prerequisite ? {code: 'retained-backend-prerequisite', message: 'The original phone prerequisite claim remains retained until its resource-check return is accepted.'} :
+            {code: 'retained-resource-check', message: 'The original resource check remains held until its return is accepted.'}});
       }
       if(existing>=0) subjects[existing]=value;else subjects.push(value);
     }

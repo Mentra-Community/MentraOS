@@ -62,7 +62,7 @@ function dependencyEnrolled(host: ResourceReservationHost, dependency: Exclusive
     resource.capabilities?.includes(dependency.capability)) || host.snapshot.lanes.some(lane=>lane.resources.some(resource=>
       resource.exclusiveDependencies?.some(value=>value.resourceId===dependency.resourceId && value.authorityHostId===host.hostId))));
 }
-export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId: string; owner: ExclusiveHostReservation['owner']}
+export type ExclusiveResourceBlocker = {resourceId: string; hostId: string; laneId?: string; owner: ExclusiveHostReservation['owner']}
 export interface ResourceReservationRepository {
   get(hostId: string): Promise<ResourceReservationHost | null>
   replace(host: ResourceReservationHost, claims: HostResourceReservation[]): Promise<boolean>
@@ -72,6 +72,7 @@ export interface ResourceReservationRepository {
   stageBackend?(requestId: string, digest: string, admission: FleetResourceAdmission, host: ResourceReservationHost, now: Date): Promise<StoredRoutineJob | null>
   recordCandidateReturn?(requestId: string, pending: NonNullable<StoredRoutineJob['fleetCandidatePreparation']>, returned: unknown): Promise<boolean>
   recordCandidateClaim?(requestId: string, pending: NonNullable<StoredRoutineJob['fleetCandidatePreparation']>, claim: ExclusiveHostReservation): Promise<boolean>
+  recordCandidateNoAcquisition?(requestId: string, pending: NonNullable<StoredRoutineJob['fleetCandidatePreparation']>, receipt: {intent: ExclusiveResourceIntent; journal: unknown; observation: unknown}): Promise<boolean>
   replaceBackend?(host: ResourceReservationHost, claims: HostResourceReservation[], intent: ExclusiveResourceIntent, now: Date): Promise<boolean>
   claimedHosts?(requestId: string): Promise<ResourceReservationHost[]>
   recorderClaims?(requestId: string): Promise<RecorderHostReservation[]>
@@ -160,7 +161,7 @@ export const resourceReservationRepository: ResourceReservationRepository = {
   async stageBackend(requestId, digest, fleetResourceAdmission, host, now) {
     const original = await this.request!(requestId), claims = await this.recorderClaims!(requestId),
       current = await this.get(host.hostId), laneId = fleetResourceAdmission.intent.laneId
-    if (!current || !backendRecorderClaimMatches(claims, requestId, digest, host.hostId, laneId) ||
+    if (!laneId || !current || !backendRecorderClaimMatches(claims, requestId, digest, host.hostId, laneId) ||
       current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration || current.sequence !== host.sequence ||
       !hostResourceReservationsSchema.parse(current.resourceReservations ?? []).some(claim => isDeepStrictEqual(claim, claims[0])) ||
       hasBackendProbe(hostResourceReservationsSchema.parse(current.resourceReservations ?? []), host.hostId, laneId) ||
@@ -195,6 +196,18 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
       fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}},
       {$set: {'fleetCandidatePreparation.returnReceipt': returned}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}));
+  },
+  async recordCandidateNoAcquisition(requestId, pending, receipt) {
+    if (pending.noAcquisitionReceipt) {
+      const previous = pending.noAcquisitionReceipt as {intent?: unknown; journal?: unknown}
+      return isDeepStrictEqual(previous.intent, receipt.intent) && isDeepStrictEqual(previous.journal, receipt.journal)
+    }
+    if (pending.claimReceipt || pending.returnReceipt || !receipt.intent.prerequisite?.candidate ||
+      !isDeepStrictEqual(receipt.intent.prerequisite.candidate, pending.candidate) || receipt.intent.hostId !== pending.hostId ||
+      receipt.intent.laneId !== pending.laneId || receipt.intent.inputSha256 !== pending.targetInputSha256) return false
+    return Boolean(await TestRequestModel.collection.findOneAndUpdate({requestId, fleetCandidatePreparation: pending,
+      fleetBinding: {$exists: false}, fleetResourceAdmission: {$exists: false}},
+      {$set: {'fleetCandidatePreparation.noAcquisitionReceipt': receipt}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}))
   },
   async recordCandidateClaim(requestId, pending, claim) {
     if (pending.claimReceipt) return isDeepStrictEqual(pending.claimReceipt, claim);
@@ -250,7 +263,7 @@ const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIn
 /** The authority is the existing host resource row. No lease expires merely because a controller stops reporting. */
 export class ResourceReservationsService {
   constructor(private rows: ResourceReservationRepository = resourceReservationRepository, private now = Date.now,
-    private qualificationTargets: (hostId: string, owned: OwnedRoutineQualification) => Promise<RoutineQualificationTarget[]> =
+    private qualificationTargets: (hostId: string, owned?: OwnedRoutineQualification) => Promise<RoutineQualificationTarget[]> =
       async (hostId, owned) => {const {RoutineJobService} = await import('./routine-job.service');
         return new RoutineJobService().qualificationTargets(hostId, owned)}) {}
   private async host(hostId: string) {
@@ -397,8 +410,12 @@ export class ResourceReservationsService {
   async acquire(value: unknown, hostId: string) {
     const intent = exclusiveResourceIntentSchema.parse(value)
     if (intent.hostId !== hostId) throw new TestRunError(409, 'Resource intent differs from authenticated controller')
+    if (intent.resourceCheck) return this.acquireResourceCheck(intent, hostId)
     if (intent.prerequisite) return this.acquireBackendPrerequisite(intent, hostId)
     const borrower = await this.host(hostId)
+    if (borrower.snapshot.resourceReservations?.resourceChecks !== undefined && intent.owner.kind === 'boundary-cleanup' &&
+      intent.resources.some(resource => resource.capabilities.includes('resource-idle')))
+      throw new TestRunError(409, 'New automatic resource checks require their frozen precheck authority')
     if (!fresh(borrower, this.now()) || borrower.incarnation !== intent.controller.incarnation ||
       borrower.incarnationGeneration !== intent.controller.generation || borrower.sequence !== intent.controller.sequence)
       throw new TestRunError(409, 'Resource reservation requires the current reporting controller observation')
@@ -444,6 +461,7 @@ export class ResourceReservationsService {
       input.controller.generation < intent.controller.generation ||
       input.controller.generation === intent.controller.generation && input.controller.incarnation !== intent.controller.incarnation)
       throw new TestRunError(409, 'Original claim observation requires the current reporting controller')
+    if (intent.resourceCheck) return this.observeResourceCheck(intent, borrower, input.controller)
     if (intent.prerequisite) {
       const intentSha256 = this.backendIntentDigest(intent), all = hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []),
         claims = all.filter(isExclusiveHostReservation).filter(claim => claim.resourceId === intent.prerequisite!.resourceId),
@@ -521,7 +539,11 @@ export class ResourceReservationsService {
       {status: 'reserved' as const, intentSha256: reservation.intentSha256, claims: reservation.claims} : unknown
   }
   async giveBack(value: unknown, hostId: string) {
-    const returned = exclusiveResourceReturnSchema.parse(value), borrower = await this.host(hostId)
+    const returned = exclusiveResourceReturnSchema.parse(value), borrower = await this.host(hostId), release = returned.release
+    if ('kind' in release && (release.kind === 'resource-check-not-started' ||
+      borrower.snapshot.resourceReservations?.resourceChecks?.some(journal => journal.operationId === release.operationId &&
+        journal.intentSha256 === returned.intentSha256)))
+      return this.giveBackResourceCheck(returned, borrower, hostId)
     if ('kind' in returned.release) return this.giveBackBackendPrerequisite(returned, borrower, hostId)
     const lane = borrower.snapshot.lanes.find(value => value.id === returned.laneId), releasedAt = Date.parse(returned.release.releasedAt)
     if (!fresh(borrower, this.now()) || borrower.incarnation !== returned.controller.incarnation ||
@@ -543,8 +565,17 @@ export class ResourceReservationsService {
       if (!claim) {
         return {status: 'returned' as const, claimId: returned.claimId}
       }
+      const independent = claim.resourceCheck && !claim.laneId && !claim.prerequisite,
+        subject = borrower.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === claim.resourceId),
+        ref = borrower.snapshot.resources?.find(value => value.id === claim.resourceId), checkedAt = Date.parse(subject?.idle.checkedAt ?? '')
+      const installed = ref ?? borrower.snapshot.lanes.find(value => value.id === claim.laneId)?.resources.find(value => value.id === claim.resourceId)
+      if (claim.resourceCheck && (!installed?.idleContract || !subject?.current || subject.subject.authorityHostId !== hostId || independent && subject.resource.memberships.length ||
+        subject.owner !== null || subject.status !== 'idle' || subject.idle.outcome !== 'passed' || subject.idle.acceptedCheck?.subjectGeneration !== subject.generation ||
+        subject.idle.qualifiedScope.kind === 'unqualified' || !Number.isFinite(checkedAt) || checkedAt > this.now() ||
+        this.now() - checkedAt > installed.idleContract.maximumAgeMs || checkedAt < Date.parse(claim.reservedAt)))
+        throw new TestRunError(409, 'Independent resource return lacks its exact fresh normal baseline')
       if (claim.prerequisite || claim.id !== returned.claimId || claim.intentSha256 !== returned.intentSha256 || claim.inputSha256 !== returned.inputSha256 ||
-        claim.borrowerHostId !== hostId || claim.laneId !== returned.laneId || !isDeepStrictEqual(claim.owner, returned.originalOwner) ||
+        claim.borrowerHostId !== hostId || !independent && claim.laneId !== returned.laneId || !isDeepStrictEqual(claim.owner, returned.originalOwner) ||
         returned.release.neverStarted && claim.operationId !== `run:${returned.release.neverStarted.requestId}` ||
         releasedAt < Date.parse(claim.reservedAt) || returned.controller.generation < claim.controllerGeneration ||
         returned.controller.generation === claim.controllerGeneration && (returned.controller.incarnation !== claim.controllerIncarnation ||
@@ -573,6 +604,187 @@ export class ResourceReservationsService {
     return requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation, generation: intent.controller.generation},
       dependencies: [{resourceId: intent.prerequisite!.resourceId, authorityHostId: intent.hostId, capability: 'backend-connectivity'}]})
   }
+  private resourceCheckIntentDigest(intent: ExclusiveResourceIntent) {
+    return requestInputDigest({...intent, controller: {incarnation: intent.controller.incarnation, generation: intent.controller.generation},
+      dependencies: [{resourceId: intent.resourceCheck!.resourceId, authorityHostId: intent.hostId,
+        capability: intent.prerequisite ? 'backend-connectivity' : 'resource-idle'}]})
+  }
+  private resourceCheckClaimMatches(claim: ExclusiveHostReservation, intent: ExclusiveResourceIntent, digest: string) {
+    return claim.intentSha256 === digest && claim.operationId === intent.operationId && claim.inputSha256 === intent.inputSha256 &&
+      claim.authorityHostId === intent.hostId && claim.borrowerHostId === intent.hostId && claim.laneId === intent.laneId &&
+      claim.resourceId === intent.resourceCheck!.resourceId && isDeepStrictEqual(claim.owner, intent.owner) && !claim.origin &&
+      isDeepStrictEqual(claim.resourceCheck, intent.resourceCheck) && isDeepStrictEqual(claim.prerequisite, intent.prerequisite) &&
+      claim.controllerIncarnation === intent.controller.incarnation && claim.controllerGeneration === intent.controller.generation &&
+      claim.borrowerSequence === intent.controller.sequence
+  }
+  private resourceCheckJournal(host: ResourceReservationHost, intent: ExclusiveResourceIntent) {
+    const digest = this.resourceCheckIntentDigest(intent), rows = host.snapshot.resourceReservations?.resourceChecks?.filter(value =>
+      value.operationId === intent.operationId)
+    return rows?.length === 1 && rows[0]!.resourceId === intent.resourceCheck!.resourceId && rows[0]!.intentSha256 === digest &&
+      isDeepStrictEqual(rows[0]!.resourceCheck, intent.resourceCheck) && isDeepStrictEqual(rows[0]!.intent, intent) ? rows[0] : undefined
+  }
+  /** New automatic checks contend with queued manual authority before changing any local generation. */
+  private async resourceCheckTargetCurrent(host: ResourceReservationHost, intent: ExclusiveResourceIntent) {
+    const check = intent.resourceCheck!, now = this.now(), lane = host.snapshot.lanes.find(value => value.id === intent.laneId),
+      subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === check.resourceId), journal = this.resourceCheckJournal(host, intent),
+      ref = intent.laneId ? lane?.resources.find(value => value.id === check.resourceId) : host.snapshot.resources?.find(value => value.id === check.resourceId)
+    if (!fresh(host, now) || host.incarnation !== intent.controller.incarnation || host.incarnationGeneration !== intent.controller.generation ||
+      host.sequence < intent.controller.sequence || !isDeepStrictEqual(host.snapshot.frameworkBinding, check.binding) ||
+      check.binding.routineApiVersion < 70 || !host.snapshot.frameworkAcceptedAt || !host.snapshot.frameworkProcess ||
+      Date.parse(host.snapshot.frameworkAcceptedAt) > now || !journal || journal.state !== 'prepared' ||
+      Date.parse(journal.observedAt) > Date.parse(host.snapshot.observedAt) || Date.parse(journal.observedAt) > now ||
+      now >= check.deadlineAt || (intent.laneId ? !lane || lane.state !== 'idle' || lane.activity ||
+        lane.dispatchMode !== 'automatic' && !intent.prerequisite?.local : intent.prerequisite ||
+        subject?.resource.memberships.length !== 0 || !host.snapshot.resources?.some(value => value.id === check.resourceId)) || !ref || !subject?.current ||
+      subject.subject.authorityHostId !== host.hostId || subject.owner !== null || subject.generation !== check.subjectGeneration ||
+      subject.idle.contractVersion !== check.contractVersion || subject.status === 'in-repair' || subject.status === 'out-of-service' ||
+      subject.status === 'offline' || subject.status === 'reserved' || subject.status === 'returning' ||
+      subject.status === 'checking' || subject.status === 'active' || subject.repair.state !== 'none' ||
+      intent.owner.id !== `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: check.resourceId})}` ||
+      host.snapshot.resourceLifecycle!.history.some(value => value.resourceId === check.resourceId && value.checkOperationId === intent.operationId &&
+        value.event === 'resource-check-released')) return false
+    const records = z.array(z.union([laneControlRecordSchema, resourceControlRecordSchema])).max(100).parse(host.laneControls ?? [])
+    if (records.some(row => ('subject' in row.command ? row.command.subject.resourceId === check.resourceId :
+      row.command.laneId === intent.laneId) && (!row.receipt || row.receipt.result.status === 'accepted' &&
+        (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
+          'check' in row.receipt.result && row.receipt.result.check?.state !== undefined && row.receipt.result.check.state !== 'settled' ||
+          'subject' in row.command && manualWithdrawalNeedsRestoration(row as ResourceControlRecord, subject, host.hostId, true, now))))) return false
+    if (!intent.prerequisite) return ref.idleContract?.version === check.contractVersion &&
+      ref.idleContract.qualifiedScope.kind !== 'unqualified'
+    if (!lane || lane.platform !== 'android' || ref.kind !== 'phone' || !ref.capabilities?.includes('backend-connectivity') ||
+      !isDeepStrictEqual(intent.prerequisite.binding, check.binding)) return false
+    const targets = await this.qualificationTargets(host.hostId), matching = targets.filter(value =>
+      value.jobId === intent.prerequisite!.jobId && value.hostId === host.hostId && value.laneId === intent.laneId &&
+      value.inputSha256 === intent.prerequisite!.targetInputSha256 && isDeepStrictEqual(value.purpose, {kind: 'backend-connectivity', resourceId: check.resourceId}) &&
+      isDeepStrictEqual(value.acceptedBinding, check.binding) && isDeepStrictEqual(value.preparing, intent.prerequisite!.preparing) &&
+      isDeepStrictEqual(value.local, intent.prerequisite!.local) && isDeepStrictEqual(value.candidate, intent.prerequisite!.candidate))
+    const current = await this.host(host.hostId)
+    return matching.length === 1 && Date.parse(matching[0]!.deadline) >= check.deadlineAt && this.now() < check.deadlineAt &&
+      fresh(current, this.now()) && current.incarnation === host.incarnation && current.incarnationGeneration === host.incarnationGeneration &&
+      current.sequence === host.sequence && current.resourceReservationVersion === host.resourceReservationVersion && current.laneControlVersion === host.laneControlVersion &&
+      isDeepStrictEqual(current.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) && isDeepStrictEqual(current.snapshot.resourceReservations, host.snapshot.resourceReservations)
+  }
+  private async acquireResourceCheck(intent: ExclusiveResourceIntent, hostId: string) {
+    const intentSha256 = this.resourceCheckIntentDigest(intent), unknown = {status: 'unknown' as const, intentSha256, claims: []}
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const host = await this.host(hostId), all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
+        current = all.filter(isExclusiveHostReservation).filter(claim => claim.resourceId === intent.resourceCheck!.resourceId)
+      if (!fresh(host, this.now()) || host.incarnation !== intent.controller.incarnation ||
+        host.incarnationGeneration !== intent.controller.generation || host.sequence < intent.controller.sequence) return unknown
+      // A committed original remains recoverable after cancellation, marker/source
+      // changes or local admission. It conveys custody, not a new reader grant.
+      if (current.length) return current.length === 1 && this.resourceCheckClaimMatches(current[0]!, intent, intentSha256) ?
+        {status: 'reserved' as const, intentSha256, claims: current} : unknown
+      if (!await this.resourceCheckTargetCurrent(host, intent)) continue
+      const selected = intent.prerequisite && !intent.prerequisite.local ? await this.rows.request?.(intent.prerequisite.jobId) : null
+      if (intent.prerequisite && (intent.prerequisite.candidate ? !candidatePrerequisiteRequestMatches(selected ?? null, intent, this.now()) :
+        intent.prerequisite.local ? Boolean(await this.rows.request?.(intent.prerequisite.jobId)) || !localBackendIntentMatches(host, intent, this.now()) :
+          !backendPrerequisiteRequestMatches(selected ?? null, intent, this.now()))) return unknown
+      if (all.some(claim => isExclusiveHostReservation(claim) ? Boolean(intent.laneId && claim.borrowerHostId === hostId && claim.laneId === intent.laneId &&
+          (!intent.prerequisite || intent.prerequisite.local || !selected?.fleetExclusiveReservation?.claims.some(value => isDeepStrictEqual(value, claim)))) :
+        claim.hostId === hostId && claim.laneId === intent.laneId &&
+          (!intent.prerequisite || intent.prerequisite.local || !isDeepStrictEqual(claim, selected?.fleetResourceReservation)))) return unknown
+      if (all.length >= 1000) throw new TestRunError(409, 'Resource authority is full; unresolved claims retain custody')
+      const claim: ExclusiveHostReservation = {kind: 'exclusive', id: randomUUID(), resourceId: intent.resourceCheck!.resourceId,
+        authorityHostId: hostId, borrowerHostId: hostId, ...(intent.laneId ? {laneId: intent.laneId} : {}), operationId: intent.operationId, intentSha256,
+        inputSha256: intent.inputSha256, owner: intent.owner, resourceCheck: intent.resourceCheck,
+        ...(intent.prerequisite ? {prerequisite: intent.prerequisite} : {}), controllerIncarnation: intent.controller.incarnation,
+        controllerGeneration: intent.controller.generation, borrowerSequence: intent.controller.sequence, reservedAt: new Date(this.now()).toISOString()}
+      if (this.now() >= intent.resourceCheck!.deadlineAt || !fresh(host, this.now())) return unknown
+      const committed = intent.prerequisite ? await this.rows.replaceBackend?.(host, [...all, claim], intent, new Date(this.now())) :
+        await this.rows.replace(host, [...all, claim])
+      if (!committed) continue
+      if (intent.prerequisite?.candidate) {
+        const row = await this.rows.request?.(intent.prerequisite.jobId), pending = row?.fleetCandidatePreparation
+        if (!row || !pending || !await this.rows.recordCandidateClaim?.(row.requestId, pending, claim)) return unknown
+      }
+      const after = await this.host(hostId)
+      if (!fresh(after, this.now()) || after.incarnation !== host.incarnation || after.incarnationGeneration !== host.incarnationGeneration ||
+        !hostResourceReservationsSchema.parse(after.resourceReservations ?? []).some(value => isDeepStrictEqual(value, claim))) return unknown
+      return {status: 'reserved' as const, intentSha256, claims: [claim]}
+    }
+    return unknown
+  }
+  private async observeResourceCheck(intent: ExclusiveResourceIntent, host: ResourceReservationHost, controller: ExclusiveResourceIntent['controller']) {
+    const intentSha256 = this.resourceCheckIntentDigest(intent), all = hostResourceReservationsSchema.parse(host.resourceReservations ?? []),
+      claims = all.filter(isExclusiveHostReservation).filter(claim => claim.resourceId === intent.resourceCheck!.resourceId),
+      unknown = {status: 'unknown' as const, intentSha256, claims: []}
+    if (claims.length) return claims.length === 1 && this.resourceCheckClaimMatches(claims[0]!, intent, intentSha256) ?
+      {status: 'reserved' as const, intentSha256, claims} : unknown
+    const subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === intent.resourceCheck!.resourceId), journal = this.resourceCheckJournal(host, intent)
+    const newer = controller.generation > intent.controller.generation || controller.generation === intent.controller.generation &&
+      controller.incarnation === intent.controller.incarnation && controller.sequence > intent.controller.sequence
+    if (!newer || !subject?.current || subject.owner !== null || subject.subject.authorityHostId !== host.hostId || journal?.state !== 'never-began' || !journal.eventId ||
+      Date.parse(journal.observedAt) > Date.parse(host.snapshot.observedAt) || Date.parse(journal.observedAt) > this.now()) return unknown
+    // Invalidate every older preclaim CAS before reporting authentic absence.
+    if (!await this.rows.replace(host, all)) return unknown
+    const after = await this.host(host.hostId), version = (host.resourceReservationVersion ?? 0) + 1,
+      current = after.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === subject.subject.id)
+    if (!fresh(after, this.now()) || after.incarnation !== controller.incarnation || after.incarnationGeneration !== controller.generation ||
+      after.sequence !== controller.sequence || after.resourceReservationVersion !== version || !isDeepStrictEqual(after.resourceReservations, all) ||
+      !current?.current || current.owner !== null || current.generation !== subject.generation || current.subject.authorityHostId !== host.hostId ||
+      !isDeepStrictEqual(this.resourceCheckJournal(after, intent), journal)) return unknown
+    const observation = {status: 'not-acquired' as const, intentSha256, claims: [], fence: {hostId: host.hostId, resourceId: subject.subject.id,
+      controller, resourceReservationVersion: version, subjectGeneration: subject.generation}}
+    if (intent.prerequisite?.candidate) {
+      const row = await this.rows.request?.(intent.prerequisite.jobId), pending = row?.fleetCandidatePreparation
+      if (!row || !pending || !await this.rows.recordCandidateNoAcquisition?.(row.requestId, pending, {intent, journal, observation})) return unknown
+    }
+    return observation
+  }
+  private async giveBackResourceCheck(returned: z.infer<typeof exclusiveResourceReturnSchema>, host: ResourceReservationHost, hostId: string) {
+    const release = returned.release
+    if (!('kind' in release)) throw new TestRunError(409, 'Resource precheck needs its original check return')
+    const at = Date.parse(release.releasedAt), subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === returned.resourceId),
+      proof = (({controller: _, ...value}) => value)(returned)
+    if (!fresh(host, this.now()) || host.incarnation !== returned.controller.incarnation || host.incarnationGeneration !== returned.controller.generation ||
+      host.sequence !== returned.controller.sequence || returned.authorityHostId !== hostId || !subject?.current || subject.owner !== null ||
+      subject.subject.authorityHostId !== hostId || subject.generation !== release.subjectGeneration || !Number.isFinite(at) || at > this.now() ||
+      at > Date.parse(host.snapshot.observedAt) || !host.snapshot.resourceReservations?.returns.some(value => isDeepStrictEqual(value, proof)))
+      throw new TestRunError(409, 'Resource precheck return requires its exact original journal and current unowned subject')
+    const journal = host.snapshot.resourceReservations?.resourceChecks?.find(value => value.operationId === release.operationId)
+    if (!journal || journal.resourceId !== returned.resourceId || journal.intentSha256 !== returned.intentSha256 ||
+      journal.intent.inputSha256 !== returned.inputSha256 || journal.intent.hostId !== hostId || journal.intent.laneId !== returned.laneId ||
+      !isDeepStrictEqual(journal.intent.owner, returned.originalOwner) || this.resourceCheckIntentDigest(journal.intent) !== returned.intentSha256 ||
+      (release.kind === 'resource-check-not-started' ? journal.state !== 'never-began' || journal.eventId !== release.eventId ||
+        journal.observedAt !== release.releasedAt || !isDeepStrictEqual(journal.resourceCheck, release.resourceCheck) : journal.state !== 'began' ||
+        !host.snapshot.resourceLifecycle?.history.some(event => event.id === release.eventId && event.event === 'resource-check-released' &&
+          event.resourceId === returned.resourceId && event.checkOperationId === release.operationId && event.subjectGeneration === release.subjectGeneration && event.at === release.releasedAt)))
+      throw new TestRunError(409, 'Resource precheck has no authentic never-began or completed local check return')
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const authority = await this.host(hostId), all = hostResourceReservationsSchema.parse(authority.resourceReservations ?? []),
+        claim = all.filter(isExclusiveHostReservation).find(value => value.resourceId === returned.resourceId)
+      if (!fresh(authority, this.now()) || authority.incarnation !== host.incarnation || authority.incarnationGeneration !== host.incarnationGeneration ||
+        authority.sequence !== host.sequence || !isDeepStrictEqual(authority.snapshot.resourceLifecycle, host.snapshot.resourceLifecycle) ||
+        !isDeepStrictEqual(authority.snapshot.resourceReservations, host.snapshot.resourceReservations))
+        throw new TestRunError(409, 'Original resource return observation changed; retain the same return')
+      if (!claim) {
+        const row = await this.rows.candidateRequest?.(hostId, returned.inputSha256)
+        if (row?.fleetCandidatePreparation && !await this.rows.recordCandidateReturn?.(row.requestId, row.fleetCandidatePreparation, returned))
+          throw new TestRunError(409, 'Original candidate return acknowledgement is pending')
+        return {status: 'returned' as const, claimId: returned.claimId}
+      }
+      if (!claim.resourceCheck || claim.id !== returned.claimId || claim.operationId !== release.operationId || claim.intentSha256 !== returned.intentSha256 ||
+        claim.inputSha256 !== returned.inputSha256 || claim.borrowerHostId !== hostId || claim.laneId !== returned.laneId ||
+        !isDeepStrictEqual(claim.owner, returned.originalOwner) || !isDeepStrictEqual(claim.resourceCheck, journal.resourceCheck) ||
+        at < Date.parse(claim.reservedAt) || returned.controller.generation < claim.controllerGeneration ||
+        returned.controller.generation === claim.controllerGeneration && (returned.controller.incarnation !== claim.controllerIncarnation || returned.controller.sequence <= claim.borrowerSequence))
+        throw new TestRunError(409, 'Resource precheck return differs from its immutable original claim')
+      if (claim.prerequisite?.candidate) {
+        const row = await this.rows.request?.(claim.prerequisite.jobId), pending = row?.fleetCandidatePreparation
+        if (!row || !pending || !await this.rows.recordCandidateClaim?.(row.requestId, pending, claim))
+          throw new TestRunError(409, 'Original candidate claim checkpoint is pending')
+      }
+      if (!await this.rows.replace(authority, all.filter(value => value !== claim))) continue
+      if (claim.prerequisite?.candidate) {
+        const row = await this.rows.request?.(claim.prerequisite.jobId), pending = row?.fleetCandidatePreparation
+        if (!row || !pending || !await this.rows.recordCandidateReturn?.(row.requestId, pending, returned))
+          throw new TestRunError(409, 'Original candidate return acknowledgement is pending')
+      }
+      return {status: 'returned' as const, claimId: claim.id}
+    }
+    throw new TestRunError(409, 'Resource authority changed; retain the same original return')
+  }
   private backendClaimMatches(claim: ExclusiveHostReservation, intent: ExclusiveResourceIntent, digest: string) {
     return claim.intentSha256 === digest && claim.operationId === intent.operationId && claim.inputSha256 === intent.inputSha256 &&
       claim.authorityHostId === intent.hostId && claim.borrowerHostId === intent.hostId && claim.laneId === intent.laneId &&
@@ -598,7 +810,7 @@ export class ResourceReservationsService {
         value.checkOperationId === intent.operationId && value.event === 'resource-check-released') ||
       intent.owner.id !== `resource-check:${requestInputDigest({operationId: intent.operationId, resourceId: purpose.resourceId})}`)
       return false
-    const targets = await this.qualificationTargets(host.hostId, {jobId: purpose.jobId, laneId: intent.laneId,
+    const targets = await this.qualificationTargets(host.hostId, {jobId: purpose.jobId, laneId: lane.id,
       inputSha256: purpose.targetInputSha256, ownerId: intent.owner.id, generation: subject.owner.generation,
       binding: purpose.binding, controller: {incarnation: host.incarnation, generation: host.incarnationGeneration},
       purpose: {kind: 'backend-connectivity', resourceId: purpose.resourceId}})
@@ -639,6 +851,8 @@ export class ResourceReservationsService {
           resourceId: intent.prerequisite!.resourceId, hostId, laneId: intent.laneId,
           owner: isExclusiveHostReservation(blocker) ? blocker.owner : {kind: 'run' as const, id: blocker.requestId}}}
       }
+      if (!current && host.snapshot.resourceReservations?.resourceChecks !== undefined)
+        return unknown
       if (current) {
         if (intent.prerequisite!.candidate) {
           const row = await this.rows.request?.(intent.prerequisite!.jobId), pending = row?.fleetCandidatePreparation;

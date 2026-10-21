@@ -1,4 +1,5 @@
 import {expect, spyOn, test} from 'bun:test'
+import {isDeepStrictEqual} from 'node:util'
 import {requestInputDigest, TestRequestService, type TestRequestRepository, type StoredRequest, type StoredTestRequest} from './test-request.service'
 import {backendPrerequisiteRequestMatches, resourceReservationRepository, ResourceReservationsService, type ResourceReservationHost, type ResourceReservationRepository} from './resource-reservations.service'
 import {RoutineJobService, compatibleRoutineLane, reconcileRecorderHostReservations, routineJobInputDigest, routineJobRepository, routineLaneContext, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service'
@@ -13,7 +14,7 @@ import {TestHostStateModel} from '../models/test-host-state.model'
 import {TestRequestModel} from '../models/test-request.model'
 import {projectResourceLifecycle} from './resource-lifecycle.service'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
-import {candidateSettlement} from './backend-candidate-preparation'
+import {candidateSettlement, candidatePrerequisiteRequestMatches, completedCandidatePreparationForHost} from './backend-candidate-preparation'
 import {BACKEND_CANDIDATE_ROUTINE_API_VERSION, backendConnectivityObservationRefusesPreparation} from '../types/backend-connectivity.types'
 
 const now = Date.parse('2026-10-18T23:00:00Z'), timestamp = new Date(now).toISOString(), hash = 'a'.repeat(64), sha = 'b'.repeat(40)
@@ -1066,4 +1067,106 @@ test('no-claim observe cannot revive released original checks or cancelled, expi
   expect((await f.service.observe({intent:f.intent,controller},'mini')).status).toBe('unknown')
   expect(f.writes).toEqual([]);expect(f.row.resourceReservations).toEqual([])
  }
+})
+
+/** The new precheck uses the real unowned target before local generation admission. */
+async function precheckBackendFixture() {
+  const f = await claimFixture(), subject=f.row.snapshot.resourceLifecycle!.subjects[0]!
+  f.row.snapshot.frameworkBinding={...f.row.snapshot.frameworkBinding!,routineApiVersion:70}
+  f.observed.frameworkBinding=f.row.snapshot.frameworkBinding
+  subject.owner=null;subject.status='unknown'
+  f.observed.resourceLifecycle=f.row.snapshot.resourceLifecycle
+  f.original.fleetDeadline=new Date(now+300000);f.original.fleetInputSha256=routineJobInputDigest(f.original);selectPreparing(f.original,f.observed)
+  const target=(await f.targets('mini'))[0]!, intent:ExclusiveResourceIntent={...f.intent,inputSha256:target.inputSha256,
+    prerequisite:{...f.intent.prerequisite!,targetInputSha256:target.inputSha256,binding:target.acceptedBinding!,preparing:target.preparing!},
+    resourceCheck:{resourceId:'phone',subjectGeneration:subject.generation,contractVersion:subject.idle.contractVersion,
+      deadlineAt:now+60000,binding:target.acceptedBinding!,controller:{incarnation:'controller',generation:1}}}
+  const digest=requestInputDigest({...intent,controller:{incarnation:'controller',generation:1},
+    dependencies:[{resourceId:'phone',authorityHostId:'mini',capability:'backend-connectivity'}]})
+  f.row.snapshot.resourceReservations={claims:[],returns:[],resourceChecks:[{intentSha256:digest,operationId:intent.operationId,
+    resourceId:'phone',intent:structuredClone(intent),resourceCheck:intent.resourceCheck!,state:'prepared',observedAt:timestamp}]}
+  return {...f,intent,target,digest}
+}
+test('backend precheck claims before a local check exists using exact actual preparation target and source',async()=>{
+  const f=await precheckBackendFixture(),before=structuredClone(f.original),result=await f.service.acquire(f.intent,'mini')
+  expect(result.status).toBe('reserved');expect(result.claims).toHaveLength(1);expect(f.writes).toHaveLength(1)
+  expect(f.row.snapshot.resourceLifecycle!.subjects[0]!.owner).toBeNull();expect(result.claims[0]!.resourceCheck).toEqual(f.intent.resourceCheck)
+  expect(f.original).toEqual(before)
+  const owner=f.row.snapshot.resourceLifecycle!.subjects[0]!,claim=result.claims[0]!
+  owner.owner={...claim.owner,generation:3,hostId:'mini',laneId:'android'};owner.status='checking';owner.generation=4
+  const command={operationId:'3a66d3c2-f408-4dbe-8756-ec2937d9f250',hostId:'mini',subject:{resourceId:'phone',subjectGeneration:4},
+    expiresAt:now+120000,operatorId:hash,action:'reserve',purpose:'Later exact owned check reservation'}
+  f.row.laneControls=[{command}];f.row.laneControlVersion=1
+  expect(await f.service.acquire(f.intent,'mini')).toEqual(result);expect(f.writes).toHaveLength(1)
+})
+test('unowned backend precheck never admits a cancelled original or mismatched declared target',async()=>{
+  for(const mutate of [
+    (f:Awaited<ReturnType<typeof precheckBackendFixture>>)=>{f.original.fleetCancellation={requestedAt:timestamp,reason:'Cancelled before preclaim'}},
+    (f:Awaited<ReturnType<typeof precheckBackendFixture>>)=>{f.intent.prerequisite!.targetInputSha256='e'.repeat(64);f.intent.inputSha256='e'.repeat(64)},
+    (f:Awaited<ReturnType<typeof precheckBackendFixture>>)=>{f.row.snapshot.resourceLifecycle!.subjects[0]!.generation++},
+  ]){const f=await precheckBackendFixture();mutate(f);expect((await f.service.acquire(f.intent,'mini')).status).toBe('unknown');expect(f.writes).toEqual([])}
+})
+
+async function candidatePrecheckFixture() {
+  let time=now
+  const observed=host(), original=job();original.fleetDeadline=new Date(now+300000);original.fleetInputSha256=routineJobInputDigest(original)
+  observed.frameworkBinding={...observed.frameworkBinding!,routineApiVersion:70};observed.resourceReservations={claims:[],returns:[],candidatePrerequisites:[],resourceChecks:[]};observed.authorityReservations=[]
+  const jobs:RoutineJobRepository={async get(){return structuredClone(original)},async *qualificationCandidates(){yield structuredClone(original)},async recorderClaims(){return []},async selectedLanes(){return []},
+    async candidatePreparation(_row:StoredRoutineJob,pending:FleetCandidatePreparation){original.fleetCandidatePreparation=structuredClone(pending);return structuredClone(original)},
+    async settleCandidatePreparation(_row:StoredRoutineJob,value:FleetCandidatePreparation){original.fleetCandidatePreparations=[...(original.fleetCandidatePreparations??[]),structuredClone(value)];delete original.fleetCandidatePreparation;return structuredClone(original)},
+    async reserveResources(){throw Error('No candidate execution allocation')}} as unknown as RoutineJobRepository
+  const jobsService=new RoutineJobService(jobs,undefined,undefined,undefined,{async get(){return structuredClone(observed)},async list(){return [structuredClone(observed)]}},undefined,undefined,()=>time)
+  await jobsService.preparation(original.requestId);const pending=original.fleetCandidatePreparation!
+  if(!pending)throw Error('Real service must construct original unbound candidate')
+  const operationId=`backend-prerequisite:${pending.targetInputSha256}`,owner={id:`resource-check:${requestInputDigest({operationId,resourceId:'phone'})}`,kind:'boundary-cleanup' as const}
+  const intent:ExclusiveResourceIntent={operationId,hostId:'mini',laneId:'android',controller:{incarnation:'controller',generation:1,sequence:0},owner,
+    inputSha256:pending.targetInputSha256,resources:[{id:'phone',capabilities:['backend-connectivity']}],
+    prerequisite:{kind:'backend-connectivity',jobId:original.requestId,targetInputSha256:pending.targetInputSha256,resourceId:'phone',binding:observed.frameworkBinding!,candidate:pending.candidate,target:qualified().target},
+    resourceCheck:{resourceId:'phone',subjectGeneration:observed.resourceLifecycle!.subjects[0]!.generation,contractVersion:'not-commissioned',deadlineAt:now+60000,binding:observed.frameworkBinding!,controller:{incarnation:'controller',generation:1}}}
+  const digest=requestInputDigest({...intent,controller:{incarnation:'controller',generation:1},dependencies:[{resourceId:'phone',authorityHostId:'mini',capability:'backend-connectivity'}]})
+  observed.resourceReservations!.resourceChecks=[{intent:structuredClone(intent),intentSha256:digest,operationId,resourceId:'phone',resourceCheck:intent.resourceCheck!,state:'prepared',observedAt:timestamp}]
+  const {receivedAt:_,authorityReservations:_claims,...snapshot}=observed,row:ResourceReservationHost={hostId:'mini',incarnation:'controller',incarnationGeneration:1,sequence:1,receivedAt:new Date(now),snapshot,resourceReservationVersion:0,resourceReservations:[],laneControlVersion:0,laneControls:[]},writes:HostResourceReservation[][]=[]
+  const repo:ResourceReservationRepository={async get(){return structuredClone(row)},async request(){return structuredClone(original)},
+    async candidateRequest(){return structuredClone(original)},async replace(previous,claims){if(previous.sequence!==row.sequence||previous.laneControlVersion!==row.laneControlVersion||previous.resourceReservationVersion!==row.resourceReservationVersion)return false;row.resourceReservations=structuredClone(claims);row.resourceReservationVersion!++;writes.push(structuredClone(claims));return true},
+    async replaceBackend(previous,claims,input){if(!candidatePrerequisiteRequestMatches(original,input,time))return false;original.fleetCandidatePreparation!.backendTarget=input.prerequisite!.target;return this.replace(previous,claims)},
+    async recordCandidateClaim(_id,p,c){if(p.claimReceipt)return isDeepStrictEqual(p.claimReceipt,c);original.fleetCandidatePreparation!.claimReceipt=structuredClone(c);return true},
+    async recordCandidateReturn(_id,p,r){original.fleetCandidatePreparation!.returnReceipt=structuredClone(r);return true},
+    async recordCandidateNoAcquisition(_id,p,r){original.fleetCandidatePreparation!.noAcquisitionReceipt=structuredClone(r);return true}}
+  const service=new ResourceReservationsService(repo,()=>time,(id,owned)=>jobsService.qualificationTargets(id,owned))
+  return {observed,original,row,intent,digest,writes,service,jobsService,
+    ended(){time+=1;row.sequence++;row.snapshot.sequence=row.sequence;row.snapshot.observedAt=new Date(time).toISOString();row.receivedAt=new Date(time)
+      const j=row.snapshot.resourceReservations!.resourceChecks![0]!;j.state='never-began';j.eventId='actual-never-began';j.observedAt=row.snapshot.observedAt;return j},
+    publish(){Object.assign(observed,structuredClone(row.snapshot),{receivedAt:row.receivedAt.toISOString(),authorityReservations:structuredClone(row.resourceReservations)})},
+    unknownReceipt(){return {targetInputSha256:intent.inputSha256,candidate:original.fleetCandidatePreparation!.candidate,outcome:'unknown' as const,hostWorkSettled:true as const,checkOperationId:operationId}}}
+}
+test('no-reader candidate uses the same original CAS no-acquisition ACK as historical settlement, without granting readiness',async()=>{
+  const f=await candidatePrecheckFixture(),identity={job:f.original.requestId,input:f.original.fleetInputSha256,selection:structuredClone(f.original.fleetSelection),deadline:f.original.fleetDeadline.toISOString()}
+  f.row.laneControls=[{command:{operationId:'cd5757fb-f3d5-44ec-87dc-887008043ed0',hostId:'mini',subject:{resourceId:'phone',subjectGeneration:2},operatorId:hash,expiresAt:now+120000,action:'mark-out-of-service',reason:'Human withdrawal'}}];f.row.laneControlVersion=1
+  expect((await f.service.acquire(f.intent,'mini')).status).toBe('unknown');expect(f.writes).toEqual([])
+  const j=f.ended();f.publish();f.observed.resourceReservations!.candidatePrerequisites=[f.unknownReceipt()]
+  expect(candidateSettlement(f.original.fleetCandidatePreparation!,f.observed,[],now+1)).toBeUndefined()
+  const response=await f.service.observe({intent:f.intent,controller:{incarnation:'controller',generation:1,sequence:f.row.sequence}},'mini')
+  expect(response.status).toBe('not-acquired');f.publish();f.observed.resourceReservations!.candidatePrerequisites=[f.unknownReceipt()]
+  const pending=f.original.fleetCandidatePreparation!,settlement=candidateSettlement(pending,f.observed,[],now+1)
+  expect(settlement?.outcome).toBe('unknown');expect(f.original.fleetCandidatePreparation!.noAcquisitionReceipt).toBeDefined();expect(f.writes).toEqual([[]])
+  f.original.fleetCandidatePreparations=[{...structuredClone(pending),settlement}];delete f.original.fleetCandidatePreparation
+  expect(completedCandidatePreparationForHost(f.original,'mini')).toBe(true);expect(completedCandidatePreparationForHost(f.original,'foreign')).toBe(false)
+  expect({job:f.original.requestId,input:f.original.fleetInputSha256,selection:f.original.fleetSelection,deadline:f.original.fleetDeadline.toISOString()}).toEqual(identity)
+  expect(f.original.fleetBinding).toBeUndefined();expect(f.original.fleetResourceAdmission).toBeUndefined()
+})
+test('committed never-began candidate settles only after original claim return ACK and immutable host closure account',async()=>{
+  const f=await candidatePrecheckFixture(),answer=await f.service.acquire(f.intent,'mini');expect(answer.status).toBe('reserved');const claim=answer.claims[0]!,j=f.ended()
+  const proof:ExclusiveResourceReturn={claimId:claim.id,authorityHostId:'mini',resourceId:'phone',intentSha256:f.digest,inputSha256:f.intent.inputSha256,originalOwner:claim.owner,laneId:'android',
+    controller:{incarnation:'controller',generation:1,sequence:f.row.sequence},release:{kind:'resource-check-not-started',operationId:f.intent.operationId,resourceCheck:f.intent.resourceCheck!,subjectGeneration:2,releasedAt:j.observedAt,eventId:j.eventId!}}
+  const {controller:_,...published}=proof;f.row.snapshot.resourceReservations!.returns=[published];f.publish();f.observed.resourceReservations!.candidatePrerequisites=[f.unknownReceipt()]
+  expect(candidateSettlement(f.original.fleetCandidatePreparation!,f.observed,answer.claims,now+1)).toBeUndefined()
+  expect(await f.service.giveBack(proof,'mini')).toMatchObject({status:'returned'});f.publish();f.observed.resourceReservations!.candidatePrerequisites=[f.unknownReceipt()]
+  const saved=structuredClone(f.original.fleetCandidatePreparation!),settled=candidateSettlement(saved,f.observed,[],now+1)
+  expect(settled?.outcome).toBe('unknown');expect(f.row.resourceReservations).toEqual([])
+  for(const mutate of [
+    (p:FleetCandidatePreparation)=>{delete p.returnReceipt},(p:FleetCandidatePreparation)=>{delete p.claimReceipt},
+    (p:FleetCandidatePreparation)=>{p.targetInputSha256='f'.repeat(64)},
+  ]){const p=structuredClone(saved);mutate(p);expect(candidateSettlement(p,f.observed,[],now+1)).toBeUndefined()}
+  const originalJournal=f.observed.resourceReservations!.resourceChecks![0]!
+  f.observed.resourceReservations!.resourceChecks![0]={...originalJournal,state:'began'};expect(candidateSettlement(saved,f.observed,[],now+1)).toBeUndefined()
 })
