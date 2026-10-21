@@ -287,7 +287,10 @@ const shared = {
     `{go(url), close()}`, or null when the browser blocked the tab, and the view then offers
     an "Open the payment page ↗" link. A refused session closes the tab.
   - After a page that does not return, the licenses and billing's status are read again
-    when the window regains focus.
+    whenever the window regains focus. That belongs to the page and not to the button that
+    asked: closing the dialog or panel that started it does not end it. It ends at the first
+    return after nothing on screen reads those answers any more, and starts nothing when
+    nothing shows them already.
 - **The locale.** The one `createBillingApi` was made with: billing words its content in
   it, and every date, amount and count is formatted in it (see [Formatting](#formatting)).
   `WorkspaceMembersPanel` takes it as `locale`.

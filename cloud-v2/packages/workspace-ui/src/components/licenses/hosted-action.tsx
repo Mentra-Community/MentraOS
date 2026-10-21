@@ -9,9 +9,9 @@
  *   in the click itself, since a browser allows that only while the click is being handled, then sends that tab to
  *   the session's URL; a session that fails closes the tab again. If the browser blocked the tab, the URL comes
  *   back as a link ("Open the payment page ↗") for a second click. Either way the licenses and billing's status
- *   are read again when the window regains focus.
+ *   are read again when the window regains focus (`watchReturn`).
  * - A screen that has let go of the request (its dialog closed, its card gone) doesn't send this tab anywhere when
- *   billing answers; the tab a click opened still gets its page.
+ *   billing answers; the tab a click opened still gets its page, and the return is still watched.
  *
  * The host supplies the two ways out (`NavigateOut`): this file never touches `window.location`, and the URL it
  * sends them to has already passed the contract's check (billing's client refuses any other).
@@ -20,7 +20,7 @@
  * the hook doesn't carry them.
  */
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ArrowUpRightIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
@@ -98,6 +98,46 @@ export interface HostedAction {
   surface: string | null;
 }
 
+/** The watches on a return to this window, per client and then per what they read again: one each, however many asked. */
+const returnWatches = new WeakMap<QueryClient, Map<string, () => void>>();
+
+/**
+ * After a page that doesn't return: reads billing's status for the owner, and for a workspace Core's licenses too,
+ * again whenever the person comes back to this window.
+ *
+ * The watch belongs to what it refreshes and not to the button that asked. A dialog or a panel closing, or a card
+ * going, ends nothing, because the page behind it still shows those reads. It ends when nothing on screen reads them
+ * any more, which it finds out at the next return, so a page the person has left leaves no listener behind for
+ * longer than that. Asked for while nothing shows them (the screen was already gone), it starts nothing.
+ */
+function watchReturn(client: QueryClient, scope: BillingScope, api?: Pick<WorkspaceApi, "basePath">): void {
+  const keys: Array<readonly unknown[]> = [billingKeys.statuses(scope)];
+  if (api && scope.kind === "workspace") keys.push(workspaceKeys.licenses(api, scope.workspaceId));
+  const shown = () => keys.some((queryKey) => client.getQueryCache().findAll({ queryKey, type: "active" }).length > 0);
+  if (!shown()) return;
+  const id = JSON.stringify(keys);
+  let owned = returnWatches.get(client);
+  if (!owned) returnWatches.set(client, (owned = new Map()));
+  if (owned.has(id)) return;
+  const watches = owned;
+  const refresh = () => {
+    if (document.visibilityState === "hidden") return;
+    if (!shown()) {
+      stop();
+      return;
+    }
+    for (const queryKey of keys) void client.invalidateQueries({ queryKey });
+  };
+  function stop() {
+    window.removeEventListener("focus", refresh);
+    document.removeEventListener("visibilitychange", refresh);
+    watches.delete(id);
+  }
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", refresh);
+  watches.set(id, stop);
+}
+
 /**
  * The hosted-page flow for one card or dialog. `product` is the name a refusal may mention ("A purchase of Fleet
  * is already under way"), for a screen that has one product; a request may name its own. `api` lets the
@@ -128,7 +168,6 @@ export function useHostedAction({
   const [surface, setSurface] = useState<string | null>(null);
   const busy = useRef(false);
   const mounted = useRef(true);
-  const stopWaiting = useRef<(() => void) | null>(null);
   // The latest of what the callback reads, so `run` keeps one identity.
   const latest = useRef({ billing, scope, navigateOut, api, product });
   latest.current = { billing, scope, navigateOut, api, product };
@@ -137,29 +176,8 @@ export function useHostedAction({
     mounted.current = true;
     return () => {
       mounted.current = false;
-      stopWaiting.current?.();
     };
   }, []);
-
-  /** After a page that doesn't return: read again whenever the person comes back to this window. */
-  const refreshOnReturn = useCallback(() => {
-    if (stopWaiting.current) return;
-    const refresh = () => {
-      if (document.visibilityState === "hidden") return;
-      const { scope: current, api: workspaceApi } = latest.current;
-      void client.invalidateQueries({ queryKey: billingKeys.statuses(current) });
-      if (workspaceApi && current.kind === "workspace") {
-        void client.invalidateQueries({ queryKey: workspaceKeys.licenses(workspaceApi, current.workspaceId) });
-      }
-    };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    stopWaiting.current = () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-      stopWaiting.current = null;
-    };
-  }, [client]);
 
   const run = useCallback(
     (request: HostedRequest, from?: string) => {
@@ -194,8 +212,8 @@ export function useHostedAction({
           if (newTab) {
             if (tab) tab.go(url);
             else if (mounted.current) setLink(url);
-            // A card that went away while billing answered has nothing left to refresh, and must not leave listeners behind.
-            if (mounted.current) refreshOnReturn();
+            // Whoever asked may be gone (a dialog closed while billing answered); the page behind it still wants the return.
+            watchReturn(client, owner, latest.current.api);
           } else if (mounted.current) {
             out.leave(url);
           }
@@ -219,7 +237,7 @@ export function useHostedAction({
         }
       })();
     },
-    [client, refreshOnReturn],
+    [client],
   );
 
   const clear = useCallback(() => {
