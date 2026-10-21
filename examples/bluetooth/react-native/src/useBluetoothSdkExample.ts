@@ -3171,7 +3171,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       };
       if (typeof sdkWithWifiAdb.setWifiAdbState !== 'function') {
         throw new Error(
-          `BluetoothSdk.setWifiAdbState is missing from JS. Point MENTRA_BLUETOOTH_SDK_PACKAGE_PATH at MentraOS mobile/modules/bluetooth-sdk and rebuild via: ${rebuildHint}`,
+          `BluetoothSdk.setWifiAdbState is missing from JS. Use an SDK version that provides it and rebuild via: ${rebuildHint}`,
         );
       }
       try {

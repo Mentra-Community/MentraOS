@@ -12,11 +12,30 @@ The SDK is available in these first-class forms:
 | React Native / Expo | `@mentra/bluetooth-sdk` | [`react-native`](react-native/README.md) |
 | React Native macOS | `@mentra/bluetooth-sdk` | [`react-native-macos`](react-native-macos/README.md) |
 
-Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
+Use the latest SDK version published by Mentra for your app. Native macOS
+support is separate from running the iOS TestFlight app on an Apple silicon Mac.
 
-The two native Mac examples use the published SDK packages. Their READMEs also
-document optional source overrides for SDK development. Native macOS support is
-separate from running the iOS TestFlight app on an Apple silicon Mac.
+## In MentraOS
+
+This folder, `examples/bluetooth` in
+[MentraOS](https://github.com/Mentra-Community/MentraOS), is the source of the
+Starter Kit. Here every example builds against the SDK source in the same
+checkout, with no published packages and no version pins:
+
+| Example | How it gets the SDK |
+| --- | --- |
+| `android` | Gradle composite build of `mobile/modules/bluetooth-sdk/android`, substituted for `com.mentraglass:bluetooth-sdk` |
+| `ios`, `macos` | Local Swift package `mobile/modules/bluetooth-sdk` |
+| `react-native`, `react-native-elevenlabs-audio`, `react-native-macos` | Members of the `sdk/` Bun workspace; `@mentra/*` are workspace links to `mobile/modules` and `cloud-v2/packages` |
+
+Paths in this folder's docs are relative to the Starter Kit root, which is
+`examples/bluetooth` in MentraOS. The `Example App Builds` workflow in MentraOS
+builds every example on changes to them or to the SDK.
+
+The standalone
+[Starter Kit repository](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
+is generated from this folder, with the SDK dependencies pinned to published
+versions so it can be cloned and built without a MentraOS checkout.
 
 ## Documentation
 
@@ -37,23 +56,16 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 
 ## Install Prebuilt Example Apps
 
-Each completed coordinated Mentra release publishes matching installable example
-apps to [GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases).
-Development and beta builds for one release train share the
-`sdk-builds-v<X.Y.Z>` release; stable builds use `sdk-<X.Y.Z>`. Every filename
-contains its exact coordinated identity, and the immutable `sdk-<version>`
-source tag identifies the commit that produced it.
-
-From the release containing your SDK version, such as `sdk-builds-v3.1.0`,
-download the files carrying the same full version:
-
-- `mentra-example-android-<version>.apk` — native Android example, when that
-  exact SDK version is already available from Maven Central
-- `mentra-example-react-native-<version>.apk` — React Native example
-- `mentra-example-rn-elevenlabs-audio-<version>.apk` — React Native ElevenLabs audio example
-- `mentra-example-ios-<version>-unsigned.ipa` — native iOS example
-
-Android APKs install directly from the phone browser (enable installs from unknown sources when prompted). The iOS IPA is unsigned; install it with a sideloading tool such as [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which re-signs it with your own Apple ID. Android pull-request builds are also available for 90 days as run artifacts on each [workflow run](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml). Ordinary pull requests analyze and compile the native iOS example without packaging or uploading it; unsigned IPA artifacts are retained for coordinated-release pull requests and manual workflow runs.
+Installable builds of the examples for published SDK versions are attached to
+the standalone Starter Kit's
+[GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases).
+Each filename carries its SDK version, for example
+`mentra-example-react-native-<version>.apk`. Android APKs install directly from
+the phone browser (enable installs from unknown sources when prompted). The iOS
+IPA is unsigned; install it with a sideloading tool such as
+[Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which
+re-signs it with your own Apple ID. In MentraOS, the `Example App Builds`
+workflow keeps the Android APKs it builds as run artifacts for 14 days.
 
 ## What The Examples Demonstrate
 
@@ -104,19 +116,6 @@ for screenshot provenance.
 - `photo-webhook-server`: focused media upload webhook server.
 - `local-webrtc-server`: lower-level MediaMTX helper.
 
-## Local SDK Development
-
-Published package installs are the normal SDK path. Local overrides are only for SDK development before a release is published:
-
-- Android: publish `com.mentraglass:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
-- iOS: point Xcode at a local Swift package checkout when testing unpublished Swift SDK source changes.
-- React Native: keep the published package pinned for clean checkouts, then
-  locally symlink `node_modules/@mentra/bluetooth-sdk` to an SDK source checkout
-  and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve
-  the same package.
-
-The example READMEs document each override explicitly. Do not bake machine-specific paths into committed app config.
-
 ## Touchpad default actions (OS-2123)
 
 The React Native, Android and iOS examples put eight **Touchpad default actions**
@@ -125,12 +124,9 @@ glasses’ built-in action; disabling it retains touch events for your app. Valu
 change only after a settings acknowledgement and reset when BLE disconnects.
 The controls are available for Mentra Live and require firmware with `cs_tpdef`.
 
-The examples pin SDK `3.4.0-dev.947`, which publishes
-`setTouchGestureDefaultBehaviorEnabled` on npm, Maven Central and Swift Package
-Manager. Build with the published packages; local SDK overrides are optional.
-
-Source dependencies: [SDK PR #4802](https://github.com/Mentra-Community/MentraOS/pull/4802)
-and [BES firmware PR #95](https://github.com/Mentra-Community/mentra-live-bes/pull/95).
+`setTouchGestureDefaultBehaviorEnabled` is available from SDK `3.4.0-dev.947`
+on npm, Maven Central and Swift Package Manager
+([SDK PR #4802](https://github.com/Mentra-Community/MentraOS/pull/4802)).
 
 To verify on glasses, connect Mentra Live, open System, disable **Double tap**, and
 double tap while media is paused and while it is playing. The touch event should

@@ -4,7 +4,7 @@
 
 - Confirm your app has the required Maven repositories configured, including `mavenCentral()` and `maven("https://www.jitpack.io")`.
 - Confirm `com.mentraglass:bluetooth-sdk:<version>` matches the version in your release notes.
-- If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the example app repositories.
+- If you are testing an unreleased SDK, build it from a MentraOS checkout through a Gradle composite build; see [Getting Started](getting-started.md#android).
 
 ## Android Build Fails On Native Libraries
 
@@ -52,11 +52,9 @@ If the error also lists a Push Notifications capability, that entitlement is not
 - Run `bunx expo prebuild` after adding the SDK plugin to `app.json`.
 - Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
 - On iOS, rerun `bunx expo run:ios` after changing native module dependencies.
-- If you are testing a local SDK package, symlink
-  `node_modules/@mentra/bluetooth-sdk` to the local source checkout and set
-  `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to that same path. The symlink is for Expo
-  native autolinking; the environment variable is for Metro JavaScript
-  resolution.
+- If you are testing unreleased SDK source, build the example inside MentraOS
+  (`examples/bluetooth`), where `@mentra/bluetooth-sdk` is a workspace link to
+  the SDK source used by both Metro and Expo native autolinking.
 
 ## Bluetooth Permission Problems
 

@@ -151,7 +151,7 @@
 			mainGroup = 75373FCEFC20A267275295AB;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				1178B517C2B84A06A3850002 /* XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios" */,
+				1178B517C2B84A06A3850002 /* XCLocalSwiftPackageReference "../../../mobile/modules/bluetooth-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1CB6EE406B6430CB76C32445 /* Products */;
@@ -421,21 +421,17 @@
 		};
 /* End XCBuildConfiguration section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		1178B517C2B84A06A3850002 /* XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git";
-			requirement = {
-				kind = exactVersion;
-				version = 3.4.0-dev.1034;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		1178B517C2B84A06A3850002 /* XCLocalSwiftPackageReference "../../../mobile/modules/bluetooth-sdk" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../mobile/modules/bluetooth-sdk;
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		1178B517C2B84A06A3850003 /* MentraBluetoothSDK */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 1178B517C2B84A06A3850002 /* XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios" */;
+			package = 1178B517C2B84A06A3850002 /* XCLocalSwiftPackageReference "../../../mobile/modules/bluetooth-sdk" */;
 			productName = MentraBluetoothSDK;
 		};
 /* End XCSwiftPackageProductDependency section */

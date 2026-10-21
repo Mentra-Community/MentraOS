@@ -20,7 +20,7 @@ on:
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
-      - "sdk/example-oem-app/**"
+      - "examples/oem-app/**"
       - "sdk/package.json"
       - "sdk/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
@@ -34,7 +34,7 @@ on:
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
-      - "sdk/example-oem-app/**"
+      - "examples/oem-app/**"
       - "sdk/package.json"
       - "sdk/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
@@ -86,7 +86,7 @@ jobs:
         run: bun run build
 
       - name: Typecheck example OEM app against the built public entry
-        working-directory: sdk/example-oem-app
+        working-directory: examples/oem-app
         run: bunx tsc --noEmit
 
       - name: Forbid internal-surface imports in the OEM app
@@ -103,13 +103,13 @@ jobs:
             -e '@mentra/engine/devtools' \
             -e '@mentra/bluetooth-sdk/internal' \
             -e '@mentra/bluetooth-sdk-internal' \
-            sdk/example-oem-app || true)
+            examples/oem-app || true)
           if [ -n "$violations" ]; then
             echo "Internal-surface imports found in the example OEM app:" >&2
             echo "$violations" >&2
             exit 1
           fi
-          if grep -n 'internal' sdk/example-oem-app/tsconfig.json; then
+          if grep -n 'internal' examples/oem-app/tsconfig.json; then
             echo "tsconfig.json must not path-map internal entries" >&2
             exit 1
           fi

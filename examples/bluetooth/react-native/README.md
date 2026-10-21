@@ -16,21 +16,35 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 
 ## Install
 
+In MentraOS this example is a member of the `sdk/` Bun workspace, which links
+`@mentra/bluetooth-sdk`, `@mentra/engine` and Engine's `@mentra/*` dependencies
+to their source in `mobile/modules` and `cloud-v2/packages`. From the MentraOS
+root, install the workspace and build the SDK's config plugin:
+
 ```bash
-cd react-native
-bun install
+cd sdk && bun install && cd ..
+(cd mobile/modules/bluetooth-sdk && bun run build:plugin)
+cd examples/bluetooth/react-native
 ```
 
-The example depends on the exact SDK and Engine versions pinned in
-[`package.json`](./package.json). Those two package versions must match.
+The `sdk/` postinstall builds `@mentra/miniapp`, which Engine imports. To type
+check, first build the declarations the example's imports resolve to:
+
+```bash
+(cd ../../../mobile/modules/bluetooth-sdk && bun run build)
+(cd ../../../mobile/modules/crust && bun run build)
+(cd ../../../mobile/modules/engine && bun run build)
+bunx tsc --noEmit
+```
+
+Metro and the native builds use the SDK source directly; the type declarations
+are only for `tsc`. `metro.config.js` watches `mobile/modules`,
+`cloud-v2/packages`, and the `sdk/` workspace store so Metro can serve those
+files, and resolves React, React Native and Expo to the app's own copies.
 
 `app.config.js` enables the ACS native build plugin when the installed Engine
 includes ACS. It uses Engine's exact dependency for Android desugaring and iOS
 framework setup; older Engine versions without ACS keep the existing config.
-
-Use compatible SDK and Engine versions published by Mentra. When validating
-unreleased SDK changes, use the local source override below so JavaScript,
-Android, and iOS all resolve the same local package.
 
 ## Run On iOS
 
@@ -123,7 +137,7 @@ permissions are blocked in `app.json`. Ordinary Bluetooth, Wi-Fi, location and
 audio permissions are separate and are not removed by this configuration.
 The existing iOS `audio` background mode is preserved explicitly in `infoPlist`.
 
-The pinned SDK includes Android `ForegroundService` support for the merged
+The SDK includes Android `ForegroundService` support for the merged
 host manifest at both startup and subsequent type selection. Do not downgrade
 the SDK below `3.2.0-dev.200` while using this configuration: older SDKs try to
 start undeclared service types. Rebuild the native app after changing these
@@ -156,38 +170,6 @@ from Expo autolinking so it does not package the unrelated navigation and
 miniapp-runtime native libraries.
 
 For production Expo apps that need BLE or microphone behavior while iOS is backgrounded or locked, see [Background Operation On iOS](../docs/getting-started.md#background-operation-on-ios).
-
-## Local SDK Override
-
-Use this when developing SDK changes before the matching package release is
-published. Keep the committed dependency pinned to the published version so a
-clean checkout still works, then replace the installed package folder locally
-with your SDK source checkout.
-
-```bash
-cd react-native
-SDK_PATH="/path/to/MentraOS-dev/mobile/modules/bluetooth-sdk"
-
-mkdir -p node_modules/@mentra
-rm -rf node_modules/@mentra/bluetooth-sdk
-ln -s "$SDK_PATH" node_modules/@mentra/bluetooth-sdk
-
-export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH="$SDK_PATH"
-bunx expo run:ios
-# or
-bun run android:dev
-```
-
-The symlink makes Expo native autolinking and prebuild consume the local SDK
-package. `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` makes Metro resolve JavaScript from
-that same source folder. The local source package can have a different version
-than the published dependency in `package.json`; the override is path-based.
-
-Do not use `bun add --no-save` for this workflow. Because the local package is
-also named `@mentra/bluetooth-sdk`, Bun can report a dependency loop when it
-tries to resolve the override against the published dependency. If `bun install`
-restores `node_modules` from the lockfile, recreate the symlink. To go back to
-the published package, remove the symlink and run `bun install`.
 
 ## App Walkthrough
 
@@ -225,6 +207,6 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 - `src/sdkFormat.ts`: shared status/event formatting.
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
 - `app.config.js`: applies `MENTRA_IOS_BUNDLE_ID` on top of `app.json` so third-party teams can sign device builds.
-- `metro.config.js`: package resolution for published installs and local SDK overrides.
+- `metro.config.js`: watch folders for the in-repo SDK source and single copies of React, React Native and Expo.
 - `modules/mentra-barcode-scanner`: local native module used by this example to scan received photo previews for barcodes.
 - `modules/mentra-video-stream-receiver`: local native module used by this example for Android/iOS direct phone WebRTC preview demos.

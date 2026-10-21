@@ -4,8 +4,9 @@ const fs = require("fs")
 const path = require("path")
 
 const projectRoot = __dirname
-const sdkRoot = path.resolve(projectRoot, "..") // the `sdk` workspace root
 const repoRoot = path.resolve(projectRoot, "..", "..") // monorepo root
+// This app is a member of the `sdk` bun workspace (sdk/package.json).
+const sdkRoot = path.resolve(repoRoot, "sdk")
 const modulesRoot = path.resolve(repoRoot, "mobile", "modules")
 // The `mobile` bun workspace's own node_modules — where @mentra/engine's
 // transitive deps (typesafe-ts, buffer, events, semver, ...) actually live on

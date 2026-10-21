@@ -1,23 +1,15 @@
 // swift-tools-version: 5.9
-import Foundation
 import PackageDescription
 
-let sdkVersion = "3.4.0-dev.1034"
-let sdk: Package.Dependency
-let sdkIdentity: String
-if let localPath = ProcessInfo.processInfo.environment["MENTRA_BLUETOOTH_SDK_PACKAGE_PATH"] {
-    sdk = .package(path: localPath)
-    sdkIdentity = URL(fileURLWithPath: localPath).lastPathComponent.lowercased()
-} else {
-    sdk = .package(url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git", exact: Version(sdkVersion)!)
-    sdkIdentity = "mentra-bluetooth-sdk-ios"
-}
-
+// Builds against the Bluetooth SDK source in this MentraOS checkout. The
+// standalone Starter Kit pins the published SwiftPM package instead.
 let package = Package(
     name: "MentraMacExample",
     platforms: [.macOS(.v13)],
-    dependencies: [sdk],
+    dependencies: [
+        .package(name: "MentraBluetoothSDK", path: "../../../mobile/modules/bluetooth-sdk"),
+    ],
     targets: [.executableTarget(name: "MentraMacExample", dependencies: [
-        .product(name: "MentraBluetoothSDK", package: sdkIdentity),
+        .product(name: "MentraBluetoothSDK", package: "MentraBluetoothSDK"),
     ])]
 )

@@ -15,8 +15,7 @@ or a simulator capture.
 | `react-native-android.png` | Released `mentra-example-react-native-3.2.0-dev.116.apk`, SDK `3.2.0-dev.116` | Galaxy Z Fold 6 cover screen; successful Bluetooth fallback to the phone photo receiver |
 
 The Mac examples demonstrate native macOS support, not the iOS compatibility
-mode available on Apple silicon. Their source override is needed until the
-macOS SDK changes are published.
+mode available on Apple silicon.
 
 The ElevenLabs audio repro is not included in this photo gallery because it
 does not implement photo capture.

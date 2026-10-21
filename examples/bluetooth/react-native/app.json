@@ -54,6 +54,7 @@
     },
     "plugins": [
       "./plugins/withAndroid16KbPageSize",
+      "./plugins/withMentraPublicSdk",
       [
         "@mentra/bluetooth-sdk",
         {

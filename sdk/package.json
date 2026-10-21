@@ -5,7 +5,6 @@
   },
   "workspaces": [
     "create-mentra-miniapp",
-    "example-oem-app",
     "miniapp-cli",
     "../cloud-v2/packages/*",
     "!../cloud-v2/packages/workspace-ui",
@@ -16,7 +15,11 @@
     "../mobile/modules/bluetooth-sdk",
     "../mobile/modules/acs-meeting",
     "../mobile/modules/glasses-media",
-    "../miniapps/*"
+    "../miniapps/*",
+    "../examples/oem-app",
+    "../examples/bluetooth/react-native",
+    "../examples/bluetooth/react-native-elevenlabs-audio",
+    "../examples/bluetooth/react-native-macos"
   ],
   "scripts": {
     "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",

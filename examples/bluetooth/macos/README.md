@@ -9,16 +9,15 @@ OTA availability checking. The complete update UI remains in the phone example.
 
 ## Run
 
-Build with the exact published SwiftPM version in `Package.swift`:
+`Package.swift` depends on the SDK source in this MentraOS checkout
+(`../../../mobile/modules/bluetooth-sdk`, the folder with the SDK's
+`Package.swift`), so SDK changes are picked up by the next build:
 
 ```bash
 cd macos
 bash run.sh
 ```
 
-For SDK development, optionally set
-`MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/absolute/path/to/MentraOS/mobile/modules/bluetooth-sdk`
-before building. Unset it to return to the published package.
 Use `bash run.sh --build-only` to build without launching.
 Quit this example before rebuilding; the script refuses to overwrite a running
 app instead of silently activating its previous binary.
@@ -52,12 +51,10 @@ Keep glasses and Mac on a network that can reach the server.
 - Mac sleep may interrupt BLE. Use the usual SDK reconnect lifecycle after wake.
 - Optional local STT/TTS and iOS-only glasses integrations are not included.
 
-These source examples are not signed/notarized Mac release artifacts. The
-coordinated version sync updates their SDK dependencies, but does not publish a
-Mac app to TestFlight or a download channel.
+These source examples are not signed/notarized Mac release artifacts, and no
+Mac app is published to TestFlight or a download channel.
 
 ## Pull Request CI
 
-The `Native macOS example` job builds the AppKit app without launching it,
-using the exact published SwiftPM dependency. No MentraOS source checkout or
-local SDK override is used in CI.
+The `Native macOS example` job in MentraOS's `Example App Builds` workflow
+builds the AppKit app against the SDK source without launching it.

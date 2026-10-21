@@ -1,0 +1,386 @@
+name: Example App Builds
+
+# Builds the integrator examples in examples/ against the SDK source in this
+# repository: no published packages, no version pins. Each React Native
+# example is a member of the sdk/ Bun workspace, so @mentra/* resolve to
+# mobile/modules and cloud-v2/packages. The native Android example includes
+# mobile/modules/bluetooth-sdk/android as a Gradle composite build, and the
+# Apple examples use mobile/modules/bluetooth-sdk as a local Swift package.
+# The engine example (examples/oem-app) has its own gates: oem-host-gate.yml
+# and oem-app-apk.yml.
+
+"on":
+  pull_request:
+    paths:
+      - "examples/bluetooth/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/engine/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/glasses-media/**"
+      - "mobile/modules/miniapp/**"
+      - "cloud-v2/packages/protocol/**"
+      - "cloud-v2/packages/cloud-client/**"
+      - "sdk/package.json"
+      - "sdk/bun.lock"
+      - ".github/workflows/example-app-builds.yml"
+  push:
+    branches:
+      - dev
+    paths:
+      - "examples/bluetooth/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/engine/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/glasses-media/**"
+      - "mobile/modules/miniapp/**"
+      - "cloud-v2/packages/protocol/**"
+      - "cloud-v2/packages/cloud-client/**"
+      - "sdk/package.json"
+      - "sdk/bun.lock"
+      - ".github/workflows/example-app-builds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: example-app-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+  GSTREAMER_VERSION: 1.28.2
+
+jobs:
+  android:
+    name: Native Android example
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "platforms;android-36" "build-tools;35.0.0" "build-tools;34.0.0" "ndk;27.1.12297006"
+
+      - name: Cache GStreamer Android SDK
+        uses: actions/cache@v4
+        with:
+          path: examples/bluetooth/android/.gstreamer/Android.sdk
+          key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
+
+      - name: Build the example with the SDK from source
+        # settings.gradle.kts includes mobile/modules/bluetooth-sdk/android
+        # and substitutes com.mentraglass:bluetooth-sdk with it.
+        working-directory: examples/bluetooth/android
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Verify foreground service types
+        working-directory: examples/bluetooth/android
+        run: python3 scripts/check-foreground-service.py app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-android
+          path: examples/bluetooth/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error
+
+  react-native:
+    name: React Native example
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Cache GStreamer Android SDK
+        uses: actions/cache@v4
+        with:
+          path: examples/bluetooth/react-native/.gstreamer/Android.sdk
+          key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
+
+      - name: Install the sdk/ workspace
+        # The sdk postinstall builds @mentra/miniapp, which Engine imports.
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      - name: Build SDK types and config plugin
+        run: |
+          set -euo pipefail
+          (cd mobile/modules/bluetooth-sdk && bun run build && bun run build:plugin)
+          (cd mobile/modules/crust && bun run build)
+          (cd mobile/modules/engine && bun run build)
+
+      - name: Type check TypeScript
+        working-directory: examples/bluetooth/react-native
+        run: bunx tsc --noEmit
+
+      - name: Unit tests
+        working-directory: examples/bluetooth/react-native
+        run: |
+          bun test
+          bun run test:app-config
+
+      - name: Generate Android project
+        working-directory: examples/bluetooth/react-native
+        run: bunx expo prebuild --platform android --no-install
+
+      - name: Verify Android cleartext support
+        working-directory: examples/bluetooth/react-native
+        run: grep -q 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+
+      - name: Build release Android app
+        working-directory: examples/bluetooth/react-native/android
+        run: ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
+
+      - name: Verify Android 16 KB page-size support
+        run: examples/bluetooth/react-native/scripts/check-android-16kb.sh examples/bluetooth/react-native/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-react-native
+          path: examples/bluetooth/react-native/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+          if-no-files-found: error
+
+  react-native-elevenlabs-audio:
+    name: React Native ElevenLabs audio example
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install the sdk/ workspace
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      - name: Build SDK types and config plugin
+        working-directory: mobile/modules/bluetooth-sdk
+        run: |
+          bun run build
+          bun run build:plugin
+
+      - name: Type check TypeScript
+        working-directory: examples/bluetooth/react-native-elevenlabs-audio
+        run: bun run typecheck
+
+      - name: Generate Android project
+        working-directory: examples/bluetooth/react-native-elevenlabs-audio
+        run: bunx expo prebuild --platform android --no-install
+
+      - name: Verify Android cleartext support
+        working-directory: examples/bluetooth/react-native-elevenlabs-audio
+        run: grep -q 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+
+      - name: Build release Android app
+        working-directory: examples/bluetooth/react-native-elevenlabs-audio/android
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-rn-elevenlabs-audio
+          path: examples/bluetooth/react-native-elevenlabs-audio/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+          if-no-files-found: error
+
+  ios:
+    name: Native iOS example
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
+
+      - name: Install GStreamer iOS SDK
+        # Installs to ~/Library/Developer/GStreamer/iPhone.sdk once per runner
+        # host; later runs reuse it.
+        working-directory: examples/bluetooth/ios
+        run: bash scripts/setup-gstreamer-ios.sh
+
+      - name: Analyze
+        working-directory: examples/bluetooth/ios
+        run: |
+          xcodebuild \
+            -project MentraExample.xcodeproj \
+            -scheme MentraExample \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/example-ios" \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
+
+      - name: Build
+        working-directory: examples/bluetooth/ios
+        run: |
+          xcodebuild \
+            -project MentraExample.xcodeproj \
+            -scheme MentraExample \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/example-ios" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Remove build outputs
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/example-ios"
+
+  macos:
+    name: Native macOS example
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
+
+      - name: Build AppKit app
+        working-directory: examples/bluetooth/macos
+        run: bash run.sh --build-only
+
+      - name: Remove build outputs
+        if: always()
+        working-directory: examples/bluetooth/macos
+        run: rm -rf .build build
+
+  react-native-macos:
+    name: React Native macOS example
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    env:
+      RCT_NO_LAUNCH_PACKAGER: 1
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
+
+      - name: Isolate this runner's CocoaPods download cache
+        run: |
+          cache_dir="$HOME/Library/Caches/CocoaPods-${RUNNER_NAME:-runner}"
+          mkdir -p "$cache_dir"
+          echo "CP_CACHE_DIR=$cache_dir" >> "$GITHUB_ENV"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install the sdk/ workspace
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      - name: Build SDK types
+        working-directory: mobile/modules/bluetooth-sdk
+        run: bun run build
+
+      - name: Type check TypeScript
+        working-directory: examples/bluetooth/react-native-macos
+        run: bun run typecheck
+
+      - name: Install CocoaPods dependencies
+        working-directory: examples/bluetooth/react-native-macos/macos
+        run: pod install
+
+      - name: Build native app and bundle JavaScript
+        working-directory: examples/bluetooth/react-native-macos/macos
+        run: |
+          xcodebuild \
+            -workspace mentra-bluetooth-sdk-macos-example.xcworkspace \
+            -scheme mentra-bluetooth-sdk-macos-example-macOS \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify embedded JavaScript bundle
+        working-directory: examples/bluetooth/react-native-macos/macos
+        run: test -s build/Build/Products/Release/mentra-bluetooth-sdk-macos-example.app/Contents/Resources/main.jsbundle
+
+      - name: Remove build outputs
+        if: always()
+        working-directory: examples/bluetooth/react-native-macos/macos
+        run: rm -rf build Pods

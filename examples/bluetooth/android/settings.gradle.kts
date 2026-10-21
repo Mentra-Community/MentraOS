@@ -5,27 +5,10 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
-val mentraBluetoothSdkRoot = providers.environmentVariable("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH").orNull
-val useMavenLocal = providers.gradleProperty("mentraUseMavenLocal")
-    .map(String::toBoolean)
-    .orElse(false)
-    .get()
 
 dependencyResolutionManagement {
-    repositoriesMode.set(
-        if (mentraBluetoothSdkRoot.isNullOrBlank()) {
-            RepositoriesMode.FAIL_ON_PROJECT_REPOS
-        } else {
-            RepositoriesMode.PREFER_SETTINGS
-        }
-    )
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        if (!mentraBluetoothSdkRoot.isNullOrBlank()) {
-            maven(file("$mentraBluetoothSdkRoot/android/libs/maven"))
-        }
-        if (!mentraBluetoothSdkRoot.isNullOrBlank() || useMavenLocal) {
-            mavenLocal()
-        }
         google()
         mavenCentral()
     }
@@ -34,13 +17,11 @@ dependencyResolutionManagement {
 rootProject.name = "MentraDesignerAndroidExample"
 include(":app")
 
-if (!mentraBluetoothSdkRoot.isNullOrBlank()) {
-    include(":mentra-bluetooth-sdk")
-    project(":mentra-bluetooth-sdk").projectDir = file("$mentraBluetoothSdkRoot/android")
-
-    include(":lc3Lib")
-    project(":lc3Lib").projectDir = file("$mentraBluetoothSdkRoot/android/lc3Lib")
-
-    include(":silero")
-    project(":silero").projectDir = file("$mentraBluetoothSdkRoot/android/silero")
+// Build the Bluetooth SDK from the MentraOS source tree. Gradle substitutes the
+// app's com.mentraglass:bluetooth-sdk dependency with this included build.
+// The standalone Starter Kit replaces this block with the published version.
+includeBuild("../../../mobile/modules/bluetooth-sdk/android") {
+    dependencySubstitution {
+        substitute(module("com.mentraglass:bluetooth-sdk")).using(project(":"))
+    }
 }

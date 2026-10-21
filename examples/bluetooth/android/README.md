@@ -2,22 +2,40 @@
 
 Native Android reference app for the Mentra Bluetooth SDK, built with Kotlin and Jetpack Compose.
 
-This example installs the SDK as `com.mentraglass:bluetooth-sdk` and is intended to run from a fresh clone once the Mentra Maven package is available. No path to a local MentraOS checkout is required for normal SDK use.
+The app depends on the SDK as `com.mentraglass:bluetooth-sdk`. In MentraOS,
+Gradle builds that dependency from the SDK source in
+`mobile/modules/bluetooth-sdk/android` (see [SDK Source](#sdk-source)). The
+standalone Starter Kit pins the published Maven Central version instead.
 
 ## Requirements
 
 - Android Studio Hedgehog or newer, or Gradle from the command line.
 - Java 17.
-- Android SDK with API 35+ installed.
+- Android SDK with API 35+ installed, and NDK `27.1.12297006` (the SDK's
+  `lc3Lib` and the example's WebRTC receiver build native code).
 - A physical Android phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 - Mentra smart glasses with Bluetooth enabled.
 
-## SDK Version
+## SDK Source
 
-The example reads its exact SDK version from `mentraSdkVersion` in
-[`gradle.properties`](./gradle.properties).
+[`settings.gradle.kts`](./settings.gradle.kts) includes the SDK as a Gradle
+composite build and substitutes the app's `com.mentraglass:bluetooth-sdk`
+dependency with it:
 
-Use the latest SDK version published by Mentra. If a future release note lists an additional Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
+```kotlin
+includeBuild("../../../mobile/modules/bluetooth-sdk/android") {
+    dependencySubstitution {
+        substitute(module("com.mentraglass:bluetooth-sdk")).using(project(":"))
+    }
+}
+```
+
+SDK source changes are picked up by the next build; there is nothing to publish
+or copy. The included build uses the Android Gradle Plugin version declared in
+this app's root `build.gradle.kts`. To use a published SDK instead, remove the
+`includeBuild` block and add a version to the dependency in
+`app/build.gradle.kts`, for example
+`com.mentraglass:bluetooth-sdk:<version>`.
 
 ## Run
 
@@ -35,7 +53,7 @@ restrictions. Rebuild and install the native APK for this change to take effect.
 Before release, test a fresh install with permissions denied, granted-permission
 background sessions, reconnect, and service restart on Android 15+.
 
-CI checks the merged manifest, including the published SDK's declarations:
+CI checks the merged manifest, including the SDK's declarations:
 
 ```bash
 python3 scripts/check-foreground-service.py app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml
@@ -66,35 +84,9 @@ export GSTREAMER_ROOT_ANDROID=/path/to/Android.sdk
 ./gradlew installDebug -PgstreamerRootAndroid=/path/to/Android.sdk
 ```
 
-## Local SDK Override
-
-Use this when developing SDK changes before the matching Maven release is
-published. This example branch uses the new camera FOV promise result, so prefer
-the source override when working from a local MentraOS checkout:
-
-```bash
-cd /path/to/mentra-bluetooth-sdk-starter-kit/examples/android
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk ./gradlew installDebug
-```
-
-The source override includes the SDK Android project directly, plus its `lc3Lib`
-and `silero` modules. The Camera tab disables FOV/ROI controls while
-`setCameraFov` is in flight, then re-enables them only after the glasses report
-that the hardware setting was applied or the SDK returns an error.
-
-If you need Maven-local validation instead:
-
-```bash
-cd /path/to/MentraOS/mobile/android
-./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal
-
-cd /path/to/mentra-bluetooth-sdk-starter-kit/examples/android
-./gradlew installDebug -PmentraUseMavenLocal=true
-```
-
-`settings.gradle.kts` only includes `mavenLocal()` when explicitly requested,
-so the default command line path validates the published Maven Central
-artifacts instead of a stale local copy.
+The Camera tab disables FOV/ROI controls while `setCameraFov` is in flight,
+then re-enables them only after the glasses report that the hardware setting was
+applied or the SDK returns an error.
 
 ## App Walkthrough
 
@@ -142,4 +134,4 @@ adb -s <glasses-serial> logcat -v threadtime | rg -i "WhipStreamingService|WHIP|
 - `app/src/main/java/com/mentra/examples/android/screens/`: Compose screens for the five tabs.
 - `app/src/main/java/com/mentra/examples/android/media/`: direct phone photo and WebRTC receivers.
 - `app/build.gradle.kts`: SDK, Compose, Media3, Coil, GStreamer, and coroutine dependencies.
-- `settings.gradle.kts`: Maven repositories for public and local SDK development.
+- `settings.gradle.kts`: Maven repositories and the SDK source composite build.
