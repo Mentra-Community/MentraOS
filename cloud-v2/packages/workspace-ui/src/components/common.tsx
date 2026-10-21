@@ -126,14 +126,23 @@ export function Restricted({ children }: { children: ReactNode }) {
   return <p className="text-muted-foreground text-sm">{children}</p>;
 }
 
+/**
+ * A failure or a refusal in words, as the sign-in page's error notice: amber, and `role="alert"`, because it is the
+ * answer to something the person just did. `ErrorNotice` is this with an error's words; use this one for a sentence
+ * of your own.
+ */
+export function AlertText({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
+      {children}
+    </p>
+  );
+}
+
 /** The failure of the last action, in words, as the sign-in page's error notice. Renders nothing when there is none. */
 export function ErrorNotice({ error }: { error: unknown }) {
   if (error === null || error === undefined) return null;
-  return (
-    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
-      {errorMessage(error)}
-    </p>
-  );
+  return <AlertText>{errorMessage(error)}</AlertText>;
 }
 
 /** A failed load, with a way to try again. */

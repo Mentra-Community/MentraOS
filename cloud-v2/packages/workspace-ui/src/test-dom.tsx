@@ -33,8 +33,41 @@ export async function teardownDom(): Promise<void> {
   await GlobalRegistrator.unregister();
 }
 
-/** Unmounts everything `render` mounted and empties the page. */
+/**
+ * Lets work that is still on its way land inside `act`: a request that answered, the query cache's notify timer,
+ * the render it asks for. A screen that fetches would otherwise have its last update arrive after the test's own
+ * `act` scope, in the middle of the next test, and React says so ("not wrapped in act(...)"). A few turns of the
+ * timer queue is enough: each one runs what the one before it scheduled.
+ */
+export async function flush(turns = 4): Promise<void> {
+  for (let turn = 0; turn < turns; turn++) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
+/**
+ * Waits, inside `act`, until `check()` holds (a request answered, a render it asked for), then lets what that
+ * caused land too (see `flush`), so nothing is left to arrive after the test has moved on. Throws when it doesn't
+ * hold in time, naming `what` it waited for.
+ */
+export async function until(check: () => boolean, what: string): Promise<void> {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (check()) {
+      await flush(2);
+      return;
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+/** Unmounts everything `render` mounted and empties the page, after letting pending work land (see `flush`). */
 export async function cleanup(): Promise<void> {
+  if (mounted.size > 0) await flush();
   for (const entry of mounted) {
     await act(async () => entry.root.unmount());
     entry.container.remove();
@@ -48,14 +81,27 @@ export interface Mounted {
   rerender(ui: ReactElement): Promise<void>;
 }
 
+/**
+ * Runs `action` inside `act`, then lets what it set going land (see `flush`). React renders an action's updates as
+ * its `act` scope closes, and an effect that then runs may touch the query cache, which tells its observers from
+ * a timer: that update would reach a component after the scope was over, and React would say it was "not wrapped
+ * in act(...)". Every helper below goes through this.
+ */
+async function inAct(action: () => void | Promise<void>): Promise<void> {
+  await act(async () => {
+    await action();
+  });
+  await flush(2);
+}
+
 /** Mounts `ui` in the page and lets React settle. */
 export async function render(ui: ReactElement): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   mounted.add({ root, container });
-  await act(async () => root.render(ui));
-  return { container, rerender: async (next) => void (await act(async () => root.render(next))) };
+  await inAct(() => root.render(ui));
+  return { container, rerender: (next) => inAct(() => root.render(next)) };
 }
 
 /** `document.querySelector`, throwing when it finds nothing, so a test fails where it looked. */
@@ -77,25 +123,25 @@ export function byText<T extends HTMLElement = HTMLElement>(text: string, select
 }
 
 export async function click(element: Element): Promise<void> {
-  await act(async () => {
+  await inAct(() => {
     (element as HTMLElement).click();
   });
 }
 
 export async function focus(element: HTMLElement): Promise<void> {
-  await act(async () => element.focus());
+  await inAct(() => element.focus());
 }
 
 /** A pointer press on `target`, which is what `useDismiss` listens for. */
 export async function pointerDown(target: Element = document.body): Promise<void> {
-  await act(async () => {
+  await inAct(() => {
     target.dispatchEvent(new Event("pointerdown", { bubbles: true, cancelable: true }));
   });
 }
 
 /** Typing into a text field the way a person does: the value changes, then `input` fires. */
 export async function typeInto(input: HTMLInputElement, text: string): Promise<void> {
-  await act(async () => {
+  await inAct(() => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     setter.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -109,7 +155,7 @@ export async function typeInto(input: HTMLInputElement, text: string): Promise<v
  */
 export async function press(element: HTMLElement, key: string, init: { shift?: boolean } = {}): Promise<boolean> {
   let cancelled = false;
-  await act(async () => {
+  await inAct(() => {
     const down = new KeyboardEvent("keydown", { key, shiftKey: init.shift ?? false, bubbles: true, cancelable: true });
     element.dispatchEvent(down);
     cancelled = down.defaultPrevented;

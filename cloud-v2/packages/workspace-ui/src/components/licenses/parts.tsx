@@ -3,15 +3,22 @@
  * `parts.tsx`): a notice, a fact in a card's strip, a placeholder, the ↗ button that leaves for a hosted page,
  * and the status badge. They carry no words of their own but one (the cue a screen reader gets on a button
  * that leaves the portal, from `strings/licenses.ts`): the screens pass in the rest.
+ *
+ * Also the pieces the seat screens share (the Members list's panel and Assign licenses): what a member is called,
+ * a license Core lists with its seats, why a seat change failed, and "Add seats ↗".
  */
 
 import { ArrowUpRightIcon, CircleCheckIcon, CreditCardIcon, TriangleAlertIcon } from "lucide-react";
-import { useId, type ComponentProps, type ReactNode } from "react";
+import { useId, useState, type ComponentProps, type ReactNode } from "react";
+import type { LicenseView, MemberView } from "@mentra/workspace-contract";
 
+import { billingErrorMessage } from "../../billing-errors";
+import { isLicenseChangedError } from "../../errors";
+import type { JoinedLicense, SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
-import { Badge, Spinner, type BadgeTone } from "../common";
+import { AlertText, Badge, ErrorNotice, Spinner, type BadgeTone } from "../common";
 
 /**
  * A notice inside a card or on the page: amber (`warn`) for a failed or incomplete payment, green (`info`) for
@@ -145,4 +152,56 @@ export function StatusBadge({ status }: { status: StatusBadgeStatus }) {
       {status.label}
     </Badge>
   );
+}
+
+/** What a member is called: their name, else their email, else their Mentra user id, else "Imported member". */
+export function memberLabel(member: Pick<MemberView, "name" | "email" | "mentraUserId">): string {
+  return member.name?.trim() || member.email || member.mentraUserId || t.members.importedMember;
+}
+
+/**
+ * A card whose license Core lists, so its seats are known: what the Members screens show. `joinLicenses` can also
+ * return a billing entry Core hasn't received yet (no license, no seats); those are never held, and
+ * `isHeldLicense` leaves them out.
+ */
+export type HeldLicense = JoinedLicense & { license: LicenseView; seats: SeatCounts };
+
+/** Whether `card` is one of Core's licenses with its seats. */
+export function isHeldLicense(card: JoinedLicense): card is HeldLicense {
+  return card.license !== null && card.seats !== null;
+}
+
+/**
+ * Why a seat change failed. A license that changed under the person (every seat taken, or gone) is "Seats changed
+ * while you were choosing. Nothing was assigned." because the screen has already read the counts again; anything
+ * else is the server's own words. Nothing when there is no error.
+ */
+export function SeatErrorNotice({ error }: { error: unknown }) {
+  if (error === null || error === undefined) return null;
+  if (isLicenseChangedError(error)) return <AlertText>{t.conflict.seatsChanged}</AlertText>;
+  return <ErrorNotice error={error} />;
+}
+
+/**
+ * "Add seats ↗" for a license: asks the host (which asks billing for a session and leaves the portal). While the
+ * request is out the button is pending, and a refusal comes back as its words. The host's call is made inside the
+ * click, so a tab it opens there isn't blocked.
+ */
+export function useAddSeats(onAddSeats: ((licenseId: string) => unknown) | undefined) {
+  const [state, setState] = useState<{ pending: string | null; message: string | null }>({ pending: null, message: null });
+  function run(card: Pick<JoinedLicense, "licenseId" | "name">) {
+    if (!onAddSeats) return;
+    setState({ pending: card.licenseId, message: null });
+    let result: unknown;
+    try {
+      result = onAddSeats(card.licenseId);
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    Promise.resolve(result).then(
+      () => setState((current) => (current.pending === card.licenseId ? { pending: null, message: null } : current)),
+      (error: unknown) => setState({ pending: null, message: billingErrorMessage(error, { product: card.name }) }),
+    );
+  }
+  return { pending: state.pending, message: state.message, run };
 }

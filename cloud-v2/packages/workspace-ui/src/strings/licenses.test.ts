@@ -274,6 +274,11 @@ describe("the people picker", () => {
 describe("Members and the member panel", () => {
   test("the list", () => {
     expect(t.members.title).toBe("Members");
+    expect(t.members.description).toBe("People in this workspace and the role each of them holds.");
+    expect(t.members.adminsOnly).toBe("Only workspace admins can see the member list.");
+    expect(t.members.noMembers).toBe("No members yet.");
+    expect(t.members.copyId).toBe("Copy id");
+    expect(t.members.copyIdFor("Dana Reyes")).toBe("Copy the Mentra user id of Dana Reyes");
     expect([t.members.member, t.members.role, t.members.joined, t.members.you]).toEqual(["Member", "Role", "Joined", "You"]);
     expect(t.members.pendingFirstSignIn).toBe("Pending first sign-in");
     expect(t.members.importedMember).toBe("Imported member");
@@ -327,6 +332,7 @@ describe("Members and the member panel", () => {
     expect(t.assign.confirm(3)).toBe("Assign 3 seats");
     expect(t.assign.confirm(1)).toBe("Assign 1 seat");
     expect(t.assign.confirm(0)).toBe("Assign");
+    expect(t.assign.tooMany(500)).toBe("You can assign up to 500 seats at a time.");
   });
 });
 
@@ -545,6 +551,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   "members.moreChips": [[2]],
   "members.selectMember": [["Dana Reyes"]],
   "members.openMember": [["Dana Reyes"]],
+  "members.copyIdFor": [["Dana Reyes"]],
   "members.selected": [[2]],
   "memberPanel.intro": [["Dana Reyes"]],
   "memberPanel.hasASeat": [[1, 5]],
@@ -565,6 +572,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   ],
   "assign.footer": [[[{ seats: 2, name: "Call Unlimited" }, { seats: 1, name: "Example Add-on" }]]],
   "assign.confirm": [[0], [1], [3]],
+  "assign.tooMany": [[500]],
   "purchase.headline": [[true], [false]],
   "purchase.settingUpSeats": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyTitle": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],

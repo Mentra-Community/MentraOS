@@ -409,6 +409,10 @@ export const licenseStrings = {
   /** The Members list. */
   members: {
     title: "Members",
+    description: "People in this workspace and the role each of them holds.",
+    /** Shown in place of the list to a viewer who may not read it. */
+    adminsOnly: "Only workspace admins can see the member list.",
+    noMembers: "No members yet.",
     member: "Member",
     role: "Role",
     joined: "Joined",
@@ -424,6 +428,9 @@ export const licenseStrings = {
     /** The row's checkbox, and the control that opens the member panel from a row. */
     selectMember: (name: string) => `Select ${name}`,
     openMember: (name: string) => `Open ${name}`,
+    /** An Organization Admin's copy button for a member's Mentra user id, in the row (`showUserIds`). */
+    copyId: "Copy id",
+    copyIdFor: (name: string) => `Copy the Mentra user id of ${name}`,
     selected: (n: number) => `${n} selected`,
     assignLicenses: "Assign licenses",
     clearSelection: "Clear selection",
@@ -464,6 +471,8 @@ export const licenseStrings = {
     /** The seats per product: "2 Call Unlimited · 1 Example Add-on". */
     footer: (parts: ReadonlyArray<{ seats: number; name: string }>) => parts.map((part) => `${part.seats} ${part.name}`).join(" · "),
     confirm: (n: number) => (n === 0 ? "Assign" : `Assign ${plural(n, "seat")}`),
+    /** Under Assign when more seats are chosen than one request takes (`MAX_SEAT_ASSIGNMENTS`). */
+    tooMany: (max: number) => `You can assign up to ${max} seats at a time.`,
   },
 
   purchase: {

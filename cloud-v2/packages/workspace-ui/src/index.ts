@@ -194,3 +194,8 @@ export {
   type CatalogCardProps,
   type CatalogProps,
 } from "./components/licenses/catalog";
+// The Members list's licenses: the member panel (role, joining, Licenses, Remove), its Licenses section, and Assign
+// licenses for the members chosen in the list. `WorkspaceMembersPanel` takes a `MembersLicenses` source to show them.
+export { AssignLicensesDialog, type AssignLicensesDialogProps } from "./components/licenses/assign-licenses";
+export { MemberPanel, PersonLicenses, type MemberPanelProps, type PersonLicensesProps } from "./components/member-panel";
+export type { MembersLicenses } from "./components/members-panel";
