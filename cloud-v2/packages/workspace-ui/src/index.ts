@@ -164,3 +164,19 @@ export {
   type LicenseProblem,
   type SeatCounts,
 } from "./lib/license-join";
+
+// Buying from billing's catalog: the grid an owner with nothing yet is offered, the "Buy a license" dialog, and the
+// seats step. Each takes billing's client and the host's `navigateOut`, and sends the browser to a hosted page.
+export {
+  BuyDialog,
+  canBuy,
+  CatalogCard,
+  CatalogDialog,
+  CatalogGrid,
+  type BuyableEntry,
+  type BuyDialogProps,
+  type BuyingHost,
+  type CatalogBilling,
+  type CatalogCardProps,
+  type CatalogProps,
+} from "./components/licenses/catalog";
