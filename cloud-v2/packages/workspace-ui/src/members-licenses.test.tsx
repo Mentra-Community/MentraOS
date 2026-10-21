@@ -25,7 +25,15 @@ import { detailFor, licenseFor, seedClient, START, WORKSPACE_ID } from "./test-f
 
 beforeAll(setupDom);
 afterAll(teardownDom);
-afterEach(cleanup);
+let assignmentLimitBody: Promise<void> | undefined;
+afterEach(async () => {
+  // A timed-out test leaves React's original act scope running. Settle that body
+  // before unmounting so it cannot keep the next test's render inside its scope.
+  const original = assignmentLimitBody;
+  assignmentLimitBody = undefined;
+  if (original) await original.catch(() => {});
+  await cleanup();
+});
 
 const BASE = "/api/portal/workspaces";
 const JOINED_LATER = "2026-10-19T10:00:00.000Z";
@@ -822,28 +830,31 @@ describe("Assign licenses", () => {
     expect(assignIsOpen()).toBe(false);
   });
 
-  test("Assign is off above one request's most, and says so under the button", async () => {
-    // 126 members × 4 licenses = 504 pairs; 125 × 4 = 500 is the most one request takes.
-    const many = Array.from({ length: 126 }, (_, i) => member(`wm_m${i}`, `m${i}@acme.test`, null));
-    const keys = ["a", "b", "c", "d"];
-    const licenses = keys.map((key) => license(`lic_${key}`, `mentra.${key}`, 1000, []));
-    const catalog = keys.map((key) => exampleEntry(`mentra.${key}`, `Product ${key.toUpperCase()}`));
-    await mount({ members: [SAM, ...many], licenses, catalog });
-    await act(async () => {
-      for (const person of many) tick(person.email!).click();
-    });
-    expect(MAX_SEAT_ASSIGNMENTS).toBe(500);
-    await openAssign();
-    const confirm = byText("Assign 504 seats", "button", assignDialog());
-    expect(confirm.hasAttribute("disabled")).toBe(true);
-    const reason = byText("You can assign up to 500 seats at a time.", "p", assignDialog());
-    expect(confirm.getAttribute("aria-describedby")).toBe(reason.id);
-    // One fewer person is exactly 500 pairs: it is on, and the reason is gone.
-    await click(find("button[aria-label='Close']", assignDialog()));
-    await click(tick(many[0]!.email!));
-    await openAssign();
-    expect(byText("Assign 500 seats", "button", assignDialog()).hasAttribute("disabled")).toBe(false);
-    expect(assignDialog().textContent).not.toContain("You can assign up to");
+  test("Assign is off above one request's most, and says so under the button", () => {
+    assignmentLimitBody = (async () => {
+      // 126 members × 4 licenses = 504 pairs; 125 × 4 = 500 is the most one request takes.
+      const many = Array.from({ length: 126 }, (_, i) => member(`wm_m${i}`, `m${i}@acme.test`, null));
+      const keys = ["a", "b", "c", "d"];
+      const licenses = keys.map((key) => license(`lic_${key}`, `mentra.${key}`, 1000, []));
+      const catalog = keys.map((key) => exampleEntry(`mentra.${key}`, `Product ${key.toUpperCase()}`));
+      await mount({ members: [SAM, ...many], licenses, catalog });
+      await act(async () => {
+        for (const person of many) tick(person.email!).click();
+      });
+      expect(MAX_SEAT_ASSIGNMENTS).toBe(500);
+      await openAssign();
+      const confirm = byText("Assign 504 seats", "button", assignDialog());
+      expect(confirm.hasAttribute("disabled")).toBe(true);
+      const reason = byText("You can assign up to 500 seats at a time.", "p", assignDialog());
+      expect(confirm.getAttribute("aria-describedby")).toBe(reason.id);
+      // One fewer person is exactly 500 pairs: it is on, and the reason is gone.
+      await click(find("button[aria-label='Close']", assignDialog()));
+      await click(tick(many[0]!.email!));
+      await openAssign();
+      expect(byText("Assign 500 seats", "button", assignDialog()).hasAttribute("disabled")).toBe(false);
+      expect(assignDialog().textContent).not.toContain("You can assign up to");
+    })();
+    return assignmentLimitBody;
   });
 
   test("has no native <select>", async () => {

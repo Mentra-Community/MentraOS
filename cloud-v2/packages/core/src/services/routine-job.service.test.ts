@@ -987,7 +987,7 @@ test('offline provisional recovery refuses duplicate or changed original custody
 })
 
 /** Real selection/reservation/binding with only the Mongo collection boundary replaced. */
-async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: Map<string, any>, counters: {host: number; request: number}) => Promise<void>, extraKinds: ('audio'|'browser'|'fixture-data')[] = []) {
+async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: Map<string, any>, counters: {host: number; request: number}, pastRows: Map<string, StoredRoutineJob>) => Promise<void>, extraKinds: ('audio'|'browser'|'fixture-data')[] = []) {
  const now=Date.now(),at=new Date(now).toISOString(),f=fixture({...definition,
    resourceRequirements:[...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']},...extraKinds.map(kind=>({kind,capabilities:[]}))],glasses:{models:['mentra-live']},
    fixtures:extraKinds.includes('fixture-data')?[{provider:'synthetic',description:'Independent synthetic fixture'}]:[],
@@ -1012,8 +1012,8 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
  (f.service as any).hosts={async get(id:string){return project().find(h=>h.hostId===id)??null},async list(){return project()}};
  const originals={find:TestRequestModel.collection.find,read:TestRequestModel.collection.findOne,write:TestRequestModel.collection.findOneAndUpdate,
   hostRead:TestHostStateModel.collection.findOne,hostWrite:TestHostStateModel.collection.findOneAndUpdate,get:resourceReservationRepository.get,request:resourceReservationRepository.request,claimed:resourceReservationRepository.claimedHosts,recorderClaims:resourceReservationRepository.recorderClaims,replace:resourceReservationRepository.replace};
- const counters={host:0,request:0};
- TestRequestModel.collection.find=((filter:any)=>({limit(n:number){expect(n).toBe(1001);expect(filter.requestId.$in).toEqual([selection.requestId]);return {async toArray(){return [structuredClone(f.row)]}}}})) as any;
+ const counters={host:0,request:0},pastRows=new Map<string,StoredRoutineJob>();
+ TestRequestModel.collection.find=((filter:any)=>({limit(n:number){expect(n).toBe(1001);expect(filter.requestId.$in.length).toBeLessThanOrEqual(1000);return {async toArray(){return filter.requestId.$in.flatMap((id:string)=>{const row=id===selection.requestId?f.row:pastRows.get(id);return row?[structuredClone(row)]:[]})}}}})) as any;
  TestRequestModel.collection.findOne=(async(filter:any)=>{expect(filter.requestId).toBe(selection.requestId);return structuredClone(f.row)}) as any;
  TestRequestModel.collection.findOneAndUpdate=(async(filter:any,update:any)=>{const row=f.row!;expect(filter.requestId).toBe(row.requestId);if(filter.fleetBinding?.$exists===false&&row.fleetBinding)return null;
   if(filter.fleetDeadline?.$gt&&row.fleetDeadline<=filter.fleetDeadline.$gt||filter.fleetCancellation?.$exists===false&&row.fleetCancellation)return null;
@@ -1024,14 +1024,15 @@ async function withLocalResources(body: (f: ReturnType<typeof fixture>, hosts: M
   counters.host++;Object.assign(h,structuredClone(update.$set));h.resourceReservationVersion++;return structuredClone(h)}) as any;
  resourceReservationRepository.get=async id=>structuredClone(hosts.get(id)??null);
  resourceReservationRepository.replace=async(previous,claims)=>{const h=hosts.get(previous.hostId);if(previous.sequence!==h.sequence||previous.laneControlVersion!==h.laneControlVersion||previous.resourceReservationVersion!==h.resourceReservationVersion)return false;
-  expect(claims).toEqual(h.resourceReservations);h.resourceReservationVersion++;return true;};
+  expect(claims.every(claim=>h.resourceReservations.some((original:any)=>requestInputDigest(original)===requestInputDigest(claim)))).toBe(true);h.resourceReservations=structuredClone(claims);h.resourceReservationVersion++;return true;};
  resourceReservationRepository.request=async()=>structuredClone(f.row);
  resourceReservationRepository.claimedHosts=async()=>[];
  resourceReservationRepository.recorderClaims=async()=>[...hosts.values()].flatMap(h=>structuredClone(h.resourceReservations)).filter((claim:any)=>claim.requestId===selection.requestId);
+ f.rows.reconcileRecorderHost=(...args)=>routineJobRepository.reconcileRecorderHost!.apply(routineJobRepository,args);
  f.rows.reserveResources=(...args)=>routineJobRepository.reserveResources!.apply(routineJobRepository,args);
  f.rows.bind=(...args)=>routineJobRepository.bind.apply(routineJobRepository,args);
  const clock=spyOn(Date,'now').mockReturnValue(now);
- try {await body(f,hosts,counters)} finally {clock.mockRestore();TestRequestModel.collection.find=originals.find;TestRequestModel.collection.findOne=originals.read;TestRequestModel.collection.findOneAndUpdate=originals.write;
+ try {await body(f,hosts,counters,pastRows)} finally {clock.mockRestore();TestRequestModel.collection.find=originals.find;TestRequestModel.collection.findOne=originals.read;TestRequestModel.collection.findOneAndUpdate=originals.write;
   TestHostStateModel.collection.findOne=originals.hostRead;TestHostStateModel.collection.findOneAndUpdate=originals.hostWrite;resourceReservationRepository.get=originals.get;resourceReservationRepository.request=originals.request;resourceReservationRepository.claimedHosts=originals.claimed;resourceReservationRepository.recorderClaims=originals.recorderClaims;resourceReservationRepository.replace=originals.replace;}
 }
 function unavailableLocal(host:any,status:'unknown'|'out-of-service'|'reserved'|'in-repair'|'offline',kind='glasses') {
@@ -1243,5 +1244,57 @@ test('serialized stage rechecks the original baseline after its recorder authori
   const reservations=new ResourceReservationsService({async request(){return structuredClone(row)},async get(){return structuredClone(h)},async recorderClaims(){now=at+2;return[claim]},
    async stageBackend(){stages++;throw Error('Expired stage must not start')},async claimedHosts(){return[]},async replace(){throw Error('No exclusive claim may start')}},()=>now);
   expect(await reservations.reserveFleet(row.requestId,row.fleetInputSha256!,h.hostId,'android')).toBeNull();expect(stages).toBe(0);expect(f.row!.fleetResourceAdmission).toBeUndefined();expect(h.resourceReservations).toEqual([claim]);
+ });
+});
+
+for(const platform of ['android','ios-on-mac'] as const)test(`a completed ${platform} recorder claim reconciles before selecting the next SAME job`,async()=>{
+ await withLocalResources(async(f,hosts,_counters,pastRows)=>{
+  const at=hosts.get('mini').receivedAt.toISOString();
+  for(const h of hosts.values()) {
+   h.snapshot.lanes[0].platform=platform;h.snapshot.lanes[0].descriptorRevision=routineLaneDescriptorRevision(h.snapshot.lanes[0]);
+   const claim={id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:`prior-${h.hostId}`,fleetInputSha256:'c'.repeat(64),hostId:h.hostId,laneId:'android',poolId:`${h.hostId}:disk:1`,minimumAvailableBytes:3*1024**3,reservedAt:at};
+   h.resourceReservations=[claim];pastRows.set(claim.requestId,{requestId:claim.requestId,fleetInputSha256:claim.fleetInputSha256,inputSha256:'d'.repeat(64),dispatchCompletion:{inputSha256:'d'.repeat(64),disposition:'clean',completedAt:at}} as StoredRoutineJob);
+  }
+  const first=await f.service.submit(selection), selectedDefinition={...definition,platforms:[platform],execution:{resourceKinds:['phone','app','recorder','network'],policy:{estimatedOutputBytes:1024**3}},source:definition.source};
+  if(platform==='ios-on-mac'){const row=structuredClone(f.row!);row.fleetSelection.platform=platform;row.fleetSelectionSha256=requestInputDigest(row.fleetSelection);f.restore(row)}
+  const row=f.row!;await f.service.prepared(selection.requestId,{inputSha256:row.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});
+  const prepared=await f.service.preparation(selection.requestId);
+  expect((prepared as {resourceTarget?:{hostId:string;laneId:string}}).resourceTarget).toBeDefined();
+  expect([...hosts.values()].flatMap(h=>h.resourceReservations).some(claim=>claim.requestId.startsWith('prior-'))).toBe(false);
+  expect(f.row!.requestId).toBe(selection.requestId);expect(f.row!.fleetSelection.build).toEqual(row.fleetSelection.build);expect(f.row!.fleetDeadline).toEqual(row.fleetDeadline);expect(f.row!.fleetBinding).toBeUndefined();
+  const target=(prepared as unknown as {resourceTarget:{hostId:string;laneId:string}}).resourceTarget,h=hosts.get(target.hostId),current=f.row!,
+   binding={jobId:current.requestId,requestId:current.requestId,hostId:h.hostId,laneId:target.laneId,
+    descriptorRevision:h.snapshot.lanes[0].descriptorRevision,actionsRunId:'10',actionsJobId:'20',boundAt:at};
+  expect((await routineJobRepository.bind(current.requestId,current.fleetInputSha256!,binding,{},h.receivedAt))?.fleetBinding).toEqual(binding);
+  expect(h.resourceReservations.map((claim:any)=>claim.requestId)).toEqual([current.requestId]);
+ });
+});
+
+for(const refusal of ['missing-request','changed-digest','active-offer','wrong-pool','stale-offer','future-offer','before-cancellation','cancellation-before-claim','completion-before-claim','invalid-completion','completion-input','candidate-held','report-race','lost-cas'] as const)test(`recorder return reconciliation retains ${refusal} custody`,async()=>{
+ await withLocalResources(async(f,hosts,_counters,pastRows)=>{
+  const h=hosts.get('mini'),at=h.receivedAt.toISOString(),offer=h.snapshot.lanes[0].resources.find((r:any)=>r.kind==='recorder').storage,
+   claim={id:'ef303cad-e9b5-4d3c-b9ea-91c1846a8dab',requestId:'prior-mini',fleetInputSha256:'c'.repeat(64),hostId:h.hostId,laneId:'android',poolId:'mini:disk:1',minimumAvailableBytes:3*1024**3,reservedAt:at},
+   prior={requestId:claim.requestId,fleetInputSha256:claim.fleetInputSha256,inputSha256:'d'.repeat(64),dispatchCompletion:{inputSha256:'d'.repeat(64),disposition:'clean',completedAt:at}} as StoredRoutineJob;
+  h.resourceReservations=[claim];pastRows.set(prior.requestId,prior);
+  if(refusal==='missing-request')pastRows.delete(prior.requestId);
+  if(refusal==='changed-digest')prior.fleetInputSha256='e'.repeat(64);
+  if(refusal==='active-offer')offer.reservations=[{requestId:prior.requestId,inputSha256:prior.inputSha256,remainingOutputBytes:0}];
+  if(refusal==='wrong-pool')offer.poolId='mini:disk:other';
+  if(refusal==='stale-offer')offer.observedAt=new Date(h.receivedAt.getTime()-120001).toISOString();
+  if(refusal==='future-offer')offer.observedAt=new Date(h.receivedAt.getTime()+1).toISOString();
+  if(refusal==='before-cancellation'){delete prior.dispatchCompletion;prior.fleetCancellation={requestedAt:new Date(h.receivedAt.getTime()+1).toISOString(),reason:'Original cancellation'};}
+  if(refusal==='cancellation-before-claim'){delete prior.dispatchCompletion;prior.fleetCancellation={requestedAt:new Date(h.receivedAt.getTime()-1).toISOString(),reason:'Older cancellation'};}
+  if(refusal==='completion-before-claim')prior.dispatchCompletion!.completedAt=new Date(h.receivedAt.getTime()-1).toISOString();
+  if(refusal==='invalid-completion')prior.dispatchCompletion!.completedAt='invalid';
+  if(refusal==='completion-input')prior.dispatchCompletion!.inputSha256='e'.repeat(64);
+  if(refusal==='candidate-held')prior.fleetCandidatePreparation={} as any;
+  const replace=resourceReservationRepository.replace;
+  if(refusal==='report-race')resourceReservationRepository.replace=async(host,claims)=>{h.sequence++;return replace(host,claims)};
+  if(refusal==='lost-cas')resourceReservationRepository.replace=async()=>{throw Error('Original CAS reply lost')};
+  try {
+   if(refusal==='lost-cas')await expect(routineJobRepository.reconcileRecorderHost!('mini',h.receivedAt)).rejects.toThrow('Original CAS reply lost');
+   else await routineJobRepository.reconcileRecorderHost!('mini',h.receivedAt);
+   expect(h.resourceReservations).toEqual([claim]);expect(f.row).toBeNull();
+  }finally{resourceReservationRepository.replace=replace}
  });
 });
