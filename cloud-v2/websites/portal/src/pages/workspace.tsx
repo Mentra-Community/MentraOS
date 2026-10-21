@@ -35,12 +35,11 @@ import {
   workspaceDetailQuery,
   workspaceListQuery,
   workspaceScope,
-  type BillingScope,
   type MembersLicenses,
   type NavGroup,
 } from "@mentra/workspace-ui";
 import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
 import { closeQueryParam, navigate, openQueryParam, Redirect, useSearch } from "@/lib/navigation";
@@ -156,34 +155,12 @@ export function isNoAccess(error: unknown): boolean {
 }
 
 /**
- * How the Members list's "Add seats ↗" works (`MembersLicenses.onAddSeats`): asks billing for an `add_seats` session for
- * the license, in the click, and leaves the portal for it; a refusal rejects and the list words it. Like every other
- * way out it leaves nothing behind if the person has gone from the page while billing answered. Kept apart from the
- * source below because it is the one part of that source that is the portal's own behavior.
- */
-function useAddSeats(scope: BillingScope): NonNullable<MembersLicenses["onAddSeats"]> {
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  return useCallback(
-    async (licenseId: string) => {
-      const { url } = await portalBillingApi.session(scope, { action: "add_seats", licenseId });
-      if (mounted.current) portalNavigateOut.leave(url);
-    },
-    [scope],
-  );
-}
-
-/**
  * The Members list's licenses source (`WorkspaceMembersPanel`'s `licenses`): billing's catalog, which names and draws the
  * licenses a member holds, and, for a viewer offered billing, billing's status, which says where "Add seats ↗" is
- * offered; and how that button works. Nothing is asked until the list can use it: the viewer sees every license
- * (`workspace.licenses.read`) in a workspace that holds one. None where billing's catalog can't be read (a Private
- * Cloud), so the list is the admin portal's.
+ * offered; and the billing client and the portal's ways out, which that button goes through like every other ↗ button
+ * (hosted action: this tab, or a tab opened in the click for a page that does not return). Nothing is asked until the
+ * list can use it: the viewer sees every license (`workspace.licenses.read`) in a workspace that holds one. None where
+ * billing's catalog can't be read (a Private Cloud), so the list is the admin portal's.
  */
 export function useMembersLicenses({
   me,
@@ -203,12 +180,14 @@ export function useMembersLicenses({
   const wanted = enabled && me.modules.billingCatalog && can(detail, "workspace.licenses.read") && (licenses ?? []).some(license => !license.endedAt);
   const catalog = useQuery({ ...billingCatalogQuery(portalBillingApi, scope), enabled: wanted });
   const status = useQuery({ ...billingStatusQuery(portalBillingApi, scope), enabled: wanted && billingOffered(me, detail) });
-  const onAddSeats = useAddSeats(scope);
 
   return useMemo(
     // The one place the source is built.
-    () => (me.modules.billingCatalog ? { catalog: catalog.data?.products, billing: status.data?.licenses, onAddSeats } : undefined),
-    [me.modules.billingCatalog, catalog.data, status.data, onAddSeats],
+    () =>
+      me.modules.billingCatalog
+        ? { catalog: catalog.data?.products, billing: status.data?.licenses, billingApi: portalBillingApi, navigateOut: portalNavigateOut }
+        : undefined,
+    [me.modules.billingCatalog, catalog.data, status.data],
   );
 }
 

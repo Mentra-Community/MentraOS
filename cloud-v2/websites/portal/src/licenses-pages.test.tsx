@@ -28,7 +28,7 @@ import {
   workspaceCatalog,
   type Scenario,
 } from "./test-core";
-import { byText, cleanup, click, find, findAll, render, setupDom, teardownDom, until } from "../../../packages/workspace-ui/src/test-dom";
+import { byText, cleanup, click, find, findAll, isNeutral, render, setupDom, teardownDom, until } from "../../../packages/workspace-ui/src/test-dom";
 import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 
 beforeAll(setupDom);
@@ -354,6 +354,52 @@ describe("Members with licenses", () => {
     await click(buttonNamed(/Add seats/)!);
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);
+    const posted = core.requests.find(request => request.method === "POST" && request.path.endsWith("/session"))!;
+    expect(posted.body).toEqual({ action: "add_seats", licenseId: "lic_fleet", locale: "en-US" });
+  });
+
+  test("Add seats ↗ is a hosted action like any other: one billing lists with returns: false opens a tab in the click", async () => {
+    const seatsPage: BillingAction = { kind: "add_seats", fallbackLabel: "Add seats", returns: false };
+    const scenario: Scenario = {
+      ...SCENARIOS.threeActive(),
+      workspaceStatus: statusOf([CALL_BILLING, { ...FLEET_BILLING, actions: [seatsPage] }, EXAMPLE_BILLING]),
+      hosted: () => ({ url: HOSTED.seats }),
+    };
+    await open(`/w/${ACME}/members?member=wm_luis`, scenario, { ready: "Hannah Kim" });
+    const out = ways();
+    await until(() => buttonNamed(/Add seats/) !== undefined, "Add seats in the panel");
+    await click(buttonNamed(/Add seats/)!);
+    // The tab was opened in the click itself, before billing answered; this tab stays.
+    expect(out.events[0]).toBe("open");
+    await until(() => out.events.includes(`replace:${HOSTED.seats}`), "the tab to be sent on");
+    expect(out.assign).not.toHaveBeenCalled();
+    expect(out.tab.opener).toBeNull();
+  });
+
+  test("a refused Add seats ↗ says so in the panel, in the neutral notice, and goes nowhere", async () => {
+    const scenario: Scenario = { ...SCENARIOS.threeActive(), hosted: () => ({ url: "javascript:alert(1)" }) };
+    await open(`/w/${ACME}/members?member=wm_luis`, scenario, { ready: "Hannah Kim" });
+    const out = ways();
+    await until(() => buttonNamed(/Add seats/) !== undefined, "Add seats in the panel");
+    await click(buttonNamed(/Add seats/)!);
+    await until(() => has("Billing couldn't do that. Try again."), "the refusal");
+    const alerts = findAll("dialog [role='alert']");
+    expect(alerts.map(alert => alert.textContent)).toEqual(["Billing couldn't do that. Try again."]);
+    expect(alerts.every(isNeutral)).toBe(true);
+    expect(out.assign).not.toHaveBeenCalled();
+    expect(out.openWindow).not.toHaveBeenCalled();
+  });
+
+  test("Add seats ↗ in the Assign licenses dialog goes the same way", async () => {
+    const { core } = await open(`/w/${ACME}/members`, { ...SCENARIOS.threeActive(), hosted: () => ({ url: HOSTED.seats }) }, { ready: "Call Unlimited" });
+    const out = ways();
+    await click(find("input[aria-label='Select Luis Ortega']"));
+    await click(find("input[aria-label='Select Amara Okafor']"));
+    await click(buttonNamed(/^Assign licenses$/)!);
+    await until(() => findAll("dialog button").some(button => /Add seats/.test(button.textContent ?? "")), "Add seats in the dialog");
+    await click(findAll("dialog button").find(button => /Add seats/.test(button.textContent ?? ""))!);
+    await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
+    expect(out.assign.mock.calls).toEqual([[HOSTED.seats]]);
     const posted = core.requests.find(request => request.method === "POST" && request.path.endsWith("/session"))!;
     expect(posted.body).toEqual({ action: "add_seats", licenseId: "lic_fleet", locale: "en-US" });
   });
