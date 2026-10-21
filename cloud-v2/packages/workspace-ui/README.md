@@ -332,7 +332,8 @@ const shared = {
   unconditionally. A viewer who is not offered billing makes them ask for nothing at all.
   Each owns its "Buy a license" dialog and its "Billing & invoices ↗" request, and a refusal
   of that request shows in words under the buttons.
-- **Every ↗ button goes through `useHostedAction`.** It marks the pressed
+- **Every ↗ button goes through `useHostedAction`,** the Members screens' "Add seats ↗"
+  included (see [Members' licenses](#members-licenses)). It marks the pressed
   button busy, words a refusal with one alert (`HostedFeedback`), and keeps the other
   buttons in the same card, dialog or grid disabled while a request is out. A purchase never
   opens a tab.
@@ -353,7 +354,7 @@ everything about licenses. Leave it out where licenses are not shown (the admin 
   api={api}
   workspaceId={workspaceId}
   locale={locale}
-  licenses={{catalog: catalog?.products, billing: status?.licenses, onAddSeats}}
+  licenses={{catalog: catalog?.products, billing: status?.licenses, billingApi: billing, navigateOut}}
   member={searchParams.get("member")}
   onMemberChange={id => setQueryParam("member", id)}
 />
@@ -366,9 +367,14 @@ everything about licenses. Leave it out where licenses are not shown (the admin 
   whether "Add seats ↗" appears: a license offers it only when its entry lists `add_seats`,
   so with `billing` null, undefined or empty nothing offers it, and the sentences drop their
   "add seats" half.
-- **`onAddSeats(licenseId)`** is how, not whether: ask billing for an `add_seats` session
-  and leave through `NavigateOut`. It may return a promise; a rejection is worded with
-  `billingErrorMessage`.
+- **`billingApi`** (the billing client, the same `createBillingApi` as the pages' `billing`)
+  and **`navigateOut`** (the same `NavigateOut`) are how "Add seats ↗" works, not whether it
+  appears. The screens run it through `useHostedAction`, with the panel's own `api` and the
+  workspace's scope, like every other ↗ button: an `add_seats` action that returns leaves
+  this tab, one billing lists with `returns: false` opens its tab in the click, a blocked
+  tab becomes an "Open the payment page ↗" link, and a refusal is worded under the list
+  (`HostedFeedback`), in the member panel and in Assign licenses alike. Both are required
+  whenever a source is given.
 - **With a source, for a viewer who can read licenses** in a workspace holding a license
   that has not ended, the list gains a Licenses column (a chip per license, "None",
   "After first sign-in", and three chips plus "+n" past four). With `workspace.licenses.assign`

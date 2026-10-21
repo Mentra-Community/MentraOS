@@ -31,10 +31,10 @@ import { useQuery } from "@tanstack/react-query";
 import { XIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
-import type { CatalogEntry, LicenseBilling } from "@mentra/workspace-contract/portal-billing";
+import type { CatalogEntry } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../api";
 import { formatDate } from "../lib/format";
-import { holdsSeat, joinLicenses, listedAction } from "../lib/license-join";
+import { holdsSeat, joinLicenses } from "../lib/license-join";
 import { cn } from "../lib/utils";
 import { licensesQuery, membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can, canRemoveRole, effectiveRole, roleOptions } from "../roles";
@@ -43,30 +43,23 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Avatar, Badge, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
 import { AssignLicensesDialog } from "./licenses/assign-licenses";
-import { isHeldLicense, memberLabel, type HeldLicense } from "./licenses/parts";
+import { isHeldLicense, memberLabel, type AddSeatsSource, type HeldLicense } from "./licenses/parts";
 import { ProductChip } from "./licenses/product";
 import { MemberPanel, PersonLicenses } from "./member-panel";
 
-/** What the host knows about licenses, for the Members list. The workspace portal passes it; the admin portal doesn't. */
-export interface MembersLicenses {
+/**
+ * What the host knows about licenses, for the Members list. The workspace portal passes it; the admin portal doesn't.
+ *
+ * "Add seats ↗" is one of the portal's hosted-page buttons like any other (`useHostedAction`), so the host gives what
+ * that needs, as it does for the Licenses page: the billing client (`billingApi`) and the two ways out (`navigateOut`).
+ * The workspace API is the panel's own `api` prop. Whether a license offers the button is `billing`'s to say.
+ */
+export interface MembersLicenses extends AddSeatsSource {
   /**
    * Billing's catalog (`catalog.products`): what names and draws each license. Null or undefined while it can't be
    * read (still loading, or it failed): the Licenses column, the selection and the panel's section are left out.
    */
   catalog: readonly CatalogEntry[] | null | undefined;
-  /**
-   * Billing's licenses (`status.licenses`), where the viewer is offered billing. This is what decides "Add seats ↗":
-   * Core shows a billing button only where billing lists the action, so a license offers it only when its entry
-   * here lists `add_seats`. Without it (not offered billing, still loading, or it failed) no license offers it,
-   * and the sentences drop their "add seats" half.
-   */
-  billing?: readonly LicenseBilling[] | null;
-  /**
-   * How "Add seats ↗" works: asks billing for an `add_seats` session for the license and leaves the portal for it;
-   * rejects with billing's refusal. It says how, not whether: without `billing` listing the action, it is never
-   * called.
-   */
-  onAddSeats?(licenseId: string): unknown;
 }
 
 /** How many chips a member's Licenses cell shows before it folds the rest into "+n". */
@@ -156,13 +149,6 @@ export function WorkspaceMembersPanel({
     () => (canSelect ? (membersResult.data ?? []).filter((member) => selectedIds.has(member.membershipId) && !member.pending) : []),
     [canSelect, membersResult.data, selectedIds],
   );
-
-  // Only where billing lists `add_seats` for the license, and fails closed: with no `billing` (not offered it, still
-  // loading, or failed) there is no button. `onAddSeats` is how it works, not whether it is offered.
-  const canAddSeats = (card: HeldLicense) =>
-    licenses?.onAddSeats !== undefined &&
-    licenses.billing != null &&
-    listedAction(licenses.billing.find((entry) => entry.licenseId === card.licenseId), "add_seats") !== null;
 
   const clearSelection = () => {
     setSelectedIds(new Set());
@@ -255,7 +241,7 @@ export function WorkspaceMembersPanel({
                       error={changeRole.error ?? remove.error}
                       locale={locale}
                       licenses={
-                        target && licensesShown ? (
+                        target && licensesShown && licenses ? (
                           <PersonLicenses
                             // A new member starts with no failure of the last one's.
                             key={target.membershipId}
@@ -264,23 +250,23 @@ export function WorkspaceMembersPanel({
                             member={target}
                             cards={cards}
                             canAssign={canSelect}
-                            canAddSeats={canAddSeats}
-                            onAddSeats={licenses?.onAddSeats}
+                            addSeats={licenses}
                           />
                         ) : null
                       }
                     />
-                    <AssignLicensesDialog
-                      open={assigning && chosen.length > 0}
-                      onClose={() => setAssigning(false)}
-                      api={api}
-                      workspaceId={workspaceId}
-                      people={chosen}
-                      cards={cards}
-                      canAddSeats={canAddSeats}
-                      onAddSeats={licenses?.onAddSeats}
-                      onAssigned={clearSelection}
-                    />
+                    {licenses ? (
+                      <AssignLicensesDialog
+                        open={assigning && chosen.length > 0}
+                        onClose={() => setAssigning(false)}
+                        api={api}
+                        workspaceId={workspaceId}
+                        people={chosen}
+                        cards={cards}
+                        addSeats={licenses}
+                        onAssigned={clearSelection}
+                      />
+                    ) : null}
                   </>
                 );
               }}

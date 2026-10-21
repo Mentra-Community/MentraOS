@@ -12,13 +12,15 @@
  *
  * Every sentence is in `strings/licenses.ts`. This file imports no runtime code from the contract's billing
  * schemas, so the admin portal doesn't carry zod for it. What the seat screens share (`memberLabel`, `HeldLicense`,
- * `SeatErrorNotice`, `useAddSeats`) is in `licenses/parts.tsx`.
+ * `SeatErrorNotice`, `AddSeatsSource`) is in `licenses/parts.tsx`. "Add seats ↗" is a `useHostedAction` like every
+ * other ↗ button, so its refusals, its tab and its link come from `HostedFeedback`.
  */
 
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
-import { useId, type ReactNode } from "react";
+import { useId, useMemo, type ReactNode } from "react";
 import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "../api";
+import { workspaceScope } from "../billing-scope";
 import { formatDate } from "../lib/format";
 import { holdsSeat } from "../lib/license-join";
 import { cn } from "../lib/utils";
@@ -28,8 +30,9 @@ import { licenseStrings as t } from "../strings/licenses";
 import { Menu, type MenuItem } from "../ui/menu";
 import { SidePanel } from "../ui/side-panel";
 import { Switch } from "../ui/switch";
-import { Avatar, AlertText, Badge, ConfirmButton, ErrorNotice } from "./common";
-import { HostedPageButton, memberLabel, SeatErrorNotice, useAddSeats, type HeldLicense } from "./licenses/parts";
+import { Avatar, Badge, ConfirmButton, ErrorNotice } from "./common";
+import { HostedFeedback, useHostedAction } from "./licenses/hosted-action";
+import { addingSeatsTo, addSeatsAction, HostedPageButton, memberLabel, SeatErrorNotice, type AddSeatsSource, type HeldLicense } from "./licenses/parts";
 import { ProductIcon } from "./licenses/product";
 
 export interface PersonLicensesProps {
@@ -40,13 +43,12 @@ export interface PersonLicensesProps {
   cards: readonly HeldLicense[];
   /** Whether the viewer may give and take seats (`workspace.licenses.assign`). Without it the switches show the state only. */
   canAssign: boolean;
-  /** Whether "Add seats ↗" is offered for the license: billing lists `add_seats` for it and the host can start it. */
-  canAddSeats(card: HeldLicense): boolean;
-  onAddSeats?(licenseId: string): unknown;
+  /** What "Add seats ↗" needs: it is offered for a license only where `addSeats.billing` lists `add_seats` for it. */
+  addSeats: AddSeatsSource;
 }
 
 /** A member's Licenses: one row per license the workspace holds, with a switch and the seats left. */
-export function PersonLicenses({ api, workspaceId, member, cards, canAssign, canAddSeats, onAddSeats }: PersonLicensesProps) {
+export function PersonLicenses({ api, workspaceId, member, cards, canAssign, addSeats }: PersonLicensesProps) {
   const heading = useId();
   const name = memberLabel(member);
   const assign = useSeatMutation(api, workspaceId, (change: { licenseId: string; membershipId: string }) =>
@@ -55,7 +57,8 @@ export function PersonLicenses({ api, workspaceId, member, cards, canAssign, can
   const release = useSeatMutation(api, workspaceId, (change: { licenseId: string; membershipId: string }) =>
     api.releaseSeat(workspaceId, change.licenseId, change.membershipId),
   );
-  const add = useAddSeats(onAddSeats);
+  const scope = useMemo(() => workspaceScope(workspaceId), [workspaceId]);
+  const hosted = useHostedAction({ billing: addSeats.billingApi, scope, navigateOut: addSeats.navigateOut, api });
   const busy = assign.isPending || release.isPending;
   // The switch shows where it is going while the request is out.
   const moving = assign.isPending ? { licenseId: assign.variables.licenseId, on: true } : release.isPending ? { licenseId: release.variables.licenseId, on: false } : null;
@@ -78,6 +81,7 @@ export function PersonLicenses({ api, workspaceId, member, cards, canAssign, can
             const over = !on && counts.over > 0;
             const full = !on && !over && counts.free === 0;
             const warn = over || full;
+            const addSeatsFor = full ? addSeatsAction(addSeats, card) : null;
             const text = on
               ? t.memberPanel.hasASeat(counts.free, counts.quantity)
               : over
@@ -99,8 +103,13 @@ export function PersonLicenses({ api, workspaceId, member, cards, canAssign, can
                     {text}
                   </div>
                 </div>
-                {full && canAddSeats(card) ? (
-                  <HostedPageButton pending={add.pending === card.licenseId} onClick={() => add.run(card)}>
+                {addSeatsFor ? (
+                  <HostedPageButton
+                    newTab={addSeatsFor.returns === false}
+                    pending={addingSeatsTo(hosted, card)}
+                    disabled={hosted.pending !== null}
+                    onClick={() => hosted.run({ action: addSeatsFor, licenseId: card.licenseId, name: card.name })}
+                  >
                     {t.actions.addSeats}
                   </HostedPageButton>
                 ) : null}
@@ -128,7 +137,7 @@ export function PersonLicenses({ api, workspaceId, member, cards, canAssign, can
         <p className="text-muted-foreground text-sm">{t.memberPanel.afterFirstSignIn(member.email ?? name)}</p>
       )}
       <SeatErrorNotice error={assign.error ?? release.error} />
-      {add.message ? <AlertText>{add.message}</AlertText> : null}
+      <HostedFeedback action={hosted} />
     </section>
   );
 }
