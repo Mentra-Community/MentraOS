@@ -27,6 +27,7 @@ import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
+import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
@@ -61,6 +62,7 @@ setDefaultTimeout(30_000)
 const MODELS = [
   AccessCredentialModel,
   BrowserSessionModel,
+  SigninIdentityModel,
   UserModel,
   WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
@@ -120,6 +122,24 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
   const bearer = await coreAccessToken({sub, email, emailVerified})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   return {sub, email, emailVerified, bearer, mentraUserId}
+}
+
+/**
+ * Set the name Core holds from `who`'s sign-ins through its provider (`signin_identities`), the row the member
+ * list reads names from, and, when given, the email that sign-in carried. `person()` already records a
+ * sign-in, with no name, as `coreAccessToken` does.
+ */
+async function signedInAs(who: Person, name: string | null, options: {email?: string} = {}) {
+  const updated = await SigninIdentityModel.updateOne(
+    {mentraUserId: who.mentraUserId},
+    {$set: {name, ...(options.email ? {email: options.email} : {})}},
+  )
+  expect(updated.matchedCount).toBe(1)
+}
+
+/** Take `who`'s sign-in identity away, as it is for a person who has never signed in through Core's provider. */
+async function neverSignedIn(who: Person) {
+  await SigninIdentityModel.deleteOne({mentraUserId: who.mentraUserId})
 }
 
 /** A signed-in session of `who` on the workspace portal (`portal`) or the admin portal (`admin`). */
@@ -923,7 +943,9 @@ describe("members", () => {
       ws.memberMembershipId,
     ])
     for (const item of reply.json.items) {
-      expect(Object.keys(item).sort()).toEqual(["email", "membershipId", "mentraUserId", "pending", "role", "startedAt"].sort())
+      expect(Object.keys(item).sort()).toEqual(
+        ["email", "membershipId", "mentraUserId", "name", "pending", "role", "startedAt"].sort(),
+      )
       expect(item.pending).toBe(false)
       expect(Number.isNaN(Date.parse(item.startedAt))).toBe(false)
     }
@@ -951,17 +973,133 @@ describe("members", () => {
       const reply = await call("GET", `${base}/${ws.workspaceId}/members`, {as})
       expect(reply.status).toBe(200)
       const pending = reply.json.items.find((item: any) => item.membershipId === "wm_imported_pending")
-      // The WorkOS id is the Store's identifier, never shown.
+      // The WorkOS id is the Store's identifier, never shown. Nobody has signed in, so there is no name.
       expect(pending).toEqual({
         membershipId: "wm_imported_pending",
         mentraUserId: null,
         email: "dev@acme.example",
+        name: null,
         role: "developer",
         startedAt: startedAt.toISOString(),
         pending: true,
       })
       expect(reply.json.items.filter((item: any) => item.pending)).toHaveLength(1)
     }
+  })
+
+  test("a member who signed in through Core's provider with a name has it; every other member has name null", async () => {
+    const ws = await newWorkspace()
+    // The owner and the member signed in with a name, the admin with none, the developer has not signed in at all.
+    // The owner's sign-in carried another email than the one the membership was made for.
+    await signedInAs(ws.owner, "Olivia Owner", {email: "olivia@personal.example"})
+    await signedInAs(ws.admin, null)
+    await signedInAs(ws.member, "Mel Member")
+    await neverSignedIn(ws.developer)
+    await WorkspaceMembershipModel.create({
+      membershipId: "wm_name_pending",
+      workspaceId: ws.workspaceId,
+      mentraUserId: null,
+      pendingWorkosUserId: "user_01NAMELESS",
+      email: "waiting@acme.example",
+      role: "developer",
+      roleHistory: [{role: "developer", from: new Date("2026-01-05T10:00:00.000Z"), authorizationRevision: 0}],
+      status: "active",
+      startedAt: new Date("2026-01-05T10:00:00.000Z"),
+    })
+
+    const reply = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.admin})
+
+    expect(reply.status).toBe(200)
+    const nameOf = new Map<string, unknown>(reply.json.items.map((item: any) => [item.membershipId, item.name]))
+    expect(nameOf.get(ws.ownerMembershipId)).toBe("Olivia Owner")
+    expect(nameOf.get(ws.memberMembershipId)).toBe("Mel Member")
+    // Signed in without a name: null, not absent, not the email.
+    expect(nameOf.get(ws.adminMembershipId)).toBeNull()
+    // Never signed in through the provider.
+    expect(nameOf.get(ws.developerMembershipId)).toBeNull()
+    // Imported and unclaimed: no Core user to look up.
+    expect(nameOf.get("wm_name_pending")).toBeNull()
+    expect(nameOf.size).toBe(5)
+    // The email stays what the membership holds, whatever the sign-in says.
+    expect(ws.owner.email).not.toBe("olivia@personal.example")
+    expect(reply.json.items.find((item: any) => item.membershipId === ws.ownerMembershipId).email).toBe(ws.owner.email)
+  })
+
+  test("a list of 50 members reads signin_identities once", async () => {
+    const ws = await newWorkspace()
+    await signedInAs(ws.owner, "Olivia Owner")
+    // The owner, an admin, a developer and a member are 4; forty-six more, written directly, make 50.
+    const startedAt = new Date("2026-02-01T10:00:00.000Z")
+    const roster = Array.from({length: 46}, (_, index) => `mu_roster_${String(index).padStart(2, "0")}`)
+    await WorkspaceMembershipModel.insertMany(
+      roster.map((mentraUserId, index) => ({
+        membershipId: `wm_roster_${String(index).padStart(2, "0")}`,
+        workspaceId: ws.workspaceId,
+        mentraUserId,
+        email: `${mentraUserId}@acme.example`,
+        role: "member",
+        roleHistory: [{role: "member", from: startedAt, authorizationRevision: 0}],
+        status: "active",
+        startedAt: new Date(startedAt.getTime() + index),
+      })),
+    )
+    await SigninIdentityModel.insertMany(
+      roster.slice(0, 40).map(mentraUserId => ({
+        mentraUserId,
+        tenantId: "mentra",
+        sourceId: "mentra",
+        subject: `supa-${mentraUserId}`,
+        email: `${mentraUserId}@acme.example`,
+        emailVerified: true,
+        name: `Person ${mentraUserId}`,
+        signedInAt: startedAt,
+      })),
+    )
+    const many = spyOn(SigninIdentityModel, "find")
+    const one = spyOn(SigninIdentityModel, "findOne")
+    try {
+      const reply = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.owner})
+
+      expect(reply.status).toBe(200)
+      expect(reply.json.items).toHaveLength(50)
+      // One read for the whole list, not one per row; it asks for exactly the 50 people on the page. The only
+      // single-row lookup is the sign-in check on the caller's own bearer token, never a member of the list.
+      for (const lookup of one.mock.calls) {
+        expect((lookup[0] as {mentraUserId: string}).mentraUserId).toBe(ws.owner.mentraUserId)
+      }
+      expect(many).toHaveBeenCalledTimes(1)
+      const filter = many.mock.calls[0]![0] as {mentraUserId: {$in: string[]}}
+      expect(new Set(filter.mentraUserId.$in).size).toBe(50)
+      expect(filter.mentraUserId.$in).toContain(ws.owner.mentraUserId)
+      expect(filter.mentraUserId.$in).toContain("mu_roster_45")
+      const nameOf = new Map<string, unknown>(reply.json.items.map((item: any) => [item.mentraUserId, item.name]))
+      expect(nameOf.get("mu_roster_07")).toBe("Person mu_roster_07")
+      expect(nameOf.get("mu_roster_39")).toBe("Person mu_roster_39")
+      expect(nameOf.get("mu_roster_40")).toBeNull()
+      expect(nameOf.get(ws.owner.mentraUserId)).toBe("Olivia Owner")
+    } finally {
+      many.mockRestore()
+      one.mockRestore()
+    }
+  })
+
+  test("the admin API's member list carries the same names", async () => {
+    const ws = await newWorkspace()
+    await signedInAs(ws.owner, "Olivia Owner")
+    await signedInAs(ws.developer, "Dev Eloper")
+    const orgAdmin = await person("orgadmin", {email: ADMIN_EMAIL})
+
+    const fromWorkspace = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.owner})
+    const fromAdmin = await call("GET", `/api/admin/workspaces/${ws.workspaceId}/members`, {
+      as: await session("admin", orgAdmin),
+    })
+
+    expect(fromAdmin.status).toBe(200)
+    expect(fromAdmin.json).toEqual(fromWorkspace.json)
+    const nameOf = new Map<string, unknown>(fromAdmin.json.items.map((item: any) => [item.membershipId, item.name]))
+    expect(nameOf.get(ws.ownerMembershipId)).toBe("Olivia Owner")
+    expect(nameOf.get(ws.developerMembershipId)).toBe("Dev Eloper")
+    expect(nameOf.get(ws.adminMembershipId)).toBeNull()
   })
 
   test("a developer or a plain member gets 403", async () => {
