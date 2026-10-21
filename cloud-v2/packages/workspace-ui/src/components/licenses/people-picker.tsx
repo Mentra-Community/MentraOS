@@ -1,8 +1,8 @@
 /**
- * "Assign seats": a dialog that searches the workspace's members, chooses several, and gives them all a seat of
+ * "Assign licenses": a dialog that searches the workspace's members, chooses several, and gives them all a seat of
  * one license in one request, all or none. People who already hold a seat, or haven't signed in yet, are listed
  * but can't be chosen, with the reason. The choice isn't capped as it is made: when more are chosen than there are
- * seats, the dialog says how many fit ("3 of 4 fit: remove one or add seats.") and Assign stays off, so the person
+ * seats, the dialog says how many fit ("3 of 4 fit: remove one or add licenses.") and Assign stays off, so the person
  * decides between fewer people and more seats. One request takes at most `MAX_SEAT_ASSIGNMENTS` people, so beyond
  * that Assign stays off too, with "You can assign up to 500 seats at a time." under it, the same as the Assign
  * licenses dialog says. The request is never split: it is all or none.
@@ -54,7 +54,7 @@ export function PeoplePickerDialog({
   license: LicenseView;
   productName: string;
   members: readonly MemberView[];
-  /** "Add seats ↗", or null where billing lists no `add_seats`: then the dialog offers only fewer people. */
+  /** "Add licenses ↗", or null where billing lists no `add_seats`: then the dialog offers only fewer people. */
   addSeats: AddSeatsControl | null;
 }) {
   return (
@@ -151,7 +151,7 @@ function PickerBody({
             }
           />
         ) : null}
-        {/* Add seats leaves for billing: when that fails, the person is told here, where they are looking. */}
+        {/* Add licenses leaves for billing: when that fails, the person is told here, where they are looking. */}
         <HostedFeedback action={{ error: addSeats?.error ?? null, link: addSeats?.link ?? null }} />
         <SeatErrorNotice error={assign.error} />
         <ul className="-mx-2 max-h-[min(46vh,400px)] space-y-0.5 overflow-y-auto">

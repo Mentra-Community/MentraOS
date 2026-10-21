@@ -295,30 +295,30 @@ describe("fitFor", () => {
   const nameOf = (person: { name: string }) => person.name;
   const line = (fit: LicenseFit<{ name: string }>, canAddSeats = true) => t.fit.line(fit, { nameOf, canAddSeats });
 
-  test("enough for both: '2 of 5 seats free: enough for both.'", () => {
+  test("enough for both: '2 of 5 licenses available: enough for both.'", () => {
     const fit = fitFor(core("lic_call", CALL, 5, 3), [luis, amara]);
     expect(fit).toMatchObject({ kind: "enough", ok: true, free: 2, quantity: 5, over: 0, fit: 2, needed: 2, holders: [] });
     expect(fit.recipients).toEqual([luis, amara]);
-    expect(line(fit)).toBe("2 of 5 seats free: enough for both.");
+    expect(line(fit)).toBe("2 of 5 licenses available: enough for both.");
   });
 
   test("enough for one, and for all of several", () => {
-    expect(line(fitFor(core("lic_call", CALL, 5, 3), [luis]))).toBe("2 of 5 seats free.");
-    expect(line(fitFor(core("lic_call", CALL, 5, 1), [luis, amara, sofia]))).toBe("4 of 5 seats free: enough for all 3.");
+    expect(line(fitFor(core("lic_call", CALL, 5, 3), [luis]))).toBe("2 of 5 licenses available.");
+    expect(line(fitFor(core("lic_call", CALL, 5, 1), [luis, amara, sofia]))).toBe("4 of 5 licenses available: enough for all 3.");
   });
 
-  test("some already hold one: 'Amara Okafor has one. 1 of 3 seats free, for Luis Ortega.'", () => {
+  test("some already hold one: 'Amara Okafor has one. 1 of 3 licenses available, for Luis Ortega.'", () => {
     const fit = fitFor(core("lic_call", CALL, 3, ["wm_amara", "wm_other"]), [luis, amara]);
     expect(fit).toMatchObject({ kind: "some_hold", ok: true, free: 1, quantity: 3, fit: 1, needed: 1 });
     expect(fit.holders).toEqual([amara]);
     expect(fit.recipients).toEqual([luis]);
-    expect(line(fit)).toBe("Amara Okafor has one. 1 of 3 seats free, for Luis Ortega.");
+    expect(line(fit)).toBe("Amara Okafor has one. 1 of 3 licenses available, for Luis Ortega.");
   });
 
   test("several hold one: 'have one'", () => {
     const fit = fitFor(core("lic_call", CALL, 5, ["wm_amara", "wm_luis"]), [luis, amara, sofia]);
     expect(fit.kind).toBe("some_hold");
-    expect(line(fit)).toBe("Luis Ortega and Amara Okafor have one. 3 of 5 seats free, for Sofia Alvarez.");
+    expect(line(fit)).toBe("Luis Ortega and Amara Okafor have one. 3 of 5 licenses available, for Sofia Alvarez.");
   });
 
   test("everyone already holds one: 'Everyone you chose has one.', and nothing can be assigned", () => {
@@ -334,23 +334,23 @@ describe("fitFor", () => {
     expect(fit.kind).toBe("all_hold");
   });
 
-  test("not enough: '2 of 3 fit: remove one or add seats.', or without 'add seats' where billing lists none", () => {
+  test("not enough: '2 of 3 fit: remove one or add licenses.', or without 'add seats' where billing lists none", () => {
     const fit = fitFor(core("lic_call", CALL, 3, 1), [luis, amara, sofia]);
     expect(fit).toMatchObject({ kind: "short", ok: false, free: 2, fit: 2, needed: 3 });
-    expect(line(fit)).toBe("2 of 3 fit: remove one or add seats.");
+    expect(line(fit)).toBe("2 of 3 fit: remove one or add licenses.");
     expect(line(fit, false)).toBe("2 of 3 fit: remove one.");
   });
 
   test("three chosen with one free asks to remove two", () => {
     const fit = fitFor(core("lic_call", CALL, 3, 2), [luis, amara, sofia]);
-    expect(line(fit)).toBe("1 of 3 fit: remove 2 or add seats.");
+    expect(line(fit)).toBe("1 of 3 fit: remove 2 or add licenses.");
   });
 
-  test("the picker's case: four chosen with three free is '3 of 4 fit: remove one or add seats.'", () => {
+  test("the picker's case: four chosen with three free is '3 of 4 fit: remove one or add licenses.'", () => {
     const four = [luis, amara, sofia, { membershipId: "wm_four", name: "Noah Fischer" }];
     const fit = fitFor(core("lic_call", CALL, 5, 2), four);
     expect(fit).toMatchObject({ kind: "short", ok: false, fit: 3, needed: 4 });
-    expect(line(fit)).toBe("3 of 4 fit: remove one or add seats.");
+    expect(line(fit)).toBe("3 of 4 fit: remove one or add licenses.");
     expect(line(fit, false)).toBe("3 of 4 fit: remove one.");
   });
 
@@ -358,19 +358,19 @@ describe("fitFor", () => {
     const fit = fitFor(core("lic_call", CALL, 3, ["wm_amara", "wm_h2"]), [luis, amara, sofia]);
     expect(fit).toMatchObject({ kind: "short", needed: 2, fit: 1 });
     expect(fit.holders).toEqual([amara]);
-    expect(line(fit)).toBe("1 of 2 fit: remove one or add seats.");
+    expect(line(fit)).toBe("1 of 2 fit: remove one or add licenses.");
   });
 
-  test("none free: 'All 10 seats are in use.'", () => {
+  test("none free: 'All 10 licenses are assigned.'", () => {
     const fit = fitFor(core("lic_fleet", FLEET, 10, 10), [luis]);
     expect(fit).toMatchObject({ kind: "full", ok: false, free: 0, over: 0, quantity: 10, fit: 0, needed: 1 });
-    expect(line(fit)).toBe("All 10 seats are in use.");
+    expect(line(fit)).toBe("All 10 licenses are assigned.");
   });
 
   test("an over-assigned license is full, and says by how much", () => {
     const fit = fitFor(core("lic_fleet", FLEET, 5, 7), [luis, amara]);
     expect(fit).toMatchObject({ kind: "full", ok: false, free: 0, over: 2, quantity: 5 });
-    expect(line(fit)).toBe("All 5 seats are in use.");
+    expect(line(fit)).toBe("All 5 licenses are assigned.");
   });
 
   test("nobody chosen is its own state, with no sentence", () => {

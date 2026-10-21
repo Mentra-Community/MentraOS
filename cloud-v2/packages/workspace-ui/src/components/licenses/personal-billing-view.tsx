@@ -156,7 +156,7 @@ export function PersonalBillingHeaderActions({ billing, purchaseId = null, navig
   const somethingToBuy = catalogForOwner(products, "person").some(canBuy);
   return (
     <>
-      <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={somethingToBuy ? () => setBuying(true) : null} hosted={hosted} />
+      <HeaderButtons invoices={listedAction(status, "billing_and_invoices")} onBuy={somethingToBuy ? () => setBuying(true) : null} buyLabel={t.page.buyALicense} hosted={hosted} />
       {somethingToBuy ? (
         <CatalogDialog
           open={buying}

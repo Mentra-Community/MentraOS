@@ -16,6 +16,7 @@ export function Dialog({
   title,
   description,
   className,
+  locked = false,
   children,
 }: {
   open: boolean;
@@ -24,6 +25,8 @@ export function Dialog({
   title: ReactNode;
   description?: ReactNode;
   className?: string;
+  /** A request is out and the dialog must stay until it answers: Escape, the backdrop and the close button do nothing. */
+  locked?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -42,11 +45,14 @@ export function Dialog({
       ref={ref}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
-      // Escape closes the dialog natively; `close` also fires when `open` turns false, which is harmless.
+      // Escape closes the dialog natively (unless it is locked); `close` also fires when `open` turns false, which is harmless.
+      onCancel={(event) => {
+        if (locked) event.preventDefault();
+      }}
       onClose={() => onClose()}
       onClick={(event) => {
         // The content fills the dialog, so only a click on the backdrop lands on the dialog itself.
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget && !locked) onClose();
       }}
       className={cn(
         // The Store's dialog: 24px corners, a soft shadow over a dimmed, blurred page.
@@ -73,6 +79,7 @@ export function Dialog({
               size="icon-sm"
               className="text-muted-foreground -mt-1.5 -mr-2"
               aria-label={t.dialog.close}
+              disabled={locked}
               onClick={onClose}
             >
               <XIcon />

@@ -373,12 +373,12 @@ describe("createWorkspaceApi: licenses and seats", () => {
 
   test("a refusal keeps Core's code, and a full license reads as Core's explanation", async () => {
     const rec = recordingFetch(
-      Response.json({ error: "no_seats_available", error_description: "every seat of this license is assigned" }, { status: 409 }),
+      Response.json({ error: "no_seats_available", error_description: "every license is assigned" }, { status: 409 }),
     );
     const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
     const error = await api.assignSeat("ws_1", "lic_1", "wm_1").catch((e: unknown) => e);
     expect(error).toMatchObject({ status: 409, code: "no_seats_available" });
-    expect(errorMessage(error)).toBe("Every seat of this license is assigned");
+    expect(errorMessage(error)).toBe("Every license is assigned");
   });
 
   describe("assignSeats", () => {
@@ -414,7 +414,7 @@ describe("createWorkspaceApi: licenses and seats", () => {
         Response.json(
           {
             error: "no_seats_available",
-            error_description: "not enough seats",
+            error_description: "too few licenses are available for these assignments; nothing was assigned",
             licenses: [{ licenseId: "lic_1", needed: 2, free: 1 }],
           },
           { status: 409 },

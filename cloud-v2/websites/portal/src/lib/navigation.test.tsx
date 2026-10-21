@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { act } from "react";
 import { cleanup, find, render, setupDom, teardownDom } from "@mentra/workspace-ui/test-dom";
-import { closeQueryParam, leavePortal, openPortalTab, openQueryParam, setQueryParam, useSearch } from "./navigation";
+import { leavePortal, openPortalTab, setQueryParam, useSearch } from "./navigation";
 
 // A DOM for the address and the window (happy-dom, as the workspace-ui package's tests use). Synthetic addresses only.
 beforeAll(setupDom);
@@ -169,7 +169,6 @@ describe("the query parameters the portal keeps in its address", () => {
   afterEach(() => mock.restore());
   const at = (path: string) => window.history.replaceState(null, "", path);
   const here = () => `${window.location.pathname}${window.location.search}`;
-  const next = () => new Promise<void>(resolve => setTimeout(resolve, 10));
 
   test("sets and removes one without touching the others or the path", () => {
     at("/w/ws_acme/licenses?foo=1");
@@ -177,19 +176,20 @@ describe("the query parameters the portal keeps in its address", () => {
     expect(here()).toBe("/w/ws_acme/licenses?foo=1&purchase=pur_1");
     setQueryParam("purchase", null);
     expect(here()).toBe("/w/ws_acme/licenses?foo=1");
-    setQueryParam("member", "wm_luis");
-    expect(here()).toBe("/w/ws_acme/licenses?foo=1&member=wm_luis");
-    setQueryParam("member", null);
-    expect(here()).toBe("/w/ws_acme/licenses?foo=1");
   });
 
   test("leaves an address alone when the parameter already has that value, so no history entry is added", () => {
     at("/w/ws_acme/licenses?purchase=pur_1");
     const before = window.history.length;
     setQueryParam("purchase", "pur_1");
-    setQueryParam("member", null);
+    setQueryParam("purchase", "pur_1", { replace: true });
     expect(window.history.length).toBe(before);
     expect(here()).toBe("/w/ws_acme/licenses?purchase=pur_1");
+    // Removing one that isn't there changes nothing either.
+    at("/w/ws_acme/licenses");
+    const unchanged = window.history.length;
+    setQueryParam("purchase", null);
+    expect(window.history.length).toBe(unchanged);
   });
 
   test("pushes a new history entry unless it is asked to replace the current one", () => {
@@ -202,18 +202,13 @@ describe("the query parameters the portal keeps in its address", () => {
     expect(here()).toBe("/w/ws_acme/licenses");
   });
 
-  test("reaches the pages that read the address: useSearch follows a set, a removal and Back", async () => {
-    at("/w/ws_acme/members");
+  test("reaches the pages that read the address: useSearch follows a set and a removal", async () => {
+    at("/w/ws_acme/licenses");
     function Search() {
       return <output>{useSearch()}</output>;
     }
     await render(<Search />);
     const shown = () => find("output").textContent;
-    expect(shown()).toBe("");
-    await act(async () => openQueryParam("member", "wm_luis"));
-    expect(shown()).toBe("?member=wm_luis");
-    await act(async () => window.history.back());
-    await next();
     expect(shown()).toBe("");
     await act(async () => setQueryParam("purchase", "pur_1", { replace: true }));
     expect(shown()).toBe("?purchase=pur_1");
@@ -221,44 +216,8 @@ describe("the query parameters the portal keeps in its address", () => {
     expect(shown()).toBe("");
   });
 
-  test("opening a panel adds an entry, and Back closes it", async () => {
-    at("/w/ws_acme/members");
-    openQueryParam("member", "wm_luis");
-    expect(here()).toBe("/w/ws_acme/members?member=wm_luis");
-    window.history.back();
-    await next();
-    expect(here()).toBe("/w/ws_acme/members");
-  });
-
-  test("closing a panel the portal opened steps Back out of its entry, so Back doesn't land on a copy of the page", async () => {
-    at("/w/ws_acme/members");
-    openQueryParam("member", "wm_luis");
-    const back = spyOn(window.history, "back");
-    closeQueryParam("member");
-    expect(back).toHaveBeenCalledTimes(1);
-    await next();
-    expect(here()).toBe("/w/ws_acme/members");
-  });
-
-  test("closing a panel the address opened (a link, a reload) removes the parameter in place", async () => {
-    at("/w/ws_acme/members?member=wm_luis");
-    const before = window.history.length;
-    const back = spyOn(window.history, "back");
-    closeQueryParam("member");
-    expect(back).not.toHaveBeenCalled();
-    expect(here()).toBe("/w/ws_acme/members");
-    expect(window.history.length).toBe(before);
-  });
-
-  test("opening another member while one is open changes the address in place: one Back still closes the panel", async () => {
-    at("/w/ws_acme/members");
-    openQueryParam("member", "wm_luis");
-    const after = window.history.length;
-    openQueryParam("member", "wm_amara");
-    expect(here()).toBe("/w/ws_acme/members?member=wm_amara");
-    expect(window.history.length).toBe(after);
-    closeQueryParam("member");
-    await next();
-    expect(here()).toBe("/w/ws_acme/members");
+  test("the address keeps no panel: purchase is the one parameter a page sets, and no member panel is opened from it", async () => {
+    const source = await Bun.file(new URL("./navigation.tsx", import.meta.url)).text();
+    expect(source).not.toMatch(/openQueryParam|closeQueryParam|"member"/);
   });
 });

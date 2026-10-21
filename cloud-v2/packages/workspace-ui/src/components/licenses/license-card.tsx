@@ -6,7 +6,7 @@
  * It has three views of the same license:
  * - `workspace`: a manager's. Core's seats and, where the viewer is offered billing, billing's dates and cost.
  *   Without billing's entry the card shows only its Seats: no money, no actions.
- * - `member`: a person who holds a seat. "You have a seat", since when, and where it works: no totals, no money,
+ * - `member`: a person who holds a seat. "Assigned to you", since when, and where it works: no totals, no money,
  *   nothing about anyone else.
  * - `person`: a personal license. Billing's facts and actions, and no seats.
  *
@@ -27,7 +27,7 @@ import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
 import type { BillingScope } from "../../billing-scope";
 import { errorMessage } from "../../errors";
-import { costFact, formatDay, formatDayShort, renewalCadence } from "../../lib/billing-format";
+import { costFact, formatDay, formatDayShort } from "../../lib/billing-format";
 import { listedAction, type JoinedLicense, type SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { useSeatMutation } from "../../queries";
@@ -111,9 +111,7 @@ function SeatsFact({ seats }: { seats: SeatCounts }) {
       foot={
         over ? (
           <span className="text-error-foreground font-semibold">{t.facts.seats.moreThanCovered(seats.over, seats.quantity)}</span>
-        ) : (
-          t.facts.seats.free(seats.free)
-        )
+        ) : undefined
       }
     >
       <Meter used={seats.used} total={seats.quantity} />
@@ -148,15 +146,9 @@ function TermFact({ card, locale, now }: { card: JoinedLicense; locale: string; 
       <Pending label={t.facts.term.ends} />
     );
   }
+  // The recurrence is in the cost's value ("$145 a month"): under the date there is only a scheduled end.
   if (billing.renewsAt) {
-    const cadence = renewalCadence(billing.price, locale);
-    return (
-      <Fact
-        label={t.facts.term.renews}
-        value={day(billing.renewsAt)}
-        foot={billing.endsAt ? t.facts.term.until(day(billing.endsAt)) : cadence ? t.facts.term.every(cadence) : undefined}
-      />
-    );
+    return <Fact label={t.facts.term.renews} value={day(billing.renewsAt)} foot={billing.endsAt ? t.facts.term.until(day(billing.endsAt)) : undefined} />;
   }
   if (billing.endsAt) return <Fact label={t.facts.term.ends} value={day(billing.endsAt)} foot={t.facts.term.doesntRenew} />;
   return <Pending label={t.facts.term.renews} />;
@@ -330,7 +322,7 @@ export function LicenseCard({
   const badge = badgeFor(card, view, locale);
   const { columns, facts } = factsFor(card, view, locale, workspaceName, clock);
   const ring = card.problem === "past_due" ? "warn" : highlight ? "highlight" : null;
-  // Add seats from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
+  // Add licenses from the card draws its refusal on the card; from the picker, in the picker (the card is behind it).
   const fromPicker = hosted.surface === PICKER;
   const addSeatsFrom = (surface?: string): AddSeatsControl | null =>
     addSeatsAction
@@ -432,10 +424,13 @@ interface CardSeatsProps {
 function CardSeats(props: CardSeatsProps) {
   const { api, scope } = props;
   if (api && scope.kind === "workspace") return <ManagedSeats {...props} api={api} workspaceId={scope.workspaceId} />;
-  return <SeatsLayout {...props} canAssign={false} onAssign={() => {}} onUnassign={() => {}} releasing={null} error={null} />;
+  return <SeatsLayout {...props} canAssign={false} onAssign={() => {}} onUnassign={async () => null} />;
 }
 
-/** The seats with their requests: unassigning, and the people picker that assigns. Both are seat mutations, so billing's status refreshes too. */
+/**
+ * The seats with their requests: unassigning (the roster's dialog asks, and shows a refusal itself), and the people
+ * picker that assigns. Both are seat mutations, so billing's status refreshes too.
+ */
 function ManagedSeats(props: CardSeatsProps & { api: WorkspaceApi; workspaceId: string }) {
   const { api, workspaceId, license, members, productName, pickerAddSeats, picking, onPicking } = props;
   const release = useSeatMutation(api, workspaceId, (holder: SeatHolder) => api.releaseSeat(workspaceId, license.licenseId, holder.membershipId));
@@ -444,12 +439,15 @@ function ManagedSeats(props: CardSeatsProps & { api: WorkspaceApi; workspaceId: 
       <SeatsLayout
         {...props}
         onAssign={() => onPicking(true)}
-        onUnassign={(holder) => {
+        onUnassign={async (holder) => {
           release.reset();
-          release.mutate(holder);
+          try {
+            await release.mutateAsync(holder);
+            return null;
+          } catch (error) {
+            return errorMessage(error);
+          }
         }}
-        releasing={release.isPending ? release.variables.membershipId : null}
-        error={release.error ? errorMessage(release.error) : null}
       />
       {props.canAssign ? (
         <PeoplePickerDialog
@@ -471,36 +469,24 @@ function SeatsLayout({
   license,
   counts,
   locale,
+  productName,
   members,
   canAssign,
   folded,
   addSeats,
   onAssign,
   onUnassign,
-  releasing,
-  error,
 }: CardSeatsProps & {
   onAssign(): void;
-  onUnassign(holder: SeatHolder): void;
-  releasing: string | null;
-  error: string | null;
+  onUnassign(holder: SeatHolder): Promise<string | null>;
 }) {
   const [open, setOpen] = useState(false);
   const holders = seatHolders(license, members);
   const controls = { holders, counts, canAssign, blocked: counts.over > 0, addSeats, onAssign };
-  const alert = error !== null ? <AlertText tone="neutral">{error}</AlertText> : null;
-  if (folded && !open) {
-    return (
-      <>
-        {alert ? <div className="px-6 pt-4 max-sm:px-5">{alert}</div> : null}
-        <SeatStrip {...controls} onOpen={() => setOpen(true)} />
-      </>
-    );
-  }
+  if (folded && !open) return <SeatStrip {...controls} onOpen={() => setOpen(true)} />;
   return (
     <div className="space-y-3 p-6 max-sm:p-5">
-      {alert}
-      <SeatRoster {...controls} locale={locale} onUnassign={onUnassign} releasing={releasing} onCollapse={folded ? () => setOpen(false) : undefined} />
+      <SeatRoster {...controls} locale={locale} productName={productName} onUnassign={onUnassign} onCollapse={folded ? () => setOpen(false) : undefined} />
     </div>
   );
 }

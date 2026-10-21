@@ -495,7 +495,7 @@ export async function assignSeat(
     if (!(await LicenseSeatModel.exists({licenseId, membershipId}).session(session))) {
       await touchWorkspace(session, workspaceId)
       const taken = await takeSeats(session, licenseId, 1)
-      if (!taken) fail("no_seats_available", "every seat of this license is assigned")
+      if (!taken) fail("no_seats_available", "every license is assigned")
       events = await insertSeats(session, actor, workspaceId, taken, [holder!])
     }
     // The answer is read first, so the event's writes are the transaction's last: the feed counter is held
@@ -595,7 +595,7 @@ export async function assignSeats(
       }
       // Failing aborts the transaction, the increments that did match included.
       if (short.length > 0) {
-        fail("no_seats_available", "too few seats are free for these assignments; nothing was assigned", {
+        fail("no_seats_available", "too few licenses are available for these assignments; nothing was assigned", {
           licenses: short,
         })
       }
@@ -639,7 +639,7 @@ async function loadSeatHolders(
     const membership = byId.get(membershipId)
     if (!membership) fail("not_found", "membership not found")
     if (!isId(membership.mentraUserId)) {
-      invalid("this membership waits for its person's first sign-in and cannot hold a seat yet")
+      invalid("this membership waits for its person's first sign-in and cannot hold a license yet")
     }
     return {membershipId, mentraUserId: membership.mentraUserId, email: membership.email ?? null}
   })
@@ -777,7 +777,7 @@ async function loadWorkspaceLicense(
 async function requireSeatManager(session: ClientSession, actor: Actor, workspaceId: string): Promise<void> {
   const role = await actingRole(session, actor, workspaceId)
   if (!role || !capabilitiesForRole(role).has("workspace.licenses.assign")) {
-    fail("forbidden", "assigning seats requires the admin role")
+    fail("forbidden", "assigning licenses requires the admin role")
   }
 }
 

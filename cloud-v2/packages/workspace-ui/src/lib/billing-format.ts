@@ -78,7 +78,7 @@ export function taxNote(tax: Tax): string | null {
 }
 
 /**
- * A price as the catalog shows it: "$15 per seat a month" for a workspace, "$29 a month" for a person. A price of
+ * A price as the catalog shows it: "$15 per user a month" for a workspace, "$29 a month" for a person. A price of
  * a scheme Core doesn't know is billing's own `fallbackLabel`.
  */
 export function priceLine(price: Price, scope: LicenseScope, locale: string): string {
@@ -95,28 +95,28 @@ export interface CostFact {
 }
 
 /**
- * A license's Cost fact. For a per-seat price, billing's `total` with the recurrence ("$145 a month") and, under
- * it, "5 × $29 · before tax": the quantity × unit (a workspace's; a person's one seat has no multiplication)
- * and the tax note. An unknown scheme is billing's `fallbackLabel` and nothing under it. A per-seat price that
- * arrives with no total shows its unit price instead, and adds nothing up.
+ * A license's Cost fact. For a per-user price, billing's `total` with the recurrence ("$145 a month"), and under it
+ * "Before tax" where billing says tax is excluded: that is the only sub-line, and with any other tax value there is
+ * none (no quantity × unit either: the count is in the Licenses fact). An unknown scheme is billing's
+ * `fallbackLabel` and nothing under it. A per-user price that arrives with no total shows its unit price instead,
+ * and adds nothing up.
  */
 export function costFact(
-  license: Pick<LicenseBilling, "price" | "quantity" | "total" | "tax">,
+  license: Pick<LicenseBilling, "price" | "total" | "tax">,
   locale: string,
   scope: LicenseScope = "workspace",
 ): CostFact {
   const { price } = license;
   if (!isPerSeat(price)) return { value: price.fallbackLabel, foot: null };
-  const tax = taxNote(license.tax);
-  if (license.total === null) return { value: priceLine(price, scope, locale), foot: tax };
-  const multiple = scope === "workspace" ? t.facts.cost.multiple(license.quantity, formatMoney(price.unit, locale)) : null;
+  const foot = license.tax === "excluded" ? t.facts.cost.beforeTax : null;
+  if (license.total === null) return { value: priceLine(price, scope, locale), foot };
   return {
     value: t.facts.cost.value(formatMoney(license.total, locale), formatRecurrence(price.recurrence, locale)),
-    foot: t.facts.cost.foot([multiple, tax]),
+    foot,
   };
 }
 
-/** The line above the cards: "2 licenses" (for bold) and "$295 a month in total", from billing's own total. */
+/** The line above the cards: "2 products" (for bold) and "$295 a month in total", from billing's own total. */
 export function totalSummary(total: BillingTotal, locale: string): { lead: string; rest: string } {
   return t.summary({
     count: total.licenseCount,
@@ -125,7 +125,7 @@ export function totalSummary(total: BillingTotal, locale: string): { lead: strin
   });
 }
 
-/** Who holds the seats, for a strip: "Dana Reyes, Priya Natarajan and 8 others", or "Nobody has a seat yet". */
+/** Who holds the seats, for a strip: "Dana Reyes, Priya Natarajan and 8 others", or "No one has a license yet". */
 export function holderNames(names: readonly string[]): string {
   return t.names.holders(names);
 }
@@ -136,7 +136,7 @@ export function nameList(names: readonly string[]): string {
 }
 
 /**
- * How many of the people chosen fit in the free seats: "3 of 4 fit: remove one or add seats.", or, where billing
+ * How many of the people chosen fit in the free seats: "3 of 4 fit: remove one or add licenses.", or, where billing
  * lists no `add_seats`, "3 of 4 fit: remove one."
  */
 export function fitNote(args: { fit: number; needed: number; canAddSeats: boolean }): string {
