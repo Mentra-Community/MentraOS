@@ -1,6 +1,6 @@
 /**
  * Buying from billing's catalog, as the approved design draws it (its `parts2.tsx`): the grid of products an owner
- * with nothing yet is offered, the "Buy a license" dialog an owner with licenses opens, and the seats step.
+ * with nothing yet is offered, the "Buy licenses" dialog an owner with licenses opens, and the seats step.
  *
  * Everything is drawn from what billing sent for each product: its name, description, icon and features, and, for
  * a viewer who may manage the owner's billing, its `offer` (the price, the tax treatment and what buying allows).
@@ -11,11 +11,11 @@
  * seats step's seats × unit. Any other price shows its `fallbackLabel` exactly, with no arithmetic, no renewal
  * claim and no tax note. "before tax" appears only where billing says tax is `excluded`.
  *
- * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Add seats (or, on a product
+ * Every button that leaves the portal for a hosted page is a `HostedPageButton` (marked ↗): Add licenses (or, on a product
  * whose first payment isn't finished, Complete payment), Continue to payment, and a person's Buy, which asks for their one seat and goes straight to payment (a person never sees the
  * seats step). A workspace's Buy only opens the seats step, so it is a plain button. They all leave the way every
  * other billing button does, through `useHostedAction` and the host's `NavigateOut`: the client has already refused
- * any address the contract doesn't accept, and an Add seats billing lists with `returns: false` opens its tab in the
+ * any address the contract doesn't accept, and an Add licenses billing lists with `returns: false` opens its tab in the
  * click.
  *
  * Words are in `strings/licenses.ts`. This file imports the client's type only, never its schemas.
@@ -108,7 +108,7 @@ function seatBounds(buy: Buy, price: Price): SeatBounds {
 // ---- asking billing ---------------------------------------------------------------------------------------------
 
 // Each container below (the grid, the dialog's rows, the seats step) has its own `useHostedAction(host)`: one request
-// at a time to billing, for a purchase or for Add seats, and on to the page it answers. A refusal is drawn where its
+// at a time to billing, for a purchase or for Add licenses, and on to the page it answers. A refusal is drawn where its
 // container is, and goes with it.
 
 /**
@@ -124,11 +124,11 @@ function buyChoice(owner: LicenseScope, hosted: HostedAction, choose: (entry: Ca
   };
 }
 
-/** Add seats on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
+/** Add licenses on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
 const addSeatsOf = (hosted: HostedAction) => (license: LicenseBilling, entry: CatalogEntry, action: BillingAction) =>
   hosted.run({ action, licenseId: license.licenseId, name: entry.name });
 
-/** Whether the request out is the one that `entry`'s button (Buy, or Add seats on its held `license`) made. */
+/** Whether the request out is the one that `entry`'s button (Buy, or Add licenses on its held `license`) made. */
 function isPendingFor(request: HostedRequest | null, entry: CatalogEntry, held: LicenseBilling | null): boolean {
   if (request === null) return false;
   return "action" in request ? held !== null && request.licenseId === held.licenseId : request.product === entry.product;
@@ -143,7 +143,7 @@ function heldOf(licenses: readonly LicenseBilling[] | undefined, product: string
 }
 
 /**
- * What the owner's license of a product says on a card or row. A license in force reads "You have 5 seats" for a
+ * What the owner's license of a product says on a card or row. A license in force reads "You have 5 licenses" for a
  * workspace and "You have it" for a person. A first payment that isn't finished (`incomplete`) is not held yet: it
  * reads as its state, "Payment incomplete" in amber, as the license's own card does, and never as seats the owner
  * doesn't have.
@@ -155,7 +155,7 @@ function heldState(owner: LicenseScope, license: LicenseBilling): { text: string
 
 /**
  * The one thing billing lists for a held product that this screen offers: Complete payment for a first payment that
- * isn't finished (a person's too), else Add seats where the owner is a workspace. Null where billing lists neither.
+ * isn't finished (a person's too), else Add licenses where the owner is a workspace. Null where billing lists neither.
  * Nothing is added to a license that isn't paid for, and a person's licenses have no seat count to change, whatever
  * is listed.
  */
@@ -213,7 +213,7 @@ function BuyButton({
 }
 
 /**
- * The ↗ button for a held product: Add seats on its license, or Complete payment for a first payment that isn't
+ * The ↗ button for a held product: Add licenses on its license, or Complete payment for a first payment that isn't
  * finished (see `heldAction`), by the action billing listed. Null where there is none. It opens its page in a tab
  * where billing lists the action with `returns: false`.
  */
@@ -282,13 +282,13 @@ export interface CatalogCardProps {
   /** It is this card's own request that is out. */
   pending: boolean;
   onBuy(entry: CatalogEntry): void;
-  /** The held license's button was pressed: Add seats, or Complete payment on an unfinished first payment, by the action billing listed. */
+  /** The held license's button was pressed: Add licenses, or Complete payment on an unfinished first payment, by the action billing listed. */
   onAddSeats(license: LicenseBilling, entry: CatalogEntry, action: BillingAction): void;
 }
 
 /**
  * One product: icon, name, description, its features as a list when it has more than one, and then its price and
- * Buy, or, for a product the owner holds, "You have 5 seats" and Add seats ("You have it" for a person).
+ * Buy, or, for a product the owner holds, "You have 5 licenses" and Add licenses ("You have it" for a person).
  */
 export function CatalogCard({ entry, scope, locale, held, busy, pending, onBuy, onAddSeats }: CatalogCardProps) {
   const nameId = useId();
@@ -349,7 +349,7 @@ export function CatalogCard({ entry, scope, locale, held, busy, pending, onBuy, 
 }
 
 /**
- * What this owner can buy: "Buy a license for your members" or "Buy a license for yourself", with one card per
+ * What this owner can buy: "Buy licenses for your members" or "Buy a license for yourself", with one card per
  * product the scope's owner type is offered. It draws nothing when there is no such product. The heading and its
  * "You'll pay by card…" line are drawn only when at least one of those products has an `offer` for this viewer; without
  * one the cards are display content and the grid has no buying copy. A workspace's Buy opens the seats step; a
@@ -404,9 +404,9 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
   );
 }
 
-// ---- Buy a license, as a dialog ---------------------------------------------------------------------------------
+// ---- Buy licenses, as a dialog ---------------------------------------------------------------------------------
 
-/** One product as a row: icon and name, then what you have or what it costs, and Buy or Add seats. */
+/** One product as a row: icon and name, then what you have or what it costs, and Buy or Add licenses. */
 function CatalogRow({
   entry,
   owner,
@@ -475,8 +475,8 @@ function CatalogRows({
 }
 
 /**
- * "Buy a license": the same catalog as rows, for an owner that already holds licenses. A product it holds offers
- * Add seats instead of Buy (and says "You have it" for a person); any other shows its price and Buy. A workspace's
+ * "Buy licenses" ("Buy a license" for a person): the same catalog as rows, for an owner that already holds licenses. A product it holds offers
+ * Add licenses instead of Buy (and says "You have it" for a person); any other shows its price and Buy. A workspace's
  * Buy opens the seats step over the list.
  */
 export function CatalogDialog({ open, onClose, products, licenses, memberCount, ...host }: CatalogProps & { open: boolean; onClose(): void }) {
@@ -490,7 +490,7 @@ export function CatalogDialog({ open, onClose, products, licenses, memberCount, 
       <Dialog
         open={open}
         onClose={onClose}
-        title={t.catalog.dialog.title}
+        title={owner === "workspace" ? t.catalog.dialog.title : t.catalog.dialog.personTitle}
         description={owner === "workspace" ? t.catalog.dialog.description : t.catalog.dialog.personDescription}
         className="max-w-[560px]"
       >

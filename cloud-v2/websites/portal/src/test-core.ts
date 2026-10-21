@@ -163,7 +163,7 @@ export function accountCatalog(): BillingCatalog {
 }
 
 const action = (kind: string, fallbackLabel: string, returns?: boolean): BillingAction => ({ kind, fallbackLabel, ...(returns === false ? { returns } : {}) });
-const SEAT_ACTIONS = [action("add_seats", "Add seats"), action("change_seats", "Change seats"), action("cancel", "Cancel")];
+const SEAT_ACTIONS = [action("add_seats", "Add licenses"), action("change_seats", "Change license count"), action("cancel", "Cancel")];
 export const INVOICES = action("billing_and_invoices", "Billing & invoices");
 
 const licenseBilling = (licenseId: string, product: string, unit: number, quantity: number, renewsAt: string, extra: Partial<LicenseBilling> = {}): LicenseBilling => ({
@@ -265,7 +265,8 @@ export function fakeCore(scenario: Scenario) {
   const role = scenario.role ?? "owner";
   const viewer = scenario.viewer ?? "dana";
   const requests: Recorded[] = [];
-  const members = scenario.members ?? PEOPLE;
+  // Copies: a role change or a removal is this fake's own, and no other test's.
+  const members = (scenario.members ?? PEOPLE).map(person => ({ ...person }));
   const licenses = [...scenario.licenses];
 
   const pick = <T,>(value: T | ((query: { purchase: string | null }) => T), query: URLSearchParams): T =>
@@ -283,6 +284,19 @@ export function fakeCore(scenario: Scenario) {
     if (path === `${workspaces}/invitations/mine`) return json({ items: [] });
     if (path === `${workspaces}/${ACME}` && method === "GET") return json(acmeDetail(role, viewer));
     if (path === `${workspaces}/${ACME}/members`) return json({ items: members });
+    const memberRoute = new RegExp(`^${workspaces}/${ACME}/members/([^/]+)$`).exec(path);
+    if (memberRoute && method === "PATCH") {
+      const target = members.find(person => person.membershipId === memberRoute[1]);
+      if (!target) return json({ error: "not_found" }, 404);
+      target.role = (body as { role: WorkspaceRole }).role;
+      return json({ workspaceId: ACME, name: ACME_NAME, status: "active", authorizationRevision: 4 });
+    }
+    if (memberRoute && method === "DELETE") {
+      const at = members.findIndex(person => person.membershipId === memberRoute[1]);
+      if (at < 0) return json({ error: "not_found" }, 404);
+      members.splice(at, 1);
+      return new Response(null, { status: 204 });
+    }
     if (path === `${workspaces}/${ACME}/invitations`) return json({ items: [] });
     if (path === `${workspaces}/${ACME}/licenses`) return json({ items: licenses });
 
@@ -329,7 +343,7 @@ export const SCENARIOS = {
     workspaceStatus: ({ purchase }) =>
       statusOf([CALL_BILLING, FLEET_BILLING], { purchase: purchase === "pur_1" ? purchaseOf({ status: "ready", licenseId: "lic_fleet" }) : null }),
   }),
-  /** v2-04 to v2-06: three licenses, for the Members list and the member panel. */
+  /** v2-04 to v2-06: three licenses, for the Members list. */
   threeActive: (): Scenario => ({
     licenses: [CALL_LICENSE, FLEET_LICENSE, EXAMPLE_LICENSE],
     workspaceStatus: statusOf([CALL_BILLING, FLEET_BILLING, EXAMPLE_BILLING]),

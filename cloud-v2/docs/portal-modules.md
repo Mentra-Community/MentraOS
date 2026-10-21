@@ -135,7 +135,7 @@ what they send is `@mentra/workspace-contract/portal-billing`:
 
 | Route | What it answers | Who |
 | --- | --- | --- |
-| `GET catalog` | What billing sells to this kind of owner, and what the owner holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many seats may be bought | Open read |
+| `GET catalog` | What billing sells to this kind of owner, and what the owner holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many licenses may be bought | Open read |
 | `GET status` | The owner's licenses as billing holds them, their dates and actions, the total, and the state of a purchase (`?purchase=`) | The module decides |
 | `POST purchase` | Starts a purchase and answers the hosted payment page's address | The module decides |
 | `POST session` | Opens a hosted billing page for a license or the account and answers its address | The module decides |

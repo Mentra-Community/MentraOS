@@ -1,8 +1,8 @@
 import { cn } from "../lib/utils";
 
 /**
- * How full a license is: dark up to the quantity, amber for the seats past it. It repeats what the text beside
- * it says ("3 of 5 in use"), so it is hidden from assistive technology.
+ * How full a license is: dark up to the quantity, amber for the licenses past it. It repeats what the text beside
+ * it says ("3 of 5 assigned"), so it is hidden from assistive technology.
  */
 function Meter({ used, total, className }: { used: number; total: number; className?: string }) {
   const over = used > total;

@@ -38,9 +38,9 @@ Roles are cumulative: each holds everything the one before it holds.
   when no sign-in has carried a name, when the person has not signed in through
   the provider, and for a pending imported membership; the `email` stays the
   one the membership was made for.
-- Every member sees the license seats they hold; Admins and Owners see every
-  license and assign its seats ([Licenses and seats](licenses.md)). Ending a
-  membership frees its seats, and deleting a workspace ends its licenses.
+- Every member sees the licenses they hold; Admins and Owners see every product and
+  assign its licenses ([Licenses](licenses.md)). Ending a membership frees
+  its licenses, and deleting a workspace ends its products.
 
 **Organization Admins** are the people whose verified email is on
 `CLOUD_CORE_ADMIN_EMAILS` or in a domain on `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`.
@@ -61,7 +61,7 @@ Admin" when an Organization Admin's powers go beyond it), and lists your other w
 page carries its workspace:
 `/w/<workspaceId>/members` (members, with pending invitations under them),
 `/w/<workspaceId>/settings`, `/w/<workspaceId>/audit` and `/w/<workspaceId>/licenses`
-([Licenses and seats](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
+([Licenses](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
 role opens. Above your account, the sidebar links to the environment's Developer Console in a
 new tab; a Private Cloud, which has no Developer Console, shows no link. `/` opens your
 last-used workspace (remembered in the browser, never an authority), else your first, else the
@@ -77,30 +77,28 @@ at `/enterprise` until it returns as workspace settings.
 **Members** lists each member by name over email (the email alone where Core has no
 name), with a "You" mark on your own row, "Pending first sign-in" on an imported
 membership, their role, the licenses they hold and when they joined (the date is left
-out on a phone). A row opens the member panel.
+out on a tablet or a phone, where each row stacks). Nothing on a row opens anything;
+licenses are assigned from the Licenses page.
 
 - **Licenses.** Where billing's catalog can be read, and you hold
-  `workspace.licenses.read` in a workspace with a license that has not ended, the list
-  has a Licenses column: a chip per license the member holds (three chips and "+n" past
-  four), "None", or "After first sign-in" for a pending membership. With
-  `workspace.licenses.assign`, each member who has signed in also has a checkbox, and
-  selecting some shows "2 selected · Assign licenses", which gives them seats of any of
-  the workspace's licenses in one step ([Seats](licenses.md#seats)). Without the
-  catalog, and on a Private Cloud, the list has no column and no selection.
-- **The member panel** is a side panel for one member: their role and when they joined,
-  Change role, Remove from workspace (it asks first), and a Licenses section with a
-  switch for each license the workspace holds
-  ([the portal's Licenses](licenses.md#in-the-workspace-portal)). The address carries
-  which member is open, `?member=<membershipId>`, so a link opens the panel, Back closes
-  it, and an id that names no member opens nothing. Change role offers the roles you
-  may move that member between, and Remove appears where you may remove them; neither is
-  offered on your own row (you leave in Settings, and another Owner or an Organization
-  Admin changes your role). Both carry the revision you last saw
-  (`409 membership_changed`).
-- **The admin portal** has the same list and panel, so role changes and Remove are
+  `workspace.licenses.read` in a workspace with a product that has not ended, the list
+  has a Licenses column: a chip per product the member holds a license for (three chips
+  and "+n" past four), "None", or "After first sign-in" for a pending membership. The
+  chips only show: licenses are assigned from the Licenses page ([the portal's
+  Licenses](licenses.md#in-the-workspace-portal), [Assigning
+  licenses](licenses.md#assigning-licenses)). Without the catalog, and on a Private
+  Cloud, the list has no column.
+- **The row's menu** ("…", named for the member, with `workspace.members.manage`) holds
+  Change role to each role you may move that member to, and Remove from workspace,
+  which asks first in a dialog ("Remove <name> from this workspace?", Cancel and a
+  destructive Remove; a refusal is shown inside it). Neither is offered on your own
+  row (you leave in Settings, and another Owner or an Organization Admin changes your
+  role), and a row has no menu where neither is yours to do. Both carry the revision
+  you last saw (`409 membership_changed`), and a role change that fails says so above
+  the list.
+- **The admin portal** has the same list and menu, so role changes and Remove are
   there too, with each member's Mentra user id and a Copy id button for recovering a
-  workspace's ownership. It has no Licenses column, no selection and no Licenses
-  section, and its panel is not in the address.
+  workspace's ownership. It has no Licenses column.
 
 ## Creating and joining
 
@@ -197,7 +195,7 @@ session authenticates only its own routes:
 Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
 (by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
-its seats and `/seat-assignments`, [Licenses and seats](licenses.md#seats)) are for people;
+its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people;
 a key gets 403. A workspace's detail says whether the caller is an Organization Admin
 (`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
 invitations, `target.name` for keys. Each checks
@@ -220,7 +218,7 @@ Fleet is installed on this Core (`fleet.installed`). `/api/admin/fleet/*` forwar
 to the optional Fleet service for a person holding `organization.fleet.administer`
 (an Organization Admin); keys get 403 ([Fleet integration](fleet-integration.md)).
 The Store calls Core through a signed service API ([Store integration](store-integration.md)),
-and its billing module writes licenses through it ([Licenses and seats](licenses.md)).
+and its billing module writes licenses through it ([Licenses](licenses.md)).
 `/api/portal/billing/*` forwards the workspace portal's billing requests
 to that module for a signed-in person, with the workspace or the person's own
 account as the scope Core decides ([Portal modules](portal-modules.md)).

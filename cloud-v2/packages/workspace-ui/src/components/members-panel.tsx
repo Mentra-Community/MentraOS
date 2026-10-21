@@ -2,62 +2,55 @@
  * The workspace's members: who they are, the role each holds, when they joined and, where the host has a
  * licenses source, the licenses they hold.
  *
- * A row shows the member's name over their email (the email alone where Core has none), their role as a badge and
- * when they joined, and opens the member panel (`MemberPanel`). Changing a role and removing a member are in that
- * panel, under the same rules as before: Change role offers only the roles `roleOptions` allows the viewer, and
- * Remove only appears where removal is theirs to do; neither is ever offered for the viewer's own membership
- * (a stray click must not demote an owner, so their role is changed by another owner or an Organization Admin).
- * Each change carries the revision the viewer last saw, so a stale view ends in "This workspace changed" and a
- * refetch rather than in an overwrite. The panel is controlled through `member` and `onMemberChange` when the
- * host passes them (the workspace portal ties it to `?member=<membershipId>`), and by its own state otherwise
- * (the admin portal).
+ * A row shows the member's name over their email (the email alone where Core has none), their role as a badge, their
+ * licenses and when they joined. Nothing on it opens anything: licenses are assigned from the Licenses page, so the
+ * chips only show. Changing a role and
+ * removing a member are in the row's "…" menu, under the rules they always had: Change role offers only the roles
+ * `roleOptions` allows the viewer, and Remove from workspace only where removal is theirs to do; neither is ever
+ * offered for the viewer's own membership (a stray click must not demote an owner, so their role is changed by
+ * another owner or an Organization Admin). Remove asks first, in a dialog. Each change carries the revision the
+ * viewer last saw, so a stale view ends in "This workspace changed" and a refetch rather than in an overwrite.
  *
- * `licenses` is the host's licenses source (the workspace portal passes it, the admin portal doesn't). Given it,
- * and for a viewer with `workspace.licenses.read` in a workspace that holds licenses, the list gains a Licenses
- * column (a chip per license held, "None", or "After first sign-in"; past four, three chips and "+n"), and the
- * panel its Licenses section. With `workspace.licenses.assign` it also gains a checkbox per member who has signed
- * in and a bar "<n> selected · Assign licenses · ×". If billing's catalog can't be read the host passes none, and
- * the list works without any of it. "Add seats ↗" is offered only for a license billing lists `add_seats` for
- * (`licenses.billing`).
+ * `licenses` is the host's licenses source (the workspace portal passes it, the admin portal doesn't): billing's
+ * catalog, which names and draws each license. Given it, and for a viewer with `workspace.licenses.read` in a workspace
+ * that holds licenses, the list gains a Licenses column: a chip per license held, "None", or "After first sign-in";
+ * past four, three chips and "+n". If billing's catalog can't be read the host passes none, and the list works
+ * without the column.
  *
  * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need it to
  * recover a workspace's ownership. Leave it off anywhere else.
  *
  * A member imported from the Store who has not signed in yet is marked "Pending first sign-in". They hold their
- * role and are managed like anyone else, but have no Mentra user id and can hold no seat until they sign in.
+ * role and are managed like anyone else, but have no Mentra user id and can hold no license until they sign in.
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { XIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { MoreHorizontalIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { MemberView, WorkspaceRole } from "@mentra/workspace-contract";
 import type { CatalogEntry } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../api";
+import { errorMessage } from "../errors";
 import { formatDate } from "../lib/format";
 import { holdsSeat, joinLicenses } from "../lib/license-join";
 import { cn } from "../lib/utils";
 import { licensesQuery, membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
-import { can, canRemoveRole, effectiveRole, roleOptions } from "../roles";
+import { can, canRemoveRole, effectiveRole, ROLE_LABELS, roleOptions } from "../roles";
 import { licenseStrings as t } from "../strings/licenses";
-import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
-import { Avatar, Badge, CopyButton, Panel, QueryGate, Restricted, RoleBadge } from "./common";
-import { AssignLicensesDialog } from "./licenses/assign-licenses";
-import { isHeldLicense, memberLabel, type AddSeatsSource, type HeldLicense } from "./licenses/parts";
+import { Menu, type MenuItem } from "../ui/menu";
+import { Avatar, Badge, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { ConfirmDialog } from "./confirm-dialog";
+import { isHeldLicense, memberLabel, type HeldLicense } from "./licenses/parts";
 import { ProductChip } from "./licenses/product";
-import { MemberPanel, PersonLicenses } from "./member-panel";
 
 /**
  * What the host knows about licenses, for the Members list. The workspace portal passes it; the admin portal doesn't.
- *
- * "Add seats ↗" is one of the portal's hosted-page buttons like any other (`useHostedAction`), so the host gives what
- * that needs, as it does for the Licenses page: the billing client (`billingApi`) and the two ways out (`navigateOut`).
- * The workspace API is the panel's own `api` prop. Whether a license offers the button is `billing`'s to say.
+ * The list only shows licenses, so all it needs is what names them.
  */
-export interface MembersLicenses extends AddSeatsSource {
+export interface MembersLicenses {
   /**
    * Billing's catalog (`catalog.products`): what names and draws each license. Null or undefined while it can't be
-   * read (still loading, or it failed): the Licenses column, the selection and the panel's section are left out.
+   * read (still loading, or it failed): the Licenses column is left out.
    */
   catalog: readonly CatalogEntry[] | null | undefined;
 }
@@ -65,13 +58,17 @@ export interface MembersLicenses extends AddSeatsSource {
 /** How many chips a member's Licenses cell shows before it folds the rest into "+n". */
 const MAX_CHIPS = 4;
 
+/** What the viewer may do to one member: the roles they may move them to (never the one held), and whether they may remove them. */
+interface RowActions {
+  roles: readonly WorkspaceRole[];
+  canRemove: boolean;
+}
+
 export function WorkspaceMembersPanel({
   api,
   workspaceId,
   showUserIds = false,
   licenses,
-  member: openMemberId,
-  onMemberChange,
   locale,
 }: {
   api: WorkspaceApi;
@@ -80,9 +77,6 @@ export function WorkspaceMembersPanel({
   showUserIds?: boolean;
   /** The licenses source. Leave it out where the host shows no licenses (the admin portal). */
   licenses?: MembersLicenses;
-  /** The membership whose panel is open (null or undefined: closed). Pass it with `onMemberChange` to control the panel; leave both out to let it keep its own. */
-  member?: string | null;
-  onMemberChange?(membershipId: string | null): void;
   /** The portal's locale, for dates. */
   locale?: string;
 }) {
@@ -98,10 +92,10 @@ export function WorkspaceMembersPanel({
     ...licensesQuery(api, workspaceId),
     enabled: catalog !== undefined && can(detail, "workspace.licenses.read"),
   });
-  // The licenses the workspace holds, named from the catalog. The Members screens deliberately keep Core's own order
+  // The licenses the workspace holds, named from the catalog. The Members list deliberately keeps Core's own order
   // (the order the licenses were bought, `_id` ascending) and not the Licenses page's (a problem first, then by
-  // name): a member's chips, the rows of Assign licenses and the panel's switches stay where they are when a
-  // payment fails. `joinLicenses` sorts for the page, so its order is put back.
+  // name): a member's chips stay where they are when a payment fails. `joinLicenses` sorts for the page, so its
+  // order is put back.
   const cards = useMemo<HeldLicense[]>(() => {
     if (catalog === undefined || !licensesResult.data) return [];
     const order = new Map(licensesResult.data.map((license, index) => [license.licenseId, index]));
@@ -110,7 +104,6 @@ export function WorkspaceMembersPanel({
       .sort((a, b) => order.get(a.licenseId)! - order.get(b.licenseId)!);
   }, [catalog, licensesResult.data, locale]);
   const licensesShown = can(detail, "workspace.licenses.read") && cards.length > 0;
-  const canSelect = licensesShown && can(detail, "workspace.licenses.assign");
 
   const changeRole = useWorkspaceMutation(
     api,
@@ -118,7 +111,7 @@ export function WorkspaceMembersPanel({
     (change: { membershipId: string; role: WorkspaceRole; expectedRevision: number }) =>
       api.changeMemberRole(workspaceId, change.membershipId, change.role, change.expectedRevision),
   );
-  // Removing a member frees their seats in the same transaction, so it refreshes billing's status like a seat change.
+  // Removing a member frees their licenses in the same transaction, so it refreshes billing's status like a change of who holds one.
   const remove = useWorkspaceMutation(
     api,
     workspaceId,
@@ -126,67 +119,29 @@ export function WorkspaceMembersPanel({
     { seats: true },
   );
 
-  // Which member's panel is open: the host's when it passes `member` or `onMemberChange`, else this panel's own.
-  const controlled = openMemberId !== undefined || onMemberChange !== undefined;
-  const [ownOpenId, setOwnOpenId] = useState<string | null>(null);
-  const openId = controlled ? (openMemberId ?? null) : ownOpenId;
-  const setOpenId = (membershipId: string | null) => {
-    if (controlled) onMemberChange?.(membershipId);
-    else setOwnOpenId(membershipId);
-  };
-  // A failure belongs to the panel it happened in: the panel is modal and draws it, and one that outlives the panel (it
-  // was closed, or another member's opened, while the request was out) is dropped with it, so nothing else shows it.
-  const resetChangeRole = changeRole.reset;
-  const resetRemove = remove.reset;
+  // Who Remove is asking about, and the menus' buttons, so that a closed dialog gives focus back.
+  const [removing, setRemoving] = useState<MemberView | null>(null);
+  const menus = useRef(new Map<string, HTMLElement>());
+  const list = useRef<HTMLDivElement>(null);
+  // Whose menu button gets focus once the dialog is gone, or null for the list itself.
+  const returnFocusTo = useRef<{ membershipId: string | null } | null>(null);
+  // Where focus goes if the member is removed, worked out when the dialog opens from the rows then on the screen.
+  const afterRemoval = useRef<string | null>(null);
+  const busy = changeRole.isPending || remove.isPending;
+  // Waits for `busy` to end too: a menu button is disabled while the removal that just finished is still settling.
   useEffect(() => {
-    resetChangeRole();
-    resetRemove();
-  }, [openId, resetChangeRole, resetRemove]);
-
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
-  const [assigning, setAssigning] = useState(false);
-  // Who is chosen: only members still listed who have signed in, in the list's order.
-  const chosen = useMemo(
-    () => (canSelect ? (membersResult.data ?? []).filter((member) => selectedIds.has(member.membershipId) && !member.pending) : []),
-    [canSelect, membersResult.data, selectedIds],
-  );
-
-  const clearSelection = () => {
-    setSelectedIds(new Set());
-    setAssigning(false);
-  };
+    if (removing !== null || busy || returnFocusTo.current === null) return;
+    const { membershipId } = returnFocusTo.current;
+    returnFocusTo.current = null;
+    const button = membershipId === null ? null : menus.current.get(membershipId)?.querySelector("button");
+    (button ?? list.current)?.focus();
+  }, [removing, busy]);
 
   return (
     <Panel
       title={t.members.title}
       count={can(detail, "workspace.members.read") ? membersResult.data?.length : undefined}
       description={t.members.description}
-      actions={
-        chosen.length > 0 ? (
-          <div
-            data-slot="selection-bar"
-            // On a phone it floats at the bottom of the screen: the header has no room for it.
-            className="bg-foreground text-background flex items-center gap-3 rounded-full py-1.5 pr-1.5 pl-4 text-sm whitespace-nowrap max-sm:fixed max-sm:inset-x-4 max-sm:bottom-4 max-sm:z-30 max-sm:justify-between max-sm:shadow-dialog"
-          >
-            <span aria-live="polite" className="font-semibold">
-              {t.members.selected(chosen.length)}
-            </span>
-            <Button type="button" size="sm" className="bg-background text-foreground" onClick={() => setAssigning(true)}>
-              {t.members.assignLicenses}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t.members.clearSelection}
-              className="text-background enabled:hover:bg-white/15"
-              onClick={clearSelection}
-            >
-              <XIcon />
-            </Button>
-          </div>
-        ) : undefined
-      }
     >
       <QueryGate result={detailResult} tone="neutral">
         {(workspace) =>
@@ -198,74 +153,60 @@ export function WorkspaceMembersPanel({
                 const viewer = effectiveRole(workspace);
                 const canManage = can(workspace, "workspace.members.manage");
                 const ownMembershipId = workspace.membership?.membershipId ?? null;
-                const target = members.find((candidate) => candidate.membershipId === openId) ?? null;
-                const targetIsOther = target !== null && canManage && target.membershipId !== ownMembershipId;
+                const actionsFor = (member: MemberView): RowActions | null => {
+                  if (!canManage || member.membershipId === ownMembershipId) return null;
+                  const roles = roleOptions(viewer, member.role).filter((role) => role !== member.role);
+                  const canRemove = canRemoveRole(viewer, member.role);
+                  return roles.length > 0 || canRemove ? { roles, canRemove } : null;
+                };
                 return (
                   <>
+                    {/* A role change that failed, in words; a refused removal is shown in its own dialog. */}
+                    <ErrorNotice error={changeRole.error} tone="neutral" />
                     <MembersTable
                       members={members}
                       ownMembershipId={ownMembershipId}
                       showUserIds={showUserIds}
                       cards={licensesShown ? cards : null}
-                      selectable={canSelect}
-                      selected={selectedIds}
+                      managed={canManage}
+                      actionsFor={actionsFor}
+                      busy={busy}
                       locale={locale}
-                      onOpen={setOpenId}
-                      onToggle={(membershipId) =>
-                        setSelectedIds((current) => {
-                          const next = new Set(current);
-                          if (next.has(membershipId)) next.delete(membershipId);
-                          else next.add(membershipId);
-                          return next;
-                        })
-                      }
-                    />
-                    <MemberPanel
-                      member={target}
-                      onClose={() => setOpenId(null)}
-                      roleOptions={targetIsOther ? roleOptions(viewer, target.role) : []}
-                      canRemove={targetIsOther && canRemoveRole(viewer, target.role)}
-                      busy={changeRole.isPending || remove.isPending}
-                      onChangeRole={(role) => {
-                        if (!target) return;
+                      listRef={list}
+                      registerMenu={(membershipId, element) => {
+                        if (element) menus.current.set(membershipId, element);
+                        else menus.current.delete(membershipId);
+                      }}
+                      onChangeRole={(member, role) => {
                         remove.reset();
-                        changeRole.mutate({ membershipId: target.membershipId, role, expectedRevision: workspace.authorizationRevision });
+                        changeRole.mutate({ membershipId: member.membershipId, role, expectedRevision: workspace.authorizationRevision });
                       }}
-                      onRemove={() => {
-                        if (!target) return;
+                      onRemove={(member) => {
                         changeRole.reset();
-                        remove.mutate(
-                          { membershipId: target.membershipId, expectedRevision: workspace.authorizationRevision },
-                          { onSuccess: () => setOpenId(null) },
-                        );
+                        afterRemoval.current = neighbourWithMenu(members, member, (other) => actionsFor(other) !== null);
+                        setRemoving(member);
                       }}
-                      error={changeRole.error ?? remove.error}
-                      locale={locale}
-                      licenses={
-                        target && licensesShown && licenses ? (
-                          <PersonLicenses
-                            // A new member starts with no failure of the last one's.
-                            key={target.membershipId}
-                            api={api}
-                            workspaceId={workspaceId}
-                            member={target}
-                            cards={cards}
-                            canAssign={canSelect}
-                            addSeats={licenses}
-                          />
-                        ) : null
-                      }
                     />
-                    {licenses ? (
-                      <AssignLicensesDialog
-                        open={assigning && chosen.length > 0}
-                        onClose={() => setAssigning(false)}
-                        api={api}
-                        workspaceId={workspaceId}
-                        people={chosen}
-                        cards={cards}
-                        addSeats={licenses}
-                        onAssigned={clearSelection}
+                    {removing ? (
+                      <ConfirmDialog
+                        title={t.members.removePrompt(memberLabel(removing))}
+                        description={t.members.removeBody}
+                        cancelLabel={t.members.cancel}
+                        confirmLabel={t.members.removeConfirm}
+                        onConfirm={async () => {
+                          remove.reset();
+                          try {
+                            await remove.mutateAsync({ membershipId: removing.membershipId, expectedRevision: workspace.authorizationRevision });
+                            return null;
+                          } catch (error) {
+                            return errorMessage(error);
+                          }
+                        }}
+                        onClose={(done) => {
+                          // Backed out: the row's menu button is where the person was. Removed: the row is going, so the neighbour's.
+                          returnFocusTo.current = { membershipId: done ? afterRemoval.current : removing.membershipId };
+                          setRemoving(null);
+                        }}
                       />
                     ) : null}
                   </>
@@ -277,6 +218,17 @@ export function WorkspaceMembersPanel({
       </QueryGate>
     </Panel>
   );
+}
+
+/**
+ * The row whose menu button gets focus when `member` is removed: the nearest row below that has a menu, else the
+ * nearest above (the last row's neighbour is the one before it). Null when no other row has one.
+ */
+function neighbourWithMenu(members: readonly MemberView[], member: MemberView, hasMenu: (other: MemberView) => boolean): string | null {
+  const at = members.findIndex((other) => other.membershipId === member.membershipId);
+  const below = members.slice(at + 1).find(hasMenu);
+  const above = members.slice(0, Math.max(at, 0)).reverse().find(hasMenu);
+  return (below ?? above)?.membershipId ?? null;
 }
 
 /** The chips of the licenses a member holds: all of them up to four, else three and "+n". */
@@ -310,81 +262,79 @@ function MembersTable({
   ownMembershipId,
   showUserIds,
   cards,
-  selectable,
-  selected,
+  managed,
+  actionsFor,
+  busy,
   locale,
-  onOpen,
-  onToggle,
+  listRef,
+  registerMenu,
+  onChangeRole,
+  onRemove,
 }: {
   members: MemberView[];
   ownMembershipId: string | null;
   showUserIds: boolean;
   /** The licenses the workspace holds, for the Licenses column; null leaves the column out. */
   cards: readonly HeldLicense[] | null;
-  selectable: boolean;
-  selected: ReadonlySet<string>;
+  /** The viewer may manage members: the table has a column for the row's menu. */
+  managed: boolean;
+  actionsFor(member: MemberView): RowActions | null;
+  /** A change is out: the menus wait. */
+  busy: boolean;
   locale?: string;
-  onOpen(membershipId: string): void;
-  onToggle(membershipId: string): void;
+  /** The list as a whole, which takes focus when a removal leaves no row with a menu to give it to. */
+  listRef: RefObject<HTMLDivElement | null>;
+  registerMenu(membershipId: string, element: HTMLElement | null): void;
+  onChangeRole(member: MemberView, role: WorkspaceRole): void;
+  onRemove(member: MemberView): void;
 }) {
-  if (members.length === 0) return <Restricted>{t.members.noMembers}</Restricted>;
+  if (members.length === 0) {
+    return (
+      <div ref={listRef} data-slot="members-list" tabIndex={-1}>
+        <Restricted>{t.members.noMembers}</Restricted>
+      </div>
+    );
+  }
   return (
-    // On a phone each row stacks: the member across the top, then their role and their licenses.
-    <div className="-mx-6 overflow-x-auto max-sm:border-t">
-      <table className="w-full text-left text-sm max-sm:block">
-        <thead className="text-muted-foreground border-y text-xs max-sm:hidden">
+    // Below a desktop each row stacks: the member across the top (with the menu beside them), then their role and their
+    // licenses. The table needs about 620px, and beside the sidebar a tablet leaves less than that, so the stacked rows
+    // go up to `lg` and the table is never scrolled sideways. A row's menu opens over the list, so nothing around the
+    // table may clip it: no `overflow` on the wrapper at any width. Every variant here is `max-lg:`, none is `lg:`, so
+    // that at exactly 1024px (where the browser rounds `max-width: 63.999rem` up) the row is one layout and not both.
+    <div ref={listRef} data-slot="members-list" tabIndex={-1} className="-mx-6 max-lg:border-t">
+      <table className="w-full text-left text-sm max-lg:block">
+        <thead className="text-muted-foreground border-y text-xs max-lg:hidden">
           <tr>
-            {selectable ? <th aria-hidden="true" className="w-10 py-3 pl-6" /> : null}
-            <th className={cn("py-3 pr-4 font-semibold", selectable ? "pl-2" : "pl-6")}>{t.members.member}</th>
+            <th className="py-3 pr-4 pl-6 font-semibold">{t.members.member}</th>
             <th className="py-3 pr-4 font-semibold">{t.members.role}</th>
             {cards ? <th className="py-3 pr-4 font-semibold">{t.members.licenses}</th> : null}
             <th className="py-3 pr-6 font-semibold">{t.members.joined}</th>
+            {managed ? <th aria-hidden="true" className="w-12 py-3 pr-4" /> : null}
           </tr>
         </thead>
-        <tbody className="max-sm:block">
+        <tbody className="max-lg:block">
           {members.map((member) => {
             const label = memberLabel(member);
             const isSelf = member.membershipId === ownMembershipId;
-            const isSelected = selected.has(member.membershipId);
             const email = member.name?.trim() && member.email ? member.email : null;
+            const actions = actionsFor(member);
+            const items: MenuItem[] = actions
+              ? [
+                  ...actions.roles.map((role) => ({
+                    key: role,
+                    label: t.members.changeRoleTo(ROLE_LABELS[role]),
+                    onSelect: () => onChangeRole(member, role),
+                  })),
+                  ...(actions.canRemove ? [{ key: "remove", label: t.members.remove, destructive: true, onSelect: () => onRemove(member) }] : []),
+                ]
+              : [];
             return (
               <tr
                 key={member.membershipId}
-                data-selected={isSelected ? "true" : undefined}
-                // A click anywhere on the row opens the panel, except on what has a click of its own.
-                onClick={(event) => {
-                  if (event.target instanceof Element && event.target.closest("button, input, a, label, code")) return;
-                  onOpen(member.membershipId);
-                }}
-                className={cn(
-                  "cursor-pointer border-b last:border-b-0 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:px-5 max-sm:py-4",
-                  isSelected && "bg-hover",
-                )}
+                className="border-b last:border-b-0 max-lg:flex max-lg:flex-wrap max-lg:items-center max-lg:gap-x-3 max-lg:gap-y-2.5 max-lg:px-5 max-lg:py-4"
               >
-                {selectable ? (
-                  <td className="w-10 py-3.5 pl-6 max-sm:w-5 max-sm:p-0">
-                    <label className="-m-2.5 flex size-10 cursor-pointer items-center justify-center has-[input:disabled]:cursor-not-allowed">
-                      <Checkbox
-                        aria-label={t.members.selectMember(label)}
-                        checked={isSelected}
-                        disabled={member.pending}
-                        onChange={() => onToggle(member.membershipId)}
-                      />
-                    </label>
-                  </td>
-                ) : null}
-                <td
-                  className={cn(
-                    "py-3.5 pr-4 max-sm:min-w-0 max-sm:flex-1 max-sm:p-0",
-                    selectable ? "pl-2 max-sm:basis-[calc(100%-2.25rem)]" : "pl-6 max-sm:basis-full",
-                  )}
-                >
-                  <button
-                    type="button"
-                    aria-label={t.members.openMember(label)}
-                    onClick={() => onOpen(member.membershipId)}
-                    className="flex min-w-0 cursor-pointer items-center gap-3 rounded-[12px] text-left"
-                  >
+                <td className={cn("py-3.5 pr-4 pl-6 max-lg:order-1 max-lg:min-w-0 max-lg:flex-1 max-lg:p-0", managed ? "max-lg:basis-[calc(100%-3rem)]" : "max-lg:basis-full")}>
+                  <div className="flex min-w-0 items-center gap-3">
                     <Avatar label={label} />
                     <span className="min-w-0">
                       <span className="flex flex-wrap items-center gap-2">
@@ -400,7 +350,7 @@ function MembersTable({
                         </span>
                       ) : null}
                     </span>
-                  </button>
+                  </div>
                   {showUserIds && member.mentraUserId ? (
                     // Under the name, not under the avatar: the avatar is 36px and the gap 12px.
                     <div className="mt-1 ml-12 flex flex-wrap items-center gap-2">
@@ -409,17 +359,32 @@ function MembersTable({
                     </div>
                   ) : null}
                 </td>
-                <td className="py-3.5 pr-4 max-sm:p-0">
+                <td className="py-3.5 pr-4 max-lg:order-3 max-lg:p-0">
                   <RoleBadge role={member.role} />
                 </td>
                 {cards ? (
-                  <td className="py-3.5 pr-4 max-sm:min-w-40 max-sm:flex-1 max-sm:p-0">
+                  <td className="py-3.5 pr-4 max-lg:order-3 max-lg:min-w-40 max-lg:flex-1 max-lg:p-0">
                     <LicensesCell member={member} cards={cards} />
                   </td>
                 ) : null}
-                <td className="text-muted-foreground hidden py-3.5 pr-6 whitespace-nowrap sm:table-cell">
+                <td className="text-muted-foreground py-3.5 pr-6 whitespace-nowrap max-lg:hidden">
                   {formatDate(member.startedAt, locale)}
                 </td>
+                {managed ? (
+                  <td className="py-3.5 pr-4 text-right max-lg:order-2 max-lg:w-9 max-lg:p-0">
+                    {items.length > 0 ? (
+                      <span ref={(element) => registerMenu(member.membershipId, element)} className="inline-block">
+                        <Menu
+                          label={t.members.moreFor(label)}
+                          trigger={<MoreHorizontalIcon aria-hidden="true" />}
+                          items={items}
+                          disabled={busy}
+                          className="text-muted-foreground"
+                        />
+                      </span>
+                    ) : null}
+                  </td>
+                ) : null}
               </tr>
             );
           })}
