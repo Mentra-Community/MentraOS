@@ -142,6 +142,9 @@
     "packages/workspace-contract": {
       "name": "@mentra/workspace-contract",
       "version": "0.0.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
     },
     "packages/workspace-ui": {
       "name": "@mentra/workspace-ui",

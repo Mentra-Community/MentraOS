@@ -69,6 +69,7 @@ describe("package entry points", () => {
       "./server": "./src/server.ts",
       "./fleet-ui": "./src/fleet-ui.ts",
       "./portal-module-ui": "./src/portal-module-ui.ts",
+      "./portal-billing": "./src/portal-billing.ts",
     })
   })
 })

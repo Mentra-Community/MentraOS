@@ -326,6 +326,11 @@ export interface MemberView {
   membershipId: string
   mentraUserId: string | null
   email: string | null
+  /**
+   * The person's name from their sign-in, null when Core has none or they haven't signed in. Optional so a
+   * portal still works against a Core that doesn't send it.
+   */
+  name?: string | null
   role: WorkspaceRole
   startedAt: string
   pending: boolean
