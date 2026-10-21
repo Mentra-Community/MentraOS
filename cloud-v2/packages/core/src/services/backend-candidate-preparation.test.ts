@@ -33,7 +33,10 @@ function fixture() {
       {id:`${hostId}:phone`,kind:'phone',capabilities:['backend-connectivity']},{id:`${hostId}:app`,kind:'app'},
       {id:`${hostId}:recorder`,kind:'recorder',storage:{poolId:`${hostId}:disk`,observedAt:new Date(now).toISOString(),availableBytes:64*1024**3,stagingBudgetBytes:10*1024**3,pendingEvidenceBytes:0,reservations:[]}},
       {id:`${hostId}:network`,kind:'network',capabilities:['independent-uplink']}]}],resourceLifecycle:{schemaVersion:1,history:[],subjects:[{
-        subject:{kind:'resource',id:`${hostId}:phone`,authorityHostId:hostId},generation:1,current:true,status:'idle',owner:null}]}} as unknown as ReceivedTestHostState))
+        subject:{kind:'resource',id:`${hostId}:phone`,authorityHostId:hostId},generation:1,current:true,status:'unknown',owner:null,
+        observedAt:new Date(now).toISOString(),receivedAt:null,reason:null,
+        idle:{contractVersion:'phone-baseline',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'same-controller',controllerId:hostId},evidenceRefs:[]},
+        repair:{configured:true,state:'none'},supportedActions:[],resource:{kind:'phone',capabilities:['backend-connectivity'],memberships:[{hostId,laneId:'android'}],dependencies:[],placement:'installed'}}]}} as unknown as ReceivedTestHostState))
   const copy = <T>(v:T):T=>structuredClone(v)
   const rows = {async get(id:string){return id===row.requestId?copy(row):null},async recorderClaims(){return []},async selectedLanes(){return [{requestId:'other',hostId:'air2',laneId:'android'}]},
     async *qualificationCandidates(){yield copy(row)},
@@ -58,7 +61,7 @@ function fixture() {
       originalOwner:{id:'original-check-owner',kind:'boundary-cleanup'},laneId:'android',controller:{incarnation:host.incarnation,generation:1,sequence:2},release:{kind:'resource-check',operationId:op,subjectGeneration:3,releasedAt:new Date(now).toISOString(),eventId:'released'}}
     if(rawClosed)host.resourceReservations!.candidatePrerequisites=[{targetInputSha256:p.targetInputSha256,candidate:p.candidate,outcome,hostWorkSettled:true,checkOperationId:op}]
   }
-  return {service,rows,hosts,settle,get row(){return row},set row(v){row=v},get writes(){return writes},get bindWrites(){return bindWrites},advance(ms:number){now+=ms;for(const h of hosts){h.observedAt=h.receivedAt=new Date(now).toISOString();h.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(now).toISOString()}},get now(){return now}}
+  return {service,rows,hosts,settle,get row(){return row},set row(v){row=v},get writes(){return writes},get bindWrites(){return bindWrites},advance(ms:number){now+=ms;for(const h of hosts){h.observedAt=h.receivedAt=new Date(now).toISOString();for(const subject of h.resourceLifecycle?.subjects??[])subject.observedAt=h.observedAt;h.lanes[0]!.resources.find(r=>r.kind==='recorder')!.storage!.observedAt=new Date(now).toISOString()}},get now(){return now}}
 }
 
 test('unknown first phone is probed unbound; settled negative falls back within the same original request, positive permits resource selection',async()=>{
@@ -68,7 +71,7 @@ test('unknown first phone is probed unbound; settled negative falls back within 
 })
 for(const gap of ['raw-work','return-ack','unknown','claim','replacement','stale-positive'] as const)test(`candidate ${gap} never moves original custody to another phone`,async()=>{
  const f=fixture();await f.service.preparation('job-one');f.settle(gap==='unknown'?'unknown':gap==='stale-positive'?'qualified':'unqualified',gap!=='raw-work',gap!=='return-ack');const old=structuredClone(f.row.fleetCandidatePreparation)
- if(gap==='claim')f.hosts[0]!.authorityReservations=[{kind:'exclusive',resourceId:'air1:phone',borrowerHostId:'air1',laneId:'android',owner:{id:'other',kind:'run'}}] as any
+ if(gap==='claim')f.hosts[0]!.authorityReservations=[{...structuredClone(f.row.fleetCandidatePreparation!.claimReceipt!),prerequisite:undefined,resourceCheck:undefined,owner:{id:'other',kind:'run'}}] as any
  if(gap==='replacement')f.hosts[0]!.incarnation='other'
  if(gap==='stale-positive')f.advance(120001)
  await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air1');expect(f.writes).toBe(1);expect(f.bindWrites).toBe(0)
@@ -90,7 +93,7 @@ test('a delayed fully returned negative settles historically and selects a fresh
 for(const gap of ['raw-work','return-ack','unknown','claim','replacement','subject-generation','binding','app','future-observation','observation-after-deadline','close-before-observation','return-before-close','stale-report'] as const)test(`delayed negative retains original custody with ${gap}`,async()=>{
  const f=fixture();await f.service.preparation('job-one');f.settle(gap==='unknown'?'unknown':'unqualified',gap!=='raw-work',gap!=='return-ack');
  f.advance(120001);const host=f.hosts[0]!,health=host.lanes[0]!.resources[0]!.backendConnectivity!;
- if(gap==='claim')host.authorityReservations=[{kind:'exclusive',resourceId:'air1:phone',borrowerHostId:'air1',laneId:'android',owner:{id:'other',kind:'run'}}] as any;
+ if(gap==='claim')host.authorityReservations=[{...structuredClone(f.row.fleetCandidatePreparation!.claimReceipt!),prerequisite:undefined,resourceCheck:undefined,owner:{id:'other',kind:'run'}}] as any;
  if(gap==='replacement')host.incarnation='other';if(gap==='subject-generation')host.resourceLifecycle!.subjects[0]!.generation++;
  if(gap==='binding')health.binding={...health.binding,version:health.binding.version+1};if(gap==='app')health.app.archiveSha256=hash('a');
  if(gap==='future-observation')health.observedAt=new Date(f.now+1).toISOString();
@@ -250,9 +253,10 @@ test('cancellation winning after a positive read permits only cleanup settlement
 function repositoryEnvelope(f: ReturnType<typeof fixture>): ResourceReservationHost {
  const h=structuredClone(f.hosts[0]!),{receivedAt,authorityReservations,...snapshot}=h,subject=snapshot.resourceLifecycle!.subjects[0]!;
  snapshot.frameworkAcceptedAt=h.observedAt;snapshot.frameworkProcess={pid:123,startedAt:h.observedAt};
+ snapshot.lanes[0]!.resources[0]!.idleContract={version:'phone-baseline',maximumAgeMs:120000,conditions:['synthetic-network'],repairConfigured:true,qualifiedScope:{kind:'same-controller',controllerId:h.hostId}};
  snapshot.resourceLifecycle!.subjects=[{...subject,status:'idle',observedAt:h.observedAt,receivedAt:null,reason:null,
    idle:{contractVersion:'phone-baseline',outcome:'passed',checkedAt:h.observedAt,acceptedCheck:{operationId:'baseline',subjectGeneration:subject.generation,resultSha256:hash('a'),acceptedAt:h.observedAt},qualifiedScope:{kind:'same-controller',controllerId:h.hostId},evidenceRefs:[]},
-   repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'phone',capabilities:['backend-connectivity'],memberships:[{hostId:h.hostId,laneId:'android'}],dependencies:[],placement:'installed'}}];
+   repair:{configured:false,state:'none'},supportedActions:[],resource:{kind:'phone',capabilities:['backend-connectivity'],memberships:[{hostId:h.hostId,laneId:'android'}],dependencies:[],placement:'installed'}},...snapshot.resourceLifecycle!.subjects.filter(value=>value.subject.id!==subject.subject.id)];
  return {hostId:h.hostId,incarnation:h.incarnation!,incarnationGeneration:h.incarnationGeneration!,sequence:h.sequence!,receivedAt:new Date(receivedAt),snapshot:hostStateSchema.parse(snapshot),resourceReservations:[structuredClone(f.row.fleetResourceReservation!)]};
 }
 async function returnedFixture() {
@@ -267,7 +271,8 @@ for (const winner of ['renewal','binding'] as const) test(`final binding and rea
  await admission.reserveFleet(f.row.requestId,f.row.fleetInputSha256!,'air1','android');
  const original=structuredClone(f.row),bindingNow=f.now;
  f.advance(120001);await f.service.preparation(f.row.requestId);const pending=structuredClone(f.row.fleetCandidatePreparation!);f.row=structuredClone(original);
- const find=TestRequestModel.collection.findOne,write=TestRequestModel.collection.findOneAndUpdate,read=resourceReservationRepository.get,claims=resourceReservationRepository.recorderClaims;
+ const find=TestRequestModel.collection.findOne,write=TestRequestModel.collection.findOneAndUpdate,read=resourceReservationRepository.get,claims=resourceReservationRepository.recorderClaims,replace=resourceReservationRepository.replace;
+ const clock=spyOn(Date,'now').mockReturnValue(bindingNow);resourceReservationRepository.replace=async()=>true;
  let bindingArrived!:()=>void,renewalArrived!:()=>void,releaseBinding!:()=>void,releaseRenewal!:()=>void;
  const bindingReady=new Promise<void>(resolve=>bindingArrived=resolve),renewalReady=new Promise<void>(resolve=>renewalArrived=resolve),
    bindingGate=new Promise<void>(resolve=>releaseBinding=resolve),renewalGate=new Promise<void>(resolve=>releaseRenewal=resolve);
@@ -290,7 +295,7 @@ for (const winner of ['renewal','binding'] as const) test(`final binding and rea
   if(winner==='renewal'){releaseRenewal();expect(await renewed).toBeDefined();releaseBinding();expect(await bound).toBeNull();expect(f.row.fleetCandidatePreparation).toEqual(pending);expect(f.row.fleetBinding).toBeUndefined()}
   else{releaseBinding();expect(await bound).toBeDefined();releaseRenewal();expect(await renewed).toBeNull();expect(f.row.state).toBe('preparing');expect(f.row.fleetCandidatePreparation).toBeUndefined()}
   expect(f.row.fleetCandidatePreparations).toEqual(original.fleetCandidatePreparations);expect(f.row.fleetResourceReservation).toEqual(claim);
- }finally{releaseBinding();releaseRenewal();TestRequestModel.collection.findOne=find;TestRequestModel.collection.findOneAndUpdate=write;resourceReservationRepository.get=read;resourceReservationRepository.recorderClaims=claims}
+ }finally{releaseBinding();releaseRenewal();TestRequestModel.collection.findOne=find;TestRequestModel.collection.findOneAndUpdate=write;resourceReservationRepository.get=read;resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.replace=replace;clock.mockRestore()}
 })
 test('actual resource admission consumes authenticated repository receive time, not snapshot metadata',async()=>{
  const f=await returnedFixture(),host=repositoryEnvelope(f),claim=f.row.fleetResourceReservation!;let stages=0;
@@ -357,7 +362,7 @@ for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'re
    hostRead=TestHostStateModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,
    originals=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,
    claimed=resourceReservationRepository.claimedHosts,request=resourceReservationRepository.request,get=routineJobRepository.get;
- let hostWrites=0,checkpointWrites=0,admissionWrites=0;
+ let hostWrites=0,checkpointWrites=0,admissionWrites=0;const clock=spyOn(Date,'now').mockImplementation(()=>f.now);
  const reserveFleet=ResourceReservationsService.prototype.reserveFleet,
    reserveClock=spyOn(ResourceReservationsService.prototype,'reserveFleet').mockImplementation(async function(...args){
     return reserveFleet.apply(new ResourceReservationsService(resourceReservationRepository,()=>f.now),args);
@@ -400,7 +405,7 @@ for(const expiry of [false,true])test(`a live orphan recorder claim ${expiry?'re
   expect(f.row.fleetCandidatePreparations).toHaveLength(1);
   expect(f.row.fleetBinding).toBeUndefined();expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
  }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.find=requestList;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
-  resourceReservationRepository.recorderClaims=originals;resourceReservationRepository.get=read;resourceReservationRepository.claimedHosts=claimed;resourceReservationRepository.request=request;routineJobRepository.get=get;reserveClock.mockRestore()}
+  resourceReservationRepository.recorderClaims=originals;resourceReservationRepository.get=read;resourceReservationRepository.claimedHosts=claimed;resourceReservationRepository.request=request;routineJobRepository.get=get;reserveClock.mockRestore();clock.mockRestore()}
 });
 
 test('lost recorder host-CAS reply is recovered as cleanup custody after health expires, returned once, then falls back',async()=>{
@@ -410,7 +415,7 @@ test('lost recorder host-CAS reply is recovered as cleanup custody after health 
    hostRead=TestHostStateModel.collection.findOne,hostWrite=TestHostStateModel.collection.findOneAndUpdate,
    claims=resourceReservationRepository.recorderClaims,read=resourceReservationRepository.get,replace=resourceReservationRepository.replace,
    get=routineJobRepository.get;
- let claimWrites=0,returnWrites=0,checkpointLoss=true;
+ let claimWrites=0,returnWrites=0,checkpointLoss=true;const clock=spyOn(Date,'now').mockImplementation(()=>f.now);
  const originals=()=>hostResourceReservationsSchema.parse(host.resourceReservations??[]).filter((value):value is RecorderHostReservation=>!isExclusiveHostReservation(value));
  resourceReservationRepository.recorderClaims=async()=>structuredClone(originals());resourceReservationRepository.get=async()=>structuredClone(host);
  routineJobRepository.get=async()=>structuredClone(f.row);
@@ -435,7 +440,7 @@ test('lost recorder host-CAS reply is recovered as cleanup custody after health 
   f.hosts[0]!.authorityReservations=[];f.settle('unqualified');await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2');expect(f.row.fleetBinding).toBeUndefined();expect(claimWrites).toBe(1);
   f.settle('qualified');await f.service.preparation('job-one');expect(currentRow().fleetResourceReservation?.hostId).toBe('air2');expect(f.row.fleetDeadline.getTime()).toBe(initialNow+300000);
  }finally{TestRequestModel.collection.findOne=requestRead;TestRequestModel.collection.findOneAndUpdate=requestWrite;TestHostStateModel.collection.findOne=hostRead;TestHostStateModel.collection.findOneAndUpdate=hostWrite;
-  resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;routineJobRepository.get=get}
+  resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.get=read;resourceReservationRepository.replace=replace;routineJobRepository.get=get;clock.mockRestore()}
 });
 
 for(const gap of ['foreign','multiple','owned-phone','local-consumer','stale-storage','replacement','cancelled','changed-selection'] as const)test(`orphan recorder checkpoint refuses ${gap} without adoption or a new grant`,async()=>{
@@ -450,4 +455,19 @@ for(const gap of ['foreign','multiple','owned-phone','local-consumer','stale-sto
  resourceReservationRepository.recorderClaims=async()=>structuredClone(list);resourceReservationRepository.get=async()=>structuredClone(host);TestRequestModel.collection.findOneAndUpdate=mock(async()=>{writes++;return null}) as never;
  try{expect(await routineJobRepository.checkpointBackendRecorder!(f.row,claim,new Date(f.now))).toBeNull();expect(writes).toBe(0);expect(f.row.fleetResourceReservation).toBeUndefined();expect(f.row.fleetBinding).toBeUndefined()}
  finally{resourceReservationRepository.recorderClaims=claims;resourceReservationRepository.get=read;TestRequestModel.collection.findOneAndUpdate=write}
+});
+test('phone-only candidate may inspect unknown app structurally but ordinary assignment still requires app baseline',async()=>{
+ const f=fixture();for(const host of f.hosts){host.resourceLifecycle!.subjects.push({
+  subject:{kind:'resource',id:`${host.hostId}:app`,authorityHostId:host.hostId},generation:1,current:true,status:'unknown',owner:null,observedAt:host.observedAt,receivedAt:null,reason:null,
+  idle:{contractVersion:'app-baseline',outcome:'not-checked',checkedAt:null,acceptedCheck:null,qualifiedScope:{kind:'same-controller',controllerId:host.hostId},evidenceRefs:[]},repair:{configured:true,state:'none'},supportedActions:[],resource:{kind:'app',capabilities:[],memberships:[{hostId:host.hostId,laneId:'android'}],dependencies:[],placement:'installed'}});
+  host.lanes[0]!.resources.find(r=>r.kind==='app')!.idleContract={version:'app-baseline',maximumAgeMs:120000,conditions:['synthetic-app-absent'],repairConfigured:true,qualifiedScope:{kind:'same-controller',controllerId:host.hostId}};
+ }
+ await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air1');expect(f.bindWrites).toBe(0);
+ f.settle('qualified');await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation).toBeUndefined();expect(f.row.fleetCandidateSelection?.hostId).toBe('air1');
+ const host=repositoryEnvelope(f);expect(await new ResourceReservationsService({async request(){return structuredClone(f.row)},async get(){return structuredClone(host)},async replace(){throw Error('Unexpected claim')},async recorderClaims(){return []}},()=>f.now).reserveFleet('job-one',f.row.fleetInputSha256!,'air1','android')).toBeNull();
+});
+for(const status of ['out-of-service','in-repair','reserved'] as const)test(`phone candidate intake refuses ${status} and selects a ready alternate without weakening its original return`,async()=>{
+ const f=fixture(),subject=f.hosts[0]!.resourceLifecycle!.subjects[0]!;subject.status=status;
+ if(status==='in-repair')subject.repair.state='queued';if(status==='reserved')subject.owner={id:'manual',kind:'authoring',generation:1,hostId:'air1'};
+ await f.service.preparation('job-one');expect(f.row.fleetCandidatePreparation?.hostId).toBe('air2');expect(f.bindWrites).toBe(0);expect(f.row.fleetResourceReservation).toBeUndefined();
 });
