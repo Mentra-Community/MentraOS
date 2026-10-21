@@ -235,15 +235,15 @@ export function useHostedAction({
 }
 
 /**
- * What a hosted action left to say: billing's refusal (an alert), and the link for a tab the browser blocked.
- * Renders nothing when there is neither.
+ * What a hosted action left to say: billing's refusal (an alert, in the neutral notice style: amber on these pages is
+ * for payments), and the link for a tab the browser blocked. Renders nothing when there is neither.
  */
 export function HostedFeedback({ action }: { action: Pick<HostedAction, "error" | "link"> }) {
   const hint = useId();
   if (action.error === null && action.link === null) return null;
   return (
     <div className="space-y-3">
-      {action.error !== null ? <AlertText>{action.error}</AlertText> : null}
+      {action.error !== null ? <AlertText tone="neutral">{action.error}</AlertText> : null}
       {action.link !== null ? (
         <p className="flex flex-wrap items-center gap-2">
           <a

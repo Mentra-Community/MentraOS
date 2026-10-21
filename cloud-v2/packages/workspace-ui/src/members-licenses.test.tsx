@@ -19,7 +19,7 @@ import { formatDate } from "./lib/format";
 import { billingKeys } from "./queries";
 import { ROLE_LABELS } from "./roles";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor } from "./test-billing-fixtures";
-import { byText, cleanup, click, find, findAll, flush, press, render, setupDom, teardownDom, until } from "./test-dom";
+import { byText, cleanup, click, find, findAll, flush, isNeutral, press, render, setupDom, teardownDom, until } from "./test-dom";
 import { runtimeImports, SCHEMA_SPECIFIER } from "./test-imports";
 import { detailFor, licenseFor, seedClient, START, WORKSPACE_ID } from "./test-fixtures";
 
@@ -604,6 +604,7 @@ describe("Assign licenses", () => {
       expect(assignDialog().textContent).toContain("You don't have permission to manage billing here.");
       expect(button.hasAttribute("disabled")).toBe(false);
       expect(host.leave).not.toHaveBeenCalled();
+      expect(findAll('[role="alert"]', assignDialog()).map(isNeutral)).toEqual([true]);
     });
 
     test("an action billing lists with returns: false opens its tab in the click, and the tab gets the page", async () => {
@@ -729,6 +730,7 @@ describe("Assign licenses", () => {
     await until(() => assignDialog().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
 
     expect(assignDialog().textContent).toContain("Seats changed while you were choosing. Nothing was assigned. Check the counts and try again.");
+    expect(findAll('[role="alert"]', assignDialog()).map(isNeutral)).toEqual([true]);
     expect(writes()).toHaveLength(1);
     expect(world.licenses).toEqual(before);
     // The new counts: Call is full now, and so can't be checked; Example still fits.
@@ -917,6 +919,33 @@ describe("the member panel", () => {
       expect(find('[role="alert"]', panelEl()).textContent).toBe("This workspace changed. Review and try again.");
       expect(panelEl().textContent).toContain(ROLE_LABELS.developer);
     });
+
+    test("and says it in the neutral notice style: amber is for payments", async () => {
+      const { world } = await mount({ role: "admin" });
+      world.fail = (call) => (call.method === "PATCH" ? reply(409, { error: "membership_changed", error_description: "changed" }) : undefined);
+      await openPanel("Dana Reyes");
+      await itemsOf();
+      await click(byText("Member", '[role="menuitem"]'));
+      await until(() => findAll('[role="alert"]', panelEl()).length === 1, "the refusal");
+      expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
+    });
+  });
+
+  test("a members list that can't be read says so in the neutral style, with Try again", async () => {
+    const detail = detailFor("admin");
+    const world: World = { detail, members: [], licenses: [] };
+    world.fail = (call) => (call.method === "GET" && call.path.endsWith("/members") ? reply(403, { error: "forbidden" }) : undefined);
+    const api = createWorkspaceApi({ basePath: BASE, fetch: serve(world, [], BASE) });
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: false } } });
+    seedClient(api, { detail }, client);
+    await render(
+      <QueryClientProvider client={client}>
+        <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />
+      </QueryClientProvider>,
+    );
+    await until(() => findAll('[role="alert"]').length === 1, "the members list to fail");
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
+    expect(byText("Try again", "button")).toBeTruthy();
   });
 
   describe("a failure that outlives its panel", () => {
@@ -1092,6 +1121,7 @@ describe("the member panel", () => {
       await click(byText("Add seats", "button", rowFor("Fleet")));
       await flush();
       expect(panelEl().textContent).toContain("You don't have permission to manage billing here.");
+      expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
       expect(refusing.leave).not.toHaveBeenCalled();
       await cleanup();
 
@@ -1181,6 +1211,7 @@ describe("the member panel", () => {
       giveSeat(world, "lic_example", "wm_luis");
       await click(switchFor("Example Add-on", "Zed Young"));
       await until(() => panelEl().textContent!.includes("Seats changed while you were choosing."), "the conflict notice");
+      expect(findAll('[role="alert"]', panelEl()).map(isNeutral)).toEqual([true]);
       expect(writes().filter((call) => call.method === "PUT")).toHaveLength(1);
       await until(() => switchFor("Example Add-on", "Zed Young").disabled, "the new counts");
       expect(switchFor("Example Add-on", "Zed Young").checked).toBe(false);

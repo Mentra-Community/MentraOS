@@ -204,7 +204,7 @@ export function MemberPanel({ member, onClose, roleOptions, canRemove, busy, onC
               ) : null}
             </div>
           ) : null}
-          <ErrorNotice error={error} />
+          <ErrorNotice error={error} tone="neutral" />
           {licenses}
         </>
       ) : null}

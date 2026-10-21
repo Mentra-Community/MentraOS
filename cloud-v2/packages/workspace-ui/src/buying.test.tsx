@@ -9,7 +9,7 @@ import { BuyDialog, canBuy, CatalogCard, CatalogDialog, CatalogGrid } from "./co
 import { billingKeys } from "./queries";
 import { licenseStrings as t } from "./strings/licenses";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat } from "./test-billing-fixtures";
-import { byText, cleanup, click, find, findAll, press, render, setupDom, teardownDom } from "./test-dom";
+import { byText, cleanup, click, find, findAll, isNeutral, press, render, setupDom, teardownDom } from "./test-dom";
 import { runtimeImports } from "./test-imports";
 
 beforeAll(setupDom);
@@ -749,6 +749,7 @@ describe("a person's Buy", () => {
     await act(async () => pending.reject(new BillingRefusedError("not_for_sale", {}, 400)));
     await settle();
     expect(find('[role="alert"]').textContent).toBe("Mentra Call Unlimited isn't for sale right now.");
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
     expect(buttonNamed("Buy", card("mentra.example")).disabled).toBe(false);
   });
 
@@ -836,6 +837,7 @@ describe("unsafe purchase addresses", () => {
       await settle();
       expect(leave).not.toHaveBeenCalled();
       expect(find('[role="alert"]', topDialog()).textContent).toBe(refused);
+      expect(isNeutral(find('[role="alert"]', topDialog()))).toBe(true);
       // The dialog stays, ready to try again.
       expect(buttonNamed("Continue to payment", topDialog()).disabled).toBe(false);
     });

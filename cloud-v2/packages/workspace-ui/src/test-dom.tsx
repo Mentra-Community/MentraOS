@@ -121,6 +121,14 @@ export async function render(ui: ReactElement): Promise<Mounted> {
   return { container, rerender: (next) => inAct(() => root.render(next)) };
 }
 
+/**
+ * Whether an alert is drawn in the neutral notice style (the grey surface), not in the amber that marks a failed or
+ * incomplete payment and over-assignment, and nothing else, on the Licenses, Members and Billing screens.
+ */
+export function isNeutral(element: Element): boolean {
+  return element.className.includes("bg-surface") && !element.className.includes("bg-error");
+}
+
 /** `document.querySelector`, throwing when it finds nothing, so a test fails where it looked. */
 export function find<T extends Element = HTMLElement>(selector: string, within: ParentNode = document): T {
   const found = within.querySelector<T>(selector);

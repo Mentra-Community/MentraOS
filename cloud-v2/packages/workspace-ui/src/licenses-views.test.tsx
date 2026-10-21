@@ -12,7 +12,7 @@ import { PersonalBillingHeaderActions, PersonalBillingView, type PersonalBilling
 import * as pkg from "./index";
 import { billingKeys, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
-import { cleanup, click, find, findAll, flush, render, setupDom, teardownDom, until } from "./test-dom";
+import { cleanup, click, find, findAll, flush, isNeutral, render, setupDom, teardownDom, until } from "./test-dom";
 import { detailFor, licenseFor, offlineApi, WORKSPACE_ID, WORKSPACE_NAME } from "./test-fixtures";
 
 beforeAll(setupDom);
@@ -1087,6 +1087,15 @@ describe("the personal Billing page", () => {
     expect(unavailable()).toBe(true);
   });
 
+  test("a purchase that is not ready after the minute says the license can take a few minutes, not 'the seats'", async () => {
+    const r = personRig({ status: personStatus({ purchase: purchaseOf({ quantity: 1, status: "processing", licenseId: null }) }) });
+    await mountPersonal(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 120 });
+    await until(() => text().includes("Your payment went through"), "the timeout");
+    expect(text()).toContain("Your license can take a few minutes to appear.");
+    expect(text()).not.toContain("The seats can take a few minutes to appear.");
+    expect(hasButton("Reload")).toBe(true);
+  });
+
   test("with nothing to buy and nothing held it says so, not a blank page", async () => {
     const r = personRig({ catalog: catalogOf([fleetEntry({ ownerTypes: ["workspace"] })]), status: statusFor({ licenses: [], total: null, actions: [] }) });
     await mountPersonal(r);
@@ -1222,6 +1231,8 @@ describe("the Licenses page's header actions", () => {
     await until(() => findAll('[role="alert"]').length === 1, "the refusal");
     expect(r.leave).not.toHaveBeenCalled();
     expect(buttonNamed("Billing & invoices").hasAttribute("disabled")).toBe(false);
+    // Neutral: amber on these pages is for a failed or incomplete payment, and over-assignment.
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
   });
 
   test("'Buy a license' owns its dialog: a held product offers Add seats, any other its price and Buy", async () => {

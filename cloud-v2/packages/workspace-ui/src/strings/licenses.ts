@@ -504,6 +504,8 @@ export const licenseStrings = {
     timeout: {
       title: (paid: boolean) => (paid ? "Your payment went through" : "Your purchase went through"),
       body: "The seats can take a few minutes to appear.",
+      /** A person's purchase has no seats. */
+      personBody: "Your license can take a few minutes to appear.",
       reload: "Reload",
     },
   },

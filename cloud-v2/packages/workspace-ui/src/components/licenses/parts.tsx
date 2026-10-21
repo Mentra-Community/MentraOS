@@ -175,12 +175,12 @@ export function isHeldLicense(card: JoinedLicense): card is HeldLicense {
 /**
  * Why a seat change failed. A license that changed under the person (every seat taken, or gone) is "Seats changed
  * while you were choosing. Nothing was assigned." because the screen has already read the counts again; anything
- * else is the server's own words. Nothing when there is no error.
+ * else is the server's own words. Neutral, not amber: amber on these pages is for payments. Nothing when there is no error.
  */
 export function SeatErrorNotice({ error }: { error: unknown }) {
   if (error === null || error === undefined) return null;
-  if (isLicenseChangedError(error)) return <AlertText>{t.conflict.seatsChanged}</AlertText>;
-  return <ErrorNotice error={error} />;
+  if (isLicenseChangedError(error)) return <AlertText tone="neutral">{t.conflict.seatsChanged}</AlertText>;
+  return <ErrorNotice error={error} tone="neutral" />;
 }
 
 /**

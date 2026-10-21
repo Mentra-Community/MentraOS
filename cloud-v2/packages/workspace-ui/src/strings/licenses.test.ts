@@ -380,6 +380,8 @@ describe("banners", () => {
     // A checkout that collected nothing (a trial) claims no payment.
     expect(t.purchase.timeout.title(false)).toBe("Your purchase went through");
     expect(t.purchase.timeout.body).toBe("The seats can take a few minutes to appear.");
+    // A person has no seats: their line is about the license.
+    expect(t.purchase.timeout.personBody).toBe("Your license can take a few minutes to appear.");
     expect(t.purchase.timeout.reload).toBe("Reload");
   });
 

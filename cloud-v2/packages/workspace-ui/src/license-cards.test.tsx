@@ -10,6 +10,7 @@ import { WorkspaceApiError } from "./errors";
 import { BillingRefusedError, type BillingApi } from "./billing-api";
 import { workspaceScope } from "./billing-scope";
 import { formatMoney } from "./lib/billing-format";
+import { AlertText, ErrorNotice } from "./components/common";
 import { LicenseCard, type LicenseCardProps } from "./components/licenses/license-card";
 import { WorkspaceLicensesPanel } from "./components/licenses-panel";
 import {
@@ -25,7 +26,7 @@ import { seatHolders } from "./components/licenses/seats";
 import { joinLicenses, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
-import { cleanup, click, find, findAll, render, setupDom, teardownDom, typeInto } from "./test-dom";
+import { cleanup, click, find, findAll, isNeutral, render, setupDom, teardownDom, typeInto } from "./test-dom";
 import { detailFor, licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures";
 
 beforeAll(setupDom);
@@ -1255,6 +1256,24 @@ describe("the people picker", () => {
     expect(text(notice)).toContain("1 of 2 fit: remove one or add seats.");
   });
 
+  test("its failures are neutral too: the conflict, and anything else", async () => {
+    const r = rig();
+    r.assignSeats.mockImplementation(async () => {
+      throw new WorkspaceApiError(409, "no_seats_available", "every seat is taken");
+    });
+    await mount(picker(r, coreLicense(5, [DANA])));
+    await click(checkboxFor("Luis Ortega"));
+    await click(assignButton());
+    await flush();
+    expect(findAll('dialog [role="alert"]').map((alert) => [alert.textContent?.startsWith("Seats changed"), isNeutral(alert)])).toEqual([[true, true]]);
+    r.assignSeats.mockImplementation(async () => {
+      throw new WorkspaceApiError(403, "forbidden", "forbidden");
+    });
+    await click(assignButton());
+    await flush();
+    expect(findAll('dialog [role="alert"]').map((alert) => [alert.textContent, isNeutral(alert)])).toEqual([["You do not have permission to do that.", true]]);
+  });
+
   test("three chosen calls assignSeats once with three pairs, and closes", async () => {
     const r = rig();
     const onClose = mock(() => {});
@@ -1507,6 +1526,15 @@ describe("the purchase banner", () => {
     expect(onReload).toHaveBeenCalledTimes(1);
   });
 
+  test("a person's timed-out purchase says their license can take a few minutes, not seats", async () => {
+    await mount(banner({ purchase: { ...processing, quantity: 1 }, listed: true, scope: "person", timedOut: true }));
+    const words = text(find("section"));
+    expect(words).toContain("Your payment went through");
+    expect(words).toContain("Your license can take a few minutes to appear.");
+    expect(words).not.toContain("seats");
+    expect(hasButton("Reload")).toBe(true);
+  });
+
   test("keeps no clock of its own: the page's flow says when the minute is up", async () => {
     jest.useFakeTimers();
     await mount(banner({ purchase: processing, listed: false }));
@@ -1633,6 +1661,53 @@ describe("a member is called one thing everywhere", () => {
   test("a seat whose member isn't listed yet is called by the user id Core has for it", () => {
     const license = { seats: [{ membershipId: "wm_gone", mentraUserId: "u_gone", assignedAt: "2026-10-02T12:00:00.000Z" }] };
     expect(seatHolders(license, [])[0]!.label).toBe("u_gone");
+  });
+});
+
+// ---- refusals are neutral ----------------------------------------------------------------------------------------
+
+describe("a refusal is neutral: amber is for payments and over-assignment", () => {
+  test("the alert is amber unless a screen of these pages asks for it neutral (the other screens keep the sign-in style)", async () => {
+    await mount(
+      <>
+        <AlertText>Sign-in style</AlertText>
+        <AlertText tone="neutral">Neutral</AlertText>
+        <ErrorNotice error={new Error("x")} />
+        <ErrorNotice error={new Error("y")} tone="neutral" />
+      </>,
+    );
+    expect(findAll('[role="alert"]').map((alert) => [alert.textContent === "Sign-in style" || alert.className.includes("bg-error"), isNeutral(alert)])).toEqual([
+      [true, false],
+      [false, true],
+      [true, false],
+      [false, true],
+    ]);
+  });
+
+  test("billing's refusal on a card", async () => {
+    const r = rig({
+      session: async () => {
+        throw new BillingRefusedError("license_not_found", {}, 404);
+      },
+    });
+    await mountCard(r, joined(coreLicense(5, [HANNAH]), { status: "past_due", fallbackStatusLabel: "Past due", seatsStopAt: "2026-11-23T12:00:00.000Z", actions: [{ kind: "update_payment", fallbackLabel: "Update payment method" }] }));
+    await press("Update payment method");
+    await flush();
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
+    // The payment notice itself is still amber: it is about a failed payment.
+    expect(find("[role='status'].rounded-notice", theCard()).className).toContain("bg-error");
+  });
+
+  test("a failed Unassign", async () => {
+    const r = rig();
+    r.releaseSeat.mockImplementation(async () => {
+      throw new WorkspaceApiError(403, "forbidden", "forbidden");
+    });
+    await mountCard(r, joined(coreLicense(5, [HANNAH]), {}));
+    await press("Unassign Hannah Kim");
+    await press("Unassign", find('[role="group"]', theCard()));
+    await flush();
+    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
   });
 });
 

@@ -70,7 +70,9 @@ export function PurchaseBanner({
         ? t.purchase.personReadyBody({ product: productName, paid })
         : t.purchase.readyBody({ product: productName, paid })
       : phase === "timeout"
-        ? t.purchase.timeout.body
+        ? person
+          ? t.purchase.timeout.personBody
+          : t.purchase.timeout.body
         : person
           ? t.purchase.personSettingUp(productName)
           : t.purchase.settingUpSeats({ seats: quantity, product: productName });

@@ -89,7 +89,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `Checkbox` (`label?`), `Switch`, `Meter` (`used`, `total`) | A styled native checkbox, a native switch, and the bar for seats used (dark up to the quantity, amber past it) |
 | `Panel` (`title`, `description?`, `count?`, `actions?`) | A titled card for one panel's content, with a count beside the title and actions on the right |
 | `Badge` (`tone?`) | A small chip: `outline` (the default, "You"), or filled `success` (green), `warn` (amber) or `neutral` (grey) for a status |
-| `ErrorNotice` (`error`), `Loading`, `QueryGate` (`result`, `loadingLabel?`, `children(data)`) | An error in words in the amber notice, the spinner with what is loading, and a query's loading and failed-load states with Try again |
+| `ErrorNotice` (`error`, `tone?`), `AlertText`, `Loading`, `QueryGate` (`result`, `loadingLabel?`, `tone?`, `children(data)`) | An error in words (amber, as the sign-in page's notice, or `tone="neutral"`), the spinner with what is loading, and a query's loading and failed-load states with Try again |
 | `Avatar`, `WorkspaceAvatar`, `Count`, `Spinner` | A person's initials, a workspace's letter tile, a count beside a heading, the loading spinner |
 | `AppShell`, `AccountFooter`, `WorkspaceSwitcher`, `SWITCHER_ITEM_CLASS` | The portal's frame, its account menu and its workspace switcher (see [Shell](#shell)) |
 | `MentraMark`, `MentraLogo`, `BrandPage` (`title`) | The Mentra mark, the logo with its wordmark (inline SVG, no asset loader), and a page that is one card under the logo |
@@ -471,6 +471,14 @@ tab order and Space.
   host owns `open`. Keys from a dialog nested inside it are left to that dialog.
 - **`Notice`** is `role="status"` in every tone, because nothing on these pages interrupts
   the person. A failed action's message is an `ErrorNotice`, the alert.
+- **Amber is for payments.** On the Licenses page, the Members list and its panel, and the
+  personal Billing page, amber marks a failed or incomplete payment and over-assignment, and
+  nothing else (the spec's rule; test mode's hazard tape is the design's). So every failure and
+  refusal there, billing's included, is an alert in the neutral notice style
+  (`tone="neutral"`: the surface of a plain `Notice`, no new token). `AlertText`, `ErrorNotice`
+  and `QueryGate` stay amber by default, as the sign-in page's notice, for the panels outside
+  these pages (invitations, credentials, settings, audit, and the older
+  `WorkspaceLicensesPanel` until a host moves to `WorkspaceLicensesView`).
 - **`HostedPageButton`** shows a ↗ icon, not a character, so its name is the label alone
   ("Add seats"). A hidden hint, "Opens a secure billing page" (or "… in a new tab"),
   describes it to a screen reader.

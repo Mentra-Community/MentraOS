@@ -127,29 +127,42 @@ export function Restricted({ children }: { children: ReactNode }) {
 }
 
 /**
- * A failure or a refusal in words, as the sign-in page's error notice: amber, and `role="alert"`, because it is the
- * answer to something the person just did. `ErrorNotice` is this with an error's words; use this one for a sentence
- * of your own.
+ * How an alert is drawn: `error`, amber as the sign-in page's error notice (the default, for the screens outside the
+ * Licenses, Members and Billing pages), or `neutral`, the grey surface of a plain notice. On those three pages amber
+ * marks a failed or incomplete payment and over-assignment, and nothing else, so every failure and refusal there is
+ * `neutral`.
  */
-export function AlertText({ children }: { children: ReactNode }) {
+export type AlertTone = "error" | "neutral";
+
+const ALERT_TONES: Record<AlertTone, string> = {
+  error: "bg-error text-error-foreground",
+  neutral: "bg-surface text-foreground",
+};
+
+/**
+ * A failure or a refusal in words, `role="alert"` because it is the answer to something the person just did. Amber,
+ * as the sign-in page's error notice, unless the screen asks for the `neutral` tone. `ErrorNotice` is this with an
+ * error's words; use this one for a sentence of your own.
+ */
+export function AlertText({ children, tone = "error" }: { children: ReactNode; tone?: AlertTone }) {
   return (
-    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
+    <p role="alert" className={cn("rounded-notice px-4 py-3 text-sm", ALERT_TONES[tone])}>
       {children}
     </p>
   );
 }
 
-/** The failure of the last action, in words, as the sign-in page's error notice. Renders nothing when there is none. */
-export function ErrorNotice({ error }: { error: unknown }) {
+/** The failure of the last action, in words (see {@link AlertText} for the tones). Renders nothing when there is none. */
+export function ErrorNotice({ error, tone }: { error: unknown; tone?: AlertTone }) {
   if (error === null || error === undefined) return null;
-  return <AlertText>{errorMessage(error)}</AlertText>;
+  return <AlertText tone={tone}>{errorMessage(error)}</AlertText>;
 }
 
 /** A failed load, with a way to try again. */
-export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+export function LoadError({ error, onRetry, tone }: { error: unknown; onRetry: () => void; tone?: AlertTone }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <ErrorNotice error={error} />
+      <ErrorNotice error={error} tone={tone} />
       <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
         Try again
       </Button>
@@ -167,14 +180,17 @@ export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => v
 export function QueryGate<T>({
   result,
   loadingLabel,
+  tone,
   children,
 }: {
   result: { data: T | undefined; isError: boolean; error: unknown; refetch: () => unknown };
   loadingLabel?: string;
+  /** How the failed load is drawn (see {@link AlertTone}). */
+  tone?: AlertTone;
   children: (data: T) => ReactNode;
 }) {
   if (result.data !== undefined) return <>{children(result.data)}</>;
-  if (result.isError) return <LoadError error={result.error} onRetry={() => void result.refetch()} />;
+  if (result.isError) return <LoadError error={result.error} onRetry={() => void result.refetch()} tone={tone} />;
   return <Loading>{loadingLabel}</Loading>;
 }
 

@@ -188,12 +188,12 @@ export function WorkspaceMembersPanel({
         ) : undefined
       }
     >
-      <QueryGate result={detailResult}>
+      <QueryGate result={detailResult} tone="neutral">
         {(workspace) =>
           !can(workspace, "workspace.members.read") ? (
             <Restricted>{t.members.adminsOnly}</Restricted>
           ) : (
-            <QueryGate result={membersResult}>
+            <QueryGate result={membersResult} tone="neutral">
               {(members) => {
                 const viewer = effectiveRole(workspace);
                 const canManage = can(workspace, "workspace.members.manage");
