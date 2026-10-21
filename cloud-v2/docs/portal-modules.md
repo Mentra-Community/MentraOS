@@ -19,7 +19,15 @@ There is one portal module:
 
 | Module | Kind | Mounted at | Settings | What it is |
 | --- | --- | --- | --- | --- |
-| `billing` | Data | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: what it sells, what each workspace and person holds, and the hosted pages where they pay. The portal draws the Licenses page, the member panel and the Billing page from its answers. Hosted Core only; a Private Cloud leaves it unset. |
+| `billing` | Data | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: what it sells, what each workspace and person holds, and the hosted pages where they pay. The portal draws the Licenses page, the Members list's licenses and the Billing page from its answers. Hosted Core only; a Private Cloud leaves it unset. |
+
+Billing is a data module. Fleet's is the only UI module: the admin portal mounts
+its bundle from `/api/admin/fleet/ui/entry.js` ([Fleet
+integration](fleet-integration.md#the-fleet-ui-module-contract)), and the workspace
+portal keeps a module host (`websites/portal/src/components/portal-module-host.tsx`)
+for Fleet Management's UI. No workspace portal page mounts it, and the registry
+above lists billing alone. [The UI of a UI module](#the-ui-of-a-ui-module) is the
+contract that host speaks.
 
 How a request is signed and sent, what a module receives, how its answer is mapped
 and how its UI assets are relayed are the same as Fleet's, in code
@@ -61,8 +69,8 @@ to answer, body included.
 - `billing` is true when billing is ready on this Core and visible to the person
   who asked (below), so the portal offers billing's pages only where they work.
 - `billingCatalog` is true when billing is ready, whoever asks, because the
-  catalog is an open read (below). It tells the portal that the licenses on the
-  Members list can be named for everyone who may see the list.
+  catalog is an open read (below). It tells the portal that licenses can be named
+  for everyone who may see them, on the Licenses page and on the Members list.
 
 A module whose settings are unusable is false in both, not true: the portal could
 not load its page. So is one that is not installed.
@@ -105,9 +113,9 @@ rest of the methods on a catalog; a trailing slash (`catalog/`), another case
 doubled slash; `ui/icons` or `ui/icons/` with no file, a file under a deeper path
 or an encoded one, `ui/Icons/...` and `ui/iconsx/...`; and every other `ui/` path.
 Each is the `404 module_not_installed` of an absent module, as is a path Core
-refuses for its form (`invalid_path` goes to staff only), so a person cannot probe
-around an open read. The request body of one that is not forwarded is not read,
-so a large one cannot tell them the module is there.
+refuses for its form (`invalid_path` goes only to people the module is visible to),
+so a person cannot probe around an open read. The request body of one that is not
+forwarded is not read, so a large one cannot tell them the module is there.
 
 An open read changes only whether a person may see the module. The scope rules
 are the same: a workspace's catalog needs a member of that workspace or an
@@ -133,9 +141,9 @@ what they send is `@mentra/workspace-contract/portal-billing`:
 | `POST session` | Opens a hosted billing page for a license or the account and answers its address | The module decides |
 | `GET ui/icons/<file>` | A product's icon | Open read |
 
-Billing serves no `ui/entry.js`. Core formats every amount, date and sentence
-from the typed values, and the portal follows only the hosted-page addresses the
-contract accepts.
+Billing serves no `ui/entry.js`. It sends values and the actions it offers, and the
+workspace portal words every sentence and formats every amount, date and count
+from them, and follows only the hosted-page addresses the contract accepts.
 
 ## Forwarding paths
 
@@ -182,7 +190,7 @@ Only people reach a module. Core answers, in this order:
 
 Core decides which workspace a request is about, from the path alone. Nothing the
 request carries in its query, body or headers can change the scope Core signs:
-`/api/portal/billing/account/checkout?scope=workspace` is still `{"kind":
+`/api/portal/billing/account/purchase?scope=workspace` is still `{"kind":
 "person"}`. The workspace in the scope is the path's segment decoded once, which
 is what the module decodes the path to.
 
