@@ -23,6 +23,9 @@
  * DELETE (or any other call with nothing to say) is 204. The response types are
  * the contract's (`@mentra/workspace-contract`), shared with the portals and the Developer Console.
  *
+ * Members: `GET /:workspaceId/members` names each member with the name their last sign-in through Core's
+ * provider carried (`name`, null when there is none), all of them read in one query.
+ *
  * Licenses: `GET /:workspaceId/licenses` answers every license and seat to a
  * caller with `workspace.licenses.read` (Admins and Owners), and to any other
  * member only the licenses they hold a seat in, each with only their own seat.
@@ -76,6 +79,7 @@ import {
   revokeInvitation,
   type InvitationRow,
 } from "../../services/workspaces/invitation.service"
+import {memberNames} from "../../services/workspaces/member-names.service"
 import {fail} from "../../services/workspaces/workspace-error"
 import {
   changeRole,
@@ -192,7 +196,9 @@ export function createWorkspacesApi(): Hono<AppEnv> {
 
   app.get("/:workspaceId/members", requireWorkspaceCapability("workspace.members.read"), async (c) => {
     const rows = await listMembers(c.req.param("workspaceId"))
-    return c.json({items: rows.map(memberView)})
+    // Every member's name in one read, not one per row.
+    const names = await memberNames(rows.map(row => row.mentraUserId))
+    return c.json({items: rows.map(row => memberView(row, names))})
   })
 
   app.patch("/:workspaceId/members/:membershipId", requireWorkspaceCapability("workspace.read"), async (c) => {
@@ -384,11 +390,13 @@ function workspaceRole(body: JsonObject): WorkspaceRole {
   return role
 }
 
-function memberView(row: MembershipRow): MemberView {
+/** `names` are the members' sign-in names by Core user id (`memberNames`); a member without one has `name: null`. */
+function memberView(row: MembershipRow, names: ReadonlyMap<string, string>): MemberView {
   return {
     membershipId: row.membershipId,
     mentraUserId: row.mentraUserId ?? null,
     email: row.email ?? null,
+    name: (row.mentraUserId ? names.get(row.mentraUserId) : undefined) ?? null,
     role: row.role as WorkspaceRole,
     startedAt: row.startedAt.toISOString(),
     // Imported from the Store and not yet claimed: the person has no Core user here until they sign in.
