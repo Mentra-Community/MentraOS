@@ -1496,9 +1496,13 @@ describe("the Licenses panel's seat changes mark billing's status stale", () => 
     const scope = workspaceScope(WS);
     const client = newClient();
     const detail = detailFor("owner");
+    const licenses = [coreLicense(5, [HANNAH])];
+    // The panel reads what is seeded and then refetches it; the server has to say the same thing, or the
+    // refetch (which the harness waits for) would replace the seat the test is about with an empty list.
+    r.listLicenses.mockImplementation(async () => licenses);
     client.setQueryData(workspaceKeys.detail(r.api, WS), detail);
     client.setQueryData(workspaceKeys.members(r.api, WS), PEOPLE);
-    client.setQueryData(workspaceKeys.licenses(r.api, WS), [coreLicense(5, [HANNAH])]);
+    client.setQueryData(workspaceKeys.licenses(r.api, WS), licenses);
     client.setQueryData(billingKeys.status(r.billing, scope), EMPTY_STATUS);
     await mount(<WorkspaceLicensesPanel api={r.api} workspaceId={WS} />, client);
     await press("Unassign hannah@acme.test");

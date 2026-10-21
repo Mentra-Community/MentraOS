@@ -11,6 +11,7 @@
  * Not exported from the package: tests only.
  */
 
+import { jest } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, type ReactElement } from "react";
 import type { Root } from "react-dom/client";
@@ -34,15 +35,30 @@ export async function teardownDom(): Promise<void> {
 }
 
 /**
+ * One turn of the timer queue, which is what lets a timer-scheduled update (the query cache's notify timer, a
+ * zero-delay `setTimeout`) run before the caller carries on.
+ *
+ * Under `jest.useFakeTimers()` a real timeout never fires, so waiting on one would hang the test for good, and
+ * the clock belongs to the test: Bun moves it a millisecond even for `advanceTimersByTime(0)`, which would eat
+ * into a deadline the test is counting down to ("one millisecond before the minute is up"). So there the turn
+ * leaves the clock alone and yields once to the event loop (`setImmediate`, which Bun doesn't fake), enough for
+ * promises and React's own scheduling to run. A timer the test wants fired, it advances to itself.
+ */
+function turn(): Promise<void> {
+  if (jest.isFakeTimers()) return new Promise((resolve) => setImmediate(resolve));
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
  * Lets work that is still on its way land inside `act`: a request that answered, the query cache's notify timer,
  * the render it asks for. A screen that fetches would otherwise have its last update arrive after the test's own
  * `act` scope, in the middle of the next test, and React says so ("not wrapped in act(...)"). A few turns of the
  * timer queue is enough: each one runs what the one before it scheduled.
  */
 export async function flush(turns = 4): Promise<void> {
-  for (let turn = 0; turn < turns; turn++) {
+  for (let done = 0; done < turns; done++) {
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await turn();
     });
   }
 }
@@ -59,7 +75,8 @@ export async function until(check: () => boolean, what: string): Promise<void> {
       return;
     }
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // Under fake timers the test owns the clock: there is nothing to wait out here, only a turn to give.
+      await (jest.isFakeTimers() ? turn() : new Promise((resolve) => setTimeout(resolve, 5)));
     });
   }
   throw new Error(`timed out waiting for ${what}`);
