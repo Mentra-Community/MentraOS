@@ -246,6 +246,10 @@ describe("licenses held", () => {
     expect(t.seats.searchPlaceholder).toBe("Search people with a license");
     expect(t.seats.since("Oct 20, 2026")).toBe("Since Oct 20, 2026");
     expect(t.seats.unassign).toBe("Unassign");
+    expect(t.seats.cancel).toBe("Cancel");
+    // Unassign asks in a dialog: its title, and one plain line under it.
+    expect(t.seats.unassignPrompt("Hannah Kim")).toBe("Unassign Hannah Kim?");
+    expect(t.seats.unassignBody("Hannah Kim", "Mentra Call Unlimited")).toBe("Hannah Kim loses Mentra Call Unlimited the next time they open it.");
     expect(t.seats.freeSeat).toBe("Available license");
     expect(t.seats.assign).toBe("Assign");
     expect(t.seats.assignSeats).toBe("Assign licenses");
@@ -563,6 +567,7 @@ const SAMPLES: Record<string, unknown[][]> = {
   ],
   "seats.since": [["Oct 20, 2026"]],
   "seats.unassignPrompt": [["Dana Reyes"]],
+  "seats.unassignBody": [["Dana Reyes", "Mentra Call Unlimited"]],
   "seats.unassignAria": [["Dana Reyes"]],
   "seats.freeSeats": [[7]],
   "seats.allInUse": [[5], [1]],

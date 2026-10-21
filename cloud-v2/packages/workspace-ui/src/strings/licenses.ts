@@ -350,8 +350,10 @@ export const licenseStrings = {
     searchPlaceholder: "Search people with a license",
     since: (date: string) => `Since ${date}`,
     unassign: "Unassign",
-    /** The confirm step of Unassign. */
+    cancel: "Cancel",
+    /** Unassign's dialog: its title, and the one line under it. */
     unassignPrompt: (name: string) => `Unassign ${name}?`,
+    unassignBody: (name: string, product: string) => `${name} loses ${product} the next time they open it.`,
     /** Unassign's accessible name: whose license. */
     unassignAria: (name: string) => `Unassign ${name}`,
     freeSeat: "Available license",

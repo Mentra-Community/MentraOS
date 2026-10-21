@@ -185,7 +185,8 @@ async function exploreCards(screen: string) {
   const unassign = findAll<HTMLElement>("[data-slot='card'] button").find((button) => button.getAttribute("aria-label")?.startsWith("Unassign "));
   if (unassign) {
     await click(unassign);
-    expectNoSeat(`${screen}: Unassign asks first`);
+    expectNoSeat(`${screen}: Unassign asks first, in a dialog`);
+    await click(one(t.seats.cancel, find("dialog[open]")));
   }
 
   for (const menu of findAll<HTMLElement>("[data-slot='card'] [aria-haspopup='menu']")) {

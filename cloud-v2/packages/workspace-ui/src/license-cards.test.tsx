@@ -184,6 +184,21 @@ async function openMenu() {
   await click(menuTrigger());
 }
 
+const openDialogs = () => findAll<HTMLDialogElement>("dialog").filter((dialog) => dialog.open);
+/** The open dialog: Unassign's, when it is the only one. */
+const unassignDialog = () => {
+  const [dialog, ...others] = openDialogs();
+  if (!dialog || others.length > 0) throw new Error(`expected one open dialog, found ${openDialogs().length}`);
+  return dialog;
+};
+/** Escape on the open dialog, as the platform does it: the dialog is asked to cancel and, unless that is prevented, closes. */
+async function escape() {
+  await act(async () => {
+    const dialog = unassignDialog();
+    if (dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) dialog.close();
+  });
+}
+
 // ---- the card ------------------------------------------------------------------------------------------------
 
 describe("an active license", () => {
@@ -1164,7 +1179,7 @@ describe("who holds the licenses", () => {
     expect(r.leave).toHaveBeenCalledWith(PAGE);
   });
 
-  test("Unassign asks first, then takes the license back, and billing's status is marked stale with the licenses", async () => {
+  test("Unassign asks first in a dialog, then takes the license back, and billing's status is marked stale with the licenses", async () => {
     const r = rig();
     const client = newClient();
     const scope = workspaceScope(WS);
@@ -1172,11 +1187,21 @@ describe("who holds the licenses", () => {
     client.setQueryData(billingKeys.catalog(r.billing, scope), { locale: "en-US", products: [] });
     client.setQueryData(workspaceKeys.licenses(r.api, WS), []);
     await mountCard(r, joined(coreLicense(5, [HANNAH, TOM]), {}), {}, client);
+    expect(openDialogs()).toHaveLength(0);
     await press("Unassign Hannah Kim");
-    expect(text(find('[role="group"]', theCard()))).toContain("Unassign Hannah Kim?");
+    // A modal, not an inline prompt: the row keeps its own button, and the question is in the dialog.
+    expect(findAll('[role="group"]', theCard())).toHaveLength(0);
+    const dialog = unassignDialog();
+    expect(find("h2", dialog).textContent).toBe("Unassign Hannah Kim?");
+    expect(text(dialog)).toContain("Hannah Kim loses Mentra Call Unlimited the next time they open it.");
+    expect(dialog.getAttribute("aria-labelledby")).toBe(find("h2", dialog).id);
+    // Cancel, and a destructive Unassign (and the × every dialog has).
+    expect(buttons(dialog)).toEqual(["Close", "Cancel", "Unassign"]);
+    expect(buttonNamed("Unassign", dialog).className).toContain("bg-destructive");
     expect(r.releaseSeat).not.toHaveBeenCalled();
-    await press("Unassign", find('[role="group"]', theCard()));
+    await press("Unassign", dialog);
     await flush();
+    expect(openDialogs()).toHaveLength(0);
     expect(r.releaseSeat).toHaveBeenCalledWith(WS, "lic_call", "wm_hannah");
     expect(client.getQueryState(billingKeys.status(r.billing, scope))?.isInvalidated).toBe(true);
     expect(client.getQueryState(workspaceKeys.licenses(r.api, WS))?.isInvalidated).toBe(true);
@@ -1184,25 +1209,87 @@ describe("who holds the licenses", () => {
     expect(client.getQueryState(billingKeys.catalog(r.billing, scope))?.isInvalidated).toBe(false);
   });
 
-  test("backing out of Unassign takes nothing back", async () => {
+  test("Cancel closes the dialog with no request, and focus goes back to the row's Unassign button", async () => {
+    const r = rig();
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM]), {}));
+    const trigger = buttonNamed("Unassign Hannah Kim");
+    trigger.focus();
+    await click(trigger);
+    await press("Cancel", unassignDialog());
+    expect(openDialogs()).toHaveLength(0);
+    expect(r.releaseSeat).not.toHaveBeenCalled();
+    expect(hasButton("Unassign Hannah Kim")).toBe(true);
+    expect(document.activeElement).toBe(buttonNamed("Unassign Hannah Kim"));
+    // Tom's row still has its own.
+    expect(hasButton("Unassign Tom Becker")).toBe(true);
+  });
+
+  test("Escape and the × close it the same way: no request, focus back on the button that asked", async () => {
+    const r = rig();
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM]), {}));
+    for (const close of [escape, () => click(find("button[aria-label='Close']", unassignDialog()))]) {
+      const trigger = buttonNamed("Unassign Tom Becker");
+      trigger.focus();
+      await click(trigger);
+      expect(find("h2", unassignDialog()).textContent).toBe("Unassign Tom Becker?");
+      await close();
+      expect(openDialogs()).toHaveLength(0);
+      expect(r.releaseSeat).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(buttonNamed("Unassign Tom Becker"));
+    }
+  });
+
+  test("a click on the backdrop closes it too, with no request", async () => {
     const r = rig();
     await mountCard(r, joined(coreLicense(5, [HANNAH]), {}));
     await press("Unassign Hannah Kim");
-    await press("Cancel", find('[role="group"]', theCard()));
+    await click(unassignDialog());
+    expect(openDialogs()).toHaveLength(0);
     expect(r.releaseSeat).not.toHaveBeenCalled();
-    expect(hasButton("Unassign Hannah Kim")).toBe(true);
   });
 
-  test("a failed Unassign says why", async () => {
+  test("a failed Unassign says why inside the dialog, which stays open for another try", async () => {
     const r = rig();
-    r.releaseSeat.mockImplementation(async () => {
+    r.releaseSeat.mockImplementationOnce(async () => {
       throw new WorkspaceApiError(403, "forbidden", "forbidden");
     });
     await mountCard(r, joined(coreLicense(5, [HANNAH]), {}));
     await press("Unassign Hannah Kim");
-    await press("Unassign", find('[role="group"]', theCard()));
+    await press("Unassign", unassignDialog());
     await flush();
-    expect(find('[role="alert"]', theCard()).textContent).toBe("You do not have permission to do that.");
+    const dialog = unassignDialog();
+    expect(find('[role="alert"]', dialog).textContent).toBe("You do not have permission to do that.");
+    // Not on the card behind it, and the dialog can be used again.
+    expect(findAll('[role="alert"]', theCard()).filter((alert) => !dialog.contains(alert))).toHaveLength(0);
+    expect(buttonNamed("Unassign", dialog).hasAttribute("disabled")).toBe(false);
+    await press("Unassign", dialog);
+    await flush();
+    expect(r.releaseSeat).toHaveBeenCalledTimes(2);
+    expect(openDialogs()).toHaveLength(0);
+  });
+
+  test("while the request is out the dialog is busy and can't be dismissed", async () => {
+    const r = rig();
+    let finish!: () => void;
+    r.releaseSeat.mockImplementation(() => new Promise<undefined>((resolve) => (finish = () => resolve(undefined))));
+    await mountCard(r, joined(coreLicense(5, [HANNAH]), {}));
+    await press("Unassign Hannah Kim");
+    await press("Unassign", unassignDialog());
+    const dialog = unassignDialog();
+    expect(buttonNamed("Unassign", dialog).getAttribute("aria-busy")).toBe("true");
+    expect(buttonNamed("Unassign", dialog).hasAttribute("disabled")).toBe(true);
+    expect(buttonNamed("Cancel", dialog).hasAttribute("disabled")).toBe(true);
+    expect(buttonNamed("Close", dialog).hasAttribute("disabled")).toBe(true);
+    // Escape is refused while it is out.
+    const cancel = new Event("cancel", { cancelable: true });
+    await act(async () => void dialog.dispatchEvent(cancel));
+    expect(cancel.defaultPrevented).toBe(true);
+    await click(dialog);
+    expect(openDialogs()).toHaveLength(1);
+    await act(async () => finish());
+    await flush();
+    expect(openDialogs()).toHaveLength(0);
+    expect(r.releaseSeat).toHaveBeenCalledTimes(1);
   });
 
   test("without permission to assign there is no Assign, no Unassign and no picker", async () => {
@@ -1967,7 +2054,7 @@ describe("a refusal is neutral: amber is for payments and over-assignment", () =
     });
     await mountCard(r, joined(coreLicense(5, [HANNAH]), {}));
     await press("Unassign Hannah Kim");
-    await press("Unassign", find('[role="group"]', theCard()));
+    await press("Unassign", unassignDialog());
     await flush();
     expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
   });

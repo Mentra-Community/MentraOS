@@ -226,7 +226,10 @@ what](#who-sees-what)).
   read again when the window regains focus. A refusal is worded next to the
   button.
 - **Assigned to.** A card lists who holds each license, name over email, since
-  when, and Unassign, which asks first. Available licenses follow: up to three as
+  when, and Unassign, which asks in a dialog ("Unassign <name>?", "<name> loses
+  <product> the next time they open it.", Cancel and a destructive Unassign;
+  Cancel, Escape and × close it with no request and give focus back to the row's
+  button, and a refusal is shown inside it). Available licenses follow: up to three as
   a row each ("Available license") with Assign, more as one line ("7 available
   licenses"). A list of more than 8 people has a search ("Search people with a
   license"). With several products on the page the list folds into one line

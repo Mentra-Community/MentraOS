@@ -2,19 +2,20 @@
  * A license's seats as the Licenses page draws them (the design's `parts.tsx` and `parts2.tsx`): who holds each
  * one, as a roster, or folded into a strip on a page with several licenses. They only draw. The card (and the
  * people picker) own the data and the requests, and pass in what to run: assigning opens the picker, Unassign
- * asks first, and "Add licenses ↗" is there only where billing lists the action.
+ * asks first in a dialog, and "Add licenses ↗" is there only where billing lists the action.
  */
 
 import { ChevronDownIcon, ChevronUpIcon, CheckIcon, PlusIcon, SearchIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
 import { formatDate } from "../../lib/format";
 import type { SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
+import { Dialog } from "../../ui/dialog";
 import { Input } from "../../ui/input";
-import { Avatar, ConfirmButton, Count } from "../common";
+import { AlertText, Avatar, Count } from "../common";
 import { HostedPageButton, memberLabel } from "./parts";
 
 /** Someone who holds a seat: who they are as far as Core knows, and since when. */
@@ -162,32 +163,65 @@ function FreeSeatIcon() {
 }
 
 /**
- * The roster: who holds each seat (their name over their email, since when, and Unassign, which asks first), then
- * the free seats: up to three as a row each with Assign, more folded into "<n> available licenses". With every seat taken
- * it says so and offers "Add licenses ↗" where billing lists it. With more holders than seats (`blocked`) nobody
- * can be assigned, so no assigning control shows; Unassign still does.
+ * The roster: who holds each license (their name over their email, since when, and Unassign, which asks first in a
+ * dialog), then the available licenses: up to three as a row each with Assign, more folded into "<n> available
+ * licenses". With every license assigned it says so and offers "Add licenses ↗" where billing lists it. With more
+ * people than licenses (`blocked`) nobody can be assigned, so no assigning control shows; Unassign still does.
+ *
+ * Unassign opens a modal: "Unassign <name>?" with one plain line, Cancel and a destructive Unassign. Cancel, Escape, the
+ * × and the backdrop close it with no request and put focus back on the row's button; a refusal is shown inside it,
+ * and while the request is out it can't be dismissed.
  */
 export function SeatRoster({
   holders,
   counts,
   locale,
+  productName,
   canAssign,
   blocked = false,
   addSeats,
   onAssign,
   onUnassign,
-  releasing = null,
   onCollapse,
 }: SeatControls & {
   /** The portal's locale, for the dates. */
   locale: string;
-  onUnassign(holder: SeatHolder): void;
-  /** The membership whose seat is being taken back. */
-  releasing?: string | null;
-  /** On a card that folds its seats: the roster's title closes it again. */
+  /** The product the licenses are for, for the line in Unassign's dialog. */
+  productName: string;
+  /** Takes the license back from `holder`: resolves with the refusal in words, or null once it is done. */
+  onUnassign(holder: SeatHolder): Promise<string | null>;
+  /** On a card that folds its licenses: the roster's title closes it again. */
   onCollapse?: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [leaving, setLeaving] = useState<SeatHolder | null>(null);
+  const [pending, setPending] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const triggers = useRef(new Map<string, HTMLButtonElement>());
+  const returnFocusTo = useRef<string | null>(null);
+  // The dialog closed without taking anything back: the row's own button is where the person was.
+  useEffect(() => {
+    if (leaving === null && returnFocusTo.current !== null) {
+      triggers.current.get(returnFocusTo.current)?.focus();
+      returnFocusTo.current = null;
+    }
+  }, [leaving]);
+  const dismiss = () => {
+    if (leaving === null) return;
+    returnFocusTo.current = leaving.membershipId;
+    setLeaving(null);
+    setRefusal(null);
+  };
+  const confirm = async () => {
+    if (leaving === null) return;
+    setPending(true);
+    setRefusal(null);
+    const refused = await onUnassign(leaving);
+    setPending(false);
+    // Done: the row is on its way out, so there is nothing to give focus back to.
+    if (refused === null) setLeaving(null);
+    else setRefusal(refused);
+  };
   const searchable = holders.length > SEARCH_FROM;
   const needle = query.trim().toLowerCase();
   const shown =
@@ -247,14 +281,19 @@ export function SeatRoster({
               {t.seats.since(formatDate(holder.assignedAt, locale))}
             </span>
             {canAssign ? (
-              <ConfirmButton
-                label={t.seats.unassign}
-                ariaLabel={t.seats.unassignAria(holder.label)}
-                prompt={t.seats.unassignPrompt(holder.label)}
-                confirmLabel={t.seats.unassign}
-                disabled={releasing === holder.membershipId}
-                onConfirm={() => onUnassign(holder)}
-              />
+              <Button
+                ref={(button) => {
+                  if (button) triggers.current.set(holder.membershipId, button);
+                  else triggers.current.delete(holder.membershipId);
+                }}
+                type="button"
+                variant="destructive-secondary"
+                size="sm"
+                aria-label={t.seats.unassignAria(holder.label)}
+                onClick={() => setLeaving(holder)}
+              >
+                {t.seats.unassign}
+              </Button>
             ) : null}
           </li>
         ))}
@@ -294,6 +333,26 @@ export function SeatRoster({
           </li>
         ) : null}
       </ul>
+      {/* Mounted only while it asks, so a roster holds no dialog of its own until then. */}
+      {leaving ? (
+        <Dialog
+          open
+          onClose={dismiss}
+          locked={pending}
+          title={t.seats.unassignPrompt(leaving.label)}
+          description={t.seats.unassignBody(leaving.label, productName)}
+        >
+          {refusal !== null ? <AlertText tone="neutral">{refusal}</AlertText> : null}
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Button type="button" variant="secondary" disabled={pending} onClick={dismiss}>
+              {t.seats.cancel}
+            </Button>
+            <Button type="button" variant="destructive" disabled={pending} aria-busy={pending || undefined} onClick={() => void confirm()}>
+              {t.seats.unassign}
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
     </div>
   );
 }
