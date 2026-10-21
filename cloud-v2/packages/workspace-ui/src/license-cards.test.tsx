@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, jest, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -16,6 +16,7 @@ import { WorkspaceLicensesPanel } from "./components/licenses-panel";
 import {
   LicensesSummary,
   LicensesUnavailable,
+  PURCHASE_POLL_MS,
   PURCHASE_TIMEOUT_MS,
   PurchaseBanner,
   TestModeBanner,
@@ -31,10 +32,7 @@ import { detailFor, licenseFor, offlineApi, WORKSPACE_ID } from "./test-fixtures
 
 beforeAll(setupDom);
 afterAll(teardownDom);
-afterEach(async () => {
-  jest.useRealTimers();
-  await cleanup();
-});
+afterEach(cleanup);
 
 // ---- people, licenses and the rig every test stands on -------------------------------------------------------
 
@@ -1305,6 +1303,7 @@ describe("the people picker", () => {
     expect(boxes).toHaveLength(MAX_SEAT_ASSIGNMENTS + 1);
 
     // 500 is the most one request takes: Assign is on and nothing is said.
+    // One act scope for the 500 clicks.
     await act(async () => {
       for (const box of boxes.slice(0, MAX_SEAT_ASSIGNMENTS)) box.click();
     });
@@ -1337,7 +1336,7 @@ describe("the people picker", () => {
     expect(pairs).toHaveLength(MAX_SEAT_ASSIGNMENTS);
     expect(new Set(pairs.map((pair) => pair.membershipId)).size).toBe(MAX_SEAT_ASSIGNMENTS);
     expect(pairs.every((pair) => pair.licenseId === "lic_call")).toBe(true);
-  }, 120_000); // Choosing 501 people one by one draws 501 rows each time: more than bun's default 5 s on a slow runner.
+  }, 120_000); // Drawing 500 chosen rows is seconds in happy-dom, and about 30 s on the CI runner: over bun's default 5 s.
 
   test("a 409 refetches, shows what changed and keeps the dialog open with the choice", async () => {
     const r = rig();
@@ -1583,12 +1582,23 @@ describe("the purchase banner", () => {
   });
 
   test("keeps no clock of its own: the page's flow says when the minute is up", async () => {
-    jest.useFakeTimers();
-    await mount(banner({ purchase: processing, listed: false }));
-    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS * 3));
-    // Two minutes past the deadline, and nobody has said so: it is still setting up.
-    expect(find("section").getAttribute("data-phase")).toBe("processing");
-    expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
+    // Not on fake timers (see `turn` in test-dom): the banner is shown to start no timer on the page's scale, which
+    // is what a clock of its own would be. The library's zero-length turns are not one.
+    const timeouts = spyOn(globalThis, "setTimeout");
+    const intervals = spyOn(globalThis, "setInterval");
+    try {
+      const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
+      await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
+      // Nobody has said the minute is up: it is still setting up.
+      expect(find("section").getAttribute("data-phase")).toBe("processing");
+      expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
+      const started = [...timeouts.mock.calls, ...intervals.mock.calls].map(([, delay]) => Number(delay ?? 0));
+      expect(started.length).toBeGreaterThan(0);
+      expect(started.filter((delay) => delay >= PURCHASE_POLL_MS)).toEqual([]);
+    } finally {
+      timeouts.mockRestore();
+      intervals.mockRestore();
+    }
   });
 
   test("a license that arrives after the minute still turns it ready, and a ready one never reads as timed out", async () => {
