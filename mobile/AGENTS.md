@@ -216,8 +216,10 @@ push("/settings/profile")
 
 - **Public token (`pk.…`)** — runtime map rendering. Lives in `.env` as
   `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`. Safe to ship in the app.
-- CI generates its own `.env` from the repository's `MAPBOX_PUBLIC_TOKEN`
-  GitHub Actions secret; a local `.env` edit does not update CI.
+- PR builds generate their `.env` from the repository's `MAPBOX_PUBLIC_TOKEN`
+  GitHub Actions secret; coordinated releases take it from the Doppler config
+  of their backend (`mentra-mobile-client` dev/stg/prd). A local `.env` edit
+  updates neither.
 - Mentra Maps also embeds a public token in its committed ZIP under
   `assets/miniapps/`. CI includes that ZIP without rebuilding it. When rotating
   the Maps token, set `PUBLIC_MAPBOX_TOKEN` for the navigation miniapp build

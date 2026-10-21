@@ -64,10 +64,13 @@ jobs:
       - name: Build the Mentra Miniapp SDK
         working-directory: mobile/modules/miniapp
         run: bun run build
+      - name: Typecheck
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: bun run typecheck
       - name: Test
         if: matrix.miniapp == 'navigation'
         working-directory: miniapps/${{ matrix.miniapp }}
-        run: bun test
+        run: bun run test
       - name: Production pack
         working-directory: miniapps/${{ matrix.miniapp }}
         run: NODE_ENV=production bun run pack
