@@ -93,7 +93,9 @@ imported membership still waiting for its person's first sign-in, and
   it is below `quantity`, in the same transaction as the seat's insert.
   Concurrent assignments conflict on the license, and the database retries them
   against the latest count, so two admins taking the last seat at once never
-  both get it, and an assignment is refused only for want of a seat.
+  both get it, and an assignment is refused only for want of a seat. Rarely, a
+  refusal comes from a count read just before another seat was released; trying
+  again succeeds.
 - **Several at once.** `POST /:workspaceId/seat-assignments` takes
   `{"assignments": [{"licenseId", "membershipId"}]}`, the people picker's and
   Assign licenses' request. It takes 1 to 500 pairs (`MAX_SEAT_ASSIGNMENTS`);
