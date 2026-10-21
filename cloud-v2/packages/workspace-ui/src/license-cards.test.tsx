@@ -190,11 +190,49 @@ describe("an active license", () => {
   test("shows its badge, licenses, renewal and cost", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
     const card = text(theCard());
-    for (const expected of ["Mentra Call Unlimited", "Unlimited Teams calls in Mentra Call.", "Active", "3 of 5 assigned", "2 available", "Renews", "Nov 20, 2026", "Every month", "$145 a month", "5 × $29 · before tax"]) {
+    for (const expected of ["Mentra Call Unlimited", "Unlimited Teams calls in Mentra Call.", "Active", "3 of 5 assigned", "Renews", "Nov 20, 2026", "$145 a month", "Before tax"]) {
       expect(card).toContain(expected);
     }
+    // The lines the meter, the date and the amount already say are not repeated: the count of licenses available, the
+    // recurrence under the renewal date, and the quantity × unit under the cost.
+    for (const gone of ["available", "Every month", "5 ×", "× $29"]) expect(card).not.toContain(gone);
     // The facts are one description list: label, value and foot in groups.
     expect(findAll("dl > div > dt", theCard()).map((term) => term.textContent)).toEqual(["Licenses", "Renews", "Cost"]);
+    const groups = findAll("dl > div", theCard());
+    // Licenses: the value and the meter, no foot. Renews: the date alone. Cost: the amount, and "Before tax" as its one sub-line.
+    expect([...groups[0]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["3 of 5 assigned", ""]);
+    expect([...groups[1]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["Nov 20, 2026"]);
+    expect([...groups[2]!.querySelectorAll("dd")].map((dd) => dd.textContent)).toEqual(["$145 a month", "Before tax"]);
+  });
+
+  test("the cost's value carries the recurrence, so no other line has to: a year, and every three months", async () => {
+    const yearly = { interval: "year" as const, count: 1 };
+    const price = { scheme: "per_seat" as const, unit: usd(34800), recurrence: yearly };
+    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { price, total: usd(174000), renewsAt: "2027-11-20T12:00:00.000Z" }));
+    const card = text(theCard());
+    expect(card).toContain("$1,740 a year");
+    expect(card).toContain("Nov 20, 2027");
+    for (const gone of ["Every year", "Every month", "5 ×"]) expect(card).not.toContain(gone);
+    await cleanup();
+    const quarterly = { scheme: "per_seat" as const, unit: usd(2900), recurrence: { interval: "month" as const, count: 3 } };
+    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { price: quarterly, total: usd(14500) }));
+    expect(text(theCard())).toContain("$145 every 3 months");
+    expect(text(theCard())).not.toContain("Every 3 months");
+  });
+
+  test("'Before tax' is the cost's only sub-line, and only where tax is excluded", async () => {
+    const costGroup = () => [...findAll("dl > div", theCard())[2]!.querySelectorAll("dd")].map((dd) => dd.textContent);
+    for (const [tax, sub] of [["excluded", ["Before tax"]], ["included", []], ["none", []], ["something_new", []]] as const) {
+      await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { tax }));
+      expect([tax, costGroup()]).toEqual([tax, ["$145 a month", ...sub]]);
+      await cleanup();
+    }
+  });
+
+  test("a license billing has no total for shows its unit price, and 'Before tax' under it", async () => {
+    await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { total: null }));
+    const group = [...findAll("dl > div", theCard())[2]!.querySelectorAll("dd")].map((dd) => dd.textContent);
+    expect(group).toEqual(["$29 per user a month", "Before tax"]);
   });
 
   test("feature chips show only for a product with more than one feature", async () => {
@@ -325,7 +363,7 @@ describe("a payment that failed", () => {
     const card = text(theCard());
     expect(card).toContain("Renews");
     expect(card).toContain("Nov 2, 2026");
-    expect(card).toContain("Every month");
+    expect(card).not.toContain("Every month");
     expect(card).not.toContain("Not paid");
     expect(card).not.toContain("Renewal");
     // The failure is still the card's state: the badge, the ring, the notice and its deadline.
@@ -686,7 +724,8 @@ describe("the portal's locale", () => {
     // German puts a no-break space before the currency sign; the card's text has plain spaces.
     const euros = (minor: number) => formatMoney(usd(minor), "de-DE").replace(/\s+/g, " ");
     expect(card).toContain(`${euros(14500)} a month`);
-    expect(card).toContain(`5 × ${euros(2900)} · before tax`);
+    expect(card).toContain("Before tax");
+    expect(card).not.toContain("×");
     expect(card).not.toContain("$145");
   });
 
@@ -847,8 +886,8 @@ describe("values the card doesn't know", () => {
 
   test("an unknown tax value adds no words", async () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH]), { tax: "reverse_charge" }));
-    expect(text(theCard())).toContain("5 × $29");
-    expect(text(theCard())).not.toContain("5 × $29 ·");
+    expect(text(theCard())).toContain("$145 a month");
+    for (const words of ["Before tax", "tax", "5 ×"]) expect(text(theCard())).not.toContain(words);
   });
 
   test("a license whose product the catalog lacks is named by its key, with a letter tile", async () => {
@@ -896,7 +935,7 @@ describe("a viewer who isn't offered billing", () => {
     await mountCard(rig(), joined(coreLicense(5, [HANNAH, TOM, NOAH]), null));
     const card = text(theCard());
     expect(card).toContain("3 of 5 assigned");
-    expect(card).toContain("2 available");
+    expect(card).not.toContain("available");
     expect(card).not.toContain("$");
     expect(card).not.toContain("Renews");
     expect(card).not.toContain("Cost");
@@ -958,7 +997,7 @@ describe("a person's own license", () => {
     const text_ = text(theCard());
     expect(text_).toContain("Renews");
     expect(find("dl > div:nth-child(2) > dd:nth-of-type(1)", theCard()).textContent).toBe("$29 a month");
-    expect(find("dl > div:nth-child(2) > dd:nth-of-type(2)", theCard()).textContent).toBe("before tax");
+    expect(find("dl > div:nth-child(2) > dd:nth-of-type(2)", theCard()).textContent).toBe("Before tax");
     expect(text_).not.toContain("1 ×");
     expect(text_).not.toContain("Licenses");
     expect(text_).not.toContain("Assigned to");

@@ -194,12 +194,16 @@ what](#who-sees-what)).
   - The badge says "Active", "Ends Nov 20" (it will not renew), "Payment failed",
     "Payment incomplete", "Setting up" (paid for, and Core has not received it)
     or "2 over" (more licenses assigned than are paid for).
-  - For someone offered billing there are three facts. Licenses: "3 of 5
-    assigned" and "2 available" (or "None available"). The term: Renews with its
-    date and "Every month" (or "Until" a later end), or Ends with its date and
-    "Doesn't renew". Cost: billing's own total, such as "$145 a month" over "5 ×
-    $29 · before tax". A price that is not per user shows billing's label, with no
-    arithmetic. Without billing the card shows its Licenses alone.
+  - For someone offered billing there are three facts, each with as few lines as
+    it needs. Licenses: "3 of 5 assigned" over a meter (past the quantity, "2 more
+    than the 5 covered" in amber). The term: Renews with its date alone (or
+    "Until" a later end), or Ends with its date and "Doesn't renew". Cost:
+    billing's own total with its recurrence, such as "$145 a month" or "$1,740 a
+    year", and "Before tax" under it only where billing says tax is excluded; with
+    any other tax value there is no line under it. The card never says how many
+    licenses are available, "Every month", or "5 × $29": the meter, the date and
+    the amount already say it. A price that is not per user shows billing's label,
+    with no arithmetic. Without billing the card shows its Licenses alone.
   - A failed payment rings the card in amber and says the day the licenses stop
     working (or stopped), with Update payment method ↗ and Complete payment ↗ where
     billing lists them. That date is the only one of its kind: no card says "paid

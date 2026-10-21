@@ -312,7 +312,7 @@ describe("who sees what", () => {
     await mountView(r);
     expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
     const call = text(cardNamed("Mentra Call Unlimited"));
-    for (const expected of ["Active", "3 of 5 assigned", "Nov 20, 2026", "$145 a month", "5 × $29 · before tax"]) expect(call).toContain(expected);
+    for (const expected of ["Active", "3 of 5 assigned", "Nov 20, 2026", "$145 a month", "Before tax"]) expect(call).toContain(expected);
     expect(text(cardNamed("Fleet"))).toContain("$150 a month");
     expect(text()).toContain("2 products · $295 a month in total");
     // The header buttons are the host's to place (`WorkspaceLicensesHeaderActions`): the page draws none.
@@ -1046,8 +1046,8 @@ describe("the personal Billing page", () => {
     await mountPersonal(r);
     expect(cardNames()).toEqual(["Mentra Call Unlimited"]);
     const card = text(cardNamed("Mentra Call Unlimited"));
-    // A person's one seat has no "1 × $29": the cost is the month's amount, and that it is before tax.
-    for (const expected of ["Active", "Renews", "Nov 20, 2026", "$29 a month", "before tax"]) expect(card).toContain(expected);
+    // A person's one license has no "1 × $29": the cost is the month's amount, and that it is before tax.
+    for (const expected of ["Active", "Renews", "Nov 20, 2026", "$29 a month", "Before tax"]) expect(card).toContain(expected);
     for (const absent of ["Licenses", "assigned", "Assigned to", "Assign", "5 ×", "1 ×"]) expect(card).not.toContain(absent);
     expect(hasButton("Billing & invoices")).toBe(false);
     expect(hasButton("Buy a license")).toBe(false);

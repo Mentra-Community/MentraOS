@@ -136,18 +136,18 @@ describe("priceLine", () => {
 });
 
 describe("costFact", () => {
-  test("is billing's total, with the quantity × unit beside it, before tax", () => {
-    expect(costFact(license(), "en-US")).toEqual({ value: "$145 a month", foot: "5 × $29 · before tax" });
+  test("is billing's total with its recurrence, and 'Before tax' under it: no quantity × unit", () => {
+    expect(costFact(license(), "en-US")).toEqual({ value: "$145 a month", foot: "Before tax" });
   });
 
   test("formats in the portal's locale and the currency's own digits", () => {
     const euro: Price = { scheme: "per_seat", unit: { amountMinor: 2900, currency: "EUR" }, recurrence: { interval: "month", count: 1 } };
     const german = costFact(license({ price: euro, total: { amountMinor: 14500, currency: "EUR" } }), "de-DE");
     expect(german.value).toBe("145 € a month");
-    expect(german.foot).toBe("5 × 29 € · before tax");
+    expect(german.foot).toBe("Before tax");
 
     const yen: Price = { scheme: "per_seat", unit: { amountMinor: 2900, currency: "JPY" }, recurrence: { interval: "month", count: 1 } };
-    expect(costFact(license({ price: yen, total: { amountMinor: 14500, currency: "JPY" } }), "en-US").foot).toBe("5 × ¥2,900 · before tax");
+    expect(costFact(license({ price: yen, total: { amountMinor: 14500, currency: "JPY" } }), "en-US")).toEqual({ value: "¥14,500 a month", foot: "Before tax" });
   });
 
   test("a three-month recurrence is 'every 3 months'", () => {
@@ -155,15 +155,16 @@ describe("costFact", () => {
     expect(costFact(license({ price: quarterly, total: usd(14500) }), "en-US").value).toBe("$145 every 3 months");
   });
 
-  test("'included' says 'including tax', and 'none' and an unknown value say nothing", () => {
-    expect(costFact(license({ tax: "included" }), "en-US").foot).toBe("5 × $29 · including tax");
-    expect(costFact(license({ tax: "none" }), "en-US").foot).toBe("5 × $29");
-    expect(costFact(license({ tax: "something_new" }), "en-US").foot).toBe("5 × $29");
+  test("only 'excluded' has a sub-line: 'included', 'none' and an unknown value say nothing", () => {
+    expect(costFact(license({ tax: "excluded" }), "en-US").foot).toBe("Before tax");
+    expect(costFact(license({ tax: "included" }), "en-US").foot).toBeNull();
+    expect(costFact(license({ tax: "none" }), "en-US").foot).toBeNull();
+    expect(costFact(license({ tax: "something_new" }), "en-US").foot).toBeNull();
   });
 
-  test("a person's cost has no multiplication: '$29 a month · before tax'", () => {
+  test("a person's cost is the same: '$29 a month' over 'Before tax'", () => {
     const personal = license({ quantity: 1, total: usd(2900) });
-    expect(costFact(personal, "en-US", "person")).toEqual({ value: "$29 a month", foot: "before tax" });
+    expect(costFact(personal, "en-US", "person")).toEqual({ value: "$29 a month", foot: "Before tax" });
     expect(costFact({ ...personal, tax: "none" }, "en-US", "person")).toEqual({ value: "$29 a month", foot: null });
   });
 
@@ -174,7 +175,7 @@ describe("costFact", () => {
   });
 
   test("a per-user price with no total from billing shows the unit price, and adds nothing up", () => {
-    expect(costFact(license({ total: null }), "en-US")).toEqual({ value: "$29 per user a month", foot: "before tax" });
+    expect(costFact(license({ total: null }), "en-US")).toEqual({ value: "$29 per user a month", foot: "Before tax" });
   });
 });
 

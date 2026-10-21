@@ -128,8 +128,8 @@ describe("a product's card", () => {
   test("the licenses fact", () => {
     expect(t.facts.seats.label).toBe("Licenses");
     expect(t.facts.seats.inUse(3, 5)).toBe("3 of 5 assigned");
-    expect(t.facts.seats.free(2)).toBe("2 available");
-    expect(t.facts.seats.free(0)).toBe("None available");
+    // "2 available" is not said: the count and the meter already say it.
+    expect("free" in t.facts.seats).toBe(false);
     expect(t.facts.seats.assigned(7)).toBe("7 assigned");
     expect(t.facts.seats.moreThanCovered(2, 5)).toBe("2 more than the 5 covered");
   });
@@ -138,8 +138,8 @@ describe("a product's card", () => {
     expect(t.facts.term.renews).toBe("Renews");
     expect(t.facts.term.ends).toBe("Ends");
     expect(t.facts.term.renewal).toBe("Renewal");
-    expect(t.facts.term.every("month")).toBe("Every month");
-    expect(t.facts.term.every("3 months")).toBe("Every 3 months");
+    // The recurrence is in the cost's value ("$145 a month"), not under the date.
+    expect("every" in t.facts.term).toBe(false);
     expect(t.facts.term.until("Dec 1, 2026")).toBe("Until Dec 1, 2026");
     expect(t.facts.term.doesntRenew).toBe("Doesn't renew");
     expect(t.facts.term.notPaid).toBe("Not paid");
@@ -149,10 +149,10 @@ describe("a product's card", () => {
     expect(t.facts.cost.label).toBe("Cost");
     expect(t.facts.cost.noMoreCharges).toBe("No more charges");
     expect(t.facts.cost.value("$145", "a month")).toBe("$145 a month");
-    expect(t.facts.cost.multiple(5, "$29")).toBe("5 × $29");
-    expect(t.facts.cost.foot(["5 × $29", "before tax"])).toBe("5 × $29 · before tax");
-    expect(t.facts.cost.foot(["5 × $29", null])).toBe("5 × $29");
-    expect(t.facts.cost.foot([null, null])).toBeNull();
+    // The one sub-line, for a cost with tax excluded; no quantity × unit.
+    expect(t.facts.cost.beforeTax).toBe("Before tax");
+    expect("multiple" in t.facts.cost).toBe(false);
+    expect("foot" in t.facts.cost).toBe(false);
   });
 
   test("a member's own license", () => {
@@ -532,14 +532,10 @@ const SAMPLES: Record<string, unknown[][]> = {
     ["paused", "Paused"],
   ],
   "facts.seats.inUse": [[3, 5]],
-  "facts.seats.free": [[2], [0]],
   "facts.seats.assigned": [[7]],
   "facts.seats.moreThanCovered": [[2, 5]],
-  "facts.term.every": [["month"], ["3 months"]],
   "facts.term.until": [["Dec 1, 2026"]],
   "facts.cost.value": [["$145", "a month"]],
-  "facts.cost.multiple": [[5, "$29"]],
-  "facts.cost.foot": [[["5 × $29", "before tax"]], [["5 × $29", null]], [[null, null]]],
   "facts.own.since": [["Oct 20, 2026"]],
   "facts.own.givenBy": [["Acme Field Services"]],
   "notice.pastDue": [

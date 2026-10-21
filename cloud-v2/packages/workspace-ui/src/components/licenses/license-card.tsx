@@ -27,7 +27,7 @@ import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
 import type { BillingScope } from "../../billing-scope";
 import { errorMessage } from "../../errors";
-import { costFact, formatDay, formatDayShort, renewalCadence } from "../../lib/billing-format";
+import { costFact, formatDay, formatDayShort } from "../../lib/billing-format";
 import { listedAction, type JoinedLicense, type SeatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { useSeatMutation } from "../../queries";
@@ -111,9 +111,7 @@ function SeatsFact({ seats }: { seats: SeatCounts }) {
       foot={
         over ? (
           <span className="text-error-foreground font-semibold">{t.facts.seats.moreThanCovered(seats.over, seats.quantity)}</span>
-        ) : (
-          t.facts.seats.free(seats.free)
-        )
+        ) : undefined
       }
     >
       <Meter used={seats.used} total={seats.quantity} />
@@ -148,15 +146,9 @@ function TermFact({ card, locale, now }: { card: JoinedLicense; locale: string; 
       <Pending label={t.facts.term.ends} />
     );
   }
+  // The recurrence is in the cost's value ("$145 a month"): under the date there is only a scheduled end.
   if (billing.renewsAt) {
-    const cadence = renewalCadence(billing.price, locale);
-    return (
-      <Fact
-        label={t.facts.term.renews}
-        value={day(billing.renewsAt)}
-        foot={billing.endsAt ? t.facts.term.until(day(billing.endsAt)) : cadence ? t.facts.term.every(cadence) : undefined}
-      />
-    );
+    return <Fact label={t.facts.term.renews} value={day(billing.renewsAt)} foot={billing.endsAt ? t.facts.term.until(day(billing.endsAt)) : undefined} />;
   }
   if (billing.endsAt) return <Fact label={t.facts.term.ends} value={day(billing.endsAt)} foot={t.facts.term.doesntRenew} />;
   return <Pending label={t.facts.term.renews} />;

@@ -290,7 +290,6 @@ export const licenseStrings = {
     seats: {
       label: "Licenses",
       inUse: (used: number, quantity: number) => `${used} of ${quantity} assigned`,
-      free: (n: number) => (n > 0 ? `${n} available` : "None available"),
       assigned: (used: number) => `${used} assigned`,
       moreThanCovered: (over: number, quantity: number) => `${over} more than the ${quantity} covered`,
     },
@@ -298,7 +297,6 @@ export const licenseStrings = {
       renews: "Renews",
       ends: "Ends",
       renewal: "Renewal",
-      every: (cadence: string) => `Every ${cadence}`,
       until: (date: string) => `Until ${date}`,
       doesntRenew: "Doesn't renew",
       notPaid: "Not paid",
@@ -307,13 +305,8 @@ export const licenseStrings = {
       label: "Cost",
       noMoreCharges: "No more charges",
       value: (total: string, rate: string) => `${total} ${rate}`,
-      /** "5 × $29". */
-      multiple: (quantity: number, unit: string) => `${quantity} × ${unit}`,
-      /** The facts under a cost, in one line: "5 × $29 · before tax"; null when there are none. */
-      foot: (parts: ReadonlyArray<string | null>) => {
-        const present = parts.filter((part): part is string => part !== null && part !== "");
-        return present.length > 0 ? present.join(" · ") : null;
-      },
+      /** The cost's one sub-line, for a price with tax excluded. The value above it carries the recurrence ("$145 a month"). */
+      beforeTax: "Before tax",
     },
     /** A member's own card. */
     own: {

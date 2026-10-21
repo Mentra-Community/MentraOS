@@ -612,19 +612,19 @@ describe("the licenses' small pieces", () => {
   });
 
   test("a Fact is a term and its values, with a foot", () => {
-    const markup = renderToStaticMarkup(<Fact label="Cost" value="$145 a month" foot="5 × $29 · before tax" />);
+    const markup = renderToStaticMarkup(<Fact label="Cost" value="$145 a month" foot="Before tax" />);
     expect(markup).toMatch(/<dt[^>]*>Cost<\/dt>/);
     expect(markup).toMatch(/<dd[^>]*>\$145 a month<\/dd>/);
-    expect(markup).toContain("5 × $29 · before tax");
+    expect(markup).toContain("Before tax");
   });
 
   test("Facts sit validly in a <dl>: a div per group, holding only the term and its descriptions", async () => {
     await render(
       <dl>
-        <Fact label="Licenses" value="3 of 5 assigned" foot="2 available">
-          <Meter used={3} total={5} />
+        <Fact label="Licenses" value="5 assigned" foot="2 more than the 3 covered">
+          <Meter used={5} total={3} />
         </Fact>
-        <Fact label="Renews" value="Nov 20, 2026" foot="Every month" />
+        <Fact label="Renews" value="Nov 20, 2026" foot="Until Dec 1, 2026" />
         <Fact label="Cost" value="$145 a month" />
       </dl>,
     );
@@ -641,9 +641,9 @@ describe("the licenses' small pieces", () => {
     expect([...groups[1]!.children].map((child) => child.tagName)).toEqual(["DT", "DD", "DD"]);
     expect([...groups[2]!.children].map((child) => child.tagName)).toEqual(["DT", "DD"]);
     // The meter sits in a description of its own, and what each says is in its place.
-    expect(groups[0]!.children[1]!.textContent).toBe("3 of 5 assigned");
+    expect(groups[0]!.children[1]!.textContent).toBe("5 assigned");
     expect(find("[data-slot=meter]", groups[0]!.children[2]!)).toBeDefined();
-    expect(groups[0]!.children[3]!.textContent).toBe("2 available");
+    expect(groups[0]!.children[3]!.textContent).toBe("2 more than the 3 covered");
   });
 
   test("a Skeleton is a placeholder with no text", () => {
