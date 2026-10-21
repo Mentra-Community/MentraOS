@@ -51,7 +51,7 @@ interface PillButtonProps extends Omit<TouchableOpacityProps, "style"> {
 
 /**
  * A reusable pill-shaped button component with primary and secondary variants.
- * Matches the design system used in AlertUtils/BasicDialog and Developer Settings.
+ * Matches the design system used in Developer Settings.
  */
 export function PillButton({
   text,
