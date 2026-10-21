@@ -364,9 +364,11 @@ describe("who sees what", () => {
     expect(page).not.toContain("in use");
     expect(page).not.toContain("Seat holders");
     expect(buttons()).toEqual([]);
-    // No request for billing's status, and none for a members list the member may not read.
+    // No request for billing's status, and none for a members list the member may not read. The catalog is asked for
+    // once, after Core's list says there is a license to name.
     expect(r.status).not.toHaveBeenCalled();
     expect(r.listMembers).not.toHaveBeenCalled();
+    expect(r.catalog).toHaveBeenCalledTimes(1);
   });
 
   test("a developer is a member here: the same page", async () => {
@@ -383,6 +385,8 @@ describe("who sees what", () => {
     expect(text()).toContain(`You don't have a seat in ${WORKSPACE_NAME}`);
     expect(text()).toContain("Its Admins and Owners give out seats. Once you have one, it works the next time you open the miniapp it's for.");
     expect(r.status).not.toHaveBeenCalled();
+    // Nothing to name, so the catalog isn't asked for either.
+    expect(r.catalog).not.toHaveBeenCalled();
   });
 
   test("a license of the member's without a seat of theirs is left out rather than claimed", async () => {
@@ -601,6 +605,8 @@ describe("the layout", () => {
     expect(text()).not.toContain("You'll pay by card");
     expect(gridProducts()).toEqual([]);
     expect(r.status).not.toHaveBeenCalled();
+    // With no license to name and nothing to buy, the catalog isn't needed: it isn't asked for.
+    expect(r.catalog).not.toHaveBeenCalled();
   });
 
   test("a catalog whose entries carry no offer draws no heading, even for a viewer the host believes is offered billing", async () => {
@@ -720,6 +726,90 @@ describe("purchases", () => {
     const calls = r.status.mock.calls.length;
     await delay(150);
     expect(r.status.mock.calls.length).toBeLessThanOrEqual(calls + 1);
+  });
+
+  test("polling stops at the deadline even when the page's reads fail and no banner ever mounts", async () => {
+    const broken: Array<[string, Partial<Answers>]> = [
+      ["status", { status: new Error("status down") }],
+      ["Core's licenses", { licenses: new Error("core down"), status: processing() }],
+      ["catalog", { catalog: new Error("catalog down"), status: processing() }],
+    ];
+    for (const [what, answers] of broken) {
+      const r = rig(answers);
+      const { client } = await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 150 });
+      // The page says so, and there is no banner to keep a clock.
+      expect([what, text().includes("Licenses are unavailable"), findAll("[data-phase]").length]).toEqual([what, true, 0]);
+      // It is still polling behind the card (this is what the deadline has to stop)...
+      const early = r.status.mock.calls.length;
+      await until(() => r.status.mock.calls.length >= early + 3, `${what}: polling behind the unavailable card`);
+      // ...and stops at the deadline. (React renders what the deadline set when this act scope ends; a read still out,
+      // with its retries, is let finish before counting.) After that the count stops growing.
+      await delay(250);
+      await idle(client);
+      const stopped = r.status.mock.calls.length;
+      const stoppedLicenses = r.listLicenses.mock.calls.length;
+      await delay(200);
+      expect([what, r.status.mock.calls.length]).toEqual([what, stopped]);
+      expect([what, r.listLicenses.mock.calls.length]).toEqual([what, stoppedLicenses]);
+      await cleanup();
+    }
+  });
+
+  test("the deadline runs from the purchase, not from when a banner first shows: it is set while the page is still loading", async () => {
+    const r = rig({ licenses: [fleetLicense()], status: processing() });
+    const hold = deferred();
+    r.gates.status = hold.promise;
+    const timeouts: unknown[] = [];
+    const { setTimeout: realTimeout } = globalThis;
+    globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...args: unknown[]) => {
+      timeouts.push(ms);
+      return realTimeout(handler, ms, ...args);
+    }) as typeof setTimeout;
+    try {
+      await mount(<WorkspaceLicensesView {...viewProps(r, { purchaseId: "pur_1" })} />);
+      await flush();
+      expect(text()).toContain("Loading licenses…");
+      expect(findAll("[data-phase]")).toHaveLength(0);
+    } finally {
+      globalThis.setTimeout = realTimeout;
+    }
+    // Nothing to show yet, no banner, and the minute is already running.
+    expect(timeouts).toContain(60000);
+    r.gates.status = null;
+    await act(async () => hold.resolve());
+    await flush();
+  });
+
+  test("polling and the deadline stop when the view unmounts", async () => {
+    const r = rig({ licenses: [fleetLicense()], status: processing() });
+    await mountView(r, { purchaseId: "pur_1", pollMs: 15, timeoutMs: 5_000 });
+    await until(() => r.status.mock.calls.length >= 3 && r.listLicenses.mock.calls.length >= 3, "polling");
+    await cleanup();
+    const status = r.status.mock.calls.length;
+    const licenses = r.listLicenses.mock.calls.length;
+    await delay(150);
+    expect(r.status.mock.calls.length).toBe(status);
+    expect(r.listLicenses.mock.calls.length).toBe(licenses);
+  });
+
+  test("only the view polls: unmounting the header leaves it going", async () => {
+    const r = rig({ licenses: [fleetLicense()], status: processing() });
+    const client = newClient();
+    const { rerender } = await mount(
+      <>
+        <WorkspaceLicensesHeaderActions {...headerProps(r, { purchaseId: "pur_1" })} />
+        <WorkspaceLicensesView {...viewProps(r, { purchaseId: "pur_1", ...POLL })} />
+      </>,
+      client,
+    );
+    await loaded();
+    const before = r.status.mock.calls.length;
+    await rerender(
+      <QueryClientProvider client={client}>
+        <WorkspaceLicensesView {...viewProps(r, { purchaseId: "pur_1", ...POLL })} />
+      </QueryClientProvider>,
+    );
+    await until(() => r.status.mock.calls.length >= before + 2, "the view still polling");
   });
 
   test("a checkout that collected no payment says 'Purchase complete', and never 'Payment received'", async () => {
@@ -1204,6 +1294,65 @@ describe("the personal Billing page's header actions", () => {
     await until(() => findAll('[role="alert"]').length === 1, "the refusal");
     expect(failing.leave).not.toHaveBeenCalled();
     expect(r.leave).not.toHaveBeenCalled();
+  });
+});
+
+describe("switching workspace on a mounted view", () => {
+  const OTHER = "ws_other";
+
+  test("never carries one workspace's billing into another while the other's status is on its way", async () => {
+    // Workspace A: two licenses, a total, an invoices action and the test-mode banner.
+    const r = rig({ status: statusFor({ testMode: { cardNumber: "4242424242424242", environment: "Staging" } }) });
+    const client = newClient();
+    const both = (workspaceId: string) => (
+      <QueryClientProvider client={client}>
+        <WorkspaceLicensesHeaderActions {...headerProps(r, { workspaceId })} />
+        <WorkspaceLicensesView {...viewProps(r, { workspaceId })} />
+      </QueryClientProvider>
+    );
+    const { rerender } = await render(both(WS));
+    await loaded();
+    await idle(client);
+    expect(cardNames()).toEqual(["Fleet", "Mentra Call Unlimited"]);
+    expect(buttons().filter((name) => name === "Billing & invoices" || name === "Buy a license")).toHaveLength(2);
+
+    // Workspace B: one smaller license, no total, no actions, no test mode. Its billing status is held back.
+    r.answers.licenses = [callLicense({ licenseId: "lic_b", quantity: 2, seatsUsed: 0, seats: [] })];
+    r.answers.status = statusFor({
+      licenses: [callBilling({ licenseId: "lic_b", quantity: 2, total: usd(5800) })],
+      total: { ...TOTAL, amount: usd(5800), licenseCount: 1 },
+      actions: [],
+      testMode: null,
+    });
+    const hold = deferred();
+    r.gates.status = hold.promise;
+    const statusCalls = r.status.mock.calls.length;
+    await rerender(both(OTHER));
+    await until(() => r.status.mock.calls.length > statusCalls && r.listLicenses.mock.calls.length > 1, "B's reads");
+    await flush();
+    expect(r.status.mock.calls.at(-1)![0]).toEqual(workspaceScope(OTHER));
+
+    // B's licenses and detail are here, its status isn't: none of A's billing is on the page.
+    const during = text();
+    for (const aOnly of ["Fleet", "$145", "$150", "$295", "licenses ·", "Test mode", "Staging", "4242", "lic_fleet"]) {
+      expect([aOnly, during.includes(aOnly)]).toEqual([aOnly, false]);
+    }
+    expect(buttons()).toEqual([]);
+    expect(cardNames()).toEqual([]);
+    expect(during).toContain("Loading licenses…");
+
+    // B's status arrives: B's billing, and only B's.
+    r.gates.status = null;
+    await act(async () => hold.resolve());
+    await until(() => cardNames().length === 1, "B's card");
+    const after = text();
+    expect(cardNames()).toEqual(["Mentra Call Unlimited"]);
+    expect(after).toContain("$58 a month");
+    expect(after).toContain("1 license · $58 a month in total");
+    for (const aOnly of ["Fleet", "$145", "$150", "$295", "Test mode", "Staging"]) expect([aOnly, after.includes(aOnly)]).toEqual([aOnly, false]);
+    // B listed no billing_and_invoices, so there is no such button, and nothing A offered is asked of B.
+    expect(hasButton("Billing & invoices")).toBe(false);
+    expect(r.session).not.toHaveBeenCalled();
   });
 });
 

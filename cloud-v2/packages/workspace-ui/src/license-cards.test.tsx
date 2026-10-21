@@ -1490,48 +1490,46 @@ describe("the purchase banner", () => {
     expect(text(find("section"))).toContain("Your 1 Mentra Call Unlimited seat is ready");
   });
 
-  test("after a minute without the license it says the payment went through, with Reload", async () => {
-    jest.useFakeTimers();
+  test("told it has timed out it says the payment went through, with Reload; until then it is still setting up", async () => {
     const onReload = mock(() => {});
-    const onTimeout = mock(() => {});
-    await mount(banner({ purchase: processing, listed: false, onReload, onTimeout }));
+    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, onReload })}</QueryClientProvider>);
     expect(PURCHASE_TIMEOUT_MS).toBe(60_000);
-    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS - 1));
     expect(find("section").getAttribute("data-phase")).toBe("processing");
-    expect(onTimeout).not.toHaveBeenCalled();
-    await act(async () => void jest.advanceTimersByTime(1));
+    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, onReload, timedOut: true })}</QueryClientProvider>);
     const words = text(find("section"));
     expect(find("section").getAttribute("data-phase")).toBe("timeout");
     expect(words).toContain("Your payment went through");
     expect(words).toContain("The seats can take a few minutes to appear.");
-    expect(onTimeout).toHaveBeenCalledTimes(1);
     expect(hasButton("Dismiss")).toBe(false);
     await press("Reload");
     expect(onReload).toHaveBeenCalledTimes(1);
   });
 
-  test("a license that arrives after the minute still turns it ready, and a ready one never times out", async () => {
+  test("keeps no clock of its own: the page's flow says when the minute is up", async () => {
     jest.useFakeTimers();
-    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false })}</QueryClientProvider>);
-    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS));
+    await mount(banner({ purchase: processing, listed: false }));
+    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS * 3));
+    // Two minutes past the deadline, and nobody has said so: it is still setting up.
+    expect(find("section").getAttribute("data-phase")).toBe("processing");
+    expect(findAll(".animate-spin", find("section"))).toHaveLength(1);
+  });
+
+  test("a license that arrives after the minute still turns it ready, and a ready one never reads as timed out", async () => {
+    const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: processing, listed: false, timedOut: true })}</QueryClientProvider>);
     expect(find("section").getAttribute("data-phase")).toBe("timeout");
-    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: ready, listed: true })}</QueryClientProvider>);
+    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: ready, listed: true, timedOut: true })}</QueryClientProvider>);
     expect(find("section").getAttribute("data-phase")).toBe("ready");
     await cleanup();
-    const onTimeout = mock(() => {});
-    await mount(banner({ purchase: ready, listed: true, onTimeout }));
-    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS * 2));
+    await mount(banner({ purchase: ready, listed: true, timedOut: true }));
     expect(find("section").getAttribute("data-phase")).toBe("ready");
-    expect(onTimeout).not.toHaveBeenCalled();
   });
 
   test("a checkout that collected no payment says 'Purchase complete' and never 'Payment received'", async () => {
-    jest.useFakeTimers();
     const free = { ...processing, paid: false };
     const view = await render(<QueryClientProvider client={newClient()}>{banner({ purchase: free, listed: false })}</QueryClientProvider>);
     const seen: string[] = [text(find("section"))];
     expect(seen[0]).toContain("Purchase complete");
-    await act(async () => void jest.advanceTimersByTime(PURCHASE_TIMEOUT_MS));
+    await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: free, listed: false, timedOut: true })}</QueryClientProvider>);
     seen.push(text(find("section")));
     expect(seen[1]).toContain("Your purchase went through");
     await view.rerender(<QueryClientProvider client={newClient()}>{banner({ purchase: { ...ready, paid: false }, listed: true })}</QueryClientProvider>);

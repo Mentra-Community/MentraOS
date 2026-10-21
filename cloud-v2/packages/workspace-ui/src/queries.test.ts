@@ -10,6 +10,7 @@ import {
   invitationPreviewQuery,
   settingsDetailQuery,
   shouldRetry,
+  statusPlaceholder,
   workspaceKeys,
   workspaceMutationOptions,
 } from "./queries";
@@ -374,5 +375,39 @@ describe("billing's queries", () => {
     expect(client.getQueryData(billingKeys.status(billing, mine, null))).toBeUndefined();
     expect(client.getQueryData(billingKeys.catalog(billing, mine))).toBeUndefined();
     expect(client.getQueryData(billingKeys.status(billing, other, null))).toBeDefined();
+  });
+});
+
+describe("statusPlaceholder", () => {
+  const client = (locale: string, base?: string) => createBillingApi({ locale, base, fetch: (async () => Response.json({})) as unknown as typeof fetch });
+  const billing = client("en-US");
+  const a = workspaceScope("ws_a");
+  const b = workspaceScope("ws_b");
+  const answer = { licenses: ["A's"] };
+  /** What the placeholder is asked: the answer the page had, and the query it came from. */
+  const asked = (from: readonly unknown[], to: readonly unknown[]) => statusPlaceholder<typeof answer>(to)(answer, { queryKey: from } as never);
+
+  test("keeps the previous answer while only the purchase in the key changes, so `?purchase=` going doesn't blank the page", () => {
+    expect(asked(billingKeys.status(billing, a, "pur_1"), billingKeys.status(billing, a, null))).toBe(answer);
+    expect(asked(billingKeys.status(billing, a, null), billingKeys.status(billing, a, "pur_2"))).toBe(answer);
+    expect(asked(billingKeys.status(billing, ACCOUNT_SCOPE, "pur_1"), billingKeys.status(billing, ACCOUNT_SCOPE, null))).toBe(answer);
+  });
+
+  test("never carries an answer to another workspace, from a workspace to the account or back, or to another locale or base path", () => {
+    const from = billingKeys.status(billing, a, "pur_1");
+    expect(asked(from, billingKeys.status(billing, b, "pur_1"))).toBeUndefined();
+    expect(asked(from, billingKeys.status(billing, b, null))).toBeUndefined();
+    expect(asked(from, billingKeys.status(billing, ACCOUNT_SCOPE, null))).toBeUndefined();
+    expect(asked(billingKeys.status(billing, ACCOUNT_SCOPE, null), billingKeys.status(billing, a, null))).toBeUndefined();
+    expect(asked(from, billingKeys.status(client("de-DE"), a, "pur_1"))).toBeUndefined();
+    expect(asked(from, billingKeys.status(client("en-US", "/api/other"), a, "pur_1"))).toBeUndefined();
+  });
+
+  test("has nothing to keep without a previous answer or a previous query, or for a key of another shape", () => {
+    const key = billingKeys.status(billing, a, null);
+    expect(statusPlaceholder<typeof answer>(key)(undefined, { queryKey: key } as never)).toBeUndefined();
+    expect(statusPlaceholder<typeof answer>(key)(answer, undefined)).toBeUndefined();
+    expect(asked(["something", "else"], key)).toBeUndefined();
+    expect(asked([...key, "extra"], key)).toBeUndefined();
   });
 });

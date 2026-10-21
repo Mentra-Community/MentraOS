@@ -21,12 +21,13 @@
  * loading state once the page has loaded.
  */
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { BillingApi } from "../../billing-api";
 import { ACCOUNT_SCOPE } from "../../billing-scope";
 import { catalogForOwner, joinLicenses, listedAction } from "../../lib/license-join";
-import { billingCatalogQuery, billingStatusQuery } from "../../queries";
+import type { BillingStatus } from "@mentra/workspace-contract/portal-billing";
+import { billingCatalogQuery, billingStatusQuery, statusPlaceholder } from "../../queries";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Loading, Restricted } from "../common";
 import { LicensesUnavailable, PURCHASE_POLL_MS, PURCHASE_TIMEOUT_MS, PurchaseBanner, TestModeBanner } from "./banners";
@@ -46,15 +47,17 @@ export interface PersonalBillingViewProps {
   navigateOut: NavigateOut;
   /** How often to read after a purchase, in ms; `PURCHASE_POLL_MS` (2 s) unless a host or a test needs another pace. */
   pollMs?: number;
-  /** How long the banner waits for the purchase to be ready, in ms; `PURCHASE_TIMEOUT_MS` (a minute) unless set. */
+  /** How long the page keeps reading for a purchase to be ready, in ms; `PURCHASE_TIMEOUT_MS` (a minute) unless a host or a test needs another. */
   timeoutMs?: number;
 }
 
 /** What the personal page and its header read: billing's catalog and status for the person's own account. */
 function usePersonalBilling(billing: BillingApi, purchaseId: string | null) {
   const catalog = useQuery(billingCatalogQuery(billing, ACCOUNT_SCOPE));
-  // It keeps its last answer while it is read under another key, so nothing swaps out the cards when `?purchase=` goes.
-  const status = useQuery({ ...billingStatusQuery(billing, ACCOUNT_SCOPE, purchaseId), placeholderData: keepPreviousData });
+  // While it is read under a key that differs only by `purchase` it keeps its last answer, so nothing swaps out the cards
+  // when `?purchase=` goes (never another owner's or locale's: see `statusPlaceholder`).
+  const statusOptions = billingStatusQuery(billing, ACCOUNT_SCOPE, purchaseId);
+  const status = useQuery({ ...statusOptions, placeholderData: statusPlaceholder<BillingStatus>(statusOptions.queryKey) });
   const failed = [catalog, status].some((result) => result.data === undefined && result.isError);
   const waiting = !failed && [catalog, status].some((result) => result.data === undefined);
   const ready = catalog.data !== undefined && status.data !== undefined ? { products: catalog.data.products, status: status.data } : null;
@@ -78,6 +81,7 @@ export function PersonalBillingView({
     listed: true,
     poll: () => void status.refetch({ cancelRefetch: false }),
     pollMs,
+    timeoutMs,
     onDone: onPurchaseDone,
   });
 
@@ -106,7 +110,7 @@ export function PersonalBillingView({
     <div className="space-y-5">
       {current.testMode ? <TestModeBanner testMode={current.testMode} /> : null}
       {purchase ? (
-        <PurchaseBanner purchase={purchase} productName={productName} scope="person" listed onDismiss={flow.dismiss} onTimeout={flow.giveUp} timeoutMs={timeoutMs} />
+        <PurchaseBanner purchase={purchase} productName={productName} scope="person" listed timedOut={flow.timedOut} onDismiss={flow.dismiss} />
       ) : null}
       {cards.map((card) => (
         <LicenseCard

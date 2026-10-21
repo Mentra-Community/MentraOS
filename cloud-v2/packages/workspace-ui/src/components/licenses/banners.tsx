@@ -5,7 +5,7 @@
  */
 
 import { CheckIcon, CreditCardIcon, FlaskConicalIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 import type { BillingTotal, PurchaseStatus, TestMode } from "@mentra/workspace-contract/portal-billing";
 import { groupCardNumber, totalSummary } from "../../lib/billing-format";
 import { licenseStrings as t, type LicenseScope } from "../../strings/licenses";
@@ -16,7 +16,7 @@ import { CopyButton, Spinner } from "../common";
 /** How often the page reads billing's status and Core's licenses while a purchase is being set up (decision 18). */
 export const PURCHASE_POLL_MS = 2_000;
 
-/** How long a purchase may take to reach Core before the banner says the seats can take a few minutes. */
+/** How long the page waits for a purchase to be set up before it stops reading and the banner says the seats can take a few minutes (decision 18). */
 export const PURCHASE_TIMEOUT_MS = 60_000;
 
 /**
@@ -26,16 +26,19 @@ export const PURCHASE_TIMEOUT_MS = 60_000;
  * It is ready when billing's status says `ready` *and* the license is listed (`listed`: Core lists
  * `purchase.licenseId`; a person's license is billing's alone, so there it is always true). A checkout that
  * collected no payment (`paid: false`, such as a trial) says "Purchase complete" and never "Payment received".
+ *
+ * The minute is not counted here. The page counts it (`usePurchaseFlow`, from the purchase, not from the first time a
+ * banner shows) and says so with `timedOut`, which is also what stops its polling. A late license still turns the
+ * banner ready, whatever `timedOut` says.
  */
 export function PurchaseBanner({
   purchase,
   productName,
   scope = "workspace",
   listed,
+  timedOut = false,
   onDismiss,
   onReload,
-  onTimeout,
-  timeoutMs = PURCHASE_TIMEOUT_MS,
 }: {
   /** `status.purchase`. */
   purchase: Pick<PurchaseStatus, "status" | "quantity" | "paid">;
@@ -43,26 +46,13 @@ export function PurchaseBanner({
   productName: string;
   scope?: LicenseScope;
   listed: boolean;
+  /** The page has waited a minute for the license and given up reading. */
+  timedOut?: boolean;
   onDismiss(): void;
   /** Reloads the page; the browser's own reload unless given. */
   onReload?: () => void;
-  /** The minute passed without the license arriving: the page can stop reading. */
-  onTimeout?: () => void;
-  timeoutMs?: number;
 }) {
   const ready = purchase.status === "ready" && listed;
-  const [timedOut, setTimedOut] = useState(false);
-  const timedOutRef = useRef(onTimeout);
-  timedOutRef.current = onTimeout;
-  useEffect(() => {
-    if (ready) return;
-    const timer = setTimeout(() => {
-      setTimedOut(true);
-      timedOutRef.current?.();
-    }, timeoutMs);
-    return () => clearTimeout(timer);
-  }, [ready, timeoutMs]);
-
   const { paid, quantity } = purchase;
   const person = scope === "person";
   const phase = ready ? "ready" : timedOut ? "timeout" : "processing";

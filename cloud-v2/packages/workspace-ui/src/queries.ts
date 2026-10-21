@@ -160,6 +160,26 @@ export const billingStatusQuery = (billing: BillingApi, scope: BillingScope, pur
     retry: billingShouldRetry,
   });
 
+/**
+ * The `placeholderData` for billing's status read: what the page keeps showing while the read under `current` (its
+ * key, from `billingStatusQuery`) is on its way. It keeps the previous answer only when the previous query's key
+ * differs from `current` in its last part alone, the `purchase` (`?purchase=` came or went: the same owner, the same
+ * client, the same locale), so the page doesn't blank for a read it already has the substance of.
+ *
+ * It never carries an answer across anything else in the key: another workspace's licenses, prices, total and actions
+ * are not this workspace's, and showing them (a click on one of those cards would ask this workspace's billing for
+ * another's license) until the right answer arrives is worse than waiting. `keepPreviousData` keeps data for any key
+ * change, so it can't be used here.
+ */
+export function statusPlaceholder<T>(current: readonly unknown[]) {
+  return (previous: T | undefined, previousQuery: { queryKey: readonly unknown[] } | undefined): T | undefined => {
+    if (previous === undefined || previousQuery === undefined) return undefined;
+    const before = previousQuery.queryKey;
+    const sameButPurchase = before.length === current.length && before.every((part, index) => index === before.length - 1 || part === current[index]);
+    return sameButPurchase ? previous : undefined;
+  };
+}
+
 export const auditQuery = (api: WorkspaceApi, workspaceId: string) =>
   infiniteQueryOptions({
     queryKey: workspaceKeys.audit(api, workspaceId),

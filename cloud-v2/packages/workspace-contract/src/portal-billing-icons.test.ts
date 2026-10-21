@@ -65,20 +65,31 @@ describe("portal-billing-icons", () => {
   })
 
   test("imports no zod, and nothing that does", () => {
+    // What it names at run time, and what the files it reaches name in turn (a harmless import would be fine; zod, or
+    // the module that builds the schemas, would not).
     const specifiers = runtimeImports(iconsModule)
-    expect(specifiers.filter((specifier) => /^zod(\/|$)/.test(specifier) || /portal-billing(?!-icons)/.test(specifier))).toEqual([])
-    // As written it needs nothing at all.
-    expect(specifiers).toEqual([])
+    expect(specifiers.filter((specifier) => /^zod(\/|$)/.test(specifier))).toEqual([])
+    expect(specifiers.filter((specifier) => /portal-billing(?!-icons)/.test(specifier))).toEqual([])
+    const manifest = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8"))
+    // The package depends on zod for its schemas; this file isn't one of the places that uses it.
+    expect(manifest.dependencies.zod).toBeDefined()
+    expect(readFileSync(iconsModule, "utf8")).not.toMatch(/from\s*["']zod["']|require\(\s*["']zod["']\s*\)/)
   })
 
-  test("bundles for the browser without zod", () => {
-    // A separate `bun build`, as portal-billing's own bundle test does.
-    const result = Bun.spawnSync([process.execPath, "build", iconsModule, "--target=browser"], {stdout: "pipe", stderr: "pipe"})
-    expect(result.stderr.toString()).not.toContain("error")
-    expect(result.exitCode).toBe(0)
-    const bundle = result.stdout.toString()
-    expect(bundle).toContain("billingIconPath")
-    expect(bundle).not.toContain("ZodError")
-    expect(bundle).not.toMatch(/\bzod\b/i)
+  test("bundles for the browser without zod's code", () => {
+    // Separate `bun build`s, as portal-billing's own bundle test does. A word in a comment is not code: look for what
+    // zod's code defines, and check the same markers are there in the bundle of the module that does use zod.
+    const bundle = (entry: string) => {
+      const result = Bun.spawnSync([process.execPath, "build", entry, "--target=browser"], {stdout: "pipe", stderr: "pipe"})
+      expect(result.stderr.toString()).not.toContain("error")
+      expect(result.exitCode).toBe(0)
+      return result.stdout.toString()
+    }
+    const markers = ["ZodError", "ZodIssueCode", "invalid_type"]
+    const withSchemas = bundle(Bun.resolveSync("./portal-billing", here))
+    for (const marker of markers) expect([marker, withSchemas.includes(marker)]).toEqual([marker, true])
+    const icons = bundle(iconsModule)
+    expect(icons).toContain("billingIconPath")
+    for (const marker of markers) expect([marker, icons.includes(marker)]).toEqual([marker, false])
   })
 })
