@@ -5,7 +5,7 @@
     "": {
       "name": "mentra-elevenlabs-audio-repro",
       "dependencies": {
-        "@mentra/bluetooth-sdk": "3.4.0-dev.1029",
+        "@mentra/bluetooth-sdk": "3.4.0-dev.1030",
         "expo": "~55.0.24",
         "expo-build-properties": "~55.0.14",
         "expo-dev-client": "~55.0.34",
@@ -290,9 +290,9 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@3.4.0-dev.1029", "", { "dependencies": { "@mentra/cloud-protocol": "3.4.0-dev.1029" }, "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-Ae28jCivgEX7K5aFxwTYII7AnSm+7J3OCLm2JHFsj37nhA0C480FwKibQ6ClKMwG5xfGK324AfabbStybaYIvw=="],
+    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@3.4.0-dev.1030", "", { "dependencies": { "@mentra/cloud-protocol": "3.4.0-dev.1030" }, "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-nBvRVid53T/EZW4mFuDc2MnaREbyLDtac/HdvyORcWbHc5I2xB2NyClkMUnAi/q1h+2YEzOPMVEgBFOMlDiKvQ=="],
 
-    "@mentra/cloud-protocol": ["@mentra/cloud-protocol@3.4.0-dev.1029", "", { "dependencies": { "zod": "^3.24.1" } }, "sha512-mVKhNknjDA/D0CjQM6x1hP5ctVXS1BLet7NxQs0L6r/tfuWqrGMwQQWtXYKmjSr4snufa/KjyBiPsMwk2psYBA=="],
+    "@mentra/cloud-protocol": ["@mentra/cloud-protocol@3.4.0-dev.1030", "", { "dependencies": { "zod": "^3.24.1" } }, "sha512-Nqo+v9ozhznhqx5cmMsCrA1RDPnNEQWCbgDqhDUmdAZnOLYpdB5ABFmh9PzW10tQAZdkFLcZ1I5NZ0rEha2U3w=="],
 
     "@react-native/assets-registry": ["@react-native/assets-registry@0.83.6", "", {}, "sha512-iljb4ue1yWJ3EhySz7EjV6CzSVrI2uNtR8BI2jzP5+QS5E4Cl3fdIJRmVwDEx1pu8uE97PGEusGRHnoaZ9Q3jg=="],
 
