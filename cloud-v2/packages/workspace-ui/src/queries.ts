@@ -17,7 +17,7 @@ import {
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "./api";
 import type { BillingApi } from "./billing-api";
-import { BillingRefusedError } from "./billing-errors";
+import { BillingContractError, BillingRefusedError } from "./billing-errors";
 import { workspaceScope, type BillingScope } from "./billing-scope";
 import { isLicenseChangedError, isWorkspaceChangedError, isWorkspaceHeldError, WorkspaceApiError } from "./errors";
 
@@ -128,12 +128,13 @@ export const licensesQuery = (api: WorkspaceApi, workspaceId: string) =>
   });
 
 /**
- * Retry billing once for a dropped connection or a 5xx, and not at all for a refusal (4xx) it would only repeat:
- * a page that can't read billing shows "unavailable" with Retry, and waiting through retries first would only
- * delay it.
+ * Retry billing once for a dropped connection or a 5xx, and not at all for what it would only repeat: a refusal
+ * (4xx), or an answer that doesn't match the contract. A page that can't read billing shows "unavailable" with
+ * Retry, and waiting through retries first would only delay it.
  */
 export function billingShouldRetry(failureCount: number, error: unknown): boolean {
   if (error instanceof BillingRefusedError && error.status !== 0 && error.status < 500) return false;
+  if (error instanceof BillingContractError) return false;
   return failureCount < 1;
 }
 

@@ -419,6 +419,14 @@ describe("who sees what", () => {
 
 // ---- when it can't be shown ---------------------------------------------------------------------------------------
 
+describe("exports", () => {
+  test("the hook's purchase request has its own name, apart from the contract's PurchaseRequest", () => {
+    // A host that imports both `@mentra/workspace-ui` and `@mentra/workspace-contract/portal-billing` can use both.
+    const bought: pkg.HostedPurchase = { product: CALL, seats: 2 };
+    expect(bought).toEqual({ product: "mentra.call.unlimited", seats: 2 });
+  });
+});
+
 describe("unavailable", () => {
   test("when the catalog fails the page says so, with Retry, and draws no cards", async () => {
     const r = rig({ catalog: new Error("catalog down") });

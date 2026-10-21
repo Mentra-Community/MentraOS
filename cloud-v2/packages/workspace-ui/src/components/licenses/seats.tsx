@@ -15,14 +15,14 @@ import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
 import { Avatar, ConfirmButton, Count } from "../common";
-import { HostedPageButton } from "./parts";
+import { HostedPageButton, memberLabel } from "./parts";
 
 /** Someone who holds a seat: who they are as far as Core knows, and since when. */
 export interface SeatHolder {
   membershipId: string;
   name: string | null;
   email: string | null;
-  /** What to call them: the name, else the email, else their user id. */
+  /** What to call them: `memberLabel`, from what Core knows of the member, else the user id on the seat. */
   label: string;
   /** ISO 8601. */
   assignedAt: string;
@@ -36,9 +36,10 @@ export function seatHolders(license: Pick<LicenseView, "seats">, members: readon
   const byMembership = new Map(members.map((member) => [member.membershipId, member]));
   return (license.seats ?? []).map((seat) => {
     const member = byMembership.get(seat.membershipId);
-    const name = member?.name?.trim() ? member.name : null;
+    const name = member?.name?.trim() || null;
     const email = member?.email ?? null;
-    return { membershipId: seat.membershipId, name, email, label: name ?? email ?? seat.mentraUserId, assignedAt: seat.assignedAt };
+    const label = memberLabel({ name, email, mentraUserId: member?.mentraUserId ?? seat.mentraUserId });
+    return { membershipId: seat.membershipId, name, email, label, assignedAt: seat.assignedAt };
   });
 }
 

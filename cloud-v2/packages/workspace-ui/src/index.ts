@@ -34,6 +34,7 @@ export {
 // sentences Core words it with, and the formatting in the portal's locale and the viewer's time zone.
 export {
   ACCOUNT_SCOPE,
+  BillingContractError,
   BillingRefusedError,
   BillingUnavailableError,
   billingErrorMessage,
@@ -185,10 +186,10 @@ export {
   type ActionRequest,
   type HostedAction,
   type HostedBilling,
+  type HostedPurchase,
   type HostedRequest,
   type NavigateOut,
   type PortalTab,
-  type PurchaseRequest,
 } from "./components/licenses/hosted-action";
 export { AvatarStack, PersonLabel, SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./components/licenses/seats";
 export { PeoplePickerDialog } from "./components/licenses/people-picker";

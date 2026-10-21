@@ -147,6 +147,11 @@ const status = {
 };
 
 export const licenseStrings = {
+  /** The × that closes a dialog or a side panel, as a screen reader names it. */
+  dialog: {
+    close: "Close",
+  },
+
   count: {
     seats: (n: number) => plural(n, "seat"),
     people: (n: number) => plural(n, "person", "people"),

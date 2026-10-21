@@ -4,6 +4,12 @@ import { licenseStrings as t, refusalMessage } from "./licenses";
 
 // The spec's copy, word for word, with names and numbers filled in. Amounts and dates arrive formatted.
 
+describe("dialogs and side panels", () => {
+  test("the label of the × that closes a dialog or a side panel", () => {
+    expect(t.dialog.close).toBe("Close");
+  });
+});
+
 describe("counts", () => {
   test("pluralise from one", () => {
     expect([t.count.seats(1), t.count.seats(5), t.count.seats(0)]).toEqual(["1 seat", "5 seats", "0 seats"]);

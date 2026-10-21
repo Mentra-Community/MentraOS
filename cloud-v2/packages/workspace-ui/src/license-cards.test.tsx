@@ -20,6 +20,8 @@ import {
   TestModeBanner,
 } from "./components/licenses/banners";
 import { PeoplePickerDialog } from "./components/licenses/people-picker";
+import { memberLabel } from "./components/licenses/parts";
+import { seatHolders } from "./components/licenses/seats";
 import { joinLicenses, type JoinedLicense } from "./lib/license-join";
 import { billingKeys, billingStatusQuery, licensesQuery, workspaceKeys } from "./queries";
 import { catalogEntryFor, fleetEntryFor, licenseBillingFor, perSeat, usd } from "./test-billing-fixtures";
@@ -1597,6 +1599,40 @@ describe("the summary and the unavailable state", () => {
     await mount(<LicensesUnavailable personal retrying onRetry={() => {}} />);
     expect(text()).toContain("Billing is unavailable");
     expect(buttonNamed("Retry").hasAttribute("disabled")).toBe(true);
+  });
+});
+
+// ---- one name for a member ---------------------------------------------------------------------------------------
+
+describe("a member is called one thing everywhere", () => {
+  const someone = (extra: Partial<MemberView>): MemberView => ({
+    membershipId: "wm_x",
+    mentraUserId: "u_x",
+    email: "x@acme.test",
+    name: "Xavier Moreau",
+    role: "member",
+    startedAt: "2026-10-01T12:00:00.000Z",
+    pending: false,
+    ...extra,
+  });
+
+  test("the roster's seat holders carry the label the member list, the panel and the picker use", () => {
+    const cases = [
+      someone({}),
+      someone({ name: "  Xavier Moreau " }),
+      someone({ name: "   " }),
+      someone({ name: null }),
+      someone({ name: null, email: null }),
+    ];
+    for (const member of cases) {
+      const license = { seats: [{ membershipId: member.membershipId, mentraUserId: "u_x", assignedAt: "2026-10-02T12:00:00.000Z" }] };
+      expect([JSON.stringify(member), seatHolders(license, [member])[0]!.label]).toEqual([JSON.stringify(member), memberLabel(member)]);
+    }
+  });
+
+  test("a seat whose member isn't listed yet is called by the user id Core has for it", () => {
+    const license = { seats: [{ membershipId: "wm_gone", mentraUserId: "u_gone", assignedAt: "2026-10-02T12:00:00.000Z" }] };
+    expect(seatHolders(license, [])[0]!.label).toBe("u_gone");
   });
 });
 

@@ -63,14 +63,14 @@ export interface ActionRequest {
 }
 
 /** One press of Buy: `seats` of `product`, which billing answers with the checkout's page. A purchase always returns to the portal. */
-export interface PurchaseRequest {
+export interface HostedPurchase {
   product: string;
   seats: number;
   /** The product, as a refusal names it, where it isn't the hook's own `product`. */
   name?: string;
 }
 
-export type HostedRequest = ActionRequest | PurchaseRequest;
+export type HostedRequest = ActionRequest | HostedPurchase;
 
 /** What `HostedAction.pending` is while a purchase is being asked for (an action's is its `kind`). */
 export const PURCHASE = "purchase";

@@ -41,7 +41,7 @@ import { can, canRemoveRole, effectiveRole, roleOptions } from "../roles";
 import { licenseStrings as t } from "../strings/licenses";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { Avatar, Badge, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { Avatar, Badge, CopyButton, Panel, QueryGate, Restricted, RoleBadge } from "./common";
 import { AssignLicensesDialog } from "./licenses/assign-licenses";
 import { isHeldLicense, memberLabel, type AddSeatsSource, type HeldLicense } from "./licenses/parts";
 import { ProductChip } from "./licenses/product";
@@ -134,7 +134,8 @@ export function WorkspaceMembersPanel({
     if (controlled) onMemberChange?.(membershipId);
     else setOwnOpenId(membershipId);
   };
-  // A failure belongs to the panel it happened in.
+  // A failure belongs to the panel it happened in: the panel is modal and draws it, and one that outlives the panel (it
+  // was closed, or another member's opened, while the request was out) is dropped with it, so nothing else shows it.
   const resetChangeRole = changeRole.reset;
   const resetRemove = remove.reset;
   useEffect(() => {
@@ -274,8 +275,6 @@ export function WorkspaceMembersPanel({
           )
         }
       </QueryGate>
-      {/* The panel is modal, so a failure in it shows there; this is for one that happened with it closed. */}
-      {openId === null ? <ErrorNotice error={changeRole.error ?? remove.error} /> : null}
     </Panel>
   );
 }

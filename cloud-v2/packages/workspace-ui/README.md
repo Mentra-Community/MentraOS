@@ -52,7 +52,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `createWorkspaceApi({basePath, fetch?, credentials?})` | Typed client for every route; throws `WorkspaceApiError` |
 | `createBillingApi({locale, base?, fetch?, credentials?})`, `BillingApi` | Typed client for billing's `catalog`, `status`, `purchase` and `session`; every answer is parsed with the contract's schemas. `base` defaults to `/api/portal/billing`; `locale` rides on every request |
 | `BillingScope`, `workspaceScope(id)`, `ACCOUNT_SCOPE`, `ownerTypeOf` | Whose billing a call is about: a workspace's, or the signed-in person's own |
-| `BillingRefusedError`, `BillingUnavailableError`, `billingErrorMessage` | A refusal billing worded with a code, a billing that could not answer (or answered off-contract), and the sentence for either |
+| `BillingRefusedError`, `BillingUnavailableError`, `BillingContractError`, `billingErrorMessage` | A refusal billing worded with a code, a billing that could not answer, one that answered off-contract (`BillingContractError`, a `BillingUnavailableError` the queries do not retry), and the sentence for any |
 | `WorkspacePicker` | Choose among your workspaces in a select; optionally create one inline |
 | `CreateWorkspaceDialog` (`open`, `onClose`, `onCreated`), `CreateWorkspaceForm`, `useCreateWorkspace` | Create a workspace from just its name; the new workspace's detail is cached and the list refreshed |
 | `WorkspaceMembersPanel` (`showUserIds?`, `licenses?`, `member?`, `onMemberChange?`, `locale?`) | Members (with a count) and a member panel for role changes and removal; `showUserIds` adds each member's copyable Mentra user id (for Organization Admins, who need it to recover ownership); `licenses` adds the Licenses column, selection and Assign licenses (see [Members' licenses](#members-licenses)) |
@@ -270,10 +270,14 @@ const shared = {
   TanStack Query, and what a purchase or a seat change makes stale is refreshed in that
   cache.
 - **The billing client**, one `createBillingApi({locale})`, as `billing`. It parses every
-  answer with the contract, so an answer that does not match is a `BillingUnavailableError`,
-  not a half-drawn page.
+  answer with the contract, so an answer that does not match is a `BillingContractError`
+  (an "unavailable" that is not retried, since it would only mismatch again), not a
+  half-drawn page.
 - **`NavigateOut {leave, openTab}`**, the host's only ways to take the browser to a hosted
-  page; nothing in the package touches `window`.
+  page; the package never sends the browser anywhere itself. What it does touch is the
+  current page: it listens for `focus` and `visibilitychange` to read again after a page
+  that does not return (below), and the purchase banner's Reload calls
+  `window.location.reload()`.
   - `leave(url)` goes in this tab. It is only given an address the client already
     accepted (`https:`, or `http:` to `localhost` or `127.0.0.1`), and it is skipped when
     the card or dialog that asked has unmounted by the time its request answers, so keep

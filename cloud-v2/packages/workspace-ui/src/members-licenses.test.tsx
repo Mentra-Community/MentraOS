@@ -120,6 +120,8 @@ interface World {
   licenses: LicenseView[];
   /** Answers a request with this instead of serving it, when it returns a response. */
   fail?: (call: Call) => Response | undefined;
+  /** Holds every change (PATCH) back until it is released, so a test can have one in flight. */
+  gate?: Promise<void>;
 }
 
 interface Call {
@@ -152,6 +154,7 @@ function serve(world: World, calls: Call[], basePath: string): FetchLike {
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     const call = { method, path, body };
     calls.push(call);
+    if (world.gate && method === "PATCH") await world.gate;
     const forced = world.fail?.(call);
     if (forced) return forced;
     const ws = `/${WORKSPACE_ID}`;
@@ -913,6 +916,24 @@ describe("the member panel", () => {
       await until(() => panelEl().textContent!.includes("This workspace changed. Review and try again."), "the refusal");
       expect(find('[role="alert"]', panelEl()).textContent).toBe("This workspace changed. Review and try again.");
       expect(panelEl().textContent).toContain(ROLE_LABELS.developer);
+    });
+  });
+
+  describe("a failure that outlives its panel", () => {
+    test("belongs to no panel: a role change that fails after its panel was closed shows nothing anywhere", async () => {
+      const hold = deferred<void>();
+      const { world, writes } = await mount({ role: "admin" });
+      world.gate = hold.promise;
+      world.fail = (call) => (call.method === "PATCH" ? reply(409, { error: "membership_changed", error_description: "changed" }) : undefined);
+      await openPanel("Dana Reyes");
+      await click(find("button[aria-label='Change role']", panelEl()));
+      await click(byText("Member", '[role="menuitem"]'));
+      await until(() => writes().length === 1, "the role change to be out");
+      await press(panelEl(), "Escape");
+      expect(panelIsOpen()).toBe(false);
+      await act(async () => hold.resolve());
+      await flush();
+      expect(findAll('[role="alert"]')).toHaveLength(0);
     });
   });
 

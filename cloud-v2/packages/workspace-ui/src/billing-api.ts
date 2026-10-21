@@ -4,7 +4,7 @@
  * (`@mentra/workspace-contract/portal-billing`) and every answer is parsed with the same ones here, so what a
  * screen receives is typed and checked: an unknown status, action kind, tax value or price scheme arrives with
  * its value kept, and an answer that doesn't match the contract (or a hosted `url` the portal may not follow)
- * is {@link BillingUnavailableError}, which a screen shows as its "unavailable" state.
+ * is {@link BillingContractError}, a {@link BillingUnavailableError}, which a screen shows as its "unavailable" state.
  *
  * Every request carries the portal's `locale`: a query parameter on `GET`s, a body field on `POST`s. Calls send
  * the session cookie to the same origin only, and nothing is cached here: the screens cache through TanStack
@@ -22,12 +22,12 @@ import {
   type SessionAnswer,
 } from "@mentra/workspace-contract/portal-billing";
 import type { FetchLike } from "./api";
-import { BillingRefusedError, BillingUnavailableError } from "./billing-errors";
+import { BillingContractError, BillingRefusedError, BillingUnavailableError } from "./billing-errors";
 import type { BillingScope } from "./billing-scope";
 
 // The scope and the errors live in schema-free modules (the query layer imports those, not this file); they are
 // re-exported here so a screen that uses the client has one place to import from.
-export { billingErrorMessage, BillingRefusedError, BillingUnavailableError } from "./billing-errors";
+export { billingErrorMessage, BillingContractError, BillingRefusedError, BillingUnavailableError } from "./billing-errors";
 export { ACCOUNT_SCOPE, ownerTypeOf, workspaceScope, type BillingScope } from "./billing-scope";
 
 export interface BillingApi {
@@ -89,7 +89,7 @@ export function createBillingApi(opts: {
     if (result.success) return result.data;
     // Paths only: the values may be a person's.
     const where = [...new Set(result.error.issues.slice(0, 5).map((issue) => issue.path.join(".") || "(root)"))].join(", ");
-    throw new BillingUnavailableError(`billing's ${what} doesn't match the contract: ${where}`, { cause: result.error });
+    throw new BillingContractError(`billing's ${what} doesn't match the contract: ${where}`, { cause: result.error });
   }
 
   return {

@@ -13,7 +13,6 @@ import { SearchIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { LicenseView, MemberView } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "../../api";
-import { errorMessage, isLicenseChangedError } from "../../errors";
 import { fitFor, holdsSeat, seatCounts } from "../../lib/license-join";
 import { cn } from "../../lib/utils";
 import { useSeatMutation } from "../../queries";
@@ -22,9 +21,9 @@ import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Dialog } from "../../ui/dialog";
 import { Input } from "../../ui/input";
-import { AlertText, Avatar } from "../common";
+import { Avatar } from "../common";
 import { HostedFeedback } from "./hosted-action";
-import { HostedPageButton, Notice } from "./parts";
+import { HostedPageButton, memberLabel, Notice, SeatErrorNotice } from "./parts";
 import { PersonLabel, type AddSeatsControl } from "./seats";
 
 /** Why a member can't be chosen, or null when they can. */
@@ -34,8 +33,6 @@ function whyNot(license: Pick<LicenseView, "seats">, member: MemberView): Why {
   if (holdsSeat(license, member.membershipId)) return "holds";
   return member.pending || member.mentraUserId === null ? "pending" : null;
 }
-
-const labelOf = (member: MemberView) => member.name?.trim() || member.email || member.mentraUserId || t.members.importedMember;
 
 export function PeoplePickerDialog({
   open,
@@ -97,7 +94,7 @@ function PickerBody({
   const rows = useMemo(() => {
     const order: Record<NonNullable<Why> | "open", number> = { open: 0, pending: 1, holds: 2 };
     return members
-      .map((member) => ({ member, why: whyNot(license, member), label: labelOf(member) }))
+      .map((member) => ({ member, why: whyNot(license, member), label: memberLabel(member) }))
       .sort((a, b) => order[a.why ?? "open"] - order[b.why ?? "open"] || a.label.localeCompare(b.label));
   }, [members, license]);
 
@@ -111,7 +108,6 @@ function PickerBody({
   const fit = fitFor(license, people);
   const counts = seatCounts(license);
   const overflow = fit.kind === "short" || fit.kind === "full";
-  const failure = assign.error;
 
   function toggle(membershipId: string, on: boolean) {
     assign.reset();
@@ -140,7 +136,7 @@ function PickerBody({
         {overflow ? (
           <Notice
             tone="neutral"
-            title={t.fit.line(fit, { nameOf: labelOf, canAddSeats: addSeats !== null })}
+            title={t.fit.line(fit, { nameOf: memberLabel, canAddSeats: addSeats !== null })}
             action={
               addSeats ? (
                 <HostedPageButton pending={addSeats.pending} newTab={addSeats.newTab} disabled={addSeats.disabled} onClick={addSeats.onClick}>
@@ -152,7 +148,7 @@ function PickerBody({
         ) : null}
         {/* Add seats leaves for billing: when that fails, the person is told here, where they are looking. */}
         <HostedFeedback action={{ error: addSeats?.error ?? null, link: addSeats?.link ?? null }} />
-        {failure ? <AlertText>{isLicenseChangedError(failure) ? t.conflict.seatsChanged : errorMessage(failure)}</AlertText> : null}
+        <SeatErrorNotice error={assign.error} />
         <ul className="-mx-2 max-h-[min(46vh,400px)] space-y-0.5 overflow-y-auto">
           {visible.map(({ member, why, label }) => {
             const off = why !== null || assign.isPending;
