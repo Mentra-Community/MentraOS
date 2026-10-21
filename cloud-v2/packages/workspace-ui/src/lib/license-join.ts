@@ -191,7 +191,7 @@ export function joinLicenses({ licenses, billing, catalog, purchase, locale = DE
  * - `enough`: everyone chosen needs a seat and there are enough ("2 of 5 seats free: enough for both.");
  * - `some_hold`: some already hold one, and the seats left cover the rest ("Amara Okafor has one. 1 of 3 seats free, for Luis Ortega.");
  * - `all_hold`: everyone chosen already holds one ("Everyone you chose has one.");
- * - `short`: fewer seats are free than people need one ("2 of 3 fit: remove one or add seats.");
+ * - `short`: fewer seats are free than people need one ("2 of 3 fit: remove one or add licenses.");
  * - `full`: nobody can get a seat because none is free ("All 10 seats are in use."), `over` saying by how many it is over-assigned;
  * - `nobody`: no one is chosen.
  */

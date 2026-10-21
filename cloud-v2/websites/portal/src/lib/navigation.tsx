@@ -3,8 +3,8 @@
  * The portal has a handful of routes (lib/routes), so it needs no router library.
  *
  * It also holds the portal's two ways out for a hosted page (`leavePortal`, `openPortalTab`: the host's side of
- * `@mentra/workspace-ui`'s `NavigateOut`) and the query parameters a page keeps in its address (`?member=`,
- * `?purchase=`).
+ * `@mentra/workspace-ui`'s `NavigateOut`) and the query parameter a page keeps in its address
+ * (`?purchase=`).
  */
 
 import { HostedUrlSchema } from "@mentra/workspace-contract/portal-billing";
@@ -40,54 +40,26 @@ export function useSearch(serverSearch = ""): string {
   );
 }
 
-/**
- * Go to `path` in this tab. `replace` swaps the current history entry (redirects). `state` is what the entry carries
- * (none, unless the caller marks it: see {@link openQueryParam}).
- */
-export function navigate(path: string, options: { replace?: boolean; state?: unknown } = {}): void {
+/** Go to `path` in this tab. `replace` swaps the current history entry (redirects). */
+export function navigate(path: string, options: { replace?: boolean } = {}): void {
   if (`${window.location.pathname}${window.location.search}` === path && !options.replace) return;
-  if (options.replace) window.history.replaceState(options.state ?? null, "", path);
-  else window.history.pushState(options.state ?? null, "", path);
+  if (options.replace) window.history.replaceState(null, "", path);
+  else window.history.pushState(null, "", path);
   for (const listener of listeners) listener();
 }
 
 // --- Query parameters ------------------------------------------------------------------------------------------
 
-/** The query parameters pages keep in their address: the open member panel, and the purchase a checkout returned with. */
-export type QueryParam = "member" | "purchase";
+/** The query parameters pages keep in their address: the purchase a checkout returned with. */
+export type QueryParam = "purchase";
 
 /** Sets (or, for null, removes) one query parameter, leaving the path and the other parameters as they are. */
-export function setQueryParam(name: QueryParam, value: string | null, options: { replace?: boolean; state?: unknown } = {}): void {
+export function setQueryParam(name: QueryParam, value: string | null, options: { replace?: boolean } = {}): void {
   const url = new URL(window.location.href);
   if (url.searchParams.get(name) === value) return;
   if (value === null) url.searchParams.delete(name);
   else url.searchParams.set(name, value);
   navigate(`${url.pathname}${url.search}${url.hash}`, options);
-}
-
-/** What an entry carries when this module pushed it to open a panel: the parameter it opened. */
-const OPENED_BY_PORTAL = "portalOpened";
-
-/**
- * Opens a panel the address carries (`?member=`): a new history entry, so that Back closes it. Where the panel is
- * already open (another member chosen), the address changes in place and the one Back still closes it.
- */
-export function openQueryParam(name: QueryParam, value: string): void {
-  if (new URL(window.location.href).searchParams.has(name)) {
-    setQueryParam(name, value, { replace: true, state: window.history.state });
-    return;
-  }
-  setQueryParam(name, value, { state: { [OPENED_BY_PORTAL]: name } });
-}
-
-/**
- * Closes a panel the address carries. A panel this module opened goes back out of its entry (so Back does not land
- * on a second copy of the page without it); one the address opened (a link, a reload) just loses its parameter.
- */
-export function closeQueryParam(name: QueryParam): void {
-  const opened = (window.history.state as { [OPENED_BY_PORTAL]?: string } | null)?.[OPENED_BY_PORTAL] === name;
-  if (opened && new URL(window.location.href).searchParams.has(name)) window.history.back();
-  else setQueryParam(name, null, { replace: true });
 }
 
 // --- Leaving the portal ----------------------------------------------------------------------------------------

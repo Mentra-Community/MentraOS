@@ -127,6 +127,35 @@ export function isNeutral(element: Element): boolean {
   return element.className.includes("bg-surface") && !element.className.includes("bg-error");
 }
 
+/** The attributes whose value is read to a person, or shown on hover or in an empty field. */
+const SPOKEN_ATTRIBUTES = ["aria-label", "aria-description", "aria-roledescription", "aria-valuetext", "aria-placeholder", "title", "alt", "placeholder"];
+
+/**
+ * Everything a person or a screen reader can get from `root`: each element's own text (visually hidden text included,
+ * and the text of a dialog that is closed) and the words in its attributes (`aria-label`, `title`, `alt`,
+ * `placeholder` and the like), each written `<tag> text` or `<tag attribute> value` so a test that finds a word can say
+ * where it is. For the guards that keep a word off the screens.
+ */
+export function wordsUnder(root: ParentNode = document.body): string[] {
+  const words: string[] = [];
+  const elements = [...(root instanceof Element ? [root] : []), ...root.querySelectorAll("*")];
+  for (const element of elements) {
+    const own = [...element.childNodes]
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent ?? "")
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim();
+    const tag = element.tagName.toLowerCase();
+    if (own) words.push(`<${tag}> ${own}`);
+    for (const attribute of SPOKEN_ATTRIBUTES) {
+      const value = element.getAttribute(attribute);
+      if (value) words.push(`<${tag} ${attribute}> ${value}`);
+    }
+  }
+  return words;
+}
+
 /** `document.querySelector`, throwing when it finds nothing, so a test fails where it looked. */
 export function find<T extends Element = HTMLElement>(selector: string, within: ParentNode = document): T {
   const found = within.querySelector<T>(selector);

@@ -5,7 +5,7 @@
  */
 
 import { CheckIcon, CreditCardIcon, FlaskConicalIcon, XIcon } from "lucide-react";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import type { BillingTotal, PurchaseStatus, TestMode } from "@mentra/workspace-contract/portal-billing";
 import { groupCardNumber, totalSummary } from "../../lib/billing-format";
 import { licenseStrings as t, type LicenseScope } from "../../strings/licenses";
@@ -109,15 +109,41 @@ const HAZARD_TAPE: CSSProperties = {
     "repeating-linear-gradient(-45deg, var(--mentra-error) 0 10px, color-mix(in srgb, var(--mentra-error) 18%, var(--mentra-error-bg)) 10px 20px)",
 };
 
+/** The session's storage key for a test-mode notice that staff hid: one key, so it holds on every page of the session. */
+export const TEST_MODE_NOTICE_HIDDEN_KEY = "mentra.testModeNotice.hidden";
+
+/** Whether the notice was hidden earlier in this browser session. Storage that throws (a private mode) reads as not hidden. */
+function noticeHidden(): boolean {
+  try {
+    return window.sessionStorage.getItem(TEST_MODE_NOTICE_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Remembers that the notice was hidden, for the rest of the session. Storage that throws keeps nothing: the page hides it itself. */
+function rememberNoticeHidden(): void {
+  try {
+    window.sessionStorage.setItem(TEST_MODE_NOTICE_HIDDEN_KEY, "1");
+  } catch {
+    // Hidden for this page only.
+  }
+}
+
 /**
- * Dev and staging only, where billing is in test mode: which environment, the card to pay with (grouped as it is
- * read, copied as its bare digits), and that only Organization Admins see billing there.
+ * Dev and staging only, where billing is in test mode: which environment and the card to pay with (grouped as it is
+ * read, copied as its bare digits). A small × in its top-right corner hides it, so a screenshot comes out clean: it
+ * stays hidden for the rest of the browser session (`sessionStorage`, on the Licenses page and the personal Billing
+ * page alike), and shows again in a new one. Where storage throws, it is hidden for the current page only. Hiding it
+ * changes nothing else: test mode itself, the buy dialogs and their words are as they were.
  */
 export function TestModeBanner({ testMode }: { testMode: Pick<TestMode, "cardNumber" | "environment"> }) {
   const digits = testMode.cardNumber.replace(/\s+/g, "");
+  const [hidden, setHidden] = useState(noticeHidden);
+  if (hidden) return null;
   return (
     <div role="note" aria-label={t.testMode.label(testMode.environment)} className="rounded-[16px] p-1.5" style={HAZARD_TAPE}>
-      <div className="bg-error text-error-foreground flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[11px] px-4 py-3.5">
+      <div className="bg-error text-error-foreground relative flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[11px] py-3.5 pr-12 pl-4">
         <span className="bg-error-foreground inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-semibold tracking-[0.08em] text-white uppercase">
           <FlaskConicalIcon aria-hidden="true" className="size-3.5" />
           {t.testMode.label(testMode.environment)}
@@ -130,16 +156,28 @@ export function TestModeBanner({ testMode }: { testMode: Pick<TestMode, "cardNum
             </span>
             {t.testMode.afterCard}
           </p>
-          <p className="mt-1 opacity-80">{t.testMode.note}</p>
         </div>
         <CopyButton text={digits} label={t.testMode.copy} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t.testMode.hide}
+          className="absolute top-1.5 right-1.5 size-7"
+          onClick={() => {
+            rememberNoticeHidden();
+            setHidden(true);
+          }}
+        >
+          <XIcon aria-hidden="true" />
+        </Button>
       </div>
     </div>
   );
 }
 
 /**
- * The line above the cards: "2 licenses · $295 a month in total", from billing's own total of the licenses it
+ * The line above the cards: "2 products · $295 a month in total", from billing's own total of the licenses it
  * will charge again. Where billing sends none (the licenses don't share a currency, a recurrence and a tax
  * treatment) there is no line: Core adds nothing up.
  */

@@ -653,7 +653,7 @@ describe("seats", () => {
     expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 1, seatsUsed: 3})
 
     const over = await call("PUT", seatPath(ws.workspaceId, license.licenseId, ws.memberMembershipId), ws.admin)
-    expect(over).toMatchObject({status: 409, json: {error: "no_seats_available"}})
+    expect(over).toMatchObject({status: 409, json: {error: "no_seats_available", error_description: "every license is assigned"}})
 
     // Freeing one still leaves more seats in use than the license has.
     await releaseSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.developerMembershipId)
@@ -815,7 +815,13 @@ describe("seats", () => {
       json: {error: "not_found"},
     })
     // A membership still waiting for its person has nobody to hold a seat.
-    expect(await as(license.licenseId, pending)).toMatchObject({status: 400, json: {error: "invalid_request"}})
+    expect(await as(license.licenseId, pending)).toMatchObject({
+      status: 400,
+      json: {
+        error: "invalid_request",
+        error_description: "this membership waits for its person's first sign-in and cannot hold a license yet",
+      },
+    })
     expect(await LicenseSeatModel.countDocuments({})).toBe(0)
   })
 })
@@ -945,7 +951,7 @@ describe("assigning several seats at once", () => {
       status: 409,
       json: {
         error: "no_seats_available",
-        error_description: expect.any(String),
+        error_description: "too few licenses are available for these assignments; nothing was assigned",
         licenses: [{licenseId: tight.licenseId, needed: 3, free: 2}],
       },
     })
@@ -969,7 +975,7 @@ describe("assigning several seats at once", () => {
       status: 409,
       json: {
         error: "no_seats_available",
-        error_description: expect.any(String),
+        error_description: "too few licenses are available for these assignments; nothing was assigned",
         licenses: [
           {licenseId: roomy.licenseId, needed: 6, free: 5},
           {licenseId: tight.licenseId, needed: 1, free: 0},
@@ -1405,6 +1411,9 @@ describe("assigning several seats at once", () => {
     for (const who of [ws.developer, ws.member, ws.stranger, workspaceKey]) {
       expect((await assignAll(who, ws.workspaceId, fits)).status).toBe(403)
     }
+    // The service refuses a person who doesn't assign licenses in its own words, whoever the route let through.
+    const notAdmin = await refusal(assignSeat(actorOf(ws.developer), ws.workspaceId, license.licenseId, ws.memberMembershipId))
+    expect([notAdmin.code, notAdmin.message]).toEqual(["forbidden", "assigning licenses requires the admin role"])
     // Without a bearer, the portal's route group reads its cookie, so a request from elsewhere is refused before
     // sign-in is asked for; the bearer-only group asks for sign-in.
     expect((await assignAll(undefined, ws.workspaceId, fits)).status).toBe(403)

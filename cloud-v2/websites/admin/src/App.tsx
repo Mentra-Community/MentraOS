@@ -275,7 +275,7 @@ function AdminPage() {
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
     workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
-    licenses: { title: "Licenses", body: "Every license in this organization, workspace and personal: who holds it, its seats and what it is paid through." },
+    licenses: { title: "Licenses", body: "Every product bought in this organization, workspace and personal: who owns it, how many licenses are assigned and what it is paid through." },
     "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
     audit: { title: "Audit log", body: "Admin actions recorded by Core, such as support-profile lookups." },
   };
