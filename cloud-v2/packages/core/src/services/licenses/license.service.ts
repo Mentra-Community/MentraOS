@@ -18,14 +18,21 @@
  * license itself is ended by billing's next attempt.
  *
  * **The seat cap is a counter.** `seatsUsed` counts a workspace license's seats. Assigning one runs one
- * transaction: a conditional increment (`seatsUsed < quantity` and not ended), then the seat's insert.
- * Concurrent assignments write the same license document, so all but one meet a write conflict, which
- * `withTransaction` retries; a retry reads `seatsUsed` again. Only the increment matching nothing refuses
- * an assignment (`no_seats_available`), so a conflict is never a refusal. Releasing decrements it in the
- * same transaction as the seat's delete. A quantity lowered below `seatsUsed` frees no seat: the license
- * just takes no new one until enough are released. Every seat change also writes the workspace document,
- * as every membership change does, so an assignment conflicts with the end of its membership or the
- * demotion of whoever assigns it, and the retried one sees the other.
+ * transaction: a conditional increment (`seatsUsed + 1 <= quantity` and not ended), then the seat's
+ * insert. Concurrent assignments write the same license document, so all but one meet a write conflict,
+ * which `withTransaction` retries; a retry reads `seatsUsed` again. Only the increment matching nothing
+ * refuses an assignment (`no_seats_available`), so a conflict is never a refusal. Releasing decrements it
+ * in the same transaction as the seat's delete. A quantity lowered below `seatsUsed` frees no seat: the
+ * license just takes no new one until enough are released. Every seat change also writes the workspace
+ * document, as every membership change does, so an assignment conflicts with the end of its membership or
+ * the demotion of whoever assigns it, and the retried one sees the other. That write also serializes a
+ * workspace's seat changes: once it succeeds, no other seat change of the workspace has committed since
+ * the transaction's snapshot, so the counts it read are current.
+ *
+ * **Several seats at once** (`assignSeats`) are one transaction too, with every check of a single
+ * assignment applied to each pair. Each license takes all of its new seats in one conditional increment
+ * (`seatsUsed + n <= quantity`); if any license's matches nothing, the whole transaction is aborted and
+ * the refusal lists every license that falls short, so a refused request assigns nothing.
  *
  * **Seats end with their membership.** A seat belongs to one membership (`license_seats`): ending the
  * membership (`endMembership`: removal, leaving, account deletion) releases its seats inside that
@@ -41,6 +48,7 @@
 
 import {
   capabilitiesForRole,
+  MAX_SEAT_ASSIGNMENTS,
   type LicenseEndedReason,
   type LicenseFeature,
   type LicenseOwner,
@@ -48,7 +56,9 @@ import {
   type LicenseView,
   type LicenseWrite,
   type LicenseWriteResponse,
+  type SeatAssignmentsRequest,
   type SeatReleaseReason,
+  type SeatShortfall,
 } from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
@@ -435,6 +445,16 @@ function seatView(seat: LicenseSeatRow): LicenseSeatView {
 
 // --- Seats -------------------------------------------------------------------
 
+/** One seat to give: a license of the workspace, and the membership that gets it. */
+export type SeatAssignment = SeatAssignmentsRequest["assignments"][number]
+
+/** A membership that can hold a seat: an active one of the workspace, whose person has signed in. */
+interface SeatHolder {
+  membershipId: string
+  mentraUserId: string
+  email: string | null
+}
+
 /**
  * Give `membershipId` a seat of the workspace's license `licenseId`, and resolve with the license, every
  * seat included. A member holds at most one seat per license: assigning one they hold changes nothing.
@@ -453,48 +473,197 @@ export async function assignSeat(
     await loadActiveWorkspace(session, workspaceId)
     await requireSeatManager(session, actor, workspaceId)
     await loadWorkspaceLicense(session, workspaceId, licenseId)
-    const membership = isId(membershipId)
-      ? await WorkspaceMembershipModel.findOne({membershipId, workspaceId, status: "active"})
+    const [holder] = await loadSeatHolders(session, workspaceId, [membershipId])
+    if (!(await LicenseSeatModel.exists({licenseId, membershipId}).session(session))) {
+      await touchWorkspace(session, workspaceId)
+      const taken = await takeSeats(session, licenseId, 1)
+      if (!taken) fail("no_seats_available", "every seat of this license is assigned")
+      await insertSeats(session, actor, workspaceId, taken, [holder!])
+    }
+    return (await listWorkspaceLicenses(workspaceId, "everyone", session)).find((view) => view.licenseId === licenseId)!
+  })
+}
+
+/**
+ * The pairs of a bulk assignment's body (`SeatAssignmentsRequest`), in order, each with only its
+ * `licenseId` and `membershipId`: 1 to {@link MAX_SEAT_ASSIGNMENTS} of them, each id a non-blank string.
+ * Anything else is `invalid_request` (400), saying what. A repeated pair is not malformed: `assignSeats`
+ * counts it once.
+ */
+export function parseSeatAssignments(body: unknown): SeatAssignment[] {
+  if (!isRecord(body) || !Array.isArray(body.assignments)) {
+    invalid("assignments must be a list of {licenseId, membershipId}")
+  }
+  const assignments: unknown[] = body.assignments
+  requireAssignmentCount(assignments.length)
+  return assignments.map((assignment, index) => {
+    if (!isRecord(assignment) || !isId(assignment.licenseId) || !isId(assignment.membershipId)) {
+      invalid(`assignments[${index}] must be {licenseId, membershipId}, each a non-blank string`)
+    }
+    return {licenseId: assignment.licenseId, membershipId: assignment.membershipId}
+  })
+}
+
+function requireAssignmentCount(count: number): void {
+  if (count < 1 || count > MAX_SEAT_ASSIGNMENTS) invalid(`assignments must have 1 to ${MAX_SEAT_ASSIGNMENTS} pairs`)
+}
+
+/**
+ * Give out several seats of the workspace's licenses at once, all of them or none, and resolve with every
+ * license `assignments` names, each with every seat, oldest first. Each pair is checked and refused as
+ * `assignSeat` checks one. A repeated pair counts once, and a pair whose membership already holds that
+ * license's seat is skipped and takes none. When any license has fewer seats free than its new pairs
+ * need, nothing is assigned and the refusal is `no_seats_available` with `licenses`: a
+ * {@link SeatShortfall} for each license that falls short, in the order the pairs first name them. Takes
+ * 1 to {@link MAX_SEAT_ASSIGNMENTS} pairs (`invalid_request` otherwise).
+ */
+export async function assignSeats(
+  actor: Actor,
+  workspaceId: string,
+  assignments: SeatAssignment[],
+): Promise<LicenseView[]> {
+  requireAssignmentCount(assignments.length)
+  // Each license's memberships, licenses in the order the pairs first name them, each pair once.
+  const wanted = new Map<string, Set<string>>()
+  for (const {licenseId, membershipId} of assignments) {
+    const memberships = wanted.get(licenseId) ?? new Set<string>()
+    memberships.add(membershipId)
+    wanted.set(licenseId, memberships)
+  }
+  const membershipIds = [...new Set(assignments.map((assignment) => assignment.membershipId))]
+  return withTransaction(async (session) => {
+    await loadActiveWorkspace(session, workspaceId)
+    await requireSeatManager(session, actor, workspaceId)
+    const licenses = new Map<string, LicenseRow>()
+    for (const licenseId of wanted.keys()) {
+      licenses.set(licenseId, await loadWorkspaceLicense(session, workspaceId, licenseId))
+    }
+    const holders = new Map(
+      (await loadSeatHolders(session, workspaceId, membershipIds)).map((holder) => [holder.membershipId, holder]),
+    )
+    const held = await LicenseSeatModel.find({licenseId: {$in: [...wanted.keys()]}, membershipId: {$in: membershipIds}})
+      .select({_id: 0, licenseId: 1, membershipId: 1})
+      .session(session)
+      .lean<Array<Pick<LicenseSeatRow, "licenseId" | "membershipId">>>()
+    const isHeld = new Set(held.map((seat) => pairKey(seat.licenseId, seat.membershipId)))
+    const fresh = [...wanted]
+      .map(([licenseId, ids]) => ({
+        licenseId,
+        holders: [...ids].filter((id) => !isHeld.has(pairKey(licenseId, id))).map((id) => holders.get(id)!),
+      }))
+      .filter((entry) => entry.holders.length > 0)
+    if (fresh.length > 0) {
+      await touchWorkspace(session, workspaceId)
+      const taken: Array<{license: LicenseRow; holders: SeatHolder[]}> = []
+      const short: SeatShortfall[] = []
+      for (const entry of fresh) {
+        const license = await takeSeats(session, entry.licenseId, entry.holders.length)
+        if (license) {
+          taken.push({license, holders: entry.holders})
+          continue
+        }
+        // As read in this transaction before anything was taken. The workspace write above found no seat
+        // change of this workspace since the transaction's snapshot, so the count is current.
+        const {quantity, seatsUsed} = licenses.get(entry.licenseId)!
+        short.push({licenseId: entry.licenseId, needed: entry.holders.length, free: Math.max(0, quantity - seatsUsed)})
+      }
+      // Failing aborts the transaction, the increments that did match included.
+      if (short.length > 0) {
+        fail("no_seats_available", "too few seats are free for these assignments; nothing was assigned", {
+          licenses: short,
+        })
+      }
+      for (const entry of taken) await insertSeats(session, actor, workspaceId, entry.license, entry.holders)
+    }
+    return (await listWorkspaceLicenses(workspaceId, "everyone", session)).filter((view) => wanted.has(view.licenseId))
+  })
+}
+
+function pairKey(licenseId: string, membershipId: string): string {
+  return JSON.stringify([licenseId, membershipId])
+}
+
+/**
+ * The memberships `membershipIds` name, in that order, as seat holders. Refused as a single assignment's
+ * membership is: one that is not an active membership of this workspace is `not_found`, and one still
+ * waiting for its person's first sign-in is `invalid_request`.
+ */
+async function loadSeatHolders(
+  session: ClientSession,
+  workspaceId: string,
+  membershipIds: string[],
+): Promise<SeatHolder[]> {
+  const ids = membershipIds.filter(isId)
+  const rows =
+    ids.length > 0
+      ? await WorkspaceMembershipModel.find({membershipId: {$in: ids}, workspaceId, status: "active"})
           .session(session)
-          .lean<MembershipRow>()
-      : null
+          .lean<MembershipRow[]>()
+      : []
+  const byId = new Map(rows.map((row) => [row.membershipId, row]))
+  return membershipIds.map((membershipId) => {
+    const membership = byId.get(membershipId)
     if (!membership) fail("not_found", "membership not found")
     if (!isId(membership.mentraUserId)) {
       invalid("this membership waits for its person's first sign-in and cannot hold a seat yet")
     }
-    if (!(await LicenseSeatModel.exists({licenseId, membershipId}).session(session))) {
-      await touchWorkspace(session, workspaceId)
-      const taken = await LicenseModel.findOneAndUpdate(
-        {_id: licenseId, endedAt: null, $expr: {$lt: ["$seatsUsed", "$quantity"]}},
-        {$inc: {seatsUsed: 1}},
-        {new: true, session},
-      ).lean<LicenseRow>()
-      if (!taken) fail("no_seats_available", "every seat of this license is assigned")
-      const assignedAt = new Date()
-      await LicenseSeatModel.create(
-        [
-          {
-            licenseId,
-            workspaceId,
-            membershipId,
-            mentraUserId: membership.mentraUserId,
-            assignedAt,
-            assignedBy: actor.kind === "user" ? actor.mentraUserId : null,
-          },
-        ],
-        {session},
-      )
-      await recordWorkspaceEvent(session, {
-        workspaceId,
-        action: "seat.assigned",
-        actor: auditActor(actor),
-        target: seatTarget({licenseId, membershipId, mentraUserId: membership.mentraUserId}, membership.email ?? null),
-        before: null,
-        after: {assignedAt: assignedAt.toISOString(), seatsUsed: taken.seatsUsed, quantity: taken.quantity},
-      })
-    }
-    return (await listWorkspaceLicenses(workspaceId, "everyone", session)).find((view) => view.licenseId === licenseId)!
+    return {membershipId, mentraUserId: membership.mentraUserId, email: membership.email ?? null}
   })
+}
+
+/**
+ * Count `count` more seats of the license if it has that many free and has not ended. Resolves with the
+ * license as that left it, or null when it matched nothing.
+ */
+async function takeSeats(session: ClientSession, licenseId: string, count: number): Promise<LicenseRow | null> {
+  return LicenseModel.findOneAndUpdate(
+    {_id: licenseId, endedAt: null, $expr: {$lte: [{$add: ["$seatsUsed", count]}, "$quantity"]}},
+    {$inc: {seatsUsed: count}},
+    {new: true, session},
+  )
+    .lean<LicenseRow>()
+    .exec()
+}
+
+/**
+ * Insert a seat of `license` for each of `holders` and record `seat.assigned` for each, in the caller's
+ * transaction. `license` is as its conditional increment (`takeSeats`) left it, with these seats counted,
+ * so each event's `seatsUsed` counts the seats in use once that seat was given.
+ */
+async function insertSeats(
+  session: ClientSession,
+  actor: Actor,
+  workspaceId: string,
+  license: LicenseRow,
+  holders: SeatHolder[],
+): Promise<void> {
+  const assignedAt = new Date()
+  const assignedBy = actor.kind === "user" ? actor.mentraUserId : null
+  await LicenseSeatModel.insertMany(
+    holders.map((holder) => ({
+      licenseId: license._id,
+      workspaceId,
+      membershipId: holder.membershipId,
+      mentraUserId: holder.mentraUserId,
+      assignedAt,
+      assignedBy,
+    })),
+    {session},
+  )
+  const seatsUsedBefore = license.seatsUsed - holders.length
+  for (const [index, holder] of holders.entries()) {
+    await recordWorkspaceEvent(session, {
+      workspaceId,
+      action: "seat.assigned",
+      actor: auditActor(actor),
+      target: seatTarget(
+        {licenseId: license._id, membershipId: holder.membershipId, mentraUserId: holder.mentraUserId},
+        holder.email,
+      ),
+      before: null,
+      after: {assignedAt: assignedAt.toISOString(), seatsUsed: seatsUsedBefore + index + 1, quantity: license.quantity},
+    })
+  }
 }
 
 /**

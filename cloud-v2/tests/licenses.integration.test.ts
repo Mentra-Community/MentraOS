@@ -32,7 +32,12 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {assignSeat, listWorkspaceLicenses, releaseSeat} from "../packages/core/src/services/licenses/license.service"
+import {
+  assignSeat,
+  assignSeats,
+  listWorkspaceLicenses,
+  releaseSeat,
+} from "../packages/core/src/services/licenses/license.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
@@ -324,16 +329,26 @@ async function signed(
   )
 }
 
-/** One request to the workspace routes as `as` (a person's bearer, or a raw bearer token). */
-async function call(method: string, path: string, as?: Person | string): Promise<Reply> {
+/** One request to the workspace routes as `as` (a person's bearer, or a raw bearer token), with `body` as JSON. */
+async function call(method: string, path: string, as?: Person | string, body?: unknown): Promise<Reply> {
   const headers: Record<string, string> = {}
   if (typeof as === "string") headers.authorization = `Bearer ${as}`
   else if (as) headers.authorization = `Bearer ${as.bearer}`
-  return reply(await app.request(`http://localhost${path}`, {method, headers}))
+  if (body !== undefined) headers["content-type"] = "application/json"
+  return reply(
+    await app.request(`http://localhost${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  )
 }
 
 const seatPath = (workspaceId: string, licenseId: string, membershipId: string) =>
   `/api/workspaces/${workspaceId}/licenses/${licenseId}/seats/${membershipId}`
+
+/** The workspace portal's route for several seats at once. */
+const seatAssignmentsPath = (workspaceId: string) => `/api/portal/workspaces/${workspaceId}/seat-assignments`
 
 // --- Lifecycle -------------------------------------------------------------
 
@@ -794,6 +809,379 @@ describe("seats", () => {
     // A membership still waiting for its person has nobody to hold a seat.
     expect(await as(license.licenseId, pending)).toMatchObject({status: 400, json: {error: "invalid_request"}})
     expect(await LicenseSeatModel.countDocuments({})).toBe(0)
+  })
+})
+
+// --- Several seats at once -------------------------------------------------
+
+describe("assigning several seats at once", () => {
+  type Pair = {licenseId: string; membershipId: string}
+  const pair = (licenseId: string, membershipId: string): Pair => ({licenseId, membershipId})
+  const assignAll = (as: Person | string | undefined, workspaceId: string, assignments: unknown) =>
+    call("POST", seatAssignmentsPath(workspaceId), as, {assignments})
+  const holders = async (licenseId: string) => (await seatsOf(licenseId)).map((seat) => seat.membershipId).sort()
+  const byLicenseId = <T extends {licenseId: string}>(items: T[]) =>
+    [...items].sort((a, b) => a.licenseId.localeCompare(b.licenseId))
+  const codeOf = (error: unknown) => (error instanceof WorkspaceError ? error.code : String(error))
+
+  test("three pairs over two licenses with room are all assigned, each seat its own seat.assigned", async () => {
+    const ws = await newWorkspace()
+    const calls = await workspaceLicense(ws.workspaceId, {quantity: 3})
+    const fleetSeats = await workspaceLicense(ws.workspaceId, {quantity: 2, product: "mentra.fleet"})
+    const untouched = await workspaceLicense(ws.workspaceId, {quantity: 2, product: "mentra.other"})
+    await assignSeat(actorOf(ws.owner), ws.workspaceId, calls.licenseId, ws.ownerMembershipId)
+
+    const answer = await assignAll(ws.admin, ws.workspaceId, [
+      pair(calls.licenseId, ws.memberMembershipId),
+      pair(calls.licenseId, ws.developerMembershipId),
+      pair(fleetSeats.licenseId, ws.memberMembershipId),
+    ])
+
+    expect(answer.status).toBe(200)
+    // Every license the request named, as Core now holds it, with every seat; the one it did not name is not there.
+    const answered = byLicenseId(answer.json.licenses as LicenseView[]).map((license) => ({
+      ...license,
+      seats: (license.seats ?? []).map((seat) => seat.membershipId).sort(),
+    }))
+    expect(answered).toEqual(
+      byLicenseId([
+        {
+          ...viewOf(calls, {seatsUsed: 3}),
+          seats: [ws.ownerMembershipId, ws.memberMembershipId, ws.developerMembershipId].sort(),
+        },
+        {...viewOf(fleetSeats, {seatsUsed: 1}), seats: [ws.memberMembershipId]},
+      ]),
+    )
+    expect((await licenseRow(calls.licenseId))!.seatsUsed).toBe(3)
+    expect((await licenseRow(fleetSeats.licenseId))!.seatsUsed).toBe(1)
+    expect((await licenseRow(untouched.licenseId))!.seatsUsed).toBe(0)
+    expect(await holders(calls.licenseId)).toEqual(
+      [ws.ownerMembershipId, ws.memberMembershipId, ws.developerMembershipId].sort(),
+    )
+    expect(await holders(fleetSeats.licenseId)).toEqual([ws.memberMembershipId])
+
+    // One event per seat after the single assignment's, each counting the seats in use once that seat was given.
+    const admin = {kind: "user" as const, mentraUserId: ws.admin.mentraUserId, email: ws.admin.email}
+    const target = (licenseId: string, holder: Person, membershipId: string) => ({
+      licenseId,
+      membershipId,
+      mentraUserId: holder.mentraUserId,
+      email: holder.email,
+    })
+    const assigned = (await audit("seat.assigned")).slice(1)
+    expect(
+      assigned.map((event) => ({
+        workspaceId: event.workspaceId,
+        actor: event.actor,
+        target: event.target,
+        seatsUsed: event.after?.seatsUsed,
+        quantity: event.after?.quantity,
+      })),
+    ).toEqual([
+      {
+        workspaceId: ws.workspaceId,
+        actor: admin,
+        target: target(calls.licenseId, ws.member, ws.memberMembershipId),
+        seatsUsed: 2,
+        quantity: 3,
+      },
+      {
+        workspaceId: ws.workspaceId,
+        actor: admin,
+        target: target(calls.licenseId, ws.developer, ws.developerMembershipId),
+        seatsUsed: 3,
+        quantity: 3,
+      },
+      {
+        workspaceId: ws.workspaceId,
+        actor: admin,
+        target: target(fleetSeats.licenseId, ws.member, ws.memberMembershipId),
+        seatsUsed: 1,
+        quantity: 2,
+      },
+    ])
+  })
+
+  test("a license short by one is 409 no_seats_available naming it, and nothing is assigned or recorded", async () => {
+    const ws = await newWorkspace()
+    const roomy = await workspaceLicense(ws.workspaceId, {quantity: 5})
+    const tight = await workspaceLicense(ws.workspaceId, {quantity: 3, product: "mentra.fleet"})
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, tight.licenseId, ws.ownerMembershipId)
+    const [a, b, c] = (await addMembers(ws.workspaceId, 3)) as [string, string, string]
+    const events = await WorkspaceAuditEventModel.countDocuments({})
+
+    const refused = await assignAll(ws.admin, ws.workspaceId, [
+      pair(roomy.licenseId, ws.memberMembershipId),
+      pair(tight.licenseId, a),
+      pair(tight.licenseId, b),
+      pair(tight.licenseId, c),
+    ])
+
+    expect(refused).toEqual({
+      status: 409,
+      json: {
+        error: "no_seats_available",
+        error_description: expect.any(String),
+        licenses: [{licenseId: tight.licenseId, needed: 3, free: 2}],
+      },
+    })
+    // Neither license changed: not the short one, and not the one that had room.
+    expect((await licenseRow(roomy.licenseId))!.seatsUsed).toBe(0)
+    expect((await licenseRow(tight.licenseId))!.seatsUsed).toBe(1)
+    expect(await holders(roomy.licenseId)).toEqual([])
+    expect(await holders(tight.licenseId)).toEqual([ws.ownerMembershipId])
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
+
+    // Every license that falls short is listed, in the order the request first names it. One whose quantity was
+    // lowered below its seats in use has none free.
+    await store().putLicense({...tight, revision: 2, quantity: 0})
+    const both = await assignAll(ws.admin, ws.workspaceId, [
+      ...[a, b, c, ws.memberMembershipId, ws.developerMembershipId, ws.adminMembershipId].map((membershipId) =>
+        pair(roomy.licenseId, membershipId),
+      ),
+      pair(tight.licenseId, a),
+    ])
+    expect(both).toEqual({
+      status: 409,
+      json: {
+        error: "no_seats_available",
+        error_description: expect.any(String),
+        licenses: [
+          {licenseId: roomy.licenseId, needed: 6, free: 5},
+          {licenseId: tight.licenseId, needed: 1, free: 0},
+        ],
+      },
+    })
+    expect((await licenseRow(roomy.licenseId))!.seatsUsed).toBe(0)
+    expect(await audit("seat.assigned")).toHaveLength(1)
+  })
+
+  test("two requests that each need 2 of the last 3 seats: exactly one is assigned whole, the other nothing", async () => {
+    const ws = await newWorkspace()
+    for (let round = 0; round < 5; round++) {
+      const license = await workspaceLicense(ws.workspaceId, {quantity: 3})
+      const [a, b, c, d] = (await addMembers(ws.workspaceId, 4)) as [string, string, string, string]
+      const requests = [
+        [a, b],
+        [c, d],
+      ]
+
+      const results = await Promise.allSettled([
+        assignSeats(actorOf(ws.admin), ws.workspaceId, [pair(license.licenseId, a), pair(license.licenseId, b)]),
+        assignSeats(actorOf(ws.owner), ws.workspaceId, [pair(license.licenseId, c), pair(license.licenseId, d)]),
+      ])
+
+      expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"])
+      const loser = results.findIndex((result) => result.status === "rejected")
+      const error = (results[loser] as PromiseRejectedResult).reason as WorkspaceError
+      expect({code: codeOf(error), details: error.details}).toEqual({
+        code: "no_seats_available",
+        details: {licenses: [{licenseId: license.licenseId, needed: 2, free: 1}]},
+      })
+      expect(await holders(license.licenseId)).toEqual([...requests[1 - loser]!].sort())
+      expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 3, seatsUsed: 2})
+    }
+    expect(await audit("seat.assigned")).toHaveLength(10)
+  })
+
+  test("bulk and single assignments racing for one license never oversell it, and a bulk one is whole or nothing", async () => {
+    const ws = await newWorkspace()
+    for (let round = 0; round < 3; round++) {
+      const license = await workspaceLicense(ws.workspaceId, {quantity: 5})
+      const bulk: string[][] = []
+      for (let i = 0; i < 6; i++) bulk.push(await addMembers(ws.workspaceId, 2))
+      const single = await addMembers(ws.workspaceId, 6)
+
+      const results = await Promise.allSettled([
+        ...bulk.map((ids) =>
+          assignSeats(
+            actorOf(ws.admin),
+            ws.workspaceId,
+            ids.map((membershipId) => pair(license.licenseId, membershipId)),
+          ),
+        ),
+        ...single.map((membershipId) => assignSeat(actorOf(ws.owner), ws.workspaceId, license.licenseId, membershipId)),
+      ])
+
+      // Every refusal is the cap's: a conflict between the requests is retried, never refused.
+      const refusals = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+      expect(refusals.map(codeOf)).toEqual(Array(refusals.length).fill("no_seats_available"))
+      const held = new Set(await holders(license.licenseId))
+      // A bulk request that succeeded holds both its seats; one that was refused holds none.
+      bulk.forEach((ids, at) => {
+        expect({at, held: ids.filter((id) => held.has(id)).length}).toEqual({
+          at,
+          held: results[at]!.status === "fulfilled" ? 2 : 0,
+        })
+      })
+      single.forEach((id, at) => {
+        expect({id, held: held.has(id)}).toEqual({id, held: results[bulk.length + at]!.status === "fulfilled"})
+      })
+      // The singles alone could fill it, so it ends full, and never past full.
+      expect(held.size).toBe(5)
+      expect(await licenseRow(license.licenseId)).toMatchObject({quantity: 5, seatsUsed: 5})
+    }
+    expect(await audit("seat.assigned")).toHaveLength(15)
+  })
+
+  test("20 one-pair requests at once for 10 free seats: exactly 10 succeed, and none is refused for a write conflict", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 10})
+    const contenders = await addMembers(ws.workspaceId, 20)
+
+    const results = await Promise.allSettled(
+      contenders.map((membershipId) =>
+        assignSeats(actorOf(ws.owner), ws.workspaceId, [pair(license.licenseId, membershipId)]),
+      ),
+    )
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(10)
+    const refusals = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+    expect(refusals.map(codeOf)).toEqual(Array(10).fill("no_seats_available"))
+    expect(await seatsOf(license.licenseId)).toHaveLength(10)
+    expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(10)
+    expect(await audit("seat.assigned")).toHaveLength(10)
+  })
+
+  test("a pair already held is skipped and takes no seat, and a repeated pair counts once", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 2})
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, license.licenseId, ws.memberMembershipId)
+    // One seat is free: counting the held pair or the repeat would need two or three.
+    const pairs = [
+      pair(license.licenseId, ws.memberMembershipId),
+      pair(license.licenseId, ws.developerMembershipId),
+      pair(license.licenseId, ws.developerMembershipId),
+    ]
+
+    const first = await assignAll(ws.admin, ws.workspaceId, pairs)
+
+    expect(first.status).toBe(200)
+    expect(first.json.licenses).toHaveLength(1)
+    expect(first.json.licenses[0]).toMatchObject({licenseId: license.licenseId, quantity: 2, seatsUsed: 2})
+    expect(await holders(license.licenseId)).toEqual([ws.memberMembershipId, ws.developerMembershipId].sort())
+    expect((await audit("seat.assigned")).map((event) => event.target?.membershipId)).toEqual([
+      ws.memberMembershipId,
+      ws.developerMembershipId,
+    ])
+
+    // Asked again, every pair is held: nothing changes, and the answer is the same. 500 repeats of one pair too.
+    expect(await assignAll(ws.admin, ws.workspaceId, pairs)).toEqual(first)
+    expect(await assignAll(ws.admin, ws.workspaceId, Array(500).fill(pairs[1]))).toEqual(first)
+    expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(2)
+    expect(await audit("seat.assigned")).toHaveLength(2)
+  })
+
+  test("each pair is checked as a single assignment is, and one refused pair assigns nothing", async () => {
+    const ws = await newWorkspace()
+    const elsewhere = await newWorkspace("Elsewhere")
+    const license = await workspaceLicense(ws.workspaceId)
+    const theirs = await workspaceLicense(elsewhere.workspaceId)
+    const ended = await workspaceLicense(ws.workspaceId, {product: "mentra.fleet"})
+    await LicenseModel.updateOne(
+      {_id: ended.licenseId},
+      {$set: {endedAt: new Date(), endedReason: "workspace_deleted"}},
+    )
+    const personal = licenseWrite({type: "person", mentraUserId: ws.member.mentraUserId})
+    await store().putLicense(personal)
+    const pending = `wm_pending_${counter++}`
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: pending,
+        workspaceId: ws.workspaceId,
+        pendingWorkosUserId: "legacy_1",
+        role: "member",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
+    const fits = pair(license.licenseId, ws.memberMembershipId)
+
+    const cases: Array<{refused: Pair; status: number; error: string}> = [
+      // A member who has not signed in yet has nobody to hold a seat.
+      {refused: pair(license.licenseId, pending), status: 400, error: "invalid_request"},
+      {refused: pair(theirs.licenseId, ws.developerMembershipId), status: 404, error: "license_not_found"},
+      {refused: pair(personal.licenseId, ws.developerMembershipId), status: 404, error: "license_not_found"},
+      {refused: pair(newLicenseId(), ws.developerMembershipId), status: 404, error: "license_not_found"},
+      {refused: pair(ended.licenseId, ws.developerMembershipId), status: 409, error: "license_ended"},
+      {refused: pair(license.licenseId, elsewhere.memberMembershipId), status: 404, error: "not_found"},
+    ]
+    for (const {refused, status, error} of cases) {
+      // Before or after a pair that would fit, the request assigns nothing.
+      for (const assignments of [
+        [fits, refused],
+        [refused, fits],
+      ]) {
+        const answer = await assignAll(ws.admin, ws.workspaceId, assignments)
+        expect({assignments, status: answer.status, error: answer.json?.error}).toEqual({assignments, status, error})
+      }
+    }
+    expect(await LicenseSeatModel.countDocuments({})).toBe(0)
+    expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(0)
+    expect(await audit("seat.assigned")).toEqual([])
+  })
+
+  test("an assignment racing a member's removal is whole or nothing, and leaves no seat behind the ended membership", async () => {
+    const ws = await newWorkspace()
+    const license = await workspaceLicense(ws.workspaceId, {quantity: 50})
+    for (let round = 0; round < 5; round++) {
+      const [leaving, staying] = (await addMembers(ws.workspaceId, 2)) as [string, string]
+      const [assigned] = await Promise.allSettled([
+        assignSeats(actorOf(ws.admin), ws.workspaceId, [
+          pair(license.licenseId, staying),
+          pair(license.licenseId, leaving),
+        ]),
+        removeMember(actorOf(ws.owner), ws.workspaceId, leaving, await revisionOf(ws.workspaceId)),
+      ])
+      const held = await holders(license.licenseId)
+      expect({round, staying: held.includes(staying), leaving: held.includes(leaving)}).toEqual({
+        round,
+        staying: assigned.status === "fulfilled",
+        leaving: false,
+      })
+    }
+    const seats = await seatsOf(license.licenseId)
+    const active = await WorkspaceMembershipModel.find({
+      membershipId: {$in: seats.map((seat) => seat.membershipId)},
+      status: "active",
+    }).lean()
+    expect(active).toHaveLength(seats.length)
+    expect((await licenseRow(license.licenseId))!.seatsUsed).toBe(seats.length)
+  })
+
+  test("only people who assign seats may: Developers, Members, strangers and keys get 403; 0 or 501 pairs are 400", async () => {
+    const ws = await newWorkspace()
+    const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+    const license = await workspaceLicense(ws.workspaceId)
+    const {token: workspaceKey} = await createWorkspaceCredential(actorOf(ws.owner), ws.workspaceId, {name: "CI"})
+    const fits = [pair(license.licenseId, ws.memberMembershipId)]
+
+    for (const who of [ws.developer, ws.member, ws.stranger, workspaceKey]) {
+      expect((await assignAll(who, ws.workspaceId, fits)).status).toBe(403)
+    }
+    // Without a bearer, the portal's route group reads its cookie, so a request from elsewhere is refused before
+    // sign-in is asked for; the bearer-only group asks for sign-in.
+    expect((await assignAll(undefined, ws.workspaceId, fits)).status).toBe(403)
+    const anonymous = await call("POST", `/api/workspaces/${ws.workspaceId}/seat-assignments`, undefined, {
+      assignments: fits,
+    })
+    expect(anonymous.status).toBe(401)
+    for (const assignments of [[], Array(501).fill(fits[0]), "nope", [{licenseId: license.licenseId}]]) {
+      expect(await assignAll(ws.admin, ws.workspaceId, assignments)).toMatchObject({
+        status: 400,
+        json: {error: "invalid_request"},
+      })
+    }
+    expect((await call("POST", seatAssignmentsPath(ws.workspaceId), ws.admin, {})).status).toBe(400)
+    expect(await LicenseSeatModel.countDocuments({})).toBe(0)
+
+    // Organization Admins act as Owner. The route is under each route group the workspace handlers are.
+    expect((await assignAll(orgAdmin, ws.workspaceId, fits)).status).toBe(200)
+    const viaApi = await call("POST", `/api/workspaces/${ws.workspaceId}/seat-assignments`, ws.owner, {
+      assignments: [pair(license.licenseId, ws.developerMembershipId)],
+    })
+    expect(viaApi.status).toBe(200)
+    expect(await holders(license.licenseId)).toEqual([ws.memberMembershipId, ws.developerMembershipId].sort())
   })
 })
 

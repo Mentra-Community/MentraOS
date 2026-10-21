@@ -27,7 +27,10 @@
  * caller with `workspace.licenses.read` (Admins and Owners), and to any other
  * member only the licenses they hold a seat in, each with only their own seat.
  * `PUT` and `DELETE /:workspaceId/licenses/:licenseId/seats/:membershipId`
- * assign and unassign a seat, with `workspace.licenses.assign`.
+ * assign and unassign a seat, with `workspace.licenses.assign`, and
+ * `POST /:workspaceId/seat-assignments` assigns several seats at once, all of
+ * them or none (409 `no_seats_available` lists each license that falls short),
+ * with the same capability.
  *
  * Route order matters: `/invitations/...` is registered before `/:workspaceId`
  * so the literal segment is never read as a workspace id.
@@ -41,13 +44,20 @@ import {
   type InvitationView,
   type LicenseView,
   type MemberView,
+  type SeatAssignmentsResponse,
   type WorkspaceDetail,
   type WorkspaceRole,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import type {WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
-import {assignSeat, listWorkspaceLicenses, releaseSeat} from "../../services/licenses/license.service"
+import {
+  assignSeat,
+  assignSeats,
+  listWorkspaceLicenses,
+  parseSeatAssignments,
+  releaseSeat,
+} from "../../services/licenses/license.service"
 import {listWorkspaceAudit, redactSecrets} from "../../services/workspaces/audit.service"
 import {
   createWorkspaceCredential,
@@ -314,6 +324,15 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       return c.body(null, 204)
     },
   )
+
+  // Several seats at once, all of them or none: the answer is every license the pairs name, with its seats.
+  app.post("/:workspaceId/seat-assignments", requireWorkspaceCapability("workspace.licenses.assign"), async (c) => {
+    const assignments = parseSeatAssignments(await readJsonObject(c))
+    const answer: SeatAssignmentsResponse = {
+      licenses: await assignSeats(userActor(c), c.req.param("workspaceId"), assignments),
+    }
+    return c.json(answer)
+  })
 
   // --- Audit -----------------------------------------------------------------
 

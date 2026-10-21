@@ -80,18 +80,34 @@ group ([APIs](workspaces.md#apis)):
 | `GET /:workspaceId/licenses` | Any member | `{items}`: with `workspace.licenses.read`, every license and every seat; otherwise the licenses the caller holds a seat in, each with only their own seat. |
 | `PUT /:workspaceId/licenses/:licenseId/seats/:membershipId` | `workspace.licenses.assign` | The license with its seats. Assigning a seat the member already holds changes nothing. |
 | `DELETE /:workspaceId/licenses/:licenseId/seats/:membershipId` | `workspace.licenses.assign` | `204`. Unassigning a seat nobody holds changes nothing. |
+| `POST /:workspaceId/seat-assignments` | `workspace.licenses.assign` | `{licenses}`: every license the request names, with its seats. Assigns several seats at once, all of them or none. |
 
 They are for people: a key gets `403`. A seat assignment is refused with
 `404 license_not_found` for a license that is not this workspace's,
-`404 not_found` for a membership that is not an active one of this workspace,
-`400 invalid_request` for an imported membership still waiting for its person's
-first sign-in, and `409 no_seats_available` when every seat is taken.
+`409 license_ended` for one that has ended, `404 not_found` for a membership
+that is not an active one of this workspace, `400 invalid_request` for an
+imported membership still waiting for its person's first sign-in, and
+`409 no_seats_available` when every seat is taken.
 
 - **The cap.** Assigning a seat increments the license's `seatsUsed` only while
   it is below `quantity`, in the same transaction as the seat's insert.
   Concurrent assignments conflict on the license, and the database retries them
   against the latest count, so two admins taking the last seat at once never
   both get it, and an assignment is refused only for want of a seat.
+- **Several at once.** `POST /:workspaceId/seat-assignments` takes
+  `{"assignments": [{"licenseId", "membershipId"}]}`, the people picker's and
+  Assign licenses' request. It takes 1 to 500 pairs (`MAX_SEAT_ASSIGNMENTS`);
+  any other count, or a pair without both ids, is `400 invalid_request`. Every
+  rule of one assignment applies to each pair, and a pair that is refused
+  assigns nothing. A repeated pair counts once, and a pair whose member already
+  holds that license's seat is skipped and takes no seat. Each license takes all
+  of its new seats in one conditional increment, in one transaction for the
+  whole request. If any license has fewer seats free than its new pairs need,
+  nothing is assigned and Core answers `409 no_seats_available` with
+  `licenses`, one `{licenseId, needed, free}` for each license that falls
+  short. Requests that race for the same seats, one seat or several, never
+  together exceed a license's quantity. Each seat assigned is its own
+  `seat.assigned` event.
 - **Fewer seats.** A write that lowers the quantity below the seats in use frees
   no seat: the license takes no new assignment until the seats in use fall below
   the quantity again, so a license that is `n` over needs `n + 1` unassigned
