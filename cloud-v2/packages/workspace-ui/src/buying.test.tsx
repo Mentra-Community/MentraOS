@@ -128,6 +128,17 @@ const card = (product: string) => find(`[data-product="${product}"]`);
 const buttons = (within: ParentNode = document) => findAll<HTMLButtonElement>("button", within);
 const buttonNamed = (label: string, within: ParentNode = document) => byText<HTMLButtonElement>(label, "button", within);
 const stepper = (within: ParentNode = document) => find<HTMLInputElement>('[role="spinbutton"]', within);
+/**
+ * Escape on the open dialog, as the platform does it: the dialog is asked to cancel and, unless that is prevented,
+ * closes (firing `close`, which the component listens for). happy-dom has no key-to-close, so the test does that part.
+ */
+async function escape() {
+  await act(async () => {
+    const dialog = topDialog();
+    if (dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) dialog.close();
+  });
+}
+
 interface GridOptions {
   products?: readonly CatalogEntry[];
   licenses?: readonly LicenseBilling[];
@@ -508,6 +519,55 @@ describe("the seats step", () => {
     expect(stepper(topDialog()).value).toBe("3");
   });
 
+  test("when billing's limits change while it is open the choice is held to them", async () => {
+    const client = new QueryClient();
+    const { billing, purchase } = stubBilling();
+    const out = ways();
+    const dialog = (product: CatalogEntry) => (
+      <QueryClientProvider client={client}>
+        <BuyDialog open product={product} billing={billing} scope={WS} navigateOut={out.navigateOut} onClose={() => {}} />
+      </QueryClientProvider>
+    );
+    const limits = (buy: { minSeats: number; maxSeats: number; defaultSeats: number }) => fleet({ offer: workspaceOffer(1500, { buy }) });
+    const view = await render(dialog(limits({ minSeats: 1, maxSeats: 500, defaultSeats: 10 })));
+    await click(find('[aria-label="One seat more"]', topDialog()));
+    await click(find('[aria-label="One seat more"]', topDialog()));
+    expect(stepper(topDialog()).value).toBe("12");
+    // The ceiling comes down below the choice.
+    await view.rerender(dialog(limits({ minSeats: 1, maxSeats: 8, defaultSeats: 10 })));
+    expect(stepper(topDialog()).value).toBe("8");
+    expect(stepper(topDialog()).getAttribute("aria-valuemax")).toBe("8");
+    expect(byText("8 seats × $15 · $120 a month · before tax", "p", topDialog())).toBeTruthy();
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 8 }]]);
+  });
+
+  test("and the floor coming up past the choice lifts it, and it stays there if the limits widen again", async () => {
+    const client = new QueryClient();
+    const { billing } = stubBilling();
+    const out = ways();
+    const dialog = (minSeats: number) => (
+      <QueryClientProvider client={client}>
+        <BuyDialog
+          open
+          product={fleet({ offer: workspaceOffer(1500, { buy: { minSeats, maxSeats: 500, defaultSeats: 10 } }) })}
+          billing={billing}
+          scope={WS}
+          navigateOut={out.navigateOut}
+          onClose={() => {}}
+        />
+      </QueryClientProvider>
+    );
+    const view = await render(dialog(1));
+    expect(stepper(topDialog()).value).toBe("10");
+    await view.rerender(dialog(15));
+    expect(stepper(topDialog()).value).toBe("15");
+    expect(byText("15 seats × $15 · $225 a month · before tax", "p", topDialog())).toBeTruthy();
+    await view.rerender(dialog(1));
+    expect(stepper(topDialog()).value).toBe("15");
+  });
+
   test("with no maxSeats the sum still never leaves the safe integers", async () => {
     // $10 billion a seat: 9,007 seats is the most whose total a number can hold exactly.
     const huge = fleet({ offer: workspaceOffer(1_000_000_000_000, { buy: { minSeats: 1, defaultSeats: 9000 } }) });
@@ -601,10 +661,22 @@ describe("the seats step", () => {
     expect(openDialogs()).toHaveLength(0);
     await click(buttonNamed("Buy", card("mentra.fleet")));
     expect(stepper(topDialog()).value).toBe("10");
-    await press(topDialog(), "Escape");
-    await act(async () => topDialog()?.dispatchEvent(new Event("cancel", { cancelable: true })));
+    await click(find('[aria-label="One seat more"]', topDialog()));
+    await escape();
+    expect(openDialogs()).toHaveLength(0);
+    await click(buttonNamed("Buy", card("mentra.fleet")));
+    expect(stepper(topDialog()).value).toBe("10");
     expect(purchase).not.toHaveBeenCalled();
     expect(leave).not.toHaveBeenCalled();
+  });
+
+  test("a click on the backdrop closes it too", async () => {
+    const { purchase } = await openBuyFleet();
+    expect(openDialogs()).toHaveLength(1);
+    // The content fills the dialog, so a click that lands on the dialog itself is a click on the backdrop.
+    await click(topDialog());
+    expect(openDialogs()).toHaveLength(0);
+    expect(purchase).not.toHaveBeenCalled();
   });
 
   test("closing it while the request is out doesn't send the browser away afterwards", async () => {
@@ -988,7 +1060,24 @@ describe("the catalog dialog", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: billingKeys.owner(ACCOUNT_SCOPE) });
   });
 
-  test("closing it (Escape, ×, the backdrop) asks the host to, and reopening starts without the old refusal", async () => {
+  /** The three ways a person closes it, each as the platform delivers it. */
+  const WAYS_TO_CLOSE: Array<[string, () => Promise<void>]> = [
+    ["×", () => click(find('[aria-label="Close"]', topDialog()))],
+    ["Escape", escape],
+    ["a click on the backdrop", () => click(topDialog())],
+  ];
+
+  for (const [way, close] of WAYS_TO_CLOSE) {
+    test(`closing it with ${way} asks the host to`, async () => {
+      const setup = dialogFor({ licenses: held });
+      await mount(setup.ui);
+      expect(setup.onClose).not.toHaveBeenCalled();
+      await close();
+      expect(setup.onClose).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  test("reopening it starts without the old refusal", async () => {
     const { billing } = realBilling(() => ({ status: 400, body: { error: "not_for_sale" } }));
     const products = [callFor({ offer: personOffer() })];
     const setup = dialogFor({ billing, scope: ACCOUNT_SCOPE, products });

@@ -1311,6 +1311,56 @@ describe("the people picker", () => {
     expect(theCard().contains(after[0]!)).toBe(true);
   });
 
+  test("a refusal the picker already showed is gone when the picker is opened again", async () => {
+    const r = rig({
+      session: async () => {
+        throw new BillingRefusedError("license_not_found", {}, 404);
+      },
+    });
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), {}));
+    await press("Assign seats", theCard());
+    for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
+    await press("Add seats", find("dialog"));
+    await flush();
+    expect(findAll('dialog [role="alert"]')).toHaveLength(1);
+    await click(find('dialog button[aria-label="Close"]'));
+    // Closed, the card shows it (nothing is lost) ...
+    expect(findAll('[role="alert"]', theCard())).toHaveLength(1);
+    // ... and a new opening starts clean: not in the dialog, and not behind it either.
+    await press("Assign seats", theCard());
+    expect(findAll('[role="alert"]')).toHaveLength(0);
+    await click(find('dialog button[aria-label="Close"]'));
+    expect(findAll('[role="alert"]')).toHaveLength(0);
+  });
+
+  test("and so is the link of a blocked tab the picker showed", async () => {
+    const r = rig({ blocked: true });
+    await mountCard(r, joined(coreLicense(5, [HANNAH, TOM, NOAH]), { actions: [{ kind: "add_seats", fallbackLabel: "Add seats", returns: false }] }));
+    await press("Assign seats", theCard());
+    for (const member of [LUIS, AMARA, INES]) await click(checkboxFor(member.name!));
+    await press("Add seats", find("dialog"));
+    await flush();
+    expect(findAll("dialog a[data-hosted-page]")).toHaveLength(1);
+    await click(find('dialog button[aria-label="Close"]'));
+    await press("Assign seats", theCard());
+    expect(findAll("a[data-hosted-page]")).toHaveLength(0);
+  });
+
+  test("opening the picker leaves a refusal of the card's own Add seats where it is", async () => {
+    const r = rig({
+      session: async () => {
+        throw new BillingRefusedError("license_not_found", {}, 404);
+      },
+    });
+    await mountCard(r, joined(coreLicense(3, [HANNAH, TOM]), {}));
+    await press("Add seats", theCard());
+    await flush();
+    expect(findAll('[role="alert"]', theCard())).toHaveLength(1);
+    await press("Assign seats", theCard());
+    expect(findAll('[role="alert"]', theCard())).toHaveLength(1);
+    expect(findAll('dialog [role="alert"]')).toHaveLength(0);
+  });
+
   test("a refusal of Add seats from the card's roster stays on the card, with nothing in the dialog", async () => {
     const r = rig({
       session: async () => {

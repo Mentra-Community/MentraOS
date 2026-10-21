@@ -82,6 +82,8 @@ export interface HostedAction {
    * what the request leaves to say (`error`, `link`) is drawn there and not behind it; none means the card.
    */
   run(request: HostedRequest, surface?: string): void;
+  /** Forgets the last refusal and link, for a screen that is shown again and shouldn't greet the person with them. Ignored while a request is out. */
+  clear(): void;
   /** The `kind` of the action whose session is being requested (`PURCHASE` for a purchase), else null. */
   pending: string | null;
   /** The request being asked for, else null: which product's button is the one waiting. */
@@ -220,8 +222,16 @@ export function useHostedAction({
     [client, refreshOnReturn],
   );
 
+  const clear = useCallback(() => {
+    if (busy.current) return;
+    setError(null);
+    setCode(null);
+    setLink(null);
+    setSurface(null);
+  }, []);
+
   const pending = current === null ? null : "action" in current ? current.action.kind : PURCHASE;
-  return { run, pending, request: current, error, code, link, surface };
+  return { run, clear, pending, request: current, error, code, link, surface };
 }
 
 /**

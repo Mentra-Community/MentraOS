@@ -1099,3 +1099,19 @@ describe("what the Members screens carry", () => {
     }
   });
 });
+
+describe("what the package exports for a host that mounts the Members screens itself", () => {
+  test("HeldLicense and isHeldLicense, which PersonLicensesProps and AssignLicensesDialogProps are written in", async () => {
+    const pkg = await import("./index");
+    const cards = pkg.joinLicenses({
+      licenses: [CALL()],
+      // Billing has a second license that Core hasn't received yet: it has no seats to hold.
+      billing: [licenseBillingFor({ licenseId: "lic_call" }), licenseBillingFor({ licenseId: "lic_new" })],
+      catalog: [catalogEntryFor()],
+    });
+    expect(cards).toHaveLength(2);
+    const held: Array<import("./index").HeldLicense> = cards.filter(pkg.isHeldLicense);
+    expect(held.map((card) => card.licenseId)).toEqual(["lic_call"]);
+    expect(held[0]!.seats.used).toBe(3);
+  });
+});

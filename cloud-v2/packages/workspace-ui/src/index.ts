@@ -117,7 +117,7 @@ export { Switch } from "./ui/switch";
 export { Textarea } from "./ui/textarea";
 
 // The pieces the Licenses and Billing screens are made of.
-export { Fact, HostedPageButton, Notice, Skeleton, StatusBadge, type StatusBadgeStatus } from "./components/licenses/parts";
+export { Fact, HostedPageButton, isHeldLicense, Notice, Skeleton, StatusBadge, type HeldLicense, type StatusBadgeStatus } from "./components/licenses/parts";
 
 // The portal's frame, for any Mentra site: the sidebar shell, the workspace switcher, the brand marks
 // and the one-column layout. None of it knows a router: links go through the host's link component.

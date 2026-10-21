@@ -310,16 +310,16 @@ export function LicenseCard({
   const menuActions = listed.filter((action) => !placed.has(action.kind));
   const menuPending = hosted.pending !== null && menuActions.some((action) => action.kind === hosted.pending);
   const items: MenuItem[] = menuActions.map((action, index) => ({
-      key: `${action.kind}-${index}`,
-      onSelect: () => hosted.run({ action, licenseId: card.licenseId }),
-      label: (
-        <>
-          {t.actions.label(action.kind, action.fallbackLabel)}
-          <ArrowUpRightIcon aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
-          <span className="sr-only">{action.returns === false ? t.actions.opensSecureBillingPageInNewTab : t.actions.opensSecureBillingPage}</span>
-        </>
-      ),
-    }));
+    key: `${action.kind}-${index}`,
+    onSelect: () => hosted.run({ action, licenseId: card.licenseId }),
+    label: (
+      <>
+        {t.actions.label(action.kind, action.fallbackLabel)}
+        <ArrowUpRightIcon aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
+        <span className="sr-only">{action.returns === false ? t.actions.opensSecureBillingPageInNewTab : t.actions.opensSecureBillingPage}</span>
+      </>
+    ),
+  }));
 
   const badge = badgeFor(card, view, locale);
   const { columns, facts } = factsFor(card, view, locale, workspaceName);
@@ -338,6 +338,11 @@ export function LicenseCard({
       : null;
   // While the picker is open it shows what its own press left; once it is closed the card does, so nothing is lost.
   const onCard = fromPicker && picking ? { error: null, link: null } : hosted;
+  // Opened again, the picker starts without what its last press left (the card has shown it since).
+  const onPicking = (open: boolean) => {
+    if (open && fromPicker) hosted.clear();
+    setPicking(open);
+  };
 
   return (
     <Card
@@ -392,7 +397,7 @@ export function LicenseCard({
           addSeats={addSeatsFrom()}
           pickerAddSeats={addSeatsFrom(PICKER)}
           picking={picking}
-          onPicking={setPicking}
+          onPicking={onPicking}
         />
       ) : null}
     </Card>

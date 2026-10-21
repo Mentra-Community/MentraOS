@@ -99,6 +99,19 @@ function seatBounds(buy: Buy, price: Price): SeatBounds {
 // at a time to billing, for a purchase or for Add seats, and on to the page it answers. A refusal is drawn where its
 // container is, and goes with it.
 
+/**
+ * What pressing Buy on `entry` does, in one place. A workspace chooses its seats first (`choose` opens the seats
+ * step). A person is never asked: they buy their one seat, the offer's own count held to its limits, and go
+ * straight to payment.
+ */
+function buyChoice(owner: LicenseScope, hosted: HostedAction, choose: (entry: CatalogEntry) => void) {
+  return (entry: CatalogEntry) => {
+    if (!canBuy(entry)) return;
+    if (owner === "workspace") choose(entry);
+    else hosted.run({ product: entry.product, seats: seatBounds(entry.offer.buy, entry.offer.price).initial, name: entry.name });
+  };
+}
+
 /** Add seats on a held product's license, by the action billing listed for it: its page opens in a tab where billing says it doesn't return. */
 const addSeatsOf = (hosted: HostedAction) => (license: LicenseBilling, entry: CatalogEntry, action: BillingAction) =>
   hosted.run({ action, licenseId: license.licenseId, name: entry.name });
@@ -316,12 +329,8 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
   const headingId = useId();
   if (entries.length === 0) return null;
   const copy = t.catalog[owner];
+  const onBuy = buyChoice(owner, hosted, setBuying);
   const onAddSeats = addSeatsOf(hosted);
-  const onBuy = (entry: CatalogEntry) => {
-    if (!canBuy(entry)) return;
-    if (owner === "workspace") setBuying(entry);
-    else hosted.run({ product: entry.product, seats: seatBounds(entry.offer.buy, entry.offer.price).initial, name: entry.name });
-  };
 
   return (
     <section aria-labelledby={headingId} className="space-y-4">
@@ -350,18 +359,8 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
           );
         })}
       </div>
-      {owner === "workspace" ? (
-        <BuyDialog
-          open={buying !== null}
-          product={buying}
-          billing={host.billing}
-          scope={host.scope}
-          navigateOut={host.navigateOut}
-          api={host.api}
-          memberCount={memberCount}
-          onClose={() => setBuying(null)}
-        />
-      ) : null}
+      {/* A person has no seats step: the dialog draws nothing for one. */}
+      <BuyDialog {...host} open={buying !== null} product={buying} memberCount={memberCount} onClose={() => setBuying(null)} />
     </section>
   );
 }
@@ -408,12 +407,8 @@ function CatalogRows({
 }: Pick<CatalogProps, "products" | "licenses"> & { host: BuyingHost; onChoose(entry: CatalogEntry): void }) {
   const owner = ownerTypeOf(host.scope);
   const hosted = useHostedAction(host);
+  const onBuy = buyChoice(owner, hosted, onChoose);
   const onAddSeats = addSeatsOf(hosted);
-  const onBuy = (entry: CatalogEntry) => {
-    if (!canBuy(entry)) return;
-    if (owner === "workspace") onChoose(entry);
-    else hosted.run({ product: entry.product, seats: seatBounds(entry.offer.buy, entry.offer.price).initial, name: entry.name });
-  };
   return (
     <div className="space-y-3">
       <HostedFeedback action={hosted} />
@@ -461,18 +456,8 @@ export function CatalogDialog({ open, onClose, products, licenses, memberCount, 
       >
         <CatalogRows products={products} licenses={licenses} host={host} onChoose={setBuying} />
       </Dialog>
-      {owner === "workspace" ? (
-        <BuyDialog
-          open={open && buying !== null}
-          product={buying}
-          billing={host.billing}
-          scope={host.scope}
-          navigateOut={host.navigateOut}
-          api={host.api}
-          memberCount={memberCount}
-          onClose={() => setBuying(null)}
-        />
-      ) : null}
+      {/* Over the list; a person has no seats step, and the dialog draws nothing for one. */}
+      <BuyDialog {...host} open={open && buying !== null} product={buying} memberCount={memberCount} onClose={() => setBuying(null)} />
     </>
   );
 }
@@ -507,7 +492,10 @@ function BuyForm({
   const { price } = offer;
   const locale = host.billing.locale;
   const bounds = seatBounds(buy, price);
-  const [seats, setSeats] = useState(bounds.initial);
+  const [chosen, setChosen] = useState(bounds.initial);
+  // Billing can change the limits while the form is open (the catalog is read again): the choice is held to them.
+  const seats = Math.min(bounds.max, Math.max(bounds.min, chosen));
+  if (seats !== chosen) setChosen(seats);
   const hosted = useHostedAction(host);
   const stepperId = useId();
   const pending = hosted.pending !== null;
@@ -551,7 +539,7 @@ function BuyForm({
             <Stepper
               id={stepperId}
               value={seats}
-              onChange={setSeats}
+              onChange={setChosen}
               min={bounds.min}
               max={bounds.max}
               label={t.buy.seats}
@@ -587,7 +575,8 @@ function BuyForm({
  * for one.
  */
 export function BuyDialog({ open, product, memberCount, onClose, ...host }: BuyDialogProps) {
-  const entry = product !== null && canBuy(product) && ownerTypeOf(host.scope) === "workspace" ? product : null;
+  if (ownerTypeOf(host.scope) !== "workspace") return null;
+  const entry = product !== null && canBuy(product) ? product : null;
   return (
     <Dialog
       open={open && entry !== null}
