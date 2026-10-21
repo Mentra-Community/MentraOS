@@ -137,7 +137,9 @@ describe("the Licenses page", () => {
   test("/w/<id>/licenses renders the view: the cards, the total and the header actions, with billing's data", async () => {
     const { core } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(find("h1").textContent).toBe("Licenses");
-    expect(has("What Acme Field Services pays for, and who has each license.")).toBe(true);
+    // The title has no subtitle.
+    expect(has("pays for")).toBe(false);
+    expect(find("h1").nextElementSibling).toBeNull();
     expect(has("Fleet")).toBe(true);
     expect(has("2 products")).toBe(true);
     expect(has("$295 a month in total")).toBe(true);
@@ -228,7 +230,7 @@ describe("the Licenses page", () => {
     const { core } = await open(`/w/${ACME}/licenses`, scenario, { modules: BILLING_ON, ready: "Assigned to you" });
     expect(has("Mentra Call Unlimited")).toBe(true);
     expect(has("What Acme Field Services pays for")).toBe(false);
-    expect(has("Your licenses in Acme Field Services.")).toBe(true);
+    expect(has("Your licenses in")).toBe(false);
     expect(text()).not.toMatch(/\$\d/);
     expect(buttonNamed(/Billing & invoices/)).toBeUndefined();
     expect(billingRequests(core).some(request => request.path.endsWith("/status"))).toBe(false);

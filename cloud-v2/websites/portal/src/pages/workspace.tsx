@@ -53,8 +53,8 @@ type SectionMeta = {
   icon: LucideIcon;
   /** The capability that opens it; null for everyone in the workspace (leaving is in Settings). */
   needs: WorkspaceCapability | null;
-  /** `manager`: the viewer sees every license (`workspace.licenses.read`), where a member sees their own seats. */
-  description(workspaceName: string, manager: boolean): string;
+  /** The line under the title; none for Licenses, whose title stands alone. */
+  description(workspaceName: string): string | undefined;
 };
 
 const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
@@ -81,7 +81,7 @@ const SECTIONS: Record<WorkspaceSection, SectionMeta> = {
     icon: CreditCard,
     // Open to everyone in the workspace, but offered only where there is something to show (see `licensesPartShown`).
     needs: null,
-    description: (name, manager) => (manager ? licenseStrings.page.description(name) : licenseStrings.page.memberDescription(name)),
+    description: () => undefined,
   },
 };
 
@@ -257,7 +257,7 @@ export function WorkspaceScreen({
       nav={workspaceNav(workspaceId, sections)}
       activeKey={active}
       title={meta?.label ?? name}
-      description={meta?.description(name, can(data, "workspace.licenses.read"))}
+      description={meta?.description(name)}
       headerAction={
         active === "members" && can(data, "workspace.members.manage") ? (
           <Button onClick={() => setInviting(true)}>

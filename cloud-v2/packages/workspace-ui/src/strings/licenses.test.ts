@@ -22,8 +22,9 @@ describe("counts", () => {
 describe("the pages", () => {
   test("the Licenses page", () => {
     expect(t.page.title).toBe("Licenses");
-    expect(t.page.description("Acme Field Services")).toBe("What Acme Field Services pays for, and who has each license.");
-    expect(t.page.memberDescription("Acme Field Services")).toBe("Your licenses in Acme Field Services.");
+    // The title stands alone: no subtitle for a manager or for a member. (The personal Billing page keeps its own.)
+    expect("description" in t.page).toBe(false);
+    expect("memberDescription" in t.page).toBe(false);
     expect(t.page.adminsGiveOutSeats("Acme Field Services")).toBe("Acme Field Services's Admins and Owners assign licenses.");
     expect(t.page.noSeat.title("Acme Field Services")).toBe("You don't have a license in Acme Field Services");
     expect(t.page.noSeat.body).toBe(
@@ -502,8 +503,6 @@ const SAMPLES: Record<string, unknown[][]> = {
   "names.list": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
   "names.holders": [[[]], [["A"]], [["A", "B", "C", "D", "E"]]],
   "nav.backTo": [["Acme Field Services"]],
-  "page.description": [["Acme Field Services"]],
-  "page.memberDescription": [["Acme Field Services"]],
   "page.adminsGiveOutSeats": [["Acme Field Services"]],
   "page.noSeat.title": [["Acme Field Services"]],
   "recurrence.rate": [["month", 1], ["month", 3], ["year", 2, "2"]],

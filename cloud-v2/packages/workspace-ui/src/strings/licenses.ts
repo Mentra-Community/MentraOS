@@ -181,9 +181,6 @@ export const licenseStrings = {
 
   page: {
     title: "Licenses",
-    description: (workspace: string) => `What ${workspace} pays for, and who has each license.`,
-    /** A Member's or Developer's page: only the licenses they hold. */
-    memberDescription: (workspace: string) => `Your licenses in ${workspace}.`,
     adminsGiveOutSeats: (workspace: string) => `${workspace}'s Admins and Owners assign licenses.`,
     noSeat: {
       title: (workspace: string) => `You don't have a license in ${workspace}`,

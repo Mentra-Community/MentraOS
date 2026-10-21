@@ -742,21 +742,25 @@ describe("Licenses in the sidebar", () => {
 });
 
 describe("the Licenses page", () => {
-  test("is titled and described in the portal's words: what the workspace pays for to those who manage it, their licenses to anyone else", () => {
+  test("is titled Licenses with no subtitle under it, for those who manage the workspace and for anyone else", () => {
     const manager = renderAs(true, `/w/${ACME}/licenses`, withLicenses([LICENSE]));
     expect(hrefs(manager)).toContain(`/w/${ACME}/licenses`);
     expect(manager).toMatch(ACTIVE_LICENSES_ITEM);
     expect(manager).toMatch(LICENSES_HEADING);
-    expect(manager).toContain("What Acme Field Team pays for, and who has each license.");
+    expect(manager).not.toContain("pays for");
+    // The title stands alone: nothing is drawn under it.
+    expect(manager).not.toMatch(/Licenses<\/h1><p/);
     // A non-staff Admin on staging sees the same page (licenses, no billing).
     const admin = render(`/w/${ACME}/licenses`, adminOfAcme([LICENSE]), { modules: meWith(false, true).modules }, undefined, meWith(false, true));
     expect(admin).toMatch(LICENSES_HEADING);
-    expect(admin).toContain("What Acme Field Team pays for, and who has each license.");
+    expect(admin).not.toContain("pays for");
+    expect(admin).not.toMatch(/Licenses<\/h1><p/);
     const member = renderAs(true, `/w/${ACME}/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE]));
     expect(hrefs(member)).toContain(`/w/${ACME}/licenses`);
     expect(member).toMatch(ACTIVE_LICENSES_ITEM);
-    expect(member).toContain("Your licenses in Acme Field Team.");
+    expect(member).not.toContain("Your licenses in");
     expect(member).not.toContain("pays for");
+    expect(member).not.toMatch(/Licenses<\/h1><p/);
   });
 
   test("is the view and nothing else: no module is hosted for any viewer", () => {

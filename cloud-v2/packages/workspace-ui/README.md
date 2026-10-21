@@ -312,9 +312,9 @@ const shared = {
 - **`offer`** (workspace page only). `catalog` is whether billing's catalog can be read at
   all, and `manage` whether this viewer is offered billing for this workspace. Neither is
   decided here; the host knows them from its own `/me`.
-- **The frame's words**, from `licenseStrings`: `page.title`, `page.description(name)` for
-  someone who sees every product and `page.memberDescription(name)` for anyone else,
-  `personal.title` and `personal.description`, and `nav.*` for the sidebar and account menu.
+- **The frame's words**, from `licenseStrings`: `page.title` (the Licenses page has no subtitle
+  under it, for anyone), `personal.title` and `personal.description` (the personal Billing page
+  keeps its subtitle), and `nav.*` for the sidebar and account menu.
 
 ### What the pages show
 
