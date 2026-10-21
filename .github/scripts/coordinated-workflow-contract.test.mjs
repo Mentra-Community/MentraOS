@@ -1067,7 +1067,7 @@ test("mobile release reads its environment from the backend's Doppler config onl
   assert.equal([...mobile.matchAll(/staging\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_STG"/g)].length, 2)
   assert.equal([...mobile.matchAll(/prod\) DOPPLER_TOKEN="\$DOPPLER_TOKEN_MOBILE_PRD"/g)].length, 2)
   assert.equal([...mobile.matchAll(/shasum -a 256 -c -/g)].length, 2)
-  assert.equal([...mobile.matchAll(/secrets download --no-file --format json[^\n]*\|\n\s+node \.github\/scripts\/prepare-mobile-release-env\.mjs/g)].length, 2)
+  assert.equal([...mobile.matchAll(/secrets download --no-file --format json[^\n]*\|\n\s+node release-tooling\/\.github\/scripts\/prepare-mobile-release-env\.mjs/g)].length, 2)
   assert.doesNotMatch(mobile, /cp mobile\/\.env\.example|DOPPLER_TOKEN_MOBILE_PRD \|\||api\.doppler\.com/)
 })
 
@@ -1367,7 +1367,8 @@ test("coordinated compiler reuse still generates the current app identity and si
     const job = jobBlock(mobile, platform)
     const metadata = job.split("      - name: Generate exact mobile environment and package metadata\n")[1]
       .split("\n      - name:")[0]
-    assert.match(metadata, /prepare-mobile-release-env.mjs/)
+    assert.match(metadata, /node release-tooling\/\.github\/scripts\/prepare-mobile-release-env\.mjs/)
+    assert.doesNotMatch(metadata, /node \.github\/scripts\/prepare-mobile-release-env/)
     assert.match(metadata, /--plan release-intent\/release-plan.json/)
     for (const key of ["release-identity", "release-set-id", "source-commit", "ota-manifest-url", "ota-manifest-sha256"]) {
       assert.ok(metadata.includes(`--${key} "\${{ `), `${platform}: ${key}`)

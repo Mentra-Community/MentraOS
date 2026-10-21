@@ -428,7 +428,7 @@ jobs:
           echo "67e4e020761adf3ffe5a030712d61721b4e2752182670bf90de5a2a88e4961e3  $doppler_archive" | shasum -a 256 -c -
           tar -xzf "$doppler_archive" -C "$RUNNER_TEMP" doppler
           DOPPLER_TOKEN="$DOPPLER_TOKEN" "$RUNNER_TEMP/doppler" secrets download --no-file --format json --no-check-version |
-            node .github/scripts/prepare-mobile-release-env.mjs \
+            node release-tooling/.github/scripts/prepare-mobile-release-env.mjs \
               --plan release-intent/release-plan.json \
               --output mobile/.env \
               --backend-environment "${{ inputs.backend_environment }}" \
@@ -810,7 +810,7 @@ jobs:
           echo "0023854e5e19a871234b9b705287483265eb65a64c0560b3eaafa7143ecc4e4b  $doppler_archive" | shasum -a 256 -c -
           tar -xzf "$doppler_archive" -C "$RUNNER_TEMP" doppler
           DOPPLER_TOKEN="$DOPPLER_TOKEN" "$RUNNER_TEMP/doppler" secrets download --no-file --format json --no-check-version |
-            node .github/scripts/prepare-mobile-release-env.mjs \
+            node release-tooling/.github/scripts/prepare-mobile-release-env.mjs \
               --plan release-intent/release-plan.json \
               --output mobile/.env \
               --backend-environment "${{ inputs.backend_environment }}" \
