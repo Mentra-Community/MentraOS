@@ -1,0 +1,127 @@
+/**
+ * A DOM for the package's interaction tests, on happy-dom (the house choice, as in the Miniapp SDK's
+ * tests). Call `setupDom()` in `beforeAll` and `teardownDom()` in `afterAll`; the globals are restored after, so
+ * the server-render suites that share the process never see a `window`.
+ *
+ * happy-dom is a DOM, not a browser: it has no implicit activation, so Enter or Space on a button, a link or a
+ * checkbox does nothing by itself, and its `<dialog>` only toggles `open`. `press` therefore finishes what a
+ * browser would do for the keys a native control owns (it clicks), after giving the page's own handlers the
+ * chance to cancel. Everything a component handles itself (arrows, Escape, Tab) goes through unchanged.
+ *
+ * Not exported from the package: tests only.
+ */
+
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { act, type ReactElement } from "react";
+import type { Root } from "react-dom/client";
+
+let createRoot: typeof import("react-dom/client").createRoot;
+const mounted = new Set<{ root: Root; container: HTMLElement }>();
+
+type ActGlobal = { IS_REACT_ACT_ENVIRONMENT?: boolean };
+
+export async function setupDom(): Promise<void> {
+  GlobalRegistrator.register({ url: "https://portal.example.test/" });
+  (globalThis as ActGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+  // After the globals exist: react-dom reads them when it first loads.
+  ({ createRoot } = await import("react-dom/client"));
+}
+
+export async function teardownDom(): Promise<void> {
+  await cleanup();
+  delete (globalThis as ActGlobal).IS_REACT_ACT_ENVIRONMENT;
+  await GlobalRegistrator.unregister();
+}
+
+/** Unmounts everything `render` mounted and empties the page. */
+export async function cleanup(): Promise<void> {
+  for (const entry of mounted) {
+    await act(async () => entry.root.unmount());
+    entry.container.remove();
+  }
+  mounted.clear();
+  document.body.innerHTML = "";
+}
+
+export interface Mounted {
+  container: HTMLElement;
+  rerender(ui: ReactElement): Promise<void>;
+}
+
+/** Mounts `ui` in the page and lets React settle. */
+export async function render(ui: ReactElement): Promise<Mounted> {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  mounted.add({ root, container });
+  await act(async () => root.render(ui));
+  return { container, rerender: async (next) => void (await act(async () => root.render(next))) };
+}
+
+/** `document.querySelector`, throwing when it finds nothing, so a test fails where it looked. */
+export function find<T extends Element = HTMLElement>(selector: string, within: ParentNode = document): T {
+  const found = within.querySelector<T>(selector);
+  if (!found) throw new Error(`nothing matches ${selector}`);
+  return found;
+}
+
+export function findAll<T extends Element = HTMLElement>(selector: string, within: ParentNode = document): T[] {
+  return [...within.querySelectorAll<T>(selector)];
+}
+
+/** The element with this text, among `selector`'s (a button's label, a menu item's). */
+export function byText<T extends HTMLElement = HTMLElement>(text: string, selector = "*", within: ParentNode = document): T {
+  const found = findAll<T>(selector, within).find((element) => element.textContent?.trim() === text);
+  if (!found) throw new Error(`no ${selector} with the text "${text}"`);
+  return found;
+}
+
+export async function click(element: Element): Promise<void> {
+  await act(async () => {
+    (element as HTMLElement).click();
+  });
+}
+
+export async function focus(element: HTMLElement): Promise<void> {
+  await act(async () => element.focus());
+}
+
+/** A pointer press on `target`, which is what `useDismiss` listens for. */
+export async function pointerDown(target: Element = document.body): Promise<void> {
+  await act(async () => {
+    target.dispatchEvent(new Event("pointerdown", { bubbles: true, cancelable: true }));
+  });
+}
+
+/** Typing into a text field the way a person does: the value changes, then `input` fires. */
+export async function typeInto(input: HTMLInputElement, text: string): Promise<void> {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/**
+ * Presses `key` on `element`: keydown (cancelable, bubbling), then what the platform does for a native control
+ * when nothing cancelled it. Enter clicks a button or a link; Space clicks a button or toggles a checkbox, on
+ * release. Returns whether a page handler cancelled the keydown.
+ */
+export async function press(element: HTMLElement, key: string, init: { shift?: boolean } = {}): Promise<boolean> {
+  let cancelled = false;
+  await act(async () => {
+    const down = new KeyboardEvent("keydown", { key, shiftKey: init.shift ?? false, bubbles: true, cancelable: true });
+    element.dispatchEvent(down);
+    cancelled = down.defaultPrevented;
+    if (!cancelled) {
+      const tag = element.tagName;
+      const isCheckbox = tag === "INPUT" && (element as HTMLInputElement).type === "checkbox";
+      if (key === "Enter" && (tag === "BUTTON" || tag === "A")) element.click();
+      if (key === " " && (tag === "BUTTON" || isCheckbox)) element.click();
+    }
+    element.dispatchEvent(new KeyboardEvent("keyup", { key, shiftKey: init.shift ?? false, bubbles: true, cancelable: true }));
+  });
+  return cancelled;
+}
+
+export const activeElement = () => document.activeElement as HTMLElement | null;

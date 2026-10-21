@@ -13,12 +13,16 @@ export type {
 export {
   errorMessage,
   isInvitationGone,
+  isLicenseChangedError,
   isWorkspaceChangedError,
   isWorkspaceHeldError,
   WORKSPACE_CHANGED_MESSAGE,
   WorkspaceApiError,
 } from "./errors";
 export {
+  billingCatalogQuery,
+  billingKeys,
+  billingStatusQuery,
   invitationPreviewQuery,
   licensesQuery,
   myInvitationsQuery,
@@ -26,6 +30,37 @@ export {
   workspaceKeys,
   workspaceListQuery,
 } from "./queries";
+// Billing's data, as the Licenses and Billing pages read it: the client (every answer parsed with the contract), the
+// sentences Core words it with, and the formatting in the portal's locale and the viewer's time zone.
+export {
+  ACCOUNT_SCOPE,
+  BillingRefusedError,
+  BillingUnavailableError,
+  billingErrorMessage,
+  createBillingApi,
+  ownerTypeOf,
+  workspaceScope,
+  type BillingApi,
+  type BillingScope,
+} from "./billing-api";
+export { licenseStrings, refusalMessage, type LicenseScope, type LicenseStrings, type RefusalContext } from "./strings/licenses";
+export {
+  costFact,
+  fitNote,
+  formatDay,
+  formatDayShort,
+  formatMoney,
+  formatRecurrence,
+  groupCardNumber,
+  holderNames,
+  nameList,
+  priceLine,
+  renewalCadence,
+  taxNote,
+  totalSummary,
+  type CostFact,
+} from "./lib/billing-format";
+export { formatDate } from "./lib/format";
 export { actsAsOrganizationAdmin, assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "./roles";
 
 export { WorkspaceAuditPanel } from "./components/audit-panel";
@@ -66,14 +101,23 @@ export { WorkspaceMembersPanel } from "./components/members-panel";
 export { WorkspacePicker } from "./components/workspace-picker";
 export { WorkspaceSettingsPanel } from "./components/settings-panel";
 
-// Mentra's controls, for a host's own screens: one button system, inputs and selects (styles/mentra.css).
+// Mentra's controls, for a host's own screens: one button system, inputs, selects, checkboxes, switches, a stepper, a menu and a side panel (styles/mentra.css).
 export { Button, buttonVariants } from "./ui/button";
 export { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
+export { Checkbox } from "./ui/checkbox";
 export { Dialog } from "./ui/dialog";
 export { Input } from "./ui/input";
 export { Label } from "./ui/label";
+export { Menu, type MenuItem } from "./ui/menu";
+export { Meter } from "./ui/meter";
 export { NativeSelect } from "./ui/native-select";
+export { SidePanel } from "./ui/side-panel";
+export { Stepper } from "./ui/stepper";
+export { Switch } from "./ui/switch";
 export { Textarea } from "./ui/textarea";
+
+// The pieces the Licenses and Billing screens are made of.
+export { Fact, HostedPageButton, Notice, Skeleton, StatusBadge, type StatusBadgeStatus } from "./components/licenses/parts";
 
 // The portal's frame, for any Mentra site: the sidebar shell, the workspace switcher, the brand marks
 // and the one-column layout. None of it knows a router: links go through the host's link component.

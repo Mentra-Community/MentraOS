@@ -29,8 +29,10 @@
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^17.6.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "happy-dom": "^17.6.3",
     "typescript": "^5.7.0"
   }
 }
