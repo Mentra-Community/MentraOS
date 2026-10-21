@@ -210,3 +210,9 @@ export {
 export { AssignLicensesDialog, type AssignLicensesDialogProps } from "./components/licenses/assign-licenses";
 export { MemberPanel, PersonLicenses, type MemberPanelProps, type PersonLicensesProps } from "./components/member-panel";
 export type { MembersLicenses } from "./components/members-panel";
+
+// The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each
+// needs a `QueryClientProvider` above it, the billing client, and the host's `NavigateOut`; the portal wires them to its
+// routes, its `me` and `?purchase=`.
+export { WorkspaceLicensesView, type WorkspaceLicensesViewProps } from "./components/licenses/licenses-view";
+export { PersonalBillingView, type PersonalBillingViewProps } from "./components/licenses/personal-billing-view";

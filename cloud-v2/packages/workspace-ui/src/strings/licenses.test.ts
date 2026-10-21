@@ -27,6 +27,11 @@ describe("the pages", () => {
     expect(t.page.buyALicense).toBe("Buy a license");
   });
 
+  test("the two sentences the spec leaves unwritten: no licenses where nothing is offered, and nothing to buy for a person", () => {
+    expect(t.page.noLicenses).toBe("This workspace has no licenses yet.");
+    expect(t.personal.nothingToBuy).toBe("There is nothing to buy for yourself right now.");
+  });
+
   test("its unavailable state, and the personal page's", () => {
     expect(t.page.unavailable).toEqual({
       title: "Licenses are unavailable",

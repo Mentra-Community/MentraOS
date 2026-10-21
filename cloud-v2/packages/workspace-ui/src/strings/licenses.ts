@@ -179,6 +179,8 @@ export const licenseStrings = {
     },
     billingAndInvoices: "Billing & invoices",
     buyALicense: "Buy a license",
+    /** A manager's page for a workspace with no license, where billing offers nothing to buy. */
+    noLicenses: "This workspace has no licenses yet.",
     loading: "Loading licenses…",
     unavailable: {
       title: "Licenses are unavailable",
@@ -190,6 +192,8 @@ export const licenseStrings = {
   personal: {
     title: "Billing",
     description: "Licenses you buy for yourself, apart from any workspace's.",
+    /** The page of someone with no license, where billing sells a person nothing. */
+    nothingToBuy: "There is nothing to buy for yourself right now.",
     loading: "Loading billing…",
     unavailable: {
       title: "Billing is unavailable",
