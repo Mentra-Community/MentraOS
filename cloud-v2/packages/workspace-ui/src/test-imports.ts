@@ -29,5 +29,8 @@ export function runtimeImports(entry: string): { files: string[]; specifiers: st
   return { files: [...files], specifiers: [...specifiers] };
 }
 
-/** The specifiers that bring in the contract's billing schemas or zod. */
-export const SCHEMA_SPECIFIER = /portal-billing|^zod/;
+/**
+ * The specifiers that bring in the contract's billing schemas or zod. `portal-billing-icons` is the contract's
+ * icon rule on its own, with no zod, so it is not one of them.
+ */
+export const SCHEMA_SPECIFIER = /portal-billing(?!-icons)|^zod/;

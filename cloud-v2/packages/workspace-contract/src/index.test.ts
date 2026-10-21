@@ -70,6 +70,7 @@ describe("package entry points", () => {
       "./fleet-ui": "./src/fleet-ui.ts",
       "./portal-module-ui": "./src/portal-module-ui.ts",
       "./portal-billing": "./src/portal-billing.ts",
+      "./portal-billing-icons": "./src/portal-billing-icons.ts",
     })
   })
 })

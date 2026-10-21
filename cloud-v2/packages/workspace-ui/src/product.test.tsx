@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { billingIconPath } from "@mentra/workspace-contract/portal-billing";
-import { FeatureChips, ProductChip, ProductIcon, tileLetter, usableIcon } from "./components/licenses/product";
+import { FeatureChips, ProductChip, ProductIcon, tileLetter } from "./components/licenses/product";
 import { cleanup, find, findAll, render, setupDom, teardownDom } from "./test-dom";
 import { fleetEntryFor, catalogEntryFor } from "./test-billing-fixtures";
 import { runtimeImports, SCHEMA_SPECIFIER } from "./test-imports";
@@ -109,52 +110,6 @@ describe("the letter of a tile", () => {
   });
 });
 
-describe("usableIcon is the contract's rule", () => {
-  // The component can't import the contract's check (it lives beside zod, which an embedder that only draws
-  // chips must not carry), so it keeps a copy. These are the paths the two must agree on.
-  const PREFIX = "/api/portal/billing/ui/icons/";
-  const samples: unknown[] = [
-    ICON,
-    `${PREFIX}a_b-c.1.svg`,
-    `${PREFIX}${"a".repeat(255)}`,
-    `${PREFIX}${"a".repeat(256)}`,
-    `${PREFIX}.hidden`,
-    `${PREFIX}.`,
-    `${PREFIX}..`,
-    `${PREFIX}...`,
-    `${PREFIX}`,
-    `${PREFIX}x.png?a=b`,
-    `${PREFIX}x.png#frag`,
-    `${PREFIX}sub/x.png`,
-    `${PREFIX}x y.png`,
-    `${PREFIX}x".png`,
-    `${PREFIX}x(1).png`,
-    `${PREFIX}x'.png`,
-    `${PREFIX}é.png`,
-    `${PREFIX}x.png\n`,
-    `${PREFIX}%2e%2e`,
-    "/api/portal/billing/ui/entry.js",
-    "/api/portal/billing/ui/icons",
-    "/API/portal/billing/ui/icons/x.png",
-    "https://evil.example/api/portal/billing/ui/icons/x.png",
-    "javascript:alert(1)",
-    "",
-    null,
-    undefined,
-    42,
-    {},
-  ];
-
-  test("every sample is accepted or refused exactly as billingIconPath does", () => {
-    for (const sample of samples) expect([sample, usableIcon(sample)]).toEqual([sample, billingIconPath(sample)]);
-  });
-
-  test("a usable path comes back as it was", () => {
-    expect(usableIcon(ICON)).toBe(ICON);
-    expect(usableIcon("https://evil.example/x.png")).toBeNull();
-  });
-});
-
 describe("ProductChip", () => {
   test("is the icon, small, and the short name", async () => {
     await render(<ProductChip product={{ name: "Mentra Call Unlimited", shortName: "Call Unlimited", icon: ICON }} />);
@@ -230,5 +185,15 @@ describe("FeatureChips", () => {
 describe("what the product pieces pull in", () => {
   test("they reach neither the contract's schemas nor zod, so the Members list can draw chips without carrying them", () => {
     expect(runtimeImports("components/licenses/product.tsx").specifiers.filter((specifier) => SCHEMA_SPECIFIER.test(specifier))).toEqual([]);
+  });
+
+  test("the icon rule is the contract's own, from its module without zod, not a copy", () => {
+    const { specifiers } = runtimeImports("components/licenses/product.tsx");
+    expect(specifiers).toContain("@mentra/workspace-contract/portal-billing-icons");
+    expect(specifiers).not.toContain("@mentra/workspace-contract/portal-billing");
+    // No path prefix or file pattern of its own to drift from the contract's.
+    const source = readFileSync(join(import.meta.dir, "components/licenses/product.tsx"), "utf8");
+    expect(source).not.toContain("/api/portal/billing/ui/icons/");
+    expect(source).not.toContain("A-Za-z0-9");
   });
 });

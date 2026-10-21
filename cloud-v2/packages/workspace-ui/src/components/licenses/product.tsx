@@ -7,11 +7,12 @@
  * carries the same fields. Nothing here names a product, and the only words are the two the strings module has
  * for a feature chip.
  *
- * This file imports no runtime code from the contract, whose schemas bring zod: the Members list draws these
- * chips in the admin portal as well.
+ * The only runtime code it takes from the contract is the icon rule, from `portal-billing-icons`: the schemas
+ * (`portal-billing`) bring zod, and the Members list draws these chips in the admin portal as well.
  */
 
 import { useState } from "react";
+import { billingIconPath } from "@mentra/workspace-contract/portal-billing-icons";
 import type { CatalogFeature } from "@mentra/workspace-contract/portal-billing";
 import { cn } from "../../lib/utils";
 import { licenseStrings as t } from "../../strings/licenses";
@@ -24,23 +25,6 @@ export interface ProductIdentity {
   shortName?: string;
   /** A path billing sent, which is drawn only if it is one of billing's own icons. */
   icon?: string | null;
-}
-
-/** Where billing serves product icons. Mirrors the contract's `BILLING_ICON_PATH_PREFIX`. */
-const ICON_PATH_PREFIX = "/api/portal/billing/ui/icons/";
-
-/** An icon's file: letters, digits, `.`, `_` and `-`, 1 to 255 of them, and not only dots. Mirrors the contract's. */
-const ICON_FILE = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/;
-
-/**
- * `value` when it is `/api/portal/billing/ui/icons/<file>` with a file the contract allows, else null. The
- * contract's schemas already turn any other icon into null, but a component can be handed anything, and a
- * page must never load an address from elsewhere. This is the contract's `billingIconPath`, copied (see the
- * file's note on zod); a test holds the two to the same answers.
- */
-export function usableIcon(value: unknown): string | null {
-  if (typeof value !== "string" || !value.startsWith(ICON_PATH_PREFIX)) return null;
-  return ICON_FILE.test(value.slice(ICON_PATH_PREFIX.length)) ? value : null;
 }
 
 /** The letter a product with no icon gets: the first letter or digit of its name in capitals, else its first character, else "?". */
@@ -56,7 +40,8 @@ export function tileLetter(name: string): string {
  * Decorative either way: the name is always beside it.
  */
 export function ProductIcon({ product, size = 48, className }: { product: Pick<ProductIdentity, "name" | "icon">; size?: number; className?: string }) {
-  const src = usableIcon(product.icon);
+  // The contract can send anything for an icon, and a component can be handed anything: only billing's own icons are drawn.
+  const src = billingIconPath(product.icon);
   const [failed, setFailed] = useState<string | null>(null);
   const box = { width: size, height: size, borderRadius: Math.round(size * 0.28) };
   if (src !== null && failed !== src) {
