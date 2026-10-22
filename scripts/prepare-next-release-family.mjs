@@ -9,7 +9,13 @@ import {loadReleaseFamily} from "../.github/scripts/release-family.mjs"
 
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]
-const LOCKFILES = ["bun.lock", "mobile/bun.lock", "cloud-v2/bun.lock", "sdk/bun.lock"]
+const LOCKFILES = [
+  "bun.lock",
+  "mobile/bun.lock",
+  "cloud-v2/bun.lock",
+  "sdk/bun.lock",
+  "examples/bun.lock",
+]
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
 function fail(message) {
