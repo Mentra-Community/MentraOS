@@ -587,6 +587,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       hostHooks.onUpdateBlocked?.(app)
       return
     }
+    if (app.local && appRegistry.isMiniappAccessRevoked(packageName)) {
+      hostHooks.onAccessRevoked?.(app)
+      return
+    }
 
     // Flip the foreground flag synchronously so the Compositor's open
     // animation starts on the same frame as the tap. We do NOT await start()
