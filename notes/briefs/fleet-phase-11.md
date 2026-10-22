@@ -61,8 +61,9 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 2. Mentra Live "Glasses software" is the ASG client APK version; More lists BES and MTK firmware.
 3. Phone page is built (Status, Battery, Mentra App; More: OS, app version, assigned miniapp status).
 4. Last-Owner copy: "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first."
-5. Failure words: storage_full "Not enough space"; not_eligible "Not available to this workspace";
-   sharing_revoked "Sharing was turned off"; not_published "No published release"; download_failed
+5. Failure words (reasons per Mentra-Specs #140; desired-state entries carry the miniapp `url`): storage_full
+   "Not enough space"; archived "No longer available"; access_denied "No access to this miniapp"; not_a_miniapp
+   "Not a miniapp"; download_failed
    "Download failed"; signature_invalid "Signature check failed"; incompatible_host "Needs a newer Mentra App";
    newer_version_installed "A newer version is installed"; manifest_conflict "Set by your organization".
 6. Invitation sheet is not swipeable (deviates from the board; Decline is irreversible). Flag in the PR.

@@ -179,7 +179,7 @@ describe("desired state", () => {
     revision: 5,
     generatedAt: T,
     workspace: {workspaceId: "ws_1", name: "Ridgeline Field Services"},
-    entries: [{assignmentId: "asg_1", revision: 2, packageName: "com.example.private", selection: "latest"}],
+    entries: [{assignmentId: "asg_1", revision: 2, url: "https://private.example.com/miniapp", packageName: "com.example.private", selection: "latest"}],
     ...overrides,
   })
 
@@ -227,11 +227,21 @@ describe("desired state", () => {
   })
 
   test("rejects a selection other than latest and an entry revision of 0", () => {
-    const entry = {assignmentId: "asg_1", revision: 2, packageName: "p", selection: "pinned"}
+    const entry = {assignmentId: "asg_1", revision: 2, url: "https://example.com/p", packageName: "p", selection: "pinned"}
     expect(FleetDesiredStateSchema.safeParse(managed({entries: [entry]})).success).toBe(false)
     expect(
       FleetDesiredStateSchema.safeParse(managed({entries: [{...entry, selection: "latest", revision: 0}]})).success,
     ).toBe(false)
+  })
+
+  test("an entry names a miniapp by an https URL: no other scheme, no credentials, no blank, no missing URL", () => {
+    const entry = {assignmentId: "asg_1", revision: 2, url: "https://example.com/p", packageName: "p", selection: "latest"}
+    expect(FleetDesiredStateSchema.safeParse(managed({entries: [entry]})).success).toBe(true)
+    for (const url of ["http://example.com/p", "ftp://example.com/p", "javascript:alert(1)", "https://user:pw@example.com/p", "", "not a url", `https://example.com/${"a".repeat(2100)}`]) {
+      expect(FleetDesiredStateSchema.safeParse(managed({entries: [{...entry, url}]})).success).toBe(false)
+    }
+    const {url: _url, ...withoutUrl} = entry
+    expect(FleetDesiredStateSchema.safeParse(managed({entries: [withoutUrl]})).success).toBe(false)
   })
 
   test("rejects extra fields (strict)", () => {
@@ -240,5 +250,16 @@ describe("desired state", () => {
 
   test("rejects a non-UTC generatedAt", () => {
     expect(FleetDesiredStateSchema.safeParse(managed({generatedAt: "2026-10-21T17:30:00+08:00"})).success).toBe(false)
+  })
+})
+
+describe("assignment reasons (Mentra-Specs #140)", () => {
+  test("archived, access_denied and not_a_miniapp are reasons; the Store-era ones are gone", () => {
+    for (const reason of ["archived", "access_denied", "not_a_miniapp", "download_failed", "storage_full"]) {
+      expect(FleetRecordSchema.safeParse(outcome({state: "blocked", reason})).success).toBe(true)
+    }
+    for (const reason of ["not_eligible", "sharing_revoked", "not_published"]) {
+      expect(FleetRecordSchema.safeParse(outcome({state: "blocked", reason})).success).toBe(false)
+    }
   })
 })

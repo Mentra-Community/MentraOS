@@ -193,9 +193,9 @@ export type FleetAssignmentState = (typeof FLEET_ASSIGNMENT_STATES)[number]
 
 /** Stable reasons for a blocked or retrying assignment. Never error text. */
 export const FLEET_ASSIGNMENT_REASONS = [
-  "not_eligible",
-  "sharing_revoked",
-  "not_published",
+  "archived",
+  "access_denied",
+  "not_a_miniapp",
   "download_failed",
   "signature_invalid",
   "incompatible_host",
@@ -204,6 +204,20 @@ export const FLEET_ASSIGNMENT_REASONS = [
   "storage_full",
 ] as const
 export type FleetAssignmentReason = (typeof FLEET_ASSIGNMENT_REASONS)[number]
+
+/** A miniapp's address: https, bounded, and with no credentials in it. */
+export const FleetMiniappUrl = z
+  .string()
+  .min(1)
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return url.protocol === "https:" && url.username === "" && url.password === ""
+    } catch {
+      return false
+    }
+  }, "a miniapp URL is an https address without credentials")
 
 const FleetRevision = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)
 
@@ -349,6 +363,9 @@ export const FleetDesiredStateEntrySchema = z
   .object({
     assignmentId: FleetId,
     revision: FleetRevision,
+    /** The miniapp's own URL (Mentra-Specs #140). The phone installs it with `installMiniapp(url)` and takes the version it serves. */
+    url: FleetMiniappUrl,
+    /** The package the URL's manifest named when it was assigned. Display and matching only; the URL decides what installs. */
     packageName: FleetText,
     selection: z.literal("latest"),
   })
