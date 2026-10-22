@@ -31,6 +31,7 @@ import {
 import semver from "semver"
 
 import {normalizeCoreUrl} from "./coreUrl"
+import type {FleetManagementState} from "./fleetManagementState"
 import type {FleetKeyValueStore} from "./fleetQueue"
 
 /** Reads the signed-in account's desired state (`GET /api/client/fleet/desired-state` through Core). Throws on any failure. */
@@ -92,6 +93,8 @@ export interface ManagedMiniappPort {
   isRunning(packageName: string): boolean
   /** Calls `listener` with each package that stops. Returns the unsubscribe function. */
   onStopped(listener: (packageName: string) => void): () => void
+  /** Calls `listener` with each running package opened again after its update prompt's Not now. */
+  onUpdateDue(listener: (packageName: string) => void): () => void
   /** Block launch and stop the package now. Uninstalls nothing. */
   revokeAccess(packageName: string): Promise<void>
   restoreAccess(packageName: string): void
@@ -114,6 +117,8 @@ export interface AssignmentReconcilerDeps {
   isOnline(): boolean
   store: FleetKeyValueStore
   emit(outcome: FleetAssignmentOutcomePayload): void
+  /** The account's last complete answer, published on each session change and each answer applied. */
+  onManagementState?(state: FleetManagementState): void
   timers: ReconcilerTimers
   now?: () => number
   random?: () => number
@@ -124,6 +129,7 @@ export type ReconcileTrigger =
   | "foreground"
   | "revision"
   | "stopped"
+  | "opened"
   | "reconnect"
   | "leave"
   | "retry"
@@ -211,6 +217,9 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   let failures = 0
   let stopped = false
   const stopListener = miniapps.onStopped((packageName) => onPackageStopped(packageName))
+  const dueListener = miniapps.onUpdateDue((packageName) => {
+    if (!stopped && session && isWaiting(packageName)) trigger("opened")
+  })
 
   function iso(at = now()): string {
     return new Date(at).toISOString()
@@ -250,7 +259,19 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     again = false
     // Signed out, the last account's revocations stand. Another account sees only its own.
     if (current) applyRevocations(sessionKey(current))
+    publishManagement()
     return current !== null
+  }
+
+  function publishManagement(): void {
+    const snapshot = session ? state.snapshot : null
+    deps.onManagementState?.(
+      snapshot?.status === "managed"
+        ? {status: "managed", workspaceId: snapshot.workspace.workspaceId, workspaceName: snapshot.workspace.name}
+        : snapshot?.status === "unmanaged"
+          ? {status: "unmanaged"}
+          : {status: "unknown"},
+    )
   }
 
   function applyRevocations(key: string): void {
@@ -380,6 +401,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     state.appliedRevision = desired.revision
     state.snapshot = desired
     save()
+    publishManagement()
 
     const entries = desired.status === "managed" ? desired.entries : []
     const byPackage = new Map<string, FleetDesiredStateEntry>()
@@ -699,10 +721,13 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       const gen = generation
       void uninstallIdle(gen).catch(() => {})
     }
-    const waiting = Object.values(state.outcomes).some(
+    if (isWaiting(packageName)) trigger("stopped")
+  }
+
+  function isWaiting(packageName: string): boolean {
+    return Object.values(state.outcomes).some(
       (outcome) => outcome.packageName === packageName && outcome.state === "deferred_running",
     )
-    if (waiting) trigger("stopped")
   }
 
   function trigger(kind: ReconcileTrigger, revision?: number): void {
@@ -750,6 +775,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       if (timer !== null) deps.timers.clearTimeout(timer)
       timer = null
       stopListener()
+      dueListener()
     },
   }
 }

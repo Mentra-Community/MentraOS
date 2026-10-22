@@ -16,6 +16,7 @@ import {
   type ManagedResolution,
   type ReconcilerSession,
 } from "../assignmentReconciler"
+import type {FleetManagementState} from "../fleetManagementState"
 import type {FleetKeyValueStore} from "../fleetQueue"
 
 // ---- fakes ------------------------------------------------------------------------------------------------------
@@ -124,11 +125,13 @@ let running: Set<string>
 let devSelections: Set<string>
 let revoked: Set<string>
 let stopListeners: Set<(packageName: string) => void>
+let dueListeners: Set<(packageName: string) => void>
 let installGate: Promise<void> | undefined
 let installError: InstallFailure | undefined
 let calls: string[]
 let outcomes: FleetAssignmentOutcomePayload[]
 let contexts: string[]
+let management: FleetManagementState[]
 
 function start(): AssignmentReconciler {
   reconciler = createAssignmentReconciler({
@@ -142,6 +145,7 @@ function start(): AssignmentReconciler {
     isOnline: () => online,
     store,
     emit: (outcome) => outcomes.push(outcome),
+    onManagementState: (state) => management.push(state),
     timers,
     now: () => timers.now,
     random: () => 0,
@@ -185,6 +189,10 @@ function start(): AssignmentReconciler {
       onStopped: (listener) => {
         stopListeners.add(listener)
         return () => stopListeners.delete(listener)
+      },
+      onUpdateDue: (listener) => {
+        dueListeners.add(listener)
+        return () => dueListeners.delete(listener)
       },
       revokeAccess: async (pkg) => {
         calls.push(`revoke:${pkg}`)
@@ -243,11 +251,13 @@ beforeEach(() => {
   devSelections = new Set()
   revoked = new Set()
   stopListeners = new Set()
+  dueListeners = new Set()
   installGate = undefined
   installError = undefined
   calls = []
   outcomes = []
   contexts = []
+  management = []
   serve("1.0.0")
 })
 
@@ -429,6 +439,21 @@ describe("managed desired state", () => {
     await timers.advance(TRIGGER_JITTER_MS)
     expect(states()).toEqual(["downloading", "deferred_running", "downloading", "installed"])
     expect(installed.get(notes)?.version).toBe("1.0.0")
+  })
+
+  test("a deferred update tries again when the person opens the miniapp after Not now, and not for others", async () => {
+    installed.set(notes, {version: "0.9.0"})
+    running.add(notes)
+    installError = new InstallFailure("running", true)
+    await startAndSettle()
+    for (const listener of [...dueListeners]) listener("com.acme.other")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(fetches).toBe(1)
+    installError = undefined
+    for (const listener of [...dueListeners]) listener(notes)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(fetches).toBe(2)
+    expect(states()).toEqual(["downloading", "deferred_running", "downloading", "installed"])
   })
 
   test("the cached release satisfies the assignment once a stopped live-development selection is cleared", async () => {
@@ -640,6 +665,62 @@ describe("context changes", () => {
     r.trigger("reconnect")
     await timers.advance(TRIGGER_JITTER_MS)
     expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+  })
+})
+
+describe("managed signal", () => {
+  const managedA = {status: "managed", workspaceId: A, workspaceName: A}
+  const last = () => management.at(-1)
+
+  test("is unknown before the first answer, then follows each complete answer", async () => {
+    answer = () => new Promise<FleetDesiredState>(() => {})
+    const r = start()
+    r.trigger("startup")
+    await timers.advance(0)
+    expect(last()).toEqual({status: "unknown"})
+    answer = async () => managed(1, [{}])
+    await timers.advance(TRIGGER_JITTER_MS + FETCH_TIMEOUT_MS + RETRY_BASE_MS)
+    expect(last()).toEqual(managedA)
+    answer = async () => unmanaged(2)
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(last()).toEqual({status: "unmanaged"})
+  })
+
+  test.each([
+    ["an error", async () => Promise.reject(new Error("HTTP 500"))],
+    ["a 503", async () => Promise.reject(Object.assign(new Error("fleet_unavailable"), {status: 503}))],
+    ["a partial answer", async () => ({status: "managed", revision: 2}) as unknown as FleetDesiredState],
+    [
+      "an unknown status",
+      async () =>
+        ({status: "paused", revision: 2, generatedAt: "2026-10-22T10:00:00.000Z"}) as unknown as FleetDesiredState,
+    ],
+  ])("%s keeps the last answer", async (_name, failing) => {
+    const r = await startAndSettle()
+    answer = failing
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(last()).toEqual(managedA)
+  })
+
+  test("is unknown when signed out and comes back from the account's stored answer, also after a restart", async () => {
+    let r = await startAndSettle()
+    session = null
+    r.sessionChanged()
+    expect(last()).toEqual({status: "unknown"})
+    session = sessionB
+    answer = () => new Promise<FleetDesiredState>(() => {})
+    r.sessionChanged()
+    expect(last()).toEqual({status: "unknown"})
+    r.stop()
+    stopListeners.clear()
+    dueListeners.clear()
+    session = sessionA
+    management = []
+    r = start()
+    r.trigger("startup")
+    expect(management).toEqual([managedA])
   })
 })
 

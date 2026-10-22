@@ -22,6 +22,7 @@ import {
 } from "../miniappReleaseInstall"
 import {resolveMiniappUrl} from "../miniappUrlResolution"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
+import {onRunningUpdatePromptDue} from "../runningUpdatePrompt"
 import {
   createAssignmentReconciler,
   type AssignmentReconciler,
@@ -30,6 +31,7 @@ import {
   type ReconcilerSession,
 } from "./assignmentReconciler"
 import {emitAssignmentOutcome, onFleetRevision} from "./fleetRevisionSignal"
+import {setFleetManagementState} from "./fleetManagementState"
 import {getFleetStore} from "./fleetStorage"
 
 function currentSession(): ReconcilerSession | null {
@@ -73,6 +75,7 @@ const miniapps: ManagedMiniappPort = {
   uninstall: uninstallManagedMiniapp,
   isRunning: (packageName) => miniappRunningRegistry.has(packageName) || miniappLauncher.isRunning(packageName),
   onStopped,
+  onUpdateDue: onRunningUpdatePromptDue,
   revokeAccess: stopMiniappForRevocation,
   restoreAccess: (packageName) => appRegistry.restoreMiniappAccess(packageName),
   isAccessRevoked: (packageName) => appRegistry.isMiniappAccessRevoked(packageName),
@@ -94,6 +97,7 @@ export function startAssignmentReconciler(client: DesiredStateClient): void {
       isOnline: () => online && cloudClientService.hasCore(),
       store: getFleetStore(),
       emit: emitAssignmentOutcome,
+      onManagementState: setFleetManagementState,
       timers: {
         setTimeout: (callback, ms) => BgTimer.setTimeout(callback, ms),
         clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
@@ -148,4 +152,5 @@ export function stopAssignmentReconciler(): void {
   }
   reconciler?.stop()
   reconciler = null
+  setFleetManagementState({status: "unknown"})
 }
