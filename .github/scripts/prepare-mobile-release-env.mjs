@@ -7,17 +7,17 @@ const CLOUDS = {
   dev: {
     core: "https://core.dev.us-west-2.mentraglass.com",
     runtime: "https://runtime.dev.us-west-2.mentraglass.com",
-    store: "https://api.apps.dev.mentraglass.com",
+    miniapps: "https://miniapps.dev.mentraglass.com/",
   },
   staging: {
     core: "https://core.staging.us-west-2.mentraglass.com",
     runtime: "https://runtime.staging.us-west-2.mentraglass.com",
-    store: "https://api.apps.staging.mentraglass.com",
+    miniapps: "https://miniapps.staging.mentraglass.com/",
   },
   prod: {
     core: "https://core.us-west-2.mentraglass.com",
     runtime: "https://runtime.us-west-2.mentraglass.com",
-    store: "https://api.apps.mentraglass.com",
+    miniapps: "https://miniapps.mentraglass.com/",
   },
 }
 
@@ -64,7 +64,7 @@ export function prepareMobileReleaseEnvironment({plan, template, backendEnvironm
     EXPO_PUBLIC_BUILD_ENV: backendEnvironment,
     EXPO_PUBLIC_CLOUD_CORE_URL: cloud.core,
     EXPO_PUBLIC_CLOUD_RUNTIME_URL: cloud.runtime,
-    EXPO_PUBLIC_STORE_URL: cloud.store,
+    EXPO_PUBLIC_MINIAPPS_URL: cloud.miniapps,
     EXPO_PUBLIC_MENTRAOS_VERSION: plan.releaseIdentity,
     MENTRAOS_NATIVE_MARKETING_VERSION: plan.native.marketingVersion,
     MENTRAOS_PINNED_BUILD_NUMBER: String(plan.native.buildNumber),
