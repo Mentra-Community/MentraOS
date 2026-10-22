@@ -47,13 +47,33 @@ const unwiredWorkspaceApi: WorkspaceApi = {
 }
 
 let current: WorkspaceApi = unwiredWorkspaceApi
+const wiredListeners = new Set<() => void>()
 
 /** The workspace calls in use. */
 export const getWorkspaceApi = (): WorkspaceApi => current
 
+/**
+ * Calls `listener` each time real calls are wired. The sheets mount at sign-in, before the app wires the client,
+ * so their first look finds nothing; this lets them look again. Returns the unsubscribe.
+ */
+export function onWorkspaceApiWired(listener: () => void): () => void {
+  wiredListeners.add(listener)
+  return () => {
+    wiredListeners.delete(listener)
+  }
+}
+
 /** Wires the real calls (or a fake in tests). Pass null to go back to the unwired default. */
 export function setWorkspaceApi(api: WorkspaceApi | null): void {
   current = api ?? unwiredWorkspaceApi
+  if (!api) return
+  for (const listener of [...wiredListeners]) {
+    try {
+      listener()
+    } catch (error) {
+      console.warn("Fleet: a workspace API listener failed", error)
+    }
+  }
 }
 
 /** Core's error code carried by a failed call, if it carries one. */

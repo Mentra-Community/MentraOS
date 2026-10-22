@@ -707,6 +707,32 @@ describe("when the sheets run", () => {
     }
   })
 
+  it("looks again once the real client is wired after sign-in, without waiting for a foreground", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {})
+    const addListener = jest
+      .spyOn(AppState, "addEventListener")
+      .mockImplementation((() => ({remove: jest.fn()})) as never)
+    try {
+      screen = render(
+        <ModalProvider>
+          <FleetSheets />
+        </ModalProvider>,
+      )
+      await act(async () => {
+        for (let tick = 0; tick < 20; tick++) await Promise.resolve()
+      })
+      expect(screen.queryByText("Ridgeline Field Services invited you to join their workspace")).toBeNull()
+
+      const core = fakeCore({invitations: [invitation(RIDGELINE)]})
+      act(() => setWorkspaceApi(core.api))
+      expect(await screen.findByText("Ridgeline Field Services invited you to join their workspace")).toBeTruthy()
+      await press(screen, "Decline")
+    } finally {
+      addListener.mockRestore()
+      warn.mockRestore()
+    }
+  })
+
   it("folds foreground events during open sheets into one more look, without stacking sheets", async () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
