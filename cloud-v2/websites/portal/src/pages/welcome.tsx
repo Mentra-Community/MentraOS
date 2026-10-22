@@ -23,7 +23,7 @@ import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { PendingInvitationCard } from "@/components/pending-invitation";
 import { PortalCenteredLayout, useBareWorkspaceId } from "@/components/portal-shell";
-import type { PendingInvitation } from "@/lib/invitations";
+import type { PendingInvitation, UnavailableInvitations } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
 
@@ -121,6 +121,31 @@ export function WelcomeScreen() {
         </Heading>
       )}
       {invitations.length > 0 ? <InvitationList invitations={invitations} /> : null}
+    </PortalCenteredLayout>
+  );
+}
+
+/**
+ * `/` for a person with no workspace whose invitations could not be read: the same unavailable state as a link that
+ * could not be looked up, with Try again. The portal makes no workspace until it knows whether one is waiting. A link
+ * that cannot be looked up may be dismissed, which lets the first run go on without it.
+ */
+export function InvitationsUnavailable({ unavailable }: { unavailable: UnavailableInvitations }) {
+  const portal = usePortal();
+  const { token } = unavailable;
+  return (
+    <PortalCenteredLayout>
+      <Heading title="Welcome to Mentra" />
+      <div className="mt-8">
+        <InvitationAcceptCard
+          load={{ status: "error", error: unavailable.error }}
+          onRetry={unavailable.retry}
+          onAccept={() => {}}
+          onDismiss={token === null ? undefined : () => portal.forgetInvitation({ invitationId: null, token }, "dismissed")}
+          accepting={false}
+          acceptError={null}
+        />
+      </div>
     </PortalCenteredLayout>
   );
 }

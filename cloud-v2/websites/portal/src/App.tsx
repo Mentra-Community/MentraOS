@@ -29,7 +29,7 @@ import { usePortalInvitations } from "./lib/use-portal-invitations";
 import { takePendingInvite } from "./lib/workspace-invite";
 import { EnterpriseScreen } from "./pages/enterprise";
 import { NotFoundMessage } from "./pages/not-found";
-import { InvitationScreen, WelcomeScreen } from "./pages/welcome";
+import { InvitationScreen, InvitationsUnavailable, WelcomeScreen } from "./pages/welcome";
 import { WorkspaceScreen } from "./pages/workspace";
 
 const queryClient = new QueryClient({
@@ -107,6 +107,7 @@ function PortalPage() {
     creation: me.data.workspaceCreation ?? { allowed: false, reason: null },
     link: invites.link,
     invitations: invites.invitations,
+    invitationsUnavailable: invites.unavailable,
     forgetInvitation: invites.forgetInvitation,
     signOut: () => void signOut(),
     signingOut,
@@ -166,8 +167,9 @@ function RouteScreen({ route, me, pathname, search }: { route: PortalRoute; me: 
  *
  * The first run keeps the address it was opened at, so a `?buy=` survives both the workspace made for the person and
  * an invitation they accept. It asks Core for a workspace (`ensure`) only when nothing else is left to offer: no
- * `?workspace=` (the person came to a workspace by its id), no invitation they can accept, and a deployment that lets
- * them have one.
+ * `?workspace=` (the person came to a workspace by its id), no invitation they can accept, invitations that were
+ * all read (a dropped connection or a 5xx on the link's lookup or the person's list holds it back, with Try again),
+ * and a deployment that lets them have one.
  *
  * The remembered workspace is this tab's own (`TabWorkspaceProvider`): another tab's pick does not move this one.
  * A workspace opened from the person's list through `?workspace=` is remembered, and a `?workspace=` that names
@@ -176,7 +178,7 @@ function RouteScreen({ route, me, pathname, search }: { route: PortalRoute; me: 
  */
 function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | null; search: string; me: PortalMe }) {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const { invitations, creation } = usePortal();
+  const { invitations, invitationsUnavailable, creation } = usePortal();
   const tab = useTabWorkspace();
   const param = workspaceParam(search);
   const workspaces = list.data;
@@ -196,7 +198,9 @@ function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | n
   // An invitation the person can accept comes first: the first run shows it in place and makes nothing. One for
   // another account does not count. Nothing is made while the list or the invitations are still being looked up.
   const acceptable = invitations?.filter(invitation => !invitation.forOtherAccount) ?? [];
-  const makes = !current && workspaces !== undefined && !list.isFetching && invitations !== undefined && acceptable.length === 0 && creation.allowed;
+  const unreadable = invitationsUnavailable ?? null;
+  const makes =
+    !current && workspaces !== undefined && !list.isFetching && invitations !== undefined && acceptable.length === 0 && creation.allowed && unreadable === null;
   const ensure = useEnsureWorkspace({ wanted: makes, has: current !== null });
 
   if (workspaces === undefined && !list.isError) return <Splash label="Loading your workspaces" />;
@@ -204,6 +208,8 @@ function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | n
     // The first run offers the person's invitations instead of a workspace, so it waits for them.
     if (invitations === undefined) return <Splash label="Looking for your invitations" />;
     if (workspaces === undefined || acceptable.length > 0 || !creation.allowed) return <WelcomeScreen />;
+    // Whether an invitation waits is not known: nothing is made until it is.
+    if (unreadable !== null) return <InvitationsUnavailable unavailable={unreadable} />;
     return <FirstRun failed={ensure.isError} retry={() => ensure.mutate()} />;
   }
   return <WorkspaceScreen key={current} workspaceId={current} bareWorkspaceId={bare} section={section} me={me} />;

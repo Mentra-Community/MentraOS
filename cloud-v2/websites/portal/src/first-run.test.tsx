@@ -78,6 +78,10 @@ interface Core {
   ensureGate: Promise<void> | null;
   /** `GET /invitations/mine` does not answer until this resolves. */
   mineGate: Promise<void> | null;
+  /** `GET /invitations/mine` fails with this status (0: the connection drops). */
+  mineStatus: number | null;
+  /** The link lookup fails with this status. */
+  linkStatus: number | null;
   /** How many times `ensure` was called. */
   ensures: number;
   requests: string[];
@@ -93,6 +97,8 @@ function fakeCore(setup: Partial<Core>) {
     ensureFailures: 0,
     ensureGate: null,
     mineGate: null,
+    mineStatus: null,
+    linkStatus: null,
     ensures: 0,
     requests: [],
     ...setup,
@@ -122,9 +128,12 @@ function fakeCore(setup: Partial<Core>) {
     }
     if (path === `${base}/invitations/mine`) {
       await core.mineGate;
+      if (core.mineStatus === 0) throw new TypeError("offline");
+      if (core.mineStatus !== null) return json({ error: "failed", error_description: "Could not list your invitations." }, core.mineStatus);
       return json({ items: core.invitations });
     }
     if (path === `${base}/invitations/peek` && method === "POST") {
+      if (core.linkStatus !== null) return json({ error: "failed", error_description: "Could not look up the invitation." }, core.linkStatus);
       return core.link ? json(core.link) : json({ error: "invitation_not_found", error_description: "gone" }, 404);
     }
     if (path === `${base}/invitations/accept` && method === "POST") {
@@ -171,6 +180,7 @@ function Portal({ creation, link }: { creation: WorkspaceCreation; link: string 
     link: invites.link,
     invitations: invites.invitations,
     forgetInvitation: invites.forgetInvitation,
+    invitationsUnavailable: invites.unavailable,
     signOut() {},
     signingOut: false,
     developerConsoleUrl: null,
@@ -206,7 +216,7 @@ async function open(address: string, options: Options = {}) {
   window.history.replaceState(null, "", address);
   const { core, fetcher } = fakeCore(options);
   spyOn(globalThis, "fetch").mockImplementation(fetcher as typeof fetch);
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, ...(options.warm ? { staleTime: Infinity } : {}) } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0, refetchOnWindowFocus: false, ...(options.warm ? { staleTime: Infinity } : {}) } } });
   if (options.warm) {
     client.setQueryData(workspaceKeys.list(portalWorkspaceApi), []);
     client.setQueryData(workspaceKeys.myInvitations(portalWorkspaceApi), []);
@@ -362,6 +372,72 @@ describe("an invitation the person can accept comes first", () => {
     const { core } = await open(BUY, { withLink: true, link: null });
     await until(() => core.ensures === 1, "ensure to be called");
     await until(() => heading() === "Licenses", "the Licenses page");
+  });
+});
+
+describe("invitations that could not be read hold the first run back", () => {
+  const unreadable = "Could not list your invitations.";
+
+  test("a failed /invitations/mine (5xx) makes nothing and offers Try again, which looks again", async () => {
+    const { core } = await open(BUY, { mineStatus: 500 });
+    await until(() => page().includes(unreadable), "the unavailable state");
+    expect(page()).toContain("Try again");
+    await flush();
+    expect(core.ensures).toBe(0);
+    expect(page()).not.toContain("Setting up your workspace");
+    // Back up, with an invitation waiting: it is shown, and still nothing is made.
+    core.mineStatus = null;
+    core.invitations = [invitationTo("ws_other")];
+    await click(byText("Try again", "button"));
+    await until(() => page().includes("Name of ws_other"), "the invitation");
+    expect(core.ensures).toBe(0);
+    expect(address()).toBe(BUY);
+  });
+
+  test("and once it answers with none, the workspace is made", async () => {
+    const { core } = await open(BUY, { mineStatus: 503 });
+    await until(() => page().includes(unreadable), "the unavailable state");
+    core.mineStatus = null;
+    await click(byText("Try again", "button"));
+    await until(() => heading() === "Licenses", "the Licenses page");
+    expect(core.ensures).toBe(1);
+  });
+
+  test("a link lookup that failed (5xx) makes nothing and offers Try again", async () => {
+    const { core } = await open(BUY, { withLink: true, link: invitationTo("ws_other"), linkStatus: 502 });
+    await until(() => page().includes("Could not look up the invitation."), "the unavailable state");
+    await flush();
+    expect(core.ensures).toBe(0);
+    core.linkStatus = null;
+    await click(byText("Try again", "button"));
+    await until(() => page().includes("Name of ws_other"), "the invitation");
+    expect(core.ensures).toBe(0);
+  });
+
+  test("a dropped connection holds it back the same way", async () => {
+    const { core } = await open(BUY, { mineStatus: 0 });
+    await until(() => page().includes("Could not reach the server"), "the unavailable state");
+    await flush();
+    expect(core.ensures).toBe(0);
+  });
+
+  test("a 4xx is an answer: an unverified email (403) on /invitations/mine holds nothing back", async () => {
+    const { core } = await open(BUY, { mineStatus: 403 });
+    await until(() => core.ensures === 1, "ensure to be called");
+    await until(() => heading() === "Licenses", "the Licenses page");
+    expect(page()).not.toContain(unreadable);
+  });
+
+  test("and so is a link Core refuses (400): it does not hold forever", async () => {
+    const { core } = await open(BUY, { withLink: true, link: invitationTo("ws_other"), linkStatus: 400 });
+    await until(() => core.ensures === 1, "ensure to be called");
+    await until(() => heading() === "Licenses", "the Licenses page");
+  });
+
+  test("where creation is not allowed, unreadable invitations change nothing: the notice shows", async () => {
+    const { core } = await open(BUY, { mineStatus: 500, creation: { allowed: false, reason: "email_unverified" } });
+    await until(() => heading() === "You're not in a workspace yet.", "the notice");
+    expect(core.ensures).toBe(0);
   });
 });
 
