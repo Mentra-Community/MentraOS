@@ -307,7 +307,7 @@ what](#who-sees-what)).
   | Billing is offered, and the catalog offers the product | Opens the Buy dialog on it |
   | The workspace already holds it, or has a card for it | "<workspace> already has <product>." |
   | The product is not in the catalog's offers | "That product isn't for sale." |
-  | The viewer is not an Admin or Owner | "Only Admins and Owners of <workspace> can buy <product>. Ask one of them." (the product's name where the page has the catalog, else "licenses") |
+  | The viewer is not an Admin or Owner | "Only Admins and Owners of <workspace> can buy <product>. Ask one of them." (the product's name from the catalog, else "licenses" where it can't be read) |
   | The viewer is an Admin or Owner, but billing is not offered here | "Licenses can't be bought here." |
 
   A note stays until the person leaves the page. Nothing goes to checkout

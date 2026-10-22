@@ -21,8 +21,9 @@
  *
  * It asks only for what the viewer's page needs. The catalog is asked for by whoever is offered billing (it names
  * licenses and sells products) and, once Core's list is in, by anyone with a license to name: a member with no seat
- * (and a manager not offered billing with no licenses) is never asked for it, so that page waits for Core's list first
- * and a member's page makes its one extra round trip for the catalog after it.
+ * (and a manager not offered billing with no licenses) is never asked for it, unless a link asks to buy a product, when
+ * the note names it (that read is optional: it can hold the page while it is out, but never makes it unavailable). That
+ * page waits for Core's list first and a member's page makes its one extra round trip for the catalog after it.
  *
  * Which of these a viewer is, comes from Core's own answer for the workspace (their capabilities), and from the host's
  * `offer`: `catalog` is whether billing's catalog can be read (`me.modules.billingCatalog`) and `manage` whether this
@@ -126,7 +127,14 @@ interface LicensesPageData {
  * - `ready`: `data` is what the page and the header draw from.
  */
 function useLicensesPage(
-  { api, billing, workspaceId, offer, purchaseId }: Pick<WorkspaceLicensesViewProps, "api" | "billing" | "workspaceId" | "offer"> & { purchaseId: string | null },
+  {
+    api,
+    billing,
+    workspaceId,
+    offer,
+    purchaseId,
+    buyProduct = null,
+  }: Pick<WorkspaceLicensesViewProps, "api" | "billing" | "workspaceId" | "offer"> & { purchaseId: string | null; buyProduct?: string | null },
   /** False for a component that will draw nothing whatever it reads (the header, for someone not offered billing): it asks for nothing. */
   wanted = true,
 ) {
@@ -147,7 +155,12 @@ function useLicensesPage(
   // The catalog names licenses and sells products: wanted by whoever is offered billing, and by anyone with a license to
   // name. A viewer with nothing to name and nothing to buy isn't asked for it (so it waits for Core's list to know).
   const needsCatalog = offer.manage || (shown !== null && shown.length > 0);
-  const catalog = useQuery({ ...billingCatalogQuery(billing, scope), enabled: wanted && offer.catalog && needsCatalog });
+  // A link asking to buy, opened by someone who can't (a Member or Developer): the note names the product, so the catalog
+  // is read for its name. Nothing else needs it, so it never makes the page unavailable (a read that fails leaves the
+  // note saying "licenses"); it may hold the page while it is out. Once the link is handled the host removes `?buy=`,
+  // the read is no longer wanted, and what it answered stays.
+  const namesLink = buyProduct !== null && offer.catalog && detail.data !== undefined && !can(detail.data, "workspace.billing.manage");
+  const catalog = useQuery({ ...billingCatalogQuery(billing, scope), enabled: wanted && offer.catalog && (needsCatalog || namesLink) });
   // Only a viewer offered billing is asked for the status (the route refuses anyone else). While it is read under a key
   // that differs only by `purchase` (`?purchase=` came or went) it keeps its last answer, so that nothing swaps out the
   // cards; it never keeps another workspace's (see `statusPlaceholder`).
@@ -161,7 +174,7 @@ function useLicensesPage(
   else {
     const required = [...(needsCatalog && offer.catalog ? [catalog] : []), ...(offer.manage ? [status] : []), ...(reads && (shown.length > 0 || offer.manage) ? [members] : [])];
     if ((needsCatalog && !offer.catalog) || required.some(readFailed)) state = "unavailable";
-    else if (required.some(readWaiting)) state = "loading";
+    else if (required.some(readWaiting) || (namesLink && readWaiting(catalog))) state = "loading";
     else {
       data = {
         workspace: detail.data!,
@@ -192,7 +205,7 @@ export function WorkspaceLicensesView({
   pollMs = PURCHASE_POLL_MS,
   timeoutMs = PURCHASE_TIMEOUT_MS,
 }: WorkspaceLicensesViewProps) {
-  const { scope, state, data, canRead, queries } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId });
+  const { scope, state, data, canRead, queries } = useLicensesPage({ api, billing, workspaceId, offer, purchaseId, buyProduct });
   const { detail, licenses, members, catalog, status } = queries;
 
   const answer = offer.manage ? status.data?.purchase : null;

@@ -74,6 +74,10 @@ interface Core {
   ensureFindsExisting: boolean;
   /** How many `ensure` calls fail before one succeeds. */
   ensureFailures: number;
+  /** `ensure` is refused with this status (403: creation is not allowed after all). */
+  ensureStatus: number | null;
+  /** `ensure` makes the workspace, but the list does not show it (a read that came back stale or failed). */
+  listHidesMade: boolean;
   /** `ensure` does not answer until this resolves. */
   ensureGate: Promise<void> | null;
   /** `GET /invitations/mine` does not answer until this resolves. */
@@ -95,6 +99,8 @@ function fakeCore(setup: Partial<Core>) {
     link: null,
     ensureFindsExisting: false,
     ensureFailures: 0,
+    ensureStatus: null,
+    listHidesMade: false,
     ensureGate: null,
     mineGate: null,
     mineStatus: null,
@@ -111,12 +117,14 @@ function fakeCore(setup: Partial<Core>) {
     const base = "/api/portal/workspaces";
     const path = url.pathname;
     if (path === base) {
+      if (core.listHidesMade && core.ensures > 0) return json({ error: "failed", error_description: "Could not list." }, 500);
       return json({ items: core.listed.map(id => ({ ...detail(id), membership: { membershipId: `wm_${id}`, role: "owner" } })) });
     }
     if (path === `${base}/ensure` && method === "POST") {
       core.ensures += 1;
       expect(init?.body).toBeUndefined();
       await core.ensureGate;
+      if (core.ensureStatus !== null) return json({ error: "workspace_creation_not_allowed", error_description: "Creation is not allowed." }, core.ensureStatus);
       if (core.ensureFailures > 0) {
         core.ensureFailures -= 1;
         return json({ error: "internal_error", error_description: "try later" }, 500);
@@ -291,6 +299,29 @@ describe("a person with no workspace and no invitation gets one made", () => {
     await until(() => heading() === "Licenses", "the Licenses page");
     expect(core.ensures).toBe(2);
     expect(address()).toBe(BUY);
+  });
+
+  test("an ensure Core refuses (403) is decision 6's page, with no Try again", async () => {
+    const { core } = await open(BUY, { ensureStatus: 403 });
+    await until(() => page().includes("You're not in a workspace yet."), "the page");
+    expect(page()).toContain("You can't create a workspace with this account.");
+    expect(page()).toContain("Open an invitation link someone sent you to join their workspace.");
+    expect(page()).not.toContain("Couldn't set up your workspace.");
+    expect(findAll("button").some(button => button.textContent === "Try again")).toBe(false);
+    await flush();
+    expect(core.ensures).toBe(1);
+    expect(address()).toBe(BUY);
+  });
+
+  test("an ensure that succeeds while the list cannot show the workspace ends in the failure state, and Try again asks again", async () => {
+    const { core } = await open(BUY, { listHidesMade: true });
+    await until(() => page().includes("Couldn't set up your workspace."), "the failure");
+    expect(page()).not.toContain("Setting up your workspace");
+    expect(core.ensures).toBe(1);
+    core.listHidesMade = false;
+    await click(byText("Try again", "button"));
+    await until(() => heading() === "Licenses", "the Licenses page");
+    expect(core.ensures).toBe(2);
   });
 
   test("losing the workspace later makes a new one", async () => {

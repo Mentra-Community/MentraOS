@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrandPage, Button, buttonVariants, Spinner, workspaceKeys, workspaceListQuery } from "@mentra/workspace-ui";
+import { BrandPage, Button, buttonVariants, Spinner, WorkspaceApiError, workspaceKeys, workspaceListQuery } from "@mentra/workspace-ui";
 import { useEffect, useRef, useState } from "react";
 import { PortalCenteredLayout, PortalShell, TabWorkspaceProvider, useTabWorkspace } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
@@ -210,7 +210,12 @@ function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | n
     if (workspaces === undefined || acceptable.length > 0 || !creation.allowed) return <WelcomeScreen />;
     // Whether an invitation waits is not known: nothing is made until it is.
     if (unreadable !== null) return <InvitationsUnavailable unavailable={unreadable} />;
-    return <FirstRun failed={ensure.isError} retry={() => ensure.mutate()} />;
+    // Core refused to make one (the deployment's rule changed after `me` was read): that is decision 6's page, and
+    // asking again would be refused the same way.
+    if (ensure.error instanceof WorkspaceApiError && ensure.error.status === 403) return <WelcomeScreen creationRefused />;
+    // Failed, or answered but the list still has no workspace once it has settled: either way there is a way out.
+    const failed = ensure.isError || (ensure.isSuccess && !list.isFetching);
+    return <FirstRun failed={failed} retry={() => ensure.mutate()} />;
   }
   return <WorkspaceScreen key={current} workspaceId={current} bareWorkspaceId={bare} section={section} me={me} />;
 }
@@ -241,7 +246,7 @@ function useEnsureWorkspace({ wanted, has }: { wanted: boolean; has: boolean }) 
       asked.current = true;
       mutate();
     }
-  }, [wanted, has]);
+  }, [wanted, has, mutate, reset, isIdle]);
   return ensure;
 }
 

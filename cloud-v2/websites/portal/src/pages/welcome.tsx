@@ -80,7 +80,7 @@ function BackHome({ name }: { name: string }) {
  * `/` with no workspace to open, where the portal does not make one: the person's invitations, or with none they
  * can accept, why they have no workspace and the way into one.
  */
-export function WelcomeScreen() {
+export function WelcomeScreen({ creationRefused = false }: { /** Core just refused to make the person a workspace: say so as the deployment's rule does. */ creationRefused?: boolean }) {
   const portal = usePortal();
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   const invitations = portal.invitations ?? [];
@@ -117,7 +117,7 @@ export function WelcomeScreen() {
         </Heading>
       ) : (
         <Heading title="You're not in a workspace yet.">
-          {[creationNotice(portal.creation), "Open an invitation link someone sent you to join their workspace."].filter(Boolean).join(" ")}
+          {[creationNotice(portal.creation) ?? (creationRefused ? creationNotice({ allowed: false, reason: null }) : null), "Open an invitation link someone sent you to join their workspace."].filter(Boolean).join(" ")}
         </Heading>
       )}
       {invitations.length > 0 ? <InvitationList invitations={invitations} /> : null}

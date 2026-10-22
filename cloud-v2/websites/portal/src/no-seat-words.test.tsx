@@ -430,7 +430,7 @@ describe("a link to buy one product", () => {
     await cleanup();
     mock.restore();
     const member: Scenario = { ...SCENARIOS.catalog(), role: "member", workspaceCatalog: workspaceCatalog(false) };
-    await open(link, member, t.page.buyLink.askAnAdmin("Acme Field Services", t.page.buyLink.anyProduct));
+    await open(link, member, t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited"));
     expectNoSeat("a member");
     await cleanup();
     mock.restore();
@@ -516,7 +516,7 @@ describe("the states were reached", () => {
     ["the solo buy step", t.buy.yoursOnPayment],
     ["a link to a product held", t.page.buyLink.alreadyHas("Acme Field Services", "Mentra Call Unlimited")],
     ["a link to a product not sold", t.page.buyLink.notForSale],
-    ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", t.page.buyLink.anyProduct)],
+    ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],
     ["a link where billing isn't offered", t.page.buyLink.notHere],
     ["the total", "3 products"],
   ];

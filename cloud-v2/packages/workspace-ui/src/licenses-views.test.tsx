@@ -985,22 +985,53 @@ describe("the ?buy= link", () => {
     }
   });
 
-  test("a Member is told to ask an Admin or Owner, by the product's name when the catalog is read, else 'licenses'", async () => {
+  test("a Member with no license is told to ask an Admin or Owner, by the product's name, from one catalog read", async () => {
     const none = rig({ role: "member", licenses: [] });
     const handled = onBuyHandled();
     await mountView(none, { buyProduct: EXAMPLE, offer: { catalog: true, manage: false }, onBuyHandled: handled });
     await until(() => note("Ask one of them") !== undefined, "the note");
-    expect(text(note("Ask one of them")!)).toBe(`Only Admins and Owners of ${WORKSPACE_NAME} can buy licenses. Ask one of them.`);
+    expect(text(note("Ask one of them")!)).toBe(`Only Admins and Owners of ${WORKSPACE_NAME} can buy Example Add-on. Ask one of them.`);
     expect(isNeutral(note("Ask one of them")!)).toBe(true);
     noDialogs();
     expect(handled).toHaveBeenCalledTimes(1);
+    expect(none.catalog).toHaveBeenCalledTimes(1);
+    expect(none.status).not.toHaveBeenCalled();
+    expect(none.listMembers).not.toHaveBeenCalled();
     expect(none.purchase).not.toHaveBeenCalled();
-    await cleanup();
+  });
 
+  test("a Member who holds a license is told the same, by the product's name", async () => {
     const named = rig({ role: "member", licenses: [callLicense({ seatsUsed: 1, seats: seatsOf([SELF]) })] });
     await mountView(named, { buyProduct: CALL, offer: { catalog: true, manage: false }, onBuyHandled: onBuyHandled() });
     await until(() => note("Ask one of them") !== undefined, "the note");
     expect(text(note("Ask one of them")!)).toBe(`Only Admins and Owners of ${WORKSPACE_NAME} can buy Mentra Call Unlimited. Ask one of them.`);
+  });
+
+  test("a Member whose catalog read fails is told 'licenses', and the page is not unavailable", async () => {
+    const none = rig({ role: "member", licenses: [] });
+    none.catalog.mockImplementation(async () => {
+      throw new Error("503");
+    });
+    await mountView(none, { buyProduct: EXAMPLE, offer: { catalog: true, manage: false }, onBuyHandled: onBuyHandled() });
+    await until(() => note("Ask one of them") !== undefined, "the note");
+    expect(text(note("Ask one of them")!)).toBe(`Only Admins and Owners of ${WORKSPACE_NAME} can buy licenses. Ask one of them.`);
+    expect(unavailable()).toBe(false);
+  });
+
+  test("with the catalog not readable at all, a Member is told 'licenses' and no catalog request is made", async () => {
+    const none = rig({ role: "member", licenses: [] });
+    await mountView(none, { buyProduct: EXAMPLE, offer: { catalog: false, manage: false }, onBuyHandled: onBuyHandled() });
+    await until(() => note("Ask one of them") !== undefined, "the note");
+    expect(text(note("Ask one of them")!)).toBe(`Only Admins and Owners of ${WORKSPACE_NAME} can buy licenses. Ask one of them.`);
+    expect(none.catalog).not.toHaveBeenCalled();
+  });
+
+  test("a Member with no license and no link makes no catalog request", async () => {
+    const none = rig({ role: "member", licenses: [] });
+    await mountView(none, { offer: { catalog: true, manage: false } });
+    await delay(50);
+    expect(none.catalog).not.toHaveBeenCalled();
+    expect(note("Ask one of them")).toBeUndefined();
   });
 
   test("a manager who isn't offered billing is told licenses can't be bought here", async () => {

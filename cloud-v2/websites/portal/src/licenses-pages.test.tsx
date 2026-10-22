@@ -311,8 +311,7 @@ describe("a link that asks to buy one product", () => {
   test("a Member is told who to ask, and the address keeps no ?buy=", async () => {
     const scenario: Scenario = { ...SCENARIOS.catalog(), role: "member", workspaceCatalog: workspaceCatalog(false) };
     await open(CALL_LINK, scenario, { ready: "Ask one of them." });
-    // A Member holding nothing is not sent the catalog, so the note cannot name the product.
-    expect(has("Only Admins and Owners of Acme Field Services can buy licenses. Ask one of them.")).toBe(true);
+    expect(has("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.")).toBe(true);
     expect(dialog()).toBeNull();
     expect(window.location.pathname + search()).toBe("/licenses");
   });

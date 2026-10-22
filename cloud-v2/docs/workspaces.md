@@ -80,10 +80,15 @@ place, at the address you came to; another account's invitation does not count. 
 asks Core for your workspace (`POST /api/portal/workspaces/ensure`) and shows "Setting up your
 workspace" while it does, then opens it at the same address, so a `?buy=` link survives.
 Core answers with your workspace if you have one and makes one named for you ("Dana Reyes's
-Workspace") if not. If that fails the page says "Couldn't set up your workspace." with **Try
-again**. Someone who may not have a workspace (an unverified email, or a deployment where only
-Organization Admins create them) sees "You're not in a workspace yet." and "Open an invitation
-link someone sent you to join their workspace." Accepting an invitation from the first run keeps
+Workspace") if not. If that fails, or Core answers but your list still has no workspace, the page
+says "Couldn't set up your workspace." with **Try again**. Nothing is made while the portal cannot
+tell whether an invitation waits (a dropped connection or a server error reading your invitations
+or the link's): the page says so, with **Try again**, and **Dismiss** for a link. Someone who may
+not have a workspace (an unverified email, or a deployment where only Organization Admins create
+them), or whom Core refuses with a `403` because the rules changed after the page loaded, sees
+"You're not in a workspace yet." with the reason ("You can't create a workspace with this
+account." when Core gave none) and "Open an invitation link someone sent you to join their
+workspace." Accepting an invitation from the first run keeps
 the address, now in the joined workspace.
 
 An invitation link lands on `/invitation`, which reads the token from the tab's session storage.
