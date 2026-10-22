@@ -4,7 +4,17 @@ import {describe, expect, mock, test} from "bun:test"
 import {readFileSync} from "node:fs"
 
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
-const methods = ["handlePlayAudio", "handleSpeak", "handleSpeakerStreamOpen", "setSpeakerState", "stopActiveSpeakerStream"]
+const methods = [
+  "beginSpeakerOperation",
+  "finishSpeakerOperation",
+  "handlePlayAudio",
+  "handleSpeak",
+  "handleSpeakerStreamOpen",
+  "handleStopAudio",
+  "isCurrentSpeakerOperation",
+  "setSpeakerState",
+  "stopActiveSpeakerStream",
+]
   .map((name) => {
     const start = source.search(new RegExp(`^  private (?:async )?${name}\\(`, "m"))
     if (start < 0) throw new Error(`Missing runtime method ${name}`)
@@ -34,6 +44,7 @@ function createHost(app: {speakerState: string; activeSpeakerStreamId?: string})
       streamEndCallbacks.get(streamId)?.(streamId, true, null, 12)
       streamEndCallbacks.delete(streamId)
     }),
+    stopForApp: mock(async () => {}),
     play: mock((request: Record<string, unknown>) => {
       if (request.stopOtherAudio) {
         // Model the audio service aborting streams after its async setup.
@@ -87,6 +98,8 @@ function createHost(app: {speakerState: string; activeSpeakerStreamId?: string})
   host.connectedApps = new Map([[appId, app]])
   host.speakerStreamCounter = 0
   host.speechRuns = new Map()
+  host.speakerOperationCounter = 0
+  host.currentSpeakerOperations = new Map()
   host.sendResult = mock(() => {})
   host.cancelSpeech = mock(() => {})
   host.sendToMiniapp = mock((packageName: string, payload: Record<string, unknown>) => {
@@ -199,5 +212,80 @@ describe("LocalMiniappRuntime speaker stream state events", () => {
       ["loading", undefined],
       ["playing", undefined],
     ])
+  })
+
+  test("does not start a play request after stop supersedes stream preemption", async () => {
+    const {host, opens, audioPlaybackService} = createHost({speakerState: "idle"})
+    await host.handleSpeakerStreamOpen(appId, {sampleRate: 24000}, "open-before-stop")
+    const streamId = opens[0]!.streamId as string
+    const onEnded = opens[0]!.onEnded as (id: string, success: boolean, error: string | null, durationMs: number) => void
+    let finishAbort!: () => void
+    audioPlaybackService.abortStream = mock(
+      (abortedStreamId: string) =>
+        new Promise<void>((resolve) => {
+          finishAbort = () => {
+            onEnded(abortedStreamId, true, null, 12)
+            resolve()
+          }
+        }),
+    )
+
+    const play = host.handlePlayAudio(appId, {audioUrl: "file://answer.wav", stopOtherAudio: true}, "stale-play")
+    await Promise.resolve()
+    await host.handleStopAudio(appId, {}, "stop")
+    finishAbort()
+    await play
+
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+    expect(host.sendResult).toHaveBeenCalledWith(appId, "stale-play", true, {duration: 0})
+    expect(opens).toHaveLength(1)
+  })
+
+  test("a newer play request supersedes an older play waiting for stream abort", async () => {
+    const {host, opens, audioPlaybackService} = createHost({speakerState: "idle"})
+    await host.handleSpeakerStreamOpen(appId, {sampleRate: 24000}, "open-before-replay")
+    const onEnded = opens[0]!.onEnded as (id: string, success: boolean, error: string | null, durationMs: number) => void
+    let releaseAbort!: () => void
+    const abortGate = new Promise<void>((resolve) => (releaseAbort = resolve))
+    audioPlaybackService.abortStream = mock(async (abortedStreamId: string) => {
+      await abortGate
+      onEnded(abortedStreamId, true, null, 12)
+    })
+
+    const firstPlay = host.handlePlayAudio(appId, {audioUrl: "file://first.wav", stopOtherAudio: true}, "first-play")
+    await Promise.resolve()
+    const secondPlay = host.handlePlayAudio(appId, {audioUrl: "file://second.wav", stopOtherAudio: true}, "second-play")
+    await Promise.resolve()
+    releaseAbort()
+    await Promise.all([firstPlay, secondPlay])
+
+    expect(audioPlaybackService.play).toHaveBeenCalledTimes(1)
+    expect(audioPlaybackService.play).toHaveBeenCalledWith(
+      expect.objectContaining({requestId: "second-play", audioUrl: "file://second.wav"}),
+      expect.any(Function),
+    )
+    expect(host.sendResult).toHaveBeenCalledWith(appId, "first-play", true, {duration: 0})
+  })
+
+  test("speak supersedes a play request waiting for stream abort", async () => {
+    const {host, opens, audioPlaybackService} = createHost({speakerState: "idle"})
+    await host.handleSpeakerStreamOpen(appId, {sampleRate: 24000}, "open-before-speak")
+    const onEnded = opens[0]!.onEnded as (id: string, success: boolean, error: string | null, durationMs: number) => void
+    let releaseAbort!: () => void
+    const abortGate = new Promise<void>((resolve) => (releaseAbort = resolve))
+    audioPlaybackService.abortStream = mock(async (streamId: string) => {
+      await abortGate
+      onEnded(streamId, true, null, 12)
+    })
+
+    const play = host.handlePlayAudio(appId, {audioUrl: "file://old.wav", stopOtherAudio: true}, "stale-play")
+    await Promise.resolve()
+    const speak = host.handleSpeak(appId, {text: "Hello", forceLocal: true, stopOtherAudio: true}, "new-speak")
+    await Promise.resolve()
+    releaseAbort()
+    await Promise.all([play, speak])
+
+    expect(audioPlaybackService.play).toHaveBeenCalledTimes(1)
+    expect(host.sendResult).toHaveBeenCalledWith(appId, "stale-play", true, {duration: 0})
   })
 })

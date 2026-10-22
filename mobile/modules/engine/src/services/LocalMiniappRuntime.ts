@@ -670,6 +670,8 @@ class LocalMiniappRuntime {
   public onLivenessTimeout: ((packageName: string) => void) | null = null
 
   private speechRuns = new Map<string, SpeechRun>()
+  private speakerOperationCounter = 0
+  private currentSpeakerOperations = new Map<string, number>()
   private runtimeSeq = 0
   private authSessionSeq = 0
 
@@ -2382,8 +2384,14 @@ class LocalMiniappRuntime {
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
     const stopOtherAudio = payload.stopOtherAudio !== false
 
+    const operationId = this.beginSpeakerOperation(packageName)
     this.cancelSpeech(packageName)
     if (stopOtherAudio) await this.stopActiveSpeakerStream(packageName)
+    if (!this.isCurrentSpeakerOperation(packageName, operationId)) {
+      this.sendResult(packageName, requestId, true, {duration: 0})
+      return
+    }
+    this.finishSpeakerOperation(packageName, operationId)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
       {
@@ -2433,7 +2441,24 @@ class LocalMiniappRuntime {
     await audioPlaybackService.abortStream(streamId)
   }
 
+  private beginSpeakerOperation(packageName: string): number {
+    const operationId = ++this.speakerOperationCounter
+    this.currentSpeakerOperations.set(packageName, operationId)
+    return operationId
+  }
+
+  private isCurrentSpeakerOperation(packageName: string, operationId: number): boolean {
+    return this.currentSpeakerOperations.get(packageName) === operationId
+  }
+
+  private finishSpeakerOperation(packageName: string, operationId: number): void {
+    if (this.isCurrentSpeakerOperation(packageName, operationId)) {
+      this.currentSpeakerOperations.delete(packageName)
+    }
+  }
+
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
+    this.currentSpeakerOperations.delete(packageName)
     const app = this.connectedApps.get(packageName)
     const streamId = app?.activeSpeakerStreamId
     if (app) app.activeSpeakerStreamId = undefined
@@ -2685,6 +2710,7 @@ class LocalMiniappRuntime {
     const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
     const run: SpeechRun = {id: audioRequestId, cancelled: false}
 
+    const operationId = this.beginSpeakerOperation(packageName)
     this.cancelSpeech(packageName)
     this.speechRuns.set(packageName, run)
 
@@ -2734,7 +2760,12 @@ class LocalMiniappRuntime {
 
     try {
       if (stopOtherAudio) await this.stopActiveSpeakerStream(packageName)
-      if (run.cancelled || this.speechRuns.get(packageName) !== run) return
+      if (
+        run.cancelled ||
+        this.speechRuns.get(packageName) !== run ||
+        !this.isCurrentSpeakerOperation(packageName, operationId)
+      ) return
+      this.finishSpeakerOperation(packageName, operationId)
       this.setSpeakerState(packageName, "loading")
 
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
