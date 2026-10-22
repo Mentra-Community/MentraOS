@@ -58,7 +58,6 @@ const otaArtifacts = productionOtaArtifacts({
   sources: otaSources,
   files: otaFiles,
   repository: "Mentra-Community/MentraOS",
-  provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1",
 })
 
 const kinds = new Map([
@@ -259,6 +258,8 @@ test("production publishes byte-identical copies of the promoted beta's OTA mani
   )
   assert.equal(otaArtifacts[1].url, `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-v${baseVersion}/mentra-live-ota-bundle-${baseVersion}.zip`)
   assert.ok(otaArtifacts.every(({status}) => status === "promoted"))
+  // Provenance is the beta record, so a resumed finalization reproduces the same record.
+  assert.ok(otaArtifacts.every(({provenanceUrl}) => provenanceUrl === plan.promotion.selectedBetaManifest.url))
 
   const record = finalizingRecord()
   const manifest = finalizeProductionPromotion({plan, record, checkpointUrl: "https://example.com/checkpoint.json", otaArtifacts})
@@ -280,7 +281,6 @@ test("production publishes byte-identical copies of the promoted beta's OTA mani
         sources: otaSources,
         files: {...otaFiles, otaBundle: Buffer.from("rebuilt bundle")},
         repository: "Mentra-Community/MentraOS",
-        provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1",
       }),
     /not a byte-identical copy/,
   )

@@ -207,6 +207,13 @@ jobs:
               --kit-dir kit --identity "$IDENTITY" --tag-exists false > kit-status.txt
             if grep -qx 'needed=false' kit-status.txt; then
               cat kit-status.txt
+              # An earlier attempt may have advanced the branch and then failed
+              # to push the tag: tag the commit that carries this release.
+              if [[ "$(jq -r .releaseIdentity kit/starter-kit-release.json 2>/dev/null)" == "$IDENTITY" ]] &&
+                ! git ls-remote --exit-code --tags "$remote" "refs/tags/sdk-$IDENTITY" >/dev/null; then
+                git -C kit tag "sdk-$IDENTITY"
+                git -C kit push --quiet origin "refs/tags/sdk-$IDENTITY"
+              fi
               exit 0
             fi
             find kit -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +

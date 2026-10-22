@@ -68,7 +68,9 @@ export function productionOtaSources({plan, betaManifest, betaManifestSha256}) {
 }
 
 // The production record's entries for the copies.
-export function productionOtaArtifacts({plan, sources, files, repository, provenanceUrl}) {
+// The copies' provenance is the promoted beta's release record, which is
+// fixed by the plan: a resumed finalization reproduces the record byte for byte.
+export function productionOtaArtifacts({plan, sources, files, repository}) {
   return sources.map(({key, name, source}) => {
     const bytes = files[key]
     if (!bytes || sha256(bytes) !== source.sha256) {
@@ -81,7 +83,7 @@ export function productionOtaArtifacts({plan, sources, files, repository, proven
       sha256: source.sha256,
       size: bytes.length,
       promotedFrom: {coordinate: source.coordinate, url: source.url},
-      provenanceUrl: requirePublicHttpsUrl(provenanceUrl, "provenance URL"),
+      provenanceUrl: requirePublicHttpsUrl(plan.promotion.selectedBetaManifest?.url, "beta release record URL"),
     }
   })
 }
@@ -148,7 +150,6 @@ async function main() {
     sources,
     files,
     repository: args.repository,
-    provenanceUrl: args["provenance-url"],
   })
   const directory = path.resolve(args["output-dir"])
   mkdirSync(directory, {recursive: true})

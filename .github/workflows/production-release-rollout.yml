@@ -191,7 +191,6 @@ jobs:
           node .github/scripts/production-ota-assets.mjs stage \
             --plan "$plan" \
             --repository "$GITHUB_REPOSITORY" \
-            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --output-dir production-finalization/ota
           for name in "$(jq -er .artifactNames.otaManifest "$plan")" "$(jq -er .artifactNames.otaBundle "$plan")"; do
             node .github/scripts/publish-immutable-release-asset.mjs \
