@@ -21,7 +21,7 @@ import {
   WorkspaceInviteDialog,
   WorkspacePendingInvitationsPanel,
 } from "./components/invitations-panel";
-import { CreateWorkspaceDialog, CreateWorkspaceForm } from "./components/create-workspace";
+import { CreateWorkspaceForm } from "./components/create-workspace";
 import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
@@ -908,16 +908,6 @@ describe("creating a workspace", () => {
     expect(markup).toContain("Cancel");
     expect(markup.match(/<input/g)).toHaveLength(1);
     expect(requests).toEqual([]);
-  });
-
-  test("the dialog shows the form only while open", () => {
-    const { api } = offlineApi();
-    expect(renderSeeded(api, {}, <CreateWorkspaceDialog api={api} open={false} onClose={() => {}} onCreated={() => {}} />)).not.toContain(
-      "Workspace name",
-    );
-    const open = renderSeeded(api, {}, <CreateWorkspaceDialog api={api} open onClose={() => {}} onCreated={() => {}} />);
-    expect(open).toContain("Create a workspace");
-    expect(open).toContain("Workspace name");
   });
 });
 

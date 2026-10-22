@@ -281,7 +281,6 @@ export function WorkspaceScreen({
   return (
     <PortalShell
       current={current}
-      section={active ?? undefined}
       nav={workspaceNav(workspaceId, sections)}
       activeKey={active === "fleet" ? fleetNavKey(fleetItemOf(search)) : active}
       title={fleetItem?.label ?? meta?.label ?? name}

@@ -81,7 +81,7 @@ export {
   WorkspaceAvatar,
   type BadgeTone,
 } from "./components/common";
-export { CreateWorkspaceDialog, CreateWorkspaceForm, useCreateWorkspace } from "./components/create-workspace";
+export { CreateWorkspaceForm, useCreateWorkspace } from "./components/create-workspace";
 export { expiryFromDateInput, SecretDialog, WorkspaceCredentialsPanel } from "./components/credentials-panel";
 export {
   acceptErrorMessage,
