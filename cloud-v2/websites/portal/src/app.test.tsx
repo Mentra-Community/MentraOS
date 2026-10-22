@@ -227,6 +227,7 @@ describe("the sidebar follows the viewer's role", () => {
     expect(labelOf("?fleet=people")).toBe("People");
     expect(labelOf("?fleet=people%2Facct_x%3Frange%3D30d")).toBe("People");
     expect(labelOf("?fleet=devices/gl_1")).toBe("Devices");
+    expect(labelOf("?fleet=phones/ph_1")).toBe("Devices");
     expect(labelOf("?fleet=miniapps")).toBe("Miniapps");
     expect(labelOf("?fleet=nonsense")).toBe("Overview");
   });
