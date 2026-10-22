@@ -45,6 +45,21 @@ export interface MiniappDataPartitionHooks {
   assignedWorkspace: (packageName: string, session: MiniappDataSession) => string | null
 }
 
+/** Stands in for the Core URL of a deployment without a Core, whose host supplies the identity. */
+export const CORE_FREE_DATA_ORIGIN = "deployment"
+
+/**
+ * The account data is kept for: the Core session's account when there is one, otherwise the host's deployment-scoped
+ * identity. Local storage was keyed by that identity before partitions, so it migrates into its personal partition.
+ */
+export function miniappDataSessionOf(
+  core: {coreUrl: string; mentraUserId: string | null} | null,
+  deploymentUserId: string | null,
+): MiniappDataSession | null {
+  if (core?.mentraUserId) return {coreUrl: core.coreUrl, mentraUserId: core.mentraUserId}
+  return deploymentUserId ? {coreUrl: CORE_FREE_DATA_ORIGIN, mentraUserId: deploymentUserId} : null
+}
+
 export const MINIAPP_PARTITION_STORE_ID = "mentra-miniapp-partitions"
 const DEV_SELECTION_SUFFIXES = [
   "_dev_meta",

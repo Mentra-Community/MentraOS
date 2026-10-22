@@ -74,6 +74,19 @@ describe("data partition of a package", () => {
     session = null
     expect(() => partitions.resolveMiniappDataPartition(pkg)).toThrow("Mentra user identity is unavailable")
   })
+
+  test("of a Core-free deployment is its identity's personal data, where earlier data migrates from", () => {
+    const deploymentUser = "workspace:dep_1:https%3A%2F%2Flogin.example.com:sub-1"
+    session = partitions.miniappDataSessionOf(null, deploymentUser)
+    const own = partitions.resolveMiniappDataPartition(pkg)
+    expect(own.personalUserId).toBe(deploymentUser)
+    expect(own.id).toMatch(/^[a-z0-9_~.-]+$/)
+    expect(partitions.miniappDataSessionOf({coreUrl: CORE, mentraUserId: "mu_1"}, deploymentUser)).toEqual({
+      coreUrl: CORE,
+      mentraUserId: "mu_1",
+    })
+    expect(partitions.miniappDataSessionOf({coreUrl: CORE, mentraUserId: null}, null)).toBeNull()
+  })
 })
 
 describe("development selections", () => {

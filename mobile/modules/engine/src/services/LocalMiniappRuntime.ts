@@ -101,7 +101,11 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
-import {configureMiniappDataPartitions, resolveMiniappDataPartition} from "./miniappDataPartition"
+import {
+  configureMiniappDataPartitions,
+  miniappDataSessionOf,
+  resolveMiniappDataPartition,
+} from "./miniappDataPartition"
 import {sameCoreUrl} from "./fleet/coreUrl"
 import {
   automaticUpdateOwner,
@@ -357,10 +361,8 @@ const localMiniappStorageBackend = {
 }
 
 configureMiniappDataPartitions({
-  getSession: () => {
-    const session = cloudClientService.getCoreSession()
-    return session?.mentraUserId ? {coreUrl: session.coreUrl, mentraUserId: session.mentraUserId} : null
-  },
+  getSession: () =>
+    miniappDataSessionOf(cloudClientService.getCoreSession(), cloudClientService.getDeploymentUserId()),
   assignedWorkspace: (packageName, session) => {
     const assignment = appRegistry.getMiniappAssignment(packageName)
     return assignment &&

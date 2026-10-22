@@ -780,6 +780,11 @@ export const cloudClientService = {
     return userId
   },
 
+  /** The host's deployment-scoped identity once resolved for local storage; null when the host supplies none. */
+  getDeploymentUserId(): string | null {
+    return getAuth()?.getUserId ? localMiniappUserIdentity.get() : null
+  },
+
   async getMiniappAuthToken(
     packageName: string,
     opts?: {minTtlMs?: number; fresh?: boolean},
