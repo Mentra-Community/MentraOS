@@ -47,33 +47,38 @@ const unwiredWorkspaceApi: WorkspaceApi = {
 }
 
 let current: WorkspaceApi = unwiredWorkspaceApi
-const wiredListeners = new Set<() => void>()
+const readyListeners = new Set<() => void>()
 
 /** The workspace calls in use. */
 export const getWorkspaceApi = (): WorkspaceApi => current
 
 /**
- * Calls `listener` each time real calls are wired. The sheets mount at sign-in, before the app wires the client,
- * so their first look finds nothing; this lets them look again. Returns the unsubscribe.
+ * Calls `listener` each time real calls are wired, and each time they start answering for another account. The
+ * sheets mount at sign-in, before the app wires the client or binds the new account's Core session, so their
+ * first look finds nothing or is dropped as `session_changed`; this lets them look again. Returns the unsubscribe.
  */
-export function onWorkspaceApiWired(listener: () => void): () => void {
-  wiredListeners.add(listener)
+export function onWorkspaceApiReady(listener: () => void): () => void {
+  readyListeners.add(listener)
   return () => {
-    wiredListeners.delete(listener)
+    readyListeners.delete(listener)
   }
 }
 
-/** Wires the real calls (or a fake in tests). Pass null to go back to the unwired default. */
-export function setWorkspaceApi(api: WorkspaceApi | null): void {
-  current = api ?? unwiredWorkspaceApi
-  if (!api) return
-  for (const listener of [...wiredListeners]) {
+/** Tells `onWorkspaceApiReady` listeners the calls can answer for the signed-in account now. */
+export function notifyWorkspaceApiReady(): void {
+  for (const listener of [...readyListeners]) {
     try {
       listener()
     } catch (error) {
       console.warn("Fleet: a workspace API listener failed", error)
     }
   }
+}
+
+/** Wires the real calls (or a fake in tests). Pass null to go back to the unwired default. */
+export function setWorkspaceApi(api: WorkspaceApi | null): void {
+  current = api ?? unwiredWorkspaceApi
+  if (api) notifyWorkspaceApiReady()
 }
 
 /** Core's error code carried by a failed call, if it carries one. */

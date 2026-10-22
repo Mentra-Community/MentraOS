@@ -25,7 +25,7 @@ import {
   getWorkspaceApi,
   type InvitationPreview,
   type MyWorkspace,
-  onWorkspaceApiWired,
+  onWorkspaceApiReady,
   WORKSPACE_ERROR,
   workspaceErrorCode,
 } from "@/services/fleet/workspaceApi"
@@ -426,7 +426,8 @@ export function runFleetSheets(): Promise<void> {
 }
 
 /**
- * Runs the Fleet sheets at startup, on foreground and once the workspace client is wired, and the notice on
+ * Runs the Fleet sheets at startup, on foreground and once the workspace client answers for the signed-in
+ * account, and the notice on
  * Fleet's answers, while someone is signed in.
  */
 export function FleetSheets() {
@@ -443,11 +444,11 @@ export function FleetSheets() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void runFleetSheets()
     })
-    const unwired = onWorkspaceApiWired(() => void runFleetSheets())
+    const unready = onWorkspaceApiReady(() => void runFleetSheets())
     const unsubscribe = onFleetManagementStateChanged((state) => void showNoticeForFleetState(state))
     return () => {
       subscription.remove()
-      unwired()
+      unready()
       unsubscribe()
     }
   }, [userId])

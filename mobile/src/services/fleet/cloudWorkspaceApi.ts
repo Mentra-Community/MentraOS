@@ -9,7 +9,7 @@
 import {cloudClientService, notifyFleetWorkspaceLeft, triggerAssignmentReconcile} from "@mentra/engine-host-internal"
 
 import {useMyWorkspaceStore} from "./myWorkspace"
-import {setWorkspaceApi, type WorkspaceApi} from "./workspaceApi"
+import {notifyWorkspaceApiReady, setWorkspaceApi, type WorkspaceApi} from "./workspaceApi"
 
 /** Codes for failures Core did not name. Core's own codes pass through as they are. */
 export const WORKSPACE_CLIENT_ERROR = {
@@ -111,8 +111,10 @@ export function installCloudWorkspaceApi(): () => void {
   let account = signedInAccount()
   const unsubscribe = cloudClientService.onCoreSessionChanged((change) => {
     if (change.reason === "reconnect" && (change.mentraUserId === account || change.mentraUserId === null)) return
-    if (change.mentraUserId !== account || change.reason === "signed_out") useMyWorkspaceStore.getState().reset()
+    const otherAccount = change.mentraUserId !== account
+    if (otherAccount || change.reason === "signed_out") useMyWorkspaceStore.getState().reset()
     account = change.mentraUserId
+    if (otherAccount && account) notifyWorkspaceApiReady()
   })
   installed = () => {
     unsubscribe()
