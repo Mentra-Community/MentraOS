@@ -2,11 +2,12 @@
 
 import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 import {readdirSync, readFileSync} from "node:fs"
-import {FLEET_CAPABILITIES, FleetRecordSchema, type FleetRecord} from "@mentra/cloud-protocol"
+import {FLEET_CAPABILITIES, FLEET_LIMITS, FleetRecordSchema, type FleetRecord} from "@mentra/cloud-protocol"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
 import {reactNative, reactNativeAppState} from "../../__tests__/reactNativeTestMock"
+import type {InstalledMiniapp, InventorySource} from "../fleetCollector"
 import {fakeCreateMMKV, resetFakeMmkv} from "./fakeMmkv"
 import {MemoryFleetStore} from "./memoryFleetStore"
 
@@ -134,7 +135,7 @@ const {nativeMiniappExecution} = await import("../../NativeMiniappExecution")
 const {createFleetQueue} = await import("../fleetQueue")
 const {phoneDeviceId} = await import("../fleetIds")
 const {fleetEvents} = await import("../fleetEvents")
-const {createFleetCollector} = await import("../fleetCollector")
+const {createFleetCollector, setFleetInventorySource} = await import("../fleetCollector")
 
 const ENGINE_VERSION = (require("../../../../package.json") as {version: string}).version
 const SDK_VERSION = (require("@mentra/bluetooth-sdk/package.json") as {version: string}).version
@@ -1639,6 +1640,205 @@ describe("launches", () => {
     collector.stop("engine_stopped")
     start(PARTITION, "COLLECTOR-SESSION-2")
     expect(ofKind("miniapp_launch")).toHaveLength(1)
+  })
+})
+
+/** An inventory source the tests drive. `listing` null is a phone whose registry has not been read yet. */
+function fakeInventory(initial: InstalledMiniapp[] | null) {
+  const source = {
+    listing: initial,
+    listeners: new Set<() => void>(),
+    list: () => source.listing,
+    subscribe(listener: () => void) {
+      source.listeners.add(listener)
+      return () => void source.listeners.delete(listener)
+    },
+    change(listing: InstalledMiniapp[] | null) {
+      source.listing = listing
+      for (const listener of [...source.listeners]) listener()
+    },
+  }
+  return source satisfies InventorySource & Record<string, unknown>
+}
+
+const NOTES: InstalledMiniapp = {
+  packageName: "com.mentra.notes",
+  versionName: "1.0.30",
+  digest: "sha256:aaaa",
+  reasons: ["bundled"],
+}
+const WEATHER: InstalledMiniapp = {
+  packageName: "com.acme.weather",
+  versionName: "2.1.0",
+  digest: "sha256:bbbb",
+  reasons: ["explicit", "assignment"],
+}
+
+describe("the miniapp inventory", () => {
+  const inventories = (partition = PARTITION) => ofKind("miniapp_inventory", partition)
+  function collectorFor(source: InventorySource): void {
+    collector.stop("engine_stopped")
+    collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono, inventory: source})
+  }
+
+  test("is sent when the collector starts, sorted by package, with each miniapp's version, digest and reasons", () => {
+    collectorFor(fakeInventory([NOTES, WEATHER]))
+    start()
+    const [inventory] = inventories()
+    expect(inventory.payload.miniapps).toEqual([
+      {
+        packageName: "com.acme.weather",
+        versionName: "2.1.0",
+        digest: "sha256:bbbb",
+        reasons: ["explicit", "assignment"],
+      },
+      {packageName: "com.mentra.notes", versionName: "1.0.30", digest: "sha256:aaaa", reasons: ["bundled"]},
+    ])
+    expect(inventory.observedAt).toBe(iso(clock.wall))
+  })
+
+  test("is not part of any snapshot", () => {
+    collectorFor(fakeInventory([NOTES]))
+    start()
+    advance(20 * 60_000)
+    connectLive()
+    advance(10_000)
+    expect(snapshots().length).toBeGreaterThan(1)
+    for (const snapshot of snapshots()) expect(Object.keys(snapshot.payload)).not.toContain("miniapps")
+    expect(inventories()).toHaveLength(1)
+  })
+
+  test("is sent again when the inventory changes, once for a burst, and not when nothing in it changed", () => {
+    const source = fakeInventory([NOTES])
+    collectorFor(source)
+    start()
+    source.change([NOTES, WEATHER])
+    source.change([NOTES, {...WEATHER, digest: "sha256:cccc"}])
+    expect(inventories()).toHaveLength(1)
+    advance(2_000)
+    expect(inventories()).toHaveLength(2)
+    expect(inventories()[1].payload.miniapps.map((app) => app.digest)).toEqual(["sha256:cccc", "sha256:aaaa"])
+    // A change that lists the same thing, in another order, says nothing new.
+    source.change([{...WEATHER, digest: "sha256:cccc"}, NOTES])
+    advance(5_000)
+    expect(inventories()).toHaveLength(2)
+    // A removal is a change too, down to an empty phone.
+    source.change([])
+    advance(2_000)
+    expect(inventories()[2].payload.miniapps).toEqual([])
+  })
+
+  test("a new reason is a change; reasons are kept apart from each other and in the contract's order", () => {
+    const source = fakeInventory([{...WEATHER, reasons: ["assignment", "explicit", "assignment"]}])
+    collectorFor(source)
+    start()
+    expect(inventories()[0].payload.miniapps[0].reasons).toEqual(["explicit", "assignment"])
+    source.change([{...WEATHER, reasons: ["explicit"]}])
+    advance(2_000)
+    expect(inventories()[1].payload.miniapps[0].reasons).toEqual(["explicit"])
+  })
+
+  test("a new run is told again, even if nothing changed since the last one", () => {
+    collectorFor(fakeInventory([NOTES]))
+    start()
+    collector.stop("account_changed")
+    start(OTHER_PARTITION, "COLLECTOR-SESSION-2")
+    expect(inventories(PARTITION)).toHaveLength(1)
+    expect(inventories(OTHER_PARTITION)).toHaveLength(1)
+  })
+
+  test("a source that does not know yet sends nothing, and the first listing is sent when it arrives", () => {
+    const source = fakeInventory(null)
+    collectorFor(source)
+    start()
+    expect(inventories()).toHaveLength(0)
+    source.change([NOTES])
+    advance(2_000)
+    expect(inventories()).toHaveLength(1)
+  })
+
+  test("the app's source, once set, is read by the collector and counts as a change", () => {
+    collector.stop("engine_stopped")
+    collector = createFleetCollector({queue, now: () => clock.wall, monotonic: () => clock.mono})
+    start()
+    expect(inventories()).toHaveLength(0)
+    const source = fakeInventory([NOTES])
+    setFleetInventorySource(source)
+    try {
+      advance(2_000)
+      expect(inventories()).toHaveLength(1)
+      source.change([NOTES, WEATHER])
+      advance(2_000)
+      expect(inventories()).toHaveLength(2)
+    } finally {
+      setFleetInventorySource(null)
+    }
+    advance(10_000)
+    expect(source.listeners.size).toBe(0)
+  })
+
+  test("a miniapp that cannot be described is left out, not allowed to sink the rest", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      collectorFor(
+        fakeInventory([
+          NOTES,
+          {...WEATHER, packageName: "  "},
+          {...WEATHER, packageName: "com.a", reasons: []},
+          {...WEATHER, packageName: "com.b", digest: ""},
+          {...WEATHER, packageName: "com.c", reasons: ["unknown" as never]},
+        ]),
+      )
+      start()
+      expect(inventories()[0].payload.miniapps.map((app) => app.packageName)).toEqual(["com.mentra.notes"])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("one entry per package, and no more than the contract's 500", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const many = Array.from({length: 520}, (_, i) => ({
+        ...NOTES,
+        packageName: `com.example.app${String(i).padStart(4, "0")}`,
+      }))
+      collectorFor(fakeInventory([...many, {...many[0], versionName: "9.9.9"}]))
+      start()
+      const [inventory] = inventories()
+      expect(inventory.payload.miniapps).toHaveLength(FLEET_LIMITS.maxInventoryMiniapps)
+      expect(inventory.payload.miniapps[0].versionName).toBe("9.9.9")
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("a source that throws never breaks the collector", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const source = fakeInventory([NOTES])
+      source.list = () => {
+        throw new Error("registry unavailable")
+      }
+      collectorFor(source)
+      expect(() => start()).not.toThrow()
+      expect(snapshots()).toHaveLength(1)
+      expect(() => source.change([NOTES])).not.toThrow()
+      expect(() => advance(2_000)).not.toThrow()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("stopping cancels a pending inventory and the subscription", () => {
+    const source = fakeInventory([NOTES])
+    collectorFor(source)
+    start()
+    source.change([NOTES, WEATHER])
+    collector.stop("engine_stopped")
+    advance(10_000)
+    expect(inventories()).toHaveLength(1)
+    expect(source.listeners.size).toBe(0)
   })
 })
 
