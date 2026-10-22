@@ -22,7 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Spinner } from "@mentra/workspace-ui";
 import { AlertCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { fetchPortalMe, type PortalMe } from "@/lib/api";
+import { fetchPortalMe, PortalApiError, type PortalMe } from "@/lib/api";
 import { navigate, useSearch } from "@/lib/navigation";
 import { usePortal } from "@/lib/portal";
 import { fleetPath } from "@/lib/routes";
@@ -325,6 +325,26 @@ export function FleetUnavailable({ reason, onRetry }: { reason: string; onRetry(
   );
 }
 
+/** Whether a failed read means the session ended (HTTP 401), as opposed to Fleet or Core being down. */
+export function endsSession(error: unknown): boolean {
+  return error instanceof PortalApiError && error.status === 401;
+}
+
+/** The session ended while Fleet was open: tell the portal, which signs the person out and offers sign-in. */
+function SessionEnded({ onExpired }: { onExpired(): void }) {
+  const told = useRef(false);
+  useEffect(() => {
+    if (told.current) return;
+    told.current = true;
+    onExpired();
+  }, [onExpired]);
+  return (
+    <div role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
+      <Spinner /> Your session ended
+    </div>
+  );
+}
+
 /**
  * The Fleet section of one workspace. Reads `me` for this workspace and hosts the module; a 401 from that read
  * means the session ended. The module's own navigation becomes `?fleet=` in the address.
@@ -343,6 +363,9 @@ export function FleetScreen({ workspaceId }: { workspaceId: string }) {
         <Spinner /> Loading Fleet
       </div>
     );
+  }
+  if (me.isError && endsSession(me.error)) {
+    return <SessionEnded onExpired={portal.sessionExpired} />;
   }
   if (me.isError || !me.data) {
     return <FleetUnavailable reason="Fleet could not be reached." onRetry={() => void me.refetch()} />;

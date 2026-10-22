@@ -85,6 +85,9 @@ When it disagrees with a source of truth below, the source of truth wins; then f
    A guard counts only while the membership it names is still the person's active one: `initializeGuards` and the
    cleanup script write from earlier reads, so a stale guard must refuse nobody (the next join replaces it). Never
    test a guard with a membership id that has no row.
+   The cleanup script writes the retained membership's row before every removal (`pinRetainedMembership`) so a
+   concurrent leave of it conflicts instead of leaving the person with none; the portal turns a 401 from `/me` into
+   `sessionExpired` (`PortalApiError.status`), not "Fleet unavailable".
 7. Claim of imported memberships now skips a pending row when the person is in another workspace (stays pending,
    retried at later sign-ins). A person with several imported orgs gets the highest role claimed first.
 8. Tests that need one person in several workspaces must write the extra membership directly (legacy state); the

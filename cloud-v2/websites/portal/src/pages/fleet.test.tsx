@@ -1,9 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { FLEET_UI_CONTRACT_VERSION, type FleetUiContext, type FleetUiModule } from "@mentra/workspace-contract/fleet-ui";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { PortalMe } from "@/lib/api";
+import { api, PortalApiError, type PortalMe } from "@/lib/api";
 import {
   createFleetHost,
+  endsSession,
   FLEET_MODULE_URL,
   fleetApiBase,
   FleetUnavailable,
@@ -287,5 +288,27 @@ describe("the unavailable state", () => {
     expect(markup).toContain("Fleet is unavailable");
     expect(markup).toContain("The Fleet module could not be loaded.");
     expect(markup).toContain(">Retry<");
+  });
+});
+
+describe("an ended session while Fleet is open", () => {
+  test("a failed portal request keeps its HTTP status", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }));
+    try {
+      const error = await api("/api/portal/me?workspaceId=ws_acme").catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(PortalApiError);
+      expect((error as PortalApiError).status).toBe(401);
+      expect((error as PortalApiError).message).toBe("unauthorized");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("only a 401 means the session ended; a 5xx, a 403 or a network failure is Fleet being unreachable", () => {
+    expect(endsSession(new PortalApiError("unauthorized", 401))).toBe(true);
+    expect(endsSession(new PortalApiError("down", 503))).toBe(false);
+    expect(endsSession(new PortalApiError("forbidden", 403))).toBe(false);
+    expect(endsSession(new TypeError("Failed to fetch"))).toBe(false);
+    expect(endsSession(null)).toBe(false);
   });
 });

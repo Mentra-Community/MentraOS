@@ -75,6 +75,17 @@ export async function fetchPortalMe(workspaceId?: string): Promise<PortalMe> {
   return { ...me, modules: readPortalModules(me.modules) };
 }
 
+/** A failed portal request, with the HTTP status so a caller can tell an ended session (401) from a failure. */
+export class PortalApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "PortalApiError";
+  }
+}
+
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(path, {
     method: init?.method ?? "GET",
@@ -92,7 +103,7 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
     } catch {
       // Keep generic status text.
     }
-    throw new Error(message);
+    throw new PortalApiError(message, response.status);
   }
   return (await response.json()) as T;
 }

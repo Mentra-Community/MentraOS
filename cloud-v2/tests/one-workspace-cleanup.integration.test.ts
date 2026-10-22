@@ -365,6 +365,75 @@ describe("concurrent changes", () => {
   })
 })
 
+describe("the membership the script keeps", () => {
+  /** `mu_p` in three workspaces: the admin one is kept, the two developer ones end. */
+  async function personInThree() {
+    const x = await workspaceOf("mu_owner_x", "X")
+    const y = await workspaceOf("mu_owner_y", "Y")
+    const z = await workspaceOf("mu_owner_z", "Z")
+    const kept = await legacyMember(x, "mu_p", "admin", {startedAt: new Date(Date.now() - 30 * DAY)})
+    const inY = await legacyMember(y, "mu_p", "developer", {startedAt: new Date(Date.now() - 20 * DAY)})
+    const inZ = await legacyMember(z, "mu_p", "developer", {startedAt: new Date(Date.now() - 10 * DAY)})
+    return {kept, inY, inZ}
+  }
+
+  test("leaving it between two removals does not leave the person with no membership", async () => {
+    const {kept, inY, inZ} = await personInThree()
+    let calls = 0
+    const real = workspaces.loadActiveWorkspace
+    const spy = spyOn(workspaces, "loadActiveWorkspace").mockImplementation(async (session, workspaceId) => {
+      calls += 1
+      const workspace = await real(session, workspaceId)
+      // The second removal's transaction has read (its snapshot is taken); now the person leaves the membership
+      // the plan keeps. The removal's write to that membership must conflict, so the transaction starts over and
+      // sees the leave, rather than committing on a snapshot where the kept membership is still active.
+      if (calls === 2) {
+        await WorkspaceMembershipModel.updateOne({membershipId: kept}, {$set: {status: "ended", endedAt: new Date(), endedReason: "left"}})
+      }
+      return workspace
+    })
+    try {
+      const report = await cleanupOneWorkspacePerPerson({apply: true})
+      expect(report.gaveUp).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(calls).toBeGreaterThanOrEqual(3)
+    const active = await activeOf("mu_p")
+    // The first removal went through; the second was refused because the kept membership was gone, so the other
+    // developer membership stays rather than the person ending with nothing.
+    expect(active).toHaveLength(1)
+    expect([inY, inZ]).toContain(active[0]!.membershipId)
+    expect(await guardOf("mu_p")).toMatchObject({guardedMembershipId: active[0]!.membershipId})
+  })
+
+  test("a role change to it that reorders the person's memberships is planned again, not applied to the old plan", async () => {
+    const {kept, inY, inZ} = await personInThree()
+    let calls = 0
+    const real = workspaces.loadActiveWorkspace
+    const spy = spyOn(workspaces, "loadActiveWorkspace").mockImplementation(async (session, workspaceId) => {
+      calls += 1
+      // Before the second removal, the kept admin is demoted to viewer: a developer membership now ranks above it.
+      if (calls === 2) await WorkspaceMembershipModel.updateOne({membershipId: kept}, {$set: {role: "viewer"}})
+      return real(session, workspaceId)
+    })
+    try {
+      const report = await cleanupOneWorkspacePerPerson({apply: true})
+      expect(report.gaveUp).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+
+    // Replanned against the new roles: exactly one membership is left, and it is the highest-ranked one now.
+    const active = await activeOf("mu_p")
+    expect(active).toHaveLength(1)
+    expect(active[0]!.role).toBe("developer")
+    expect([inY, inZ]).toContain(active[0]!.membershipId)
+    expect(await guardOf("mu_p")).toMatchObject({guardedMembershipId: active[0]!.membershipId})
+  })
+})
+
 describe("the command line", () => {
   test("a dry run takes any URL; --apply takes only a local one unless the operator says otherwise", () => {
     expect(parseArgs(["--target", "mongodb+srv://user:pw@cluster.example/core"])).toMatchObject({apply: false})

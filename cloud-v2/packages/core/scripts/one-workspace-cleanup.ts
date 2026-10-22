@@ -165,6 +165,31 @@ async function nextToPromote(others: MembershipRow[], session: mongoose.ClientSe
   return candidates.sort(keepOrder)[0] ?? null
 }
 
+/**
+ * The plan ends memberships only because it keeps another one. Before each removal, in the removal's own
+ * transaction, the kept membership must still be the person's best active one (not ended, not demoted below
+ * another), and it is **written**, not only read: a leave, a removal or a role change of that membership writes
+ * the same row, so under snapshot isolation one of the two transactions loses instead of both committing and
+ * leaving the person with no membership at all. A stale plan throws `membership_changed` and is planned again.
+ */
+async function pinRetainedMembership(session: mongoose.ClientSession, plan: PersonPlan): Promise<void> {
+  const held = await WorkspaceMembershipModel.find({mentraUserId: plan.mentraUserId, status: "active"})
+    .session(session)
+    .lean<MembershipRow[]>()
+  const [best] = [...held].sort(keepOrder)
+  if (held.length < 2 || !best || best.membershipId !== plan.kept.membershipId || best.role !== plan.kept.role) {
+    throw new WorkspaceError("membership_changed", 409, "the membership to keep changed since it was planned")
+  }
+  const pinned = await WorkspaceMembershipModel.updateOne(
+    {membershipId: plan.kept.membershipId, mentraUserId: plan.mentraUserId, status: "active", role: plan.kept.role},
+    {$set: {updatedAt: new Date()}},
+    {session, timestamps: false},
+  )
+  if (pinned.matchedCount !== 1) {
+    throw new WorkspaceError("membership_changed", 409, "the membership to keep changed since it was planned")
+  }
+}
+
 /** End one membership of `plan`'s person, in its own transaction. Throws `membership_changed` on a stale plan. */
 async function applyEnd(plan: PersonPlan, end: PlannedEnd): Promise<void> {
   await withTransaction(async session => {
@@ -179,6 +204,7 @@ async function applyEnd(plan: PersonPlan, end: PlannedEnd): Promise<void> {
     if (!membership || membership.mentraUserId !== plan.mentraUserId || membership.role !== end.role) {
       throw new WorkspaceError("membership_changed", 409, "the membership changed since it was planned")
     }
+    await pinRetainedMembership(session, plan)
     // The usual revision check: the plan was made at the revision the workspace had, and writing it first is
     // what serializes this with every other change there.
     const updated = await bumpRevision(session, end.workspaceId, workspace.authorizationRevision)
@@ -273,13 +299,20 @@ export async function cleanupOneWorkspacePerPerson(options: CleanupOptions): Pro
         if (!(error instanceof WorkspaceError) || error.code !== "membership_changed") throw error
         log(`${mentraUserId}: a membership changed while ending another; planning again (attempt ${attempt})`)
         plan = await planPerson(mentraUserId, null)
+        if (!plan) {
+          // They hold at most one membership now (it was left or removed meanwhile): nothing is left to end,
+          // and `initializeGuards` below writes the guard of a person who still holds exactly one.
+          log(`${mentraUserId}: holds at most one membership now; nothing left to end`)
+          done = true
+        }
       }
     }
     if (!done) {
       report.gaveUp.push(mentraUserId)
       continue
     }
-    const after = plan!
+    if (!plan) continue
+    const after = plan
     // Left with one membership: write their guard for it. A person with a blocked membership still has several.
     if (after.blocked.length === 0) {
       await withTransaction(session => setGuard(session, mentraUserId, after.kept))
