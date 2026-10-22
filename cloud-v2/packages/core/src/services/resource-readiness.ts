@@ -14,7 +14,16 @@ export type ResourceReadinessHost = ResourceReadinessAuthority & {hostId: string
 
 export type ResourceReadinessBlocker = {code: 'lane-resource-owned' | 'lane-operator-restriction' | 'resource-owned' |
   'resource-operator-restriction' | 'resource-restoration-required' | 'resource-baseline-unavailable' |
-  'resource-idle-proof-unavailable' | 'resource-not-enrolled'; laneId?: string; resourceId?: string; resourceKind?: string}
+  'resource-idle-proof-unavailable' | 'resource-not-enrolled' | 'host-report-unavailable'; laneId?: string; resourceId?: string; resourceKind?: string}
+
+/** Authenticated envelope freshness does not depend on resource commissioning. */
+export function resourceHostBlocker(host: ResourceReadinessHost, now: number): ResourceReadinessBlocker | undefined {
+  const received = host.receivedAt instanceof Date ? host.receivedAt.getTime() : Date.parse(host.receivedAt),
+    observed = Date.parse(host.snapshot.observedAt ?? '')
+  if (![received, observed].every(at => Number.isFinite(at) && at <= now && now - at <= 120_000) || observed > received)
+    return {code: 'host-report-unavailable'}
+  return undefined
+}
 
 export function resourceLaneBlocker(host: ResourceReadinessAuthority, laneId: string,
   original?: {requestId: string; inputSha256: string; hostId: string}) {
@@ -54,9 +63,11 @@ export function resourceBlocker(host: ResourceReadinessHost, resourceId: string,
     .subjects.find(value => value.subject.id === resourceId)
   const resource = host.snapshot.resources?.find(value => value.id === resourceId) ?? host.snapshot.lanes
     .flatMap(lane => lane.resources).find(value => value.id === resourceId), contract = resource?.idleContract
+  const hostBlocker = resourceHostBlocker(host, now)
+  if (hostBlocker) return hostBlocker
   if (host.snapshot.laneControls?.resourceControls !== true && !contract && !raw && !previous && !relevant.length) return undefined
   const received = host.receivedAt instanceof Date ? host.receivedAt.getTime() : Date.parse(host.receivedAt)
-  const fresh = [received, Date.parse(host.snapshot.observedAt ?? '')].every(at => Number.isFinite(at) && at <= now && now - at <= 120_000)
+  const fresh = true
   if (relevant.some(row => manualWithdrawalNeedsRestoration(row, subject, host.hostId, fresh, now))) return {code: 'resource-restoration-required' as const, resourceId}
   const observed = Date.parse(subject?.observedAt ?? '')
   if (!fresh || !subject?.current || subject.subject.authorityHostId !== host.hostId || subject.owner !== null ||
@@ -87,6 +98,8 @@ export function requiredResourceBlocker<Requirement extends {kind: string}>(host
   lane: ResourceReadinessHost['snapshot']['lanes'][number], requirements: readonly Requirement[], now: number,
   allowUnchecked: (required: Requirement, resource: typeof lane.resources[number]) => boolean,
   original?: {requestId: string; inputSha256: string}): ResourceReadinessBlocker | undefined {
+  const hostBlocker = resourceHostBlocker(host, now)
+  if (hostBlocker) return hostBlocker
   for (const required of requirements) {
     const resource = lane.resources.find(value => value.kind === required.kind)
     if (!resource) return {code: 'resource-not-enrolled', laneId: lane.id, resourceKind: required.kind}

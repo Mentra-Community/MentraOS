@@ -46,7 +46,7 @@ test('routing reads only fresh current offers and preserves permission and physi
     resources: [{id: 'app', kind: 'app' as const, capabilities: ['camera'], permissionObservations: [observation]},
       {id: 'glasses', kind: 'glasses' as const, capabilities: ['display']}],
     glasses: [{resourceId: 'glasses', deviceId: 'physical-one', model: 'mentra-live', capabilities: ['display']}]};
-  const current = {hostId: 'mini', frameworkBinding: binding, lanes: [lane]};
+  const current = {hostId: 'mini', observedAt: new Date(now).toISOString(), frameworkBinding: binding, lanes: [lane]};
   const requirements = {platform: 'ios-on-mac' as const, resources: [{kind: 'app' as const, capabilities: ['camera'],
     permissions: [{permission: 'camera' as const, recipient: 'app' as const}]}, {kind: 'glasses' as const, capabilities: ['display']}],
     glasses: {models: ['mentra-live'], capabilities: ['display']}};
