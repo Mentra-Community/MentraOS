@@ -1,5 +1,5 @@
 import {getConfigValues} from "../runtime/bootstrap"
-import {isTrustedSystemMiniappRelease} from "./systemMiniappTrust"
+import {isSystemMiniappAssignedToStore, isTrustedSystemMiniappRelease} from "./systemMiniappTrust"
 
 /**
  * Build-owned miniapp identity and Store update ownership.
@@ -24,7 +24,7 @@ export function isStoreMiniappPackage(packageName: string): boolean {
 
 /** One bundled Store cannot update a package the build assigns to another Store. */
 export function canStoreUpdateSystemMiniapp(storePackageName: string, targetPackageName: string): boolean {
-  return isTrustedSystemMiniappRelease(getConfigValues(), targetPackageName, {source: "system_store", storePackageName})
+  return isSystemMiniappAssignedToStore(getConfigValues(), targetPackageName, storePackageName)
 }
 
 /** The Store the host build assigns to update this bundled package, if any. */
@@ -77,13 +77,17 @@ export function requiresConnectedGlasses(packageName: string): boolean {
  */
 export function isHostTrustedSystemMiniapp(
   packageName: string,
-  releaseIdentity?: {source?: string; storePackageName?: string} | null,
+  releaseIdentity?: {source?: string; storePackageName?: string; sourceUrl?: string} | null,
 ): boolean {
   return isTrustedSystemMiniappRelease(
     getConfigValues(),
     packageName,
     releaseIdentity?.source
-      ? {source: releaseIdentity.source, storePackageName: releaseIdentity.storePackageName}
+      ? {
+          source: releaseIdentity.source,
+          storePackageName: releaseIdentity.storePackageName,
+          sourceUrl: releaseIdentity.sourceUrl,
+        }
       : null,
   )
 }

@@ -18,7 +18,7 @@ const doppler = {
   EXPO_PUBLIC_CLOUD_RUNTIME_URL: "https://runtime.staging.us-west-2.mentraglass.com",
   EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: "pk.example",
   EXPO_PUBLIC_SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-  EXPO_PUBLIC_STORE_URL: "https://api.apps.staging.mentraglass.com",
+  EXPO_PUBLIC_MINIAPPS_URL: "https://miniapps.staging.mentraglass.com/",
   MAPBOX_DOWNLOADS_TOKEN: "sk.secret",
 }
 
@@ -33,7 +33,7 @@ test("writes Doppler values and the release identity, and nothing else", () => {
   assert.match(env, /^EXPO_PUBLIC_BUILD_ENV=staging$/m)
   assert.match(env, /^EXPO_PUBLIC_ASG_OTA_VERSION_URL=https:\/\/example\.com\/ota\.json$/m)
   assert.match(env, /^EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/core\.staging\.us-west-2\.mentraglass\.com$/m)
-  assert.match(env, /^EXPO_PUBLIC_STORE_URL=https:\/\/api\.apps\.staging\.mentraglass\.com$/m)
+  assert.match(env, /^EXPO_PUBLIC_MINIAPPS_URL=https:\/\/miniapps\.staging\.mentraglass\.com\/$/m)
   assert.match(env, /^EXPO_PUBLIC_SENTRY_DSN=https:\/\/public@example\.ingest\.sentry\.io\/1$/m)
   assert.doesNotMatch(env, /DOPPLER_CONFIG|MAPBOX_DOWNLOADS_TOKEN|sk\.secret/)
   assert.deepEqual(masked, ["pk.example", "https://public@example.ingest.sentry.io/1"])
@@ -44,9 +44,9 @@ test("fails when Doppler lacks a required value", () => {
     () =>
       prepareMobileReleaseEnvironment({
         ...input,
-        doppler: {...doppler, EXPO_PUBLIC_STORE_URL: undefined, EXPO_PUBLIC_SENTRY_DSN: " "},
+        doppler: {...doppler, EXPO_PUBLIC_MINIAPPS_URL: undefined, EXPO_PUBLIC_SENTRY_DSN: " "},
       }),
-    /Missing or empty release environment values: EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_STORE_URL$/,
+    /Missing or empty release environment values: EXPO_PUBLIC_SENTRY_DSN, EXPO_PUBLIC_MINIAPPS_URL$/,
   )
   assert.throws(
     () =>

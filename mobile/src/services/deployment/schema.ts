@@ -49,6 +49,7 @@ export const deploymentManifestSchema = z
         mentraLiveOtaManifestUrl: nullableUrl,
         sttModelBaseUrl: nullableUrl,
         ttsModelBaseUrl: nullableUrl,
+        firstPartyMiniappsUrl: nullableUrl.optional(),
       })
       .strict(),
     appUpdates: z
