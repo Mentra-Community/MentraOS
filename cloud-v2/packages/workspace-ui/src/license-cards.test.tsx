@@ -1262,6 +1262,8 @@ describe("who holds the licenses", () => {
     // Not on the card behind it, and the dialog can be used again.
     expect(findAll('[role="alert"]', theCard()).filter((alert) => !dialog.contains(alert))).toHaveLength(0);
     expect(buttonNamed("Unassign", dialog).hasAttribute("disabled")).toBe(false);
+    // The button was disabled while the request was out, which dropped focus: it is back on the button for another try.
+    expect(document.activeElement).toBe(buttonNamed("Unassign", dialog));
     await press("Unassign", dialog);
     await flush();
     expect(r.releaseSeat).toHaveBeenCalledTimes(2);
