@@ -88,7 +88,8 @@ test("dev can finalize GitHub Android artifacts without a Google Play publicatio
     publications: {...publications, ...mobile.publications},
     artifacts: [
       ...mobile.artifacts,
-      ...["asgSelection", "otaBundle", "enginePackage"].map((key) => publication(plan.artifactNames[key])),
+      // A dev release publishes no portable OTA bundle.
+      ...["asgSelection", "enginePackage"].map((key) => publication(plan.artifactNames[key])),
     ],
     otaManifest: publication(plan.artifactNames.otaManifest),
     cloud: cloudRecordForPlan(plan),

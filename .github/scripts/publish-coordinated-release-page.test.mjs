@@ -2,8 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {finalizedBeta} from "./coordinated-release-test-helpers.mjs"
+import {exampleArtifacts} from "./bluetooth-example-artifacts.mjs"
 import {
   publishCoordinatedReleasePage,
+  publishProductionReleasePage,
   releaseDownloadNotes,
   updateDownloadNotes,
 } from "./publish-coordinated-release-page.mjs"
@@ -92,4 +94,126 @@ test("a failed page publication can retry the same archived manifest without cha
   publishCoordinatedReleasePage(input)
   assert.equal(input.writes.length, 1)
   assert.equal(JSON.stringify({plan: input.plan, manifest: input.manifest}), before)
+})
+
+test("the one dev or beta page writer lists the OTA bundle, and the example apps when they were published", () => {
+  const input = fixture()
+  const without = releaseDownloadNotes(input)
+  const bundle = input.manifest.artifacts.find((a) => a.coordinate === input.plan.artifactNames.otaBundle)
+  assert.ok(without.includes(`[Glasses OTA bundle](${bundle.url})`))
+  assert.doesNotMatch(without, /Bluetooth example apps/)
+
+  const withExamples = releaseDownloadNotes({...input, examples: true})
+  const examples = exampleArtifacts(input.plan, input.repository)
+  assert.match(withExamples, /## Bluetooth example apps/)
+  for (const {url} of examples) assert.ok(withExamples.includes(`](${url})`), url)
+  assert.ok(
+    withExamples.includes(
+      `[React Native example APK](https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/${input.plan.artifactContainerTag}/mentra-example-react-native-${input.plan.releaseIdentity}.apk)`,
+    ),
+  )
+  // One managed block: a rerun of the same page writer replaces it in place.
+  const page = fixture({id: 42, draft: false, prerelease: true, body: updateDownloadNotes("Manual notes", without)})
+  publishCoordinatedReleasePage({...page, examples: true})
+  const body = page.writes[0].data.body
+  assert.ok(body.startsWith("Manual notes\n\n"))
+  assert.equal(body.match(/mentra-release-downloads:start/g).length, 1)
+  assert.match(body, /## Bluetooth example apps/)
+})
+
+test("the production page lists the example apps found in the stable container", () => {
+  const {plan: beta} = fixture()
+  const identity = beta.familyBaseVersion
+  const plan = {
+    ...beta,
+    channel: "production",
+    releaseIdentity: identity,
+    releaseSetId: `mentra-${identity}`,
+    artifactContainerTag: `mentra-v${identity}`,
+    artifactNames: {
+      ...beta.artifactNames,
+      releaseManifest: `mentra-release-${identity}.json`,
+      otaManifest: `mentra-live-ota-${identity}.json`,
+      otaBundle: `mentra-live-ota-bundle-${identity}.zip`,
+    },
+  }
+  const manifest = {
+    kind: "mentra-production-release",
+    releaseIdentity: identity,
+    sourceCommit: plan.sourceCommit,
+    promotion: {selectedBetaIdentity: beta.releaseIdentity},
+    artifacts: [
+      {coordinate: plan.artifactNames.otaManifest, url: "https://example.com/ota.json"},
+      {coordinate: plan.artifactNames.otaBundle, url: "https://example.com/bundle.zip"},
+    ],
+  }
+  const writes = []
+  const api = (route, options = {}) => {
+    if (options.method) {
+      writes.push(options.data)
+      return {id: 7, ...options.data}
+    }
+    return {id: 7, tag_name: plan.artifactContainerTag, draft: true, prerelease: false, body: ""}
+  }
+  const [reactNative, android] = exampleArtifacts(plan, "Mentra-Community/MentraOS")
+  publishProductionReleasePage({
+    plan,
+    manifest,
+    repository: "Mentra-Community/MentraOS",
+    releaseId: "7",
+    assetNames: [reactNative.name, plan.artifactNames.otaBundle],
+    api,
+  })
+  const body = writes[0].body
+  // GitHub untags a draft whose update omits tag_name; the page keeps it.
+  assert.equal(writes[0].tag_name, plan.artifactContainerTag)
+  assert.ok(body.includes("[Glasses OTA bundle](https://example.com/bundle.zip)"))
+  assert.ok(body.includes(`[React Native example APK](${reactNative.url})`))
+  assert.ok(!body.includes(android.url), "Only the examples the container holds are listed")
+  assert.equal(body.match(/mentra-release-downloads:start/g).length, 1)
+  writes.length = 0
+  publishProductionReleasePage({plan, manifest, repository: "Mentra-Community/MentraOS", releaseId: "7", api})
+  assert.doesNotMatch(writes[0].body, /Bluetooth example apps/)
+})
+
+test("updating a draft production page keeps its tag; a published page sends only the body", () => {
+  const {plan: beta} = fixture()
+  const identity = beta.familyBaseVersion
+  const plan = {
+    ...beta,
+    channel: "production",
+    releaseIdentity: identity,
+    releaseSetId: `mentra-${identity}`,
+    artifactContainerTag: `mentra-v${identity}`,
+    artifactNames: {
+      ...beta.artifactNames,
+      releaseManifest: `mentra-release-${identity}.json`,
+      otaManifest: `mentra-live-ota-${identity}.json`,
+      otaBundle: `mentra-live-ota-bundle-${identity}.zip`,
+    },
+  }
+  const manifest = {
+    kind: "mentra-production-release",
+    releaseIdentity: identity,
+    sourceCommit: plan.sourceCommit,
+    promotion: {selectedBetaIdentity: beta.releaseIdentity},
+    artifacts: [
+      {coordinate: plan.artifactNames.otaManifest, url: "https://example.com/ota.json"},
+      {coordinate: plan.artifactNames.otaBundle, url: "https://example.com/bundle.zip"},
+    ],
+  }
+  for (const draft of [true, false]) {
+    const writes = []
+    const api = (route, options = {}) => {
+      if (options.method) {
+        writes.push(options.data)
+        return {id: 7, ...options.data}
+      }
+      return {id: 7, tag_name: plan.artifactContainerTag, draft, prerelease: false, body: "Notes"}
+    }
+    publishProductionReleasePage({plan, manifest, repository: "Mentra-Community/MentraOS", releaseId: "7", api})
+    assert.equal(writes.length, 1)
+    assert.deepEqual(Object.keys(writes[0]).sort(), draft ? ["body", "tag_name"] : ["body"])
+    if (draft) assert.equal(writes[0].tag_name, `mentra-v${identity}`)
+  }
 })

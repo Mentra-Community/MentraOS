@@ -283,7 +283,7 @@ test("dispatches the production example from the promoted beta and never promise
   assert.deepEqual(validateExampleOptions({beta: "3.1.0-beta.212"}), {beta_identity: "3.1.0-beta.212"})
   assert.throws(() => validateExampleOptions({beta: "3.1.0"}), /--beta X\.Y\.Z-beta\.N/)
   const message = exampleConfirmationMessage({beta_identity: "3.1.0-beta.212"})
-  assert.match(message, /example 3\.1\.0 from the public 3\.1\.0 packages/)
+  assert.match(message, /example 3\.1\.0 from the promoted beta.s source/)
   assert.match(message, /never releases the example to a store/)
 })
 

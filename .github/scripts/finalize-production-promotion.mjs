@@ -3,6 +3,7 @@ import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {validateProductionOtaArtifacts} from "./production-ota-assets.mjs"
 import {hasCompatibilityLab, promotionAssetName, validatePromotionRecord} from "./production-promotion-state.mjs"
 import {releaseRecordSha256, requirePublicHttpsUrl, serializeReleaseRecord} from "./release-family.mjs"
 
@@ -16,7 +17,7 @@ function requireMatchingCoordinate(actual, expected, label) {
   }
 }
 
-export function finalizeProductionPromotion({plan, record, checkpointUrl}) {
+export function finalizeProductionPromotion({plan, record, checkpointUrl, otaArtifacts}) {
   validatePromotionRecord(record)
   if (record.state !== "finalizing") fail(`promotion state is ${record.state}, expected finalizing`)
   if (
@@ -94,6 +95,9 @@ export function finalizeProductionPromotion({plan, record, checkpointUrl}) {
       ),
     },
     otaManifest: plan.promotion.otaManifest,
+    // Byte-identical copies of the promoted beta's OTA manifest and portable
+    // OTA bundle, published in this release's container.
+    artifacts: validateProductionOtaArtifacts(plan, otaArtifacts),
     promotion: {
       promotionId: record.promotionId,
       attempt: record.attempt,
@@ -135,6 +139,7 @@ function main() {
     plan: readJson(args.plan),
     record: readJson(args.record),
     checkpointUrl: args["checkpoint-url"],
+    otaArtifacts: readJson(args["ota-artifacts"]),
   })
   writeFileSync(path.resolve(args.output), serializeReleaseRecord(manifest))
 }
