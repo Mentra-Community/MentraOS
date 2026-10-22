@@ -30,21 +30,19 @@ export {
   workspaceKeys,
   workspaceListQuery,
 } from "./queries";
-// Billing's data, as the Licenses and Billing pages read it: the client (every answer parsed with the contract), the
+// Billing's data, as the Licenses page reads it: the client (every answer parsed with the contract), the
 // sentences Core words it with, and the formatting in the portal's locale and the viewer's time zone.
 export {
-  ACCOUNT_SCOPE,
   BillingContractError,
   BillingRefusedError,
   BillingUnavailableError,
   billingErrorMessage,
   createBillingApi,
-  ownerTypeOf,
   workspaceScope,
   type BillingApi,
   type BillingScope,
 } from "./billing-api";
-export { licenseStrings, refusalMessage, type LicenseScope, type LicenseStrings, type RefusalContext } from "./strings/licenses";
+export { licenseStrings, refusalMessage, type LicenseStrings, type RefusalContext } from "./strings/licenses";
 export {
   costFact,
   fitNote,
@@ -159,7 +157,6 @@ export {
 // status and its catalog joined and put in order, with the seat counts and what fits a license's free seats.
 export { FeatureChips, ProductChip, ProductIcon, type ProductIdentity } from "./components/licenses/product";
 export {
-  catalogForOwner,
   fitFor,
   holdsSeat,
   joinLicenses,
@@ -219,19 +216,13 @@ export {
 export { ConfirmDialog, useAsking } from "./components/confirm-dialog";
 export type { MembersLicenses } from "./components/members-panel";
 
-// The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each
-// needs a `QueryClientProvider` above it, the billing client, and the host's `NavigateOut`; the portal wires them to its
-// routes, its `me` and `?purchase=`. Each has a header-actions component ("Billing & invoices ↗", "Buy licenses" or "Buy a license") for the
-// host to put in its title bar; it reads under the view's keys, so nothing is requested twice.
+// The workspace's Licenses page, composed from the pieces above. It needs a `QueryClientProvider` above it, the billing
+// client, and the host's `NavigateOut`; the portal wires it to its routes, its `me`, `?purchase=` and `?buy=`. It has a
+// header-actions component ("Billing & invoices ↗", "Buy licenses") for the host to put in its title bar; it reads under
+// the view's keys, so nothing is requested twice.
 export {
   WorkspaceLicensesHeaderActions,
   WorkspaceLicensesView,
   type WorkspaceLicensesHeaderActionsProps,
   type WorkspaceLicensesViewProps,
 } from "./components/licenses/licenses-view";
-export {
-  PersonalBillingHeaderActions,
-  PersonalBillingView,
-  type PersonalBillingHeaderActionsProps,
-  type PersonalBillingViewProps,
-} from "./components/licenses/personal-billing-view";

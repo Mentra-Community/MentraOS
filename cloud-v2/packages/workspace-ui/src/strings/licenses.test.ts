@@ -13,7 +13,7 @@ describe("dialogs and side panels", () => {
 describe("the pages", () => {
   test("the Licenses page", () => {
     expect(t.page.title).toBe("Licenses");
-    // The title stands alone: no subtitle for a manager or for a member. (The personal Billing page keeps its own.)
+    // The title stands alone: no subtitle for a manager or for a member.
     expect("description" in t.page).toBe(false);
     expect("memberDescription" in t.page).toBe(false);
     expect(t.page.adminsGiveOutSeats("Acme Field Services")).toBe("Acme Field Services's Admins and Owners assign licenses.");
@@ -22,54 +22,51 @@ describe("the pages", () => {
       "Its Admins and Owners assign licenses. Once you have one, it works the next time you open the miniapp it's for.",
     );
     expect(t.page.billingAndInvoices).toBe("Billing & invoices");
-    // A workspace buys several licenses; a person buys their own.
+    // A workspace buys several licenses.
     expect(t.page.buyLicenses).toBe("Buy licenses");
-    expect(t.page.buyALicense).toBe("Buy a license");
   });
 
-  test("the two sentences the spec leaves unwritten: no products where nothing is offered, and nothing to buy for a person", () => {
+  test("the sentence the spec leaves unwritten: no products where nothing is offered", () => {
     expect(t.page.noLicenses).toBe("This workspace has no products yet.");
-    expect(t.personal.nothingToBuy).toBe("There is nothing to buy for yourself right now.");
   });
 
-  test("its unavailable state, and the personal page's", () => {
+  test("its unavailable state", () => {
     expect(t.page.unavailable).toEqual({
       title: "Licenses are unavailable",
       body: "They can't be shown right now. Try again in a moment.",
       retry: "Retry",
     });
-    expect(t.personal.unavailable.title).toBe("Billing is unavailable");
-    expect(t.personal.unavailable.retry).toBe("Retry");
   });
 
-  test("the personal Billing page and the navigation to it", () => {
-    expect(t.personal.title).toBe("Billing");
-    expect(t.personal.description).toBe("Licenses you buy for yourself, apart from any workspace's.");
-    expect(t.nav).toMatchObject({ licenses: "Licenses", billing: "Billing", yourAccount: "Your account" });
-    expect(t.nav.backTo("Acme Field Services")).toBe("Back to Acme Field Services");
+  test("the navigation has the Licenses page and nothing personal", () => {
+    expect(t.nav).toEqual({ licenses: "Licenses" });
+    expect("personal" in t).toBe(false);
+  });
+
+  test("what the page says when the address asks to buy a product that isn't opened", () => {
+    const words = t.page.buyLink;
+    expect(words.alreadyHas("Acme Field Services", "Mentra Call Unlimited")).toBe("Acme Field Services already has Mentra Call Unlimited.");
+    expect(words.notForSale).toBe("That product isn't for sale.");
+    expect(words.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")).toBe(
+      "Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.",
+    );
+    expect(words.askAnAdmin("Acme Field Services", words.anyProduct)).toBe("Only Admins and Owners of Acme Field Services can buy licenses. Ask one of them.");
+    expect(words.notHere).toBe("Licenses can't be bought here.");
   });
 });
 
 describe("the catalog and buying", () => {
-  test("the catalog's headings differ for a workspace and a person", () => {
-    expect(t.catalog.workspace).toEqual({
-      title: "Buy licenses for your members",
-      intro: "You'll pay by card on a secure payment page, then come back here to assign the licenses.",
-    });
-    expect(t.catalog.person).toEqual({
-      title: "Buy a license for yourself",
-      intro: "You'll pay by card on a secure payment page, then come back here.",
-    });
+  test("the catalog's heading", () => {
+    expect(t.catalog.title).toBe("Buy licenses for your members");
+    expect(t.catalog.intro).toBe("You'll pay by card on a secure payment page, then come back here to assign the licenses.");
     expect(t.catalog.buy).toBe("Buy");
   });
 
   test("the catalog dialog and its held rows", () => {
     expect(t.catalog.dialog.title).toBe("Buy licenses");
-    expect(t.catalog.dialog.personTitle).toBe("Buy a license");
     expect(t.catalog.dialog.description).toBe("Products for your workspace. For one you have, add licenses instead.");
     expect(t.catalog.youHaveSeats(5)).toBe("You have 5 licenses");
     expect(t.catalog.youHaveSeats(1)).toBe("You have 1 license");
-    expect(t.catalog.youHaveIt).toBe("You have it");
   });
 
   test("the licenses step", () => {
@@ -88,6 +85,10 @@ describe("the catalog and buying", () => {
       "10 licenses × $15 · $150 a month · before tax",
     );
     expect(t.buy.summary({ seats: 1, unit: "$15", total: "$15", rate: "a month", note: null })).toBe("1 license × $15 · $15 a month");
+    // A workspace of one member buys one license with no number to choose.
+    expect(t.buy.solo({ total: "$29", rate: "a month", note: "before tax" })).toBe("1 license · $29 a month · before tax");
+    expect(t.buy.solo({ total: "$29", rate: "a month", note: null })).toBe("1 license · $29 a month");
+    expect(t.buy.yoursOnPayment).toBe("It's yours once payment goes through.");
     expect(t.buy.payNote).toBe("You'll pay by card on a secure payment page.");
     expect([t.buy.cancel, t.buy.continue]).toEqual(["Cancel", "Continue to payment"]);
   });
@@ -389,12 +390,18 @@ describe("banners", () => {
     expect(p.dismiss).toBe("Dismiss");
   });
 
-  test("after checkout for a person", () => {
+  test("after checkout, when the buyer was given one of the new licenses", () => {
     const p = t.purchase;
-    expect(p.personSettingUp("Call Unlimited")).toBe("Setting up Call Unlimited. This takes a few seconds; you can stay on this page.");
-    expect(p.personReadyTitle("Call Unlimited")).toBe("Call Unlimited is ready");
-    expect(p.personReadyBody({ product: "Call Unlimited", paid: true })).toBe("Payment received, and Call Unlimited is active on your account.");
-    expect(p.personReadyBody({ product: "Call Unlimited", paid: false })).toBe("Call Unlimited is active on your account.");
+    const one = { seats: 1, product: "Call Unlimited" };
+    const five = { seats: 5, product: "Call Unlimited" };
+    expect(p.givenTitle({ ...one, paid: true })).toBe("Your Call Unlimited license is ready");
+    expect(p.givenBody({ ...one, paid: true })).toBe("Payment received, and it's assigned to you.");
+    expect(p.givenTitle({ ...one, paid: false })).toBe("Purchase complete");
+    expect(p.givenBody({ ...one, paid: false })).toBe("Call Unlimited is active, and it's assigned to you.");
+    expect(p.givenTitle({ ...five, paid: true })).toBe("Your 5 Call Unlimited licenses are ready");
+    expect(p.givenBody({ ...five, paid: true })).toBe("Payment received, and one is assigned to you. Assign the rest to members below.");
+    expect(p.givenTitle({ ...five, paid: false })).toBe("Your 5 Call Unlimited licenses are ready");
+    expect(p.givenBody({ ...five, paid: false })).toBe("Call Unlimited is active, and one is assigned to you. Assign the rest to members below.");
   });
 
   test("a purchase that hasn't reached Core after a minute", () => {
@@ -402,8 +409,6 @@ describe("banners", () => {
     // A checkout that collected nothing (a trial) claims no payment.
     expect(t.purchase.timeout.title(false)).toBe("Your purchase went through");
     expect(t.purchase.timeout.body).toBe("The licenses can take a few minutes to appear.");
-    // A person has one license: their line is about it.
-    expect(t.purchase.timeout.personBody).toBe("Your license can take a few minutes to appear.");
     expect(t.purchase.timeout.reload).toBe("Reload");
   });
 
@@ -427,7 +432,6 @@ describe("banners", () => {
 describe("refusals", () => {
   test("the two the screens act on name the product", () => {
     expect(refusalMessage("already_licensed", { product: "Fleet" })).toBe("You already have Fleet. Add licenses instead.");
-    expect(refusalMessage("already_licensed", { product: "Fleet", scope: "person" })).toBe("You already have Fleet.");
     expect(refusalMessage("checkout_in_progress", { product: "Fleet" })).toBe(
       "A purchase of Fleet is already under way. Finish it, or try again in a minute.",
     );
@@ -471,7 +475,7 @@ describe("refusals", () => {
     // A sample for a function that no longer exists would only pretend to scan something.
     expect(Object.keys(SAMPLES).filter((path) => !functions.includes(path))).toEqual([]);
     for (const code of BILLING_ERROR_CODES) {
-      for (const context of [{ product: "Fleet" }, { product: "Fleet", scope: "person" as const }, {}]) outputs.push(refusalMessage(code, context));
+      for (const context of [{ product: "Fleet" }, {}]) outputs.push(refusalMessage(code, context));
     }
     // A floor, so a walk that reached nothing can't pass.
     expect(outputs.length).toBeGreaterThan(250);
@@ -511,17 +515,18 @@ const FIT_LINES: unknown[][] = (["enough", "some_hold", "all_hold", "short", "fu
 const SAMPLES: Record<string, unknown[][]> = {
   "names.list": [[[]], [["A"]], [["A", "B"]], [["A", "B", "C"]], [["A", "B", "C", "D", "E"]]],
   "names.holders": [[[]], [["A"]], [["A", "B", "C", "D", "E"]]],
-  "nav.backTo": [["Acme Field Services"]],
+  "page.buyLink.alreadyHas": [["Acme Field Services", "Mentra Call Unlimited"]],
+  "page.buyLink.askAnAdmin": [["Acme Field Services", "Mentra Call Unlimited"], ["Acme Field Services", "licenses"]],
   "page.adminsGiveOutSeats": [["Acme Field Services"]],
   "page.noSeat.title": [["Acme Field Services"]],
   "recurrence.rate": [["month", 1], ["month", 3], ["year", 2, "2"]],
   "recurrence.cadence": [["month", 1], ["month", 3], ["week", 2, "2"]],
   "price.perSeat": [["$15", "a month"]],
-  "price.perPerson": [["$29", "every 3 months"]],
   "catalog.youHaveSeats": [[1], [5]],
   "buy.title": [["Fleet"]],
   "buy.terms": [["$15 per user a month", "month"]],
   "buy.members": [[1], [14]],
+  "buy.solo": [[{ total: "$29", rate: "a month", note: "before tax" }], [{ total: "$29", rate: "a month", note: null }]],
   "buy.summary": [
     [{ seats: 10, unit: "$15", total: "$150", rate: "a month", note: "before tax" }],
     [{ seats: 1, unit: "$15", total: "$15", rate: "a month", note: null }],
@@ -614,9 +619,18 @@ const SAMPLES: Record<string, unknown[][]> = {
   "purchase.settingUpSeats": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyTitle": [[{ seats: 1, product: "Call Unlimited" }], [{ seats: 5, product: "Call Unlimited" }]],
   "purchase.readyBody": [[{ product: "Call Unlimited", paid: true }], [{ product: "Call Unlimited", paid: false }]],
-  "purchase.personSettingUp": [["Call Unlimited"]],
-  "purchase.personReadyTitle": [["Call Unlimited"]],
-  "purchase.personReadyBody": [[{ product: "Call Unlimited", paid: true }], [{ product: "Call Unlimited", paid: false }]],
+  "purchase.givenTitle": [
+    [{ seats: 1, product: "Call Unlimited", paid: true }],
+    [{ seats: 1, product: "Call Unlimited", paid: false }],
+    [{ seats: 5, product: "Call Unlimited", paid: true }],
+    [{ seats: 5, product: "Call Unlimited", paid: false }],
+  ],
+  "purchase.givenBody": [
+    [{ seats: 1, product: "Call Unlimited", paid: true }],
+    [{ seats: 1, product: "Call Unlimited", paid: false }],
+    [{ seats: 5, product: "Call Unlimited", paid: true }],
+    [{ seats: 5, product: "Call Unlimited", paid: false }],
+  ],
   "purchase.timeout.title": [[true], [false]],
   "testMode.label": [["Staging"]],
   summary: [[{ count: 1, amount: "$29", rate: "a month" }], [{ count: 2, amount: "$295", rate: "a month" }]],

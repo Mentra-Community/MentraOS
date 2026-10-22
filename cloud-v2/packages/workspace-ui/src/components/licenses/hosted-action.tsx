@@ -1,8 +1,8 @@
 /**
  * Leaving the portal for one of billing's hosted pages: ask billing for a session (or a checkout), then send the
- * person to its URL. Every ↗ button on the Licenses and Billing screens (a card's actions, the roster's Add licenses,
- * the over notice's "Add 2 licenses", the picker's Add licenses, and the catalog's Buy, Continue to payment and Add
- * seats) goes through one `useHostedAction`, so they all behave alike.
+ * person to its URL. Every ↗ button on the Licenses page (a card's actions, the roster's Add licenses,
+ * the over notice's "Add 2 licenses", the picker's Add licenses, and the catalog's Continue to payment and Add
+ * licenses) goes through one `useHostedAction`, so they all behave alike.
  *
  * - An action that returns to the portal, and every purchase, navigates this tab.
  * - An action billing lists with `returns: false` (an invoice's payment page has no way back) opens a blank tab
@@ -27,7 +27,7 @@ import type { BillingAction } from "@mentra/workspace-contract/portal-billing";
 import type { WorkspaceApi } from "../../api";
 import type { BillingApi } from "../../billing-api";
 import { BillingRefusedError, billingErrorMessage } from "../../billing-errors";
-import { ownerTypeOf, type BillingScope } from "../../billing-scope";
+import type { BillingScope } from "../../billing-scope";
 import { billingKeys, workspaceKeys } from "../../queries";
 import { licenseStrings as t } from "../../strings/licenses";
 import { buttonVariants } from "../../ui/button";
@@ -117,7 +117,7 @@ const returnWatches = new WeakMap<QueryClient, Map<string, () => void>>();
  */
 function watchReturn(client: QueryClient, scope: BillingScope, api?: Pick<WorkspaceApi, "basePath">): void {
   const keys: Array<readonly unknown[]> = [billingKeys.statuses(scope)];
-  if (api && scope.kind === "workspace") keys.push(workspaceKeys.licenses(api, scope.workspaceId));
+  if (api) keys.push(workspaceKeys.licenses(api, scope.workspaceId));
   const shown = () => keys.some((queryKey) => client.getQueryCache().findAll({ queryKey, type: "active" }).length > 0);
   if (!shown()) return;
   const id = JSON.stringify(keys);
@@ -146,8 +146,7 @@ function watchReturn(client: QueryClient, scope: BillingScope, api?: Pick<Worksp
 /**
  * The hosted-page flow for one card or dialog. `product` is the name a refusal may mention ("A purchase of Fleet
  * is already under way"), for a screen that has one product; a request may name its own. `api` lets the
- * window-focus refresh read the workspace's licenses again as well as billing's status; without it (a person's
- * page) only the status is refreshed.
+ * window-focus refresh read the workspace's licenses again as well as billing's status; without it only the status is refreshed.
  *
  * A purchase refused as `already_licensed` means the catalog on screen is stale, so billing's answers for the owner
  * are read again.
@@ -235,7 +234,7 @@ export function useHostedAction({
           // Held already: the catalog the person is looking at is out of date, whatever became of the screen that asked.
           if (purchasing && refused === "already_licensed") void client.invalidateQueries({ queryKey: billingKeys.owner(owner) });
           if (mounted.current) {
-            setError(billingErrorMessage(cause, { product: request.name ?? product, scope: ownerTypeOf(owner) }));
+            setError(billingErrorMessage(cause, { product: request.name ?? product }));
             setCode(refused);
           }
         } finally {

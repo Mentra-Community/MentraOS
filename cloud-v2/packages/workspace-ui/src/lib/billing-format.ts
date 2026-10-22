@@ -17,7 +17,7 @@ import {
   type Recurrence,
   type Tax,
 } from "@mentra/workspace-contract/portal-billing";
-import { licenseStrings as t, type LicenseScope } from "../strings/licenses";
+import { licenseStrings as t } from "../strings/licenses";
 import { formatDate, usableLocale } from "./format";
 
 /**
@@ -78,14 +78,14 @@ export function taxNote(tax: Tax): string | null {
 }
 
 /**
- * A price as the catalog shows it: "$15 per user a month" for a workspace, "$29 a month" for a person. A price of
+ * A price as the catalog shows it: "$15 per user a month". A price of
  * a scheme Core doesn't know is billing's own `fallbackLabel`.
  */
-export function priceLine(price: Price, scope: LicenseScope, locale: string): string {
+export function priceLine(price: Price, locale: string): string {
   if (!isPerSeat(price)) return price.fallbackLabel;
   const unit = formatMoney(price.unit, locale);
   const rate = formatRecurrence(price.recurrence, locale);
-  return scope === "workspace" ? t.price.perSeat(unit, rate) : t.price.perPerson(unit, rate);
+  return t.price.perSeat(unit, rate);
 }
 
 /** A card's Cost fact: the value, and the line under it (null when there is none). */
@@ -104,12 +104,11 @@ export interface CostFact {
 export function costFact(
   license: Pick<LicenseBilling, "price" | "total" | "tax">,
   locale: string,
-  scope: LicenseScope = "workspace",
 ): CostFact {
   const { price } = license;
   if (!isPerSeat(price)) return { value: price.fallbackLabel, foot: null };
   const foot = license.tax === "excluded" ? t.facts.cost.beforeTax : null;
-  if (license.total === null) return { value: priceLine(price, scope, locale), foot };
+  if (license.total === null) return { value: priceLine(price, locale), foot };
   return {
     value: t.facts.cost.value(formatMoney(license.total, locale), formatRecurrence(price.recurrence, locale)),
     foot,
