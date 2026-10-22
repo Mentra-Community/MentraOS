@@ -74,10 +74,14 @@ export function fleetPath(workspaceId: string, item: FleetItem = "overview"): st
   return `${workspacePath(workspaceId, "fleet")}?fleet=${item}`;
 }
 
-/** The Fleet item an address's query names: the first segment of `?fleet=`. A blank or unknown one is the overview. */
+/**
+ * The Fleet item an address's query names: the first segment of `?fleet=`. A phone's page (`phones/<id>`) belongs to
+ * Devices. A blank or unknown one is the overview.
+ */
 export function fleetItemOf(search: string): FleetItem {
   const value = new URLSearchParams(search).get("fleet") ?? "";
   const first = value.replace(/^\/+/, "").split(/[/?#]/)[0];
+  if (first === "phones") return "devices";
   return FLEET_ITEMS.find(item => item === first) ?? "overview";
 }
 

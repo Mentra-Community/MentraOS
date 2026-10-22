@@ -43,6 +43,7 @@ describe("addresses", () => {
     expect(fleetPath("ws/odd id", "devices")).toBe("/w/ws%2Fodd%20id/fleet?fleet=devices");
     expect(fleetItemOf("?fleet=people")).toBe("people");
     expect(fleetItemOf("?fleet=/devices?tab=phones")).toBe("devices");
+    expect(fleetItemOf("?fleet=phones%2Fphone-1")).toBe("devices");
     expect(fleetItemOf("?fleet=/miniapps/com.acme.app")).toBe("miniapps");
     for (const search of ["", "?fleet=", "?fleet=nope", "?x=1"]) expect(fleetItemOf(search)).toBe("overview");
   });

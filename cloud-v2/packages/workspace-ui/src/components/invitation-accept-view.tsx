@@ -312,7 +312,17 @@ export function InvitationAcceptCard({
       </div>
       {notice}
       {actions.length > 0 ? (
-        <div className={actions.length >= 2 ? `mt-6 grid gap-2.5 ${actions.length === 2 ? "grid-cols-2" : "sm:grid-cols-3"}` : "mt-6 grid"}>{actions}</div>
+        <div className={actions.length >= 2 ? "mt-6 grid grid-cols-2 gap-2.5" : "mt-6 grid"}>
+          {actions.length === 3
+            ? [
+                ...actions.slice(0, 2),
+                // Three pills do not fit the card's width: the main action takes a row of its own.
+                <div key="main" className="col-span-2 grid">
+                  {actions[2]}
+                </div>,
+              ]
+            : actions}
+        </div>
       ) : null}
       {acceptError ? (
         <p role="alert" className="rounded-notice bg-error text-error-foreground mt-4 px-4 py-3 text-sm">

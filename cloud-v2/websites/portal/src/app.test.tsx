@@ -227,6 +227,7 @@ describe("the sidebar follows the viewer's role", () => {
     expect(labelOf("?fleet=people")).toBe("People");
     expect(labelOf("?fleet=people%2Facct_x%3Frange%3D30d")).toBe("People");
     expect(labelOf("?fleet=devices/gl_1")).toBe("Devices");
+    expect(labelOf("?fleet=phones/ph_1")).toBe("Devices");
     expect(labelOf("?fleet=miniapps")).toBe("Miniapps");
     expect(labelOf("?fleet=nonsense")).toBe("Overview");
   });
@@ -446,6 +447,13 @@ describe("the invitation card's Decline and leave-first", () => {
     });
     expect(other).not.toContain(">Decline<");
     expect(other).not.toContain("Accept invitation");
+  });
+
+  test("with Dismiss, Decline and Accept, Accept takes a row of its own so its words fit", () => {
+    const three = card({ onDismiss: () => {}, onDecline: () => {} });
+    expect(three).not.toContain("grid-cols-3");
+    expect(three).toMatch(/<div class="col-span-2 grid"><button[^>]*>Accept invitation<\/button><\/div>/);
+    expect(card({ onDecline: () => {} })).not.toContain("col-span-2");
   });
 
   test("shows Declining… and disables both while a decline is in flight", () => {
