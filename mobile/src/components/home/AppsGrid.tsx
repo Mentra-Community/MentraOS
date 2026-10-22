@@ -29,6 +29,8 @@ import {
   useStop,
 } from "@mentra/engine"
 
+import {hasAssignmentReason} from "@mentra/engine-host-internal"
+
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
@@ -764,16 +766,19 @@ export function AppsGrid({
               }
             },
           },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:uninstall"),
-          icon: "trash",
-          destructive: true,
-          onPress: () => {
-            if (liveSelectedApp) {
-              uninstallAppUI(liveSelectedApp)
-            }
+        // A miniapp a workspace assigned is managed: its menu has no Uninstall (the board's managed menu).
+        // Remove above only takes it off Home; the assignment keeps it installed.
+        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") &&
+          !(liveSelectedApp && hasAssignmentReason(liveSelectedApp.packageName)) && {
+            label: translate("appInfo:uninstall"),
+            icon: "trash",
+            destructive: true,
+            onPress: () => {
+              if (liveSelectedApp) {
+                uninstallAppUI(liveSelectedApp)
+              }
+            },
           },
-        },
       ].filter(Boolean) as PopoverAction[],
     [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push, homePackageNames],
   )

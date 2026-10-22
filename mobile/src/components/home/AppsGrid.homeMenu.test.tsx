@@ -11,6 +11,7 @@ const mockPush = jest.fn()
 const mockPermissions = jest.fn()
 const mockAskPermissions = jest.fn()
 const mockAlert = jest.fn()
+let mockManaged = new Set<string>()
 
 jest.mock("@mentra/engine", () => ({
   DUMMY_APPLET: {packageName: "@empty", name: ""},
@@ -35,6 +36,7 @@ jest.mock("@mentra/engine", () => ({
     },
   },
 }))
+jest.mock("@mentra/engine-host-internal", () => ({hasAssignmentReason: (pkg: string) => mockManaged.has(pkg)}))
 jest.mock("@/hooks/useAppsExtras", () => ({useForegroundApps: () => mockApps}))
 jest.mock("@/hooks/useCachedRemoteImageSource", () => ({warmCachedRemoteImageSources: jest.fn()}))
 jest.mock("@/contexts/ThemeContext", () => ({
@@ -121,6 +123,7 @@ function openDrawerMenu(pkg: string) {
 beforeEach(() => {
   jest.clearAllMocks()
   mockOrder = {}
+  mockManaged = new Set()
   mockApps = [app(0), app(1, true)]
 })
 
@@ -163,4 +166,40 @@ test("uses actual Home slots when a saved layout has gaps and an overflow miniap
   expect(screen.queryByTestId("home.miniapp.app.1")).toBeNull()
   openDrawerMenu("app.1")
   expect(screen.getByText("appInfo:addToHome")).toBeTruthy()
+})
+
+const menuLabels = () =>
+  ["appInfo:start", "appInfo:settings", "appInfo:remove", "appInfo:addToHome", "appInfo:uninstall"].filter((label) =>
+    screen.queryByText(label),
+  )
+
+test("a managed miniapp's Home menu is Start miniapp, Miniapp info and Remove, with no Uninstall", () => {
+  mockManaged = new Set(["app.0"])
+  render(<HomeAndDrawer />)
+  fireEvent(screen.getByTestId("grid.home"), "dragStart", {key: "app.0", fromIndex: 0})
+  expect(menuLabels()).toEqual(["appInfo:start", "appInfo:settings", "appInfo:remove"])
+})
+
+test("a miniapp that is not managed keeps Uninstall in the Home menu", () => {
+  mockManaged = new Set(["app.1"])
+  render(<HomeAndDrawer />)
+  fireEvent(screen.getByTestId("grid.home"), "dragStart", {key: "app.0", fromIndex: 0})
+  expect(menuLabels()).toEqual(["appInfo:start", "appInfo:settings", "appInfo:remove", "appInfo:uninstall"])
+})
+
+test("a managed miniapp has no Uninstall in the all-miniapps menu either", () => {
+  mockManaged = new Set(["app.0"])
+  render(<HomeAndDrawer searchQuery="App 00" />)
+  openDrawerMenu("app.0")
+  expect(screen.queryByText("appInfo:uninstall")).toBeNull()
+  expect(screen.getByText("appInfo:settings")).toBeTruthy()
+})
+
+test("Remove on a managed miniapp only takes it off Home: nothing is uninstalled", () => {
+  mockManaged = new Set(["app.0"])
+  render(<HomeAndDrawer />)
+  fireEvent(screen.getByTestId("grid.home"), "dragStart", {key: "app.0", fromIndex: 0})
+  fireEvent.press(screen.getByText("appInfo:remove"))
+  expect(mockApps.find((entry) => entry.packageName === "app.0")?.hidden).toBe(true)
+  expect(jest.requireMock("@/utils/uninstallAppUI").uninstallAppUI).not.toHaveBeenCalled()
 })

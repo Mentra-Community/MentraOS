@@ -1,33 +1,47 @@
 import {engine, type PendingRunningUpdatePrompt, type RunningUpdateFailure} from "@mentra/engine"
 
-import {showAlert} from "@/contexts/ModalContext"
+import {showAlert, waitForAlertHost, type AlertButton} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 
-const UPDATE_BUTTON_INDEX = 1
+type PromptChoice = "update" | "not_now"
 
-/** "Update {name}?" for a running miniapp. Anything but Update (including a dismissal) is "Not now". */
+/**
+ * "Update {name}?" for a running miniapp: the Mentra App's standard alert sheet, with Update on top and
+ * Not now below as the cancel button, so a swipe, a tap outside and Android back all mean Not now.
+ *
+ * The sheet answers with the index of the pressed button in this list, and lays the buttons out by their
+ * style, not their position. So each button carries its role, and the answer is read through the role: the
+ * order of this list and of the sheet can change without Update and Not now swapping.
+ */
 export async function presentRunningUpdatePrompt(prompt: PendingRunningUpdatePrompt): Promise<void> {
-  let choice = -1
+  const choices: Array<{role: PromptChoice; button: AlertButton}> = [
+    {role: "not_now", button: {text: translate("fleet:updatePromptNotNow"), style: "cancel"}},
+    {role: "update", button: {text: translate("fleet:updatePromptUpdate")}},
+  ]
+  let answer: PromptChoice = "not_now"
   try {
-    choice = await showAlert({
-      title: translate("home:miniappUpdatePromptTitle", {name: prompt.displayName}),
-      message: translate("home:miniappUpdatePromptMessage", {name: prompt.displayName, version: prompt.version}),
-      buttons: [
-        {text: translate("home:miniappUpdatePromptNotNow"), style: "cancel"},
-        {text: translate("home:miniappUpdatePromptUpdate")},
-      ],
+    // At startup the sheet isn't mounted yet; a system alert would be the wrong surface, and showing
+    // nothing would answer Not now for a prompt the user never saw.
+    await waitForAlertHost()
+    const index = await showAlert({
+      title: translate("fleet:updatePromptTitle", {name: prompt.displayName}),
+      message: translate("fleet:updatePromptMessage", {name: prompt.displayName}),
+      buttons: choices.map(({button}) => button),
       options: {allowDismiss: true},
     })
+    // Anything but the Update button (Not now, a swipe, no answer) is Not now.
+    answer = choices[index]?.role === "update" ? "update" : "not_now"
   } finally {
-    prompt.answer(choice === UPDATE_BUTTON_INDEX ? "update" : "not_now")
+    prompt.answer(answer)
   }
 }
 
 /** An accepted update failed and the miniapp is back on its installed version. */
-export function presentRunningUpdateFailure(failure: RunningUpdateFailure): void {
-  void showAlert({
-    title: translate("home:miniappUpdateFailedTitle", {name: failure.displayName}),
-    message: translate("home:miniappUpdateFailedMessage", {version: failure.installedVersion}),
+export async function presentRunningUpdateFailure(failure: RunningUpdateFailure): Promise<void> {
+  await waitForAlertHost()
+  await showAlert({
+    title: translate("fleet:updateFailedTitle", {name: failure.displayName}),
+    message: translate("fleet:updateFailedMessage", {version: failure.installedVersion}),
     buttons: [{text: translate("common:ok")}],
   })
 }
