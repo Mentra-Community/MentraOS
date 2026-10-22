@@ -494,6 +494,19 @@ describe("an update whose session ends (sign-out or a deployment switch)", () =>
     expect(miniappRunningRegistry.has(pkg)).toBe(true)
   })
 
+  test("tells its caller when it waits for an answer; dismissing that one prompt defers the update", async () => {
+    answer = "hold"
+    await runApp({open: true})
+    const asked: string[] = []
+    const update = release({onAsking: () => asked.push(calls.at(-1)!)})
+    while (!calls.includes("prompt")) await Promise.resolve()
+    expect(asked).toEqual(["unpack"])
+    prompt.dismissRunningUpdatePrompt("com.acme.other")
+    prompt.dismissRunningUpdatePrompt(pkg)
+    await expect(update).rejects.toBeInstanceOf(MiniappRunningError)
+    expect(active).toBe("1.0.0")
+  })
+
   test("after Update it neither activates nor restarts the miniapp, and shows no failure", async () => {
     await runApp({open: true})
     await expect(release({isCancelled: () => calls.includes(`stop:${pkg}`)})).rejects.toBeInstanceOf(

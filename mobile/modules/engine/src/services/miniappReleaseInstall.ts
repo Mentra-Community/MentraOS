@@ -64,6 +64,8 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
    * shown, and nothing restarts into the ended session.
    */
   isCancelled?: () => boolean
+  /** With `askIfRunning`: called when the staged release waits for the person's answer to its update prompt. */
+  onAsking?: () => void
   /**
    * With `onlyIfStopped`: a package that is not installed may be installed
    * (a managed first install). It is silent: no updating state, no prompt.
@@ -101,7 +103,7 @@ export async function installMiniappRelease(
   archive: MiniappReleaseArchive,
   options: ReleaseInstallOptions,
 ): Promise<void> {
-  const {onlyIfStopped, askIfRunning, isCancelled, firstInstall, ...requestedOptions} = options
+  const {onlyIfStopped, askIfRunning, isCancelled, onAsking, firstInstall, ...requestedOptions} = options
   const packageName = options.expectedPackageName
   const install = archiveInstaller(archive)
   const assertCurrent = () => {
@@ -146,7 +148,7 @@ export async function installMiniappRelease(
     if (installsFirst) {
       await installFirstWhenIdle(install, installOptions, packageName)
     } else if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
-      await installRunningUpdate(install, installOptions, packageName, options.expectedVersion, isCancelled)
+      await installRunningUpdate(install, installOptions, packageName, options.expectedVersion, isCancelled, onAsking)
     } else {
       await installIdleUpdate(install, installOptions, packageName)
     }
@@ -221,6 +223,7 @@ async function installRunningUpdate(
   packageName: string,
   version: string,
   isCancelled: (() => boolean) | undefined,
+  onAsking: (() => void) | undefined,
 ): Promise<void> {
   const assertCurrent = () => {
     if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
@@ -247,6 +250,7 @@ async function installRunningUpdate(
         // and the files are unpacked; nothing is reserved yet. If the user
         // closed the miniapp meanwhile, it updates like an idle one.
         if (miniappLauncher.isRunning(packageName)) {
+          if (canShowRunningUpdatePrompt(packageName)) onAsking?.()
           const answer = await requestRunningUpdatePrompt({packageName, displayName, version})
           if (answer !== "update") throw new MiniappRunningError(packageName)
           assertCurrent()
@@ -330,6 +334,8 @@ export interface ManagedMiniappInstall {
   assignment: MiniappAssignment
   /** True once the account, Core or workspace that asked for it is no longer current. Nothing then commits. */
   isCancelled: () => boolean
+  /** Called when the install waits for the person's answer to its update prompt. */
+  onAsking?: () => void
 }
 
 /**
@@ -341,6 +347,7 @@ export async function installManagedMiniapp({
   resolution,
   assignment,
   isCancelled,
+  onAsking,
 }: ManagedMiniappInstall): Promise<void> {
   const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
   await installMiniappRelease(resolution.bundleUrl, {
@@ -354,6 +361,7 @@ export async function installManagedMiniapp({
     askIfRunning: true,
     firstInstall: true,
     isCancelled,
+    onAsking,
     ...(hostVersion && supportedMiniappSdkRange
       ? {compatibilityPolicy: {hostVersion, supportedSdkRange: supportedMiniappSdkRange}}
       : {}),

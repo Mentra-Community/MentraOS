@@ -128,6 +128,9 @@ let stopListeners: Set<(packageName: string) => void>
 let dueListeners: Set<(packageName: string) => void>
 let installGate: Promise<void> | undefined
 let installError: InstallFailure | undefined
+/** Packages whose install asks the person before it replaces the running release. */
+let asks: Set<string>
+let prompts: Map<string, (choice: "update" | "not_now" | "not_shown") => void>
 let calls: string[]
 let outcomes: FleetAssignmentOutcomePayload[]
 let contexts: string[]
@@ -160,10 +163,16 @@ function start(): AssignmentReconciler {
         calls.push(`clear-dev:${pkg}`)
         devSelections.delete(pkg)
       },
-      install: async ({resolution, assignment, isCancelled}) => {
+      install: async ({resolution, assignment, isCancelled, onAsking}) => {
         calls.push(`install:${resolution.packageName}@${resolution.version}`)
         if (installGate) await installGate
         if (installError) throw installError
+        if (asks.has(resolution.packageName)) {
+          onAsking?.()
+          const choice = await new Promise((resolve) => prompts.set(resolution.packageName, resolve))
+          prompts.delete(resolution.packageName)
+          if (choice !== "update") throw new InstallFailure("running", true)
+        }
         if (isCancelled()) throw new InstallFailure("cancelled", true)
         installed.set(resolution.packageName, {version: resolution.version, bundleSha256: resolution.bundleSha256})
         devSelections.delete(resolution.packageName)
@@ -204,6 +213,10 @@ function start(): AssignmentReconciler {
         revoked.delete(pkg)
       },
       isAccessRevoked: (pkg) => revoked.has(pkg),
+      dismissUpdatePrompt: (pkg) => {
+        calls.push(`dismiss:${pkg}`)
+        prompts.get(pkg)?.("not_shown")
+      },
       setWorkspaceContext: (s, ws) => contexts.push(`${s.mentraUserId}:${ws ?? "none"}`),
     },
   })
@@ -226,7 +239,8 @@ function serve(version: string, extra: Partial<Extract<ManagedResolution, {ok: t
   })
 }
 
-const states = () => outcomes.map((o) => (o.reason ? `${o.state}:${o.reason}` : o.state))
+const states = (pkg?: string) =>
+  outcomes.filter((o) => !pkg || o.packageName === pkg).map((o) => (o.reason ? `${o.state}:${o.reason}` : o.state))
 
 async function startAndSettle(): Promise<AssignmentReconciler> {
   const r = start()
@@ -254,6 +268,8 @@ beforeEach(() => {
   dueListeners = new Set()
   installGate = undefined
   installError = undefined
+  asks = new Set()
+  prompts = new Map()
   calls = []
   outcomes = []
   contexts = []
@@ -454,6 +470,66 @@ describe("managed desired state", () => {
     await timers.advance(TRIGGER_JITTER_MS)
     expect(fetches).toBe(2)
     expect(states()).toEqual(["downloading", "deferred_running", "downloading", "installed"])
+  })
+
+  test("an unanswered update prompt holds neither other assignments nor later triggers", async () => {
+    const other = "com.acme.other"
+    const otherUrl = "https://other.acme.example/app"
+    serve("2.0.0", {packageName: other}, otherUrl)
+    answer = async () => managed(1, [{}, {id: "asg_other", pkg: other, url: otherUrl}])
+    installed.set(notes, {version: "0.9.0"})
+    running.add(notes)
+    asks.add(notes)
+    const r = await startAndSettle()
+    expect(states(notes)).toEqual(["downloading", "deferred_running"])
+    expect(states(other)).toEqual(["downloading", "installed"])
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(fetches).toBe(2)
+    expect(calls.filter((call) => call.startsWith(`install:${notes}`))).toHaveLength(1)
+    prompts.get(notes)!("update")
+    await settle()
+    expect(installed.get(notes)?.version).toBe("1.0.0")
+    expect(states(notes)).toEqual(["downloading", "deferred_running", "installed"])
+  })
+
+  test("a newer release dismisses the unanswered prompt of the one it supersedes", async () => {
+    installed.set(notes, {version: "0.9.0"})
+    running.add(notes)
+    asks.add(notes)
+    const r = await startAndSettle()
+    serve("1.1.0")
+    answer = async () => managed(2, [{}])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "dismiss:com.acme.notes", "install:com.acme.notes@1.1.0"])
+    prompts.get(notes)!("update")
+    await settle()
+    expect(installed.get(notes)?.version).toBe("1.1.0")
+  })
+
+  test("a withdrawn assignment and a context change dismiss its unanswered prompt", async () => {
+    installed.set(notes, {version: "0.9.0"})
+    running.add(notes)
+    asks.add(notes)
+    const r = await startAndSettle()
+    answer = async () => managed(2, [])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "dismiss:com.acme.notes"])
+    expect(installed.get(notes)?.version).toBe("0.9.0")
+
+    calls = []
+    answer = async () => managed(3, [{}])
+    r.trigger("revision", 3)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    session = sessionB
+    answer = async () => unmanaged(1)
+    r.sessionChanged()
+    expect(calls).toContain("dismiss:com.acme.notes")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(installed.get(notes)?.version).toBe("0.9.0")
   })
 
   test("the cached release satisfies the assignment once a stopped live-development selection is cleared", async () => {

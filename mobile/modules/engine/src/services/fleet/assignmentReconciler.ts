@@ -81,6 +81,8 @@ export interface ManagedMiniappPort {
     resolution: Extract<ManagedResolution, {ok: true}>
     assignment: ManagedAssignment
     isCancelled: () => boolean
+    /** Called when the install stops to wait for the person's answer to its update prompt. */
+    onAsking?: () => void
   }): Promise<void>
   /** Map an install error to its failure. */
   classify(error: unknown): {kind: ManagedInstallFailure; retryable: boolean}
@@ -99,6 +101,8 @@ export interface ManagedMiniappPort {
   revokeAccess(packageName: string): Promise<void>
   restoreAccess(packageName: string): void
   isAccessRevoked(packageName: string): boolean
+  /** Answer the package's open update prompt as not shown, so its install stops waiting and defers. */
+  dismissUpdatePrompt(packageName: string): void
   /** The data and development context for this account: the workspace it belongs to, or none. */
   setWorkspaceContext(session: ReconcilerSession, workspaceId: string | null): void
 }
@@ -175,6 +179,18 @@ interface PersistedState {
 
 class Superseded extends Error {}
 
+/** An install waiting for the person's answer to its update prompt. The cycle goes on without it. */
+interface AskingInstall {
+  assignmentId: string
+  assignmentRevision: number
+  selectedVersion: string
+  gen: number
+  /** The ack revision whose desired state still wants this install; a newer one cancels it unless it still does. */
+  heard: {revision: number}
+  /** Resolves once the install committed or failed. Never rejects. */
+  settled: Promise<void>
+}
+
 function emptyState(): PersistedState {
   return {appliedRevision: 0, snapshot: null, outcomes: {}, pendingUninstalls: [], revoked: []}
 }
@@ -216,6 +232,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   let again = false
   let failures = 0
   let stopped = false
+  const asking = new Map<string, AskingInstall>()
   const stopListener = miniapps.onStopped((packageName) => onPackageStopped(packageName))
   const dueListener = miniapps.onUpdateDue((packageName) => {
     if (!stopped && session && isWaiting(packageName)) trigger("opened")
@@ -251,7 +268,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   function syncSession(): boolean {
     const current = deps.getSession()
     if (sameSession(current, session)) return current !== null
-    generation += 1
+    supersede()
     session = current
     state = current ? load(current) : emptyState()
     wantedRevision = 0
@@ -297,6 +314,20 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
 
   function assertCurrent(gen: number): void {
     if (stopped || gen !== generation) throw new Superseded()
+  }
+
+  /** Start a new generation: nothing in flight commits, and no prompt of the old one waits for an answer. */
+  function supersede(): void {
+    generation += 1
+    for (const packageName of asking.keys()) miniapps.dismissUpdatePrompt(packageName)
+  }
+
+  /** Stop waiting for the package's prompt, if one is open, and let its install settle. */
+  async function dismissAsking(packageName: string): Promise<void> {
+    const pending = asking.get(packageName)
+    if (!pending) return
+    miniapps.dismissUpdatePrompt(packageName)
+    await pending.settled
   }
 
   // --- scheduling ----------------------------------------------------------------------------------------------
@@ -394,7 +425,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     const workspace = workspaceOf(desired)
     if (previousWorkspace !== workspace || state.snapshot === null) {
       // Leaving one context: nothing of the old one may commit once the new one is active.
-      if (previousWorkspace !== workspace && state.snapshot !== null) generation += 1
+      if (previousWorkspace !== workspace && state.snapshot !== null) supersede()
       gen = generation
       miniapps.setWorkspaceContext(current, workspace)
     }
@@ -427,6 +458,10 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     gen: number,
   ): Promise<void> {
     const desiredIds = new Set([...byPackage.values()].map((entry) => entry.assignmentId))
+    for (const packageName of [...asking.keys()]) {
+      if (!byPackage.has(packageName)) await dismissAsking(packageName)
+    }
+    assertCurrent(gen)
     for (const [assignmentId, outcome] of Object.entries(state.outcomes)) {
       if (desiredIds.has(assignmentId)) continue
       assertCurrent(gen)
@@ -533,9 +568,24 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       mentraUserId: current.mentraUserId,
       url: entry.url,
     }
+    const selectedVersion = resolution.version
+    const waiting = asking.get(entry.packageName)
+    if (waiting) {
+      if (
+        waiting.gen === gen &&
+        waiting.assignmentId === entry.assignmentId &&
+        waiting.assignmentRevision === entry.revision &&
+        waiting.selectedVersion === selectedVersion
+      ) {
+        // Still the install this desired state wants: it keeps waiting for its answer.
+        waiting.heard.revision = wantedRevision
+        return
+      }
+      await dismissAsking(entry.packageName)
+      assertCurrent(gen)
+    }
     const installed = await miniapps.installedRelease(entry.packageName)
     assertCurrent(gen)
-    const selectedVersion = resolution.version
     // An install this release already refused is not downloaded again until the URL serves another version or the
     // assignment changes.
     if (
@@ -608,24 +658,73 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       attempted: true,
     })
     // A newer desired-state revision heard before the commit makes this decision stale; the next cycle reads it.
-    const heardRevision = wantedRevision
-    try {
-      await miniapps.install({
+    const heard = {revision: wantedRevision}
+    let markAsking!: () => void
+    const asked = new Promise<null>((resolve) => {
+      markAsking = () => resolve(null)
+    })
+    const finished = miniapps
+      .install({
         resolution,
         assignment,
-        isCancelled: () => stopped || gen !== generation || wantedRevision > heardRevision,
+        isCancelled: () => stopped || gen !== generation || wantedRevision > heard.revision,
+        onAsking: () => markAsking(),
       })
-    } catch (error) {
-      assertCurrent(gen)
-      const {kind, retryable} = miniapps.classify(error)
+      .then(
+        () => ({error: undefined as unknown, failed: false}),
+        (error: unknown) => ({error, failed: true}),
+      )
+    const first = await Promise.race([finished, asked])
+    if (first) {
+      await settleInstall(entry, desired.revision, gen, selectedVersion, installed?.version, attempts, first)
+      return
+    }
+    // The person is asked whether to close the running miniapp. Other assignments and later triggers go on; a
+    // later cycle that wants something else dismisses the prompt.
+    const pending: AskingInstall = {
+      assignmentId: entry.assignmentId,
+      assignmentRevision: entry.revision,
+      selectedVersion,
+      gen,
+      heard,
+      settled: finished.then(async (result) => {
+        if (asking.get(entry.packageName) === pending) asking.delete(entry.packageName)
+        try {
+          await settleInstall(entry, state.appliedRevision, gen, selectedVersion, installed?.version, attempts, result)
+        } catch (error) {
+          if (!(error instanceof Superseded)) console.warn(`Fleet install of ${entry.packageName} failed`, error)
+        }
+      }),
+    }
+    asking.set(entry.packageName, pending)
+    record(entry, desired.revision, {
+      state: "deferred_running",
+      selectedVersion,
+      installedVersion: installed?.version,
+      attempts,
+    })
+  }
+
+  async function settleInstall(
+    entry: FleetDesiredStateEntry,
+    desiredRevision: number,
+    gen: number,
+    selectedVersion: string,
+    installedVersion: string | undefined,
+    attempts: number,
+    result: {error: unknown; failed: boolean},
+  ): Promise<void> {
+    assertCurrent(gen)
+    if (result.failed) {
+      const {kind, retryable} = miniapps.classify(result.error)
       if (kind === "cancelled") throw new Superseded()
-      const after = (await miniapps.installedRelease(entry.packageName))?.version ?? installed?.version
+      const after = (await miniapps.installedRelease(entry.packageName))?.version ?? installedVersion
       assertCurrent(gen)
       if (kind === "running") {
-        record(entry, desired.revision, {state: "deferred_running", selectedVersion, installedVersion: after, attempts})
+        record(entry, desiredRevision, {state: "deferred_running", selectedVersion, installedVersion: after, attempts})
         return
       }
-      record(entry, desired.revision, {
+      record(entry, desiredRevision, {
         state: retryable ? "retrying" : "blocked",
         reason: kind,
         selectedVersion,
@@ -635,9 +734,8 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       if (retryable) schedule(backoff())
       return
     }
-    assertCurrent(gen)
     state.pendingUninstalls = state.pendingUninstalls.filter((name) => name !== entry.packageName)
-    record(entry, desired.revision, {
+    record(entry, desiredRevision, {
       state: "installed",
       selectedVersion,
       installedVersion: selectedVersion,
@@ -740,7 +838,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     }
     if (kind === "leave") {
       // The old workspace's work stops now; the new context activates when its desired state arrives.
-      generation += 1
+      supersede()
       again = false
       schedule(0)
       return
@@ -771,7 +869,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     },
     stop() {
       stopped = true
-      generation += 1
+      supersede()
       if (timer !== null) deps.timers.clearTimeout(timer)
       timer = null
       stopListener()

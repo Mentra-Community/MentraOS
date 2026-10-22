@@ -58,7 +58,8 @@ const promptListeners = new Set<(prompt: PendingRunningUpdatePrompt) => void>()
 const failureListeners = new Set<(failure: RunningUpdateFailure) => void>()
 const dueListeners = new Set<(packageName: string) => void>()
 let openPrompt: string | null = null
-const openSettlers = new Set<(answer: RunningUpdatePromptAnswer) => void>()
+/** Each open prompt's settle function, with its package. */
+const openSettlers = new Map<(answer: RunningUpdatePromptAnswer) => void, string>()
 
 /** Whether a prompt for this miniapp would be shown right now. */
 export function canShowRunningUpdatePrompt(packageName: string): boolean {
@@ -114,7 +115,7 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
       if (answer === "not_now") environment.setDeclined(request.packageName, true)
       resolve(answer)
     }
-    openSettlers.add(settle)
+    openSettlers.set(settle, request.packageName)
     const pending: PendingRunningUpdatePrompt = {
       ...request,
       answer: (choice) => settle(choice === "update" ? "update" : "not_now"),
@@ -134,7 +135,12 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
  * prompt still on screen is ignored.
  */
 export function dismissRunningUpdatePrompts(): void {
-  for (const settle of [...openSettlers]) settle("not_shown")
+  for (const settle of [...openSettlers.keys()]) settle("not_shown")
+}
+
+/** Settle the open prompt of `packageName`, if any, as "not_shown": the install that asked no longer wants it. */
+export function dismissRunningUpdatePrompt(packageName: string): void {
+  for (const [settle, prompted] of [...openSettlers]) if (prompted === packageName) settle("not_shown")
 }
 
 /** Host UI: render each prompt and answer it. Returns an unsubscribe function. */

@@ -22,7 +22,7 @@ import {
 } from "../miniappReleaseInstall"
 import {resolveMiniappUrl} from "../miniappUrlResolution"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
-import {onRunningUpdatePromptDue} from "../runningUpdatePrompt"
+import {dismissRunningUpdatePrompt, onRunningUpdatePromptDue} from "../runningUpdatePrompt"
 import {
   createAssignmentReconciler,
   type AssignmentReconciler,
@@ -79,6 +79,7 @@ const miniapps: ManagedMiniappPort = {
   revokeAccess: stopMiniappForRevocation,
   restoreAccess: (packageName) => appRegistry.restoreMiniappAccess(packageName),
   isAccessRevoked: (packageName) => appRegistry.isMiniappAccessRevoked(packageName),
+  dismissUpdatePrompt: dismissRunningUpdatePrompt,
   setWorkspaceContext: (session, workspaceId) => setFleetWorkspace(session, workspaceId),
 }
 
