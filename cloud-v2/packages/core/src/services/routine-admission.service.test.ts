@@ -298,3 +298,13 @@ test('NIMO never admits a firmware, BLE, other-model or fabricated-identity prov
   // Live remains firmware-bound even when it requests connection only.
   expect(() => select(enrollment(), {...build, manifest: undefined})).toThrow('immutable glasses manifest');
 });
+test('lifecycle enrollment contracts stay authoritative but never leak into executable resource input',()=>{
+ const observed=host(),original=structuredClone(observed);
+ for(const ref of observed.lanes[0]!.resources)ref.idleContract={version:'installed-resource-baseline-v1',maximumAgeMs:120000,
+  qualifiedScope:{kind:'same-controller',controllerId:'mini'},conditions:['synthetic-idle'],repairConfigured:true};
+ const contracts=observed.lanes[0]!.resources.map(ref=>structuredClone(ref.idleContract));
+ const input=select(enrollment(),build,observed);
+ expect(input.resources.map(ref=>ref.id).sort()).toEqual(original.lanes[0]!.resources.map(ref=>ref.id).sort());
+ expect(input.resources.every(ref=>!('idleContract' in ref))).toBe(true);expect(frameworkRequestInputSchema.parse(input)).toEqual(input);
+ expect(observed.lanes[0]!.resources.map(ref=>ref.idleContract)).toEqual(contracts);
+});

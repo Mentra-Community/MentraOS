@@ -5,7 +5,7 @@ import {testWriteConcern} from '../models/test-write-concern'
 import {exclusiveResourceIntentSchema, exclusiveResourceObservationInputSchema, exclusiveResourceReturnSchema, hostResourceReservationsSchema,
   fleetExclusiveObservationSchema, fleetExclusiveReservationSchema, fleetExclusiveExecutionBindingSchema, fleetResourceAdmissionSchema,
   isExclusiveHostReservation, type ExclusiveHostReservation, type ExclusiveResourceDependency, type ExclusiveResourceIntent,
-  type FleetExclusiveReservation, type FleetResourceAdmission, type HostResourceReservation} from '../types/resource-reservations.types'
+  type FleetExclusiveReservation, type FleetResourceAdmission, type HostResourceReservation, type ExclusiveResourceReturn} from '../types/resource-reservations.types'
 import {hostStateSchema, type TestHostState} from './test-host-state.service'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -18,8 +18,8 @@ import {z} from 'zod'
 import {BACKEND_CONNECTIVITY_ROUTINE_API_VERSION} from '../types/backend-connectivity.types'
 import {candidatePrerequisiteRequestMatches, qualifiedCandidate, candidateReturnMatches} from './backend-candidate-preparation'
 import type {RecorderHostReservation} from '../types/recorder-storage.types'
+import {resourceAvailable, resourceLaneBlocker, requiredResourceBlocker, type ResourceReadinessBlocker} from './resource-readiness'
 import {laneControlRecordSchema, resourceControlRecordSchema, type ResourceControlRecord} from '../types/lane-control.types'
-import {resourceLifecycleSchema} from '../types/resource-lifecycle.types'
 import {manualWithdrawalNeedsRestoration} from '../types/resource-control-authority'
 
 /** A phone check and ordinary preparation must not queue conflicting owners on one physical Android lane. */
@@ -32,30 +32,27 @@ export type ResourceReservationHost = {hostId: string; incarnation: string; inca
   laneControlVersion?: number; laneControls?: unknown; resourceLifecycleCursor?: unknown}
 /** Installed resource controls and new fleet claims contend on the same authority row. */
 function dependencyAvailable(host: ResourceReservationHost, dependency: ExclusiveResourceDependency, now: number) {
-  // Capability loss withdraws new controls; it cannot erase an original operator's
-  // reservation/check. The retained exchange remains authority after rollback.
-  const records=z.array(z.union([laneControlRecordSchema,resourceControlRecordSchema])).max(100).parse(host.laneControls??[]);
-  if (records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId &&
-    (!row.receipt || row.receipt.result.status==='accepted' &&
-      (row.receipt.result.reservation && ['waiting','granted','returning'].includes(row.receipt.result.reservation.state) ||
-        'check' in row.receipt.result && row.receipt.result.check && row.receipt.result.check.state!=='settled')))) return false;
-  const subject=host.snapshot.resourceLifecycle?.subjects.find(value=>value.subject.id===dependency.resourceId);
-  const cursor=host.resourceLifecycleCursor===undefined?undefined:resourceLifecycleSchema.parse(host.resourceLifecycleCursor),
-    previous=cursor?.subjects.find(value=>value.subject.id===dependency.resourceId);
-  if(records.some(row=>'subject' in row.command&&row.command.subject.resourceId===dependency.resourceId&&
-    manualWithdrawalNeedsRestoration(row as ResourceControlRecord,subject,host.hostId,fresh(host,now),now)))return false;
-  // A formerly controlled subject cannot revert to legacy permissive readiness
-  // after rollback or bounded history trimming. Any published lifecycle subject
-  // remains subject to its current baseline, even after its control row retires.
-  if (host.snapshot.laneControls?.resourceControls !== true &&
-    !subject && !previous && !records.some(row=>'subject' in row.command && row.command.subject.resourceId===dependency.resourceId)) return true;
-  if (!fresh(host,now)) return false;
-  const at=Date.parse(subject?.observedAt??'');
-  if (!subject?.current || subject.subject.authorityHostId!==host.hostId || (previous &&
-    (previous.subject.authorityHostId!==host.hostId || subject.generation<previous.generation)) || subject.status!=='idle' || subject.owner ||
-    subject.idle.outcome!=='passed' || subject.idle.acceptedCheck?.subjectGeneration!==subject.generation ||
-    subject.idle.qualifiedScope.kind==='unqualified' || !Number.isFinite(at) || at>now || now-at>120_000) return false;
-  return true;
+  return resourceAvailable({...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations}, dependency.resourceId, now)
+}
+/** Ordinary backend work needs current returned phone proof; other providers keep their idle baseline. */
+export function routineResourceBlocker(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false):
+  ResourceReadinessBlocker | {code: 'routine-lane-unavailable' | 'routine-preparation-unavailable' | 'routine-lane-not-idle' | 'routine-backend-proof-unavailable'; laneId: string} | undefined {
+  const lane = host.snapshot.lanes.find(value => value.id === laneId)
+  if (!lane) return {code: 'routine-lane-unavailable', laneId}
+  if (!row.fleetPreparation) return {code: 'routine-preparation-unavailable', laneId}
+  if (!candidateCheck && (lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic')) return {code: 'routine-lane-not-idle', laneId}
+  const readinessHost = {...host, resourceControlRecords: host.laneControls, authorityReservations: host.resourceReservations},
+    original = {requestId: row.requestId, inputSha256: row.fleetInputSha256!},
+    laneBlocker = resourceLaneBlocker(readinessHost, laneId, {...original, hostId: host.hostId})
+  if (laneBlocker) return laneBlocker
+  const phone = lane.resources.find(value => value.kind === 'phone')
+  const backendRequired = requiresBackendConnectivity(row), qualified = backendRequired && qualifiedCandidate(row, host.snapshot, laneId, now, host.receivedAt)
+  if (backendRequired && !candidateCheck && !qualified) return {code: 'routine-backend-proof-unavailable', laneId}
+  return requiredResourceBlocker(readinessHost, lane, row.fleetPreparation.requirements.resources, now,
+    (_required, resource) => resource.id === phone?.id && Boolean(candidateCheck || qualified), original)
+}
+export function routineResourcesAvailable(host: ResourceReservationHost, row: StoredRoutineJob, laneId: string, now: number, candidateCheck = false) {
+  return routineResourceBlocker(host, row, laneId, now, candidateCheck) === undefined
 }
 function dependencyEnrolled(host: ResourceReservationHost, dependency: ExclusiveResourceDependency) {
   return dependency.authorityHostId===host.hostId && (host.snapshot.resources?.some(resource=>resource.id===dependency.resourceId &&
@@ -154,21 +151,27 @@ export const resourceReservationRepository: ResourceReservationRepository = {
     if (row?.fleetCandidatePreparation || row && requiresBackendConnectivity(row) &&
       (!row.fleetCandidateSelection || row.fleetCandidateSelection.hostId !== fleetResourceAdmission.intent.hostId ||
         row.fleetCandidateSelection.laneId !== fleetResourceAdmission.intent.laneId)) return null;
-    return await TestRequestModel.collection.findOneAndUpdate({...stageFilter(requestId, digest, now),
+    const host = await this.get(fleetResourceAdmission.intent.hostId), laneId = fleetResourceAdmission.intent.laneId,
+      stagedAt = new Date(Date.now());
+    if (!row || !host || !laneId || row.fleetDeadline <= stagedAt ||
+      !routineResourcesAvailable(host, row, laneId, stagedAt.getTime())) return null;
+    return await TestRequestModel.collection.findOneAndUpdate({...stageFilter(requestId, digest, stagedAt),
       ...(row && requiresBackendConnectivity(row) ? {fleetCandidateSelection: row.fleetCandidateSelection} : {})},
       {$set: {fleetResourceAdmission}}, {returnDocument: 'after', writeConcern: testWriteConcern, timeoutMS: 5000}) as unknown as StoredRoutineJob | null
   },
   async stageBackend(requestId, digest, fleetResourceAdmission, host, now) {
     const original = await this.request!(requestId), claims = await this.recorderClaims!(requestId),
-      current = await this.get(host.hostId), laneId = fleetResourceAdmission.intent.laneId
+      current = await this.get(host.hostId), laneId = fleetResourceAdmission.intent.laneId,
+      stagedAt = new Date(Date.now())
     if (!laneId || !current || !backendRecorderClaimMatches(claims, requestId, digest, host.hostId, laneId) ||
       current.incarnation !== host.incarnation || current.incarnationGeneration !== host.incarnationGeneration || current.sequence !== host.sequence ||
       !hostResourceReservationsSchema.parse(current.resourceReservations ?? []).some(claim => isDeepStrictEqual(claim, claims[0])) ||
       hasBackendProbe(hostResourceReservationsSchema.parse(current.resourceReservations ?? []), host.hostId, laneId) ||
-      !fresh(current, now.getTime())) return null
+      !fresh(current, stagedAt.getTime()) || !original || original.fleetDeadline <= stagedAt ||
+      !routineResourcesAvailable(current, original, laneId, stagedAt.getTime())) return null
     // The retained byte claim already won the same host CAS as phone probes. It survives
     // failed/lost staging replies; this request CAS selects only that original candidate.
-    return this.stage!(requestId, digest, fleetResourceAdmission, now)
+    return this.stage!(requestId, digest, fleetResourceAdmission, stagedAt)
   },
   async replaceBackend(host, claims, intent, now) {
     if (intent.prerequisite!.candidate) {
@@ -235,6 +238,37 @@ export const resourceReservationRepository: ResourceReservationRepository = {
 }
 const fresh = (host: ResourceReservationHost, now: number) => [host.receivedAt.getTime(), Date.parse(host.snapshot.observedAt)]
   .every(at => Number.isFinite(at) && at <= now && now - at <= 120_000)
+/** An ACK removes the original claim; it cannot renew physical readiness. */
+function closedNormalResourceReturn(host: ResourceReservationHost, claim: ExclusiveHostReservation, returned: ExclusiveResourceReturn) {
+  if ('kind' in returned.release || claim.authorityHostId !== host.hostId || returned.authorityHostId !== host.hostId) return false
+  const release = returned.release, subject = host.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === claim.resourceId),
+    installed = host.snapshot.resources?.find(value => value.id === claim.resourceId) ??
+      host.snapshot.lanes.find(value => value.id === claim.laneId)?.resources.find(value => value.id === claim.resourceId),
+    contract = installed?.idleContract, accepted = subject?.idle.acceptedCheck,
+    checkedAt = Date.parse(subject?.idle.checkedAt ?? ''), acceptedAt = Date.parse(accepted?.acceptedAt ?? ''),
+    releasedAt = Date.parse(release.releasedAt), observedAt = Date.parse(host.snapshot.observedAt),
+    subjectObservedAt = Date.parse(subject?.observedAt ?? '')
+  if (!subject?.current || subject.subject.authorityHostId !== host.hostId || subject.owner !== null || subject.repair.state !== 'none' ||
+    !['idle', 'unknown'].includes(subject.status) || !['passed', 'unknown'].includes(subject.idle.outcome) ||
+    subject.status === 'unknown' && !['resource-not-returned', 'idle-check-required'].includes(subject.reason?.code ?? '') ||
+    !contract || subject.idle.contractVersion !== contract.version || subject.idle.qualifiedScope.kind === 'unqualified' ||
+    !isDeepStrictEqual(subject.idle.qualifiedScope, contract.qualifiedScope) || !accepted || accepted.subjectGeneration !== subject.generation || !subject.idle.evidenceRefs.length ||
+    !claim.laneId && subject.resource.memberships.length ||
+    ![checkedAt, acceptedAt, releasedAt, observedAt, subjectObservedAt].every(Number.isFinite) || checkedAt < Date.parse(claim.reservedAt) ||
+    checkedAt > acceptedAt || acceptedAt > releasedAt || releasedAt > subjectObservedAt || subjectObservedAt > observedAt || observedAt - subjectObservedAt > 120_000 ||
+    releasedAt - checkedAt > contract.maximumAgeMs) return false
+  const history = host.snapshot.resourceLifecycle!.history.filter(event => event.resourceId === claim.resourceId),
+    matchingOwner = (event: typeof history[number]) => event.ownerId === release.owner.id &&
+      event.ownerGeneration === release.owner.generation && event.hostId === host.hostId && event.laneId === returned.laneId,
+    releases = history.filter(event => event.subjectGeneration === subject.generation),
+    checks = history.filter(event => event.subjectGeneration === subject.generation - 1)
+  // Exact consecutive generations prove the accepted check carried into this
+  // release, with no intervening resource transition or later replacement.
+  return releases.length === 1 && checks.length === 1 && releases[0]!.event === 'released' && checks[0]!.event === 'check-passed' &&
+    matchingOwner(releases[0]!) && matchingOwner(checks[0]!) && Date.parse(checks[0]!.at) === acceptedAt &&
+    Date.parse(releases[0]!.at) >= acceptedAt && Date.parse(releases[0]!.at) <= releasedAt &&
+    !history.some(event => event.subjectGeneration === null || event.subjectGeneration > subject.generation || Date.parse(event.at) > Date.parse(releases[0]!.at))
+}
 const dependencies = (host: ResourceReservationHost, intent: ExclusiveResourceIntent, observation = false): ExclusiveResourceDependency[] => {
   const lane = host.snapshot.lanes.find(value => value.id === intent.laneId), dispatch = intent.localDispatch,
     localDispatch = dispatch && intent.owner.kind === 'run' && intent.owner.id === dispatch.requestId &&
@@ -286,6 +320,7 @@ export class ResourceReservationsService {
     if (requiresBackendConnectivity(row) && !row.fleetResourceAdmission && !qualifiedCandidate(row, borrower.snapshot, laneId, this.now(), borrower.receivedAt)) return null
     if (!fresh(borrower, this.now()) ||
       !lane || lane.state !== 'idle' || lane.activity || lane.dispatchMode !== 'automatic') return null
+    if (!routineResourcesAvailable(borrower, row, laneId, this.now())) return null
     if (hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(claim => isExclusiveHostReservation(claim) &&
       claim.prerequisite && claim.borrowerHostId === hostId && claim.laneId === laneId)) return null
     const resources = row.fleetPreparation.requirements.resources.map(required => {
@@ -307,9 +342,13 @@ export class ResourceReservationsService {
       if (!originals || !backendRecorderClaimMatches(originals, requestId, digest, hostId, laneId) ||
         !hostResourceReservationsSchema.parse(borrower.resourceReservations ?? []).some(value => isDeepStrictEqual(value, originals[0]))) return null
     }
-    if (!row.fleetResourceAdmission) row = await (serializedPreparation
-      ? this.rows.stageBackend?.(requestId, digest, candidate, borrower, new Date(this.now()))
-      : this.rows.stage?.(requestId, digest, candidate, new Date(this.now()))) ?? await this.rows.request?.(requestId)
+    if (!row.fleetResourceAdmission) {
+      const stagedAt = this.now()
+      if (row.fleetDeadline.getTime() <= stagedAt || !routineResourcesAvailable(borrower, row, laneId, stagedAt)) return null
+      row = await (serializedPreparation
+        ? this.rows.stageBackend?.(requestId, digest, candidate, borrower, new Date(stagedAt))
+        : this.rows.stage?.(requestId, digest, candidate, new Date(stagedAt))) ?? await this.rows.request?.(requestId)
+    }
     if (!row?.fleetResourceAdmission || row.state !== 'awaiting-runner' || row.fleetInputSha256 !== digest || row.fleetBinding ||
       row.fleetCancellation || row.hostId || row.input || row.inputSha256 || row.fleetDeadline.getTime() <= this.now()) return null
     const admission = fleetResourceAdmissionSchema.parse(row.fleetResourceAdmission), intent = admission.intent
@@ -321,6 +360,7 @@ export class ResourceReservationsService {
     if (retainedHost && (!retained.length || retained.some(claim => claim.authorityHostId !== retainedHost.hostId ||
       claim.origin?.fleetInputSha256 !== digest || claim.inputSha256 !== digest || claim.operationId !== intent.operationId ||
       claim.borrowerHostId !== hostId || claim.laneId !== laneId)) || row.fleetExclusiveReservation && !retained.length) return null
+    if (row.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, row, laneId, this.now())) return null
     if (!selected.length) return retained.length ? null : undefined
     if (retained.length && (retained.length !== selected.length || selected.some(dependency => !retained.some(claim =>
       claim.resourceId === dependency.resourceId && claim.authorityHostId === dependency.authorityHostId)))) return null
@@ -352,6 +392,7 @@ export class ResourceReservationsService {
             generation: originalIntent.controller.generation}, origin, dependencies: selected})
         if (existing.some(claim => claim.intentSha256 !== intentSha256)) return null
         const receipt = fleetExclusiveReservationSchema.parse({origin, intent: originalIntent, intentSha256, claims: existing})
+        if (current.fleetDeadline.getTime() <= this.now() || !routineResourcesAvailable(borrower, current, laneId, this.now())) return null
         return row.fleetExclusiveReservation && !isDeepStrictEqual(row.fleetExclusiveReservation, receipt) ? null : receipt
       }
       if(selected.some(dependency=>!dependencyAvailable(authority,dependency,this.now()))) return null;
@@ -362,11 +403,16 @@ export class ResourceReservationsService {
           authorityHostId: authority.hostId, borrowerHostId: hostId, laneId, operationId: intent.operationId, intentSha256,
           inputSha256: digest, owner: intent.owner, origin, controllerIncarnation: intent.controller.incarnation,
           controllerGeneration: intent.controller.generation, borrowerSequence: intent.controller.sequence, reservedAt: new Date(this.now()).toISOString()}))
+      const claimingAt = this.now()
+      if (current.fleetDeadline.getTime() <= claimingAt ||
+        !routineResourcesAvailable(borrower, current, laneId, claimingAt)) return null
       if (await this.rows.replace(authority, [...claims, ...next])) {
         const after = await this.rows.request?.(requestId)
         if (after?.fleetCancellation) await this.reconcileFleetCancellation(requestId)
         if (!after || after.fleetCancellation || after.fleetBinding || after.hostId || after.input || after.inputSha256 ||
-          after.state !== 'awaiting-runner' || after.fleetInputSha256 !== digest || !isDeepStrictEqual(after.fleetResourceAdmission, admission)) return null
+          after.state !== 'awaiting-runner' || after.fleetInputSha256 !== digest || !isDeepStrictEqual(after.fleetResourceAdmission, admission) ||
+          after.fleetDeadline.getTime() <= this.now() ||
+          !routineResourcesAvailable(borrower, after, laneId, this.now())) return null
         return fleetExclusiveReservationSchema.parse({origin, intent, intentSha256, claims: next})
       }
     }
@@ -561,6 +607,9 @@ export class ResourceReservationsService {
       throw new TestRunError(409, 'Return requires fresh idle custody and its exact recorded normal local release lineage')
     for (let attempt = 0; attempt < 3; attempt++) {
       const authority = await this.host(returned.authorityHostId), claims = hostResourceReservationsSchema.parse(authority.resourceReservations ?? [])
+      if (authority.hostId === hostId && (authority.incarnation !== returned.controller.incarnation ||
+        authority.incarnationGeneration !== returned.controller.generation || authority.sequence !== returned.controller.sequence))
+        throw new TestRunError(409, 'Resource authority changed; retry the same normal return proof')
       const claim = claims.filter(isExclusiveHostReservation).find(value => value.resourceId === returned.resourceId)
       if (!claim) {
         return {status: 'returned' as const, claimId: returned.claimId}
@@ -569,10 +618,11 @@ export class ResourceReservationsService {
         subject = borrower.snapshot.resourceLifecycle?.subjects.find(value => value.subject.id === claim.resourceId),
         ref = borrower.snapshot.resources?.find(value => value.id === claim.resourceId), checkedAt = Date.parse(subject?.idle.checkedAt ?? '')
       const installed = ref ?? borrower.snapshot.lanes.find(value => value.id === claim.laneId)?.resources.find(value => value.id === claim.resourceId)
-      if (claim.resourceCheck && (!installed?.idleContract || !subject?.current || subject.subject.authorityHostId !== hostId || independent && subject.resource.memberships.length ||
-        subject.owner !== null || subject.status !== 'idle' || subject.idle.outcome !== 'passed' || subject.idle.acceptedCheck?.subjectGeneration !== subject.generation ||
-        subject.idle.qualifiedScope.kind === 'unqualified' || !Number.isFinite(checkedAt) || checkedAt > this.now() ||
-        this.now() - checkedAt > installed.idleContract.maximumAgeMs || checkedAt < Date.parse(claim.reservedAt)))
+      const freshBaseline = !!installed?.idleContract && !!subject?.current && subject.subject.authorityHostId === hostId && !(independent && subject.resource.memberships.length) &&
+        subject.owner === null && subject.status === 'idle' && subject.idle.outcome === 'passed' && subject.idle.acceptedCheck?.subjectGeneration === subject.generation &&
+        subject.idle.qualifiedScope.kind !== 'unqualified' && Number.isFinite(checkedAt) && checkedAt <= this.now() &&
+        this.now() - checkedAt <= installed.idleContract.maximumAgeMs && checkedAt >= Date.parse(claim.reservedAt)
+      if (claim.resourceCheck && (subject?.repair.state !== 'none' || !freshBaseline && !closedNormalResourceReturn(authority, claim, returned)))
         throw new TestRunError(409, 'Independent resource return lacks its exact fresh normal baseline')
       if (claim.prerequisite || claim.id !== returned.claimId || claim.intentSha256 !== returned.intentSha256 || claim.inputSha256 !== returned.inputSha256 ||
         claim.borrowerHostId !== hostId || !independent && claim.laneId !== returned.laneId || !isDeepStrictEqual(claim.owner, returned.originalOwner) ||

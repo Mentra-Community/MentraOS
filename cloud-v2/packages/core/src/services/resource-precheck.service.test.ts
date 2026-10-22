@@ -6,6 +6,7 @@ import {testFrameworkBinding} from '../testing/framework-fixtures'
 import {requestInputDigest} from './test-request.service'
 import {projectResourceLifecycle} from './resource-lifecycle.service'
 import {hostStateSchema} from './test-host-state.service'
+import {resourceAvailable} from './resource-readiness'
 import {exclusiveResourceIntentSchema, hostResourceReservationsSchema, type ExclusiveResourceIntent, type ExclusiveHostReservation, type ExclusiveResourceReturn, type HostResourceReservation} from '../types/resource-reservations.types'
 import {resourceLifecycleSubjectSchema} from '../types/resource-lifecycle.types'
 
@@ -217,4 +218,100 @@ test('canonical preclaim overlay preserves genuine installed generation and memb
     const actual=projectResourceLifecycle([f.host],start).subjects[0]!
     expect(actual.generation).toBe(before.generation);expect(actual.resource).toEqual(before.resource)
     expect(actual.owner?.generation).toBeNull();expect(actual.supportedActions).toEqual([]);expect(actual.status).toBe('reserved')}
+})
+
+
+function completedNormalReturn(f: ReturnType<typeof fixture>, claim: ExclusiveHostReservation, releaseDelay = 1) {
+  f.advance(10)
+  const subject = f.subject(), owner = {id: 'resume-cleanup:original-fixer', kind: 'boundary-cleanup' as const, generation: 9},
+    laneId = claim.laneId ?? 'repair-controller-lane', checkedAt = f.host.snapshot.observedAt
+  if (!claim.laneId) f.host.snapshot.lanes = [{id: laneId, platform: 'ios-on-mac', dispatchMode: 'automatic', state: 'idle', resources: []}]
+  subject.owner = null; subject.generation = 10; subject.status = 'unknown'; subject.repair.state = 'none'
+  subject.reason = {code: 'resource-not-returned', message: 'Original Core claim prevents allocation'}
+  subject.idle.outcome = 'passed'; subject.idle.checkedAt = checkedAt
+  subject.idle.evidenceRefs = ['exact-final-check-evidence']
+  subject.idle.acceptedCheck = {operationId: 'exact-final-cleanup-baseline', subjectGeneration: 10, resultSha256: hash, acceptedAt: checkedAt}
+  f.host.snapshot.resourceLifecycle!.history = [{id: 'exact-check-passed', resourceId: claim.resourceId, subjectGeneration: 9,
+    at: checkedAt, event: 'check-passed', ownerId: owner.id, ownerGeneration: owner.generation, hostId: 'mini', laneId}]
+  f.advance(releaseDelay)
+  const releasedAt = f.host.snapshot.observedAt
+  f.host.snapshot.resourceLifecycle!.history.push({id: 'exact-resource-released', resourceId: claim.resourceId, subjectGeneration: 10,
+    at: releasedAt, event: 'released', ownerId: owner.id, ownerGeneration: owner.generation, hostId: 'mini', laneId})
+  const proof: ExclusiveResourceReturn = {claimId: claim.id, authorityHostId: 'mini', resourceId: claim.resourceId,
+    intentSha256: claim.intentSha256, inputSha256: claim.inputSha256, originalOwner: claim.owner, laneId,
+    controller: {incarnation: f.host.incarnation, generation: f.host.incarnationGeneration, sequence: f.host.sequence},
+    release: {eventId: `lane-release:${owner.id}:${owner.generation}`, owner, releasedAt,
+      lineage: [{...claim.owner, generation: 3}, owner]}}
+  const {controller: _, ...published} = proof
+  f.host.snapshot.resourceReservations!.returns = [published]
+  return proof
+}
+function currentReturnReporter(f: ReturnType<typeof fixture>, proof: ExclusiveResourceReturn, elapsed = 120001) {
+  f.advance(elapsed)
+  proof.controller = {incarnation: f.host.incarnation, generation: f.host.incarnationGeneration, sequence: f.host.sequence}
+  f.subject().idle.outcome = 'unknown'; f.subject().reason = {code: 'idle-check-required', message: 'Accepted baseline aged; current allocation needs a new check'}
+}
+test('normal return clears the retained precheck without requiring its own claim to be allocatable', async () => {
+  for (const standalone of [false, true]) {
+    const f = fixture(standalone), result = await f.service.acquire(f.intent, 'mini'), claim = result.claims[0]!, proof = completedNormalReturn(f, claim)
+    expect(f.subject().status).toBe('unknown')
+    expect(await f.service.giveBack(proof, 'mini')).toMatchObject({status: 'returned', claimId: claim.id})
+    expect(f.host.resourceReservations).toEqual([]); expect(f.subject().status).toBe('unknown')
+  }
+})
+test('original closed normal return survives delayed ACK while historical proof never becomes current allocation readiness', async () => {
+  for (const standalone of [false, true]) {
+    const f = fixture(standalone), result = await f.service.acquire(f.intent, 'mini'), claim = result.claims[0]!, proof = completedNormalReturn(f, claim)
+    const published = structuredClone(f.host.snapshot.resourceReservations!.returns)
+    currentReturnReporter(f, proof)
+    expect(await f.service.giveBack(proof, 'mini')).toMatchObject({status: 'returned', claimId: claim.id})
+    expect(f.host.snapshot.resourceReservations!.returns).toEqual(published)
+    expect(f.subject()).toMatchObject({status: 'unknown', idle: {outcome: 'unknown', acceptedCheck: {subjectGeneration: 10}}})
+    expect(resourceAvailable({...f.host, authorityReservations: f.host.resourceReservations}, claim.resourceId, Date.parse(f.host.snapshot.observedAt))).toBe(false)
+    expect((await f.service.acquire(f.intent, 'mini')).status).toBe('unknown')
+    expect(await f.service.giveBack(proof, 'mini')).toMatchObject({status: 'returned'})
+    expect(f.writes).toHaveLength(2)
+  }
+})
+test('historical normal return refuses missing or changed release authority instead of blessing an unknown resource', async () => {
+  const changes = [
+    (f: ReturnType<typeof fixture>) => {f.subject().owner = {id: 'foreign-owner', kind: 'run', generation: 11, hostId: 'mini', laneId: 'android'}},
+    (f: ReturnType<typeof fixture>) => {f.subject().repair.state = 'running'},
+    (f: ReturnType<typeof fixture>) => {f.subject().status = 'out-of-service'},
+    (f: ReturnType<typeof fixture>) => {f.subject().idle.outcome = 'failed'},
+    (f: ReturnType<typeof fixture>) => {f.subject().current = false},
+    (f: ReturnType<typeof fixture>) => {f.subject().generation++},
+    (f: ReturnType<typeof fixture>) => {f.subject().idle.contractVersion = 'different-contract'},
+    (f: ReturnType<typeof fixture>) => {f.subject().idle.qualifiedScope = {kind: 'fleet'}},
+    (f: ReturnType<typeof fixture>) => {f.subject().idle.evidenceRefs = []},
+    (f: ReturnType<typeof fixture>) => {f.subject().idle.acceptedCheck!.acceptedAt = new Date(start).toISOString()},
+    (f: ReturnType<typeof fixture>) => {f.subject().idle.checkedAt = new Date(start - 1).toISOString()},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.shift()},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.pop()},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[0]!.ownerId = 'unrelated-fixer'},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[1]!.ownerGeneration = 10},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[1]!.laneId = 'unrelated-lane'},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history[1]!.at = new Date(start).toISOString()},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.push({id: 'unknown-generation', resourceId: f.intent.resourceCheck!.resourceId, subjectGeneration: null, event: 'unknown', at: f.host.snapshot.observedAt})},
+    (f: ReturnType<typeof fixture>) => {f.host.snapshot.resourceLifecycle!.history.push({...f.host.snapshot.resourceLifecycle!.history[0]!, id: 'ambiguous-check'})},
+    (f: ReturnType<typeof fixture>) => {f.subject().reason = {code: 'different-unknown', message: 'Unknown custody'}},
+  ]
+  for (const change of changes) {
+    const f = fixture(), result = await f.service.acquire(f.intent, 'mini'), proof = completedNormalReturn(f, result.claims[0]!)
+    currentReturnReporter(f, proof); change(f)
+    await expect(f.service.giveBack(proof, 'mini')).rejects.toThrow()
+    expect(f.host.resourceReservations).toHaveLength(1); expect(f.writes).toHaveLength(1)
+  }
+})
+test('a check already expired when its original lane released cannot satisfy historical normal return', async () => {
+  const f = fixture(), result = await f.service.acquire(f.intent, 'mini'), proof = completedNormalReturn(f, result.claims[0]!, 120001)
+  currentReturnReporter(f, proof)
+  await expect(f.service.giveBack(proof, 'mini')).rejects.toThrow()
+  expect(f.host.resourceReservations).toHaveLength(1); expect(f.writes).toHaveLength(1)
+})
+test('historical normal return refuses a reporter changing between proof read and the original host CAS', async () => {
+  const f = fixture(), result = await f.service.acquire(f.intent, 'mini'), proof = completedNormalReturn(f, result.claims[0]!)
+  currentReturnReporter(f, proof); f.beforeWrite(async () => {f.advance()})
+  await expect(f.service.giveBack(proof, 'mini')).rejects.toThrow()
+  expect(f.host.resourceReservations).toHaveLength(1); expect(f.writes).toHaveLength(1)
 })

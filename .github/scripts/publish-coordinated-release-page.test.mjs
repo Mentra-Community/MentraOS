@@ -165,6 +165,8 @@ test("the production page lists the example apps found in the stable container",
     api,
   })
   const body = writes[0].body
+  // GitHub untags a draft whose update omits tag_name; the page keeps it.
+  assert.equal(writes[0].tag_name, plan.artifactContainerTag)
   assert.ok(body.includes("[Glasses OTA bundle](https://example.com/bundle.zip)"))
   assert.ok(body.includes(`[React Native example APK](${reactNative.url})`))
   assert.ok(!body.includes(android.url), "Only the examples the container holds are listed")
@@ -172,4 +174,46 @@ test("the production page lists the example apps found in the stable container",
   writes.length = 0
   publishProductionReleasePage({plan, manifest, repository: "Mentra-Community/MentraOS", releaseId: "7", api})
   assert.doesNotMatch(writes[0].body, /Bluetooth example apps/)
+})
+
+test("updating a draft production page keeps its tag; a published page sends only the body", () => {
+  const {plan: beta} = fixture()
+  const identity = beta.familyBaseVersion
+  const plan = {
+    ...beta,
+    channel: "production",
+    releaseIdentity: identity,
+    releaseSetId: `mentra-${identity}`,
+    artifactContainerTag: `mentra-v${identity}`,
+    artifactNames: {
+      ...beta.artifactNames,
+      releaseManifest: `mentra-release-${identity}.json`,
+      otaManifest: `mentra-live-ota-${identity}.json`,
+      otaBundle: `mentra-live-ota-bundle-${identity}.zip`,
+    },
+  }
+  const manifest = {
+    kind: "mentra-production-release",
+    releaseIdentity: identity,
+    sourceCommit: plan.sourceCommit,
+    promotion: {selectedBetaIdentity: beta.releaseIdentity},
+    artifacts: [
+      {coordinate: plan.artifactNames.otaManifest, url: "https://example.com/ota.json"},
+      {coordinate: plan.artifactNames.otaBundle, url: "https://example.com/bundle.zip"},
+    ],
+  }
+  for (const draft of [true, false]) {
+    const writes = []
+    const api = (route, options = {}) => {
+      if (options.method) {
+        writes.push(options.data)
+        return {id: 7, ...options.data}
+      }
+      return {id: 7, tag_name: plan.artifactContainerTag, draft, prerelease: false, body: "Notes"}
+    }
+    publishProductionReleasePage({plan, manifest, repository: "Mentra-Community/MentraOS", releaseId: "7", api})
+    assert.equal(writes.length, 1)
+    assert.deepEqual(Object.keys(writes[0]).sort(), draft ? ["body", "tag_name"] : ["body"])
+    if (draft) assert.equal(writes[0].tag_name, `mentra-v${identity}`)
+  }
 })

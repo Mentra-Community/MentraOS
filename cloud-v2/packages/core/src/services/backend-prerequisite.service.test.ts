@@ -395,6 +395,14 @@ test('only real settled resource check event/current unowned generation returns 
   expect(subject.idle.outcome).toBe('not-checked')
 })
 
+/** Offline work still needs the phone's accepted physical baseline. */
+function acceptPhoneIdle(observed: ReturnType<typeof host>) {
+  const lane=observed.lanes[0]!,phone=lane.resources.find(resource=>resource.kind==='phone')!,subject=observed.resourceLifecycle!.subjects.find(value=>value.subject.id===phone.id)!
+  phone.idleContract={version:'phone-baseline-v1',maximumAgeMs:120000,qualifiedScope:{kind:'fleet'},conditions:['phone-connected'],repairConfigured:true}
+  subject.status='idle';subject.owner=null;subject.idle={contractVersion:phone.idleContract.version,outcome:'passed',checkedAt:timestamp,
+    acceptedCheck:{operationId:'phone-idle',subjectGeneration:subject.generation,resultSha256:hash,acceptedAt:timestamp},qualifiedScope:phone.idleContract.qualifiedScope,evidenceRefs:[]}
+}
+
 /** Exercise the production host/request CAS paths without database transaction support. */
 async function portableFixture() {
   const f = await claimFixture(); f.original = job()
@@ -497,6 +505,7 @@ test('fresh settled negative refuses repeated new original admissions before any
     expect(reasons).toEqual(Array(10).fill('The phone’s internet connection check failed. Waiting for a new check.'))
     expect(f.events).toEqual([]); expect(f.current.host.resourceReservations).toEqual([])
     const offline = f.addRequest('offline-original', true)
+    acceptPhoneIdle({...f.current.host.snapshot,receivedAt:timestamp})
     expect(await f.reserve('mini', 'android', offline.requestId)).not.toBeNull()
   } finally {f.restore()}
 })
@@ -905,8 +914,9 @@ test('same-phone queued preparation progresses one original at a time even with 
       expect(adoptions).toBe(1); expect(await f.reserve('mini', 'android', 'second')).toBeNull()
       // Only the original normal completion plus a current empty recorder offer
       // removes its retained byte claim; elapsed time/health alone never does.
-      f.current.request.dispatchCompletion = {completedAt: timestamp} as StoredRoutineJob['dispatchCompletion']
+      f.current.request.dispatchCompletion = {inputSha256: f.current.request.inputSha256!, disposition: 'clean', completedAt: timestamp}
       if(!offline)await f.prepareCandidate('second')
+      else acceptPhoneIdle({...f.current.host.snapshot,receivedAt:timestamp})
       expect(await f.reserve('mini', 'android', 'second')).not.toBeNull()
       expect(second.fleetResourceReservation?.requestId).toBe('second')
       expect((f.current.host.resourceReservations as RecorderHostReservation[]).map(value => value.requestId)).toEqual(['second'])

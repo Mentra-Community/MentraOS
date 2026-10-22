@@ -18,11 +18,6 @@ on:
     - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
-      identity:
-        description: Release identity to export; empty exports each channel's newest completed release
-        required: false
-        default: ""
-        type: string
       dry_run:
         description: Build and check the export without pushing it
         required: false
@@ -55,7 +50,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CHANNEL: ${{ matrix.channel }}
-          IDENTITY: ${{ inputs.identity }}
         run: |
           set -euo pipefail
           cdn="https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases"
@@ -70,23 +64,18 @@ jobs:
             production) branch=main dist_tag=latest pattern='^[0-9]+\.[0-9]+\.[0-9]+$' ;;
             *) echo "Unsupported channel $CHANNEL" >&2; exit 1 ;;
           esac
-          identity="$IDENTITY"
-          if [[ -n "$identity" ]]; then
-            [[ "$identity" =~ $pattern ]] || stop "$identity is not a $CHANNEL release."
+          # The npm dist-tag names the channel's release family; the family
+          # container's index lists the records of completed releases only.
+          current=$(curl -fsS "https://registry.npmjs.org/-/package/@mentra%2fbluetooth-sdk/dist-tags" |
+            jq -r --arg tag "$dist_tag" '.[$tag] // empty')
+          [[ -n "$current" ]] || stop "@mentra/bluetooth-sdk has no $dist_tag dist-tag."
+          if [[ "$CHANNEL" == production ]]; then
+            identity="$current"
           else
-            # The npm dist-tag names the channel's release family; the family
-            # container's index lists the records of completed releases only.
-            current=$(curl -fsS "https://registry.npmjs.org/-/package/@mentra%2fbluetooth-sdk/dist-tags" |
-              jq -r --arg tag "$dist_tag" '.[$tag] // empty')
-            [[ -n "$current" ]] || stop "@mentra/bluetooth-sdk has no $dist_tag dist-tag."
-            if [[ "$CHANNEL" == production ]]; then
-              identity="$current"
-            else
-              identity=$(curl -fsS "$cdn/mentra-builds-v${current%%-*}/_assets.json" |
-                jq -r '.assets[] | select(.state == "uploaded") | .name | capture("^mentra-release-(?<id>.+)\\.json$") | .id' |
-                { grep -E "$pattern" || true; } | sort -V | tail -n 1)
-              [[ -n "$identity" ]] || stop "No completed $CHANNEL release in the ${current%%-*} family yet."
-            fi
+            identity=$(curl -fsS "$cdn/mentra-builds-v${current%%-*}/_assets.json" |
+              jq -r '.assets[] | select(.state == "uploaded") | .name | capture("^mentra-release-(?<id>.+)\\.json$") | .id' |
+              { grep -E "$pattern" || true; } | sort -V | tail -n 1)
+            [[ -n "$identity" ]] || stop "No completed $CHANNEL release in the ${current%%-*} family yet."
           fi
           kit=$(gh api "repos/$STARTER_KIT_REPOSITORY/contents/starter-kit-release.json?ref=$branch" --jq .content 2>/dev/null |
             base64 -d 2>/dev/null | jq -r '.releaseIdentity // empty' 2>/dev/null || true)
@@ -144,8 +133,8 @@ jobs:
             echo "record_sha256=$(sha256sum release/mentra-release.json | cut -c1-64)"
           } >> "$GITHUB_OUTPUT"
 
-      # The export tooling runs from this workflow's revision, so it can export
-      # an older release's source.
+      # The export tooling runs from this workflow's revision, which may be
+      # newer than the release's source.
       - uses: actions/checkout@v4
         if: steps.check.outputs.proceed == 'true'
         with:
@@ -227,7 +216,8 @@ jobs:
               echo "$BRANCH already carries $current."
               exit 0
             fi
-            # The kit keeps its own .github (its CI); everything else is the export.
+            # The kit keeps its own .github (its CI); everything else is the export,
+            # in the kit's layout: shared files at the root, apps under examples/.
             find kit -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
             cp -a export/. kit/
             git -C kit config user.name "mentra-starter-kit-export[bot]"

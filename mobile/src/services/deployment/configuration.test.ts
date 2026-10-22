@@ -82,40 +82,37 @@ it("uses shared dev defaults for missing or blank environment values", () => {
   })
 })
 
-describe("the Store miniapp's per-environment Store", () => {
-  const originalStore = process.env.EXPO_PUBLIC_STORE_URL
+describe("the build's first-party miniapps host", () => {
+  const original = process.env.EXPO_PUBLIC_MINIAPPS_URL
   afterEach(() => {
-    if (originalStore === undefined) delete process.env.EXPO_PUBLIC_STORE_URL
-    else process.env.EXPO_PUBLIC_STORE_URL = originalStore
+    if (original === undefined) delete process.env.EXPO_PUBLIC_MINIAPPS_URL
+    else process.env.EXPO_PUBLIC_MINIAPPS_URL = original
   })
 
-  it("hands the build's Store to com.mentra.store only, through the engine's miniapp configuration", () => {
-    process.env.EXPO_PUBLIC_STORE_URL = " https://api.apps.dev.mentraglass.com "
+  it("hands the build's first-party host to the engine", () => {
+    process.env.EXPO_PUBLIC_MINIAPPS_URL = " https://miniapps.staging.mentraglass.com/ "
     const manifest = createOfficialManifest()
     expect(deploymentManifestSchema.parse(manifest)).toEqual(manifest)
-    expect(manifest.miniapps.configuration).toEqual({
-      "com.mentra.store": {storeUrl: "https://api.apps.dev.mentraglass.com"},
-    })
-    expect(deploymentCloudConfigValues(createConsumerDeployment()).miniappConfiguration).toEqual({
-      "com.mentra.store": {storeUrl: "https://api.apps.dev.mentraglass.com"},
-    })
+    expect(manifest.artifacts.firstPartyMiniappsUrl).toBe("https://miniapps.staging.mentraglass.com/")
+    expect(manifest.miniapps.configuration).toEqual({})
+    expect(deploymentCloudConfigValues(createConsumerDeployment()).firstPartyMiniappsUrl).toBe(
+      "https://miniapps.staging.mentraglass.com/",
+    )
   })
 
-  it.each([undefined, "", "   "])("supplies no Store when the build sets none (%p)", (value) => {
-    if (value === undefined) delete process.env.EXPO_PUBLIC_STORE_URL
-    else process.env.EXPO_PUBLIC_STORE_URL = value
-    expect(createOfficialManifest().miniapps.configuration).toEqual({})
+  it.each([undefined, "", "   "])("uses the dev host when the build sets none (%p)", (value) => {
+    if (value === undefined) delete process.env.EXPO_PUBLIC_MINIAPPS_URL
+    else process.env.EXPO_PUBLIC_MINIAPPS_URL = value
+    expect(createOfficialManifest().artifacts.firstPartyMiniappsUrl).toBe("https://miniapps.dev.mentraglass.com/")
   })
 
-  it("keeps the build's Store under Core and Runtime debug overrides", async () => {
-    process.env.EXPO_PUBLIC_STORE_URL = "https://api.apps.dev.mentraglass.com"
+  it("keeps the build's first-party host under Core and Runtime debug overrides", async () => {
+    process.env.EXPO_PUBLIC_MINIAPPS_URL = "https://miniapps.mentraglass.com/"
     await deploymentStore.returnToMentra()
     const deployment = deploymentStore.getActive()
     await saveDeploymentCloudOverrides(deployment, {core: "http://localhost:3000", runtime: "http://localhost:3001"})
     try {
-      expect(deploymentCloudConfigValues(deployment).miniappConfiguration).toEqual({
-        "com.mentra.store": {storeUrl: "https://api.apps.dev.mentraglass.com"},
-      })
+      expect(deploymentCloudConfigValues(deployment).firstPartyMiniappsUrl).toBe("https://miniapps.mentraglass.com/")
     } finally {
       await saveDeploymentCloudOverrides(deployment, {core: "", runtime: ""})
     }

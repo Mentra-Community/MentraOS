@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -8,6 +8,7 @@ import {fileURLToPath} from "node:url"
 import {
   exportCoordinates,
   guardStarterKit,
+  kitLink,
   releaseContainer,
   releaseRecordUrl,
   sourceReferences,
@@ -204,21 +205,21 @@ test("a fixture example tree becomes a standalone kit with no source references"
       record,
       recordSha256: "b".repeat(64),
     })
-    assert.deepEqual(examples, ["react-native", "react-native-macos"])
+    assert.deepEqual(examples, ["examples/react-native", "examples/react-native-macos"])
     guardStarterKit(out)
 
     const read = (file) => readFileSync(path.join(out, file), "utf8")
-    assert.doesNotMatch(read("android/settings.gradle.kts"), /includeBuild|MentraOS source tree/)
-    assert.match(read("android/settings.gradle.kts"), /include\(":app"\)\n$/)
-    assert.match(read("android/app/build.gradle.kts"), /bluetooth-sdk:\$\{property\("mentraSdkVersion"\)\}/)
-    assert.equal(read("android/gradle.properties"), `android.useAndroidX=true\nmentraSdkVersion=${identity}\n`)
+    assert.doesNotMatch(read("examples/android/settings.gradle.kts"), /includeBuild|MentraOS source tree/)
+    assert.match(read("examples/android/settings.gradle.kts"), /include\(":app"\)\n$/)
+    assert.match(read("examples/android/app/build.gradle.kts"), /bluetooth-sdk:\$\{property\("mentraSdkVersion"\)\}/)
+    assert.equal(read("examples/android/gradle.properties"), `android.useAndroidX=true\nmentraSdkVersion=${identity}\n`)
     assert.match(
-      read("ios/project.yml"),
+      read("examples/ios/project.yml"),
       new RegExp(
         `url: https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git\\n    exactVersion: ${identity.replaceAll(".", "\\.")}`,
       ),
     )
-    const project = read("ios/MentraExample.xcodeproj/project.pbxproj")
+    const project = read("examples/ios/MentraExample.xcodeproj/project.pbxproj")
     assert.doesNotMatch(project, /XCLocalSwiftPackageReference|relativePath/)
     assert.equal([...project.matchAll(/XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios"/g)].length, 3)
     assert.match(
@@ -229,7 +230,7 @@ test("a fixture example tree becomes a standalone kit with no source references"
       project,
       new RegExp(`kind = exactVersion;\\n\\t\\t\\t\\tversion = ${identity.replaceAll(".", "\\.")};`),
     )
-    const swift = read("macos/Package.swift")
+    const swift = read("examples/macos/Package.swift")
     assert.match(swift, new RegExp(`let sdkVersion = "${identity.replaceAll(".", "\\.")}"`))
     assert.match(
       swift,
@@ -237,14 +238,14 @@ test("a fixture example tree becomes a standalone kit with no source references"
     )
     assert.match(swift, /package: "mentra-bluetooth-sdk-ios"\)/)
 
-    const app = JSON.parse(read("react-native/package.json"))
+    const app = JSON.parse(read("examples/react-native/package.json"))
     assert.equal(app.dependencies["@mentra/bluetooth-sdk"], identity)
     assert.equal(app.dependencies["@mentra/engine"], identity)
     assert.equal(app.dependencies["@mentra/local-module"], "file:modules/local-module")
     assert.deepEqual(app.patchedDependencies, {"expo-modules-core@55.0.25": "patches/expo-modules-core@55.0.25.patch"})
-    assert.equal(read("react-native-macos/patches/expo-modules-core@55.0.25.patch"), "diff --git a/x b/x\n")
+    assert.equal(read("examples/react-native-macos/patches/expo-modules-core@55.0.25.patch"), "diff --git a/x b/x\n")
     assert.equal(read("README.md"), "# Kit\n\nIn MentraOS this builds from mobile/modules/bluetooth-sdk.\n")
-    assert.throws(() => read("react-native/node_modules/ignored/package.json"), /ENOENT/)
+    assert.throws(() => read("examples/react-native/node_modules/ignored/package.json"), /ENOENT/)
 
     const kitRecord = JSON.parse(read("starter-kit-release.json"))
     assert.equal(kitRecord.releaseIdentity, identity)
@@ -268,12 +269,20 @@ test("the guard rejects any build file that still reaches into MentraOS", () => 
       recordSha256: "b".repeat(64),
     })
     for (const [file, contents, message] of [
-      ["react-native/package.json", '{"dependencies": {"@mentra/crust": "workspace:*"}}', /workspace: dependency/],
-      ["react-native/bun.lock", '"@mentra/engine": ["@mentra/engine@workspace:../mobile/modules/engine"]', /workspace/],
-      ["macos/Package.swift", '.package(path: "../../../mobile/modules/bluetooth-sdk")', /Swift package/],
-      ["android/settings.gradle.kts", 'includeBuild("../sdk")', /composite build/],
       [
-        "react-native-macos/package.json",
+        "examples/react-native/package.json",
+        '{"dependencies": {"@mentra/crust": "workspace:*"}}',
+        /workspace: dependency/,
+      ],
+      [
+        "examples/react-native/bun.lock",
+        '"@mentra/engine": ["@mentra/engine@workspace:../mobile/modules/engine"]',
+        /workspace/,
+      ],
+      ["examples/macos/Package.swift", '.package(path: "../../../mobile/modules/bluetooth-sdk")', /Swift package/],
+      ["examples/android/settings.gradle.kts", 'includeBuild("../sdk")', /composite build/],
+      [
+        "examples/react-native-macos/package.json",
         '{"dependencies": {"x": "file:../../../cloud-v2/packages/protocol"}}',
         /outside the example|MentraOS/,
       ],
@@ -349,7 +358,11 @@ test("the MentraOS examples tree exports to a standalone kit", () => {
       record: releaseRecord(),
       recordSha256: "b".repeat(64),
     })
-    assert.deepEqual(examples.sort(), ["react-native", "react-native-elevenlabs-audio", "react-native-macos"])
+    assert.deepEqual(examples.sort(), [
+      "examples/react-native",
+      "examples/react-native-elevenlabs-audio",
+      "examples/react-native-macos",
+    ])
     // Lockfiles are written by the export workflow; everything else is final.
     assert.deepEqual(sourceReferences(path.join(out, "kit")), [])
     // The kit keeps its own CI in its repository; the export never carries one.
@@ -384,4 +397,76 @@ test("a production release record pins the plain versions it promoted", () => {
   assert.equal(coordinates.otaManifest.url, record.otaManifest.url)
   record.releaseFamily.members["@mentra/bluetooth-sdk"].publishTargets = ["npm"]
   assert.throws(() => exportCoordinates(record), /Maven/)
+})
+
+test("the exported kit keeps the layout the kit's own CI builds", () => {
+  const ci = JSON.parse(readFileSync(new URL("fixtures/starter-kit-ci-paths.json", import.meta.url), "utf8"))
+  const out = mkdtempSync(path.join(tmpdir(), "starter-kit-layout-"))
+  try {
+    const kit = path.join(out, "kit")
+    const {examples} = transformStarterKit({
+      examplesDir: path.join(repositoryRoot, "examples/bluetooth"),
+      outDir: kit,
+      record: releaseRecord(),
+      recordSha256: "b".repeat(64),
+    })
+    for (const directory of ci.directories) {
+      assert.ok(statSync(path.join(kit, directory)).isDirectory(), directory)
+    }
+    for (const file of ci.files) assert.ok(statSync(path.join(kit, file)).isFile(), file)
+    // writeLockfiles writes each React Native example's lockfile where the CI installs it.
+    assert.deepEqual(examples.map((example) => `${example}/bun.lock`).sort(), [...ci.lockfiles].sort())
+    // Shared files stay at the root, apps sit only under examples/.
+    for (const file of ["README.md", "LICENSE", ".gitignore", "docs/getting-started.md", "starter-kit-release.json"]) {
+      assert.ok(existsSync(path.join(kit, file)), file)
+    }
+    assert.equal(existsSync(path.join(kit, "android")), false)
+    assert.equal(existsSync(path.join(kit, "examples/docs")), false)
+    // The values the kit's CI reads back from the pinned files.
+    assert.match(
+      readFileSync(path.join(kit, "examples/android/gradle.properties"), "utf8"),
+      new RegExp(`^mentraSdkVersion=${identity.replaceAll(".", "\\.")}$`, "m"),
+    )
+    assert.match(
+      readFileSync(path.join(kit, "examples/ios/MentraExample.xcodeproj/project.pbxproj"), "utf8"),
+      /repositoryURL = "https:\/\/github\.com\/Mentra-Community\/mentra-bluetooth-sdk-ios\.git";/,
+    )
+    for (const app of ["react-native", "react-native-elevenlabs-audio"]) {
+      const manifest = JSON.parse(readFileSync(path.join(kit, `examples/${app}/package.json`), "utf8"))
+      assert.equal(manifest.dependencies["@mentra/bluetooth-sdk"], identity, app)
+    }
+    // Links and ignore patterns follow the apps into examples/.
+    const readme = readFileSync(path.join(kit, "README.md"), "utf8")
+    assert.match(readme, /\]\(examples\/android\/README\.md\)/)
+    assert.match(readme, /\]\(docs\/getting-started\.md\)/)
+    assert.match(
+      readFileSync(path.join(kit, "examples/react-native/README.md"), "utf8"),
+      /\]\(\.\.\/\.\.\/docs\/getting-started\.md#background-operation-on-ios\)/,
+    )
+    assert.match(
+      readFileSync(path.join(kit, "docs/getting-started.md"), "utf8"),
+      /\]\(\.\.\/examples\/react-native\/README\.md#install\)/,
+    )
+    const ignore = readFileSync(path.join(kit, ".gitignore"), "utf8")
+    assert.match(ignore, /^examples\/android\/\.gradle\/$/m)
+    assert.match(ignore, /^!examples\/ios\/$/m)
+    assert.doesNotMatch(ignore, /^!?\/(android|ios|react-native)/m)
+  } finally {
+    rmSync(out, {recursive: true, force: true})
+  }
+})
+
+test("Markdown links are rewritten for the kit layout", () => {
+  const apps = ["android", "macos", "react-native", "react-native-macos"]
+  assert.equal(kitLink("README.md", "android/README.md", apps), "examples/android/README.md")
+  assert.equal(kitLink("README.md", "docs/api-reference.md", apps), "docs/api-reference.md")
+  assert.equal(kitLink("react-native/README.md", "../docs/x.md#y", apps), "../../docs/x.md#y")
+  assert.equal(kitLink("react-native-macos/README.md", "../macos/README.md", apps), "../macos/README.md")
+  assert.equal(kitLink("docs/getting-started.md", "../macos/README.md", apps), "../examples/macos/README.md")
+  assert.equal(
+    kitLink("react-native/README.md", "../../package.json", apps),
+    "https://github.com/Mentra-Community/MentraOS/blob/dev/examples/package.json",
+  )
+  assert.equal(kitLink("android/README.md", "./settings.gradle.kts", apps), "./settings.gradle.kts")
+  assert.equal(kitLink("README.md", "https://example.com/a", apps), "https://example.com/a")
 })
