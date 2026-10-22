@@ -141,3 +141,32 @@ describe("updates from Mentra's own host", () => {
     ).toBe(false)
   })
 })
+
+describe("releases the retired Store installed", () => {
+  test("keep their trust in a build that bundles no Store", () => {
+    withConfig({
+      bundledSystemMiniappPackages: [notes],
+      bundledStoreMiniappPackages: [],
+      bundledSystemMiniappStoreOwners: {},
+    })
+    expect(isHostTrustedSystemMiniapp(notes, {source: "system_store", storePackageName: store})).toBe(true)
+    // Another Store's releases, and the retired Store's install authority, do not carry over.
+    expect(isHostTrustedSystemMiniapp(notes, {source: "system_store", storePackageName: "com.oem.store"})).toBe(false)
+    expect(canStoreUpdateSystemMiniapp(store, notes)).toBe(false)
+  })
+
+  test("stay visible to an organization that approves the package", () => {
+    withConfig({
+      bundledSystemMiniappPackages: [notes],
+      bundledStoreMiniappPackages: [],
+      bundledSystemMiniappStoreOwners: {},
+      localMiniappPolicy: {systemPackageNames: null, managed: []},
+    })
+    expect(isHostTrustedSystemMiniapp(notes, {source: "system_store", storePackageName: store})).toBe(true)
+    withConfig({
+      bundledSystemMiniappPackages: [notes],
+      localMiniappPolicy: {systemPackageNames: [], managed: []},
+    })
+    expect(isHostTrustedSystemMiniapp(notes, {source: "system_store", storePackageName: store})).toBe(false)
+  })
+})

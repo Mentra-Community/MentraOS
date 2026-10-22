@@ -15,17 +15,14 @@ export function firstPartyMiniappUrl(config: IslandConfigValues, packageName: st
 }
 
 /**
- * Host-trusted provenance for a build-owned (bundled) package: the bundled ZIP
- * itself, a release the engine installed for it from a Mentra host, or one
- * the build's assigned Store installed over it. Shared by runtime privileges,
- * organization visibility and install authority. Never derived from a
- * manifest, a signature or a dev server.
+ * The Store miniapp that Mentra App betas bundled before 3.3. A release it
+ * installed came from Mentra's Store, so it keeps its trust until an update
+ * from a Mentra host replaces it.
  */
-export function isTrustedSystemMiniappRelease(
-  config: IslandConfigValues,
-  packageName: string,
-  identity?: {source: string; storePackageName?: string; sourceUrl?: string} | null,
-): boolean {
+const RETIRED_MENTRA_STORE = "com.mentra.store"
+
+/** A bundled package this deployment lets run with the build's privileges. */
+function isApprovedSystemPackage(config: IslandConfigValues, packageName: string): boolean {
   if (!config.bundledSystemMiniappPackages?.includes(packageName)) return false
   const policy = config.localMiniappPolicy
   if (policy) {
@@ -35,6 +32,35 @@ export function isTrustedSystemMiniappRelease(
   } else if (config.localMiniappAllowlist && !config.localMiniappAllowlist.includes(packageName)) {
     return false
   }
+  return true
+}
+
+/** The build assigns this bundled package to this bundled Store, which may update it. */
+export function isSystemMiniappAssignedToStore(
+  config: IslandConfigValues,
+  packageName: string,
+  storePackageName: string,
+): boolean {
+  return (
+    isApprovedSystemPackage(config, packageName) &&
+    Boolean(config.bundledSystemMiniappPackages?.includes(storePackageName)) &&
+    Boolean(config.bundledStoreMiniappPackages?.includes(storePackageName)) &&
+    config.bundledSystemMiniappStoreOwners?.[packageName] === storePackageName
+  )
+}
+
+/**
+ * Host-trusted provenance for a build-owned (bundled) package: the bundled ZIP
+ * itself, a release the engine installed for it from a Mentra host, or one a
+ * Mentra Store installed over it. Shared by runtime privileges and organization
+ * visibility. Never derived from a manifest, a signature or a dev server.
+ */
+export function isTrustedSystemMiniappRelease(
+  config: IslandConfigValues,
+  packageName: string,
+  identity?: {source: string; storePackageName?: string; sourceUrl?: string} | null,
+): boolean {
+  if (!isApprovedSystemPackage(config, packageName)) return false
   if (identity?.source === "bundled_asset") return true
   // Installed from a Mentra host: only Mentra serves its package names, so this
   // holds when a later deployment names another host, or none.
@@ -42,11 +68,6 @@ export function isTrustedSystemMiniappRelease(
     return typeof identity.sourceUrl === "string" && isPackageNameAllowedForUrl(packageName, identity.sourceUrl)
   }
   const owner = identity?.storePackageName
-  return Boolean(
-    identity?.source === "system_store" &&
-      owner &&
-      config.bundledSystemMiniappPackages.includes(owner) &&
-      config.bundledStoreMiniappPackages?.includes(owner) &&
-      config.bundledSystemMiniappStoreOwners?.[packageName] === owner,
-  )
+  if (identity?.source !== "system_store" || !owner) return false
+  return owner === RETIRED_MENTRA_STORE || isSystemMiniappAssignedToStore(config, packageName, owner)
 }
