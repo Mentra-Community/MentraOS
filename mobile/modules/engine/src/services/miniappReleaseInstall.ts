@@ -12,7 +12,12 @@ import appRegistry, {
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
 import {miniappLauncher} from "./MiniappLauncher"
 import type {MiniappUrlResolution} from "./miniappUrlResolution"
-import {canShowRunningUpdatePrompt, emitRunningUpdateFailed, requestRunningUpdatePrompt} from "./runningUpdatePrompt"
+import {
+  canShowRunningUpdatePrompt,
+  emitRunningUpdateFailed,
+  forgetRunningUpdateDecline,
+  requestRunningUpdatePrompt,
+} from "./runningUpdatePrompt"
 
 /**
  * A release archive: a URL the installer downloads, or a ZIP its caller already
@@ -149,6 +154,8 @@ export async function installMiniappRelease(
     if (error instanceof MiniappRunningError) markMiniappUpdateDeferred(packageName)
     throw error
   }
+  // The update the person put off has installed: a later one asks afresh.
+  forgetRunningUpdateDecline(packageName)
   await useAppStatusStore.getState().refresh()
 }
 

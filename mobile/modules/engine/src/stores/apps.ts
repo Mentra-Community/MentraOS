@@ -28,6 +28,7 @@ import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {nativeMiniappExecution} from "../services/NativeMiniappExecution"
+import {noteMiniappOpened} from "../services/runningUpdatePrompt"
 import {isMiniappAvailable} from "../runtime/bootstrap"
 import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
@@ -598,6 +599,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       foregroundedPackage: packageName,
       apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
     }))
+    noteMiniappOpened(packageName)
 
     // Ensure the JSContext exists. start() is idempotent for an
     // already-running app and enforces the foreground-only-one rule for

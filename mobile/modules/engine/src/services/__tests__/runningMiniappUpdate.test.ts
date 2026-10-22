@@ -180,7 +180,6 @@ const router = {
 } as unknown as MentraJSRouter
 
 let foreground = true
-let now = 10_000_000
 let answer: "update" | "not_now" | "hold" = "update"
 const prompts: PendingRunningUpdatePrompt[] = []
 const failures: unknown[] = []
@@ -226,7 +225,6 @@ beforeEach(async () => {
   notInstalled = false
   installReasons.length = 0
   foreground = true
-  now = 10_000_000
   answer = "update"
   prompts.length = 0
   failures.length = 0
@@ -235,9 +233,9 @@ beforeEach(async () => {
   deferredUpdates.resetDeferredMiniappUpdatesForTests()
   prompt.setRunningUpdatePromptEnvironmentForTests({
     isForeground: () => foreground,
-    now: () => now,
-    lastPromptedAt: (packageName) => (stored.get(`prompted:${packageName}`) as number | undefined) ?? null,
-    recordPrompted: (packageName, at) => stored.set(`prompted:${packageName}`, at),
+    isDeclined: (packageName) => stored.get(`declined:${packageName}`) === true,
+    setDeclined: (packageName, value) =>
+      void (value ? stored.set(`declined:${packageName}`, true) : stored.delete(`declined:${packageName}`)),
   })
   prompt.onRunningUpdatePrompt((pending) => {
     prompts.push(pending)
@@ -346,18 +344,26 @@ describe("update prompt for a running miniapp", () => {
     await release()
     expect(calls).toEqual(["download", "verify", "unpack", "activate"])
     expect(active).toBe("1.1.0")
+    // The put-off update installed: the next one asks without waiting for an open.
+    expect(prompt.canShowRunningUpdatePrompt(pkg)).toBe(true)
   })
 
-  test("asks at most once a day per miniapp, without downloading while it may not ask", async () => {
+  test("after Not now asks again only once the person opens the miniapp, without downloading before", async () => {
     answer = "not_now"
     await runApp({open: false})
+    const ready: string[] = []
+    deferredUpdates.onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
+    const due: string[] = []
+    prompt.onRunningUpdatePromptDue((packageName) => due.push(packageName))
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     calls.length = 0
-    now += prompt.RUNNING_UPDATE_PROMPT_INTERVAL_MS - 1
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     expect(calls).toEqual([])
     expect(prompts).toHaveLength(1)
-    now += 1
+
+    await useAppStatusStore.getState().setForeground(pkg)
+    expect(due).toEqual([pkg])
+    expect(ready).toEqual([])
     answer = "update"
     await release()
     expect(prompts).toHaveLength(2)
