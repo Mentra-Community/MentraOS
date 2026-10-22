@@ -142,35 +142,7 @@
         "zod": "^3.24.1",
       },
     },
-    "../miniapps/captions": {
-      "name": "local-captions",
-      "dependencies": {
-        "@mentra/miniapp": "workspace:*",
-        "clsx": "^2.1.1",
-        "lucide-react": "^0.511.0",
-        "react": "^19.0.0",
-        "react-dom": "^19.0.0",
-        "tailwind-merge": "^3.0.2",
-        "tailwindcss": "^4.0.8",
-      },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "workspace:*",
-        "@types/react": "^19.1.6",
-        "@types/react-dom": "^19.1.6",
-        "bun-plugin-tailwind": "^0.1.2",
-      },
-    },
-    "../miniapps/codex-kawaii-e2e": {
-      "name": "codex-kawaii-e2e-miniapp",
-      "dependencies": {
-        "@mentra/miniapp": "workspace:*",
-      },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "workspace:*",
-        "bun-types": "^1.3.14",
-      },
-    },
-    "../miniapps/example-miniapp": {
+    "../examples/miniapp": {
       "name": "example-miniapp",
       "dependencies": {
         "@mentra/miniapp": "workspace:*",
@@ -200,14 +172,22 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
-    "../miniapps/kawaii": {
-      "name": "kawaii-miniapp",
+    "../miniapps/captions": {
+      "name": "local-captions",
       "dependencies": {
         "@mentra/miniapp": "workspace:*",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.511.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwind-merge": "^3.0.2",
+        "tailwindcss": "^4.0.8",
       },
       "devDependencies": {
         "@mentra/miniapp-cli": "workspace:*",
-        "bun-types": "^1.3.14",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
       },
     },
     "../miniapps/navigation": {
@@ -1702,8 +1682,6 @@
 
     "co": ["co@4.6.0", "", {}, "sha512-QVb0dM5HvG+uaxitm8wONl7jltx8dqhfU33DcqtOZcLSVIKSDDLDi7+0LbAKiyI8hD9u42m2YxXSkMGWThaecQ=="],
 
-    "codex-kawaii-e2e-miniapp": ["codex-kawaii-e2e-miniapp@workspace:../miniapps/codex-kawaii-e2e"],
-
     "collect-v8-coverage": ["collect-v8-coverage@1.0.3", "", {}, "sha512-1L5aqIkwPfiodaMgQunkF1zRhNqifHBmtbbbxcr6yVxxBnliw4TDOW6NxpO8DJLgJ16OT+Y4ztZqP6p/FtXnAw=="],
 
     "color-convert": ["color-convert@2.0.1", "", { "dependencies": { "color-name": "~1.1.4" } }, "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ=="],
@@ -1948,7 +1926,7 @@
 
     "eventsource-parser": ["eventsource-parser@3.1.1", "", {}, "sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ=="],
 
-    "example-miniapp": ["example-miniapp@workspace:../miniapps/example-miniapp"],
+    "example-miniapp": ["example-miniapp@workspace:../examples/miniapp"],
 
     "execa": ["execa@5.1.1", "", { "dependencies": { "cross-spawn": "^7.0.3", "get-stream": "^6.0.0", "human-signals": "^2.1.0", "is-stream": "^2.0.0", "merge-stream": "^2.0.0", "npm-run-path": "^4.0.1", "onetime": "^5.1.2", "signal-exit": "^3.0.3", "strip-final-newline": "^2.0.0" } }, "sha512-8uSpZZocAZRBAPIEINJj3Lo9HyGitllczc27Eh5YYojjMFMn8yHMDMaUHE2Jqfq05D/wucwI4JGURyXt1vchyg=="],
 
@@ -2373,8 +2351,6 @@
     "jwt-decode": ["jwt-decode@4.0.0", "", {}, "sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA=="],
 
     "kareem": ["kareem@2.6.3", "", {}, "sha512-C3iHfuGUXK2u8/ipq9LfjFfXFxAZMQJJq7vLS45r3D9Y2xQ/m4S8zaR4zMLFWh9AsNPXmcFfUDhTEO8UIC/V6Q=="],
-
-    "kawaii-miniapp": ["kawaii-miniapp@workspace:../miniapps/kawaii"],
 
     "keygrip": ["keygrip@1.1.0", "", { "dependencies": { "tsscmp": "1.0.6" } }, "sha512-iYSchDJ+liQ8iwbSI2QqsQOvqv58eJCEanyJPJi+Khyu8smkcKSFUCbPwzFcL7YVtZ6eONjqRX/38caJ7QjRAQ=="],
 

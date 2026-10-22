@@ -152,5 +152,5 @@ A clean 60s window in `RUNNING` resets the retry counter.
 - [session.ui](./ui.md) — the background-side message bus reference.
 - [agents/mentrajs-two-layer-miniapp-architecture.md](../../agents/mentrajs-two-layer-miniapp-architecture.md)
   — full architecture spec, including memory profile and engine choice.
-- The example miniapp (`sdk/example-miniapp/`) — canonical
+- The example miniapp (`examples/miniapp/`) — canonical
   implementation following Appendix A of the architecture spec.

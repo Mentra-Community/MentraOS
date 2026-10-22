@@ -159,36 +159,11 @@
     "cloud-v2/packages/workspace-contract": {
       "name": "@mentra/workspace-contract",
       "version": "0.0.0",
-    },
-    "miniapps/captions": {
-      "name": "local-captions",
       "dependencies": {
-        "@mentra/miniapp": "workspace:*",
-        "clsx": "^2.1.1",
-        "lucide-react": "^0.511.0",
-        "react": "^19.0.0",
-        "react-dom": "^19.0.0",
-        "tailwind-merge": "^3.0.2",
-        "tailwindcss": "^4.0.8",
-      },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "workspace:*",
-        "@types/react": "^19.1.6",
-        "@types/react-dom": "^19.1.6",
-        "bun-plugin-tailwind": "^0.1.2",
+        "zod": "^3.24.1",
       },
     },
-    "miniapps/codex-kawaii-e2e": {
-      "name": "codex-kawaii-e2e-miniapp",
-      "dependencies": {
-        "@mentra/miniapp": "workspace:*",
-      },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "workspace:*",
-        "bun-types": "^1.3.14",
-      },
-    },
-    "miniapps/example-miniapp": {
+    "examples/miniapp": {
       "name": "example-miniapp",
       "dependencies": {
         "@mentra/miniapp": "workspace:*",
@@ -218,14 +193,22 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
-    "miniapps/kawaii": {
-      "name": "kawaii-miniapp",
+    "miniapps/captions": {
+      "name": "local-captions",
       "dependencies": {
         "@mentra/miniapp": "workspace:*",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.511.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwind-merge": "^3.0.2",
+        "tailwindcss": "^4.0.8",
       },
       "devDependencies": {
         "@mentra/miniapp-cli": "workspace:*",
-        "bun-types": "^1.3.14",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
       },
     },
     "miniapps/navigation": {
@@ -1058,8 +1041,6 @@
 
     "cluster-key-slot": ["cluster-key-slot@1.1.1", "", {}, "sha512-rwHwUfXL40Chm1r08yrhU3qpUvdVlgkKNeyeGPOxnW8/SyVDvgRaed/Uz54AqWNaTCAThlj6QAs3TZcKI0xDEw=="],
 
-    "codex-kawaii-e2e-miniapp": ["codex-kawaii-e2e-miniapp@workspace:miniapps/codex-kawaii-e2e"],
-
     "color-convert": ["color-convert@2.0.1", "", { "dependencies": { "color-name": "~1.1.4" } }, ""],
 
     "color-name": ["color-name@1.1.4", "", {}, ""],
@@ -1228,7 +1209,7 @@
 
     "eventsource-parser": ["eventsource-parser@3.1.1", "", {}, "sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ=="],
 
-    "example-miniapp": ["example-miniapp@workspace:miniapps/example-miniapp"],
+    "example-miniapp": ["example-miniapp@workspace:examples/miniapp"],
 
     "express": ["express@5.2.1", "", { "dependencies": { "accepts": "^2.0.0", "body-parser": "^2.2.1", "content-disposition": "^1.0.0", "content-type": "^1.0.5", "cookie": "^0.7.1", "cookie-signature": "^1.2.1", "debug": "^4.4.0", "depd": "^2.0.0", "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "etag": "^1.8.1", "finalhandler": "^2.1.0", "fresh": "^2.0.0", "http-errors": "^2.0.0", "merge-descriptors": "^2.0.0", "mime-types": "^3.0.0", "on-finished": "^2.4.1", "once": "^1.4.0", "parseurl": "^1.3.3", "proxy-addr": "^2.0.7", "qs": "^6.14.0", "range-parser": "^1.2.1", "router": "^2.2.0", "send": "^1.1.0", "serve-static": "^2.2.0", "statuses": "^2.0.1", "type-is": "^2.0.1", "vary": "^1.1.2" } }, "sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw=="],
 
@@ -1457,8 +1438,6 @@
     "jwt-decode": ["jwt-decode@4.0.0", "", {}, "sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA=="],
 
     "kareem": ["kareem@2.6.3", "", {}, "sha512-C3iHfuGUXK2u8/ipq9LfjFfXFxAZMQJJq7vLS45r3D9Y2xQ/m4S8zaR4zMLFWh9AsNPXmcFfUDhTEO8UIC/V6Q=="],
-
-    "kawaii-miniapp": ["kawaii-miniapp@workspace:miniapps/kawaii"],
 
     "keygrip": ["keygrip@1.1.0", "", { "dependencies": { "tsscmp": "1.0.6" } }, "sha512-iYSchDJ+liQ8iwbSI2QqsQOvqv58eJCEanyJPJi+Khyu8smkcKSFUCbPwzFcL7YVtZ6eONjqRX/38caJ7QjRAQ=="],
 
