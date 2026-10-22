@@ -88,10 +88,15 @@ export function workspaceErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined
 }
 
-/** Core's error codes the sheets give their own words. The values are `CLIENT_WORKSPACE_ERRORS` in the contract. */
+/**
+ * The error codes the sheets act on. Core's are `CLIENT_WORKSPACE_ERRORS` in the contract; `sessionChanged` is the
+ * real client's (`WORKSPACE_CLIENT_ERROR` in `cloudWorkspaceApi.ts`).
+ */
 export const WORKSPACE_ERROR = {
   lastOwner: "last_owner",
   invitationExpired: "invitation_expired",
   invitationNotFound: "invitation_not_found",
   alreadyInWorkspace: "already_in_workspace",
+  /** The client's own code: the answer came for an account that is no longer signed in. */
+  sessionChanged: "session_changed",
 } as const

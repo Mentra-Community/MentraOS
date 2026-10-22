@@ -381,6 +381,15 @@ async function pass(): Promise<void> {
   const api = getWorkspaceApi()
   const [mine, invitations] = await Promise.allSettled([api.mine(), api.invitations()])
 
+  // A read dropped for another account is stale: without the person's workspace an invitation would offer a
+  // plain Join. Look again as the account signed in now.
+  const sessionChanged = (result: PromiseSettledResult<unknown>) =>
+    result.status === "rejected" && workspaceErrorCode(result.reason) === WORKSPACE_ERROR.sessionChanged
+  if (sessionChanged(mine) || sessionChanged(invitations)) {
+    again = true
+    return
+  }
+
   if (mine.status === "fulfilled") {
     useMyWorkspaceStore.getState().set(mine.value)
   } else {

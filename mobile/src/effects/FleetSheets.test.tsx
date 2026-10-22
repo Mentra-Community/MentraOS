@@ -436,6 +436,20 @@ describe("the leave-first variant", () => {
     await press(screen, "Decline")
     await finish(run)
   })
+
+  it("looks again instead of offering a plain Join when the workspace read was dropped for a session change", async () => {
+    const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
+    ;(core.api.mine as jest.Mock).mockRejectedValueOnce(failWith("session_changed"))
+    setWorkspaceApi(core.api)
+    screen = render(<ModalProvider>{null}</ModalProvider>)
+    const run = start()
+
+    expect(await screen.findByText("Leave Northwind Labs")).toBeTruthy()
+    expect(screen.queryByText("Join")).toBeNull()
+    expect(core.api.mine).toHaveBeenCalledTimes(2)
+    await press(screen, "Decline")
+    await finish(run)
+  })
 })
 
 describe("the Fleet notice", () => {
