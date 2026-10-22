@@ -444,6 +444,37 @@ export const licenseStrings = {
     cancel: "Cancel",
   },
 
+  /**
+   * The questions asked in a dialog before something that can't be taken back and isn't about a license: leaving a
+   * workspace, deleting it, and revoking an invitation or a key. Each has its title (the question), one plain line
+   * under it, and the action's name on the destructive button, beside a Cancel.
+   */
+  confirm: {
+    cancel: "Cancel",
+    leave: {
+      title: (workspace: string) => `Leave ${workspace}?`,
+      body: "You lose access to this workspace.",
+      action: "Leave",
+    },
+    delete: {
+      title: (workspace: string) => `Delete ${workspace}?`,
+      body: "Deleting a workspace ends every membership and invitation and revokes every key. It cannot be undone.",
+      /** The field that asks for the workspace's name back, in the parts a screen styles (the name is bold). */
+      typeName: (workspace: string) => ({ lead: "Type ", name: workspace, rest: " to confirm" }),
+      action: "Delete",
+    },
+    revokeInvitation: {
+      title: (email: string) => `Revoke the invitation for ${email}?`,
+      body: "The link they were sent stops working.",
+      action: "Revoke",
+    },
+    revokeKey: {
+      title: (name: string) => `Revoke ${name}?`,
+      body: "Anything using it stops working.",
+      action: "Revoke",
+    },
+  },
+
   /** What fits when licenses are given to several people at once: the people picker's lines. */
   assign: {
     enough: ({ free, quantity, chosen }: { free: number; quantity: number; chosen: number }) => {
