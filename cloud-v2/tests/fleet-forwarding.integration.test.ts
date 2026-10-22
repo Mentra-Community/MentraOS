@@ -1324,6 +1324,48 @@ describe("the workspace portal", () => {
     expect((await fromPortal(owner, "DELETE", "/ui/entry.js")).status).toBe(405)
   })
 
+  test("a workspace's UI assets are behind its fleet.read: relayed from /v1/portal/ui as the person", async () => {
+    const owner = await portalPerson("p-owner")
+    const admin = await portalPerson("p-admin")
+    const orgAdmin = await portalPerson("p-org-admin", {email: ADMIN_EMAIL})
+    const ws = await workspaceWith(owner, {admin})
+    for (const who of [owner, admin, orgAdmin]) {
+      const get = await fromPortal(who, "GET", `/workspaces/${ws}/ui/chunks/main.js?v=1`)
+      const head = await fromPortal(who, "HEAD", `/workspaces/${ws}/ui/entry.js`)
+      expect(get.status).toBe(200)
+      expect(head.status).toBe(200)
+      expect((get.json as Echo).pathWithQuery).toBe("/v1/portal/ui/chunks/main.js?v=1")
+      expect((get.json as Echo).principal).toMatchObject({kind: "user", scope: {kind: "person"}})
+      expect(get.headers.get("x-content-type-options")).toBe("nosniff")
+      expect(get.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+    }
+    const sent = received.length
+    expect((await fromPortal(owner, "POST", `/workspaces/${ws}/ui/entry.js`, {body: "{}"})).status).toBe(405)
+    expect((await fromPortal(owner, "DELETE", `/workspaces/${ws}/ui/entry.js`)).status).toBe(405)
+    expect(received).toHaveLength(sent)
+  })
+
+  test("a workspace's UI assets refuse who its API refuses, and other spellings of ui are not routes", async () => {
+    const owner = await portalPerson("p-owner")
+    const member = await portalPerson("p-member")
+    const developer = await portalPerson("p-dev")
+    const stranger = await portalPerson("p-stranger")
+    const ws = await workspaceWith(owner, {member, developer})
+    for (const who of [member, developer, stranger]) {
+      for (const method of ["GET", "HEAD", "POST"]) {
+        const reply = await fromPortal(who, method, `/workspaces/${ws}/ui/entry.js`)
+        expect({method, status: reply.status}).toEqual({method, status: 403})
+      }
+    }
+    expect((await fromPortal(owner, "GET", "/workspaces/ws_missing/ui/entry.js")).status).toBe(404)
+    expect((await fromPortal(owner, "GET", `/workspaces/${ws}/ui/entry.js`, {via: "bearer"})).status).toBe(403)
+    for (const rest of [`/workspaces/${ws}/UI/entry.js`, `/workspaces/${ws}/%75i/entry.js`, `/workspaces/${ws}/ui`, `/workspaces/${ws}/ui/`]) {
+      const reply = await fromPortal(owner, "GET", rest)
+      expect({rest, status: reply.status}).toEqual({rest, status: 404})
+    }
+    expect(received).toEqual([])
+  })
+
   test("Fleet is not a portal module: the module router never forwards to it", async () => {
     const owner = await portalPerson("p-owner")
     await workspaceWith(owner)
