@@ -125,7 +125,11 @@ export class BlobStore {
     return {partitionId: partition.id, scope: `${partition.id}\0${packageName}`}
   }
 
-  /** Move blobs stored before partitions (scoped by user id alone) into that account's personal partition, once. */
+  /**
+   * Move blobs stored before partitions (scoped by user id alone) into that account's personal partition, once.
+   * Throws when the files cannot move, so the request fails and nothing is created in the partition: the next use
+   * tries again, with the blobs and their metadata still where they were.
+   */
   private migrateLegacy(userId: string, packageName: string, partitionId: string): void {
     const marker = `${MIGRATED_KEY_ROOT}${userId}/${packageName}`
     if (this.migrated.has(marker) || mmkvStorage.load<boolean>(marker).is_ok()) {
@@ -144,6 +148,10 @@ export class BlobStore {
         const parent = new Directory(Paths.document, ROOT_DIR_NAME, partitionId)
         if (!parent.exists) parent.create({intermediates: true})
         legacyDir.move(targetDir)
+      } else if (legacyDir.exists) {
+        for (const entry of legacyDir.list()) {
+          if (entry instanceof File && !new File(targetDir, entry.name).exists) entry.move(targetDir)
+        }
       }
       const legacyPrefix = `${LEGACY_META_KEY_ROOT}${sanitizeSegment(userId)}_${packageName}_`
       const prefix = `${META_KEY_ROOT}${partitionId}/${packageName}/`
@@ -158,6 +166,7 @@ export class BlobStore {
       this.migrated.add(marker)
     } catch (err) {
       console.warn(`${LOG_TAG}: blob migration for ${packageName} failed; retried on next use`, err)
+      throw err
     }
   }
 
