@@ -43,6 +43,7 @@ import SpeechSettings from "@/app/miniapps/settings/speech"
 import StressTestScreen from "@/app/miniapps/settings/stress-test"
 import SuperSettings from "@/app/miniapps/settings/super"
 import WearTuningSettings from "@/app/miniapps/settings/wear-tuning"
+import WorkspaceSettings from "@/app/miniapps/settings/workspace"
 
 export interface OfflineAppDef {
   initialRoute: string
@@ -79,6 +80,7 @@ const settingsRoutes: Record<string, ComponentType<any>> = {
   "/miniapps/settings/stress-test": StressTestScreen,
   "/miniapps/settings/super": SuperSettings,
   "/miniapps/settings/wear-tuning": WearTuningSettings,
+  "/miniapps/settings/workspace": WorkspaceSettings,
 }
 
 export const offlineAppRegistry: Record<string, OfflineAppDef> = {
