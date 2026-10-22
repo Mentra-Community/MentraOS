@@ -42,6 +42,7 @@ const urlUpdater = new MiniappUrlUpdater({
   install: installMiniappRelease,
   keepVersions: (packageName, versions) => appRegistry.gcReleaseVersions(packageName, versions),
   isRunningError: (error) => error instanceof MiniappRunningError,
+  installSession: () => localMiniappRuntime.installSession(),
   now: () => Date.now(),
   log: (message) => console.log(`MiniappUpdates: ${message}`),
   warn: (message, error) => console.warn(`MiniappUpdates: ${message}`, error ?? ""),

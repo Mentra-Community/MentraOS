@@ -56,6 +56,8 @@ export interface MiniappUrlUpdaterDependencies {
   /** Keep only these versions of the package (the new release and the one it replaced). */
   keepVersions(packageName: string, versions: string[]): Promise<void>
   isRunningError(error: unknown): boolean
+  /** Changes when the engine session ends; an update started before then must not activate. */
+  installSession(): number
   now(): number
   log(message: string): void
   warn(message: string, error?: unknown): void
@@ -103,8 +105,15 @@ interface Backoff {
   nextAttemptAt: number
 }
 
+/** A validated `miniapp.json`, kept with its ETag so a 304 can be evaluated again. */
+interface CachedManifest {
+  etag: string
+  url: string
+  manifest: HostedMiniappManifest
+}
+
 export class MiniappUrlUpdater {
-  private readonly etags = new Map<string, string>()
+  private readonly manifests = new Map<string, CachedManifest>()
   private readonly backoff = new Map<string, Backoff>()
   private readonly lastCheckedAt = new Map<string, number>()
   private readonly inFlight = new Map<string, Promise<void>>()
@@ -159,36 +168,42 @@ export class MiniappUrlUpdater {
     if (!sourceUrl || !isPackageNameAllowedForUrl(packageName, sourceUrl)) return
 
     this.lastCheckedAt.set(packageName, now)
+    const session = this.deps.installSession()
+    const isCancelled = () => this.deps.installSession() !== session
     const manifestUrl = new URL("miniapp.json", sourceUrl).href
+    const cached = this.manifests.get(manifestUrl)
     let result: ManifestFetchResult
     try {
-      result = await this.deps.fetchManifest(manifestUrl, this.etags.get(manifestUrl))
+      result = await this.deps.fetchManifest(manifestUrl, cached?.etag)
     } catch (error) {
       this.fail(packageName, `could not fetch ${manifestUrl}`, error)
       return
     }
-    if (result.status === 304) {
-      this.backoff.delete(packageName)
-      return
+    // A 304 is the manifest seen before. Its release is evaluated again: it may
+    // have waited for the miniapp to stop, failed, or needed hardware since added.
+    let served: {url: string; manifest: HostedMiniappManifest}
+    if (result.status === 304 && cached) {
+      served = cached
+    } else {
+      if (result.status < 200 || result.status >= 300 || result.body === undefined) {
+        this.fail(packageName, `${manifestUrl} answered ${result.status}`, undefined, result.retryAfterMs)
+        return
+      }
+      if (!isPackageNameAllowedForUrl(packageName, result.url)) {
+        this.fail(packageName, `${manifestUrl} redirected to ${result.url}, which can't serve ${packageName}`)
+        return
+      }
+      try {
+        served = {url: result.url, manifest: parseHostedManifest(result.body, packageName)}
+      } catch (error) {
+        this.fail(packageName, `${manifestUrl} is not a valid miniapp.json`, error)
+        return
+      }
+      if (result.etag) this.manifests.set(manifestUrl, {etag: result.etag, ...served})
+      else this.manifests.delete(manifestUrl)
     }
-    if (result.status < 200 || result.status >= 300 || result.body === undefined) {
-      this.fail(packageName, `${manifestUrl} answered ${result.status}`, undefined, result.retryAfterMs)
-      return
-    }
-    if (!isPackageNameAllowedForUrl(packageName, result.url)) {
-      this.fail(packageName, `${manifestUrl} redirected to ${result.url}, which can't serve ${packageName}`)
-      return
-    }
-
-    let manifest: HostedMiniappManifest
-    try {
-      manifest = parseHostedManifest(result.body, packageName)
-    } catch (error) {
-      this.fail(packageName, `${manifestUrl} is not a valid miniapp.json`, error)
-      return
-    }
-    if (result.etag) this.etags.set(manifestUrl, result.etag)
     this.backoff.delete(packageName)
+    const {manifest} = served
     if (!semver.gt(manifest.version, version)) return
 
     const policy = this.deps.compatibilityPolicy()
@@ -201,7 +216,7 @@ export class MiniappUrlUpdater {
 
     let bundleUrl: string
     try {
-      const resolved = new URL(manifest.bundle.url, result.url)
+      const resolved = new URL(manifest.bundle.url, served.url)
       if (resolved.protocol !== "https:") throw new Error("the bundle URL is not HTTPS")
       bundleUrl = resolved.href
     } catch (error) {
@@ -217,6 +232,7 @@ export class MiniappUrlUpdater {
         compatibilityPolicy: policy,
         onlyIfStopped: true,
         askIfRunning: true,
+        isCancelled,
         beforeActivate: () => {
           if (this.deps.hasDevelopmentSelection(packageName)) {
             throw new Error(`${packageName} uses a manually selected build`)
@@ -225,6 +241,8 @@ export class MiniappUrlUpdater {
         releaseIdentity: {source: "url", sourceUrl, bundleSha256: manifest.bundle.sha256},
       })
     } catch (error) {
+      // The session ended: the next session checks again.
+      if (isCancelled()) return
       // A running miniapp's update waits for it to stop, or for the user's answer.
       if (this.deps.isRunningError(error)) return
       this.fail(packageName, `could not install ${packageName}@${manifest.version}`, error)

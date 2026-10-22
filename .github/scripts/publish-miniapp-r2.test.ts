@@ -4,7 +4,13 @@ import {mkdtempSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 
-import {type MiniappArchive, type ObjectStore, publishMiniapp, readArchive} from "./publish-miniapp-r2"
+import {
+  archiveFromBytes,
+  type MiniappArchive,
+  type ObjectStore,
+  publishMiniapp,
+  readArchive,
+} from "./publish-miniapp-r2"
 
 function memoryStore() {
   const objects = new Map<string, {data: Uint8Array; type: string}>()
@@ -29,6 +35,9 @@ function archive(version: string, extra: Record<string, unknown> = {}, bytes = `
 }
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex")
+
+/** Opens a stored test ZIP: its bytes are `zip-<version>`. */
+const openStored = (bytes: Uint8Array) => archive(new TextDecoder().decode(bytes).replace(/^zip-/, ""))
 
 describe("publishing a miniapp to its own URL", () => {
   test("uploads the ZIP, the icon, and miniapp.json naming the ZIP and its hash", async () => {
@@ -78,6 +87,30 @@ describe("publishing a miniapp to its own URL", () => {
     expect(objects.has("com.mentra.captions/com.mentra.captions-1.2.0.zip")).toBe(true)
   })
 
+  test("a publish interrupted after its ZIP is finished from the stored ZIP, never a rebuild", async () => {
+    const {store, objects, json} = memoryStore()
+    let failManifest = true
+    const flaky: ObjectStore = {
+      ...store,
+      write: async (key, data, type) => {
+        if (key.endsWith("/miniapp.json") && failManifest) throw new Error("connection reset")
+        await store.write(key, data, type)
+      },
+    }
+    await expect(publishMiniapp(archive("1.2.0"), flaky, openStored)).rejects.toThrow("connection reset")
+    expect(objects.has("com.mentra.captions/miniapp.json")).toBe(false)
+    failManifest = false
+    const result = await publishMiniapp(archive("1.2.0", {}, "rebuilt bytes"), flaky, openStored)
+    expect(result.manifest).toBe("published")
+    expect(json("com.mentra.captions/miniapp.json").bundle).toEqual({
+      url: "com.mentra.captions-1.2.0.zip",
+      sha256: sha("zip-1.2.0"),
+    })
+    expect(new TextDecoder().decode(objects.get("com.mentra.captions/com.mentra.captions-1.2.0.zip")!.data)).toBe(
+      "zip-1.2.0",
+    )
+  })
+
   test.each([
     ["a third-party package", {packageName: "com.example.notes"}],
     ["a prerelease version", {version: "1.2.0-dev.1"}],
@@ -99,5 +132,8 @@ describe("publishing a miniapp to its own URL", () => {
     expect(JSON.parse(read.manifest).version).toBe("1.0.0")
     expect(new TextDecoder().decode(read.file("icon.png")!)).toBe("png")
     expect(read.file("missing.png")).toBeNull()
+    const stored = archiveFromBytes(read.bytes)
+    expect(JSON.parse(stored.manifest).version).toBe("1.0.0")
+    expect(new TextDecoder().decode(stored.file("icon.png")!)).toBe("png")
   })
 })

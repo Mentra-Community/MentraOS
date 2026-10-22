@@ -34,6 +34,9 @@ let installError: unknown
 let kept: Array<{packageName: string; versions: string[]}>
 let devSelected: Set<string>
 let warnings: string[]
+let session: number
+let hardware: DeviceTypes
+let duringInstall: ((options: ReleaseInstallOptions) => void) | undefined
 
 function served(manifest: Record<string, unknown>, extra: Partial<ManifestFetchResult> = {}): ManifestFetchResult {
   return {status: 200, url: `${sourceUrl}miniapp.json`, body: JSON.stringify(manifest), ...extra}
@@ -62,7 +65,7 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
     compatibilityPolicy: () => ({
       hostVersion: "3.3.0",
       supportedSdkRange: ">=0.3.0 <4.0.0",
-      hardwareCapabilities: getModelCapabilities(DeviceTypes.NONE),
+      hardwareCapabilities: getModelCapabilities(hardware),
     }),
     fetchManifest: async (url, etag) => {
       fetched.push({url, etag})
@@ -72,6 +75,8 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
     },
     install: async (bundleUrl, options) => {
       installs.push({bundleUrl, options})
+      duringInstall?.(options)
+      if (options.isCancelled?.()) throw new Error("cancelled")
       if (installError) throw installError
       active[options.expectedPackageName] = options.expectedVersion
     },
@@ -79,6 +84,7 @@ function updaterDeps(): ConstructorParameters<typeof MiniappUrlUpdater>[0] {
       kept.push({packageName, versions})
     },
     isRunningError: (error) => error instanceof RunningError,
+    installSession: () => session,
     now: () => now,
     log: () => {},
     warn: (message) => warnings.push(message),
@@ -100,6 +106,9 @@ beforeEach(() => {
   kept = []
   devSelected = new Set()
   warnings = []
+  session = 1
+  hardware = DeviceTypes.NONE
+  duringInstall = undefined
 })
 
 describe("the domain rule", () => {
@@ -174,6 +183,55 @@ describe("updates from a miniapp's own URL", () => {
     await u.checkAll()
     expect(fetched.map((call) => call.etag)).toEqual([undefined, '"v1"'])
     expect(installs).toHaveLength(0)
+  })
+
+  test("a release that waited for its running miniapp installs on the next check, even after a 304", async () => {
+    installError = new RunningError("running")
+    const u = updater()
+    responses = [served(manifest("1.1.0"), {etag: '"v2"'})]
+    await u.check(pkg)
+    installError = undefined
+    responses = [{status: 304, url: `${sourceUrl}miniapp.json`}]
+    await u.check(pkg)
+    expect(fetched.map((call) => call.etag)).toEqual([undefined, '"v2"'])
+    expect(installs).toHaveLength(2)
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test("a failed install is retried after its backoff, even after a 304", async () => {
+    installError = new Error("download failed")
+    const u = updater()
+    responses = [served(manifest("1.1.0"), {etag: '"v2"'})]
+    await u.check(pkg)
+    installError = undefined
+    now += BASE_BACKOFF_MS
+    responses = [{status: 304, url: `${sourceUrl}miniapp.json`}]
+    await u.check(pkg)
+    expect(active[pkg]).toBe("1.1.0")
+  })
+
+  test("a release that needs hardware installs once the phone has it, even after a 304", async () => {
+    const u = updater()
+    const needsDisplay = {hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}]}
+    responses = [served(manifest("1.1.0", needsDisplay), {etag: '"v2"'})]
+    await u.check(pkg)
+    expect(installs).toHaveLength(0)
+    hardware = DeviceTypes.G1
+    responses = [{status: 304, url: `${sourceUrl}miniapp.json`}]
+    await u.check(pkg)
+    expect(installs).toHaveLength(1)
+  })
+
+  test("an update in flight when the session ends never activates, and is not a failure", async () => {
+    responses = [served(manifest("1.1.0"))]
+    duringInstall = () => {
+      session += 1
+    }
+    await updater().check(pkg)
+    expect(installs).toHaveLength(1)
+    expect(installs[0].options.isCancelled?.()).toBe(true)
+    expect(active[pkg]).toBe("1.0.0")
+    expect(warnings).toHaveLength(0)
   })
 
   test("never downgrades or reinstalls the same version", async () => {

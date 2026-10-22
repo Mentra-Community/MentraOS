@@ -6527,7 +6527,12 @@ class LocalMiniappRuntime {
   /** Packages a Store request is installing or uninstalling: one operation per package. */
   private storeMutationsInFlight = new Set<string>()
   /** Bumped by cleanup(): a Store install requested before sign-out or a deployment switch never activates. */
-  private storeSessionEpoch = 0
+  private installSessionEpoch = 0
+
+  /** Changes at cleanup: an install started earlier belongs to the ended session. */
+  public installSession(): number {
+    return this.installSessionEpoch
+  }
 
   private interopApps(): ClientApp[] {
     return useAppStatusStore.getState().apps
@@ -6817,7 +6822,7 @@ class LocalMiniappRuntime {
   ): Promise<void> {
     const target = typeof payload.packageName === "string" ? payload.packageName.trim() : undefined
     if (!this.requireHostTrustedStore(storePackageName, requestId, "install", target)) return
-    const sessionEpoch = this.storeSessionEpoch
+    const sessionEpoch = this.installSessionEpoch
     const fail = (code: MiniappErrorCode, message: string) => {
       this.sendResult(storePackageName, requestId, false, undefined, {code, message})
       this.auditInterop({caller: storePackageName, op: "install", target, ok: false, errorCode: code})
@@ -6909,7 +6914,7 @@ class LocalMiniappRuntime {
         compatibilityPolicy,
         onlyIfStopped,
         askIfRunning,
-        isCancelled: () => sessionEpoch !== this.storeSessionEpoch,
+        isCancelled: () => sessionEpoch !== this.installSessionEpoch,
         beforeActivate: () => {
           if (onlyIfStopped && this.hasDevelopmentSelection(target)) {
             throw new Error(`${target} uses a manually selected build`)
@@ -7410,9 +7415,9 @@ class LocalMiniappRuntime {
 
   public cleanup(): void {
     console.log(`${LOG_TAG}: cleanup()`)
-    // Store installs already in flight belong to the ending session: they must
+    // Installs already in flight belong to the ending session: they must
     // not activate afterwards, and their open update prompts close unanswered.
-    this.storeSessionEpoch += 1
+    this.installSessionEpoch += 1
     dismissRunningUpdatePrompts()
     this.visibilityUnsubscribe?.()
     this.visibilityUnsubscribe = null

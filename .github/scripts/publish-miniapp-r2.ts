@@ -4,7 +4,7 @@
  * Mentra hosts its miniapps the way any developer can: as plain files at
  * `https://<host>/<packageName>/`. This uploads one ZIP to an R2 bucket:
  *
- *   <packageName>/<packageName>-<version>.zip   the ZIP, never overwritten
+ *   <packageName>/<packageName>-<version>.zip   the ZIP, first, never overwritten
  *   <packageName>/<icon>                          the icon from the ZIP
  *   <packageName>/miniapp.json                    the ZIP's miniapp.json plus
  *                                                 bundle: {url, sha256}, last
@@ -12,6 +12,7 @@
  * The Mentra App checks <packageName>/miniapp.json and installs a newer release.
  * A version the host already has is skipped, so publishing happens when
  * miniapp.json's version is bumped; an older version never replaces a newer one.
+ * Running it again finishes an interrupted publish from the stored ZIP.
  *
  * Usage: bun publish-miniapp-r2.ts <path to ZIP>
  * Environment: MINIAPPS_R2_ENDPOINT, MINIAPPS_R2_ACCESS_KEY_ID,
@@ -23,7 +24,9 @@
  */
 import {S3Client} from "bun"
 import {createHash} from "node:crypto"
-import {readFileSync} from "node:fs"
+import {mkdtempSync, readFileSync, writeFileSync} from "node:fs"
+import {tmpdir} from "node:os"
+import {join} from "node:path"
 
 export interface ObjectStore {
   exists(key: string): Promise<boolean>
@@ -68,7 +71,8 @@ function contentTypeFor(path: string): string {
   return "application/octet-stream"
 }
 
-export async function publishMiniapp(archive: MiniappArchive, store: ObjectStore): Promise<PublishResult> {
+/** The package name and version a ZIP's miniapp.json declares, once it passes the first-party rules. */
+function releaseOf(archive: MiniappArchive): {manifest: Record<string, unknown>; packageName: string; version: string} {
   const manifest = JSON.parse(archive.manifest) as Record<string, unknown>
   const packageName = manifest.packageName
   const version = manifest.version
@@ -79,30 +83,54 @@ export async function publishMiniapp(archive: MiniappArchive, store: ObjectStore
     throw new Error(`Expected a MAJOR.MINOR.PATCH version, got ${String(version)}`)
   }
   if ("bundle" in manifest) throw new Error("The ZIP's miniapp.json must not declare a bundle")
+  return {manifest, packageName, version}
+}
 
-  const sha256 = createHash("sha256").update(archive.bytes).digest("hex")
+const sha256Of = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+
+export async function publishMiniapp(
+  archive: MiniappArchive,
+  store: ObjectStore,
+  openStored: (bytes: Uint8Array) => MiniappArchive = archiveFromBytes,
+): Promise<PublishResult> {
+  const {packageName, version} = releaseOf(archive)
   const zipName = `${packageName}-${version}.zip`
   const zipKey = `${packageName}/${zipName}`
-
-  // A published ZIP never changes. A rebuild of a version the host already has
-  // is skipped: publishing happens when miniapp.json's version is bumped.
-  if (await store.exists(zipKey)) return {packageName, version, sha256, zipKey, manifest: "already-published"}
-
   const manifestKey = `${packageName}/miniapp.json`
+
+  // miniapp.json is written last, so a version it names is completely published.
+  // A rebuild of that version is skipped: publishing happens when it is bumped.
   if (await store.exists(manifestKey)) {
-    const current = JSON.parse(new TextDecoder().decode(await store.read(manifestKey))) as {version?: string}
-    if (
-      typeof current.version === "string" &&
-      RELEASE_VERSION.test(current.version) &&
-      compareVersions(current.version, version) > 0
-    ) {
-      return {packageName, version, sha256, zipKey, manifest: "kept-newer"}
+    const current = JSON.parse(new TextDecoder().decode(await store.read(manifestKey))) as {
+      version?: string
+      bundle?: {sha256?: string}
+    }
+    if (typeof current.version === "string" && RELEASE_VERSION.test(current.version)) {
+      const order = compareVersions(current.version, version)
+      if (order > 0) return {packageName, version, sha256: sha256Of(archive.bytes), zipKey, manifest: "kept-newer"}
+      if (order === 0) {
+        const sha256 = current.bundle?.sha256 ?? sha256Of(archive.bytes)
+        return {packageName, version, sha256, zipKey, manifest: "already-published"}
+      }
     }
   }
 
-  await store.write(zipKey, archive.bytes, "application/zip")
+  // A stored ZIP never changes. One left by an interrupted publish is finished
+  // from its own bytes and manifest, never replaced by a rebuild.
+  let release = archive
+  if (await store.exists(zipKey)) {
+    release = openStored(await store.read(zipKey))
+    const stored = releaseOf(release)
+    if (stored.packageName !== packageName || stored.version !== version) {
+      throw new Error(`${zipKey} holds ${stored.packageName}@${stored.version}`)
+    }
+  } else {
+    await store.write(zipKey, archive.bytes, "application/zip")
+  }
+  const {manifest} = releaseOf(release)
+  const sha256 = sha256Of(release.bytes)
   if (typeof manifest.icon === "string" && SAFE_RELATIVE_PATH.test(manifest.icon)) {
-    const icon = archive.file(manifest.icon)
+    const icon = release.file(manifest.icon)
     if (icon) await store.write(`${packageName}/${manifest.icon}`, icon, contentTypeFor(manifest.icon))
   }
   const hosted = {...manifest, bundle: {url: zipName, sha256}}
@@ -120,6 +148,14 @@ export function readArchive(path: string): MiniappArchive {
   const manifest = file("miniapp.json")
   if (!manifest) throw new Error(`${path} has no miniapp.json at its root`)
   return {bytes, manifest: new TextDecoder().decode(manifest), file}
+}
+
+/** Reads a ZIP held in memory, such as one already stored on the host. */
+export function archiveFromBytes(bytes: Uint8Array): MiniappArchive {
+  const directory = mkdtempSync(join(tmpdir(), "stored-miniapp-"))
+  const path = join(directory, "bundle.zip")
+  writeFileSync(path, bytes)
+  return readArchive(path)
 }
 
 const STORAGE_TIMEOUT_MS = 60_000
