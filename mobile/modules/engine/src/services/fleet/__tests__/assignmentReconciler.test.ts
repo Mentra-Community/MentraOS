@@ -121,6 +121,7 @@ let installed: Map<string, {version: string; bundleSha256?: string}>
 let otherReasons: Set<string>
 let assignments: Map<string, ManagedAssignment>
 let running: Set<string>
+let devSelections: Set<string>
 let revoked: Set<string>
 let stopListeners: Set<(packageName: string) => void>
 let installGate: Promise<void> | undefined
@@ -149,15 +150,19 @@ function start(): AssignmentReconciler {
       installedRelease: async (pkg) => installed.get(pkg) ?? null,
       hasOtherReason: (pkg) => otherReasons.has(pkg),
       assignment: (pkg) => assignments.get(pkg) ?? null,
+      assignedPackages: () => [...assignments.keys()],
+      hasDevelopmentSelection: (pkg) => devSelections.has(pkg),
+      clearDevelopmentSelection: async (pkg) => {
+        calls.push(`clear-dev:${pkg}`)
+        devSelections.delete(pkg)
+      },
       install: async ({resolution, assignment, isCancelled}) => {
         calls.push(`install:${resolution.packageName}@${resolution.version}`)
         if (installGate) await installGate
         if (installError) throw installError
         if (isCancelled()) throw new InstallFailure("cancelled", true)
-        installed.set(resolution.packageName, {
-          version: resolution.version,
-          ...(resolution.bundleSha256 ? {bundleSha256: resolution.bundleSha256} : {}),
-        })
+        installed.set(resolution.packageName, {version: resolution.version, bundleSha256: resolution.bundleSha256})
+        devSelections.delete(resolution.packageName)
         assignments.set(resolution.packageName, assignment)
       },
       classify: (error) =>
@@ -235,6 +240,7 @@ beforeEach(() => {
   otherReasons = new Set()
   assignments = new Map()
   running = new Set()
+  devSelections = new Set()
   revoked = new Set()
   stopListeners = new Set()
   installGate = undefined
@@ -272,7 +278,7 @@ describe("triggers", () => {
     expect(fetches).toBe(2)
   })
 
-  test("a newer revision heard mid-install re-evaluates after it", async () => {
+  test("a newer revision heard mid-install refuses the stale commit, then applies the newer revision", async () => {
     const install = gate()
     installGate = install.promise
     const r = start()
@@ -285,7 +291,25 @@ describe("triggers", () => {
     install.open()
     await timers.advance(TRIGGER_JITTER_MS)
     expect(fetches).toBe(2)
-    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "unassign:com.acme.notes", "uninstall:com.acme.notes"])
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    expect(installed.has(notes)).toBe(false)
+    expect(states()).toEqual(["downloading", "withdrawn"])
+  })
+
+  test("a revision heard mid-install that the next answer still wants installs it then", async () => {
+    const install = gate()
+    installGate = install.promise
+    const r = start()
+    r.trigger("startup")
+    await timers.advance(TRIGGER_JITTER_MS)
+    r.trigger("revision", 2)
+    answer = async () => managed(2, [{}])
+    installGate = undefined
+    install.open()
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "install:com.acme.notes@1.0.0"])
+    expect(installed.get(notes)?.version).toBe("1.0.0")
+    expect(states().at(-1)).toBe("installed")
   })
 
   test("leaving a workspace reads desired state at once", async () => {
@@ -405,6 +429,27 @@ describe("managed desired state", () => {
     await timers.advance(TRIGGER_JITTER_MS)
     expect(states()).toEqual(["downloading", "deferred_running", "downloading", "installed"])
     expect(installed.get(notes)?.version).toBe("1.0.0")
+  })
+
+  test("the cached release satisfies the assignment once a stopped live-development selection is cleared", async () => {
+    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
+    devSelections.add(notes)
+    await startAndSettle()
+    expect(calls).toEqual(["clear-dev:com.acme.notes", "assign:com.acme.notes"])
+    expect(states()).toEqual(["installed"])
+  })
+
+  test("a running live-development selection is deferred_running, then cleared when it stops", async () => {
+    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
+    devSelections.add(notes)
+    running.add(notes)
+    await startAndSettle()
+    expect(calls).toEqual([])
+    expect(states()).toEqual(["deferred_running"])
+    stop(notes)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["clear-dev:com.acme.notes", "assign:com.acme.notes"])
+    expect(states()).toEqual(["deferred_running", "installed"])
   })
 })
 
@@ -554,6 +599,36 @@ describe("context changes", () => {
     await timers.advance(TRIGGER_JITTER_MS * 10)
     expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
     expect(installed.has(notes)).toBe(true)
+  })
+
+  test("the next account's complete desired state decides the previous account's assignment reasons", async () => {
+    const r = await startAndSettle()
+    session = sessionB
+    answer = async () => managed(1, [], B)
+    r.sessionChanged()
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "unassign:com.acme.notes", "uninstall:com.acme.notes"])
+    expect(outcomes.filter((outcome) => outcome.state === "withdrawn")).toEqual([])
+  })
+
+  test("the next account's assignment of the same package takes the reason over without reinstalling", async () => {
+    const r = await startAndSettle()
+    session = sessionB
+    answer = async () => managed(1, [{id: "asg_b"}], B)
+    r.sessionChanged()
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0", "assign:com.acme.notes"])
+    expect(assignments.get(notes)).toMatchObject({assignmentId: "asg_b", mentraUserId: "mu_2", workspaceId: B})
+  })
+
+  test("the next account's failed desired state keeps the previous account's assignment reasons", async () => {
+    const r = await startAndSettle()
+    session = sessionB
+    answer = async () => Promise.reject(Object.assign(new Error("fleet_unavailable"), {status: 503}))
+    r.sessionChanged()
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["install:com.acme.notes@1.0.0"])
+    expect(assignments.has(notes)).toBe(true)
   })
 
   test("offline starts no install; reconnect reconciles", async () => {

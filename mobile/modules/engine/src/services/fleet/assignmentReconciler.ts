@@ -70,6 +70,12 @@ export interface ManagedMiniappPort {
   hasOtherReason(packageName: string): boolean
   /** The assignment the package's install recorded, or null. */
   assignment(packageName: string): ManagedAssignment | null
+  /** Every package holding an `assignment` reason, whichever account's. */
+  assignedPackages(): string[]
+  /** A live-development build or snapshot is selected for the package, so launching would not run the release. */
+  hasDevelopmentSelection(packageName: string): boolean
+  /** Clear the package's live-development selection, so launching runs its installed release. */
+  clearDevelopmentSelection(packageName: string): Promise<void>
   install(request: {
     resolution: Extract<ManagedResolution, {ok: true}>
     assignment: ManagedAssignment
@@ -415,6 +421,17 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       delete state.outcomes[assignmentId]
       save()
     }
+    // An assignment reason this account has no outcome for, such as one a previous account's assignment recorded,
+    // stays only while this account's complete desired state still names the package.
+    for (const packageName of miniapps.assignedPackages()) {
+      if (byPackage.has(packageName)) continue
+      assertCurrent(gen)
+      miniapps.clearAssignment(packageName)
+      if (!miniapps.hasOtherReason(packageName) && !state.pendingUninstalls.includes(packageName)) {
+        state.pendingUninstalls.push(packageName)
+        save()
+      }
+    }
     await uninstallIdle(gen)
   }
 
@@ -521,15 +538,31 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         })
         return
       }
-      const sameBytes =
-        !resolution.bundleSha256 || !installed.bundleSha256 || resolution.bundleSha256 === installed.bundleSha256
+      // A release installed before digests were recorded counts as the served bytes at the same version.
+      const sameBytes = !installed.bundleSha256 || resolution.bundleSha256 === installed.bundleSha256
       if (order === 0 && sameBytes) {
+        // The cached release satisfies the assignment only once a live-development selection no longer runs instead.
+        if (miniapps.hasDevelopmentSelection(entry.packageName)) {
+          if (miniapps.isRunning(entry.packageName)) {
+            record(entry, desired.revision, {
+              state: "deferred_running",
+              selectedVersion,
+              installedVersion: installed.version,
+            })
+            return
+          }
+          await miniapps.clearDevelopmentSelection(entry.packageName)
+          assertCurrent(gen)
+        }
         const recorded = miniapps.assignment(entry.packageName)
         if (
           !recorded ||
           recorded.assignmentId !== assignment.assignmentId ||
           recorded.assignmentRevision !== assignment.assignmentRevision ||
-          recorded.workspaceId !== assignment.workspaceId
+          recorded.workspaceId !== assignment.workspaceId ||
+          recorded.coreUrl !== assignment.coreUrl ||
+          recorded.mentraUserId !== assignment.mentraUserId ||
+          recorded.url !== assignment.url
         ) {
           miniapps.setAssignment(entry.packageName, assignment)
         }
@@ -552,8 +585,14 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       attempts,
       attempted: true,
     })
+    // A newer desired-state revision heard before the commit makes this decision stale; the next cycle reads it.
+    const heardRevision = wantedRevision
     try {
-      await miniapps.install({resolution, assignment, isCancelled: () => stopped || gen !== generation})
+      await miniapps.install({
+        resolution,
+        assignment,
+        isCancelled: () => stopped || gen !== generation || wantedRevision > heardRevision,
+      })
     } catch (error) {
       assertCurrent(gen)
       const {kind, retryable} = miniapps.classify(error)
