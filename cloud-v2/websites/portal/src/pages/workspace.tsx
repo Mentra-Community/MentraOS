@@ -96,6 +96,12 @@ const FLEET_NAV: ReadonlyArray<{ item: FleetItem; label: string; icon: LucideIco
   { item: "miniapps", label: "Miniapps", icon: Boxes },
 ];
 
+/** The Fleet item an address is on (its first `?fleet=` segment): a person's page is still People. */
+export function fleetNavItem(search: string): { item: FleetItem; label: string } {
+  const item = fleetItemOf(search);
+  return FLEET_NAV.find(entry => entry.item === item) ?? FLEET_NAV[0]!;
+}
+
 /** The sidebar key of a Fleet item. */
 export function fleetNavKey(item: FleetItem): string {
   return `fleet-${item}`;
@@ -264,6 +270,8 @@ export function WorkspaceScreen({
   const redirecting = data !== undefined && active === null && !waitingForLicenses;
   const shown = redirecting ? null : (active ?? section);
   const meta = shown ? SECTIONS[shown] : null;
+  // Fleet's title is the item the viewer is on (Overview, People, ...), with no line under it: the module draws each page's own heading.
+  const fleetItem = shown === "fleet" ? fleetNavItem(search) : undefined;
 
   function gone() {
     forgetWorkspace(safeLocalStorage(), workspaceId);
@@ -276,8 +284,8 @@ export function WorkspaceScreen({
       section={active ?? undefined}
       nav={workspaceNav(workspaceId, sections)}
       activeKey={active === "fleet" ? fleetNavKey(fleetItemOf(search)) : active}
-      title={meta?.label ?? name}
-      description={meta?.description(name)}
+      title={fleetItem?.label ?? meta?.label ?? name}
+      description={fleetItem ? undefined : meta?.description(name)}
       headerAction={
         active === "members" && can(data, "workspace.members.manage") ? (
           <Button onClick={() => setInviting(true)}>

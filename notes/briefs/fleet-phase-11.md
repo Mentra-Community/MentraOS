@@ -1,7 +1,7 @@
 ---
 status: active
 owner: nicolo
-last_verified: 2026-10-21
+last_verified: 2026-10-22
 covers:
   - cloud-v2/packages/protocol/src/fleet.ts
   - cloud-v2/packages/workspace-contract/src/**
@@ -103,6 +103,9 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 13. Admin Workspaces link needs build-time `PORTAL_URL` (set by `scripts/deploy-pages.ts`, public, not a Doppler key).
 14. Portal Decline is `POST /api/{portal/,}workspaces/invitations/decline` (shared handler); the Mentra App uses
     `/api/client/workspaces/invitations/:id/decline`. Both call `declineInvitation`.
+15. The Fleet UI module is `fleet/ui/` in miniapp-store (stacked PR #66 on #65): built to `fleet/ui/dist`, served by MFM
+    at `/v1/portal/ui/*`. The portal title is the Fleet item (`fleetNavItem`, first `?fleet=` segment, no description);
+    the module draws its own page headings. `useSearch()` is "" in server-rendered tests, so test titles via `fleetNavItem`.
 
 ## Open items
 

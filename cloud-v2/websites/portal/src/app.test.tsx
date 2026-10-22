@@ -39,7 +39,7 @@ import { usePortalInvitations } from "./lib/use-portal-invitations";
 import type { InviteStorage } from "./lib/workspace-invite";
 import { accountNav } from "./pages/account-billing";
 import { billingOffered } from "./pages/licenses";
-import { isNoAccess, licensesPartShown, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
+import { fleetNavItem, isNoAccess, licensesPartShown, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
 
 // Synthetic data only. The query cache is seeded, so a server render never reaches the network.
 const api = portalWorkspaceApi;
@@ -209,6 +209,27 @@ describe("the sidebar follows the viewer's role", () => {
       ["Miniapps", `/w/${ACME}/fleet?fleet=miniapps`],
     ]);
     expect(nav.flatMap(entry => entry.items).map(item => item.label)).not.toContain("Audit log");
+  });
+
+  test("the page title is the Fleet item being viewed, with no line under it", () => {
+    const withFleet = { ...ME, fleet: { installed: true } };
+    const markup = render(`/w/${ACME}/fleet`, TWO_WORKSPACES, {}, undefined, withFleet);
+    expect(markup).toMatch(/<h1[^>]*>Overview<\/h1>/);
+    expect(markup).not.toContain("The people, devices and miniapps of");
+    // The other sections keep their own title and line.
+    expect(render(`/w/${ACME}/members`, TWO_WORKSPACES)).toContain("Manage who has access to");
+    expect(render(`/w/${ACME}/members`, TWO_WORKSPACES)).toMatch(/<h1[^>]*>Members<\/h1>/);
+  });
+
+  test("an address's title is its first ?fleet= segment, so a person's page is still People", () => {
+    const labelOf = (search: string) => fleetNavItem(search).label;
+    expect(labelOf("")).toBe("Overview");
+    expect(labelOf("?fleet=overview")).toBe("Overview");
+    expect(labelOf("?fleet=people")).toBe("People");
+    expect(labelOf("?fleet=people%2Facct_x%3Frange%3D30d")).toBe("People");
+    expect(labelOf("?fleet=devices/gl_1")).toBe("Devices");
+    expect(labelOf("?fleet=miniapps")).toBe("Miniapps");
+    expect(labelOf("?fleet=nonsense")).toBe("Overview");
   });
 
   test("an Organization Admin who is not a member has Fleet Management through fleet.read", () => {
