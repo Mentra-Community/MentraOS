@@ -145,6 +145,16 @@ describe("workspaces: paths, methods, bodies", () => {
     expect(requests.map(r => [r.method, r.url])).toEqual([["POST", `${BASE}/leave`]])
   })
 
+  test("leave names the workspace it leaves when given one, and sends no body without one", async () => {
+    const {workspaces, requests} = setup(() => new Response(null, {status: 204}))
+    await workspaces.leave({workspaceId: "ws-1"})
+    await workspaces.leave()
+    expect(requests.map(r => [r.method, r.url, r.body])).toEqual([
+      ["POST", `${BASE}/leave`, JSON.stringify({workspaceId: "ws-1"})],
+      ["POST", `${BASE}/leave`, undefined],
+    ])
+  })
+
   test("an invitation ID is one path segment", async () => {
     const {workspaces, requests} = setup(() => json(200, {workspace}))
     await workspaces.acceptInvitation("a/b?c")

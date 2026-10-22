@@ -20,6 +20,7 @@ import type { FleetDesiredState, FleetReport } from "@mentra/cloud-protocol";
 import type {
   AcceptInvitationResult,
   DeclineInvitationResult,
+  LeaveWorkspaceRequest,
   MyWorkspaceResponse,
   PendingInvitationsResponse,
 } from "@mentra/workspace-contract";
@@ -148,8 +149,8 @@ export class Core {
     acceptInvitation(invitationId: string, opts?: AccountCallOptions): Promise<AcceptInvitationResult>;
     /** `POST /api/client/workspaces/invitations/:invitationId/decline`. */
     declineInvitation(invitationId: string, opts?: AccountCallOptions): Promise<DeclineInvitationResult>;
-    /** `POST /api/client/workspaces/leave`. */
-    leave(opts?: AccountCallOptions): Promise<void>;
+    /** `POST /api/client/workspaces/leave`, naming `opts.workspaceId` when given. */
+    leave(opts?: AccountCallOptions & LeaveWorkspaceRequest): Promise<void>;
   };
 
   constructor(deps: CoreDeps) {

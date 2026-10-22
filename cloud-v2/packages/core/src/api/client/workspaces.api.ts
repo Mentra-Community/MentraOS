@@ -5,7 +5,9 @@
  *   GET  /invitations/mine                   invitations addressed to their verified email that they can accept
  *   POST /invitations/:invitationId/accept   join the workspace the invitation is for
  *   POST /invitations/:invitationId/decline  turn it down (idempotent; changes no membership)
- *   POST /leave                              leave the workspace (the only Owner cannot)
+ *   POST /leave                              leave the workspace (the only Owner cannot); an optional
+ *                                            `{workspaceId}` body names it, and is 409 `membership_changed`
+ *                                            when the person is no longer in that workspace
  *
  * The gate is the phone's access token (`userAuth`), which carries no email. The person's verified email
  * comes from Core's copy of the account directory's answer (`accountEmail`), so the invitation checks (a
@@ -23,6 +25,7 @@
 import type {
   AcceptInvitationResult,
   DeclineInvitationResult,
+  LeaveWorkspaceRequest,
   MyWorkspace,
   MyWorkspaceResponse,
   PendingInvitationsResponse,
@@ -104,6 +107,25 @@ async function workspaceOf(mentraUserId: string): Promise<MyWorkspace | null> {
   }
 }
 
+/** The optional body of `POST /leave`. An empty body names no workspace; anything else malformed is 400. */
+async function leaveRequest(c: AppContext): Promise<LeaveWorkspaceRequest> {
+  const raw = await c.req.text()
+  if (!raw.trim()) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    fail("invalid_request", "request body must be a JSON object")
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    fail("invalid_request", "request body must be a JSON object")
+  }
+  const {workspaceId} = parsed as {workspaceId?: unknown}
+  if (workspaceId === undefined) return {}
+  if (typeof workspaceId !== "string" || !workspaceId) fail("invalid_request", "workspaceId must be a string")
+  return {workspaceId}
+}
+
 app.use("*", phoneAuth)
 
 app.get("/mine", async c => {
@@ -148,6 +170,16 @@ app.post("/invitations/:invitationId/decline", async c => {
 app.post("/leave", async c => {
   const actor = await requireActor(c)
   if (actor instanceof Response) return actor
+  const {workspaceId} = await leaveRequest(c)
+  if (workspaceId) {
+    // The workspace the phone showed when the person chose to leave: never another one they also belong to.
+    const memberships = await listWorkspacesForUser(actor.mentraUserId)
+    if (!memberships.some(workspace => workspace.workspaceId === workspaceId)) {
+      fail("membership_changed", "you are no longer in that workspace")
+    }
+    await leaveWorkspace(actor, workspaceId)
+    return c.body(null, 204)
+  }
   const workspace = await workspaceOf(actor.mentraUserId)
   if (!workspace) fail("not_found", "not a member of any workspace")
   await leaveWorkspace(actor, workspace.workspaceId)

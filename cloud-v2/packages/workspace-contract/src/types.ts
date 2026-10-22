@@ -397,6 +397,14 @@ export interface DeclineInvitationResult {
   declined: true
 }
 
+/**
+ * `POST /api/client/workspaces/leave`. A body is optional: with `workspaceId`, Core leaves that workspace only while
+ * the person is in it, and answers `membership_changed` (409) otherwise; without one, the person's workspace.
+ */
+export interface LeaveWorkspaceRequest {
+  workspaceId?: string
+}
+
 /** Codes a client workspace call can fail with, so the Mentra App can map each to its own words. */
 export const CLIENT_WORKSPACE_ERRORS = {
   /** The person already belongs to a workspace; leave it first. */
@@ -406,7 +414,7 @@ export const CLIENT_WORKSPACE_ERRORS = {
   invitationExpired: "invitation_expired",
   invitationNotFound: "invitation_not_found",
   emailUnverified: "email_unverified",
-  /** The membership's role changed under the call. */
+  /** The membership changed under the call: its role, or the workspace a leave named is no longer the person's. */
   membershipChanged: "membership_changed",
 } as const
 export type ClientWorkspaceErrorCode = (typeof CLIENT_WORKSPACE_ERRORS)[keyof typeof CLIENT_WORKSPACE_ERRORS]

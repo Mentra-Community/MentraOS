@@ -90,10 +90,11 @@ function signedInAs(mentraUserId: string) {
   )
 }
 
-function call(path: string, init: {method?: string; token?: string | null} = {}) {
+function call(path: string, init: {method?: string; token?: string | null; body?: string} = {}) {
   const headers: Record<string, string> = {}
   if (init.token !== null) headers.authorization = `Bearer ${init.token ?? "phone-token"}`
-  return app.request(`/api/client/workspaces${path}`, {method: init.method ?? "GET", headers})
+  if (init.body !== undefined) headers["content-type"] = "application/json"
+  return app.request(`/api/client/workspaces${path}`, {method: init.method ?? "GET", headers, body: init.body})
 }
 
 async function workspaceWithOwner(name = "Acme") {
@@ -397,6 +398,26 @@ describe("POST /leave", () => {
     await person("mu_co", "co@example.test")
     await addMember(ws, "mu_co", "owner")
     expect((await call("/leave", {method: "POST"})).status).toBe(204)
+  })
+
+  test("a leave naming a workspace leaves it only while the person is in it (409 membership_changed otherwise)", async () => {
+    const ws = await workspaceWithOwner()
+    await person("mu_dev", "dev@example.test")
+    await addMember(ws, "mu_dev", "member")
+    signedInAs("mu_dev")
+    const mismatch = await call("/leave", {method: "POST", body: JSON.stringify({workspaceId: "ws_other"})})
+    expect(mismatch.status).toBe(409)
+    expect(((await mismatch.json()) as {error: string}).error).toBe("membership_changed")
+    expect(await getActiveMembership(ws, "mu_dev")).not.toBeNull()
+
+    const malformed = await call("/leave", {method: "POST", body: JSON.stringify({workspaceId: 7})})
+    expect(malformed.status).toBe(400)
+    expect(await getActiveMembership(ws, "mu_dev")).not.toBeNull()
+
+    expect((await call("/leave", {method: "POST", body: JSON.stringify({workspaceId: ws})})).status).toBe(204)
+    expect(await getActiveMembership(ws, "mu_dev")).toBeNull()
+    const again = await call("/leave", {method: "POST", body: JSON.stringify({workspaceId: ws})})
+    expect(again.status).toBe(409)
   })
 
   test("a person in no workspace gets 404", async () => {

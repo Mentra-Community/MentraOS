@@ -17,6 +17,7 @@ import type {
   AcceptInvitationResult,
   DeclineInvitationResult,
   InvitationPreview,
+  LeaveWorkspaceRequest,
   MyWorkspace,
   MyWorkspaceResponse,
   PendingInvitationsResponse,
@@ -139,11 +140,14 @@ export class Workspaces {
     return {invitationId: body.invitationId, declined: true}
   }
 
-  /** Leaves the workspace. `last_owner` (409) means the only Owner cannot leave; `not_found` that there is none. */
-  async leave(opts?: AccountCallOptions): Promise<void> {
+  /**
+   * Leaves the workspace: `opts.workspaceId` when given, which Core refuses with `membership_changed` (409) once the
+   * person is no longer in it. `last_owner` (409) means the only Owner cannot leave; `not_found` that there is none.
+   */
+  async leave(opts?: AccountCallOptions & LeaveWorkspaceRequest): Promise<void> {
+    const body: LeaveWorkspaceRequest | undefined = opts?.workspaceId ? {workspaceId: opts.workspaceId} : undefined
     await this.caller.run(
-      bearer =>
-        this.http.post<unknown>(`${BASE}/leave`, undefined, {bearer, ...(opts?.signal ? {signal: opts.signal} : {})}),
+      bearer => this.http.post<unknown>(`${BASE}/leave`, body, {bearer, ...(opts?.signal ? {signal: opts.signal} : {})}),
       opts,
     )
   }
