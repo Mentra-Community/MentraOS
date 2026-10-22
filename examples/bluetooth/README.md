@@ -41,9 +41,8 @@ versions so it can be cloned and built without a MentraOS checkout. A scheduled
 MentraOS workflow keeps each kit branch on its channel's latest completed
 release: it pushes one `Release <version>` commit and an `sdk-<version>` tag,
 and records the inputs in `starter-kit-release.json`. Intermediate releases are
-skipped; an older release is exported only by a manual dispatch with its
-identity. The kit repository keeps its own CI, which builds the
-examples from the published packages.
+skipped. The kit repository keeps its own CI, which builds the examples from the
+published packages on every push, including each export.
 
 ## Documentation
 

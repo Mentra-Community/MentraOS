@@ -990,7 +990,9 @@ test("the Starter Kit export is scheduled, stops cheaply, and pushes only to the
   const exporter = workflow("bluetooth-starter-kit-export.yml")
   assert.doesNotMatch(exporter, /workflow_call:|--timeout-minutes|missingPublications|permission-workflows/)
   assert.match(exporter, /schedule:\n    - cron: "7,37 \* \* \* \*"/)
-  assert.match(exporter, /workflow_dispatch:/)
+  assert.match(exporter, /workflow_dispatch:\n    inputs:\n      dry_run:/)
+  // The export always means each channel's latest completed release.
+  assert.doesNotMatch(exporter, /inputs\.identity|^      identity:/m)
   assert.match(exporter, /channel: \[dev, beta, production\]/)
   assert.match(exporter, /group: starter-kit-export-\$\{\{ matrix\.channel \}\}/)
   assert.match(exporter, /cancel-in-progress: false/)

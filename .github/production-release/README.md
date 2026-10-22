@@ -35,7 +35,8 @@ container are kept, never replaced.
 The standalone Starter Kit is not part of the release run. A scheduled
 workflow (`bluetooth-starter-kit-export.yml`, every 30 minutes) exports each
 channel's newest completed release once its packages are served. Intermediate
-releases are skipped; dispatch the workflow with an identity to export an older one.
+releases are skipped; there is no export of an older release. The kit's own
+`Example App Builds` validates each export push.
 
 The process is resumable. It records immutable state in a draft GitHub release
 named `mentra-production-promotion-vX.Y.Z-attempt-N`. Store review may take days;

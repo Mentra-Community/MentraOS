@@ -77,9 +77,14 @@ Package Manager packages, pushed as one `Release <identity>` commit and an
 `sdk-<identity>` tag to the channel's branch (`dev`, `staging` for beta, `main`
 for production). It runs every 30 minutes: a cheap first check stops at once
 when the kit already has the release, or when npm, Maven Central, the Swift
-package or the OTA manifest do not serve it yet; a later run retries.
-Intermediate releases are skipped; dispatch the workflow with an `identity` to
-export an older one. The kit keeps its own `.github`.
+package or the OTA manifest do not serve it yet; a later run retries. The export
+always means each channel's latest completed release: intermediate releases are
+skipped, and a manual dispatch (optionally a dry run) runs the same check.
+
+The kit keeps its own `.github`. Its `Example App Builds` workflow runs on every
+push to `dev`, `staging` and `main`, so each export commit is validated as an
+external consumer would build it: see the kit's Actions tab, Example App Builds,
+filtered by the channel's branch.
 
 ## Portable OTA Bundle
 
