@@ -5,6 +5,12 @@ name: Example App Builds
 # reusable-bluetooth-examples.yml, which the coordinated release also calls to
 # build the release's example apps. The engine example (examples/oem-app) has
 # its own gates: oem-host-gate.yml and oem-app-apk.yml.
+#
+# The path filter below skips this workflow for pull requests that cannot
+# affect the examples. It is not a required check and ci-gate-dev does not
+# gate on it, so a skipped run blocks nothing. Release scripts in
+# .github/scripts are covered by Coordinated Release Family Checks; pull
+# request builds never stamp a release.
 
 "on":
   pull_request:
@@ -12,9 +18,11 @@ name: Example App Builds
       - "examples/bluetooth/**"
       - "examples/package.json"
       - "examples/bun.lock"
+      - "examples/patches/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/engine/**"
       - "mobile/modules/crust/**"
+      - "mobile/modules/jspolyfill/**"
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/glasses-media/**"
       - "mobile/modules/miniapp/**"
@@ -29,9 +37,11 @@ name: Example App Builds
       - "examples/bluetooth/**"
       - "examples/package.json"
       - "examples/bun.lock"
+      - "examples/patches/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/engine/**"
       - "mobile/modules/crust/**"
+      - "mobile/modules/jspolyfill/**"
       - "mobile/modules/acs-meeting/**"
       - "mobile/modules/glasses-media/**"
       - "mobile/modules/miniapp/**"

@@ -135,12 +135,27 @@ jobs:
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
 
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # Scoped by job and runner.environment, as in the Mentra App build.
+          key: gradle-${{ runner.environment }}-${{ runner.os }}-example-android-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bluetooth/android/**/*.gradle*', 'examples/bluetooth/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/modules/bluetooth-sdk/android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-${{ runner.environment }}-${{ runner.os }}-example-android-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-example-android-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -195,12 +210,27 @@ jobs:
         with:
           ref: ${{ inputs.source_commit || github.sha }}
 
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # Scoped by job and runner.environment, as in the Mentra App build.
+          key: gradle-${{ runner.environment }}-${{ runner.os }}-example-react-native-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bun.lock', 'examples/bluetooth/react-native/**/*.gradle') }}
+          restore-keys: |
+            gradle-${{ runner.environment }}-${{ runner.os }}-example-react-native-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-example-react-native-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -225,6 +255,14 @@ jobs:
         with:
           path: examples/bluetooth/react-native/.gstreamer/Android.sdk
           key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.environment }}-${{ runner.os }}-examples-${{ hashFiles('examples/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.environment }}-${{ runner.os }}-examples-
 
       - name: Install the examples workspace
         # Also builds the linked SDK packages through their prepare scripts.
@@ -285,6 +323,12 @@ jobs:
         working-directory: examples/bluetooth/react-native
         run: grep -q 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
 
+      # Pull request builds are compile checks: one ABI, as in the Mentra App
+      # PR build. Release builds keep every ABI the example ships.
+      - name: Build only arm64-v8a outside releases
+        if: needs.prepare.outputs.release != 'true'
+        run: echo "ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a" >> "$GITHUB_ENV"
+
       - name: Build release Android app
         working-directory: examples/bluetooth/react-native/android
         run: ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
@@ -320,12 +364,27 @@ jobs:
         with:
           ref: ${{ inputs.source_commit || github.sha }}
 
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # Scoped by job and runner.environment, as in the Mentra App build.
+          key: gradle-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bun.lock', 'examples/bluetooth/react-native-elevenlabs-audio/**/*.gradle') }}
+          restore-keys: |
+            gradle-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -344,6 +403,14 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.environment }}-${{ runner.os }}-examples-${{ hashFiles('examples/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.environment }}-${{ runner.os }}-examples-
 
       - name: Install the examples workspace
         # Also builds the linked SDK packages through their prepare scripts.
@@ -390,6 +457,12 @@ jobs:
       - name: Verify Android cleartext support
         working-directory: examples/bluetooth/react-native-elevenlabs-audio
         run: grep -q 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+
+      # Pull request builds are compile checks: one ABI, as in the Mentra App
+      # PR build. Release builds keep every ABI the example ships.
+      - name: Build only arm64-v8a outside releases
+        if: needs.prepare.outputs.release != 'true'
+        run: echo "ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a" >> "$GITHUB_ENV"
 
       - name: Build release Android app
         working-directory: examples/bluetooth/react-native-elevenlabs-audio/android
@@ -591,6 +664,10 @@ jobs:
 
       - name: Build native app and bundle JavaScript
         working-directory: examples/bluetooth/react-native-macos/macos
+        env:
+          # Outside releases, build the runner's architecture only instead of
+          # a universal binary.
+          ONLY_ACTIVE_ARCH: ${{ needs.prepare.outputs.release == 'true' && 'NO' || 'YES' }}
         run: |
           xcodebuild \
             -workspace mentra-bluetooth-sdk-macos-example.xcworkspace \
@@ -599,6 +676,7 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH="$ONLY_ACTIVE_ARCH" \
             build
 
       - name: Verify embedded JavaScript bundle

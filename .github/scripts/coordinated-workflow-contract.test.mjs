@@ -969,6 +969,31 @@ test("the release's example builds are stamped with the same release metadata as
   assert.match(workflow("example-app-builds.yml"), /uses: \.\/\.github\/workflows\/reusable-bluetooth-examples\.yml/)
 })
 
+test("example builds outside releases compile one architecture and reuse caches", () => {
+  const reusable = workflow("reusable-bluetooth-examples.yml")
+  assert.doesNotMatch(reusable, /cache: gradle/)
+  for (const job of ["android", "react-native", "react-native-elevenlabs-audio"]) {
+    const block = jobBlock(reusable, job)
+    assert.match(block, /key: gradle-\$\{\{ runner\.environment \}\}-\$\{\{ runner\.os \}\}-example-[a-z-]+-\$\{\{ steps\.cache-week\.outputs\.week \}\}-/, job)
+  }
+  for (const job of ["react-native", "react-native-elevenlabs-audio"]) {
+    const block = jobBlock(reusable, job)
+    assert.match(block, /key: bun-\$\{\{ runner\.environment \}\}-\$\{\{ runner\.os \}\}-examples-\$\{\{ hashFiles\('examples\/bun\.lock'\) \}\}/, job)
+    assert.ok(block.indexOf("Cache Bun dependencies") < block.indexOf("bun install --frozen-lockfile"), job)
+    // Releases ship every ABI; everything else builds arm64-v8a only.
+    assert.match(
+      block,
+      /if: needs\.prepare\.outputs\.release != 'true'\n\s+run: echo "ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a" >> "\$GITHUB_ENV"/,
+      job,
+    )
+    assert.ok(block.indexOf("ORG_GRADLE_PROJECT_reactNativeArchitectures") < block.indexOf("Build release Android app"), job)
+  }
+  assert.match(
+    jobBlock(reusable, "react-native-macos"),
+    /ONLY_ACTIVE_ARCH: \$\{\{ needs\.prepare\.outputs\.release == 'true' && 'NO' \|\| 'YES' \}\}/,
+  )
+})
+
 test("the Starter Kit export is idempotent, deferrable, and pushes only to the kit", () => {
   const exporter = workflow("bluetooth-starter-kit-export.yml")
   assert.match(exporter, /workflow_call:/)
