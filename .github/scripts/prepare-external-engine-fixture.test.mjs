@@ -44,7 +44,7 @@ test("pins external Engine native peers to the app's verified version", () => {
   const versions = [
     readPackage("mobile/package.json").dependencies["react-native-zip-archive"],
     readPackage("mobile/modules/engine/package.json").peerDependencies["react-native-zip-archive"],
-    readPackage("sdk/example-oem-app/package.json").dependencies["react-native-zip-archive"],
+    readPackage("examples/oem-app/package.json").dependencies["react-native-zip-archive"],
   ]
 
   assert.match(versions[0], /^\d+\.\d+\.\d+$/)
@@ -59,11 +59,11 @@ test("constrains the external Engine asset peer to the mobile Expo SDK", () => {
   const expected = readPackage("mobile/package.json").dependencies["expo-asset"]
   assert.match(expected, /^~55\.0\.\d+$/)
   assert.equal(readPackage("mobile/modules/engine/package.json").peerDependencies["expo-asset"], expected)
-  assert.equal(readPackage("sdk/example-oem-app/package.json").dependencies["expo-asset"], expected)
+  assert.equal(readPackage("examples/oem-app/package.json").dependencies["expo-asset"], expected)
 
   const output = path.join(mkdtempSync(path.join(os.tmpdir(), "mentra-engine-asset-fixture-")), "host")
   prepareExternalEngineFixture({
-    sourceDir: path.join(root, "sdk/example-oem-app"),
+    sourceDir: path.join(root, "examples/oem-app"),
     outputDir: output,
     releaseIdentity: "3.3.0-dev.932",
   })

@@ -1,0 +1,29 @@
+const path = require('node:path');
+const ts = require('typescript');
+
+const config = ts.getParsedCommandLineOfConfigFile(path.join(__dirname, 'tsconfig.json'), {}, {
+  ...ts.sys,
+  onUnRecoverableConfigFileDiagnostic: diagnostic => {
+    console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+    process.exit(1);
+  },
+});
+
+// Match Metro's Mac host: React Native resolves to react-native-macos.
+config.options.paths = {
+  'react': [path.join(__dirname, 'node_modules/@types/react')],
+  'react/*': [path.join(__dirname, 'node_modules/@types/react/*')],
+  'react-native': [path.join(__dirname, 'node_modules/react-native-macos')],
+  'react-native/*': [path.join(__dirname, 'node_modules/react-native-macos/*')],
+};
+
+const program = ts.createProgram(config.fileNames, config.options);
+const diagnostics = [...config.errors, ...ts.getPreEmitDiagnostics(program)];
+if (diagnostics.length) {
+  console.error(ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+    getCanonicalFileName: name => name,
+    getCurrentDirectory: ts.sys.getCurrentDirectory,
+    getNewLine: () => ts.sys.newLine,
+  }));
+  process.exit(1);
+}

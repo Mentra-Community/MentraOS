@@ -68,7 +68,7 @@ jobs:
         run: |
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           node .github/scripts/prepare-external-engine-fixture.mjs \
-            --source sdk/example-oem-app \
+            --source examples/oem-app \
             --output "$RUNNER_TEMP/engine-consumer" \
             --release-identity "$identity"
 
@@ -159,7 +159,7 @@ jobs:
         run: |
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           node .github/scripts/prepare-external-engine-fixture.mjs \
-            --source sdk/example-oem-app \
+            --source examples/oem-app \
             --output "$RUNNER_TEMP/engine-consumer" \
             --release-identity "$identity"
 

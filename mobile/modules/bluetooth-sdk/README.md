@@ -896,7 +896,7 @@ https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 
 Select a coordinated SDK version that includes your target platform, then add
 the `MentraBluetoothSDK` product to your app target. Native macOS support is new
-on `dev`; use the local source override until a supporting release is published.
+on `dev`; use the local package below until a supporting release is published.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -912,7 +912,8 @@ permission/audio-input capability for host microphone capture and network-server
 capability for local SDK servers. macOS uses CoreAudio instead of
 `AVAudioSession`; it does not provide iOS background modes or ANCS relay. See
 [the macOS integration guide](../../../mintlify-docs/bluetooth-sdk/macos.mdx)
-and the Starter Kit's `examples/macos` and `examples/react-native-macos` hosts.
+and the [`examples/bluetooth/macos`](../../../examples/bluetooth/macos/README.md) and
+[`examples/bluetooth/react-native-macos`](../../../examples/bluetooth/react-native-macos/README.md) hosts.
 
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).

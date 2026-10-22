@@ -1,0 +1,34 @@
+require_relative '../node_modules/react-native-macos/scripts/react_native_pods'
+require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), 'scripts/autolinking')
+
+ENV['MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER'] = '1'
+ENV['REACT_NATIVE_PATH'] = File.expand_path('../node_modules/react-native-macos', __dir__)
+
+prepare_react_native_project!
+
+target 'mentra-bluetooth-sdk-macos-example-macOS' do
+  platform :macos, '14.0'
+  use_expo_modules!({:searchPaths => ['../node_modules']})
+  # expo-modules-autolinking is a dependency of expo, so resolve it from expo
+  # rather than assuming a hoisted node_modules layout.
+  autolinking_bin = File.join(File.dirname(`node --print "require.resolve('expo-modules-autolinking/package.json', {paths: [require.resolve('expo/package.json')]})"`.strip), 'bin/expo-modules-autolinking')
+  config_command = ['node', autolinking_bin, 'react-native-config', '--json', '--platform', 'ios']
+  use_native_modules!(config_command)
+
+  use_react_native!(
+    :path => '../node_modules/react-native-macos',
+    :fabric_enabled => ENV['RCT_NEW_ARCH_ENABLED'] == '1',
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    react_native_post_install(installer, '../node_modules/react-native-macos')
+    # Some pods (including their resource bundles) still declare macOS 11.0,
+    # which current Xcode rejects. Raise them to the app's deployment target.
+    (installer.pods_project.build_configurations + installer.pods_project.targets.flat_map(&:build_configurations)).each do |build_configuration|
+      target = build_configuration.build_settings['MACOSX_DEPLOYMENT_TARGET']
+      build_configuration.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '14.0' if target.nil? || target.to_f < 14.0
+    end
+  end
+end

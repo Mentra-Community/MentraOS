@@ -1,0 +1,4066 @@
+import AVFoundation
+import Foundation
+import MentraBluetoothSDK
+import NetworkExtension
+import UIKit
+
+struct ExampleEvent: Identifiable {
+    let id = UUID()
+    let time: String
+    let tag: String
+    let text: String
+}
+
+struct MentraLiveVersions {
+    var appVersion: String?
+    var besFirmwareVersion: String?
+    var mtkFirmwareVersion: String?
+}
+
+struct ExampleActionError: LocalizedError {
+    let message: String
+    var errorDescription: String? {
+        message
+    }
+}
+
+private struct GalleryServerCheck {
+    let reachable: Bool
+    let status: String
+    let eventTag: String
+    let eventText: String
+}
+
+private struct WebhookReachability {
+    let healthUrl: URL
+    let host: String
+}
+
+private struct GalleryPhoto {
+    let name: String
+    let mimeType: String?
+    let size: Int?
+    let url: String?
+}
+
+private struct PendingHotspotConnection {
+    let ssid: String
+    let password: String
+    let baseUrl: String
+}
+
+private final class GlassesHotspotConnector {
+    func connect(ssid: String, password: String) async throws {
+        let configuration = NEHotspotConfiguration(ssid: ssid, passphrase: password, isWEP: false)
+        configuration.joinOnce = false
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            NEHotspotConfigurationManager.shared.apply(configuration) { error in
+                if let error {
+                    let nsError = error as NSError
+                    if nsError.domain == NEHotspotConfigurationErrorDomain,
+                       nsError.code == NEHotspotConfigurationError.alreadyAssociated.rawValue {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: error)
+                    }
+                    return
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    func disconnect(ssid: String) {
+        NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+    }
+}
+
+private struct PersistedCloudUrls {
+    let streamProtocol: ExampleStreamProtocol?
+    let streamUrl: String?
+    let webhookUrl: String?
+}
+
+private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
+    var parts = ["\(ack.setting) \(ack.status)"]
+    if let fov = ack.values["fov"] {
+        parts.append("fov=\(fov)")
+    }
+    if let roiPosition = ack.values["roiPosition"] {
+        parts.append("roi=\(roiPosition)")
+    }
+    if let errorCode = ack.errorCode {
+        parts.append(errorCode)
+    }
+    return parts.joined(separator: " ")
+}
+
+private func describeCameraFovResult(_ result: CameraFovResult) -> String {
+    "applied fov=\(result.fov) roi=\(result.roiPosition.label) request=\(result.requestId)"
+}
+
+private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
+let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
+let photoExposureMinNs = 1_000_000
+let photoExposureMaxNs = 33_333_333
+let photoExposureDefaultNs = 8_333_333
+let photoIsoMin = 100
+let photoIsoMax = 6400
+let photoIsoDefault = 200
+let cameraFovMin = 62
+let cameraFovMax = 118
+let cameraFovDefault = 102
+let cameraWarmUpDurationMs = 30_000
+let cameraWarmUpRefreshMs = 20_000
+let cameraWarmUpDisconnectedRetryMs = 2_000
+let photoAeExposureDivisorOptions = [2, 3, 5]
+let photoIsoCapOptions = [400, 800, 1600]
+let photoIspDigitalGainOptions = [0, 1, 2, 4]
+let photoIspAnalogGainOptions = ["low"]
+let glassesPhotoPollAttempts = 120
+let glassesGalleryFailureThreshold = 3
+let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
+
+enum PhotoDestination {
+    case macBookServer
+    case thisPhone
+    case glassesStorage
+}
+
+struct PhotoPreviewDetails {
+    let byteCount: Int?
+    let contentType: String?
+    let error: String?
+    let fileName: String?
+    let height: Int?
+    let previewUrl: String?
+    let requestId: String?
+    let source: String
+    let state: String
+    let timestamp: Int?
+    let uploadUrl: String?
+    let uploadedAt: String?
+    let width: Int?
+
+    func withState(_ nextState: String) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(
+            byteCount: byteCount,
+            contentType: contentType,
+            error: error,
+            fileName: fileName,
+            height: height,
+            previewUrl: previewUrl,
+            requestId: requestId,
+            source: source,
+            state: nextState,
+            timestamp: timestamp,
+            uploadUrl: uploadUrl,
+            uploadedAt: uploadedAt,
+            width: width
+        )
+    }
+
+    func acknowledged(
+        requestId: String,
+        source: String,
+        timestamp: Int,
+        uploadUrl: String,
+        fileName: String? = nil
+    ) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(
+            byteCount: byteCount,
+            contentType: contentType,
+            error: error,
+            fileName: fileName ?? self.fileName,
+            height: height,
+            previewUrl: previewUrl,
+            requestId: requestId,
+            source: source,
+            state: state == "preview" || state == "saved" ? state : "acknowledged",
+            timestamp: timestamp,
+            uploadUrl: uploadUrl,
+            uploadedAt: uploadedAt,
+            width: width
+        )
+    }
+
+    func uploaded(
+        byteCount: Int?,
+        contentType: String? = nil,
+        fileName: String? = nil,
+        height: Int? = nil,
+        previewUrl: String,
+        requestId: String?,
+        source: String,
+        uploadedAt: String? = nil,
+        width: Int? = nil
+    ) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(
+            byteCount: byteCount ?? self.byteCount,
+            contentType: contentType ?? self.contentType,
+            error: error,
+            fileName: fileName ?? self.fileName,
+            height: height ?? self.height,
+            previewUrl: previewUrl,
+            requestId: requestId ?? self.requestId,
+            source: source,
+            state: "preview",
+            timestamp: timestamp,
+            uploadUrl: uploadUrl,
+            uploadedAt: uploadedAt ?? self.uploadedAt,
+            width: width ?? self.width
+        )
+    }
+
+    static func waiting(source: String) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: nil, fileName: nil, height: nil, previewUrl: nil, requestId: nil, source: source, state: "acknowledged", timestamp: nil, uploadUrl: nil, uploadedAt: nil, width: nil)
+    }
+
+    static func failed(requestId: String, source: String, error: String, timestamp: Int) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: error, fileName: nil, height: nil, previewUrl: nil, requestId: requestId, source: source, state: "error", timestamp: timestamp, uploadUrl: nil, uploadedAt: nil, width: nil)
+    }
+}
+
+struct VideoPreviewDetails {
+    let byteCount: Int?
+    let contentType: String?
+    let durationMs: Int?
+    let error: String?
+    let mediaUrl: String?
+    let previewUrl: String?
+    let requestId: String?
+    let source: String
+    let state: String
+    let status: String?
+    let timestamp: Int?
+    let uploadUrl: String?
+    let uploadedAt: String?
+
+    func updated(
+        byteCount: Int? = nil,
+        contentType: String? = nil,
+        durationMs: Int? = nil,
+        error: String? = nil,
+        mediaUrl: String? = nil,
+        previewUrl: String? = nil,
+        requestId: String? = nil,
+        state: String,
+        status: String? = nil,
+        timestamp: Int? = nil,
+        uploadUrl: String? = nil,
+        uploadedAt: String? = nil
+    ) -> VideoPreviewDetails {
+        VideoPreviewDetails(
+            byteCount: byteCount ?? self.byteCount,
+            contentType: contentType ?? self.contentType,
+            durationMs: durationMs ?? self.durationMs,
+            error: error,
+            mediaUrl: mediaUrl ?? self.mediaUrl,
+            previewUrl: previewUrl ?? self.previewUrl,
+            requestId: requestId ?? self.requestId,
+            source: source,
+            state: state,
+            status: status ?? self.status,
+            timestamp: timestamp ?? self.timestamp,
+            uploadUrl: uploadUrl ?? self.uploadUrl,
+            uploadedAt: uploadedAt ?? self.uploadedAt
+        )
+    }
+
+    static func pending(requestId: String, state: String, uploadUrl: String) -> VideoPreviewDetails {
+        VideoPreviewDetails(
+            byteCount: nil,
+            contentType: nil,
+            durationMs: nil,
+            error: nil,
+            mediaUrl: nil,
+            previewUrl: nil,
+            requestId: requestId,
+            source: "Cloud server",
+            state: state,
+            status: nil,
+            timestamp: nil,
+            uploadUrl: uploadUrl,
+            uploadedAt: nil
+        )
+    }
+}
+
+func deviceModelLabel(_ model: DeviceModel) -> String {
+    switch model {
+    case .mentraLive:
+        return "Mentra Live"
+    case .g2:
+        return "Even G2"
+    case .g1:
+        return "Even G1"
+    case .mentraNex:
+        return "Mentra Nex"
+    case .mach1:
+        return "Mach1"
+    case .z100:
+        return "Z100"
+    case .nimo:
+        return "Nimo"
+    case .ar99:
+        return "AR99"
+    case .frame:
+        return "Frame"
+    case .r1:
+        return "R1"
+    case .simulated:
+        return "Simulated"
+    @unknown default:
+        return model.rawValue
+    }
+}
+
+func roiPositionLabel(_ roiPosition: Int) -> String {
+    cameraRoiPositions.first { $0.value == roiPosition }?.label ?? "Center"
+}
+
+enum ExampleStreamProtocol: String, CaseIterable {
+    case rtmp
+    case srt
+    case webrtc
+
+    static let defaultUrls = Set(Self.allCases.map(\.defaultUrl))
+
+    var defaultUrl: String {
+        switch self {
+        case .rtmp:
+            return "rtmp://<computer-ip>:1935/live/mentra-live"
+        case .srt:
+            return "srt://<computer-ip>:8890?streamid=publish:mentra-live"
+        case .webrtc:
+            return "http://<computer-ip>:8889/mentra-live/whip"
+        }
+    }
+
+    var inputLabel: String {
+        self == .webrtc ? "WHIP" : rawValue.uppercased()
+    }
+}
+
+@MainActor
+final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
+    @Published private(set) var glassesValues: GlassesRuntimeState?
+    @Published private(set) var bluetoothValues: PhoneSdkRuntimeState?
+    @Published private(set) var scanHint: String?
+    @Published private(set) var discoveredDevices: [Device] = []
+    @Published private(set) var selectedDiscoveredDevice: Device?
+    @Published private(set) var selectedScanModel: DeviceModel = .mentraLive
+    @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
+    @Published private(set) var activeAction: String?
+    @Published private(set) var lastAction = "No actions yet."
+    private var actionSequence = 0
+    private var activeActions: [Int: String] = [:]
+    private var activeActionOrder: [Int] = []
+    private let glassesHotspotConnector = GlassesHotspotConnector()
+    private var galleryConnectionGeneration = 0
+    /// BLE session generation — advances only on glasses disconnect/reconnect.
+    private var glassesConnectionGeneration = 0
+    private var pendingHotspotConnection: PendingHotspotConnection?
+    private var photoDestinationBeforeGlasses: PhotoDestination = .thisPhone
+    private var streamConfigurationChangeInProgress = false
+    private var photoCaptureDefaultsSyncGeneration = 0
+    private var photoCaptureDefaultsSyncTask: Task<Void, Never>?
+    @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
+    @Published var webhookUrl = defaultPhotoUploadUrl {
+        didSet {
+            guard webhookUrl != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
+    @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
+    @Published private(set) var photoPreviewUrl: URL?
+    @Published private(set) var photoPreviewImage: UIImage?
+    @Published private(set) var videoPreviewDetails: VideoPreviewDetails?
+    @Published private(set) var videoPreviewUrl: URL?
+    @Published private(set) var videoRecording = false
+    @Published private(set) var photoDestination: PhotoDestination = .thisPhone
+    @Published private(set) var photoSize: PhotoSize = .max
+    @Published private(set) var scanMode = false
+    @Published private(set) var scanAeDivisor = 3
+    @Published private(set) var scanIsoCap = 800
+    @Published private(set) var photoCompression: PhotoCompression = .none
+    @Published private(set) var photoAeExposureDivisor: Int?
+    @Published private(set) var photoIsoCap: Int?
+    @Published private(set) var photoNoiseReduction: Bool?
+    @Published private(set) var photoEdgeEnhancement: Bool?
+    @Published private(set) var photoMfnr: Bool?
+    @Published private(set) var photoZsl: Bool?
+    @Published private(set) var photoIspDigitalGain: Int?
+    @Published private(set) var photoIspAnalogGain: String?
+    @Published private(set) var photoExposureManual = false
+    @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
+    @Published private(set) var photoIso = photoIsoDefault
+    @Published private(set) var cameraFov = cameraFovDefault
+    @Published private(set) var cameraRoiPosition = 0
+    @Published private(set) var cameraSettingsApplying = false
+    @Published private(set) var cameraSettingsStatus = "Camera settings: default"
+    @Published private(set) var phonePhotoServerRunning = false
+    @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
+    @Published var streamProtocol: ExampleStreamProtocol = .webrtc {
+        didSet {
+            guard streamProtocol != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
+    @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl {
+        didSet {
+            guard streamUrl != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
+    @Published private(set) var streamFps = 15
+    @Published private(set) var streamCloudServerEnabled = false
+    @Published private(set) var directStreamReceiverRunning = false
+    @Published private(set) var directStreamWhipUrl = "Phone receiver not started"
+    @Published private(set) var streamRequested = false
+    @Published private(set) var streamPreviewReady = false
+    @Published private(set) var streamResolvedConfig: StreamResolvedConfig?
+    @Published private(set) var streamStartPending = false
+    @Published private(set) var streamStartedAt: Date?
+    @Published private(set) var streamStatus = "Ready to start stream"
+    @Published private(set) var touchGestureDefaults: [TouchGesture: Bool] = [:]
+    @Published private(set) var touchGesturePending: TouchGesture?
+    @Published private(set) var galleryModeEnabled = false
+    @Published private(set) var hotspotEnabled = false
+    /// Optimistic local toggle — glasses do not report Wi-Fi ADB status.
+    @Published private(set) var wifiAdbEnabled = false
+    @Published private(set) var galleryServerReachable: Bool?
+    @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
+    @Published private(set) var micRecording = false
+    @Published private(set) var micPlaying = false
+    @Published private(set) var micElapsedSeconds = 0
+    @Published private(set) var pcmFrames = 0
+    @Published private(set) var pcmBytes = 0
+    @Published private(set) var speaking: Bool?
+    @Published private(set) var voiceActivityDetectionEnabled = false
+    @Published private(set) var lastMicDurationSeconds: Int?
+    @Published private(set) var lastMicBytes = 0
+    @Published private(set) var micPlaybackHint: String?
+    @Published private(set) var otaDisplayPercent: Int?
+    @Published private(set) var otaNoUpdateVisible = false
+    @Published private(set) var otaStartPending = false
+    @Published private(set) var otaStatus: OtaStatusEvent?
+    @Published private(set) var otaStatusMessage: String?
+    @Published private(set) var otaUpdateAvailable = false
+    @Published private(set) var ledColor = "green"
+    @Published private(set) var ledMode = "Off"
+    @Published private(set) var mentraLiveVersions = MentraLiveVersions()
+    @Published var rawJsonExpanded = false
+
+    private let micSampleRate = 16000
+    private let micChannelCount = 1
+    private let micBitsPerSample = 16
+    private let mentraBluetoothSdk = MentraBluetoothSDK()
+    let directWhipReceiver = GStreamerWhipReceiver()
+    private var activePhotoRequestId: String?
+    private var activeVideoRequestId: String?
+    private var activeStreamId: String?
+    private var pollGeneration = 0
+    private var videoPollGeneration = 0
+    private var directPhotoTimeoutTask: Task<Void, Never>?
+    private var cameraTabForeground = false
+    private var cameraWarmUpFailureLogged = false
+    private var cameraWarmUpTask: Task<Void, Never>?
+    private var previewHealthTask: Task<Void, Never>?
+    private var directStreamStartTask: Task<Void, Never>?
+    private var directStreamStopTask: Task<Void, Never>?
+    private var directStreamFirstFrameSeen = false
+    private var lastDirectStreamFrameStatusRefresh = Date.distantPast
+    private var autoOtaCheckedConnectionKey: String?
+    private var autoOtaCheckInProgress = false
+    private var latestVersionInfo: VersionInfoResult?
+    private var latestOtaVersionInfoSignature: String?
+    private var otaDisplayProgressSessionKey: String?
+    private var otaDisplayOverallPercent: Int?
+    private var otaStartingAppIdentity: String?
+    private var postOtaCheckInProgress = false
+    private var postOtaCheckedSessionKey: String?
+    private var otaCheckGeneration = 0
+    private var otaNoUpdateHideTask: Task<Void, Never>?
+    private var scanSession: ScanSession?
+    private var micStartedAt: Date?
+    private var micElapsedTask: Task<Void, Never>?
+    private var micPcmData = Data()
+    private var micRecordingUrl: URL?
+    private var micPlayer: AVAudioPlayer?
+    private let validLedColors = Set(["red", "green", "blue", "orange", "white"])
+    private let defaultDeviceDefaults = UserDefaults.standard
+    private let cloudUrlDefaults = UserDefaults.standard
+    private let directWhipProxy = WhipHeaderProxy()
+    private nonisolated(unsafe) var photoUploadServer: LocalPhotoUploadServer?
+
+    private enum DefaultDeviceStorage {
+        static let version = "mentra.example.defaultDevice.version"
+        static let model = "mentra.example.defaultDevice.model"
+        static let name = "mentra.example.defaultDevice.name"
+        static let identifier = "mentra.example.defaultDevice.identifier"
+        static let savedAt = "mentra.example.defaultDevice.savedAt"
+    }
+
+    private enum CloudUrlStorage {
+        static let version = "mentra.example.cloudUrls.version"
+        static let streamProtocol = "mentra.example.cloudUrls.streamProtocol"
+        static let streamUrl = "mentra.example.cloudUrls.streamUrl"
+        static let webhookUrl = "mentra.example.cloudUrls.webhookUrl"
+        static let savedAt = "mentra.example.cloudUrls.savedAt"
+    }
+
+    var glassesConnected: Bool {
+        isGlassesConnected(glassesValues)
+    }
+
+    var glassesWifiConnected: Bool {
+        connectedWifiStatus(glassesValues) != nil
+    }
+
+    var hasMicRecording: Bool {
+        micRecordingUrl != nil && lastMicBytes > 0
+    }
+
+    override init() {
+        super.init()
+        mentraBluetoothSdk.delegate = self
+        directWhipReceiver.onStateChanged = { [weak self] message in
+            Task { @MainActor in
+                self?.handleDirectReceiverStatus(message)
+            }
+        }
+        directWhipReceiver.onFrameRendered = { [weak self] in
+            Task { @MainActor in
+                self?.markDirectStreamFrameReceived()
+            }
+        }
+        photoUploadServer = LocalPhotoUploadServer(
+            onLog: { [weak self] message in
+                Task { @MainActor in
+                    self?.append(tag: "HTTP", text: message)
+                }
+            },
+            onUpload: { [weak self] upload in
+                Task { @MainActor in
+                    self?.handleDirectPhotoUpload(upload)
+                }
+            }
+        )
+        let savedDefaultDevice = loadPersistedDefaultDevice()
+        let savedCloudUrls = loadPersistedCloudUrls()
+        if let savedDevice = savedDefaultDevice {
+            mentraBluetoothSdk.setDefaultDevice(savedDevice)
+        }
+        glassesValues = mentraBluetoothSdk.glasses
+        hotspotEnabled = enabledHotspotStatus(glassesValues) != nil
+        mentraLiveVersions = resolveMentraLiveVersions(glassesValues, versionInfo: latestVersionInfo)
+        refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
+        applySdkState(mentraBluetoothSdk.sdkState)
+        if isMentraLiveRuntime(glassesValues) {
+            refreshMentraLiveVersionInfo()
+        }
+        if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
+            webhookUrl = value
+        } else if let value = savedCloudUrls.webhookUrl {
+            webhookUrl = value
+        }
+        let environmentStreamUrl = ProcessInfo.processInfo.environment["MENTRA_STREAM_URL"]
+        if environmentStreamUrl == nil, let value = savedCloudUrls.streamProtocol {
+            streamProtocol = value
+        }
+        if let value = environmentStreamUrl {
+            streamUrl = value
+        } else if let value = savedCloudUrls.streamUrl {
+            streamUrl = value
+        } else if let value = savedCloudUrls.streamProtocol {
+            streamUrl = value.defaultUrl
+        }
+        if savedDefaultDevice != nil {
+            scheduleAutoConnectDefaultOnStartup()
+        }
+    }
+
+    deinit {
+        cameraWarmUpTask?.cancel()
+        previewHealthTask?.cancel()
+        directPhotoTimeoutTask?.cancel()
+        directStreamStartTask?.cancel()
+        directStreamStopTask?.cancel()
+        micElapsedTask?.cancel()
+        otaNoUpdateHideTask?.cancel()
+        directWhipProxy.stop()
+        directWhipReceiver.stop()
+        photoUploadServer?.stop()
+        let scanSession = scanSession
+        Task { @MainActor [mentraBluetoothSdk] in
+            scanSession?.stop()
+            mentraBluetoothSdk.invalidate()
+        }
+    }
+
+    func startScan() {
+        let model = selectedScanModel
+        runAction("Scan \(deviceModelLabel(model))") {
+            scanSession?.stop()
+            scanHint = nil
+            discoveredDevices.removeAll()
+            selectedDiscoveredDevice = nil
+            scanSession = try mentraBluetoothSdk.scan(
+                model: model,
+                timeout: 10,
+                onResults: { [weak self] devices in
+                    self?.discoveredDevices = devices
+                    if !devices.isEmpty { self?.scanHint = nil }
+                },
+                onDiagnostic: { [weak self] diagnostic in
+                    self?.scanHint = diagnostic.message
+                    self?.append(tag: "BLE", text: diagnostic.message)
+                }
+            )
+        }
+    }
+
+    func connect() {
+        scanSession?.stop()
+        scanHint = nil
+        runAction("Connect") {
+            if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
+                try mentraBluetoothSdk.connect(to: device)
+            } else if hasSavedConnectionTarget(bluetoothValues) {
+                try mentraBluetoothSdk.connectDefault()
+            } else {
+                throw ExampleActionError(message: "Scan first to choose nearby glasses.")
+            }
+        }
+    }
+
+    func selectDiscoveredDevice(_ device: Device) {
+        selectedDiscoveredDevice = device
+        lastAction = "Selected: \(device.name)"
+    }
+
+    func selectScanModel(_ model: DeviceModel) {
+        guard selectedScanModel != model else { return }
+        scanSession?.stop()
+        scanSession = nil
+        discoveredDevices.removeAll()
+        selectedDiscoveredDevice = nil
+        selectedScanModel = model
+        scanHint = nil
+        lastAction = "Selected scan model: \(deviceModelLabel(model))"
+    }
+
+    func connect(_ device: Device) {
+        scanSession?.stop()
+        scanHint = nil
+        selectedDiscoveredDevice = device
+        runAction("Connect \(device.name)") {
+            try mentraBluetoothSdk.connect(to: device)
+        }
+    }
+
+    func disconnect() {
+        let label = "Disconnect"
+        guard activeAction != label else { return }
+        let actionId = beginAction(label)
+        lastAction = "Running: \(label)"
+        append(tag: "TX", text: label)
+        activeStreamId = nil
+        applyDisconnectedState(status: "Disconnecting")
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            self.mentraBluetoothSdk.disconnect()
+            self.lastAction = "Requested: \(label)"
+            self.endAction(actionId)
+        }
+    }
+
+    func clearDefaultDevice() {
+        runAction("Clear default") {
+            mentraBluetoothSdk.clearDefaultDevice()
+            bluetoothValues = mentraBluetoothSdk.sdkState
+            selectedDiscoveredDevice = nil
+        }
+    }
+
+    func setCameraTabForeground(_ foreground: Bool) {
+        guard cameraTabForeground != foreground else { return }
+        cameraTabForeground = foreground
+        if foreground {
+            cameraWarmUpFailureLogged = false
+            startCameraWarmUpLoop()
+        } else {
+            stopCameraWarmUpLoop()
+        }
+    }
+
+    func displayHello() {
+        runAction("Display Hello") {
+            try requireDisplaySupport("display text")
+            Task {
+                try? await mentraBluetoothSdk.displayText("Hello from Mentra Bluetooth SDK")
+            }
+        }
+    }
+
+    func clearDisplay() {
+        runAction("Clear Display") {
+            try requireDisplaySupport("clear the display")
+            Task { try? await mentraBluetoothSdk.clearDisplay() }
+        }
+    }
+
+    func checkForOtaUpdate() {
+        hideOtaNoUpdateCard()
+        runAsyncAction("Check OTA") { [self] in
+            try requireConnected("check OTA")
+            try requireGlassesWifi("check for OTA updates")
+            if isOtaInProgress() {
+                append(tag: "TX", text: "OTA check skipped while update is in progress")
+                return
+            }
+            _ = try await checkForOtaUpdateResult(showNoUpdateCard: true)
+        }
+    }
+
+    func startOtaUpdate() {
+        guard !otaStartPending else {
+            append(tag: "TX", text: "OTA start skipped; a start is already in flight")
+            return
+        }
+        otaStartPending = true
+        runAsyncAction("Start OTA") { [self] in
+            do {
+                try requireConnected("start OTA")
+                try requireGlassesWifi("start OTA updates")
+                postOtaCheckedSessionKey = nil
+                otaStartingAppIdentity = otaAppIdentity(glassesValues)
+                resetOtaDisplayProgress()
+                otaDisplayPercent = nil
+                _ = try await mentraBluetoothSdk.startOtaUpdate()
+                append(tag: "LIVE", text: "OTA start acknowledged")
+            } catch {
+                otaStartPending = false
+                throw error
+            }
+        }
+    }
+
+    func setGalleryModeEnabled(_ enabled: Bool) {
+        runAsyncAction(enabled ? "Save in gallery mode" : "Report button events") { [self] in
+            try requireConnected("change gallery mode")
+            let ack = try await mentraBluetoothSdk.setGalleryModeEnabled(enabled)
+            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
+            galleryModeEnabled = enabled
+        }
+    }
+
+    func setTouchGestureDefaultBehaviorEnabled(_ gesture: TouchGesture, enabled: Bool) {
+        guard touchGesturePending == nil else { return }
+        let generation = glassesConnectionGeneration
+        touchGesturePending = gesture
+        runAsyncAction("\(enabled ? "Enable" : "Disable") \(gesture.rawValue) default action") { [self] in
+            defer {
+                if generation == glassesConnectionGeneration { touchGesturePending = nil }
+            }
+            try requireConnected("change touchpad default actions")
+            let ack = try await mentraBluetoothSdk.setTouchGestureDefaultBehaviorEnabled(gesture, enabled: enabled)
+            guard generation == glassesConnectionGeneration else { return }
+            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
+            touchGestureDefaults[gesture] = enabled
+        }
+    }
+
+    func setVoiceActivityDetectionEnabled(_ enabled: Bool) {
+        runAction(enabled ? "Enable voice activity detection" : "Disable voice activity detection") {
+            try requireConnected("change voice activity detection")
+            voiceActivityDetectionEnabled = enabled
+            Task { try? await mentraBluetoothSdk.setVoiceActivityDetectionEnabled(enabled) }
+        }
+    }
+
+    func setPhotoDestination(_ requestedDestination: PhotoDestination) {
+        let destination: PhotoDestination
+        if photoDestination == .glassesStorage, requestedDestination == .thisPhone {
+            destination = photoDestinationBeforeGlasses
+        } else {
+            destination = requestedDestination
+        }
+        guard photoDestination != destination else { return }
+        let wasGlassesStorage = photoDestination == .glassesStorage
+        if destination == .glassesStorage, !wasGlassesStorage {
+            photoDestinationBeforeGlasses = photoDestination
+        } else if destination != .glassesStorage {
+            photoDestinationBeforeGlasses = destination
+        }
+        stopPhonePhotoServer()
+        photoDestination = destination
+        switch destination {
+        case .macBookServer:
+            cameraStatus = "Camera: enter a media upload URL"
+        case .thisPhone:
+            cameraStatus = "Camera: phone receiver will start before capture"
+        case .glassesStorage:
+            cameraStatus = "Camera: preparing glasses hotspot"
+            if glassesConnected {
+                prepareGlassesPhotoPreview()
+            }
+            return
+        }
+        guard wasGlassesStorage else { return }
+        galleryConnectionGeneration += 1
+        let hotspotSsid = pendingHotspotConnection?.ssid ?? enabledHotspotStatus(glassesValues)?.ssid
+        pendingHotspotConnection = nil
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: hotspot off"
+        runAsyncAction("Disable glasses photo hotspot") { [self] in
+            if let hotspotSsid {
+                glassesHotspotConnector.disconnect(ssid: hotspotSsid)
+            }
+            if hotspotEnabled && glassesConnected {
+                _ = try await mentraBluetoothSdk.setHotspotState(enabled: false)
+            }
+        }
+    }
+
+    func prepareGlassesPhotoPreview() {
+        galleryConnectionGeneration += 1
+        if let ssid = pendingHotspotConnection?.ssid ?? enabledHotspotStatus(glassesValues)?.ssid {
+            glassesHotspotConnector.disconnect(ssid: ssid)
+        }
+        runAsyncAction("Connect to glasses hotspot") { [self] in
+            try await prepareGlassesPhotoPreviewConnection()
+        }
+    }
+
+    private func prepareGlassesPhotoPreviewConnection() async throws {
+        try requireConnected("prepare saved-photo previews")
+        galleryConnectionGeneration += 1
+        let generation = galleryConnectionGeneration
+        cameraStatus = "Camera: preparing glasses hotspot"
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: starting glasses hotspot"
+
+        let hotspot: (ssid: String, password: String, localIp: String)
+        if let current = enabledHotspotStatus(glassesValues) {
+            hotspot = current
+        } else {
+            let status = try await mentraBluetoothSdk.setHotspotState(enabled: true)
+            guard case let .enabled(ssid, password, localIp) = status.status else {
+                throw ExampleActionError(message: "The glasses hotspot did not turn on.")
+            }
+            hotspot = (ssid, password, localIp)
+        }
+        guard generation == galleryConnectionGeneration else { return }
+
+        let pending = PendingHotspotConnection(
+            ssid: hotspot.ssid,
+            password: hotspot.password,
+            baseUrl: "http://\(hotspot.localIp):8089"
+        )
+        pendingHotspotConnection = pending
+        let alreadyReady = await waitForGalleryServer(pending.baseUrl, attempts: 3, delayMs: 400)
+        guard generation == galleryConnectionGeneration else { return }
+        if alreadyReady {
+            markGalleryServerReady(pending.baseUrl)
+            return
+        }
+        try await connectPendingGlassesHotspot()
+    }
+
+    private func connectPendingGlassesHotspot() async throws {
+        guard let pending = pendingHotspotConnection else {
+            try await prepareGlassesPhotoPreviewConnection()
+            return
+        }
+        let generation = galleryConnectionGeneration
+        cameraStatus = "Camera: connecting to \(pending.ssid)"
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: connecting to \(pending.ssid)"
+        do {
+            try await glassesHotspotConnector.connect(ssid: pending.ssid, password: pending.password)
+            guard generation == galleryConnectionGeneration else { return }
+            let ready = await waitForGalleryServer(pending.baseUrl, attempts: 20, delayMs: 500)
+            guard generation == galleryConnectionGeneration else { return }
+            guard ready else {
+                throw ExampleActionError(message: "Could not reach the glasses gallery after connecting.")
+            }
+            markGalleryServerReady(pending.baseUrl)
+        } catch {
+            guard generation == galleryConnectionGeneration else { return }
+            cameraStatus = "Camera: connect to the glasses hotspot to enable capture"
+            galleryServerReachable = false
+            galleryServerStatus = "Gallery server: \(error.localizedDescription)"
+            throw error
+        }
+    }
+
+    private func waitForGalleryServer(_ baseUrl: String, attempts: Int, delayMs: UInt64) async -> Bool {
+        for attempt in 0 ..< attempts {
+            if await checkGalleryServerReachability(baseUrl).reachable {
+                return true
+            }
+            if attempt < attempts - 1 {
+                try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+            }
+        }
+        return false
+    }
+
+    private func markGalleryServerReady(_ baseUrl: String) {
+        cameraStatus = "Camera: ready to save and preview from glasses"
+        galleryServerReachable = true
+        galleryServerStatus = "Gallery server: ready at \(baseUrl)"
+        append(tag: "LIVE", text: "gallery server ready \(baseUrl)")
+    }
+
+    func setPhotoSize(_ size: PhotoSize) {
+        photoSize = size
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoCompression(_ compression: PhotoCompression) {
+        photoCompression = compression
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setScanMode(_ enabled: Bool) {
+        scanMode = enabled
+        if enabled {
+            applyBarcodeScanPhotoPreset()
+        }
+        guard glassesConnected else { return }
+        if enabled {
+            syncPhotoCaptureDefaults("Apply scan preset on glasses", settings: scanButtonPreset())
+        } else {
+            let size = PhotoSize(rawValue: photoSize.rawValue) ?? .max
+            syncPhotoCaptureDefaults(
+                "Restore photo preset on glasses",
+                settings: PhotoCaptureDefaults(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
+            )
+        }
+    }
+
+    func setScanAeDivisor(_ divisor: Int) {
+        let nextDivisor = divisor > 3 ? 5 : 3
+        scanAeDivisor = nextDivisor
+        photoAeExposureDivisor = nextDivisor
+        if scanMode {
+            pushScanButtonPreset()
+        }
+    }
+
+    func setScanIsoCap(_ isoCap: Int) {
+        let nextIsoCap = isoCap <= 400 ? 400 : 800
+        scanIsoCap = nextIsoCap
+        photoIsoCap = nextIsoCap
+        if scanMode {
+            pushScanButtonPreset()
+        }
+    }
+
+    private func pushScanButtonPreset() {
+        guard glassesConnected else { return }
+        syncPhotoCaptureDefaults("Apply scan preset on glasses", settings: scanButtonPreset())
+    }
+
+    private func syncPhotoCaptureDefaults(_ label: String, settings: PhotoCaptureDefaults) {
+        photoCaptureDefaultsSyncGeneration += 1
+        let generation = photoCaptureDefaultsSyncGeneration
+        let previousTask = photoCaptureDefaultsSyncTask
+        photoCaptureDefaultsSyncTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard let self, generation == self.photoCaptureDefaultsSyncGeneration, self.glassesConnected else { return }
+            let actionId = self.beginAction(label)
+            self.lastAction = "Running: \(label)"
+            self.append(tag: "TX", text: label)
+            do {
+                _ = try await self.mentraBluetoothSdk.setPhotoCaptureDefaults(settings)
+                self.lastAction = "Requested: \(label)"
+            } catch {
+                self.cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+                self.lastAction = "Failed: \(label) - \(error.localizedDescription)"
+                self.append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
+            }
+            self.endAction(actionId)
+        }
+    }
+
+    private func syncScanButtonPresetIfEnabled() {
+        if scanMode {
+            pushScanButtonPreset()
+        }
+    }
+
+    private func scanButtonPreset() -> PhotoCaptureDefaults {
+        PhotoCaptureDefaults(
+            size: PhotoSize(rawValue: photoSize.rawValue) ?? .max,
+            mfnr: photoMfnr,
+            zsl: photoZsl,
+            noiseReduction: photoNoiseReduction,
+            edgeEnhancement: photoEdgeEnhancement,
+            ispDigitalGain: photoIspDigitalGain,
+            ispAnalogGain: photoIspAnalogGain,
+            aeExposureDivisor: photoAeExposureDivisor,
+            isoCap: photoIsoCap,
+            compress: photoCompression,
+            sound: true,
+            resetCaptureTuning: shouldResetCaptureTuning()
+        )
+    }
+
+    private func shouldResetCaptureTuning() -> Bool {
+        photoAeExposureDivisor == nil ||
+            photoIsoCap == nil ||
+            photoNoiseReduction == nil ||
+            photoEdgeEnhancement == nil ||
+            photoMfnr == nil ||
+            photoZsl == nil ||
+            photoIspDigitalGain == nil ||
+            photoIspAnalogGain == nil
+    }
+
+    func setPhotoAeExposureDivisor(_ divisor: Int?) {
+        photoAeExposureDivisor = divisor.flatMap { photoAeExposureDivisorOptions.contains($0) ? $0 : nil }
+        if photoAeExposureDivisor == 3 || photoAeExposureDivisor == 5 {
+            scanAeDivisor = photoAeExposureDivisor!
+        }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoIsoCap(_ isoCap: Int?) {
+        photoIsoCap = isoCap.flatMap { photoIsoCapOptions.contains($0) ? $0 : nil }
+        if photoIsoCap == 400 || photoIsoCap == 800 {
+            scanIsoCap = photoIsoCap!
+        }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoNoiseReduction(_ value: Bool?) {
+        photoNoiseReduction = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoEdgeEnhancement(_ value: Bool?) {
+        photoEdgeEnhancement = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoMfnr(_ value: Bool?) {
+        photoMfnr = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoZsl(_ value: Bool?) {
+        photoZsl = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoIspDigitalGain(_ gain: Int?) {
+        photoIspDigitalGain = gain.flatMap { photoIspDigitalGainOptions.contains($0) ? $0 : nil }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoIspAnalogGain(_ gain: String?) {
+        photoIspAnalogGain = gain.flatMap { photoIspAnalogGainOptions.contains($0) ? $0 : nil }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func applyBarcodeScanPhotoPreset() {
+        // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
+        photoSize = .max
+        photoCompression = .none
+        photoExposureManual = false
+        scanAeDivisor = 3
+        scanIsoCap = 800
+        photoAeExposureDivisor = 3
+        photoIsoCap = 800
+        photoNoiseReduction = false
+        photoEdgeEnhancement = false
+        photoMfnr = false
+        photoZsl = false
+        photoIspDigitalGain = 0
+        photoIspAnalogGain = "low"
+    }
+
+    func setPhotoExposureManual(_ enabled: Bool) {
+        photoExposureManual = enabled
+    }
+
+    func setPhotoExposureTimeNs(_ exposureTimeNs: Int) {
+        photoExposureTimeNs = min(max(exposureTimeNs, photoExposureMinNs), photoExposureMaxNs)
+    }
+
+    func setPhotoIso(_ iso: Int) {
+        photoIso = min(max(iso, photoIsoMin), photoIsoMax)
+    }
+
+    func setCameraFov(_ fov: Int) {
+        cameraFov = min(max(fov, cameraFovMin), cameraFovMax)
+        if cameraFov == cameraFovMax {
+            cameraRoiPosition = 0
+        }
+    }
+
+    func setCameraRoiPosition(_ roiPosition: Int) {
+        cameraRoiPosition = cameraFov == cameraFovMax ? 0 : min(max(roiPosition, 0), 2)
+    }
+
+    func applyCameraSettings() {
+        guard !cameraSettingsApplying else {
+            append(tag: "TX", text: "camera_fov already applying")
+            return
+        }
+        runAsyncAction("Apply camera settings") { [self] in
+            try requireConnected("apply camera settings")
+            let fov = cameraFov
+            let roiPosition = fov == cameraFovMax ? 0 : cameraRoiPosition
+            cameraSettingsApplying = true
+            cameraSettingsStatus = "Camera settings: applying FOV/ROI on glasses"
+            defer { cameraSettingsApplying = false }
+            do {
+                let result = try await mentraBluetoothSdk.setCameraFov(
+                    CameraFov(fov: fov, roiPosition: CameraRoiPosition.from(rawValue: roiPosition))
+                )
+                append(tag: "LIVE", text: "camera_fov \(describeCameraFovResult(result))")
+                cameraSettingsStatus = "Camera settings: applied; field of view \(result.fov)°, \(roiPositionLabel(result.roiPosition.rawValue)) crop"
+            } catch {
+                cameraSettingsStatus = "Camera settings: failed - \(error.localizedDescription)"
+                throw error
+            }
+        }
+    }
+
+    func captureAndUpload() {
+        runAsyncAction(scanMode ? "Capture scan photo" : "Capture & upload") { [self] in
+            try requireConnected("capture photos")
+            if photoDestination == .glassesStorage {
+                guard galleryServerReachable == true else {
+                    throw ExampleActionError(message: "Connect to the glasses hotspot before capturing.")
+                }
+                try await captureToGlassesStorage()
+                return
+            }
+            // Without glasses Wi-Fi the photo is delivered over the Bluetooth
+            // transfer path instead of the network upload.
+            if photoDestination == .thisPhone {
+                try await captureAndUploadToPhone()
+                return
+            }
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                throw ExampleActionError(message: validationMessage)
+            }
+            guard let statusUrl = photoStatusUrl(uploadUrl, requestId: "") else {
+                let message = "Enter a valid http:// or https:// media upload URL."
+                cameraStatus = "Camera: \(message)"
+                throw ExampleActionError(message: message)
+            }
+            let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
+            activePhotoRequestId = requestId
+            pollGeneration += 1
+            let generation = pollGeneration
+            photoPreviewDetails = nil
+            photoPreviewUrl = nil
+            photoPreviewImage = nil
+            cameraStatus = "Camera: webhook upload requested (\(requestId))"
+            let responseEvent: PhotoResponseEvent
+            do {
+                responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                    buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
+                )
+            } catch {
+                if activePhotoRequestId == requestId {
+                    activePhotoRequestId = nil
+                }
+                throw error
+            }
+            handlePhotoResponse(responseEvent)
+            pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
+        }
+    }
+
+    private func captureAndUploadToPhone() async throws {
+        let uploadUrl = try startPhonePhotoServer()
+        let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
+        activePhotoRequestId = requestId
+        pollGeneration += 1
+        directPhotoTimeoutTask?.cancel()
+        directPhotoTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 75_000_000_000)
+            await MainActor.run {
+                guard let self, self.activePhotoRequestId == requestId else { return }
+                self.activePhotoRequestId = nil
+                self.cameraStatus = "Camera: timed out waiting for phone upload"
+                self.append(tag: "TX", text: "phone photo upload timed out \(requestId)")
+            }
+        }
+        photoPreviewDetails = nil
+        photoPreviewUrl = nil
+        photoPreviewImage = nil
+        cameraStatus = "Camera: requested phone upload (\(requestId))"
+        let responseEvent: PhotoResponseEvent
+        do {
+            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
+            )
+        } catch {
+            directPhotoTimeoutTask?.cancel()
+            directPhotoTimeoutTask = nil
+            if activePhotoRequestId == requestId {
+                activePhotoRequestId = nil
+            }
+            throw error
+        }
+        handlePhotoResponse(responseEvent)
+        append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
+    }
+
+    private func captureToGlassesStorage() async throws {
+        let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
+        activePhotoRequestId = requestId
+        pollGeneration += 1
+        let generation = pollGeneration
+        photoPreviewDetails = .waiting(source: "Glasses gallery")
+        photoPreviewUrl = nil
+        photoPreviewImage = nil
+        cameraStatus = "Camera: saving photo on glasses (\(requestId))"
+
+        let responseEvent: PhotoResponseEvent
+        do {
+            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                buildPhotoRequest(requestId: requestId, webhookUrl: nil, save: true)
+            )
+        } catch {
+            activePhotoRequestId = nil
+            throw error
+        }
+        handlePhotoResponse(responseEvent)
+        switch responseEvent.response {
+        case .success:
+            break
+        case let .error(_, errorCode, errorMessage, _):
+            activePhotoRequestId = nil
+            throw ExampleActionError(message: errorCode ?? errorMessage)
+        }
+        cameraStatus = "Camera: photo saved on glasses; loading preview"
+        photoPreviewDetails = photoPreviewDetails.map { $0.withState("saved") }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await downloadGlassesPhotoPreview(
+                    requestId: requestId,
+                    generation: generation
+                )
+            } catch {
+                guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
+                activePhotoRequestId = nil
+                let message = error.localizedDescription
+                cameraStatus = "Camera: \(message)"
+                photoPreviewDetails = photoPreviewDetails.map {
+                    PhotoPreviewDetails(
+                        byteCount: $0.byteCount,
+                        contentType: $0.contentType,
+                        error: message,
+                        fileName: $0.fileName,
+                        height: $0.height,
+                        previewUrl: $0.previewUrl,
+                        requestId: requestId,
+                        source: "Glasses gallery",
+                        state: "saved",
+                        timestamp: $0.timestamp,
+                        uploadUrl: $0.uploadUrl,
+                        uploadedAt: $0.uploadedAt,
+                        width: $0.width
+                    )
+                }
+            }
+        }
+    }
+
+    private func buildPhotoRequest(
+        requestId: String,
+        webhookUrl: String?,
+        save: Bool = false
+    ) -> PhotoRequest {
+        return PhotoRequest(
+            requestId: requestId,
+            size: photoSize,
+            webhookUrl: webhookUrl,
+            compress: photoCompression,
+            save: save,
+            sound: true,
+            exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+            iso: photoExposureManual ? photoIso : nil,
+            aeExposureDivisor: photoExposureManual ? nil : photoAeExposureDivisor,
+            isoCap: photoExposureManual ? nil : photoIsoCap,
+            noiseReduction: photoNoiseReduction,
+            edgeEnhancement: photoEdgeEnhancement,
+            mfnr: photoMfnr,
+            zsl: photoZsl,
+            ispDigitalGain: photoIspDigitalGain,
+            ispAnalogGain: photoIspAnalogGain
+        )
+    }
+
+    private func downloadGlassesPhotoPreview(
+        requestId: String,
+        generation: Int
+    ) async throws {
+        guard let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled)
+                ?? pendingHotspotConnection?.baseUrl,
+              galleryServerReachable == true else {
+            throw ExampleActionError(message: "The glasses hotspot is not ready for preview downloads.")
+        }
+        let galleryGeneration = galleryConnectionGeneration
+
+        galleryServerStatus = "Gallery server: finding \(requestId)"
+        var consecutiveFailures = 0
+        for attempt in 0 ..< glassesPhotoPollAttempts {
+            guard activePhotoRequestId == requestId,
+                  pollGeneration == generation,
+                  galleryConnectionGeneration == galleryGeneration else { return }
+            do {
+                let photo = try await findGalleryPhoto(baseUrl: baseUrl, requestId: requestId)
+                guard galleryConnectionGeneration == galleryGeneration else { return }
+                consecutiveFailures = 0
+                galleryServerReachable = true
+                galleryServerStatus = "Gallery server: connected; finding \(requestId)"
+                guard let photo else {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+                let remoteUrl: URL
+                if let path = photo.url, let url = URL(string: path, relativeTo: URL(string: baseUrl)) {
+                    remoteUrl = url.absoluteURL
+                } else {
+                    var components = URLComponents(string: "\(baseUrl)/api/photo")!
+                    components.queryItems = [URLQueryItem(name: "file", value: photo.name)]
+                    guard let url = components.url else {
+                        throw ExampleActionError(message: "The glasses photo URL is invalid.")
+                    }
+                    remoteUrl = url
+                }
+                var request = URLRequest(url: remoteUrl)
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.timeoutInterval = 30
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard galleryConnectionGeneration == galleryGeneration else { return }
+                guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+                    let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    throw ExampleActionError(message: "Gallery server returned HTTP \(statusCode).")
+                }
+                guard let image = UIImage(data: data) else {
+                    throw ExampleActionError(message: "The downloaded glasses photo is not a JPEG image.")
+                }
+                let localUrl = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("mentra-gallery-\(requestId).jpg")
+                try data.write(to: localUrl, options: .atomic)
+                activePhotoRequestId = nil
+                photoPreviewUrl = localUrl
+                photoPreviewImage = image
+                photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Glasses gallery")).uploaded(
+                    byteCount: photo.size ?? data.count,
+                    contentType: photo.mimeType ?? http.value(forHTTPHeaderField: "Content-Type") ?? "image/jpeg",
+                    fileName: photo.name,
+                    height: Int(image.size.height * image.scale),
+                    previewUrl: remoteUrl.absoluteString,
+                    requestId: requestId,
+                    source: "Glasses gallery",
+                    width: Int(image.size.width * image.scale)
+                )
+                galleryServerReachable = true
+                galleryServerStatus = "Gallery server: downloaded \(photo.name)"
+                cameraStatus = "Camera: loaded photo preview from glasses"
+                append(tag: "LIVE", text: "glasses photo downloaded \(photo.name)")
+                return
+            } catch {
+                guard galleryConnectionGeneration == galleryGeneration else { return }
+                consecutiveFailures += 1
+                let transportUnavailable = consecutiveFailures >= glassesGalleryFailureThreshold
+                if attempt == 0 || attempt % 10 == 9 {
+                    galleryServerReachable = transportUnavailable ? false : galleryServerReachable
+                    galleryServerStatus = transportUnavailable
+                        ? "Gallery server: \(error.localizedDescription)"
+                        : "Gallery server: connected; waiting for \(requestId)"
+                    cameraStatus = transportUnavailable
+                        ? "Camera: reconnect to the glasses hotspot to load the saved photo"
+                        : "Camera: photo saved on glasses; waiting for preview"
+                    append(tag: "LIVE", text: "waiting for glasses photo \(requestId): \(error.localizedDescription)")
+                } else if transportUnavailable, galleryServerReachable != false {
+                    galleryServerReachable = false
+                    galleryServerStatus = "Gallery server: \(error.localizedDescription)"
+                    cameraStatus = "Camera: reconnect to the glasses hotspot to load the saved photo"
+                }
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        throw ExampleActionError(
+            message: "Photo was saved on the glasses, but the preview could not be downloaded from \(baseUrl)."
+        )
+    }
+
+    private func findGalleryPhoto(baseUrl: String, requestId: String) async throws -> GalleryPhoto? {
+        guard var components = URLComponents(string: "\(baseUrl)/api/gallery") else { return nil }
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "poll", value: String(Int(Date().timeIntervalSince1970 * 1000))),
+        ]
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 5
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw ExampleActionError(message: "Gallery server returned HTTP \(statusCode).")
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = root["data"] as? [String: Any],
+              let photos = payload["photos"] as? [[String: Any]],
+              let photo = photos.first(where: { stringValue($0, "request_id") == requestId }),
+              let name = stringValue(photo, "name")
+        else {
+            return nil
+        }
+        return GalleryPhoto(
+            name: name,
+            mimeType: stringValue(photo, "mime_type"),
+            size: intValue(photo, "size"),
+            url: stringValue(photo, "url")
+        )
+    }
+
+    func toggleVideoRecording() {
+        if activeVideoRequestId != nil || videoRecording {
+            stopVideoRecording()
+        } else {
+            startVideoRecording()
+        }
+    }
+
+    private func startVideoRecording() {
+        runAsyncAction("Start video recording") { [self] in
+            try requireConnected("record video")
+            try requireGlassesWifi("record video")
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                throw ExampleActionError(message: validationMessage)
+            }
+            guard photoStatusUrl(uploadUrl, requestId: "") != nil else {
+                let message = "Enter a valid http:// or https:// media upload URL."
+                cameraStatus = "Camera: \(message)"
+                throw ExampleActionError(message: message)
+            }
+            cameraStatus = "Camera: checking this app can reach the media server before video"
+            do {
+                let reachability = try await checkWebhookReachable(uploadUrl)
+                cameraStatus = "Camera: this app reached media server (\(reachability.host)); starting video"
+                append(tag: "LIVE", text: "app reached media server for video \(reachability.healthUrl.absoluteString)")
+            } catch {
+                let message = webhookReachabilityErrorMessage(error)
+                cameraStatus = "Camera: media server check failed: \(message)"
+                videoPreviewDetails = .pending(requestId: "", state: "error", uploadUrl: uploadUrl)
+                    .updated(error: message, state: "error")
+                append(tag: "LIVE", text: "media server check failed: \(message)")
+                throw ExampleActionError(message: "Media server check failed: \(message)")
+            }
+            let requestId = "video-\(Int(Date().timeIntervalSince1970 * 1000))"
+            activeVideoRequestId = requestId
+            videoPollGeneration += 1
+            videoPreviewDetails = .pending(requestId: requestId, state: "recording", uploadUrl: uploadUrl)
+            videoPreviewUrl = nil
+            videoRecording = true
+            cameraStatus = "Camera: recording video (\(requestId))"
+            do {
+                let event = try await mentraBluetoothSdk.startVideoRecording(
+                    VideoRecordingRequest(
+                        requestId: requestId,
+                        save: true,
+                        sound: true,
+                        maxRecordingTimeMinutes: 1
+                    )
+                )
+                handleVideoRecordingStatus(event)
+            } catch {
+                if activeVideoRequestId == requestId {
+                    activeVideoRequestId = nil
+                }
+                videoRecording = false
+                videoPreviewDetails = .pending(requestId: requestId, state: "error", uploadUrl: uploadUrl)
+                    .updated(error: error.localizedDescription, state: "error")
+                cameraStatus = "Camera: video failed (\(error.localizedDescription))"
+                throw error
+            }
+        }
+    }
+
+    private func stopVideoRecording() {
+        runAsyncAction("Stop & upload video") { [self] in
+            guard let requestId = activeVideoRequestId else {
+                throw ExampleActionError(message: "No active video recording to stop.")
+            }
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                throw ExampleActionError(message: validationMessage)
+            }
+            guard let statusUrl = photoStatusUrl(uploadUrl, requestId: requestId) else {
+                let message = "Enter a valid http:// or https:// media upload URL."
+                cameraStatus = "Camera: \(message)"
+                throw ExampleActionError(message: message)
+            }
+            videoPollGeneration += 1
+            let generation = videoPollGeneration
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "uploading", uploadUrl: uploadUrl))
+                .updated(requestId: requestId, state: "uploading", uploadUrl: uploadUrl)
+            cameraStatus = "Camera: stopping video and uploading (\(requestId))"
+            do {
+                let event = try await mentraBluetoothSdk.stopVideoRecording(requestId: requestId, webhookUrl: uploadUrl)
+                handleVideoRecordingStatus(event)
+                pollVideoPreview(requestId: requestId, statusUrl: statusUrl, generation: generation)
+            } catch {
+                if activeVideoRequestId == requestId {
+                    activeVideoRequestId = nil
+                }
+                videoRecording = false
+                videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "error", uploadUrl: uploadUrl))
+                    .updated(error: error.localizedDescription, requestId: requestId, state: "error", uploadUrl: uploadUrl)
+                cameraStatus = "Camera: video upload failed (\(error.localizedDescription))"
+                throw error
+            }
+        }
+    }
+
+    private func startPhonePhotoServer() throws -> String {
+        guard let host = bestLocalIPv4Address() else {
+            let message = "No phone LAN IP found. Connect this iPhone to Wi-Fi or a network reachable by the glasses."
+            cameraStatus = "Camera: \(message)"
+            throw ExampleActionError(message: message)
+        }
+        let photoUploadServer = photoUploadServer!
+        if photoUploadServer.running, phonePhotoUploadUrl.hasPrefix("http://\(host):") {
+            return phonePhotoUploadUrl
+        }
+
+        cameraStatus = "Camera: starting phone upload receiver"
+        phonePhotoServerRunning = false
+        phonePhotoUploadUrl = "Starting phone receiver"
+
+        var lastError: Error?
+        for port in [UInt16(8787), 8788, 8789, 8790] {
+            do {
+                let actualPort = try photoUploadServer.start(port: port)
+                let url = "http://\(host):\(actualPort)/upload"
+                phonePhotoServerRunning = true
+                phonePhotoUploadUrl = url
+                cameraStatus = "Camera: phone receiver ready"
+                append(tag: "HTTP", text: "phone photo receiver \(url)")
+                return url
+            } catch {
+                lastError = error
+                append(tag: "HTTP", text: "photo receiver port \(port) unavailable: \(error.localizedDescription)")
+            }
+        }
+
+        let message = lastError?.localizedDescription ?? "No local photo receiver port was available."
+        phonePhotoServerRunning = false
+        phonePhotoUploadUrl = "Phone receiver failed"
+        cameraStatus = "Camera: phone receiver failed: \(message)"
+        throw ExampleActionError(message: "Phone photo receiver failed: \(message)")
+    }
+
+    private func stopPhonePhotoServer() {
+        directPhotoTimeoutTask?.cancel()
+        directPhotoTimeoutTask = nil
+        photoUploadServer?.stop()
+        phonePhotoServerRunning = false
+        phonePhotoUploadUrl = "Phone receiver not started"
+    }
+
+    private func handleDirectPhotoUpload(_ upload: LocalPhotoUpload) {
+        if let activePhotoRequestId, let requestId = upload.requestId, requestId != activePhotoRequestId {
+            append(tag: "LIVE", text: "ignoring stale phone upload \(requestId)")
+            return
+        }
+        directPhotoTimeoutTask?.cancel()
+        directPhotoTimeoutTask = nil
+        activePhotoRequestId = nil
+        photoPreviewUrl = upload.fileURL
+        photoPreviewImage = UIImage(contentsOfFile: upload.fileURL.path)
+        photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Phone receiver")).uploaded(
+            byteCount: upload.byteCount,
+            contentType: "image/jpeg",
+            height: photoPreviewImage.map { Int($0.size.height * $0.scale) },
+            previewUrl: upload.fileURL.absoluteString,
+            requestId: upload.requestId,
+            source: "Phone receiver",
+            width: photoPreviewImage.map { Int($0.size.width * $0.scale) }
+        )
+        cameraStatus = "Camera: received phone upload \(upload.requestId ?? "")"
+        append(tag: "LIVE", text: "phone photo ready \(upload.byteCount) bytes")
+    }
+
+    func testWebhook() {
+        runAction("Test webhook") {
+            if photoDestination == .thisPhone {
+                _ = try startPhonePhotoServer()
+                cameraStatus = "Camera: phone receiver ready at \(phonePhotoUploadUrl)"
+                return
+            }
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                append(tag: "TX", text: "Test webhook failed: \(validationMessage)")
+                throw ExampleActionError(message: validationMessage)
+            }
+            guard webhookHealthUrl(uploadUrl) != nil else {
+                let message = "Enter a valid http:// or https:// media upload URL."
+                cameraStatus = "Camera: \(message)"
+                append(tag: "TX", text: "Test webhook failed: invalid URL")
+                throw ExampleActionError(message: message)
+            }
+
+            cameraStatus = "Camera: testing local webhook"
+            Task {
+                do {
+                    let reachability = try await checkWebhookReachable(uploadUrl)
+                    cameraStatus = "Camera: webhook reachable (\(reachability.host))"
+                    append(tag: "LIVE", text: "webhook reachable \(reachability.healthUrl.absoluteString)")
+                } catch {
+                    let message = webhookReachabilityErrorMessage(error)
+                    cameraStatus = "Camera: webhook test failed: \(message)"
+                    append(tag: "LIVE", text: "webhook test failed: \(message)")
+                }
+            }
+        }
+    }
+
+    func toggleStream() {
+        guard !streamStartPending else {
+            streamStatus = "Stream start already in progress"
+            append(tag: "TX", text: "duplicate stream start ignored")
+            return
+        }
+        guard !streamConfigurationChangeInProgress else {
+            streamStatus = "Waiting for stream configuration update"
+            append(tag: "TX", text: "stream action ignored while configuration update is running")
+            return
+        }
+        if streamRequested || streamStartedAt != nil {
+            runAsyncAction("Stop stream") { [self] in
+                stopPreviewHealthPoll()
+                if isDirectPhoneWebRtcSelected {
+                    directStreamStartTask?.cancel()
+                    directStreamStartTask = nil
+                    if glassesConnected {
+                        let status = try await mentraBluetoothSdk.stopStream()
+                        append(tag: "LIVE", text: "stream \(summarize(status.values))")
+                        streamStatus = "Stopping WebRTC direct phone stream"
+                        directStreamStopTask?.cancel()
+                        directStreamStopTask = Task { [weak self] in
+                            try? await Task.sleep(nanoseconds: 5_000_000_000)
+                            await MainActor.run {
+                                guard let self,
+                                      self.isDirectPhoneWebRtcSelected,
+                                      self.directStreamReceiverRunning
+                                else {
+                                    return
+                                }
+                                self.activeStreamId = nil
+                                self.stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
+                                self.streamRequested = false
+                                self.streamResolvedConfig = nil
+                                self.streamStartedAt = nil
+                            }
+                        }
+                        return
+                    }
+                    stopDirectPhoneStreamReceiver(status: "Stopped")
+                    activeStreamId = nil
+                    streamRequested = false
+                    streamPreviewReady = false
+                    streamResolvedConfig = nil
+                    streamStartedAt = nil
+                    streamStatus = "Stopped"
+                    return
+                }
+                if glassesConnected {
+                    let status = try await mentraBluetoothSdk.stopStream()
+                    append(tag: "LIVE", text: "stream \(summarize(status.values))")
+                }
+                activeStreamId = nil
+                streamRequested = false
+                streamPreviewReady = false
+                streamResolvedConfig = nil
+                streamStartedAt = nil
+                streamStatus = "Stopped"
+            }
+            return
+        }
+
+        streamStartPending = true
+        streamStatus = "Starting stream"
+        runAsyncAction("Start stream") { [self] in
+            defer { streamStartPending = false }
+            try requireConnected("start streaming")
+            try requireGlassesWifi("start streaming")
+            if isDirectPhoneWebRtcSelected {
+                try startDirectPhoneWebRtcStream()
+                return
+            }
+            let url = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = streamUrlValidationMessage(url) {
+                streamStatus = validationMessage
+                throw ExampleActionError(message: validationMessage)
+            }
+            let streamId = "ios-\(Int(Date().timeIntervalSince1970 * 1000))"
+            let selectedProtocol = streamProtocol
+            if selectedProtocol == .rtmp || selectedProtocol == .srt || selectedProtocol == .webrtc {
+                streamStatus = "Checking local \(selectedProtocol.rawValue.uppercased()) server"
+                if selectedProtocol == .rtmp {
+                    try await checkLocalRtmpServer(rtmpUrl: url)
+                } else if selectedProtocol == .srt {
+                    try await checkLocalSrtServer(srtUrl: url)
+                } else {
+                    try await checkLocalWebrtcServer(whipUrl: url)
+                }
+                guard streamUrl.trimmingCharacters(in: .whitespacesAndNewlines) == url,
+                      streamProtocol == selectedProtocol,
+                      !streamRequested,
+                      streamStartedAt == nil
+                else { return }
+            }
+            try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+        }
+    }
+
+    private func startDirectPhoneWebRtcStream() throws {
+        stopPreviewHealthPoll()
+        directStreamStopTask?.cancel()
+        directStreamStopTask = nil
+        stopDirectPhoneStreamReceiver(status: "Starting phone receiver")
+        guard let host = bestLocalIPv4Address() else {
+            let message = "No phone LAN IP found. Connect this iPhone to Wi-Fi or a network reachable by the glasses."
+            streamStatus = message
+            throw ExampleActionError(message: message)
+        }
+
+        var lastError: Error?
+        for ports in [(publicPort: 8190, backendPort: 8191), (publicPort: 8192, backendPort: 8193), (publicPort: 8194, backendPort: 8195)] {
+            do {
+                try directWhipReceiver.start(withAdvertisedHost: "127.0.0.1", port: ports.backendPort)
+                try directWhipProxy.start(listenPort: UInt16(ports.publicPort), backendPort: UInt16(ports.backendPort))
+                let streamId = "ios-gst-\(Int(Date().timeIntervalSince1970 * 1000))"
+                let url = "http://\(host):\(ports.publicPort)/whip/endpoint"
+                activeStreamId = streamId
+                directStreamFirstFrameSeen = false
+                lastDirectStreamFrameStatusRefresh = .distantPast
+                directStreamReceiverRunning = true
+                directStreamWhipUrl = url
+                streamPreviewReady = false
+                streamRequested = true
+                streamStartedAt = nil
+                streamStatus = "WebRTC phone receiver ready; starting stream"
+                append(tag: "STREAM", text: "phone WHIP receiver \(url) -> GStreamer \(ports.backendPort)")
+                directStreamStartTask?.cancel()
+                directStreamStartTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard let self,
+                          self.activeStreamId == streamId,
+                          self.directStreamReceiverRunning,
+                          self.streamRequested
+                    else {
+                        return
+                    }
+                    do {
+                        try await self.sendDirectPhoneStartStream(streamUrl: url, streamId: streamId)
+                    } catch {
+                        self.streamStatus = "WebRTC stream failed: \(error.localizedDescription)"
+                        self.append(tag: "TX", text: "direct phone stream failed: \(error.localizedDescription)")
+                    }
+                }
+                return
+            } catch {
+                lastError = error
+                directWhipProxy.stop()
+                directWhipReceiver.stop()
+                append(tag: "GST", text: "port pair \(ports.publicPort)->\(ports.backendPort) unavailable: \(error.localizedDescription)")
+            }
+        }
+
+        let message = lastError?.localizedDescription ?? "No local WHIP port pair was available."
+        directStreamReceiverRunning = false
+        directStreamWhipUrl = "Phone receiver failed"
+        streamPreviewReady = false
+        streamResolvedConfig = nil
+        streamRequested = false
+        streamStatus = "WebRTC phone receiver failed: \(message)"
+        throw ExampleActionError(message: "WebRTC phone receiver failed: \(message)")
+    }
+
+    private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) async throws {
+        let status = try await mentraBluetoothSdk.startStream(
+            StreamRequest(
+                streamUrl: streamUrl,
+                streamId: streamId,
+                video: StreamVideoConfig(fps: streamFps)
+            )
+        )
+        append(tag: "LIVE", text: "stream \(summarize(status.values))")
+        streamRequested = true
+        streamStartedAt = streamStartedAt ?? Date()
+        streamStatus = "WebRTC stream requested; waiting for phone preview"
+        append(tag: "TX", text: "startStream direct phone \(streamUrl)")
+    }
+
+    private func stopDirectPhoneStreamReceiver(status: String) {
+        directStreamStartTask?.cancel()
+        directStreamStartTask = nil
+        directStreamStopTask?.cancel()
+        directStreamStopTask = nil
+        directStreamFirstFrameSeen = false
+        lastDirectStreamFrameStatusRefresh = .distantPast
+        directWhipProxy.stop()
+        directWhipReceiver.stop()
+        directStreamReceiverRunning = false
+        directStreamWhipUrl = "Phone receiver not started"
+        streamPreviewReady = false
+        streamStatus = status
+    }
+
+    private func handleDirectReceiverStatus(_ message: String) {
+        append(tag: "GST", text: message)
+        guard isDirectPhoneWebRtcSelected, directStreamReceiverRunning else { return }
+        if message.hasPrefix("Rendered ") {
+            markDirectStreamFrameReceived()
+        } else if !streamPreviewReady {
+            streamStatus = "WebRTC phone receiver: \(message)"
+        }
+    }
+
+    private func markDirectStreamFrameReceived() {
+        guard isDirectPhoneWebRtcSelected, directStreamReceiverRunning else { return }
+        let firstFrame = !directStreamFirstFrameSeen
+        let now = Date()
+        guard firstFrame || now.timeIntervalSince(lastDirectStreamFrameStatusRefresh) >= 1 else {
+            return
+        }
+        directStreamFirstFrameSeen = true
+        streamPreviewReady = true
+        streamStartedAt = streamStartedAt ?? Date()
+        streamStatus = "WebRTC direct phone live"
+        if firstFrame {
+            append(tag: "LIVE", text: "first WebRTC frame received on phone")
+        }
+        lastDirectStreamFrameStatusRefresh = now
+    }
+
+    private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) async throws {
+        let status = try await mentraBluetoothSdk.startStream(
+            StreamRequest(
+                streamUrl: streamUrl,
+                streamId: streamId,
+                video: StreamVideoConfig(fps: streamFps)
+            )
+        )
+        append(tag: "LIVE", text: "stream \(summarize(status.values))")
+        activeStreamId = streamId
+        streamRequested = true
+        streamPreviewReady = false
+        streamStatus = "Starting \(selectedProtocol.rawValue.uppercased()) stream; waiting for preview"
+        startPreviewReadinessPoll(streamUrl: streamUrl, protocol: selectedProtocol, streamId: streamId)
+    }
+
+    private func startPreviewReadinessPoll(streamUrl: String, protocol selectedProtocol: ExampleStreamProtocol, streamId: String) {
+        Task {
+            for _ in 0 ..< 30 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard activeStreamId == streamId else { return }
+                if await streamPreviewIsReady(streamUrl: streamUrl, protocol: selectedProtocol) {
+                    streamPreviewReady = true
+                    streamStatus = "\(selectedProtocol.rawValue.uppercased()) preview ready"
+                    append(tag: "LIVE", text: "\(selectedProtocol.rawValue.uppercased()) preview ready")
+                    startPreviewHealthPoll(streamUrl: streamUrl, protocol: selectedProtocol, streamId: streamId)
+                    return
+                }
+            }
+            guard activeStreamId == streamId else { return }
+            streamStatus = "Stream requested; preview is still starting"
+            append(tag: "TX", text: "\(selectedProtocol.rawValue.uppercased()) preview did not become ready")
+        }
+    }
+
+    private func startPreviewHealthPoll(streamUrl: String, protocol selectedProtocol: ExampleStreamProtocol, streamId: String) {
+        stopPreviewHealthPoll()
+        previewHealthTask = Task {
+            var lastReady = true
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard activeStreamId == streamId else { return }
+                let ready = await streamPreviewIsReady(streamUrl: streamUrl, protocol: selectedProtocol)
+                guard activeStreamId == streamId else { return }
+                if ready, !lastReady {
+                    streamPreviewReady = true
+                    streamStatus = "\(selectedProtocol.rawValue.uppercased()) preview ready"
+                    append(tag: "LIVE", text: "\(selectedProtocol.rawValue.uppercased()) preview ready")
+                } else if !ready, lastReady {
+                    streamPreviewReady = false
+                    streamStatus = "\(selectedProtocol.rawValue.uppercased()) media path lost; preview may be frozen"
+                    append(tag: "TX", text: "\(selectedProtocol.rawValue.uppercased()) media path lost")
+                }
+                lastReady = ready
+            }
+        }
+    }
+
+    private func stopPreviewHealthPoll() {
+        previewHealthTask?.cancel()
+        previewHealthTask = nil
+    }
+
+    @discardableResult
+    private func stopStreamForConfigurationChange(status: String) async -> Bool {
+        let streamActive = streamRequested || streamStartedAt != nil || directStreamReceiverRunning
+        guard streamActive else { return false }
+
+        stopPreviewHealthPoll()
+        directStreamStartTask?.cancel()
+        directStreamStartTask = nil
+        directStreamStopTask?.cancel()
+        directStreamStopTask = nil
+        if glassesConnected {
+            do {
+                let stopStatus = try await mentraBluetoothSdk.stopStream()
+                append(tag: "LIVE", text: "stream \(summarize(stopStatus.values))")
+            } catch {
+                append(tag: "TX", text: "stopStream before configuration change failed: \(error.localizedDescription)")
+            }
+            append(tag: "TX", text: "stopStream before stream configuration change")
+        }
+        activeStreamId = nil
+        if directStreamReceiverRunning {
+            stopDirectPhoneStreamReceiver(status: status)
+        } else {
+            directStreamFirstFrameSeen = false
+            streamPreviewReady = false
+            streamStatus = status
+        }
+        streamRequested = false
+        streamPreviewReady = false
+        streamResolvedConfig = nil
+        streamStartedAt = nil
+        return true
+    }
+
+    func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
+        guard streamProtocol != nextProtocol else { return }
+        runStreamConfigurationChange { [self] in
+            let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+            let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
+            self.streamProtocol = nextProtocol
+            self.streamResolvedConfig = nil
+            if shouldUseDefault {
+                self.streamUrl = nextProtocol.defaultUrl
+            }
+            if stoppedStream {
+                self.streamStatus = "Ready to start stream"
+            }
+        }
+    }
+
+    func setStreamCloudServerEnabled(_ enabled: Bool) {
+        guard streamCloudServerEnabled != enabled else { return }
+        runStreamConfigurationChange { [self] in
+            await self.stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
+            self.streamResolvedConfig = nil
+            if enabled {
+                let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+                let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+                self.streamCloudServerEnabled = true
+                if shouldUseDefault {
+                    self.streamUrl = self.streamProtocol.defaultUrl
+                }
+                self.streamStatus = "Ready to start stream"
+                self.streamPreviewReady = false
+                self.streamResolvedConfig = nil
+                return
+            }
+
+            self.streamCloudServerEnabled = false
+            self.streamStatus = "Ready to stream WebRTC to this phone"
+            self.streamPreviewReady = false
+            self.streamResolvedConfig = nil
+        }
+    }
+
+    func setStreamUrl(_ nextUrl: String) {
+        guard streamUrl != nextUrl else { return }
+        runStreamConfigurationChange { [self] in
+            let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
+            self.streamUrl = nextUrl
+            self.streamResolvedConfig = nil
+            if stoppedStream {
+                self.streamStatus = "Ready to start stream"
+            }
+        }
+    }
+
+    private func runStreamConfigurationChange(_ action: @escaping () async -> Void) {
+        guard !streamConfigurationChangeInProgress else {
+            streamStatus = "Waiting for stream configuration update"
+            return
+        }
+        streamConfigurationChangeInProgress = true
+        streamStatus = "Updating stream configuration"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.streamConfigurationChangeInProgress = false }
+            await action()
+        }
+    }
+
+    func setStreamFps(_ fps: Int) {
+        guard !streamRequested, streamStartedAt == nil else { return }
+        streamFps = min(24, max(1, fps))
+    }
+
+    func requestWifiScan() {
+        runAsyncAction("Scan Wi-Fi") { [self] in
+            try requireConnected("scan Wi-Fi")
+            let networks = try await mentraBluetoothSdk.requestWifiScan()
+            append(tag: "LIVE", text: "Wi-Fi scan returned \(networks.count) network\(networks.count == 1 ? "" : "s")")
+        }
+    }
+
+    func sendWifiCredentials(ssid: String, password: String, requiresPassword: Bool) {
+        runAsyncAction("Connect Wi-Fi \(ssid)") { [self] in
+            try requireConnected("send Wi-Fi credentials")
+            if requiresPassword, password.isEmpty {
+                throw ExampleActionError(message: "Enter the Wi-Fi password before connecting to \(ssid).")
+            }
+            let status = try await mentraBluetoothSdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+            append(tag: "LIVE", text: "Wi-Fi \(summarize(status.values))")
+        }
+    }
+
+    func forgetCurrentWifiNetwork() {
+        runAsyncAction("Forget current Wi-Fi") { [self] in
+            try requireConnected("forget Wi-Fi network")
+            guard let wifi = connectedWifiStatus(glassesValues) else {
+                throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
+            }
+            let status = try await mentraBluetoothSdk.forgetWifiNetwork(ssid: wifi.ssid)
+            append(tag: "LIVE", text: "Wi-Fi \(summarize(status.values))")
+        }
+    }
+
+    func toggleHotspot() {
+        runAsyncAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") { [self] in
+            try requireConnected("toggle hotspot")
+            let current = enabledHotspotStatus(glassesValues) != nil || (glassesValues == nil && hotspotEnabled)
+            let next = !current
+            let status = try await mentraBluetoothSdk.setHotspotState(enabled: next)
+            append(tag: "LIVE", text: "hotspot \(summarize(status.values))")
+        }
+    }
+
+    func setWifiAdbState(enabled: Bool) {
+        runAsyncAction(enabled ? "Enable Wi-Fi ADB" : "Disable Wi-Fi ADB") { [self] in
+            try requireConnected("toggle Wi-Fi ADB")
+            let generation = glassesConnectionGeneration
+            try await mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
+            // Ignore completions from a prior BLE session after disconnect/reconnect.
+            // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
+            guard generation == glassesConnectionGeneration, glassesConnected else { return }
+            wifiAdbEnabled = enabled
+            append(tag: "LIVE", text: "Wi-Fi ADB \(enabled ? "enabled" : "disabled")")
+        }
+    }
+
+    func openGalleryServer() {
+        runAction("Open gallery server") {
+            let baseUrl = try requireGalleryServerUrl()
+            galleryServerReachable = nil
+            galleryServerStatus = "Gallery server: checking \(baseUrl)"
+            Task { [weak self] in
+                guard let self else { return }
+                let result = await self.checkGalleryServerReachability(baseUrl)
+                self.galleryServerReachable = result.reachable
+                self.galleryServerStatus = result.status
+                self.append(tag: result.eventTag, text: result.eventText)
+                if result.reachable, let url = URL(string: baseUrl) {
+                    await UIApplication.shared.open(url)
+                }
+            }
+        }
+    }
+
+    func copyGalleryServerUrl() {
+        runAction("Copy gallery URL") {
+            let baseUrl = try requireGalleryServerUrl()
+            UIPasteboard.general.string = baseUrl
+            galleryServerStatus = "Gallery server: copied \(baseUrl)"
+        }
+    }
+
+    func copyGalleryHotspotPassword() {
+        runAction("Copy hotspot password") {
+            let password = galleryHotspotPasswordLabel(glassesValues)
+            UIPasteboard.general.string = password
+            galleryServerStatus = "Hotspot password copied: \(password)"
+        }
+    }
+
+    func openWifiSettings() {
+        runAction("Show hotspot join help") {
+            let ssid = galleryHotspotSsidLabel(glassesValues)
+            let password = galleryHotspotPasswordLabel(glassesValues)
+            UIPasteboard.general.string = password
+            let message = "Password copied. Open iOS Settings > Wi-Fi, join \(ssid) with password \(password), then return and tap Retry."
+            galleryServerStatus = message
+            append(tag: "LIVE", text: message)
+        }
+    }
+
+    func toggleMic() {
+        runAction(micRecording ? "Stop microphone" : "Start microphone") {
+            if micRecording {
+                stopMicRecording()
+            } else {
+                try startMicRecording()
+            }
+        }
+    }
+
+    func playMicRecording() {
+        runAction(micPlaying ? "Stop mic playback" : "Play mic recording") {
+            if micPlaying {
+                stopMicPlayback()
+                return
+            }
+            try startMicPlayback()
+        }
+    }
+
+    func openBluetoothSettings() {
+        append(tag: "LIVE", text: "Open iOS Settings > Bluetooth and select the glasses as the audio output.")
+        micPlaybackHint = "Select the glasses in iOS Bluetooth settings, then return here and press Play."
+        guard let bluetoothSettingsUrl = URL(string: "App-Prefs:root=Bluetooth") else { return }
+        UIApplication.shared.open(bluetoothSettingsUrl) { success in
+            if !success, let appSettingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(appSettingsUrl)
+            }
+        }
+    }
+
+    func selectLedMode(_ mode: String) {
+        runAsyncAction("RGB LED \(mode)") { [self] in
+            try requireConnected("control the RGB LED")
+            ledMode = mode
+            try await sendRgbLedRequest(mode: mode, color: ledColor)
+        }
+    }
+
+    func selectLedColor(_ color: String) {
+        runAsyncAction("RGB LED color \(color.uppercased())") { [self] in
+            try requireConnected("control the RGB LED")
+            guard validLedColors.contains(color) else {
+                throw ExampleActionError(message: "Unsupported RGB LED color: \(color)")
+            }
+            ledColor = color
+            if ledMode != "Off" {
+                try await sendRgbLedRequest(mode: ledMode, color: color)
+            }
+        }
+    }
+
+    private func sendRgbLedRequest(mode: String, color: String) async throws {
+        let request = rgbLedRequest(for: mode, color: color)
+        let response = try await mentraBluetoothSdk.rgbLedControl(
+            RgbLedRequest(
+                requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
+                packageName: "com.mentra.bluetoothsdk.example.ios",
+                action: request.action,
+                color: request.color,
+                onDurationMs: request.onDurationMs,
+                offDurationMs: request.offDurationMs,
+                count: request.count
+            )
+        )
+        append(tag: "LIVE", text: "RGB LED ack \(response.requestId)")
+    }
+
+    private func rgbLedRequest(for mode: String, color: String) -> (action: RgbLedAction, color: RgbLedColor?, onDurationMs: Int, offDurationMs: Int, count: Int) {
+        let ledColor = RgbLedColor(rawValue: color) ?? .red
+        switch mode {
+        case "Solid":
+            return (.on, ledColor, 30000, 0, 1)
+        case "Pulse":
+            return (.on, ledColor, 900, 900, 6)
+        case "Blink":
+            return (.on, ledColor, 250, 250, 12)
+        default:
+            return (.off, nil, 0, 0, 0)
+        }
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        if isGlassesConnected(glasses) { scanHint = nil }
+        let wasConnected = glassesConnected
+        if !glasses.connected || !wasConnected {
+            latestVersionInfo = nil
+        }
+        glassesValues = glasses
+        hotspotEnabled = enabledHotspotStatus(glasses) != nil
+        mentraLiveVersions = resolveMentraLiveVersions(glasses, versionInfo: latestVersionInfo)
+        let shouldRefreshVersions = !wasConnected && isMentraLiveRuntime(glasses)
+        if !glasses.connected {
+            applyDisconnectedState(status: "Disconnected")
+        } else if !wasConnected {
+            refreshMentraLiveVersionInfo()
+            // Re-apply scan preset on reconnect so button captures stay in sync.
+            if scanMode {
+                pushScanButtonPreset()
+            }
+            if photoDestination == .glassesStorage {
+                prepareGlassesPhotoPreview()
+            }
+        }
+        refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
+        if !shouldRefreshVersions {
+            maybeAutoCheckOta()
+        }
+        append(tag: "STORE", text: summarize(glasses))
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateSdkState sdkState: PhoneSdkRuntimeState) {
+        applySdkState(sdkState)
+        append(tag: "BLE", text: summarize(sdkState))
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateScan scan: BluetoothScanState) {
+        discoveredDevices = scan.devices
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: Device) {
+        append(tag: "BLE", text: "discovered \(device.name)")
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: Device?) {
+        savePersistedDefaultDevice(device)
+        bluetoothValues = mentraBluetoothSdk.sdkState
+        if let device {
+            append(tag: "BLE", text: "saved default \(device.name)")
+        }
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+        switch event {
+        case let .buttonPress(button):
+            append(tag: "LIVE", text: "button \(button.buttonId): \(button.pressType)")
+        case let .touch(touch):
+            append(tag: "LIVE", text: "\(touch.isSwipe ? "swipe" : "touch") \(touch.gestureName ?? summarize(touch.values))")
+        case let .voiceActivityDetectionStatus(status):
+            voiceActivityDetectionEnabled = status.voiceActivityDetectionEnabled
+            append(tag: "LIVE", text: "voice activity detection \(status.voiceActivityDetectionEnabled ? "enabled" : "disabled")")
+        case let .speakingStatus(status):
+            speaking = status.speaking
+        case let .wifiStatus(status):
+            applyWifiStatus(status)
+        case let .hotspotStatus(status):
+            handleRawEvent(name: "hotspot_status_change", values: status.values)
+        case let .hotspotError(error):
+            handleRawEvent(name: "hotspot_error", values: error.values)
+        case .photoResponse:
+            break
+        case let .videoRecordingStatus(status):
+            handleVideoRecordingStatus(status)
+        case let .mediaUpload(upload):
+            handleMediaUpload(upload)
+        case let .streamStatus(status):
+            handleStreamStatus(status.status)
+        case .otaStartAck, .settingsAck, .rgbLedControlResponse:
+            break
+        case let .otaStatus(event):
+            applyOtaStatus(event)
+        case let .versionInfo(event):
+            applyVersionInfo(event)
+            let installedIdentity = otaAppIdentity(event)
+            if let installedIdentity,
+               let otaStartingAppIdentity,
+               installedIdentity != otaStartingAppIdentity,
+               otaStatus?.status == "in_progress",
+               otaStatus?.phase == "install" {
+                self.otaStartingAppIdentity = nil
+                resetOtaDisplayProgress()
+                autoOtaCheckedConnectionKey = nil
+                hideOtaNoUpdateCard()
+                otaStartPending = false
+                otaStatus = nil
+                otaDisplayPercent = nil
+                otaStatusMessage = "OTA installed; checking for additional updates"
+                otaUpdateAvailable = false
+                append(tag: "LIVE", text: "OTA install restarted ASG client as \(installedIdentity)")
+            }
+            maybeAutoCheckOta()
+        case let .raw(name, values):
+            handleRawEvent(name: name, values: values)
+        default:
+            append(tag: "LIVE", text: event.description)
+        }
+    }
+
+    private func checkForOtaUpdateResult(showNoUpdateCard: Bool = false) async throws -> Bool? {
+        let checkGeneration = otaCheckGeneration
+        let updateAvailable = try await mentraBluetoothSdk.checkForOtaUpdate()
+        guard checkGeneration == otaCheckGeneration, glassesConnected else {
+            append(tag: "LIVE", text: "OTA check result ignored after connection changed")
+            return nil
+        }
+        return handleOtaCheckResult(updateAvailable, showNoUpdateCard: showNoUpdateCard)
+    }
+
+    private func applyVersionInfo(_ event: VersionInfoResult) {
+        guard glassesConnected else { return }
+        latestVersionInfo = event
+        latestOtaVersionInfoSignature = otaVersionInfoSignature(event)
+        mentraLiveVersions = resolveMentraLiveVersions(glassesValues, versionInfo: event)
+    }
+
+    private func refreshMentraLiveVersionInfo() {
+        guard isMentraLiveRuntime(glassesValues) else { return }
+        let connectionKey = otaConnectionKey(glassesValues)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let payload = try await mentraBluetoothSdk.requestVersionInfo()
+                guard isMentraLiveRuntime(glassesValues), otaConnectionKey(glassesValues) == connectionKey else { return }
+                applyVersionInfo(payload)
+                maybeAutoCheckOta()
+            } catch {
+                guard isMentraLiveRuntime(glassesValues), otaConnectionKey(glassesValues) == connectionKey else { return }
+                append(tag: "LIVE", text: "version info refresh failed: \(error.localizedDescription)")
+                maybeAutoCheckOta()
+            }
+        }
+    }
+
+    private func handleOtaCheckResult(_ updateAvailable: Bool, showNoUpdateCard: Bool = false) -> Bool {
+        if isOtaInProgress() {
+            append(tag: "LIVE", text: "OTA check result ignored while update is in progress")
+            return updateAvailable
+        }
+        otaStartingAppIdentity = nil
+        resetOtaDisplayProgress()
+        if updateAvailable {
+            hideOtaNoUpdateCard()
+            otaStatus = nil
+            otaDisplayPercent = nil
+            otaStatusMessage = nil
+            otaUpdateAvailable = true
+            append(tag: "LIVE", text: "OTA update available")
+            return true
+        }
+
+        otaStatus = nil
+        otaDisplayPercent = nil
+        otaStatusMessage = "Glasses firmware is up to date"
+        otaUpdateAvailable = false
+        if showNoUpdateCard {
+            showOtaNoUpdateCard()
+        }
+        append(tag: "LIVE", text: "OTA up to date")
+        return false
+    }
+
+    private func showOtaNoUpdateCard() {
+        hideOtaNoUpdateCard()
+        otaNoUpdateVisible = true
+        otaNoUpdateHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.otaNoUpdateVisible = false
+            self?.otaNoUpdateHideTask = nil
+        }
+    }
+
+    private func hideOtaNoUpdateCard() {
+        otaNoUpdateHideTask?.cancel()
+        otaNoUpdateHideTask = nil
+        otaNoUpdateVisible = false
+    }
+
+    private func applyOtaStatus(_ event: OtaStatusEvent) {
+        hideOtaNoUpdateCard()
+        guard isDisplayableOtaStatus(event) else {
+            otaStartingAppIdentity = nil
+            resetOtaDisplayProgress()
+            otaStartPending = false
+            otaStatus = nil
+            otaDisplayPercent = nil
+            otaStatusMessage = "No active OTA"
+            append(tag: "LIVE", text: "OTA idle")
+            return
+        }
+
+        otaDisplayPercent = updateOtaDisplayPercent(event)
+        otaStartPending = false
+        otaStatus = event
+        otaStatusMessage = nil
+        if event.status == "complete" || event.status == "failed" {
+            otaStartingAppIdentity = nil
+            otaUpdateAvailable = false
+        }
+        append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
+        schedulePostOtaCheck(event)
+    }
+
+    private func updateOtaDisplayPercent(_ event: OtaStatusEvent) -> Int {
+        let sessionKey = otaSessionKey(event)
+        let incomingPercent = min(max(event.overallPercent, 0), 100)
+        let previousPercent = otaDisplayProgressSessionKey == sessionKey ? otaDisplayOverallPercent : nil
+        let displayPercent: Int
+        switch event.status {
+        case "complete":
+            displayPercent = 100
+        case "in_progress", "step_complete":
+            displayPercent = max(previousPercent ?? incomingPercent, incomingPercent)
+        default:
+            displayPercent = incomingPercent
+        }
+        otaDisplayProgressSessionKey = sessionKey
+        otaDisplayOverallPercent = min(max(displayPercent, 0), 100)
+        return otaDisplayOverallPercent ?? incomingPercent
+    }
+
+    private func resetOtaDisplayProgress() {
+        otaDisplayProgressSessionKey = nil
+        otaDisplayOverallPercent = nil
+    }
+
+    private func schedulePostOtaCheck(_ event: OtaStatusEvent) {
+        guard event.status == "complete" else { return }
+        let sessionKey = otaSessionKey(event)
+        guard !postOtaCheckInProgress, postOtaCheckedSessionKey != sessionKey else { return }
+
+        postOtaCheckInProgress = true
+        autoOtaCheckInProgress = true
+        runAsyncAction("Verify OTA") { [self] in
+            var checkSucceeded = false
+            defer {
+                postOtaCheckInProgress = false
+                autoOtaCheckInProgress = false
+                if checkSucceeded {
+                    postOtaCheckedSessionKey = sessionKey
+                    autoOtaCheckedConnectionKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+                }
+            }
+            guard glassesConnected, glassesWifiConnected else {
+                append(tag: "LIVE", text: "OTA complete; skipped verification because glasses Wi-Fi is unavailable")
+                return
+            }
+            checkSucceeded = (try await checkForOtaUpdateResult(showNoUpdateCard: true)) != nil
+        }
+    }
+
+    private func applyWifiStatus(_ event: WifiStatusEvent) {
+        glassesValues = glassesValues?.withWifi(event.status) ?? mentraBluetoothSdk.glasses
+        let label: String
+        switch event.status {
+        case let .connected(ssid, _):
+            label = ssid
+        case .disconnected:
+            label = "disconnected"
+        }
+        maybeAutoCheckOta()
+        append(tag: "STORE", text: "Wi-Fi \(label)")
+    }
+
+    private func maybeAutoCheckOta() {
+        guard glassesConnected else {
+            autoOtaCheckedConnectionKey = nil
+            autoOtaCheckInProgress = false
+            latestVersionInfo = nil
+            latestOtaVersionInfoSignature = nil
+            postOtaCheckInProgress = false
+            postOtaCheckedSessionKey = nil
+            return
+        }
+        guard glassesWifiConnected, !autoOtaCheckInProgress, !isOtaInProgress() else { return }
+        let autoCheckKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+        guard autoOtaCheckedConnectionKey != autoCheckKey else { return }
+
+        autoOtaCheckInProgress = true
+        runAsyncAction("Auto-check OTA") { [self] in
+            var checkSucceeded = false
+            defer {
+                autoOtaCheckInProgress = false
+                if checkSucceeded {
+                    autoOtaCheckedConnectionKey = autoCheckKey
+                    let currentKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+                    if autoOtaCheckedConnectionKey != currentKey,
+                       glassesConnected,
+                       glassesWifiConnected,
+                       !isOtaInProgress() {
+                        maybeAutoCheckOta()
+                    }
+                }
+            }
+            try requireConnected("check OTA")
+            try requireGlassesWifi("check for OTA updates")
+            checkSucceeded = (try await checkForOtaUpdateResult()) != nil
+        }
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
+        guard micRecording else { return }
+        let frame = event.pcm
+        micPcmData.append(frame)
+        pcmFrames += 1
+        pcmBytes += frame.count
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event) {
+        guard micRecording else { return }
+        append(
+            tag: "LIVE",
+            text: "received LC3 mic frame while PCM recording is enabled (\(event.lc3.count) bytes, \(event.frameDurationMs)ms)"
+        )
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog message: String) {
+        append(tag: "LIVE", text: message)
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
+        append(tag: "TX", text: error.description)
+    }
+
+    private func runAction(_ label: String, _ action: () throws -> Void) {
+        let actionId = beginAction(label)
+        lastAction = "Running: \(label)"
+        append(tag: "TX", text: label)
+        do {
+            try action()
+            lastAction = "Requested: \(label)"
+        } catch {
+            lastAction = "Failed: \(label) - \(error.localizedDescription)"
+            append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
+        }
+        endAction(actionId)
+    }
+
+    private func runAsyncAction(_ label: String, _ action: @escaping () async throws -> Void) {
+        let actionId = beginAction(label)
+        lastAction = "Running: \(label)"
+        append(tag: "TX", text: label)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+                lastAction = "Requested: \(label)"
+            } catch {
+                lastAction = "Failed: \(label) - \(error.localizedDescription)"
+                append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
+            }
+            endAction(actionId)
+        }
+    }
+
+    private func beginAction(_ label: String) -> Int {
+        actionSequence += 1
+        let actionId = actionSequence
+        activeActions[actionId] = label
+        activeActionOrder.append(actionId)
+        activeAction = label
+        return actionId
+    }
+
+    private func endAction(_ actionId: Int) {
+        activeActions[actionId] = nil
+        activeActionOrder.removeAll { $0 == actionId }
+        activeAction = activeActionOrder.last.flatMap { activeActions[$0] }
+    }
+
+    private func scheduleAutoConnectDefaultOnStartup() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            self?.autoConnectDefaultOnStartup()
+        }
+    }
+
+    private func autoConnectDefaultOnStartup() {
+        guard !glassesConnected, hasSavedConnectionTarget(bluetoothValues) else { return }
+        runAction("Auto-connect default") {
+            try mentraBluetoothSdk.connectDefault()
+        }
+    }
+
+    private func isOtaInProgress() -> Bool {
+        otaStartPending || otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
+    }
+
+    private func startCameraWarmUpLoop() {
+        guard cameraWarmUpTask == nil else { return }
+        cameraWarmUpTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let nextDelayMs = await self?.runCameraWarmUpTick() ?? cameraWarmUpDisconnectedRetryMs
+                try? await Task.sleep(nanoseconds: UInt64(nextDelayMs) * 1_000_000)
+            }
+        }
+    }
+
+    private func stopCameraWarmUpLoop() {
+        cameraWarmUpTask?.cancel()
+        cameraWarmUpTask = nil
+    }
+
+    private func runCameraWarmUpTick() async -> Int {
+        guard cameraTabForeground else { return cameraWarmUpRefreshMs }
+        guard glassesConnected else { return cameraWarmUpDisconnectedRetryMs }
+        let exposureTimeNs = photoExposureManual ? Double(photoExposureTimeNs) : nil
+        do {
+            _ = try await mentraBluetoothSdk.warmUpCamera(
+                size: photoSize,
+                exposureTimeNs: exposureTimeNs,
+                durationMs: cameraWarmUpDurationMs
+            )
+            cameraWarmUpFailureLogged = false
+        } catch {
+            if cameraTabForeground && glassesConnected && !cameraWarmUpFailureLogged {
+                cameraWarmUpFailureLogged = true
+                append(tag: "TX", text: "camera warm-up failed: \(error.localizedDescription)")
+            }
+        }
+        return cameraWarmUpRefreshMs
+    }
+
+    private func requireConnected(_ feature: String) throws {
+        guard glassesConnected else {
+            let message = "Connect glasses first to \(feature)."
+            if feature.contains("photo") || feature.contains("capture") || feature.contains("video") {
+                cameraStatus = message
+            }
+            if feature.contains("stream") {
+                streamStatus = message
+            }
+            append(tag: "TX", text: message)
+            throw ExampleActionError(message: message)
+        }
+    }
+
+    private func requireGlassesWifi(_ feature: String) throws {
+        guard glassesWifiConnected else {
+            let message = "Connect the glasses to Wi-Fi from the System tab before you \(feature)."
+            if feature.contains("photo") || feature.contains("capture") || feature.contains("video") {
+                cameraStatus = "Camera: \(message)"
+            }
+            if feature.contains("stream") {
+                streamStatus = message
+            }
+            append(tag: "TX", text: message)
+            throw ExampleActionError(message: message)
+        }
+    }
+
+    private func requireGalleryServerUrl() throws -> String {
+        guard let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) else {
+            throw ExampleActionError(message: "Enable the glasses hotspot first.")
+        }
+        return baseUrl
+    }
+
+    private func refreshGalleryServerStatusForCurrentHotspot(defaultStatus: String) {
+        if galleryServerReachable == true,
+           galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) != nil {
+            return
+        }
+        galleryServerReachable = !hotspotEnabled && photoDestination == .glassesStorage ? false : nil
+        if let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) {
+            galleryServerStatus = "Gallery server: \(baseUrl)"
+        } else {
+            galleryServerStatus = defaultStatus
+        }
+    }
+
+    private func checkGalleryServerReachability(_ baseUrl: String) async -> GalleryServerCheck {
+        guard let statusUrl = URL(string: "\(baseUrl)/api/status?poll=\(Int(Date().timeIntervalSince1970 * 1000))") else {
+            return GalleryServerCheck(
+                reachable: false,
+                status: "Gallery server: invalid URL",
+                eventTag: "TX",
+                eventText: "gallery server invalid URL \(baseUrl)"
+            )
+        }
+
+        do {
+            var request = URLRequest(url: statusUrl, timeoutInterval: 1.5)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if (200 ... 299).contains(code) {
+                let totalPhotos = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])
+                    .flatMap { intValue($0, "total_photos") }
+                return GalleryServerCheck(
+                    reachable: true,
+                    status: totalPhotos.map { "Gallery server: reachable · \($0) items" } ?? "Gallery server: reachable",
+                    eventTag: "LIVE",
+                    eventText: "gallery server reachable \(baseUrl)"
+                )
+            }
+            return GalleryServerCheck(
+                reachable: false,
+                status: "Gallery server: HTTP \(code)",
+                eventTag: "TX",
+                eventText: "gallery server HTTP \(code)"
+            )
+        } catch {
+            return GalleryServerCheck(
+                reachable: false,
+                status: "Gallery server: not reachable. Join \(galleryHotspotSsidLabel(glassesValues)) and retry.",
+                eventTag: "TX",
+                eventText: "gallery server unreachable: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func requireDisplaySupport(_ feature: String) throws {
+        try requireConnected(feature)
+        guard supportsDisplay(glassesValues) else {
+            throw ExampleActionError(message: "This glasses model has no display, so \(feature) is unavailable.")
+        }
+    }
+
+    private func applySdkState(_ status: PhoneSdkRuntimeState) {
+        bluetoothValues = status
+        galleryModeEnabled = status.galleryMode.enabled
+    }
+
+    private func loadPersistedDefaultDevice() -> Device? {
+        guard let model = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.model), !model.isEmpty else {
+            return nil
+        }
+        guard let name = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.name), !name.isEmpty else {
+            return nil
+        }
+        let identifier = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.identifier).flatMap {
+            $0.isEmpty ? nil : $0
+        }
+        return Device(
+            model: DeviceModel.fromDeviceType(model),
+            name: name,
+            identifier: identifier
+        )
+    }
+
+    private func savePersistedDefaultDevice(_ device: Device?) {
+        guard let device, !device.name.isEmpty else {
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.version)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.model)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.name)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.identifier)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.savedAt)
+            return
+        }
+
+        defaultDeviceDefaults.set(1, forKey: DefaultDeviceStorage.version)
+        defaultDeviceDefaults.set(device.model.deviceType, forKey: DefaultDeviceStorage.model)
+        defaultDeviceDefaults.set(device.name, forKey: DefaultDeviceStorage.name)
+        defaultDeviceDefaults.set(device.identifier ?? "", forKey: DefaultDeviceStorage.identifier)
+        defaultDeviceDefaults.set(Date().timeIntervalSince1970, forKey: DefaultDeviceStorage.savedAt)
+    }
+
+    private func loadPersistedCloudUrls() -> PersistedCloudUrls {
+        guard cloudUrlDefaults.integer(forKey: CloudUrlStorage.version) == 1 else {
+            return PersistedCloudUrls(streamProtocol: nil, streamUrl: nil, webhookUrl: nil)
+        }
+        let streamProtocol = cloudUrlDefaults.string(forKey: CloudUrlStorage.streamProtocol)
+            .flatMap(ExampleStreamProtocol.init(rawValue:))
+        return PersistedCloudUrls(
+            streamProtocol: streamProtocol,
+            streamUrl: cloudUrlDefaults.string(forKey: CloudUrlStorage.streamUrl),
+            webhookUrl: cloudUrlDefaults.string(forKey: CloudUrlStorage.webhookUrl)
+        )
+    }
+
+    private func savePersistedCloudUrls() {
+        cloudUrlDefaults.set(1, forKey: CloudUrlStorage.version)
+        cloudUrlDefaults.set(streamProtocol.rawValue, forKey: CloudUrlStorage.streamProtocol)
+        cloudUrlDefaults.set(streamUrl, forKey: CloudUrlStorage.streamUrl)
+        cloudUrlDefaults.set(webhookUrl, forKey: CloudUrlStorage.webhookUrl)
+        cloudUrlDefaults.set(Date().timeIntervalSince1970, forKey: CloudUrlStorage.savedAt)
+    }
+
+    private func checkWebhookReachable(_ uploadUrl: String) async throws -> WebhookReachability {
+        guard let healthUrl = webhookHealthUrl(uploadUrl) else {
+            throw ExampleActionError(message: "Enter a valid http:// or https:// media upload URL.")
+        }
+        var request = URLRequest(url: cacheBustedUrl(healthUrl))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 3
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ExampleActionError(message: "invalid response")
+            }
+            guard (200 ..< 300).contains(http.statusCode) else {
+                throw ExampleActionError(
+                    message: "This app reached \(healthUrl.absoluteString), but the media server returned HTTP \(http.statusCode)."
+                )
+            }
+            return WebhookReachability(healthUrl: healthUrl, host: healthUrl.host ?? "server")
+        } catch let error as ExampleActionError {
+            throw error
+        } catch let error as URLError {
+            throw ExampleActionError(message: webhookReachabilityErrorMessage(error, healthUrl: healthUrl))
+        } catch {
+            throw error
+        }
+    }
+
+    private func cacheBustedUrl(_ url: URL) -> URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        var queryItems = components?.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "poll", value: "\(Int(Date().timeIntervalSince1970 * 1000))"))
+        components?.queryItems = queryItems
+        return components?.url ?? url
+    }
+
+    private func webhookReachabilityErrorMessage(_ error: Error) -> String {
+        error.localizedDescription
+    }
+
+    private func webhookReachabilityErrorMessage(_ error: URLError, healthUrl: URL) -> String {
+        switch error.code {
+        case .timedOut:
+            return "Timed out after 3s while this app tried to GET \(healthUrl.absoluteString). This only checks app-device-to-media-server reachability."
+        case .cannotFindHost:
+            return "This app could not resolve \(healthUrl.host ?? "the media server host") while checking \(healthUrl.absoluteString). Check that the media server URL uses a host this device can reach."
+        case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
+            return "This app could not GET \(healthUrl.absoluteString). Check that the media server is running and that this device can reach that host on the local network."
+        case .appTransportSecurityRequiresSecureConnection:
+            return "iOS blocked \(healthUrl.absoluteString) because App Transport Security requires HTTPS for this host."
+        default:
+            return "This app could not GET \(healthUrl.absoluteString): \(error.localizedDescription)"
+        }
+    }
+
+    private func applyDisconnectedState(status: String) {
+        touchGestureDefaults = [:]
+        touchGesturePending = nil
+        glassesValues = .disconnected(connection: .disconnected)
+        hideOtaNoUpdateCard()
+        stopPreviewHealthPoll()
+        activeStreamId = nil
+        streamRequested = false
+        streamPreviewReady = false
+        streamResolvedConfig = nil
+        streamStartedAt = nil
+        streamStatus = status
+        micRecording = false
+        stopMicElapsedTimer()
+        stopMicPlayback()
+        hotspotEnabled = false
+        wifiAdbEnabled = false
+        galleryConnectionGeneration += 1
+        glassesConnectionGeneration += 1
+        if let pendingHotspotConnection {
+            glassesHotspotConnector.disconnect(ssid: pendingHotspotConnection.ssid)
+        }
+        pendingHotspotConnection = nil
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: connect glasses first"
+        otaStartingAppIdentity = nil
+        otaStartPending = false
+        latestVersionInfo = nil
+        otaCheckGeneration += 1
+        mentraLiveVersions = MentraLiveVersions()
+        resetOtaDisplayProgress()
+        otaStatus = nil
+        otaDisplayPercent = nil
+        otaStatusMessage = nil
+        otaUpdateAvailable = false
+        if activePhotoRequestId != nil {
+            activePhotoRequestId = nil
+            pollGeneration += 1
+            cameraStatus = "Disconnected before photo upload completed"
+        }
+        if activeVideoRequestId != nil || videoRecording {
+            activeVideoRequestId = nil
+            videoPollGeneration += 1
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: "", state: "error", uploadUrl: webhookUrl))
+                .updated(error: "Disconnected before video upload completed", state: "error")
+            cameraStatus = "Disconnected before video upload completed"
+        }
+    }
+
+    private func startMicRecording() throws {
+        try requireConnected("stream microphone audio")
+        stopMicPlayback()
+        micPcmData.removeAll(keepingCapacity: true)
+        micRecordingUrl = nil
+        micPlaybackHint = nil
+        lastMicDurationSeconds = nil
+        lastMicBytes = 0
+        pcmFrames = 0
+        pcmBytes = 0
+        micElapsedSeconds = 0
+        micStartedAt = Date()
+        mentraBluetoothSdk.setMicState(enabled: true, useGlassesMic: true)
+        micRecording = true
+        startMicElapsedTimer()
+    }
+
+    private func stopMicRecording() {
+        if glassesConnected {
+            mentraBluetoothSdk.setMicState(enabled: false)
+        }
+        micRecording = false
+        stopMicElapsedTimer()
+        let capturedPcm = micPcmData
+        let capturedBytes = capturedPcm.count
+
+        guard !capturedPcm.isEmpty else {
+            micRecordingUrl = nil
+            lastMicDurationSeconds = nil
+            lastMicBytes = 0
+            micPlaybackHint = "No speech audio captured. Keep the glasses connected, speak while recording, and try again."
+            append(tag: "LIVE", text: "microphone stopped with no PCM data")
+            return
+        }
+
+        do {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("mentra-mic-last.wav")
+            try wavData(from: capturedPcm).write(to: url, options: [.atomic])
+            micRecordingUrl = url
+            lastMicDurationSeconds = max(micElapsedSeconds, Int((Double(capturedBytes) / Double(micSampleRate * micChannelCount * micBitsPerSample / 8)).rounded(.up)))
+            lastMicBytes = capturedBytes
+            micPlaybackHint = nil
+            append(tag: "LIVE", text: "saved microphone WAV \(capturedBytes) bytes")
+        } catch {
+            micRecordingUrl = nil
+            lastMicDurationSeconds = nil
+            lastMicBytes = 0
+            micPlaybackHint = "Failed to save microphone WAV: \(error.localizedDescription)"
+            append(tag: "TX", text: "failed to save microphone WAV: \(error.localizedDescription)")
+        }
+    }
+
+    private func startMicPlayback(restart: Bool = false) throws {
+        guard let url = micRecordingUrl, lastMicBytes > 0 else {
+            throw ExampleActionError(message: "Record microphone audio before playback.")
+        }
+        stopMicPlayback()
+
+        do {
+            let routeName = try requireGlassesAudioRoute()
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.delegate = self
+            player.prepareToPlay()
+            if restart {
+                player.currentTime = 0
+            }
+            micPlayer = player
+            micPlaying = true
+            micPlaybackHint = nil
+            mentraBluetoothSdk.setOwnAppAudioPlaying(true)
+            if !player.play() {
+                stopMicPlayback()
+                throw ExampleActionError(message: "Could not start mic playback.")
+            }
+            append(tag: "LIVE", text: "playing through \(routeName)")
+        } catch {
+            stopMicPlayback()
+            micPlaybackHint = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func stopMicPlayback() {
+        let wasPlaying = micPlaying
+        micPlayer?.stop()
+        micPlayer = nil
+        if micPlaying {
+            mentraBluetoothSdk.setOwnAppAudioPlaying(false)
+        }
+        micPlaying = false
+        if wasPlaying {
+            micPlaybackHint = nil
+        }
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    private func requireGlassesAudioRoute() throws -> String {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+        try session.setActive(true)
+
+        if let bluetoothOutput = session.currentRoute.outputs.first(where: isBluetoothAudioOutput) {
+            return bluetoothOutput.portName
+        }
+
+        throw ExampleActionError(
+            message: "Pair/select the glasses in iOS Settings > Bluetooth before playback. iOS apps cannot trigger classic Bluetooth audio pairing."
+        )
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
+        Task { @MainActor [weak self] in
+            self?.stopMicPlayback()
+        }
+    }
+
+    nonisolated func audioPlayerDecodeErrorDidOccur(_: AVAudioPlayer, error: Error?) {
+        let message = error?.localizedDescription ?? "decode error"
+        Task { @MainActor [weak self] in
+            self?.append(tag: "TX", text: "mic playback failed: \(message)")
+            self?.stopMicPlayback()
+        }
+    }
+
+    private func isBluetoothAudioOutput(_ output: AVAudioSessionPortDescription) -> Bool {
+        output.portType == .bluetoothA2DP ||
+            output.portType == .bluetoothHFP ||
+            output.portType == .bluetoothLE
+    }
+
+    private func startMicElapsedTimer() {
+        stopMicElapsedTimer()
+        micElapsedTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self, let micStartedAt = self.micStartedAt else { return }
+                self.micElapsedSeconds = max(0, Int(Date().timeIntervalSince(micStartedAt)))
+            }
+        }
+    }
+
+    private func stopMicElapsedTimer() {
+        micElapsedTask?.cancel()
+        micElapsedTask = nil
+        micStartedAt = nil
+    }
+
+    private func wavData(from pcmData: Data) -> Data {
+        var data = Data()
+        appendAscii("RIFF", to: &data)
+        appendUInt32(UInt32(36 + pcmData.count), to: &data)
+        appendAscii("WAVE", to: &data)
+        appendAscii("fmt ", to: &data)
+        appendUInt32(16, to: &data)
+        appendUInt16(1, to: &data)
+        appendUInt16(UInt16(micChannelCount), to: &data)
+        appendUInt32(UInt32(micSampleRate), to: &data)
+        appendUInt32(UInt32(micSampleRate * micChannelCount * micBitsPerSample / 8), to: &data)
+        appendUInt16(UInt16(micChannelCount * micBitsPerSample / 8), to: &data)
+        appendUInt16(UInt16(micBitsPerSample), to: &data)
+        appendAscii("data", to: &data)
+        appendUInt32(UInt32(pcmData.count), to: &data)
+        data.append(pcmData)
+        return data
+    }
+
+    private func appendAscii(_ text: String, to data: inout Data) {
+        data.append(text.data(using: .ascii) ?? Data())
+    }
+
+    private func appendUInt16(_ value: UInt16, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
+
+    private func appendUInt32(_ value: UInt32, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
+
+    private func append(tag: String, text: String) {
+        events = [ExampleEvent.make(tag: tag, text: text)] + events
+        events = Array(events.prefix(30))
+    }
+
+    private func handleRawEvent(name: String, values: [String: Any]) {
+        switch name {
+        case "button_press":
+            append(tag: "LIVE", text: "button \(stringValue(values, "buttonId") ?? ""): \(stringValue(values, "pressType") ?? "")")
+        case "touch_event":
+            append(tag: "LIVE", text: "touch \(summarize(values))")
+        case "battery_status":
+            glassesValues = glassesValues?.withBattery(
+                level: intValue(values, "level") ?? -1,
+                charging: boolValue(values, "charging") ?? false
+            )
+            append(tag: "STORE", text: "battery \(intValue(values, "level") ?? -1)%")
+        case "hotspot_status_change":
+            let hotspot = HotspotStatus(values: values) ?? .disabled
+            let enabled = enabledHotspotStatus(hotspot) != nil
+            hotspotEnabled = enabled
+            glassesValues = glassesValues?.withHotspot(hotspot)
+            refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
+            append(tag: "STORE", text: "hotspot \(summarize(values))")
+        case "hotspot_error":
+            hotspotEnabled = false
+            galleryServerReachable = false
+            galleryServerStatus = "Gallery server: hotspot error"
+            glassesValues = glassesValues?.withHotspot(.disabled)
+            append(tag: "TX", text: "hotspot error \(summarize(values))")
+        case "photo_response":
+            break
+        case "stream_status":
+            handleStreamStatus(StreamStatus(values: values))
+        default:
+            append(tag: "LIVE", text: "\(name) \(summarize(values))")
+        }
+    }
+
+    private func applyStreamStatus(_ status: StreamStatus) {
+        switch status.state {
+        case .streaming, .initializing, .reconnecting, .reconnected:
+            streamRequested = true
+            if streamStartedAt == nil {
+                streamStartedAt = Date()
+            }
+            if let streamId = status.streamId {
+                activeStreamId = streamId
+            }
+        case .stopped, .stopping, .error, .reconnectFailed:
+            streamRequested = false
+            streamPreviewReady = false
+            streamResolvedConfig = nil
+            streamStartedAt = nil
+            activeStreamId = nil
+            stopPreviewHealthPoll()
+            if directStreamReceiverRunning {
+                stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
+            }
+        }
+    }
+
+    private func handleStreamStatus(_ status: StreamStatus) {
+        applyStreamStatus(status)
+        if let resolvedConfig = status.resolvedConfig {
+            streamResolvedConfig = resolvedConfig
+        }
+        let summary = summarize(status.values)
+        if isDirectPhoneWebRtcSelected {
+            if status.state == .stopped || status.state == .stopping || status.state == .reconnectFailed {
+                streamStatus = "WebRTC direct phone stopped"
+            } else if status.state == .error {
+                streamStatus = "WebRTC direct phone error: \(summary)"
+            } else if streamPreviewReady {
+                streamStatus = "WebRTC direct phone live"
+            } else {
+                streamStatus = "WebRTC stream requested; waiting for phone preview"
+            }
+        } else {
+            streamStatus = summary
+        }
+        append(tag: "LIVE", text: "stream \(summary)")
+    }
+
+    private func handlePhotoResponse(_ event: PhotoResponseEvent) {
+        let response = event.response
+        let requestId = response.requestId
+        if let activePhotoRequestId, requestId != activePhotoRequestId {
+            append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
+            return
+        }
+        let uploadTarget: String
+        let source: String
+        switch photoDestination {
+        case .thisPhone:
+            uploadTarget = "phone receiver"
+            source = "Phone receiver"
+        case .macBookServer:
+            uploadTarget = "cloud webhook"
+            source = "Cloud server"
+        case .glassesStorage:
+            uploadTarget = "glasses storage"
+            source = "Glasses gallery"
+        }
+        switch response {
+        case let .success(requestId, uploadUrl, _, _, _, _, timestamp):
+            photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(
+                requestId: requestId,
+                source: source,
+                timestamp: timestamp,
+                uploadUrl: uploadUrl
+            )
+            cameraStatus = "Camera: photo delivered to \(uploadTarget)"
+        case let .error(requestId, errorCode, errorMessage, timestamp):
+            photoPreviewDetails = .failed(
+                requestId: requestId,
+                source: source,
+                error: errorCode ?? errorMessage,
+                timestamp: timestamp
+            )
+            cameraStatus = "Camera: photo failed (\(errorCode ?? errorMessage))"
+        }
+        append(tag: "LIVE", text: "photo response \(requestId)")
+    }
+
+    private func handleVideoRecordingStatus(_ event: VideoRecordingStatusEvent) {
+        let requestId = event.requestId.isEmpty ? (activeVideoRequestId ?? "") : event.requestId
+        if let activeVideoRequestId, !requestId.isEmpty, requestId != activeVideoRequestId {
+            append(tag: "LIVE", text: "ignoring stale video status \(requestId)")
+            return
+        }
+        let durationMs = intValue(event.data?["duration_ms"])
+        let failed = !event.success || videoStatusIsFailure(event.status)
+        if event.status == "recording_started" || event.data.flatMap({ boolValue($0, "recording") }) == true {
+            activeVideoRequestId = requestId
+            videoRecording = true
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "recording", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, requestId: requestId, state: "recording", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: recording video"
+        } else if event.status == "recording_stopped" {
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "uploading", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, requestId: requestId, state: "uploading", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: video stopped; waiting for upload preview"
+        } else if failed {
+            activeVideoRequestId = nil
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "error", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, error: event.details ?? event.status, requestId: requestId, state: "error", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: video failed (\(event.details ?? event.status))"
+        } else {
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "recording", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, requestId: requestId, state: videoPreviewDetails?.state ?? "recording", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: video \(event.status.replacingOccurrences(of: "_", with: " "))"
+        }
+        append(tag: "LIVE", text: "video status \(event.status)")
+    }
+
+    private func handleMediaUpload(_ event: MediaUploadEvent) {
+        guard event.isVideo else { return }
+        if let activeVideoRequestId, event.requestId != activeVideoRequestId {
+            append(tag: "LIVE", text: "ignoring stale video upload \(event.requestId)")
+            return
+        }
+        if !event.isSuccess {
+            activeVideoRequestId = nil
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: event.requestId, state: "error", uploadUrl: webhookUrl))
+                .updated(error: event.errorMessage ?? "upload failed", requestId: event.requestId, state: "error", timestamp: event.timestamp)
+            cameraStatus = "Camera: video upload failed (\(event.errorMessage ?? "upload failed"))"
+            append(tag: "LIVE", text: "video upload failed \(event.errorMessage ?? "")")
+            return
+        }
+        videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: event.requestId, state: "uploading", uploadUrl: webhookUrl))
+            .updated(mediaUrl: event.mediaUrl, requestId: event.requestId, state: videoPreviewDetails?.state == "preview" ? "preview" : "uploading", timestamp: event.timestamp)
+        cameraStatus = "Camera: video uploaded; loading preview"
+        append(tag: "LIVE", text: "video uploaded \(event.mediaUrl ?? "")")
+    }
+
+    private func pollPhotoPreview(requestId: String, statusUrl: URL, generation: Int) {
+        Task {
+            for attempt in 0 ..< 45 {
+                guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
+                do {
+                    let cacheBusted = URL(string: "\(statusUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!
+                    let (data, response) = try await URLSession.shared.data(from: cacheBusted)
+                    if let http = response as? HTTPURLResponse, http.statusCode == 200,
+                       let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let photoUrl = stringValue(json, "photoUrl"),
+                       let url = URL(string: photoUrl)
+                    {
+                        photoPreviewUrl = url
+                        photoPreviewImage = nil
+                        photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Cloud server")).uploaded(
+                            byteCount: intValue(json, "fileSizeBytes"),
+                            contentType: stringValue(json, "contentType"),
+                            previewUrl: photoUrl,
+                            requestId: stringValue(json, "requestId") ?? requestId,
+                            source: "Cloud server",
+                            uploadedAt: stringValue(json, "uploadedAt")
+                        )
+                        cameraStatus = "Camera: loaded photo preview"
+                        activePhotoRequestId = nil
+                        append(tag: "LIVE", text: "local photo ready \(photoUrl)")
+                        return
+                    }
+                    if attempt == 0 || attempt % 10 == 9 {
+                        append(tag: "LIVE", text: "waiting for upload \(requestId)")
+                    }
+                } catch {
+                    if attempt == 0 || attempt % 10 == 9 {
+                        append(tag: "LIVE", text: "waiting for local photo server")
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            if activePhotoRequestId == requestId {
+                cameraStatus = "Camera: timed out waiting for local server upload"
+            }
+        }
+    }
+
+    private func pollVideoPreview(requestId: String, statusUrl: URL, generation: Int) {
+        Task {
+            for attempt in 0 ..< 180 {
+                guard activeVideoRequestId == requestId, videoPollGeneration == generation else { return }
+                do {
+                    let cacheBusted = URL(string: "\(statusUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!
+                    let (data, response) = try await URLSession.shared.data(from: cacheBusted)
+                    if let http = response as? HTTPURLResponse, http.statusCode == 200,
+                       let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    {
+                        let mediaType = stringValue(json, "mediaType")
+                        let videoUrl = stringValue(json, "videoUrl")
+                            ?? (mediaType == "video" ? (stringValue(json, "mediaUrl") ?? stringValue(json, "url")) : nil)
+                        if let videoUrl, let url = URL(string: videoUrl) {
+                            videoPreviewUrl = url
+                            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "preview", uploadUrl: webhookUrl))
+                                .updated(
+                                    byteCount: intValue(json, "fileSizeBytes"),
+                                    contentType: stringValue(json, "contentType"),
+                                    mediaUrl: stringValue(json, "mediaUrl") ?? stringValue(json, "url"),
+                                    previewUrl: videoUrl,
+                                    requestId: stringValue(json, "requestId") ?? requestId,
+                                    state: "preview",
+                                    uploadedAt: stringValue(json, "uploadedAt")
+                                )
+                            cameraStatus = "Camera: loaded video preview"
+                            activeVideoRequestId = nil
+                            append(tag: "LIVE", text: "local video ready \(videoUrl)")
+                            return
+                        }
+                    }
+                    if attempt == 0 || attempt % 10 == 9 {
+                        append(tag: "LIVE", text: "waiting for video upload \(requestId)")
+                    }
+                } catch {
+                    if attempt == 0 || attempt % 10 == 9 {
+                        append(tag: "LIVE", text: "waiting for local video server")
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            if activeVideoRequestId == requestId {
+                activeVideoRequestId = nil
+                videoRecording = false
+                videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "error", uploadUrl: webhookUrl))
+                    .updated(error: "Timed out waiting for local server upload", requestId: requestId, state: "error")
+                cameraStatus = "Camera: timed out waiting for local server video upload"
+            }
+        }
+    }
+
+    private var isDirectPhoneWebRtcSelected: Bool {
+        !streamCloudServerEnabled
+    }
+}
+
+extension ExampleEvent {
+    static func make(tag: String, text: String) -> ExampleEvent {
+        ExampleEvent(
+            time: DateFormatter.exampleEventTime.string(from: Date()),
+            tag: tag,
+            text: text
+        )
+    }
+}
+
+extension DateFormatter {
+    static let exampleEventTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+}
+
+extension Array {
+    func ifEmpty(_ fallback: [Element]) -> [Element] {
+        isEmpty ? fallback : self
+    }
+}
+
+func stringValue(_ values: [String: Any], _ key: String) -> String? {
+    guard let value = values[key] as? String else { return nil }
+    return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+}
+
+func intValue(_ values: [String: Any], _ key: String) -> Int? {
+    if let int = values[key] as? Int { return int }
+    if let number = values[key] as? NSNumber { return number.intValue }
+    return nil
+}
+
+func intValue(_ value: Any?) -> Int? {
+    if let int = value as? Int { return int }
+    if let number = value as? NSNumber { return number.intValue }
+    return nil
+}
+
+func boolValue(_ values: [String: Any], _ key: String) -> Bool? {
+    if let bool = values[key] as? Bool { return bool }
+    if let number = values[key] as? NSNumber { return number.boolValue }
+    return nil
+}
+
+extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+func connectionLabel(_ status: GlassesRuntimeState?) -> String {
+    status?.connection.rawValue ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
+}
+
+func isGlassesConnected(_ status: GlassesRuntimeState?) -> Bool {
+    status?.connected == true
+}
+
+func connectedGlassesInfo(_ status: GlassesRuntimeState?) -> ConnectedGlassesInfo? {
+    status?.device
+}
+
+func otaConnectionKey(_ status: GlassesRuntimeState?) -> String {
+    let key = [
+        connectedGlassesInfo(status)?.bluetoothName,
+        connectedGlassesInfo(status)?.serialNumber,
+        connectedGlassesInfo(status)?.deviceModel?.deviceType,
+    ]
+    .compactMap { $0 }
+    .joined(separator: "|")
+    return key.isEmpty ? "connected" : key
+}
+
+func otaAutoCheckKey(_ status: GlassesRuntimeState?, versionInfoSignature: String? = nil) -> String {
+    "\(otaConnectionKey(status))|\(versionInfoSignature ?? otaVersionSignature(status))"
+}
+
+func otaVersionSignature(_ status: GlassesRuntimeState?) -> String {
+    guard isGlassesConnected(status) else {
+        return "disconnected"
+    }
+    let key = [
+        connectedGlassesInfo(status)?.buildNumber,
+        status?.firmware?.buildNumber,
+        connectedGlassesInfo(status)?.appVersion,
+        status?.firmware?.appVersion,
+        status?.firmware?.source.rawValue,
+        status?.firmware?.version,
+    ]
+    .compactMap { $0 }
+    .joined(separator: "|")
+    return key.isEmpty ? "version-unknown" : key
+}
+
+func otaVersionInfoSignature(_ event: VersionInfoResult) -> String {
+    let key = [
+        event.buildNumber,
+        event.appVersion,
+        event.mtkFirmwareVersion,
+        event.besFirmwareVersion,
+        event.firmwareVersion,
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "|")
+    return key.isEmpty ? "version-unknown" : key
+}
+
+func otaAppIdentity(_ status: GlassesRuntimeState?) -> String? {
+    guard let device = connectedGlassesInfo(status) else { return nil }
+    let key = [device.buildNumber, device.appVersion]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: "|")
+    return key.isEmpty ? nil : key
+}
+
+func otaAppIdentity(_ event: VersionInfoResult) -> String? {
+    let key = [event.buildNumber, event.appVersion]
+        .filter { !$0.isEmpty }
+        .joined(separator: "|")
+    return key.isEmpty ? nil : key
+}
+
+func versionValue(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return nil
+    }
+    return trimmed
+}
+
+func resolveMentraLiveVersions(_ status: GlassesRuntimeState?, versionInfo: VersionInfoResult?) -> MentraLiveVersions {
+    guard isGlassesConnected(status) else {
+        return MentraLiveVersions()
+    }
+    return MentraLiveVersions(
+        appVersion: versionValue(versionInfo?.appVersion)
+            ?? versionValue(connectedGlassesInfo(status)?.appVersion)
+            ?? versionValue(status?.firmware?.appVersion),
+        besFirmwareVersion: versionValue(versionInfo?.besFirmwareVersion)
+            ?? (status?.firmware?.source == .bes ? versionValue(status?.firmware?.version) : nil),
+        mtkFirmwareVersion: versionValue(versionInfo?.mtkFirmwareVersion)
+            ?? (status?.firmware?.source == .mtk ? versionValue(status?.firmware?.version) : nil)
+    )
+}
+
+func isMentraLiveRuntime(_ status: GlassesRuntimeState?) -> Bool {
+    guard isGlassesConnected(status) else {
+        return false
+    }
+    let device = connectedGlassesInfo(status)
+    let model = [
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
+    ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+    return device?.deviceModel == .mentraLive || model.contains("mentra live")
+}
+
+func shouldShowMentraLiveVersions(_ status: GlassesRuntimeState?) -> Bool {
+    isMentraLiveRuntime(status)
+}
+
+func versionLabel(_ version: String?) -> String {
+    version ?? "Unknown"
+}
+
+@MainActor
+func firmwareCardLabel(model: BluetoothViewModel) -> String {
+    if shouldShowMentraLiveVersions(model.glassesValues), let appVersion = model.mentraLiveVersions.appVersion {
+        return appVersion
+    }
+    return firmwareLabel(model.glassesValues)
+}
+
+@MainActor
+func firmwareCardSubLabel(model: BluetoothViewModel) -> String {
+    if shouldShowMentraLiveVersions(model.glassesValues), model.mentraLiveVersions.appVersion != nil {
+        return "ASG client"
+    }
+    return firmwareSubLabel(model.glassesValues)
+}
+
+func otaSessionKey(_ status: OtaStatusEvent) -> String {
+    status.sessionId.isEmpty ? "current-ota" : status.sessionId
+}
+
+func modelLabel(_ status: GlassesRuntimeState?) -> String {
+    connectedGlassesInfo(status)?.deviceModel.map(deviceModelLabel) ?? "Mentra Live"
+}
+
+func deviceLabel(_ status: GlassesRuntimeState?) -> String {
+    let device = connectedGlassesInfo(status)
+    if let value = device?.bluetoothName, !value.isEmpty { return value }
+    if let value = device?.serialNumber, !value.isEmpty { return value }
+    if let value = device?.deviceModel { return deviceModelLabel(value) }
+    return "Mentra Live"
+}
+
+func supportsDisplay(_ status: GlassesRuntimeState?) -> Bool {
+    let device = connectedGlassesInfo(status)
+    let model = [
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
+    ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+
+    if model.contains("g1") || model.contains("g2") || model.contains("nex") || model.contains("mach")
+        || model.contains("z100") || model.contains("vuzix") || model.contains("display") || model.contains("frame")
+    {
+        return true
+    }
+    if model.contains("live") || model.contains("r1") || model.contains("ring") {
+        return false
+    }
+    return false
+}
+
+func discoveredDeviceKey(_ device: Device) -> String {
+    device.id
+}
+
+func batteryLevel(_ status: GlassesRuntimeState?) -> Int? {
+    guard isGlassesConnected(status), let level = status?.battery?.level, level >= 0 else { return nil }
+    return min(level, 100)
+}
+
+func batteryLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let level = batteryLevel(status) else {
+        return status?.connected == false || status?.connection == .disconnected ? "Not connected" : "Waiting for status"
+    }
+    return "\(level)%\(status?.battery?.charging == true ? " charging" : "")"
+}
+
+func wifiLabel(_ status: GlassesRuntimeState?) -> String {
+    switch status?.wifi {
+    case let .connected(ssid, _):
+        return ssid
+    case .disconnected:
+        return isGlassesConnected(status) ? "Not connected" : "Unknown"
+    case .none:
+        return "Unknown"
+    }
+}
+
+func connectedWifiStatus(_ status: GlassesRuntimeState?) -> (ssid: String, localIp: String?)? {
+    guard case let .connected(ssid, localIp) = status?.wifi else {
+        return nil
+    }
+    return (ssid, localIp)
+}
+
+func isDisplayableOtaStatus(_ status: OtaStatusEvent) -> Bool {
+    status.status != "idle" || !(status.errorMessage ?? "").isEmpty
+}
+
+func enabledHotspotStatus(_ hotspot: HotspotStatus) -> (ssid: String, password: String, localIp: String)? {
+    guard case let .enabled(ssid, password, localIp) = hotspot else {
+        return nil
+    }
+    return (ssid, password, localIp)
+}
+
+func enabledHotspotStatus(_ status: GlassesRuntimeState?) -> (ssid: String, password: String, localIp: String)? {
+    guard let hotspot = status?.hotspot else {
+        return nil
+    }
+    return enabledHotspotStatus(hotspot)
+}
+
+func hotspotLabel(_ status: GlassesRuntimeState?, fallbackEnabled: Bool) -> String {
+    if let hotspot = enabledHotspotStatus(status) {
+        return "\(hotspot.ssid) · \(hotspot.localIp)"
+    }
+    return status == nil && fallbackEnabled ? "waiting for SSID" : "disabled"
+}
+
+private let mentraLiveDefaultHotspotPassword = "00001111"
+
+func galleryServerUrl(_ status: GlassesRuntimeState?, fallbackEnabled: Bool) -> String? {
+    let hotspot = enabledHotspotStatus(status)
+    guard hotspot != nil || (status == nil && fallbackEnabled) else { return nil }
+
+    let gateway = hotspot?.localIp ?? "192.168.43.1"
+    return "http://\(gateway):8089"
+}
+
+func galleryHotspotSsidLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let ssid = enabledHotspotStatus(status)?.ssid else {
+        return "the glasses hotspot"
+    }
+    return "Wi-Fi \(ssid)"
+}
+
+func galleryHotspotPasswordLabel(_ status: GlassesRuntimeState?) -> String {
+    enabledHotspotStatus(status)?.password ?? mentraLiveDefaultHotspotPassword
+}
+
+func firmwareLabel(_ status: GlassesRuntimeState?) -> String {
+    status?.firmware?.version ?? "Unknown"
+}
+
+func firmwareSubLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let firmware = status?.firmware else {
+        return "not reported"
+    }
+    switch firmware.source {
+    case .firmware:
+        return "reported"
+    case .bes:
+        return "BES firmware"
+    case .mtk:
+        return "MTK firmware"
+    case .app:
+        guard let appVersion = firmware.appVersion else { return "not reported" }
+        return "ASG app \(appVersion)"
+    case .unknown:
+        return "not reported"
+    }
+}
+
+func rssiLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let signal = status?.signal?.strengthDbm else { return "Unknown" }
+    return "\(signal) dBm"
+}
+
+func rssiUpdatedLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let updatedAt = status?.signal?.updatedAt, updatedAt > 0 else { return "signal" }
+    let date = Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000)
+    return "updated \(DateFormatter.exampleEventTime.string(from: date))"
+}
+
+func bluetoothSearchLabel(_ status: PhoneSdkRuntimeState?) -> String {
+    status?.searching == true ? "Scanning" : "Idle"
+}
+
+func hasSavedConnectionTarget(_ status: PhoneSdkRuntimeState?) -> Bool {
+    status?.defaultDevice != nil
+}
+
+func savedConnectionTargetName(_ status: PhoneSdkRuntimeState?) -> String {
+    status?.defaultDevice?.name ?? "Saved glasses"
+}
+
+func savedConnectionTargetDetail(_ status: PhoneSdkRuntimeState?) -> String {
+    let model = status?.defaultDevice?.model.deviceType ?? "Saved model"
+    return "\(model) · mentraBluetoothSdk.connectDefault()"
+}
+
+func wifiScanResults(_ status: PhoneSdkRuntimeState?) -> [WifiScanResult] {
+    status?.wifiScanResults ?? []
+}
+
+extension GlassesRuntimeState {
+    func withBattery(level: Int, charging: Bool) -> GlassesRuntimeState {
+        guard case let .connected(_, connection, device, firmware, hotspot, ready, signal, voiceActivityDetectionEnabled, wifi) = self else {
+            return self
+        }
+        return .connected(
+            battery: GlassesBatteryState(charging: charging, level: level >= 0 ? level : nil),
+            connection: connection,
+            device: device,
+            firmware: firmware,
+            hotspot: hotspot,
+            ready: ready,
+            signal: signal,
+            voiceActivityDetectionEnabled: voiceActivityDetectionEnabled,
+            wifi: wifi
+        )
+    }
+
+    func withWifi(_ wifi: WifiStatus) -> GlassesRuntimeState {
+        guard case let .connected(battery, connection, device, firmware, hotspot, ready, signal, voiceActivityDetectionEnabled, _) = self else {
+            return self
+        }
+        return .connected(
+            battery: battery,
+            connection: connection,
+            device: device,
+            firmware: firmware,
+            hotspot: hotspot,
+            ready: ready,
+            signal: signal,
+            voiceActivityDetectionEnabled: voiceActivityDetectionEnabled,
+            wifi: wifi
+        )
+    }
+
+    func withHotspot(_ hotspot: HotspotStatus) -> GlassesRuntimeState {
+        guard case let .connected(battery, connection, device, firmware, _, ready, signal, voiceActivityDetectionEnabled, wifi) = self else {
+            return self
+        }
+        return .connected(
+            battery: battery,
+            connection: connection,
+            device: device,
+            firmware: firmware,
+            hotspot: hotspot,
+            ready: ready,
+            signal: signal,
+            voiceActivityDetectionEnabled: voiceActivityDetectionEnabled,
+            wifi: wifi
+        )
+    }
+}
+
+func elapsedText(_ date: Date?) -> String {
+    guard let date else { return "00:00:00" }
+    let seconds = max(0, Int(Date().timeIntervalSince(date)))
+    return durationLabel(seconds)
+}
+
+func durationLabel(_ seconds: Int) -> String {
+    let seconds = max(0, seconds)
+    return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+}
+
+func summarize(_ values: [String: Any]) -> String {
+    let parts = values.prefix(3).map { "\($0.key): \($0.value)" }
+    return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
+}
+
+func summarize(_ status: GlassesRuntimeState) -> String {
+    let parts = [
+        "connection: \(status.connection.rawValue)",
+        "ready: \(status.ready)",
+        status.battery?.level.map { "battery: \($0)%" },
+        status.wifi.map { _ in "wifi: \(wifiLabel(status))" },
+        status.hotspot.map { hotspot -> String in
+            switch hotspot {
+            case let .enabled(ssid, _, localIp):
+                return "hotspot: \(ssid) · \(localIp)"
+            case .disabled:
+                return "hotspot: disabled"
+            }
+        },
+        status.signal?.strengthDbm.map { "signal: \($0) dBm" },
+    ].compactMap { $0 }.prefix(3)
+    return parts.joined(separator: ", ")
+}
+
+func summarize(_ status: PhoneSdkRuntimeState) -> String {
+    let parts = [
+        "searching: \(status.searching)",
+        "wifiScanResults: \(status.wifiScanResults.count)",
+        "galleryModeEnabled: \(status.galleryMode.enabled)",
+        status.defaultDevice.map { "defaultDevice: \($0.name)" },
+    ].compactMap { $0 }.prefix(3)
+    return parts.joined(separator: ", ")
+}
+
+func photoStatusUrl(_ uploadUrlText: String, requestId: String) -> URL? {
+    guard let uploadUrl = URL(string: uploadUrlText),
+          uploadUrl.scheme == "http" || uploadUrl.scheme == "https",
+          let host = uploadUrl.host
+    else { return nil }
+    var components = URLComponents()
+    components.scheme = uploadUrl.scheme
+    components.host = host
+    components.port = uploadUrl.port
+    components.path = "/uploads/\(requestId).json"
+    return components.url
+}
+
+func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
+    guard let uploadUrl = URL(string: uploadUrlText),
+          uploadUrl.scheme == "http" || uploadUrl.scheme == "https",
+          let host = uploadUrl.host
+    else { return nil }
+    var components = URLComponents()
+    components.scheme = uploadUrl.scheme
+    components.host = host
+    components.port = uploadUrl.port
+    components.path = "/"
+    return components.url
+}
+
+func photoUploadValidationMessage(_ uploadUrlText: String) -> String? {
+    let value = uploadUrlText.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty {
+        return "Enter the cloud server media upload URL."
+    }
+    if value.contains("<computer-ip>") {
+        return "Replace <computer-ip> with the cloud server IP."
+    }
+    return nil
+}
+
+func videoStatusIsFailure(_ status: String) -> Bool {
+    [
+        "not_recording",
+        "request_id_mismatch",
+        "service_unavailable",
+        "json_error",
+        "battery_low",
+        "camera_busy",
+        "storage_unavailable",
+        "integrity_failed",
+        "error",
+    ].contains(status)
+}
+
+func checkLocalRtmpServer(rtmpUrl: String) async throws {
+    guard isValidRtmpUrl(rtmpUrl) else {
+        throw ExampleActionError(message: "Enter a valid rtmp:// or rtmps:// publish URL.")
+    }
+    guard let previewUrl = rtmpHlsPreviewUrl(rtmpUrl) else { return }
+    try await checkHttpPreviewServer(url: previewUrl, setupMessage: localRtmpSetupMessage)
+}
+
+func checkLocalSrtServer(srtUrl: String) async throws {
+    guard isValidSrtUrl(srtUrl) else {
+        throw ExampleActionError(message: "Enter a valid srt:// publish URL.")
+    }
+    guard let previewUrl = srtHlsPreviewUrl(srtUrl) else { return }
+    try await checkHttpPreviewServer(url: previewUrl, setupMessage: localSrtSetupMessage)
+}
+
+func checkLocalWebrtcServer(whipUrl: String) async throws {
+    guard let previewUrl = webrtcPreviewUrl(whipUrl) else {
+        throw ExampleActionError(message: "Enter a valid http:// or https:// WHIP URL.")
+    }
+    try await checkHttpPreviewServer(url: previewUrl, setupMessage: localWebrtcSetupMessage)
+}
+
+func streamPreviewIsReady(streamUrl: String, protocol selectedProtocol: ExampleStreamProtocol) async -> Bool {
+    switch selectedProtocol {
+    case .rtmp:
+        guard let previewUrl = rtmpHlsPreviewUrl(streamUrl) else { return false }
+        return await hlsPreviewIsReady(previewUrl)
+    case .srt:
+        guard let previewUrl = srtHlsPreviewUrl(streamUrl) else { return false }
+        return await hlsPreviewIsReady(previewUrl)
+    case .webrtc:
+        guard let previewUrl = webrtcPreviewUrl(streamUrl) else { return false }
+        return await webPreviewIsReady(previewUrl)
+    }
+}
+
+private func webPreviewIsReady(_ url: URL) async -> Bool {
+    var request = URLRequest(url: url)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 2
+    do {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            return false
+        }
+        return (200 ... 299).contains(http.statusCode)
+    } catch {
+        return false
+    }
+}
+
+private func hlsPreviewIsReady(_ url: URL) async -> Bool {
+    var request = URLRequest(url: url)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 2
+    do {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            return false
+        }
+        return String(data: data, encoding: .utf8)?.contains("#EXTM3U") == true
+    } catch {
+        return false
+    }
+}
+
+func checkHttpPreviewServer(url: URL, setupMessage: (String) -> String) async throws {
+    var request = URLRequest(url: url)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 3
+    do {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ExampleActionError(message: setupMessage("invalid response"))
+        }
+        // MediaMTX may return 404 before a stream exists; any HTTP response means it is reachable.
+        _ = http.statusCode
+    } catch let error as ExampleActionError {
+        throw error
+    } catch {
+        throw ExampleActionError(message: setupMessage(error.localizedDescription))
+    }
+}
+
+func rtmpHlsPreviewUrl(_ rtmpUrlText: String) -> URL? {
+    guard var components = URLComponents(string: rtmpUrlText),
+          components.scheme == "rtmp" || components.scheme == "rtmps",
+          let host = components.host,
+          isLocalPreviewHost(host)
+    else { return nil }
+    components.scheme = components.scheme == "rtmps" ? "https" : "http"
+    components.port = 8888
+    let streamPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    components.path = streamPath.isEmpty ? "/index.m3u8" : "/\(streamPath)/index.m3u8"
+    components.query = nil
+    return components.url
+}
+
+func srtHlsPreviewUrl(_ srtUrlText: String) -> URL? {
+    guard let components = URLComponents(string: srtUrlText),
+          components.scheme == "srt",
+          let host = components.host,
+          isLocalPreviewHost(host),
+          let streamPath = srtStreamPath(components)
+    else { return nil }
+
+    var previewComponents = URLComponents()
+    previewComponents.scheme = "http"
+    previewComponents.host = host
+    previewComponents.port = 8888
+    previewComponents.path = "/\(streamPath)/index.m3u8"
+    return previewComponents.url
+}
+
+private func srtStreamPath(_ components: URLComponents) -> String? {
+    guard let streamId = components.queryItems?.first(where: { $0.name.lowercased() == "streamid" })?.value else {
+        return nil
+    }
+    let pieces = streamId.split(separator: ":", omittingEmptySubsequences: false)
+    let path = ["publish", "read"].contains(pieces.first?.lowercased() ?? "") && pieces.count > 1
+        ? String(pieces[1])
+        : streamId
+    let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    return trimmedPath.isEmpty ? nil : trimmedPath
+}
+
+func isValidRtmpUrl(_ rtmpUrlText: String) -> Bool {
+    guard let components = URLComponents(string: rtmpUrlText) else { return false }
+    return (components.scheme == "rtmp" || components.scheme == "rtmps") && components.host != nil
+}
+
+func isValidSrtUrl(_ srtUrlText: String) -> Bool {
+    guard let components = URLComponents(string: srtUrlText) else { return false }
+    return components.scheme == "srt" && components.host != nil
+}
+
+func isLocalPreviewHost(_ host: String) -> Bool {
+    let normalized = host.lowercased()
+    if normalized == "localhost" || normalized.hasSuffix(".local") || normalized.hasPrefix("192.168.") || normalized.hasPrefix("10.") || normalized.hasPrefix("169.254.") {
+        return true
+    }
+    let parts = normalized.split(separator: ".").compactMap { Int($0) }
+    return parts.count == 4 && parts[0] == 172 && (16 ... 31).contains(parts[1])
+}
+
+func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
+    guard var components = URLComponents(string: whipUrlText),
+          components.scheme == "http" || components.scheme == "https",
+          components.host != nil
+    else { return nil }
+    if components.path.hasSuffix("/whip") {
+        components.path = String(components.path.dropLast("/whip".count))
+    }
+    if components.path.isEmpty {
+        components.path = "/"
+    }
+    components.query = nil
+    return components.url
+}
+
+func localRtmpSetupMessage(_ detail: String) -> String {
+    "Local RTMP/HLS server not reachable (\(detail)). Run python3 local-demo-cloud/server.py and paste the printed RTMP publish URL."
+}
+
+func localSrtSetupMessage(_ detail: String) -> String {
+    "Local SRT/HLS server not reachable (\(detail)). Run python3 local-demo-cloud/server.py and paste the printed SRT publish URL."
+}
+
+func localWebrtcSetupMessage(_ detail: String) -> String {
+    "Local WebRTC server not reachable (\(detail)). Run python3 local-demo-cloud/server.py and paste the printed WHIP publish URL."
+}
+
+func streamUrlValidationMessage(_ streamUrl: String) -> String? {
+    if streamUrl.isEmpty {
+        return "Stream URL is required."
+    }
+    if streamUrl.contains("<computer-ip>") {
+        return "Replace <computer-ip> with the matching publish URL printed by local demo cloud."
+    }
+    if streamUrl.contains("<") || streamUrl.contains(">") || streamUrl.contains("YOUR_") {
+        return "Replace the placeholder stream URL before starting."
+    }
+    if let components = URLComponents(string: streamUrl),
+       let scheme = components.scheme?.lowercased(),
+       scheme == "rtmp" || scheme == "rtmps"
+    {
+        let pathSegments = components.path.split(separator: "/").filter { !$0.isEmpty }
+        if pathSegments.count < 2 {
+            return "RTMP URL must include an app and stream key, for example rtmp://<computer-ip>:1935/live/mentra-live."
+        }
+    }
+    return nil
+}
