@@ -79,6 +79,38 @@ describe("LocalMiniappRuntime speaker stream state events", () => {
     })
   })
 
+  test("settles a failed stream from its scoped error event to stopped", async () => {
+    const {host, opens, outbound} = createHost({speakerState: "idle"})
+
+    await host.handleSpeakerStreamOpen(appId, {sampleRate: 24000}, "open-error")
+    const opened = opens[0]!
+    const streamId = opened.streamId as string
+    ;(opened.onEnded as (id: string, success: boolean, error: string | null, durationMs: number) => void)(
+      streamId,
+      false,
+      "decode failed",
+      12,
+    )
+
+    expect(outbound.slice(-2)).toEqual([
+      {
+        packageName: appId,
+        payload: {
+          type: "miniapp_speaker_state",
+          state: "error",
+          streamId,
+          errorCode: "INTERNAL",
+          errorMessage: "decode failed",
+          durationMs: 12,
+        },
+      },
+      {
+        packageName: appId,
+        payload: {type: "miniapp_speaker_state", state: "stopped"},
+      },
+    ])
+  })
+
   test("reports the replaced stream as ended before opening its replacement", async () => {
     const {host, opens, outbound} = createHost({speakerState: "playing", activeSpeakerStreamId: "old-stream"})
 

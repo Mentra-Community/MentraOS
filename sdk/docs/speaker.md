@@ -72,6 +72,11 @@ resolves, including before its first write. The state remains `playing` until
 the stream closes, aborts, is stopped, or the host reports that specific stream
 has ended. A late state event for another playback cannot end the live stream.
 
+`play()` and `speak()` report their playback state through the same state
+events. Those host events are not tied to a PCM stream ID, so they do not
+change `state` or `isPlaying` while a live stream is active. The stream remains
+authoritative until it ends, or `stop()` clears it.
+
 ---
 
 ## API
