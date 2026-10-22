@@ -122,6 +122,11 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     (`LocalMiniappView.tsx` `domStorageEnabled`) is the platform WebView store and is not partitioned by JS code.
     W9 partitions SimpleStorage and blobs by Core + account + (assigned package) workspace in
     `miniappDataPartition.ts`, and swaps development selections per context instead of rewriting every reader.
+17. W9 reconciler: an assigned install's provenance is `direct_download`, which `bootstrap.isInstalledMiniappAllowed`
+    and `AppRegistry.getActiveVersion` treat as a developer release under a workspace `localMiniappPolicy`. Phase 16
+    (`installMiniapp(url)`) needs a URL provenance. Compare installs against released versions on disk, not
+    `getActiveVersion`. Reconciler state is per Core + account in the `mentra-fleet` MMKV (`fleet.assignments.v1/`);
+    no lock is persisted. `assignmentReconcilerHost.ts` is started by the host, not by `engine.ts` yet.
 
 ## Open items
 
