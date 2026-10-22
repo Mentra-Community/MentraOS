@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient, type UseMutationOptions } from "@tanstack/react-query";
 import { OPERATOR_KEY_SCOPES, type CredentialView, type OrganizationCapability } from "@mentra/workspace-contract";
-import { ConfirmButton, expiryFromDateInput, SecretDialog } from "@mentra/workspace-ui";
+import { Button as MentraButton, ConfirmDialog, expiryFromDateInput, licenseStrings, SecretDialog, useAsking } from "@mentra/workspace-ui";
 import { Loader2, RefreshCcw } from "lucide-react";
 import { useId, useReducer, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
@@ -131,10 +131,7 @@ export function OperatorKeysPage() {
           <CreateKeyForm
             busy={busy}
             error={create.error}
-            onCreate={(input, onCreated) => {
-              revoke.reset();
-              create.mutate(input, { onSuccess: onCreated });
-            }}
+            onCreate={(input, onCreated) => create.mutate(input, { onSuccess: onCreated })}
           />
         </div>
       </section>
@@ -170,17 +167,12 @@ export function OperatorKeysPage() {
           <KeyTable
             keys={items}
             busy={busy}
-            onRevoke={credentialId => {
+            onRevoke={async credentialId => {
               create.reset();
-              revoke.mutate(credentialId);
+              await revoke.mutateAsync(credentialId);
             }}
           />
         )}
-        {revoke.error ? (
-          <div className="px-5 pb-5">
-            <ErrorNotice error={revoke.error} />
-          </div>
-        ) : null}
       </section>
 
       <SecretGate secret={secret} onDone={() => dispatch({ type: "dismissed" })} />
@@ -275,7 +267,11 @@ function CreateKeyForm({
   );
 }
 
-function KeyTable({ keys, busy, onRevoke }: { keys: CredentialView[]; busy: boolean; onRevoke(credentialId: string): void }) {
+/** The keys, each with Revoke, which asks in a dialog that shows a refusal itself (`onRevoke` rejects with it). */
+function KeyTable({ keys, busy, onRevoke }: { keys: CredentialView[]; busy: boolean; onRevoke(credentialId: string): Promise<void> }) {
+  const ask = useAsking<CredentialView>(key => key.credentialId, busy);
+  const asking = ask.asking;
+  const t = licenseStrings.confirm;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -310,19 +306,40 @@ function KeyTable({ keys, busy, onRevoke }: { keys: CredentialView[]; busy: bool
               <td className="py-3 pr-4">{key.expiresAt ? formatDate(key.expiresAt) : "Never"}</td>
               <td className="py-3 pr-4">{key.lastUsedAt ? formatDateTime(key.lastUsedAt) : "Never used"}</td>
               <td className="py-3 pr-5 text-right">
-                <ConfirmButton
-                  label="Revoke"
-                  ariaLabel={`Revoke ${key.name}`}
-                  prompt={`Revoke ${key.name}? Anything using it stops working.`}
-                  confirmLabel="Confirm revoke"
+                <MentraButton
+                  ref={ask.trigger(key.credentialId)}
+                  type="button"
+                  variant="destructive-secondary"
+                  size="sm"
+                  aria-label={`Revoke ${key.name}`}
                   disabled={busy}
-                  onConfirm={() => onRevoke(key.credentialId)}
-                />
+                  onClick={() => ask.ask(key, keys)}
+                >
+                  Revoke
+                </MentraButton>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {asking ? (
+        <ConfirmDialog
+          title={t.revokeKey.title(asking.name)}
+          description={t.revokeKey.body}
+          cancelLabel={t.cancel}
+          confirmLabel={t.revokeKey.action}
+          onConfirm={async () => {
+            try {
+              await onRevoke(asking.credentialId);
+              return null;
+            } catch (error) {
+              // In this page's words for a refusal, as the notices around it.
+              return error instanceof Error ? error.message : "Request failed";
+            }
+          }}
+          onClose={ask.close}
+        />
+      ) : null}
     </div>
   );
 }

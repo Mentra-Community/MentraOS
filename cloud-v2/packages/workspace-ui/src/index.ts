@@ -68,7 +68,6 @@ export { WorkspaceAuditPanel } from "./components/audit-panel";
 export {
   Avatar,
   Badge,
-  ConfirmButton,
   CopyButton,
   Count,
   ErrorNotice,
@@ -215,8 +214,9 @@ export {
   type CatalogProps,
 } from "./components/licenses/catalog";
 // The Members list's licenses: `WorkspaceMembersPanel` takes a `MembersLicenses` source (billing's catalog) to show each
-// member's licenses as chips. A question that can't be taken back (Unassign, Remove) is asked in a `ConfirmDialog`.
-export { ConfirmDialog } from "./components/confirm-dialog";
+// member's licenses as chips. A question that can't be taken back (Unassign, Remove, Leave, Delete, Revoke) is asked in a
+// `ConfirmDialog`; `useAsking` is how a list of rows opens one and where focus goes when it closes.
+export { ConfirmDialog, useAsking } from "./components/confirm-dialog";
 export type { MembersLicenses } from "./components/members-panel";
 
 // The two pages, composed from the pieces above: the workspace's Licenses page, and the person's own Billing page. Each

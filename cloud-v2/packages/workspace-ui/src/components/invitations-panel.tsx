@@ -24,12 +24,14 @@ import { formatDate } from "../lib/format";
 import { cn } from "../lib/utils";
 import { invitationsQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "../roles";
+import { licenseStrings } from "../strings/licenses";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { NativeSelect } from "../ui/native-select";
-import { Avatar, ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { Avatar, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { ConfirmDialog, useAsking } from "./confirm-dialog";
 
 const TITLE = "Invitations";
 const DESCRIPTION = "Invite people by email. An invitation can only be accepted by the address it was sent to.";
@@ -168,7 +170,10 @@ function InviteForm({
   );
 }
 
-/** The pending invitations, each with Resend and Revoke where the viewer could have sent it. */
+/**
+ * The pending invitations, each with Resend and Revoke where the viewer could have sent it. Revoke asks in a dialog,
+ * which shows a refusal itself; a failed Resend is shown under the list.
+ */
 function PendingInvitationsList({
   api,
   workspaceId,
@@ -192,6 +197,11 @@ function PendingInvitationsList({
     api.revokeInvitation(workspaceId, invitationId),
   );
   const busy = resend.isPending || revoke.isPending;
+  const ask = useAsking<InvitationView>((invitation) => invitation.invitationId, busy);
+  // The invitations the viewer may resend or revoke: the ones with buttons, which focus moves between.
+  const manageable = viewer ? invitations.filter((invitation) => canChangeRole(viewer, null, invitation.role)) : [];
+  const asking = ask.asking;
+  const t = licenseStrings.confirm;
 
   if (invitations.length === 0) return <Restricted>No pending invitations.</Restricted>;
   return (
@@ -221,30 +231,41 @@ function PendingInvitationsList({
                   aria-label={`Resend invitation to ${invitation.email}`}
                   title="Sends a new link. The earlier link stops working."
                   disabled={busy}
-                  onClick={() => {
-                    revoke.reset();
-                    resend.mutate(invitation);
-                  }}
+                  onClick={() => resend.mutate(invitation)}
                 >
                   Resend
                 </Button>
-                <ConfirmButton
-                  label="Revoke"
-                  ariaLabel={`Revoke invitation for ${invitation.email}`}
-                  prompt={`Revoke the invitation for ${invitation.email}?`}
-                  confirmLabel="Confirm revoke"
+                <Button
+                  ref={ask.trigger(invitation.invitationId)}
+                  type="button"
+                  variant="destructive-secondary"
+                  size="sm"
+                  aria-label={`Revoke invitation for ${invitation.email}`}
                   disabled={busy}
-                  onConfirm={() => {
-                    resend.reset();
-                    revoke.mutate(invitation.invitationId);
-                  }}
-                />
+                  onClick={() => ask.ask(invitation, manageable)}
+                >
+                  Revoke
+                </Button>
               </div>
             ) : null}
           </li>
         ))}
       </ul>
-      <ErrorNotice error={resend.error ?? revoke.error} />
+      <ErrorNotice error={resend.error} />
+      {asking ? (
+        <ConfirmDialog
+          title={t.revokeInvitation.title(asking.email)}
+          description={t.revokeInvitation.body}
+          cancelLabel={t.cancel}
+          confirmLabel={t.revokeInvitation.action}
+          onConfirm={async () => {
+            resend.reset();
+            await revoke.mutateAsync(asking.invitationId);
+            return null;
+          }}
+          onClose={ask.close}
+        />
+      ) : null}
     </>
   );
 }
