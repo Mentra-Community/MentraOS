@@ -529,6 +529,19 @@ async function downloadMiniAppZip(
 }
 
 /**
+ * Every release records the SHA-256 of the ZIP it installed, a bundled or release-QR install included, so Fleet can
+ * report it and an assignment can tell whether its URL serves the same bytes. Development snapshots record none.
+ */
+export async function withReleaseDigest(
+  identity: MiniappReleaseIdentity,
+  version: string,
+  bytes: Uint8Array,
+): Promise<MiniappReleaseIdentity> {
+  if (identity.bundleSha256 || version.startsWith("dev-")) return identity
+  return {...identity, bundleSha256: await sha256Hex(bytes)}
+}
+
+/**
  * Write validated archive bytes to a unique host-owned cache file. Native
  * extraction reads this private copy, never a caller's path that could change
  * while the install waits in the queue. Startup cleanup removes leftovers.
@@ -942,6 +955,40 @@ class AppRegistry {
     return readStoredInstallReasons(packageName)?.assignment ?? null
   }
 
+  /** Every installed package holding an `assignment` reason, whichever account's assignment recorded it. */
+  public getAssignedPackages(): string[] {
+    return this.getPackageNames().filter((packageName) =>
+      readStoredInstallReasons(packageName)?.reasons.includes("assignment"),
+    )
+  }
+
+  /** A live-development URL, build or snapshot would run for the package instead of its installed release. */
+  public hasDevelopmentSelection(packageName: string): boolean {
+    return (
+      readDevAppRecord(packageName) !== null ||
+      storage.load<string>(`${packageName}_dev_url`).is_ok() ||
+      this.getSelectedDevSnapshot(packageName) !== null ||
+      this.getInstalledVersions(packageName).some(
+        (version) => version.startsWith("dev-") && isDevSnapshotVisible(packageName, version),
+      )
+    )
+  }
+
+  /**
+   * Clear the package's live-development selection and its development builds, as a release install does, so
+   * launching runs its installed release. Serialized with installs.
+   */
+  public clearDevelopmentSelection(packageName: string): Promise<void> {
+    return runInstallFilesystemTransaction(async () => {
+      invalidateDevSnapshotRequests(packageName)
+      this.clearDevArtifacts(packageName)
+      const active = storage.load<string>(activeVersionKey(packageName))
+      if (active.is_ok() && active.value.startsWith("dev-")) storage.remove(activeVersionKey(packageName))
+      this.refreshNeeded = true
+      this.notify()
+    })
+  }
+
   /** Add the `assignment` reason (or replace its assignment), keeping every other reason. */
   public setMiniappAssignment(packageName: string, assignment: MiniappAssignment): void {
     this.recordAssignment(packageName, assignment)
@@ -1352,7 +1399,7 @@ class AppRegistry {
       source: version.startsWith("dev-") ? "dev_snapshot" : localZip ? "bundled_asset" : "direct_download",
     }
     const releaseIdentity: MiniappReleaseIdentity = {
-      ...callerIdentity,
+      ...(await withReleaseDigest(callerIdentity, version, bytes)),
       ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
     }
     const validateTrust = () => {

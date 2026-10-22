@@ -5,7 +5,7 @@ import type {FleetInstallReason} from "@mentra/cloud-protocol"
 
 mock.module("../../AppRegistry", () => ({default: {}}))
 
-const {createRegistryInventorySource} = await import("../registryInventorySource")
+const {createRegistryInventorySource, UNRECORDED_DIGEST} = await import("../registryInventorySource")
 type InventoryRegistry = Parameters<typeof createRegistryInventorySource>[0]
 
 interface FakePackage {
@@ -76,8 +76,8 @@ describe("the registry inventory source", () => {
   test("lists each package's active release with its digest and reasons, and leaves development builds out", () => {
     expect(createRegistryInventorySource(registry).list()).toEqual([
       {packageName: "com.acme.notes", versionName: "1.1.0", digest: SHA_B, reasons: ["explicit", "assignment"]},
-      // No recorded digest: listed, and the collector leaves it out of the record.
-      {packageName: "com.mentra.captions", versionName: "2.0.0", digest: "", reasons: ["bundled"]},
+      // Installed before digests were recorded: still listed, with the unrecorded digest.
+      {packageName: "com.mentra.captions", versionName: "2.0.0", digest: UNRECORDED_DIGEST, reasons: ["bundled"]},
     ])
   })
 
