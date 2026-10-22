@@ -32,6 +32,7 @@ export {
   getDevAppRecords,
   getDevAppSourcePackage,
   DEV_APP_PACKAGE_NAME,
+  hasAssignmentReason,
   SignedMiniappDevBuildError,
   type DevAppRecord,
   type InstallBundleOptions,
