@@ -25,6 +25,7 @@ import {
   getWorkspaceApi,
   type InvitationPreview,
   type MyWorkspace,
+  onWorkspaceApiReady,
   WORKSPACE_ERROR,
   workspaceErrorCode,
 } from "@/services/fleet/workspaceApi"
@@ -380,6 +381,15 @@ async function pass(): Promise<void> {
   const api = getWorkspaceApi()
   const [mine, invitations] = await Promise.allSettled([api.mine(), api.invitations()])
 
+  // A read dropped for another account is stale: without the person's workspace an invitation would offer a
+  // plain Join. Look again as the account signed in now.
+  const sessionChanged = (result: PromiseSettledResult<unknown>) =>
+    result.status === "rejected" && workspaceErrorCode(result.reason) === WORKSPACE_ERROR.sessionChanged
+  if (sessionChanged(mine) || sessionChanged(invitations)) {
+    again = true
+    return
+  }
+
   if (mine.status === "fulfilled") {
     useMyWorkspaceStore.getState().set(mine.value)
   } else {
@@ -424,7 +434,11 @@ export function runFleetSheets(): Promise<void> {
   return running
 }
 
-/** Runs the Fleet sheets at startup and on foreground, and the notice on Fleet's answers, while someone is signed in. */
+/**
+ * Runs the Fleet sheets at startup, on foreground and once the workspace client answers for the signed-in
+ * account, and the notice on
+ * Fleet's answers, while someone is signed in.
+ */
 export function FleetSheets() {
   const {user} = useAuth()
   const userId = user?.id
@@ -439,9 +453,11 @@ export function FleetSheets() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void runFleetSheets()
     })
+    const unready = onWorkspaceApiReady(() => void runFleetSheets())
     const unsubscribe = onFleetManagementStateChanged((state) => void showNoticeForFleetState(state))
     return () => {
       subscription.remove()
+      unready()
       unsubscribe()
     }
   }, [userId])

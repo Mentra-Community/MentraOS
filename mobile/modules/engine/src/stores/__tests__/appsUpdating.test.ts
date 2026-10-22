@@ -212,6 +212,22 @@ describe("miniapp update availability", () => {
     expect(ensureRunning).toHaveBeenCalledTimes(1)
   })
 
+  test("a miniapp whose access was revoked is not brought to the foreground, even from a stale running object", async () => {
+    const accessRevoked = mock(() => {})
+    installHooks({onUpdateBlocked: blocked, onOpenRequested: opened, onAccessRevoked: accessRevoked})
+    apps.setState({apps: [{...target, running: true}]})
+    revoked.add(target.packageName)
+    await apps.getState().setForeground(target.packageName)
+    expect(apps.getState().foregroundedPackage).toBeNull()
+    expect(apps.getState().apps[0].foregrounded).toBeFalsy()
+    expect(accessRevoked).toHaveBeenCalledTimes(1)
+
+    revoked.delete(target.packageName)
+    await apps.getState().setForeground(target.packageName)
+    expect(apps.getState().foregroundedPackage).toBe(target.packageName)
+    expect(accessRevoked).toHaveBeenCalledTimes(1)
+  })
+
   test("updating one miniapp does not block another", async () => {
     const other = {...target, packageName: "com.test.other"}
     apps.getState().setApps([target, other])

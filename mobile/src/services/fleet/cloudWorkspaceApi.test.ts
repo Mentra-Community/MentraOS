@@ -8,7 +8,7 @@ import {
   toWorkspaceApiError,
 } from "@/services/fleet/cloudWorkspaceApi"
 import {useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
-import {getWorkspaceApi, workspaceErrorCode} from "@/services/fleet/workspaceApi"
+import {getWorkspaceApi, onWorkspaceApiReady, workspaceErrorCode} from "@/services/fleet/workspaceApi"
 
 type SessionListener = (change: {reason: string; coreUrl: string | null; mentraUserId: string | null}) => void
 
@@ -158,5 +158,24 @@ describe("installing the cloud workspace calls", () => {
     uninstall()
     expect(getWorkspaceApi()).not.toBe(cloudWorkspaceApi)
     expect(host.__listeners.size).toBe(0)
+  })
+
+  test("tells the sheets to look again when another account signs in, not on a reconnect or a sign-out", () => {
+    const ready = jest.fn()
+    const unready = onWorkspaceApiReady(ready)
+    const uninstall = installCloudWorkspaceApi()
+    expect(ready).toHaveBeenCalledTimes(1)
+
+    signIn("user_a", "reconnect")
+    signIn(null, "signed_out")
+    expect(ready).toHaveBeenCalledTimes(1)
+
+    signIn("user_b")
+    expect(ready).toHaveBeenCalledTimes(2)
+    signIn("user_b", "reconnect")
+    expect(ready).toHaveBeenCalledTimes(2)
+
+    uninstall()
+    unready()
   })
 })

@@ -436,6 +436,20 @@ describe("the leave-first variant", () => {
     await press(screen, "Decline")
     await finish(run)
   })
+
+  it("looks again instead of offering a plain Join when the workspace read was dropped for a session change", async () => {
+    const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
+    ;(core.api.mine as jest.Mock).mockRejectedValueOnce(failWith("session_changed"))
+    setWorkspaceApi(core.api)
+    screen = render(<ModalProvider>{null}</ModalProvider>)
+    const run = start()
+
+    expect(await screen.findByText("Leave Northwind Labs")).toBeTruthy()
+    expect(screen.queryByText("Join")).toBeNull()
+    expect(core.api.mine).toHaveBeenCalledTimes(2)
+    await press(screen, "Decline")
+    await finish(run)
+  })
 })
 
 describe("the Fleet notice", () => {
@@ -704,6 +718,32 @@ describe("when the sheets run", () => {
       expect(useMyWorkspaceStore.getState().loaded).toBe(false)
     } finally {
       addListener.mockRestore()
+    }
+  })
+
+  it("looks again once the real client is wired after sign-in, without waiting for a foreground", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {})
+    const addListener = jest
+      .spyOn(AppState, "addEventListener")
+      .mockImplementation((() => ({remove: jest.fn()})) as never)
+    try {
+      screen = render(
+        <ModalProvider>
+          <FleetSheets />
+        </ModalProvider>,
+      )
+      await act(async () => {
+        for (let tick = 0; tick < 20; tick++) await Promise.resolve()
+      })
+      expect(screen.queryByText("Ridgeline Field Services invited you to join their workspace")).toBeNull()
+
+      const core = fakeCore({invitations: [invitation(RIDGELINE)]})
+      act(() => setWorkspaceApi(core.api))
+      expect(await screen.findByText("Ridgeline Field Services invited you to join their workspace")).toBeTruthy()
+      await press(screen, "Decline")
+    } finally {
+      addListener.mockRestore()
+      warn.mockRestore()
     }
   })
 

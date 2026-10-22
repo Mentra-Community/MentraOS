@@ -50,13 +50,38 @@ const unwiredWorkspaceApi: WorkspaceApi = {
 }
 
 let current: WorkspaceApi = unwiredWorkspaceApi
+const readyListeners = new Set<() => void>()
 
 /** The workspace calls in use. */
 export const getWorkspaceApi = (): WorkspaceApi => current
 
+/**
+ * Calls `listener` each time real calls are wired, and each time they start answering for another account. The
+ * sheets mount at sign-in, before the app wires the client or binds the new account's Core session, so their
+ * first look finds nothing or is dropped as `session_changed`; this lets them look again. Returns the unsubscribe.
+ */
+export function onWorkspaceApiReady(listener: () => void): () => void {
+  readyListeners.add(listener)
+  return () => {
+    readyListeners.delete(listener)
+  }
+}
+
+/** Tells `onWorkspaceApiReady` listeners the calls can answer for the signed-in account now. */
+export function notifyWorkspaceApiReady(): void {
+  for (const listener of [...readyListeners]) {
+    try {
+      listener()
+    } catch (error) {
+      console.warn("Fleet: a workspace API listener failed", error)
+    }
+  }
+}
+
 /** Wires the real calls (or a fake in tests). Pass null to go back to the unwired default. */
 export function setWorkspaceApi(api: WorkspaceApi | null): void {
   current = api ?? unwiredWorkspaceApi
+  if (api) notifyWorkspaceApiReady()
 }
 
 /** Core's error code carried by a failed call, if it carries one. */
@@ -66,10 +91,15 @@ export function workspaceErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined
 }
 
-/** Core's error codes the sheets give their own words. The values are `CLIENT_WORKSPACE_ERRORS` in the contract. */
+/**
+ * The error codes the sheets act on. Core's are `CLIENT_WORKSPACE_ERRORS` in the contract; `sessionChanged` is the
+ * real client's (`WORKSPACE_CLIENT_ERROR` in `cloudWorkspaceApi.ts`).
+ */
 export const WORKSPACE_ERROR = {
   lastOwner: "last_owner",
   invitationExpired: "invitation_expired",
   invitationNotFound: "invitation_not_found",
   alreadyInWorkspace: "already_in_workspace",
+  /** The client's own code: the answer came for an account that is no longer signed in. */
+  sessionChanged: "session_changed",
 } as const

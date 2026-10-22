@@ -136,18 +136,31 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     except inside an install transaction's `apply` (a subscriber there could move the active pointer). The real
     `WorkspaceApi` is `mobile/src/services/fleet/cloudWorkspaceApi.ts`, installed by `MantleManager` before
     `engine.start()`. Inventory drops entries without `bundleSha256`: bundled and release-QR installs record none.
-    `isMiniappAccessRevoked` is gated in `stores/apps.ts` `start` (host `onAccessRevoked` alert) and `ensureRunning`.
-19. Local stack: `cloud-v2/scripts/fleet-local-stack.ts` (Core, fake GoTrue, built portals with `/__dev/login`) plus
+    `isMiniappAccessRevoked` is gated in `stores/apps.ts` `start` (host `onAccessRevoked` alert) and `ensureRunning`,
+    and in `setForeground`: Home's running-tile path foregrounds without `start`.
+19. Fleet sheets mount at sign-in, before `MantleManager` wires the client and before the new account's Core session
+    is bound. Their first look is "not wired" or `session_changed`; `onWorkspaceApiReady` (wire, account change) and
+    `pass()` re-looking on `session_changed` make the sheet show without a foreground. Never present an invitation
+    from a pass whose `mine()` was dropped: it offers plain Join instead of the leave-first variant.
+20. Revocation reaches the phone only as a 401/403 from an assigned URL; `resolveMiniappUrl` sends no credentials, so a
+    real private host cannot tell a removed member from anyone. A removed member's running private miniapp is
+    withdrawn (uninstalled once idle), not stopped. Device run 2026-10-22: `/tmp/fleet-e2e/phone/` (local, not kept).
+21. Local stack: `cloud-v2/scripts/fleet-local-stack.ts` (Core, fake GoTrue, built portals with `/__dev/login`) plus
     miniapp-store `fleet/scripts/dev-stack.ts` (MFM with a fake registry and miniapp host) and `fleet/scripts/seed.ts`
     (`--keep-alive` keeps "connected now" past the 10 minute window). The static portal server must send a
     Content-Type, or the module script is refused and the page is blank.
 
 ## Open items
 
+- Phone access to private miniapp URLs (item 20): who authenticates the resolve, and whether removal must stop
+  running private code before idle (provisioning spec "stops running private code"). Not decided in code.
 - Dates: OS-2099 includes Phase 12; Oct 30 / Nov 11 / Nov 19 are meeting evidence, not checked commitments.
 - Cosmos boundary for the one-workspace guard (design is Cosmos-safe on paper; spike on Cosmos staging NOT run); named owners O1-O6; harness host readiness is uninspected.
 
 ## Tests and verification
 
 - Guard/cleanup: `tests/one-workspace-{guard,cleanup}.integration.test.ts`. Protocol: `cd cloud-v2/packages/protocol && bun test`. Core: `cd cloud-v2 && bun run test`.
-- Device evidence follows the plan's checkpoint gate; none exists yet.
+- Device evidence follows the plan's checkpoint gate. Android (SM-S906U) against the local stack: flows (a)-(f),
+  (h), (i) and the URL-401 revocation pass on 2026-10-22; no iOS, glasses or real private-host evidence yet.
+- Local phone setup: debug build reads JS from `debug_http_host` in `com.mentra.mentra_preferences.xml`; the dev
+  miniapp host's self-signed cert needs a debug-only trust anchor in the generated `network_security_config.xml`.
