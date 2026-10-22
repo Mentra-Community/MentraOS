@@ -1009,9 +1009,23 @@ class AppRegistry {
     this.notify()
   }
 
+  /** The reasons a package holds while `replaced`, the identity of a release being replaced in place, is hidden. */
+  private installReasonsReplacing(
+    packageName: string,
+    replaced: MiniappReleaseIdentity | null,
+  ): MiniappInstallReason[] {
+    const reasons = this.getInstallReasons(packageName)
+    if (reasons.length > 0 || readStoredInstallReasons(packageName) || !replaced) return reasons
+    return [inferredInstallReason(replaced)]
+  }
+
   /** Writes without notifying: the install transaction notifies once its files commit. */
-  private recordAssignment(packageName: string, assignment: MiniappAssignment): void {
-    const reasons = new Set(this.getInstallReasons(packageName))
+  private recordAssignment(
+    packageName: string,
+    assignment: MiniappAssignment,
+    current: MiniappInstallReason[] = this.getInstallReasons(packageName),
+  ): void {
+    const reasons = new Set(current)
     reasons.add("assignment")
     writeStoredInstallReasons(packageName, {
       reasons: MINIAPP_INSTALL_REASONS.filter((reason) => reasons.has(reason)),
@@ -1019,13 +1033,17 @@ class AppRegistry {
     })
   }
 
-  private recordInstallReason(packageName: string, reason: Exclude<MiniappInstallReason, "assignment">): void {
-    const current = readStoredInstallReasons(packageName)
-    const reasons = new Set(this.getInstallReasons(packageName))
+  private recordInstallReason(
+    packageName: string,
+    reason: Exclude<MiniappInstallReason, "assignment">,
+    current: MiniappInstallReason[] = this.getInstallReasons(packageName),
+  ): void {
+    const stored = readStoredInstallReasons(packageName)
+    const reasons = new Set(current)
     reasons.add(reason)
     writeStoredInstallReasons(packageName, {
       reasons: MINIAPP_INSTALL_REASONS.filter((candidate) => reasons.has(candidate)),
-      ...(current?.assignment ? {assignment: current.assignment} : {}),
+      ...(stored?.assignment ? {assignment: stored.assignment} : {}),
     })
   }
 
@@ -1478,6 +1496,8 @@ class AppRegistry {
       : undefined
     const reasonsKey = installReasonsKey(packageName)
     const reasonsBefore = installReason ? snapshotInstallationMetadata<StoredInstallReasons>(reasonsKey) : undefined
+    // The pending activation hides a replaced same-version release from inference: take the reasons it held.
+    const reasonsAtActivation = installReason ? this.installReasonsReplacing(packageName, previousRelease) : []
 
     const rollbackJournal: InstallMetadataRollbackJournal = {
       schemaVersion: 1,
@@ -1532,8 +1552,8 @@ class AppRegistry {
           getInstallationMetadata().set(publisherKey, JSON.stringify(releaseIdentity.publisherKeyFingerprint))
         }
         getInstallationMetadata().set(releaseKey, JSON.stringify(releaseIdentity))
-        if (installReason === "assignment") this.recordAssignment(packageName, assignment!)
-        else if (installReason) this.recordInstallReason(packageName, installReason)
+        if (installReason === "assignment") this.recordAssignment(packageName, assignment!, reasonsAtActivation)
+        else if (installReason) this.recordInstallReason(packageName, installReason, reasonsAtActivation)
         if (!releaseInstall) recordDevSnapshotOwner(packageName, version)
         // Do not notify until the pending filesystem marker has committed.
         // A subscriber scanning here would exclude the pending version and

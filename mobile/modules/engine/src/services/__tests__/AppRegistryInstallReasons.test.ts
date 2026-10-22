@@ -124,6 +124,15 @@ describe("installation reasons", () => {
     expect(registry.clearMiniappAssignment(packageName)).toEqual([reason])
   })
 
+  test("a same-version replacement keeps the reason inferred before its activation hid the release", () => {
+    finalize("1.0.0", {source: "system_store"}).apply()
+    // While the replacement's pending activation is in place, the release is not a version on disk.
+    installed = []
+    finalize("1.0.0", {source: "direct_download"}, "assignment").apply()
+    installed = ["1.0.0"]
+    expect(registry.getInstallReasons(packageName)).toEqual(["bundled", "assignment"])
+  })
+
   test("withdrawing the only reason leaves none, and a later explicit install adds its own", () => {
     finalize("1.0.0", {source: "direct_download"}, "assignment").apply()
     installed = ["1.0.0"]
