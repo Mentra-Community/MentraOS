@@ -16,6 +16,8 @@ export type PortalUser = {
   /** The same ID under the Fleet UI contract's name. */
   mentraUserId?: string;
   email: string | null;
+  /** The person's name as sign-in gave it; absent from a Core that does not send one yet (then the footer shows the address). */
+  name?: string | null;
   emailVerified: boolean;
 };
 

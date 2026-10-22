@@ -20,16 +20,15 @@ deployment). Roles are `member`, `developer`, `admin` and `owner`.
 
 ```tsx
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query"
-import {createWorkspaceApi, WorkspaceMembersPanel, WorkspacePicker} from "@mentra/workspace-ui"
+import {createWorkspaceApi, WorkspaceMembersPanel} from "@mentra/workspace-ui"
 
 // "/api/portal/workspaces" in the workspace portal, "/api/admin/workspaces" in the admin portal.
 const api = createWorkspaceApi({basePath: "/api/portal/workspaces"})
 const queryClient = new QueryClient()
 
-function Page({workspaceId, setWorkspaceId}: {workspaceId: string | null; setWorkspaceId(id: string): void}) {
+function Page({workspaceId}: {workspaceId: string | null}) {
   return (
     <QueryClientProvider client={queryClient}>
-      <WorkspacePicker api={api} value={workspaceId} onChange={setWorkspaceId} allowCreate />
       {workspaceId ? <WorkspaceMembersPanel api={api} workspaceId={workspaceId} /> : null}
     </QueryClientProvider>
   )
@@ -53,8 +52,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `createBillingApi({locale, base?, fetch?, credentials?})`, `BillingApi` | Typed client for billing's `catalog`, `status`, `purchase` and `session`; every answer is parsed with the contract's schemas. `base` defaults to `/api/portal/billing`; `locale` rides on every request |
 | `BillingScope`, `workspaceScope(id)`, `ACCOUNT_SCOPE`, `ownerTypeOf` | Whose billing a call is about: a workspace's, or the signed-in person's own |
 | `BillingRefusedError`, `BillingUnavailableError`, `BillingContractError`, `billingErrorMessage` | A refusal billing worded with a code, a billing that could not answer, one that answered off-contract (`BillingContractError`, a `BillingUnavailableError` the queries do not retry), and the sentence for any |
-| `WorkspacePicker` | Choose among your workspaces in a select; optionally create one inline |
-| `CreateWorkspaceDialog` (`open`, `onClose`, `onCreated`), `CreateWorkspaceForm`, `useCreateWorkspace` | Create a workspace from just its name; the new workspace's detail is cached and the list refreshed |
+| `CreateWorkspaceForm`, `useCreateWorkspace` | Create a person's first workspace from just its name (the first-run screen); the new workspace's detail is cached and the list refreshed. A person belongs to one workspace, so nothing offers a second |
 | `WorkspaceMembersPanel` (`showUserIds?`, `licenses?`, `locale?`) | Members (with a count): name over email, role, licenses and joined, and a row menu ("…") for role changes and removal, which asks in a dialog; `showUserIds` adds each member's copyable Mentra user id (for Organization Admins, who need it to recover ownership); `licenses` adds the read-only Licenses column (see [Members' licenses](#members-licenses)) |
 | `WorkspaceInvitationsPanel` | Invite by email, and the pending invitations with Resend and Revoke, in one card |
 | `WorkspaceInviteDialog` (`open`, `onClose`) | Invite by email and role in a dialog; the link is shown once after sending |
@@ -90,7 +88,7 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `Badge` (`tone?`) | A small chip: `outline` (the default, "You"), or filled `success` (green), `warn` (amber) or `neutral` (grey) for a status |
 | `ErrorNotice` (`error`, `tone?`), `AlertText`, `Loading`, `QueryGate` (`result`, `loadingLabel?`, `tone?`, `children(data)`) | An error in words (amber, as the sign-in page's notice, or `tone="neutral"`), the spinner with what is loading, and a query's loading and failed-load states with Try again |
 | `Avatar`, `WorkspaceAvatar`, `Count`, `Spinner` | A person's initials, a workspace's letter tile, a count beside a heading, the loading spinner |
-| `AppShell`, `AccountFooter`, `WorkspaceSwitcher`, `SWITCHER_ITEM_CLASS` | The portal's frame, its account menu and its workspace switcher (see [Shell](#shell)) |
+| `AppShell`, `AccountFooter`, `WorkspaceLabel`, `WorkspaceSwitcher`, `SWITCHER_ITEM_CLASS` | The portal's frame, its account menu, its static workspace block, and the menu for hosts that list several workspaces (see [Shell](#shell)) |
 | `MentraMark`, `MentraLogo`, `BrandPage` (`title`) | The Mentra mark, the logo with its wordmark (inline SVG, no asset loader), and a page that is one card under the logo |
 | `CenteredLayout` (`userEmail`, `onSignOut?`, `signingOut?`) | A page that is one focused task: the logo and Sign out across the top, one centered column |
 | `useDismiss(ref, open, close)` | Closes a popover on a press outside `ref` or on Escape |
@@ -188,9 +186,6 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
           current={active}
           workspaces={mine}
           invitations={[]}
-          canCreate
-          createNotice={null}
-          onCreate={create}
           linkComponent={ShellLink}
         />
       }
@@ -222,10 +217,13 @@ function ConsoleShell({children}: {children: React.ReactNode}) {
   shell puts on its own `onSelect` buttons. The switcher's menu closes the same way.
 - **The switcher is presentational.** It takes the current workspace, the list (undefined
   while loading; `listFailed` and `onRetry` when it failed), the invitations as entries
-  with the host's own actions, and whether Create workspace is offered. Choosing the
-  current workspace's `onSelect` button only closes the menu. `extraItems` adds rows
-  under the workspaces, above Create workspace: give each `role="menuitem"` and
+  with the host's own actions. It has no Create workspace: a person belongs to one
+  workspace. Choosing the current workspace's `onSelect` button only closes the menu.
+  `extraItems` adds rows under the workspaces: give each `role="menuitem"` and
   `SWITCHER_ITEM_CLASS`, so the arrow keys reach it and it matches.
+- **The workspace portal shows `WorkspaceLabel` instead**: the one workspace's name and
+  the person's role as a static block (no chevron, no menu), with whatever the host puts
+  under it (a link to the pending invitations).
 - **Colours come from the tokens.** The shell uses only `mentra.css`'s theme names, so a
   site that imports it and scans this package's `src` (see [Styling](#styling)) gets the
   portal's look.

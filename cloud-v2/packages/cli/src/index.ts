@@ -170,7 +170,7 @@ program
     }
   });
 
-const workspace = program.command("workspace").description("Manage the active workspace");
+const workspace = program.command("workspace").description("Show or set up your workspace (an account belongs to one)");
 
 workspace
   .command("show")
@@ -185,6 +185,11 @@ workspace
       if (!active) {
         if (creds.workspaceId) {
           throw new Error(`Workspace ${creds.workspaceId} is not available to this account. Sign in again with \`mentra login\`.`);
+        }
+        if (session.workspaces.length > 1) {
+          // Nothing to pick among: a person belongs to one workspace, so this is for Mentra support to fix.
+          console.log("This account is in more than one workspace, which Mentra no longer allows. Contact Mentra support to bring it down to one.");
+          return;
         }
         console.log("This account has no workspace. Create one with `mentra workspace create <name>`.");
         return;
@@ -230,7 +235,7 @@ workspace
   .command("create")
   .argument("<name>", "workspace name")
   .option("--package-prefix <prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
-  .description("Create a workspace and make it the active one")
+  .description("Create your workspace (Core refuses a second one)")
   .action(async (name: string, options: { packagePrefix?: string }) => {
     const creds = await requireStoreCredentials();
     if (!creds) return;

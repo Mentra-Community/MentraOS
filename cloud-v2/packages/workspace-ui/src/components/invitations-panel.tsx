@@ -17,16 +17,17 @@ import {
   type WorkspaceDetail,
   type WorkspaceRole,
 } from "@mentra/workspace-contract";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, MoreHorizontalIcon, SendIcon, XIcon } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import type { WorkspaceApi } from "../api";
-import { formatDate } from "../lib/format";
+import { formatExpiry } from "../lib/format";
 import { cn } from "../lib/utils";
 import { invitationsQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "../roles";
 import { licenseStrings } from "../strings/licenses";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
+import { Menu, type MenuItem } from "../ui/menu";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { NativeSelect } from "../ui/native-select";
@@ -170,9 +171,15 @@ function InviteForm({
   );
 }
 
+/** The newest invitation first: every invitation lives the same time, so the latest to expire was sent last. */
+function newestFirst(invitations: InvitationView[]): InvitationView[] {
+  return [...invitations].sort((a, b) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt));
+}
+
 /**
- * The pending invitations, each with Resend and Revoke where the viewer could have sent it. Revoke asks in a dialog,
- * which shows a refusal itself; a failed Resend is shown under the list.
+ * The pending invitations as a table: each address, its role and when it expires ("In 6 days", "Tomorrow"), newest
+ * first. Where the viewer could have sent one, its row's "…" menu has Resend and Revoke. Revoke asks in a dialog, which
+ * shows a refusal itself; a failed Resend is shown under the list.
  */
 function PendingInvitationsList({
   api,
@@ -198,59 +205,87 @@ function PendingInvitationsList({
   );
   const busy = resend.isPending || revoke.isPending;
   const ask = useAsking<InvitationView>((invitation) => invitation.invitationId, busy);
-  // The invitations the viewer may resend or revoke: the ones with buttons, which focus moves between.
-  const manageable = viewer ? invitations.filter((invitation) => canChangeRole(viewer, null, invitation.role)) : [];
+  const rows = newestFirst(invitations);
+  // The invitations the viewer may resend or revoke: the ones with a menu, which focus moves between.
+  const manageable = viewer ? rows.filter((invitation) => canChangeRole(viewer, null, invitation.role)) : [];
   const asking = ask.asking;
   const t = licenseStrings.confirm;
 
   if (invitations.length === 0) return <Restricted>No pending invitations.</Restricted>;
   return (
     <>
-      <ul className="divide-y">
-        {invitations.map((invitation) => (
-          <li
-            key={invitation.invitationId}
-            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0"
-          >
-            <div className="flex min-w-0 items-center gap-3">
-              <Avatar label={invitation.email} className="text-muted-foreground bg-background border-dashed" />
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="truncate text-[15px] font-semibold">{invitation.email}</span>
-                  <RoleBadge role={invitation.role} />
-                </div>
-                <div className="text-muted-foreground mt-0.5 text-xs">Expires {formatDate(invitation.expiresAt)}</div>
-              </div>
-            </div>
-            {viewer && canChangeRole(viewer, null, invitation.role) ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  aria-label={`Resend invitation to ${invitation.email}`}
-                  title="Sends a new link. The earlier link stops working."
-                  disabled={busy}
-                  onClick={() => resend.mutate(invitation)}
-                >
-                  Resend
-                </Button>
-                <Button
-                  ref={ask.trigger(invitation.invitationId)}
-                  type="button"
-                  variant="destructive-secondary"
-                  size="sm"
-                  aria-label={`Revoke invitation for ${invitation.email}`}
-                  disabled={busy}
-                  onClick={() => ask.ask(invitation, manageable)}
-                >
-                  Revoke
-                </Button>
-              </div>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+      <div data-slot="invitations-list" className="-mx-6">
+        <table className="w-full text-left text-sm">
+          <thead className="text-muted-foreground border-y text-xs">
+            <tr>
+              <th className="py-3 pr-4 pl-6 font-semibold">Email</th>
+              <th className="py-3 pr-4 font-semibold">Role</th>
+              <th className="py-3 pr-4 font-semibold">Expires</th>
+              <th aria-hidden="true" className="w-12 py-3 pr-4" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((invitation) => {
+              const items: MenuItem[] =
+                viewer && canChangeRole(viewer, null, invitation.role)
+                  ? [
+                      {
+                        key: "resend",
+                        label: (
+                          <>
+                            <SendIcon aria-hidden="true" className="size-4" />
+                            Resend
+                          </>
+                        ),
+                        onSelect: () => resend.mutate(invitation),
+                      },
+                      {
+                        key: "revoke",
+                        destructive: true,
+                        label: (
+                          <>
+                            <XIcon aria-hidden="true" className="size-4" />
+                            Revoke
+                          </>
+                        ),
+                        onSelect: () => ask.ask(invitation, manageable),
+                      },
+                    ]
+                  : [];
+              return (
+                <tr key={invitation.invitationId} className="border-b last:border-b-0">
+                  <td className="py-3.5 pr-4 pl-6">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar label={invitation.email} className="text-muted-foreground bg-background border-dashed" />
+                      <span className="min-w-0 text-[15px] font-semibold [overflow-wrap:anywhere]">{invitation.email}</span>
+                    </div>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <RoleBadge role={invitation.role} />
+                  </td>
+                  <td className="text-muted-foreground py-3.5 pr-4 whitespace-nowrap">{formatExpiry(invitation.expiresAt)}</td>
+                  <td className="py-3.5 pr-4 text-right">
+                    {items.length > 0 ? (
+                      <span
+                        ref={(element) => ask.trigger(invitation.invitationId)(element?.querySelector("button") ?? null)}
+                        className="inline-block"
+                      >
+                        <Menu
+                          label={`More for ${invitation.email}`}
+                          trigger={<MoreHorizontalIcon aria-hidden="true" />}
+                          items={items}
+                          disabled={busy}
+                          className="text-muted-foreground"
+                        />
+                      </span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <ErrorNotice error={resend.error} />
       {asking ? (
         <ConfirmDialog

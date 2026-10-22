@@ -81,7 +81,7 @@ export {
   WorkspaceAvatar,
   type BadgeTone,
 } from "./components/common";
-export { CreateWorkspaceDialog, CreateWorkspaceForm, useCreateWorkspace } from "./components/create-workspace";
+export { CreateWorkspaceForm, useCreateWorkspace } from "./components/create-workspace";
 export { expiryFromDateInput, SecretDialog, WorkspaceCredentialsPanel } from "./components/credentials-panel";
 export {
   acceptErrorMessage,
@@ -99,7 +99,6 @@ export {
   WorkspacePendingInvitationsPanel,
 } from "./components/invitations-panel";
 export { WorkspaceMembersPanel } from "./components/members-panel";
-export { WorkspacePicker } from "./components/workspace-picker";
 export { WorkspaceSettingsPanel } from "./components/settings-panel";
 
 // Mentra's controls, for a host's own screens: one button system, inputs, selects, checkboxes, switches, a stepper, a menu and a side panel (styles/mentra.css).
@@ -151,6 +150,7 @@ export {
 export { useDismiss } from "./shell/use-dismiss";
 export {
   SWITCHER_ITEM_CLASS,
+  WorkspaceLabel,
   WorkspaceSwitcher,
   type SwitcherCurrent,
   type SwitcherInvitation,
