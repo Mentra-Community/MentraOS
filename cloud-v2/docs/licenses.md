@@ -1,7 +1,7 @@
 # Licenses
 
-Core holds the products that people and workspaces buy, and the licenses people
-get from them: who holds each one. Billing (the Store's billing module) sells
+Core holds the products that workspaces buy, and the licenses people get from
+them: who holds each one. Billing (the Store's billing module) sells
 the products and writes each license into Core; Core never changes a license's
 terms itself. Workspaces, roles and the audit trail are described in
 [Workspaces and keys](workspaces.md), and the signed service API in
@@ -12,16 +12,16 @@ terms itself. Workspaces, roles and the audit trail are described in
 - A product unlocks **features** (`call.unlimited`), each for the packages it
   names (`com.mentra.call`). A feature for no package is a service's.
 - A license's **owner** is a workspace, whose Admins and Owners assign its seats
-  to members, or a person (by Core user ID), who holds its one seat. The owner
-  never changes.
+  to members. A license has no other kind of owner: a person holds a license only
+  through a seat, and buying for yourself is buying in your own workspace. The
+  owner never changes.
 - A **seat** belongs to one membership. A member holds at most one seat per
   license, and the seats in use never exceed the quantity.
 
 **The words.** The screens use the Microsoft 365 meaning. A *license* is one
 person's right to use a product; a workspace buys some number of licenses for a
 *product*, and each license is assigned to one member. What the workspace buys
-is a product (never "a license"), a person's own price has no unit, and a
-price per license is "per user". The screens never say "seat". Core's records
+is a product (never "a license"), and a price per license is "per user". The screens never say "seat". Core's records
 and API keep their names for the same things: a `License` is the owner's holding
 of one product (its `quantity` is the number of licenses bought), and a license
 assigned to a member is a *seat* (`license_seats`, `seatsUsed`, `/seats/`,
@@ -30,9 +30,9 @@ describes records and routes, and the screens' words where it describes what a
 person sees.
 
 Core keeps them in `licenses` (one document per license, `_id` billing's license
-ID, a ULID) and `license_seats` (one document per assigned seat of a workspace
-license, unique per license and membership). A personal license has no seat
-document. Licenses exist on hosted Core only: a Private Cloud has none.
+ID, a ULID) and `license_seats` (one document per assigned seat, unique per
+license and membership). Licenses exist on hosted Core only: a Private Cloud
+has none.
 
 ## Writing licenses
 
@@ -46,12 +46,12 @@ is `403 forbidden`; an unsigned or wrongly signed call is
 | --- | --- |
 | `licenseId` | The license the path names: billing's ULID. |
 | `revision` | A whole number above zero that grows with every change billing makes. |
-| `owner` | `{"type": "workspace", "workspaceId"}` or `{"type": "person", "mentraUserId"}`. |
+| `owner` | `{"type": "workspace", "workspaceId"}`. Any other owner is refused. |
 | `product` | The product, such as `mentra.call.unlimited`. |
 | `features` | `[{key, packages}]`; `packages` may be empty. |
-| `quantity` | The number of licenses bought, a whole number of 0 or more. Always 1 for a person. |
+| `quantity` | The number of licenses bought, a whole number of 0 or more. |
 | `validFrom`, `paidThrough` | RFC 3339 times in UTC (`2026-10-01T00:00:00Z`). |
-| `assignTo` | Optional, workspace licenses only: `{"mentraUserId"}`, the purchase's buyer ([The buyer's license](#the-buyers-license)). |
+| `assignTo` | Optional: `{"mentraUserId"}`, the purchase's buyer ([The buyer's license](#the-buyers-license)). |
 
 Core applies a write only if its revision is newer than the one it has, so
 billing sends the latest version of each license until Core accepts it, and
@@ -62,27 +62,23 @@ repeats and late deliveries are harmless:
 | `200 {"applied": true, "revision"}` | A new license, or a newer revision. | Delivered. |
 | `200 {"applied": false, "revision"}` | The revision Core has. Nothing changes. | Delivered. |
 | `409 stale_revision` | An older revision. The body's `revision` is Core's. | Delivered: Core has a newer one. |
-| `404 owner_not_found` | The workspace or account is deleted, or never existed, or the license ended with its owner. For a personal license this is checked on every write, a repeat or an older revision included. | Stop sending it. |
-| `400 invalid_request` | A malformed write, another license than the path's, a person's quantity other than 1, a `paidThrough` before `validFrom`, an `assignTo` other than `{"mentraUserId"}` with a non-blank ID or one on a personal license, or a change of owner. | A bug to fix. |
+| `404 owner_not_found` | The workspace is deleted, or never existed, or the license ended with it. | Stop sending it. |
+| `400 invalid_request` | A malformed write, another license than the path's, an owner that is not a workspace (a person included), a `paidThrough` before `validFrom`, an `assignTo` other than `{"mentraUserId"}` with a non-blank ID, or a change of owner. | A bug to fix. |
 | `5xx` | Core could not answer. | Send it again. |
 
-`GET /api/internal/licenses?ownerType=workspace|person&ownerId=` answers
-`{"licenses": [...]}`: the owner's licenses, ended ones included, each a
-`LicenseView` with `seatsUsed` and `endedAt`. The Store only.
+`GET /api/internal/licenses?ownerType=workspace&ownerId=` answers
+`{"licenses": [...]}`: the workspace's licenses, ended ones included, each a
+`LicenseView` with `seatsUsed` and `endedAt`. Any other `ownerType` is
+`400 invalid_request`. The Store only.
 
 `createCoreWorkspaceClient` from `@mentra/workspace-contract/server` speaks both:
 `putLicense(write)` resolves `{applied, revision}`, and throws
 `CoreWorkspaceClientError` with `code` `stale_revision` (409), `owner_not_found`
 (404), `core_unavailable` (5xx, or no answer) or `bad_request`, and the HTTP
-`status`. `listLicenses(owner)` resolves `{licenses}`.
+`status`. `listLicenses(workspaceId)` resolves `{licenses}`.
 
-A workspace license is written in a transaction that also writes the workspace,
-so it never lands after the workspace is deleted. A personal license is one
-document, written without a transaction. Every write of one, a repeat
-included, first checks that the person's account still exists; if it does not,
-Core ends the license and answers `404 owner_not_found`. So a write that races
-the person's account deletion is ended at once, or, should that request fail
-first, by billing's next attempt.
+A license is written in a transaction that also writes the workspace, so it
+never lands after the workspace is deleted.
 
 ### The buyer's license
 
@@ -350,19 +346,18 @@ what](#who-sees-what)).
 
 - **Deleting a workspace** ends its licenses (`endedReason: "workspace_deleted"`)
   and frees their seats in the deletion's transaction.
-- **Deleting an account** ends the person's own licenses
-  (`endedReason: "account_deleted"`) before its `user.deleted` tombstone; the
-  seats they held in workspaces end with their memberships.
+- **Deleting an account** ends no license. The person's memberships end, and the
+  licenses assigned to them are freed with them (`seat.released`, reason
+  `account_deleted`), before its `user.deleted` tombstone.
 
 An ended license keeps its document, takes no seat and no write: Core answers
 `404 owner_not_found` to every later write for it. Billing learns of the
-deletion from the change feed (`workspace.deleted`, `user.deleted`) and stops
-charging.
+deletion from the change feed (`workspace.deleted`) and stops charging.
 
 ## Listing every license
 
-An Organization Admin lists every license, workspace and personal, in the admin
-portal's Licenses page, which reads `GET /api/admin/licenses?query=&cursor=`. It
+An Organization Admin lists every license, with the workspace that holds it, in
+the admin portal's Licenses page, which reads `GET /api/admin/licenses?query=&cursor=`. It
 needs `organization.licenses.read`, which only an Organization Admin holds: an
 operator key never does, and neither do a workspace admin, a workspace key or a
 phone. The list is read-only: no admin route changes a license or a seat.
@@ -372,15 +367,13 @@ phone. The list is read-only: no admin route changes a license or a seat.
   `validFrom`, `paidThrough`, `endedAt` and `endedReason`). `next` is the `cursor`
   of the next page, or `null` on the last. A license written while an admin pages
   never moves a row between pages.
-- **Owners.** A workspace shows by its name, also once deleted. A person shows by
-  the last name a sign-in through Core's sign-in server carried and the email of
-  their latest sign-in there, or by Core's copy of their verified email when they
-  have not signed in through it; both are null for a deleted account, and the
-  portal shows the id. A page's owners are read in one query per collection.
+- **Owners.** Each license's workspace shows by its name, also once deleted. A
+  workspace Core has no record of has a null name, and the portal shows its id.
+  A page's workspaces are read in one query; no person's record is read.
 - **Search.** `query` is plain text of up to 100 characters, compared without
-  regard to case as a substring of the owner's name, email or id, or of the
-  product. A search reads the owners that hold a license, not only a page's, so
-  it suits the few thousand licenses a deployment has.
+  regard to case as a substring of the workspace's name or id, or of the
+  product. A search reads the workspaces that hold a license, not only a page's,
+  so it suits the few thousand licenses a deployment has.
 - **The Licenses page** appears in the portal only when the caller may read
   licenses and `GET /api/admin/me` says `licenses.available`: billing is
   configured on this Core (`CLOUD_CORE_BILLING_URL`), or any license exists.
@@ -396,9 +389,9 @@ and unique, such as `["call.unlimited"]`. A miniapp backend reads them with
 
 A person holds a feature through:
 
-- **a license of their own;**
-- **a seat** in a workspace's license (a seat is deleted when its membership
-  ends, so every seat Core finds is a current member's);
+- **a seat** in a workspace's license, the only way a person holds a license (a
+  seat is deleted when its membership ends, so every seat Core finds is a
+  current member's);
 - **`CLOUD_CORE_ENABLED_FEATURES`**, whose entries are `feature[:package+package]`,
   comma-separated. An entry with packages grants that feature to every signed-in
   person, in those packages' tokens only. An entry without packages (`fleet.managed`)
@@ -420,9 +413,8 @@ seconds (the same deadline as the account email lookup), the mint answers
 `503 {"error":"features_unavailable"}` and issues no token; the Mentra App asks
 again. Core never mints a token that is missing features the person holds.
 
-The lookup uses the collections' existing indexes: personal licenses by
-`{"owner.type", "owner.mentraUserId"}`, seats by `{mentraUserId}` and the seated
-licenses by `_id`. A person with no seat costs two queries, run together.
+The lookup uses the collections' existing indexes: seats by `{mentraUserId}`
+and the seated licenses by `_id`. A person with no seat costs one query.
 
 ## Who sees what
 
@@ -434,8 +426,7 @@ licenses by `_id`. A person with no seat costs two queries, run together.
 | `workspace.billing.manage`: buy, change or cancel, payment methods, invoices | | | Yes | Yes |
 
 Organization Admins act as Owner in every workspace, and hold
-`organization.licenses.read`: every license on their Core, personal ones
-included, for support. It allows no seat change and no billing. Operator keys
+`organization.licenses.read`: every license on their Core, for support. It allows no seat change and no billing. Operator keys
 never carry it.
 
 The Licenses page draws what the viewer's capabilities and the portal's offer of
@@ -474,10 +465,8 @@ the page does.
 
 Every license and seat change is in Core's audit trail, with its actor (the
 `store` service for a license write and the buyer's seat it gives, the person
-for a seat change). A workspace
-license's events are the workspace's, so they are on its audit page and on the
-[change feed](fleet-integration.md#the-change-feed); a personal license's are the
-organization's, and not on the feed.
+for a seat change). A license's events are its workspace's, so they are on its
+audit page and on the [change feed](fleet-integration.md#the-change-feed).
 
 | `action` | `target` | `before` | `after` |
 | --- | --- | --- | --- |

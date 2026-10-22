@@ -23,7 +23,6 @@ export function licensesPath(query: string, cursor?: string): string {
 
 const ENDED_REASONS: Record<LicenseEndedReason, string> = {
   workspace_deleted: "workspace deleted",
-  account_deleted: "account deleted",
 };
 
 export interface LicenseState {
@@ -32,7 +31,7 @@ export interface LicenseState {
 }
 
 /**
- * Where a license stands at `now`. An ended license (its owner was deleted) is ended whatever its term. Otherwise
+ * Where a license stands at `now`. An ended license (its workspace was deleted) is ended whatever its term. Otherwise
  * it is active only inside its term, `validFrom <= now < paidThrough` (the rule that puts its features in tokens):
  * expired once paid through, or, for a term with no instant in it, never valid; not started before `validFrom`.
  */
@@ -57,10 +56,10 @@ const STATE_STYLE: Record<LicenseState["kind"], string> = {
 };
 
 /**
- * Every license in this organization, workspace and personal, newest first, with who holds it, what it is
- * for, how many of its seats are used and what it is paid through. Read-only: seats are assigned by each
- * workspace's Admins and Owners, and nothing on this page changes a license or takes payment. The search
- * matches the owner's name, email or id, or the product.
+ * Every license in this organization, newest first, with the workspace that holds it, what it is for, how
+ * many of its seats are used and what it is paid through. Read-only: seats are assigned by each workspace's
+ * Admins and Owners, and nothing on this page changes a license or takes payment. The search matches the
+ * workspace's name or id, or the product.
  */
 export function LicensesPage() {
   const [query, setQuery] = useState("");
@@ -89,18 +88,18 @@ export function LicenseListing({ query, onSearch }: { query: string; onSearch(qu
       <div className="flex flex-wrap items-end justify-between gap-4 border-b p-6">
         <div>
           <h2 className="text-xl font-semibold">All products</h2>
-          <p className="text-muted-foreground mt-1 text-sm">Newest first, held by workspaces and by people. This list is read-only.</p>
+          <p className="text-muted-foreground mt-1 text-sm">Newest first, each with the workspace that holds it. This list is read-only.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <form onSubmit={search} className="flex flex-wrap items-end gap-3">
             <div className="grid gap-2">
-              <Label htmlFor={searchId}>Search by owner or product</Label>
+              <Label htmlFor={searchId}>Search by workspace or product</Label>
               <Input
                 id={searchId}
                 type="search"
                 autoComplete="off"
                 maxLength={100}
-                placeholder="Name, email, id or product"
+                placeholder="Workspace name, id or product"
                 className="w-72"
                 value={draft}
                 onChange={event => setDraft(event.target.value)}
@@ -155,7 +154,7 @@ function LicenseTable({ licenses }: { licenses: AdminLicenseView[] }) {
       <table className="w-full text-left text-sm">
         <thead className="text-muted-foreground text-xs">
           <tr>
-            <th className="px-6 py-3 font-medium">Owner</th>
+            <th className="px-6 py-3 font-medium">Workspace</th>
             <th className="py-3 pr-4 font-medium">Product</th>
             <th className="py-3 pr-4 font-medium">Assigned</th>
             <th className="py-3 pr-4 font-medium">Paid through</th>
@@ -193,21 +192,12 @@ function LicenseTable({ licenses }: { licenses: AdminLicenseView[] }) {
   );
 }
 
-/** The owner by name or email, with its kind and id; the id stands in when Core knows no name or email. */
+/** The workspace by its name, with its id under it; the id alone when Core knows no name for it. */
 function Owner({ owner }: { owner: AdminLicenseOwner }) {
-  const id = owner.type === "workspace" ? owner.workspaceId : owner.mentraUserId;
-  const name = owner.name ?? (owner.type === "person" ? owner.email : null) ?? id;
-  const email = owner.type === "person" && owner.name !== null ? owner.email : null;
   return (
     <div className="min-w-0">
-      <div className="flex flex-wrap items-center gap-2 font-semibold">
-        {name}
-        <span className="bg-surface text-muted-foreground inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold">
-          {owner.type === "workspace" ? "Workspace" : "Person"}
-        </span>
-      </div>
-      {email ? <div className="text-muted-foreground text-xs">{email}</div> : null}
-      <code className="text-muted-foreground block truncate text-xs">{id}</code>
+      <div className="font-semibold">{owner.name ?? owner.workspaceId}</div>
+      {owner.name !== null ? <code className="text-muted-foreground block truncate text-xs">{owner.workspaceId}</code> : null}
     </div>
   );
 }

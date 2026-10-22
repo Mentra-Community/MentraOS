@@ -5,13 +5,14 @@
  * Deleting an account ends every workspace membership the person holds, revokes the keys those
  * memberships created and every invitation the person sent, in one transaction, before the account
  * itself is deleted; then their operator keys are revoked and their identity is cleared from the rows
- * that stay. Nothing else about workspaces changes: other people's memberships and keys, service keys,
+ * that stay. The licenses the person was assigned are freed with those memberships; no license ends, since
+ * every license is a workspace's. Nothing else about workspaces changes: other people's memberships and keys, service keys,
  * and invitations addressed to the person stay. The last write of that transaction is the
  * `user.deleted` tombstone on the change feed, which tells a service keeping data keyed by the
  * person to delete it.
  *
- * Real rows on a local replica set: users, one-time codes, memberships, credentials, invitations and
- * audit events. The account directory (GoTrue's admin API, where the account is deleted) is a fake
+ * Real rows on a local replica set: users, one-time codes, memberships, credentials, invitations, licenses,
+ * their seats and audit events. The account directory (GoTrue's admin API, where the account is deleted) is a fake
  * identity provider (`support/fake-idp.ts`) that this process's `fetch` reaches.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name,
@@ -28,6 +29,8 @@ import {AccessCredentialModel} from "../packages/core/src/models/access-credenti
 import {AccountCodeModel} from "../packages/core/src/models/account-code.model"
 import {AccountEmailModel} from "../packages/core/src/models/account-email.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
+import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
 import {UserModel} from "../packages/core/src/models/user.model"
@@ -44,6 +47,7 @@ import {
   gotrue,
   otc,
 } from "../packages/core/src/services/account/account.service"
+import {assignSeat} from "../packages/core/src/services/licenses/license.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
@@ -95,6 +99,8 @@ const MODELS = [
   AccountCodeModel,
   AccountEmailModel,
   BrowserSessionModel,
+  LicenseModel,
+  LicenseSeatModel,
   RefreshTokenModel,
   SupportProfileModel,
   UserModel,
@@ -632,6 +638,53 @@ describe("removeDeletedUserFromWorkspaces", () => {
     for (const previous of revisions) {
       expect((await getWorkspace(previous.workspaceId))!.authorizationRevision).toBe(previous.authorizationRevision)
     }
+  })
+
+  test("frees the licenses assigned to the person with their memberships, ends no license, and looks up none by its owner", async () => {
+    const s = await scenario()
+    const license = {
+      owner: {type: "workspace", workspaceId: s.team.workspaceId},
+      product: "mentra.call.unlimited",
+      features: [{key: "call.unlimited", packages: ["com.mentra.call"]}],
+      quantity: 3,
+      seatsUsed: 0,
+      validFrom: new Date(Date.now() - 86_400_000),
+      paidThrough: new Date(Date.now() + 30 * 86_400_000),
+      revision: 1,
+    }
+    await LicenseModel.create({_id: "01KACCOUNTDELETIONLICENSE1", ...license})
+    await LicenseModel.create({_id: "01KACCOUNTDELETIONLICENSE2", ...license, owner: {type: "workspace", workspaceId: s.solo.workspaceId}})
+    const owner = actor("mu_team_owner")
+    await assignSeat(owner, s.team.workspaceId, "01KACCOUNTDELETIONLICENSE1", s.teamMembershipId)
+    await assignSeat(owner, s.team.workspaceId, "01KACCOUNTDELETIONLICENSE1", s.otherMembershipId)
+    await assignSeat({...actor(s.mentraUserId), email: s.email}, s.solo.workspaceId, "01KACCOUNTDELETIONLICENSE2", s.soloMembershipId)
+    const exists = spyOn(LicenseModel, "exists")
+    const find = spyOn(LicenseModel, "find")
+    try {
+      await removeDeletedUserFromWorkspaces(s.mentraUserId)
+      // Nothing asks which licenses the person owns: a person owns none.
+      const filters = [...exists.mock.calls, ...find.mock.calls].map(([filter]) => JSON.stringify(filter ?? {}))
+      expect(filters.filter(filter => filter.includes("owner"))).toEqual([])
+    } finally {
+      exists.mockRestore()
+      find.mockRestore()
+    }
+
+    // The person's seats went with their memberships; another member's stays, and both licenses stand.
+    expect((await LicenseSeatModel.find({}).lean()).map(seat => seat.membershipId)).toEqual([s.otherMembershipId])
+    const rows = await LicenseModel.find({}).sort({_id: 1}).lean()
+    expect(rows.map(row => ({seatsUsed: row.seatsUsed, endedAt: row.endedAt, endedReason: row.endedReason}))).toEqual([
+      {seatsUsed: 1, endedAt: null, endedReason: null},
+      {seatsUsed: 0, endedAt: null, endedReason: null},
+    ])
+    const released = await WorkspaceAuditEventModel.find({action: "seat.released"}).sort({seq: 1}).lean()
+    expect(released.map(event => [event.target?.membershipId, event.after?.reason]).sort()).toEqual(
+      [
+        [s.teamMembershipId, "account_deleted"],
+        [s.soloMembershipId, "account_deleted"],
+      ].sort(),
+    )
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "license.ended"})).toBe(0)
   })
 
   test("a person with no active membership changes no workspace and records only the tombstone", async () => {

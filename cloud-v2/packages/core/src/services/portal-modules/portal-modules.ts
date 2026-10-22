@@ -33,8 +33,8 @@
  * workspace who is not staff still sees what a license is, so the Members list can name the licenses people
  * hold. A module's `openReads` name the few requests that stay open to everyone who may reach the module's
  * scope, however staff-only it is, and `portalModuleAccess` answers `ready` for exactly those and nothing else:
- *  - `scopePaths`: `GET` of `/workspaces/<id>/<path>` and of `/account/<path>`, the path matched exactly as
- *    received (billing: `catalog`). `HEAD` and every other method, a trailing slash, another case, an encoded
+ *  - `scopePaths`: `GET` of `/workspaces/<id>/<path>`, the path matched exactly as received (billing:
+ *    `catalog`). `HEAD` and every other method, a trailing slash, another case, an encoded
  *    letter or a deeper path are not it;
  *  - `assetPrefixes`: `GET` and `HEAD` of `/ui/<prefix><file>`, with one file name after the prefix (billing:
  *    `icons/`). The rest of `ui/`, a module's `entry.js` above all, is not open.
@@ -60,7 +60,7 @@ export type PortalModuleName = (typeof PORTAL_MODULE_NAMES)[number]
 
 /** The requests a staff-only module still answers to everyone who reaches it (see the file header). */
 interface OpenReads {
-  /** Paths under a scope (`/workspaces/<id>/<path>`, `/account/<path>`) whose `GET` is open, matched exactly as received. */
+  /** Paths under a workspace (`/workspaces/<id>/<path>`) whose `GET` is open, matched exactly as received. */
   scopePaths: readonly string[]
   /**
    * Prefixes under `ui/` whose `GET` and `HEAD` are open, for one file name after the prefix. Each ends with "/":
@@ -90,11 +90,11 @@ const REGISTRY: Record<PortalModuleName, PortalModuleSettings> = {
 /**
  * A request to a module, as far as who may make it is concerned: its method, the family of path it is for and
  * the rest of the path after that family's scope, exactly as received (not decoded, no leading "/", no query):
- * `catalog` for `/workspaces/ws_1/catalog` and for `/account/catalog`, `icons/a.png` for `/ui/icons/a.png`.
+ * `catalog` for `/workspaces/ws_1/catalog`, `icons/a.png` for `/ui/icons/a.png`.
  */
 export interface PortalModuleRequest {
   method: string
-  route: {kind: "workspace" | "account" | "ui"}
+  route: {kind: "workspace" | "ui"}
   rest: string
 }
 
@@ -237,10 +237,10 @@ export interface PortalModuleAvailability {
   billingCatalog: boolean
 }
 
-/** The request `billingCatalog` stands for: a catalog is read the same way under either scope. */
+/** The request `billingCatalog` stands for: a workspace's catalog, read the same way under every workspace. */
 const CATALOG_READ: PortalModuleRequest = {
   method: "GET",
-  route: {kind: "account"},
+  route: {kind: "workspace"},
   rest: REGISTRY.billing.openReads.scopePaths[0],
 }
 

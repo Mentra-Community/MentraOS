@@ -14,8 +14,6 @@ const CALL = "com.mentra.call"
 const NOW = new Date("2026-10-20T12:00:00.000Z")
 
 interface Stubbed {
-  /** The personal licenses `find` answers for the person. */
-  personal: Array<{features: Array<{key: string; packages: string[]}>}>
   /** The ids of the licenses the person holds a seat in. */
   seatLicenseIds: string[]
   /** The licenses `find` answers for those ids. */
@@ -28,11 +26,11 @@ const mocks: Array<{mockRestore(): void}> = []
 const savedFeatures = process.env.CLOUD_CORE_ENABLED_FEATURES
 
 function stub(rows: Partial<Stubbed> = {}) {
-  const {personal = [], seatLicenseIds = [], seated = []} = rows
+  const {seatLicenseIds = [], seated = []} = rows
   mocks.push(
     spyOn(LicenseModel, "find").mockImplementation(((filter: Record<string, unknown>) => {
       licenseFilters.push(filter)
-      return {lean: async () => ("_id" in filter ? seated : personal)}
+      return {lean: async () => ("_id" in filter ? seated : [])}
     }) as never),
     spyOn(LicenseSeatModel, "find").mockImplementation(((filter: Record<string, unknown>) => {
       seatFilters.push(filter)
@@ -61,9 +59,10 @@ describe("featuresFor", () => {
     expect(await lookup()).toEqual([])
   })
 
-  test("returns the sorted, unique keys of a person's own licenses and seats for the package", async () => {
+  test("returns the sorted, unique keys of the licenses a person holds a seat in, for the package", async () => {
     stub({
-      personal: [
+      seatLicenseIds: ["01LICENSEAAAAAAAAAAAAAAAAA", "01LICENSEBBBBBBBBBBBBBBBBB", "01LICENSECCCCCCCCCCCCCCCCC"],
+      seated: [
         {features: [{key: "call.unlimited", packages: [CALL]}]},
         {
           features: [
@@ -71,16 +70,16 @@ describe("featuresFor", () => {
             {key: "call.unlimited", packages: [CALL]},
           ],
         },
+        {features: [{key: "call.recording", packages: [CALL, "com.example.dialer"]}]},
       ],
-      seatLicenseIds: ["01LICENSEAAAAAAAAAAAAAAAAA"],
-      seated: [{features: [{key: "call.recording", packages: [CALL, "com.example.dialer"]}]}],
     })
     expect(await lookup()).toEqual(["call.recording", "call.transcripts", "call.unlimited"])
   })
 
   test("a feature reaches a package's token only when it lists that package", async () => {
     stub({
-      personal: [
+      seatLicenseIds: ["01LICENSEAAAAAAAAAAAAAAAAA", "01LICENSEBBBBBBBBBBBBBBBBB"],
+      seated: [
         {
           features: [
             {key: "call.unlimited", packages: [CALL]},
@@ -88,38 +87,28 @@ describe("featuresFor", () => {
             {key: "service.only", packages: []},
           ],
         },
+        {features: [{key: "seat.feature", packages: ["com.mentra.notes"]}]},
       ],
-      seatLicenseIds: ["01LICENSEAAAAAAAAAAAAAAAAA"],
-      seated: [{features: [{key: "seat.feature", packages: ["com.mentra.notes"]}]}],
     })
     expect(await lookup(CALL)).toEqual(["call.unlimited"])
     expect(await lookup("com.mentra.notes")).toEqual(["notes.pro", "seat.feature"])
     expect(await lookup("com.example.other")).toEqual([])
   })
 
-  test("asks for personal licenses by owner and seats by person, in term and not ended", async () => {
+  test("reads only seats: the person's seats, then their licenses in term and not ended, never a license by owner", async () => {
     stub({seatLicenseIds: ["01LICENSEAAAAAAAAAAAAAAAAA", "01LICENSEBBBBBBBBBBBBBBBBB"]})
     await lookup()
 
     const inTerm = {endedAt: null, validFrom: {$lte: NOW}, paidThrough: {$gt: NOW}}
     expect(seatFilters).toEqual([{mentraUserId: "mu_01TEST"}])
-    expect(licenseFilters).toContainEqual({
-      "owner.type": "person",
-      "owner.mentraUserId": "mu_01TEST",
-      ...inTerm,
-    })
-    expect(licenseFilters).toContainEqual({
-      _id: {$in: ["01LICENSEAAAAAAAAAAAAAAAAA", "01LICENSEBBBBBBBBBBBBBBBBB"]},
-      ...inTerm,
-    })
-    expect(licenseFilters).toHaveLength(2)
+    expect(licenseFilters).toEqual([{_id: {$in: ["01LICENSEAAAAAAAAAAAAAAAAA", "01LICENSEBBBBBBBBBBBBBBBBB"]}, ...inTerm}])
   })
 
-  test("a person with no seat costs no query for seated licenses", async () => {
+  test("a person with no seat costs one query, for their seats, and none for licenses", async () => {
     stub()
     await lookup()
-    expect(licenseFilters).toHaveLength(1)
-    expect(licenseFilters[0]!["owner.type"]).toBe("person")
+    expect(seatFilters).toEqual([{mentraUserId: "mu_01TEST"}])
+    expect(licenseFilters).toEqual([])
   })
 
   describe("CLOUD_CORE_ENABLED_FEATURES", () => {
@@ -140,7 +129,8 @@ describe("featuresFor", () => {
       process.env.CLOUD_CORE_ENABLED_FEATURES =
         "call.unlimited:com.mentra.call+com.example.dialer, a.first:com.mentra.call"
       stub({
-        personal: [
+        seatLicenseIds: ["01LICENSEAAAAAAAAAAAAAAAAA"],
+        seated: [
           {
             features: [
               {key: "call.unlimited", packages: [CALL]},
@@ -155,26 +145,16 @@ describe("featuresFor", () => {
     test("still reads the database, so a failure is never hidden by a configured grant", async () => {
       process.env.CLOUD_CORE_ENABLED_FEATURES = "call.unlimited:com.mentra.call"
       mocks.push(
-        spyOn(LicenseSeatModel, "find").mockImplementation((() => ({lean: async () => []})) as never),
-        spyOn(LicenseModel, "find").mockImplementation((() => ({
+        spyOn(LicenseSeatModel, "find").mockImplementation((() => ({
           lean: () => Promise.reject(new Error("mongo down")),
         })) as never),
+        spyOn(LicenseModel, "find").mockImplementation((() => ({lean: async () => []})) as never),
       )
       await expect(lookup()).rejects.toThrow("mongo down")
     })
   })
 
   describe("a lookup that fails", () => {
-    test("rejects when the personal licenses cannot be read", async () => {
-      mocks.push(
-        spyOn(LicenseSeatModel, "find").mockImplementation((() => ({lean: async () => []})) as never),
-        spyOn(LicenseModel, "find").mockImplementation((() => ({
-          lean: () => Promise.reject(new Error("mongo down")),
-        })) as never),
-      )
-      await expect(lookup()).rejects.toThrow("mongo down")
-    })
-
     test("rejects when the seats cannot be read", async () => {
       mocks.push(
         spyOn(LicenseSeatModel, "find").mockImplementation((() => ({
@@ -185,16 +165,14 @@ describe("featuresFor", () => {
       await expect(lookup()).rejects.toThrow("mongo down")
     })
 
-    test("rejects when the seated licenses cannot be read, rather than answering with the personal ones", async () => {
+    test("rejects when the seated licenses cannot be read, rather than answering with the setting's grants alone", async () => {
+      process.env.CLOUD_CORE_ENABLED_FEATURES = "call.unlimited:com.mentra.call"
       mocks.push(
         spyOn(LicenseSeatModel, "find").mockImplementation((() => ({
           lean: async () => [{licenseId: "01LICENSEAAAAAAAAAAAAAAAAA"}],
         })) as never),
-        spyOn(LicenseModel, "find").mockImplementation(((filter: Record<string, unknown>) => ({
-          lean: () =>
-            "_id" in filter
-              ? Promise.reject(new Error("mongo down"))
-              : Promise.resolve([{features: [{key: "call.unlimited", packages: [CALL]}]}]),
+        spyOn(LicenseModel, "find").mockImplementation((() => ({
+          lean: () => Promise.reject(new Error("mongo down")),
         })) as never),
       )
       await expect(lookup()).rejects.toThrow("mongo down")

@@ -37,7 +37,7 @@ describe("joinUpstreamUrl", () => {
 
   test("joins the base URL's path prefix, with or without trailing slashes, to the path and query", () => {
     for (const base of ["https://m.example.test", "https://m.example.test/", "https://m.example.test//"]) {
-      expect(join(base, "/v1/portal/account/x", "?a=1")).toBe("https://m.example.test/v1/portal/account/x?a=1")
+      expect(join(base, "/v1/portal/workspaces/ws_1/x", "?a=1")).toBe("https://m.example.test/v1/portal/workspaces/ws_1/x?a=1")
     }
     for (const base of ["https://m.example.test/billing", "https://m.example.test/billing/", "https://m.example.test/billing//"]) {
       expect(join(base, "/v1/portal/ui/entry.js")).toBe("https://m.example.test/billing/v1/portal/ui/entry.js")
@@ -54,8 +54,8 @@ describe("joinUpstreamUrl", () => {
 
 describe("rawPathAndQuery", () => {
   test("splits a URL after its origin and keeps dot segments, which `new URL` would collapse", () => {
-    expect(rawPathAndQuery("http://localhost/api/portal/billing/account/x?y=1")).toEqual({
-      path: "/api/portal/billing/account/x",
+    expect(rawPathAndQuery("http://localhost/api/portal/billing/workspaces/ws_1/x?y=1")).toEqual({
+      path: "/api/portal/billing/workspaces/ws_1/x",
       query: "?y=1",
     })
     expect(rawPathAndQuery("http://localhost/a/../b").path).toBe("/a/../b")
@@ -70,7 +70,7 @@ describe("rawPathAndQuery", () => {
 
 describe("isSafeSuffix", () => {
   test("accepts ordinary paths, encoded spaces included", () => {
-    for (const suffix of ["", "/", "/workspaces/ws_1/licenses", "/account/a%20b", "/ui/entry.js", "/a//b"]) {
+    for (const suffix of ["", "/", "/workspaces/ws_1/licenses", "/workspaces/ws_1/a%20b", "/ui/entry.js", "/a//b"]) {
       expect([suffix, isSafeSuffix(suffix)]).toEqual([suffix, true])
     }
   })
