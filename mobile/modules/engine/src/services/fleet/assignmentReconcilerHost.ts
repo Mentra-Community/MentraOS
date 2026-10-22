@@ -17,11 +17,12 @@ import {miniappLauncher} from "../MiniappLauncher"
 import {
   classifyManagedInstallError,
   installManagedMiniapp,
-  resolveMiniappUrl,
   stopMiniappForRevocation,
   uninstallManagedMiniapp,
 } from "../miniappReleaseInstall"
+import {resolveMiniappUrl} from "../miniappUrlResolution"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
+import {onRunningUpdatePromptDue} from "../runningUpdatePrompt"
 import {
   createAssignmentReconciler,
   type AssignmentReconciler,
@@ -30,6 +31,7 @@ import {
   type ReconcilerSession,
 } from "./assignmentReconciler"
 import {emitAssignmentOutcome, onFleetRevision} from "./fleetRevisionSignal"
+import {setFleetManagementState} from "./fleetManagementState"
 import {getFleetStore} from "./fleetStorage"
 
 function currentSession(): ReconcilerSession | null {
@@ -63,6 +65,9 @@ const miniapps: ManagedMiniappPort = {
   installedRelease: async (packageName) => installedRelease(packageName),
   hasOtherReason: (packageName) => appRegistry.getInstallReasons(packageName).some((reason) => reason !== "assignment"),
   assignment: (packageName) => appRegistry.getMiniappAssignment(packageName),
+  assignedPackages: () => appRegistry.getAssignedPackages(),
+  hasDevelopmentSelection: (packageName) => appRegistry.hasDevelopmentSelection(packageName),
+  clearDevelopmentSelection: (packageName) => appRegistry.clearDevelopmentSelection(packageName),
   install: (request) => installManagedMiniapp(request),
   classify: classifyManagedInstallError,
   setAssignment: (packageName, assignment) => appRegistry.setMiniappAssignment(packageName, assignment),
@@ -70,6 +75,7 @@ const miniapps: ManagedMiniappPort = {
   uninstall: uninstallManagedMiniapp,
   isRunning: (packageName) => miniappRunningRegistry.has(packageName) || miniappLauncher.isRunning(packageName),
   onStopped,
+  onUpdateDue: onRunningUpdatePromptDue,
   revokeAccess: stopMiniappForRevocation,
   restoreAccess: (packageName) => appRegistry.restoreMiniappAccess(packageName),
   isAccessRevoked: (packageName) => appRegistry.isMiniappAccessRevoked(packageName),
@@ -91,6 +97,7 @@ export function startAssignmentReconciler(client: DesiredStateClient): void {
       isOnline: () => online && cloudClientService.hasCore(),
       store: getFleetStore(),
       emit: emitAssignmentOutcome,
+      onManagementState: setFleetManagementState,
       timers: {
         setTimeout: (callback, ms) => BgTimer.setTimeout(callback, ms),
         clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
@@ -145,4 +152,5 @@ export function stopAssignmentReconciler(): void {
   }
   reconciler?.stop()
   reconciler = null
+  setFleetManagementState({status: "unknown"})
 }

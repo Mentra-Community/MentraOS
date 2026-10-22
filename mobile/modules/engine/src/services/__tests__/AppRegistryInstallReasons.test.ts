@@ -53,7 +53,7 @@ mock.module("expo-file-system", () => ({
 mock.module("react-native-zip-archive", () => ({unzip: mock()}))
 mock.module("../../utils/storage/zip", () => ({printDirectory: mock()}))
 
-const {default: registry, hasAssignmentReason} = await import("../AppRegistry")
+const {default: registry, hasAssignmentReason, withReleaseDigest} = await import("../AppRegistry")
 const packageName = "com.acme.notes"
 const assignment: MiniappAssignment = {
   assignmentId: "asg_1",
@@ -168,10 +168,57 @@ describe("installation reasons", () => {
     expect(registry.getActiveReleaseVersion(packageName)).toBeNull()
   })
 
+  test("every package holding an assignment reason is listed, whichever account recorded it", () => {
+    spyOn(registry, "getPackageNames").mockImplementation(() => [packageName, "com.acme.chat", "com.acme.maps"])
+    registry.setMiniappAssignment(packageName, assignment)
+    registry.setMiniappAssignment("com.acme.chat", {...assignment, mentraUserId: "mu_2"})
+    registry.addInstallReason("com.acme.maps", "explicit")
+    expect(registry.getAssignedPackages()).toEqual([packageName, "com.acme.chat"])
+  })
+
   test("an assignment install must name its assignment", async () => {
     await expect(registry["installArchive"](new Uint8Array(), {installReason: "assignment"}, false)).rejects.toThrow(
       "must name its assignment",
     )
+  })
+})
+
+describe("release digests", () => {
+  const bytes = new TextEncoder().encode("abc")
+  const ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+  test("a release without a recorded digest records the SHA-256 of the bytes it installed", async () => {
+    expect(await withReleaseDigest({source: "bundled_asset"}, "1.0.0", bytes)).toEqual({
+      source: "bundled_asset",
+      bundleSha256: ABC_SHA256,
+    })
+    expect(await withReleaseDigest({source: "direct_download"}, "1.0.0", bytes)).toEqual({
+      source: "direct_download",
+      bundleSha256: ABC_SHA256,
+    })
+  })
+
+  test("a caller's verified digest is kept, and a development snapshot records none", async () => {
+    const verified = {source: "direct_download" as const, bundleSha256: "f".repeat(64)}
+    expect(await withReleaseDigest(verified, "1.0.0", bytes)).toEqual(verified)
+    expect(await withReleaseDigest({source: "dev_snapshot"}, "dev-1000", bytes)).toEqual({source: "dev_snapshot"})
+  })
+})
+
+describe("live-development selection", () => {
+  test("a live-development URL is a selection until it is cleared; the installed release then runs", async () => {
+    installed = ["1.0.0"]
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
+    values.set(`${packageName}_dev_url`, "http://192.168.1.20:3000")
+    values.set(`${packageName}_dev_port`, 3001)
+    values.set(`${packageName}_active_version`, "dev-1000")
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(true)
+
+    await registry.clearDevelopmentSelection(packageName)
+    expect(registry.hasDevelopmentSelection(packageName)).toBe(false)
+    expect(values.has(`${packageName}_dev_port`)).toBe(false)
+    expect(values.has(`${packageName}_active_version`)).toBe(false)
+    expect(registry.getActiveReleaseVersion(packageName)).toBe("1.0.0")
   })
 })
 
@@ -184,5 +231,13 @@ describe("access revocation", () => {
     expect(registry.getMiniappEntryPaths(packageName, "1.0.0")).toBeNull()
     registry.restoreMiniappAccess(packageName)
     expect(registry.getMiniappEntryPaths(packageName, "1.0.0")).not.toBeNull()
+  })
+
+  test("uninstalling the last version clears revocation so a later reinstall can launch", async () => {
+    registry.revokeMiniappAccess(packageName)
+    expect(registry.isMiniappAccessRevoked(packageName)).toBe(true)
+    installed = []
+    expect((await registry.uninstall(packageName)).is_ok()).toBe(true)
+    expect(registry.isMiniappAccessRevoked(packageName)).toBe(false)
   })
 })

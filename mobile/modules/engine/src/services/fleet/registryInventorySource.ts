@@ -2,13 +2,16 @@
  * Fleet's inventory source over the app registry: each installed miniapp's release (development builds are not
  * inventory), its digest and why the phone holds it.
  *
- * The digest is the release identity's `bundleSha256`. A release installed without one (bundled assets and release-QR
- * installs record none) is listed without a digest, and the collector leaves it out of the record.
+ * The digest is the release identity's `bundleSha256`, which every release install records. A release installed before
+ * digests were recorded is still listed, with {@link UNRECORDED_DIGEST}: its ZIP is gone, so its digest is unknown.
  */
 import type {FleetInstallReason} from "@mentra/cloud-protocol"
 
 import appRegistry from "../AppRegistry"
 import type {InstalledMiniapp, InventorySource} from "./fleetCollector"
+
+/** The digest reported for a release installed before the app recorded one. Never a SHA-256. */
+export const UNRECORDED_DIGEST = "unrecorded"
 
 /** The part of the registry the source reads. */
 export interface InventoryRegistry {
@@ -31,7 +34,7 @@ function scan(registry: InventoryRegistry): InstalledMiniapp[] {
     out.push({
       packageName,
       versionName,
-      digest: identity?.bundleSha256 ?? "",
+      digest: identity?.bundleSha256 || UNRECORDED_DIGEST,
       reasons: registry.getInstallReasons(packageName),
     })
   }

@@ -151,7 +151,7 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError, resolveMiniappUrl} =
+const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError} =
   await import("../miniappReleaseInstall")
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
@@ -180,7 +180,6 @@ const router = {
 } as unknown as MentraJSRouter
 
 let foreground = true
-let now = 10_000_000
 let answer: "update" | "not_now" | "hold" = "update"
 const prompts: PendingRunningUpdatePrompt[] = []
 const failures: unknown[] = []
@@ -226,7 +225,6 @@ beforeEach(async () => {
   notInstalled = false
   installReasons.length = 0
   foreground = true
-  now = 10_000_000
   answer = "update"
   prompts.length = 0
   failures.length = 0
@@ -235,9 +233,9 @@ beforeEach(async () => {
   deferredUpdates.resetDeferredMiniappUpdatesForTests()
   prompt.setRunningUpdatePromptEnvironmentForTests({
     isForeground: () => foreground,
-    now: () => now,
-    lastPromptedAt: (packageName) => (stored.get(`prompted:${packageName}`) as number | undefined) ?? null,
-    recordPrompted: (packageName, at) => stored.set(`prompted:${packageName}`, at),
+    isDeclined: (packageName) => stored.get(`declined:${packageName}`) === true,
+    setDeclined: (packageName, value) =>
+      void (value ? stored.set(`declined:${packageName}`, true) : stored.delete(`declined:${packageName}`)),
   })
   prompt.onRunningUpdatePrompt((pending) => {
     prompts.push(pending)
@@ -346,18 +344,26 @@ describe("update prompt for a running miniapp", () => {
     await release()
     expect(calls).toEqual(["download", "verify", "unpack", "activate"])
     expect(active).toBe("1.1.0")
+    // The put-off update installed: the next one asks without waiting for an open.
+    expect(prompt.canShowRunningUpdatePrompt(pkg)).toBe(true)
   })
 
-  test("asks at most once a day per miniapp, without downloading while it may not ask", async () => {
+  test("after Not now asks again only once the person opens the miniapp, without downloading before", async () => {
     answer = "not_now"
     await runApp({open: false})
+    const ready: string[] = []
+    deferredUpdates.onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
+    const due: string[] = []
+    prompt.onRunningUpdatePromptDue((packageName) => due.push(packageName))
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     calls.length = 0
-    now += prompt.RUNNING_UPDATE_PROMPT_INTERVAL_MS - 1
     await expect(release()).rejects.toBeInstanceOf(MiniappRunningError)
     expect(calls).toEqual([])
     expect(prompts).toHaveLength(1)
-    now += 1
+
+    await useAppStatusStore.getState().setForeground(pkg)
+    expect(due).toEqual([pkg])
+    expect(ready).toEqual([])
     answer = "update"
     await release()
     expect(prompts).toHaveLength(2)
@@ -551,48 +557,6 @@ describe("installation reasons", () => {
     active = "1.1.0"
     await release({expectedVersion: "1.2.0"})
     expect(installReasons).toEqual(["explicit", undefined])
-  })
-})
-
-describe("resolving a miniapp URL", () => {
-  const serve = (status: number, body?: unknown) =>
-    (async () => new Response(body === undefined ? null : JSON.stringify(body), {status})) as unknown as typeof fetch
-
-  test("reads the manifest the URL serves; the URL decides the version", async () => {
-    const seen: string[] = []
-    const fetchImpl = (async (url: string) => {
-      seen.push(url)
-      return new Response(JSON.stringify({packageName: pkg, version: "2.0.0", bundleSha256: "A".repeat(64)}))
-    }) as unknown as typeof fetch
-    expect(await resolveMiniappUrl("https://notes.acme.example/app/", fetchImpl)).toEqual({
-      ok: true,
-      packageName: pkg,
-      version: "2.0.0",
-      bundleUrl: "https://notes.acme.example/app/bundle.zip",
-      bundleSha256: "a".repeat(64),
-    })
-    expect(seen).toEqual(["https://notes.acme.example/app/miniapp.json"])
-  })
-
-  test.each([
-    [401, "access_denied"],
-    [403, "access_denied"],
-    [404, "not_a_miniapp"],
-    [410, "archived"],
-    [503, "download_failed"],
-  ] as const)("HTTP %d is %s", async (status, reason) => {
-    expect(await resolveMiniappUrl("https://notes.acme.example", serve(status))).toEqual({ok: false, reason})
-  })
-
-  test("a page that is not a miniapp manifest is not_a_miniapp; a network error is download_failed", async () => {
-    expect(await resolveMiniappUrl("https://x.example", serve(200, {name: "site"}))).toEqual({
-      ok: false,
-      reason: "not_a_miniapp",
-    })
-    const offline = (async () => {
-      throw new TypeError("Network request failed")
-    }) as unknown as typeof fetch
-    expect(await resolveMiniappUrl("https://x.example", offline)).toEqual({ok: false, reason: "download_failed"})
   })
 })
 

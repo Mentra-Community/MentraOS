@@ -31,6 +31,7 @@ import {
 import semver from "semver"
 
 import {normalizeCoreUrl} from "./coreUrl"
+import type {FleetManagementState} from "./fleetManagementState"
 import type {FleetKeyValueStore} from "./fleetQueue"
 
 /** Reads the signed-in account's desired state (`GET /api/client/fleet/desired-state` through Core). Throws on any failure. */
@@ -43,9 +44,9 @@ export interface ReconcilerSession {
   mentraUserId: string
 }
 
-/** What a miniapp URL serves now, or why it cannot be installed. */
+/** What a miniapp URL serves now (its `miniapp.json` names the ZIP and its SHA-256), or why it cannot be installed. */
 export type ManagedResolution =
-  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256?: string}
+  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256: string}
   | {ok: false; reason: FleetAssignmentReason}
 
 /** The assignment a managed install commits with its bundle. */
@@ -70,6 +71,12 @@ export interface ManagedMiniappPort {
   hasOtherReason(packageName: string): boolean
   /** The assignment the package's install recorded, or null. */
   assignment(packageName: string): ManagedAssignment | null
+  /** Every package holding an `assignment` reason, whichever account's. */
+  assignedPackages(): string[]
+  /** A live-development build or snapshot is selected for the package, so launching would not run the release. */
+  hasDevelopmentSelection(packageName: string): boolean
+  /** Clear the package's live-development selection, so launching runs its installed release. */
+  clearDevelopmentSelection(packageName: string): Promise<void>
   install(request: {
     resolution: Extract<ManagedResolution, {ok: true}>
     assignment: ManagedAssignment
@@ -86,6 +93,8 @@ export interface ManagedMiniappPort {
   isRunning(packageName: string): boolean
   /** Calls `listener` with each package that stops. Returns the unsubscribe function. */
   onStopped(listener: (packageName: string) => void): () => void
+  /** Calls `listener` with each running package opened again after its update prompt's Not now. */
+  onUpdateDue(listener: (packageName: string) => void): () => void
   /** Block launch and stop the package now. Uninstalls nothing. */
   revokeAccess(packageName: string): Promise<void>
   restoreAccess(packageName: string): void
@@ -108,6 +117,8 @@ export interface AssignmentReconcilerDeps {
   isOnline(): boolean
   store: FleetKeyValueStore
   emit(outcome: FleetAssignmentOutcomePayload): void
+  /** The account's last complete answer, published on each session change and each answer applied. */
+  onManagementState?(state: FleetManagementState): void
   timers: ReconcilerTimers
   now?: () => number
   random?: () => number
@@ -118,6 +129,7 @@ export type ReconcileTrigger =
   | "foreground"
   | "revision"
   | "stopped"
+  | "opened"
   | "reconnect"
   | "leave"
   | "retry"
@@ -205,6 +217,9 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
   let failures = 0
   let stopped = false
   const stopListener = miniapps.onStopped((packageName) => onPackageStopped(packageName))
+  const dueListener = miniapps.onUpdateDue((packageName) => {
+    if (!stopped && session && isWaiting(packageName)) trigger("opened")
+  })
 
   function iso(at = now()): string {
     return new Date(at).toISOString()
@@ -244,7 +259,19 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     again = false
     // Signed out, the last account's revocations stand. Another account sees only its own.
     if (current) applyRevocations(sessionKey(current))
+    publishManagement()
     return current !== null
+  }
+
+  function publishManagement(): void {
+    const snapshot = session ? state.snapshot : null
+    deps.onManagementState?.(
+      snapshot?.status === "managed"
+        ? {status: "managed", workspaceId: snapshot.workspace.workspaceId, workspaceName: snapshot.workspace.name}
+        : snapshot?.status === "unmanaged"
+          ? {status: "unmanaged"}
+          : {status: "unknown"},
+    )
   }
 
   function applyRevocations(key: string): void {
@@ -374,6 +401,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
     state.appliedRevision = desired.revision
     state.snapshot = desired
     save()
+    publishManagement()
 
     const entries = desired.status === "managed" ? desired.entries : []
     const byPackage = new Map<string, FleetDesiredStateEntry>()
@@ -414,6 +442,17 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       emitOutcome(assignmentId, {...outcome, state: "withdrawn", reason: undefined}, desiredRevision)
       delete state.outcomes[assignmentId]
       save()
+    }
+    // An assignment reason this account has no outcome for, such as one a previous account's assignment recorded,
+    // stays only while this account's complete desired state still names the package.
+    for (const packageName of miniapps.assignedPackages()) {
+      if (byPackage.has(packageName)) continue
+      assertCurrent(gen)
+      miniapps.clearAssignment(packageName)
+      if (!miniapps.hasOtherReason(packageName) && !state.pendingUninstalls.includes(packageName)) {
+        state.pendingUninstalls.push(packageName)
+        save()
+      }
     }
     await uninstallIdle(gen)
   }
@@ -521,15 +560,31 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         })
         return
       }
-      const sameBytes =
-        !resolution.bundleSha256 || !installed.bundleSha256 || resolution.bundleSha256 === installed.bundleSha256
+      // A release installed before digests were recorded counts as the served bytes at the same version.
+      const sameBytes = !installed.bundleSha256 || resolution.bundleSha256 === installed.bundleSha256
       if (order === 0 && sameBytes) {
+        // The cached release satisfies the assignment only once a live-development selection no longer runs instead.
+        if (miniapps.hasDevelopmentSelection(entry.packageName)) {
+          if (miniapps.isRunning(entry.packageName)) {
+            record(entry, desired.revision, {
+              state: "deferred_running",
+              selectedVersion,
+              installedVersion: installed.version,
+            })
+            return
+          }
+          await miniapps.clearDevelopmentSelection(entry.packageName)
+          assertCurrent(gen)
+        }
         const recorded = miniapps.assignment(entry.packageName)
         if (
           !recorded ||
           recorded.assignmentId !== assignment.assignmentId ||
           recorded.assignmentRevision !== assignment.assignmentRevision ||
-          recorded.workspaceId !== assignment.workspaceId
+          recorded.workspaceId !== assignment.workspaceId ||
+          recorded.coreUrl !== assignment.coreUrl ||
+          recorded.mentraUserId !== assignment.mentraUserId ||
+          recorded.url !== assignment.url
         ) {
           miniapps.setAssignment(entry.packageName, assignment)
         }
@@ -552,8 +607,14 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       attempts,
       attempted: true,
     })
+    // A newer desired-state revision heard before the commit makes this decision stale; the next cycle reads it.
+    const heardRevision = wantedRevision
     try {
-      await miniapps.install({resolution, assignment, isCancelled: () => stopped || gen !== generation})
+      await miniapps.install({
+        resolution,
+        assignment,
+        isCancelled: () => stopped || gen !== generation || wantedRevision > heardRevision,
+      })
     } catch (error) {
       assertCurrent(gen)
       const {kind, retryable} = miniapps.classify(error)
@@ -660,10 +721,13 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       const gen = generation
       void uninstallIdle(gen).catch(() => {})
     }
-    const waiting = Object.values(state.outcomes).some(
+    if (isWaiting(packageName)) trigger("stopped")
+  }
+
+  function isWaiting(packageName: string): boolean {
+    return Object.values(state.outcomes).some(
       (outcome) => outcome.packageName === packageName && outcome.state === "deferred_running",
     )
-    if (waiting) trigger("stopped")
   }
 
   function trigger(kind: ReconcileTrigger, revision?: number): void {
@@ -711,6 +775,7 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
       if (timer !== null) deps.timers.clearTimeout(timer)
       timer = null
       stopListener()
+      dueListener()
     },
   }
 }

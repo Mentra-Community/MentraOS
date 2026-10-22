@@ -9,27 +9,26 @@ mock.module("../../utils/storage/storage", () => ({
 const {
   canShowRunningUpdatePrompt,
   emitRunningUpdateFailed,
+  forgetRunningUpdateDecline,
+  noteMiniappOpened,
   onRunningUpdateFailed,
   onRunningUpdatePrompt,
+  onRunningUpdatePromptDue,
   requestRunningUpdatePrompt,
-  RUNNING_UPDATE_PROMPT_INTERVAL_MS,
   setRunningUpdatePromptEnvironmentForTests,
 } = await import("../runningUpdatePrompt")
 
 const request = {packageName: "com.acme.notes", displayName: "Notes", version: "1.1.0"}
 let foreground = true
-let now = 1_000_000
-const promptedAt = new Map<string, number>()
+const declined = new Set<string>()
 
 beforeEach(() => {
   foreground = true
-  now = 1_000_000
-  promptedAt.clear()
+  declined.clear()
   setRunningUpdatePromptEnvironmentForTests({
     isForeground: () => foreground,
-    now: () => now,
-    lastPromptedAt: (packageName) => promptedAt.get(packageName) ?? null,
-    recordPrompted: (packageName, at) => promptedAt.set(packageName, at),
+    isDeclined: (packageName) => declined.has(packageName),
+    setDeclined: (packageName, value) => void (value ? declined.add(packageName) : declined.delete(packageName)),
   })
 })
 
@@ -49,20 +48,38 @@ describe("running update prompt", () => {
     const {shown} = answerWith("update")
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("update")
     expect(shown.map(({packageName, displayName, version}) => ({packageName, displayName, version}))).toEqual([request])
-    expect(promptedAt.get(request.packageName)).toBe(now)
+    // Update leaves nothing that would hold back a later prompt.
+    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
   })
 
-  test("Not now is an answer, and the prompt returns at most once a day for that miniapp", async () => {
+  test("after Not now it asks again the next time the person opens that miniapp, and not before", async () => {
     const {shown} = answerWith("not_now")
+    const due: string[] = []
+    onRunningUpdatePromptDue((packageName) => due.push(packageName))
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_now")
-    now += RUNNING_UPDATE_PROMPT_INTERVAL_MS - 1
     expect(canShowRunningUpdatePrompt(request.packageName)).toBe(false)
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_shown")
-    // Another miniapp is not limited by this one's prompt.
+    // Another miniapp is neither held back by this one's answer nor does opening it count.
     await expect(requestRunningUpdatePrompt({...request, packageName: "com.acme.other"})).resolves.toBe("not_now")
-    now += 1
+    noteMiniappOpened("com.acme.third")
+    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(false)
+    expect(due).toEqual([])
+
+    noteMiniappOpened(request.packageName)
+    expect(due).toEqual([request.packageName])
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_now")
     expect(shown).toHaveLength(3)
+    // Opening it again only counts once per Not now.
+    noteMiniappOpened("com.acme.other")
+    noteMiniappOpened("com.acme.other")
+    expect(due).toEqual([request.packageName, "com.acme.other"])
+  })
+
+  test("once the put-off update installs, a later update asks without waiting for an open", async () => {
+    answerWith("not_now")
+    await requestRunningUpdatePrompt(request)
+    forgetRunningUpdateDecline(request.packageName)
+    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
   })
 
   test("is not shown while the Mentra App is in the background, and that does not count as asking", async () => {
@@ -70,7 +87,7 @@ describe("running update prompt", () => {
     foreground = false
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_shown")
     expect(shown).toHaveLength(0)
-    expect(promptedAt.size).toBe(0)
+    expect(declined.size).toBe(0)
     foreground = true
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("update")
   })
@@ -99,14 +116,7 @@ describe("running update prompt", () => {
       throw new Error("no modal")
     })
     await expect(requestRunningUpdatePrompt(request)).resolves.toBe("not_shown")
-    expect(promptedAt.size).toBe(0)
-    expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
-  })
-
-  test("a clock moved backwards does not suppress the prompt", async () => {
-    answerWith("not_now")
-    await requestRunningUpdatePrompt(request)
-    now -= 10_000
+    expect(declined.size).toBe(0)
     expect(canShowRunningUpdatePrompt(request.packageName)).toBe(true)
   })
 
