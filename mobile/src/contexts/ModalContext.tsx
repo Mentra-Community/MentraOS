@@ -148,22 +148,26 @@ function SheetButtons({
   onPress: (index: number) => void
 }) {
   const {theme} = useAppTheme()
+  const {fontScale} = useWindowDimensions()
   const [rowWidth, setRowWidth] = useState(0)
-  const [labelWidths, setLabelWidths] = useState<number[]>([])
+  /** Label widths at the text size they were measured at. A new text size measures again. */
+  const [labels, setLabels] = useState<{fontScale: number; widths: number[]}>({fontScale, widths: []})
 
   const ordered = sheetButtonOrder(buttons)
   const pair = ordered.length === 2
-  const measured = rowWidth > 0 && ordered.every((_, position) => (labelWidths[position] ?? 0) > 0)
+  const measured =
+    rowWidth > 0 && labels.fontScale === fontScale && ordered.every((_, position) => (labels.widths[position] ?? 0) > 0)
   // Until the labels are measured (the first frame, while the sheet is still below the screen), assume they fit.
-  const sideBySide = pair && (!measured || buttonsFitSideBySide(rowWidth, labelWidths))
+  const sideBySide = pair && (!measured || buttonsFitSideBySide(rowWidth, labels.widths))
 
   const measureLabel = (position: number) => (event: LayoutChangeEvent) => {
     const width = event.nativeEvent.layout.width
-    setLabelWidths((widths) => {
-      if (widths[position] === width) return widths
+    setLabels((current) => {
+      const widths = current.fontScale === fontScale ? current.widths : []
+      if (widths[position] === width) return current
       const next = [...widths]
       next[position] = width
-      return next
+      return {fontScale, widths: next}
     })
   }
 
@@ -172,7 +176,7 @@ function SheetButtons({
       className={sideBySide ? "mt-6 flex-row gap-2.5" : "mt-6 gap-2.5"}
       onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
       testID={sideBySide ? "alert.buttons.row" : "alert.buttons.stack"}>
-      {/* Invisible copies of the labels, measured once and then removed so only the buttons carry the text. */}
+      {/* Invisible copies of the labels, measured and then removed so only the buttons carry the text. */}
       {pair && !measured && (
         <View
           className="absolute left-0 right-0 top-0 items-start opacity-0"

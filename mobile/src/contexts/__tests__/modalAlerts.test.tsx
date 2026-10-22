@@ -1,5 +1,5 @@
 import {act, fireEvent, render, within} from "@testing-library/react-native"
-import {BackHandler} from "react-native"
+import {BackHandler, Dimensions} from "react-native"
 
 import {
   buttonsFitSideBySide,
@@ -230,6 +230,30 @@ describe("alert sheet", () => {
     })
     expect(screen.getByTestId("alert.buttons.row")).toBeTruthy()
     expect(screen.queryByTestId("alert.buttons.measure", {includeHiddenElements: true})).toBeNull()
+  })
+
+  it("measures the labels again when the text size changes", async () => {
+    const window = Dimensions.get("window")
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    try {
+      await show(UPDATE)
+      await act(async () => {
+        layOut(screen, 320, {"Not now": 60, "Update": 55})
+      })
+      expect(screen.getByTestId("alert.buttons.row")).toBeTruthy()
+
+      await act(async () => {
+        Dimensions.set({window: {...window, fontScale: window.fontScale * 3}})
+      })
+      await act(async () => {
+        layOut(screen, 320, {"Not now": 180, "Update": 165})
+      })
+      expect(screen.getByTestId("alert.buttons.stack")).toBeTruthy()
+    } finally {
+      await act(async () => {
+        Dimensions.set({window})
+      })
+    }
   })
 
   it("stacks three or more buttons", async () => {
