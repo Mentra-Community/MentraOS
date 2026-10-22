@@ -50,6 +50,7 @@ import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
+import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
 import {RecentChecks} from "./recent-checks"
 import {isId, roleEntry, type MembershipRow} from "./workspace.service"
 
@@ -104,6 +105,7 @@ export async function claimPendingMemberships(
   const heldByWorkspace = new Map(held.map(row => [row.workspaceId, row]))
   const bumped = new Map<string, WorkspaceRow | null>()
   const now = new Date()
+  let yielded = false
 
   for (const row of pending) {
     // Every change to who holds a role writes the workspace document first, once per workspace: it
@@ -121,6 +123,11 @@ export async function claimPendingMemberships(
       continue
     }
 
+    // The person is about to hold a workspace of their own accord: an empty automatic one gives way, once.
+    if (!yielded && bumped.get(row.workspaceId)) {
+      yielded = true
+      await yieldAutomaticWorkspace(session, SYSTEM_ACTOR, mentraUserId, {except: row.workspaceId})
+    }
     const claimed = await WorkspaceMembershipModel.updateOne(
       {membershipId: row.membershipId, pendingWorkosUserId: workosUserId, status: "active"},
       {$set: {mentraUserId, pendingWorkosUserId: null}},

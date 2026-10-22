@@ -2,10 +2,11 @@
  * @fileoverview The `features` claim: licensed features in a person's miniapp token.
  *
  * `featuresFor` and `POST /api/client/auth/miniapp-token` run against real `licenses` and `license_seats`
- * rows on a local replica set. A person holds a feature through a license of their own or a seat in a
- * workspace's license, while that license is in its term (`validFrom <= now < paidThrough`, not ended), and
- * only for the packages the feature lists. `CLOUD_CORE_ENABLED_FEATURES` grants an entry's feature to every
- * signed-in person in the listed packages' tokens.
+ * rows on a local replica set. A person holds a feature through a seat in a workspace's license, and only
+ * through one, while that license is in its term (`validFrom <= now < paidThrough`, not ended), and only for
+ * the packages the feature lists. `CLOUD_CORE_ENABLED_FEATURES` grants an entry's feature to every
+ * signed-in person in the listed packages' tokens. A purchase's buyer, given a license by the write that
+ * created it (`applyLicenseWrite` with `assignTo`), has its features in their next token.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random database name, ignores
  * `MONGO_URL`) and asserts the live connection is on that database before any destructive call. The
@@ -23,13 +24,26 @@ import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {LicenseSeatModel} from "../packages/core/src/models/license-seat.model"
 import {LicenseModel} from "../packages/core/src/models/license.model"
+import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
+import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
+import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
+import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import * as trustedEmail from "../packages/core/src/services/account/trusted-email.service"
 import {featuresFor} from "../packages/core/src/services/licenses/features.service"
+import {applyLicenseWrite} from "../packages/core/src/services/licenses/license.service"
 import * as session from "../packages/core/src/services/session.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 import {applyEnv} from "./support/signin-harness"
 
-const MODELS = [LicenseModel, LicenseSeatModel]
+const MODELS = [
+  LicenseModel,
+  LicenseSeatModel,
+  WorkspaceAuditCounterModel,
+  WorkspaceAuditEventModel,
+  WorkspaceMembershipModel,
+  WorkspaceModel,
+]
 
 const CALL = "com.mentra.call"
 const NOTES = "com.mentra.notes"
@@ -100,8 +114,8 @@ async function insertLicense(owner: Record<string, string>, fields: LicenseField
     owner,
     product: "mentra.call.unlimited",
     features: fields.features ?? [{key: UNLIMITED, packages: [CALL]}],
-    quantity: owner.type === "person" ? 1 : 5,
-    seatsUsed: owner.type === "person" ? 1 : 0,
+    quantity: 5,
+    seatsUsed: 0,
     validFrom: fields.validFrom ?? inMs(-10 * DAY),
     paidThrough: fields.paidThrough ?? inMs(20 * DAY),
     revision: 1,
@@ -110,8 +124,6 @@ async function insertLicense(owner: Record<string, string>, fields: LicenseField
   })
   return _id
 }
-
-const personal = (mentraUserId: string, fields?: LicenseFields) => insertLicense({type: "person", mentraUserId}, fields)
 
 /** A workspace's license, with a seat for each of `holders`. */
 async function workspaceLicense(workspaceId: string, holders: string[], fields?: LicenseFields): Promise<string> {
@@ -130,6 +142,10 @@ async function workspaceLicense(workspaceId: string, holders: string[], fields?:
   return licenseId
 }
 
+/** A license of a workspace of its own, with one seat, `mentraUserId`'s. */
+const seated = (mentraUserId: string, fields?: LicenseFields) =>
+  workspaceLicense(`ws_${mentraUserId}_${counter++}`, [mentraUserId], fields)
+
 const lookup = (mentraUserId: string, packageName = CALL, now = NOW) => featuresFor({mentraUserId, packageName, now})
 
 // --- Licenses and seats ----------------------------------------------------
@@ -139,9 +155,22 @@ describe("who holds a feature", () => {
     expect(await lookup("mu_nobody")).toEqual([])
   })
 
-  test("a personal license gives its feature", async () => {
-    await personal("mu_alice")
-    expect(await lookup("mu_alice")).toEqual([UNLIMITED])
+  test("only a seat counts: a license that names the person as its owner gives nothing", async () => {
+    // No write makes such a license; one written straight into the collection stands for any that existed.
+    await LicenseModel.collection.insertOne({
+      _id: newLicenseId() as never,
+      owner: {type: "person", mentraUserId: "mu_alice"},
+      product: "mentra.call.unlimited",
+      features: [{key: UNLIMITED, packages: [CALL]}],
+      quantity: 1,
+      seatsUsed: 1,
+      validFrom: inMs(-10 * DAY),
+      paidThrough: inMs(20 * DAY),
+      revision: 1,
+      endedAt: null,
+      endedReason: null,
+    })
+    expect(await lookup("mu_alice")).toEqual([])
   })
 
   test("a seat in a workspace license gives its feature", async () => {
@@ -149,35 +178,30 @@ describe("who holds a feature", () => {
     expect(await lookup("mu_alice")).toEqual([UNLIMITED])
   })
 
-  test("a personal license and a seat in the same feature give it once", async () => {
-    await personal("mu_alice")
+  test("seats in two licenses of the same feature give it once", async () => {
     await workspaceLicense("ws_acme", ["mu_alice"])
+    await workspaceLicense("ws_globex", ["mu_alice"])
     expect(await lookup("mu_alice")).toEqual([UNLIMITED])
   })
 
   test("with either one ended, the other still gives the feature", async () => {
     const ended = {endedAt: inMs(-DAY)}
 
-    await personal("mu_alice", ended)
-    await workspaceLicense("ws_acme", ["mu_alice"])
+    await workspaceLicense("ws_acme", ["mu_alice"], ended)
+    await workspaceLicense("ws_globex", ["mu_alice"])
     expect(await lookup("mu_alice")).toEqual([UNLIMITED])
 
-    await personal("mu_bob")
-    await workspaceLicense("ws_acme", ["mu_bob"], ended)
+    await workspaceLicense("ws_acme", ["mu_bob"])
+    await workspaceLicense("ws_globex", ["mu_bob"], ended)
     expect(await lookup("mu_bob")).toEqual([UNLIMITED])
 
-    await personal("mu_carol", ended)
     await workspaceLicense("ws_acme", ["mu_carol"], ended)
+    await workspaceLicense("ws_globex", ["mu_carol"], ended)
     expect(await lookup("mu_carol")).toEqual([])
   })
 
   test("a workspace license gives nothing to a person without a seat, or to another person's seat", async () => {
     await workspaceLicense("ws_acme", ["mu_alice"])
-    expect(await lookup("mu_bob")).toEqual([])
-  })
-
-  test("a personal license is its owner's alone", async () => {
-    await personal("mu_alice")
     expect(await lookup("mu_bob")).toEqual([])
   })
 
@@ -190,8 +214,8 @@ describe("who holds a feature", () => {
   })
 
   test("seats in several workspaces, and licenses of several products, are all counted, sorted and unique", async () => {
-    await personal("mu_alice", {features: [{key: "call.transcripts", packages: [CALL]}]})
-    await personal("mu_alice", {
+    await workspaceLicense("ws_acme", ["mu_alice"], {features: [{key: "call.transcripts", packages: [CALL]}]})
+    await workspaceLicense("ws_acme", ["mu_alice"], {
       features: [
         {key: UNLIMITED, packages: [CALL]},
         {key: "call.recording", packages: [CALL, NOTES]},
@@ -205,36 +229,36 @@ describe("who holds a feature", () => {
 
 describe("a license's term", () => {
   test("is valid from validFrom, inclusive, to paidThrough, exclusive", async () => {
-    await personal("mu_from", {validFrom: NOW, paidThrough: inMs(DAY)})
+    await seated("mu_from", {validFrom: NOW, paidThrough: inMs(DAY)})
     expect(await lookup("mu_from")).toEqual([UNLIMITED])
 
-    await personal("mu_until", {validFrom: inMs(-DAY), paidThrough: inMs(1)})
+    await seated("mu_until", {validFrom: inMs(-DAY), paidThrough: inMs(1)})
     expect(await lookup("mu_until")).toEqual([UNLIMITED])
 
-    await personal("mu_expired_now", {validFrom: inMs(-DAY), paidThrough: NOW})
+    await seated("mu_expired_now", {validFrom: inMs(-DAY), paidThrough: NOW})
     expect(await lookup("mu_expired_now")).toEqual([])
   })
 
   test("an expired license gives nothing", async () => {
-    await personal("mu_alice", {validFrom: inMs(-40 * DAY), paidThrough: inMs(-10 * DAY)})
+    await seated("mu_alice", {validFrom: inMs(-40 * DAY), paidThrough: inMs(-10 * DAY)})
     await workspaceLicense("ws_acme", ["mu_alice"], {validFrom: inMs(-40 * DAY), paidThrough: inMs(-1)})
     expect(await lookup("mu_alice")).toEqual([])
   })
 
   test("a license that has not started gives nothing", async () => {
-    await personal("mu_alice", {validFrom: inMs(1), paidThrough: inMs(30 * DAY)})
+    await seated("mu_alice", {validFrom: inMs(1), paidThrough: inMs(30 * DAY)})
     await workspaceLicense("ws_acme", ["mu_alice"], {validFrom: inMs(DAY), paidThrough: inMs(30 * DAY)})
     expect(await lookup("mu_alice")).toEqual([])
   })
 
   test("an ended license gives nothing, though its dates still cover now", async () => {
-    await personal("mu_alice", {endedAt: inMs(-1)})
+    await seated("mu_alice", {endedAt: inMs(-1)})
     await workspaceLicense("ws_acme", ["mu_alice"], {endedAt: inMs(-DAY)})
     expect(await lookup("mu_alice")).toEqual([])
   })
 
   test("is judged at the time asked about, not the time of the call", async () => {
-    await personal("mu_alice", {validFrom: inMs(-DAY), paidThrough: inMs(DAY)})
+    await seated("mu_alice", {validFrom: inMs(-DAY), paidThrough: inMs(DAY)})
     expect(await lookup("mu_alice", CALL, inMs(0))).toEqual([UNLIMITED])
     expect(await lookup("mu_alice", CALL, inMs(2 * DAY))).toEqual([])
     expect(await lookup("mu_alice", CALL, inMs(-2 * DAY))).toEqual([])
@@ -254,11 +278,6 @@ describe("a feature's packages", () => {
     expect(await lookup("mu_alice", NOTES)).toEqual(["notes.pro"])
   })
 
-  test("a personal license for another package never reaches this package's token", async () => {
-    await personal("mu_alice", {features: [{key: "notes.pro", packages: [NOTES]}]})
-    expect(await lookup("mu_alice", CALL)).toEqual([])
-  })
-
   test("one license's features are filtered one by one", async () => {
     await workspaceLicense("ws_acme", ["mu_alice"], {
       features: [
@@ -273,7 +292,7 @@ describe("a feature's packages", () => {
   })
 
   test("a feature for no package reaches no token", async () => {
-    await personal("mu_alice", {features: [{key: "service.only", packages: []}]})
+    await seated("mu_alice", {features: [{key: "service.only", packages: []}]})
     await workspaceLicense("ws_acme", ["mu_alice"], {features: [{key: "seat.service.only", packages: []}]})
     for (const packageName of [CALL, NOTES, "", "com.example.other"]) {
       expect(await lookup("mu_alice", packageName)).toEqual([])
@@ -309,7 +328,7 @@ describe("CLOUD_CORE_ENABLED_FEATURES", () => {
 
   test("is added to what licenses give, each feature once", async () => {
     grant("call.unlimited:com.mentra.call, call.beta:com.mentra.call")
-    await personal("mu_alice")
+    await seated("mu_alice")
     await workspaceLicense("ws_acme", ["mu_alice"], {features: [{key: "call.recording", packages: [CALL]}]})
     expect(await lookup("mu_alice")).toEqual(["call.beta", "call.recording", UNLIMITED])
     expect(await lookup("mu_bob")).toEqual(["call.beta", UNLIMITED])
@@ -332,13 +351,11 @@ describe("the lookups use the collections' indexes", () => {
     return [...own, ...children.flatMap(scannedIndexes)]
   }
 
-  test("personal licenses by owner, seats by person and seated licenses by id", async () => {
-    // Other people's licenses and seats, enough that scanning the collections (or only the owner type
-    // or the workspace) would read dozens of documents where the person's own indexes read one.
+  test("seats by person and seated licenses by id, and nothing else", async () => {
+    // Other people's licenses and seats, enough that scanning the collections (or only the workspace) would
+    // read dozens of documents where the person's own indexes read one.
     const others = 40
-    for (let n = 0; n < others; n++) await personal(`mu_other_${n}`)
     for (let n = 0; n < others; n++) await workspaceLicense(`ws_other_${n}`, [`mu_seat_other_${n}`])
-    await personal("mu_alice")
     await workspaceLicense("ws_acme", ["mu_alice"])
 
     // Collect the filters featuresFor sends, then ask Mongo how it runs each.
@@ -359,19 +376,17 @@ describe("the lookups use the collections' indexes", () => {
     expect(await lookup("mu_alice")).toEqual([UNLIMITED])
     for (const mock of mocks.splice(0)) mock.mockRestore()
 
-    expect(licenseFilters).toHaveLength(2)
+    // One read of the person's seats and one of the licenses they are in; no license is read by its owner.
     expect(seatFilters).toHaveLength(1)
+    expect(licenseFilters).toHaveLength(1)
+    expect("_id" in licenseFilters[0]).toBe(true)
     const plans = {
-      personal: await LicenseModel.find(licenseFilters.find((filter) => "owner.type" in filter)).explain(
-        "executionStats",
-      ),
-      seated: await LicenseModel.find(licenseFilters.find((filter) => "_id" in filter)).explain("executionStats"),
+      seated: await LicenseModel.find(licenseFilters[0]).explain("executionStats"),
       seats: await LicenseSeatModel.find(seatFilters[0]).explain("executionStats"),
     }
-    expect(scannedIndexes(plans.personal)).toContain("owner.type_1_owner.mentraUserId_1")
     expect(scannedIndexes(plans.seated)).toContain("_id_")
     expect(scannedIndexes(plans.seats)).toContain("mentraUserId_1")
-    // Alice has one license of her own, one seat and one seated license; nothing else is read.
+    // Alice has one seat and one seated license; nothing else is read.
     for (const plan of Object.values(plans)) {
       expect((plan as any).executionStats.totalDocsExamined).toBe(1)
       expect((plan as any).executionStats.totalKeysExamined).toBe(1)
@@ -427,17 +442,11 @@ describe("POST /api/client/auth/miniapp-token", () => {
   // The licenses are in their term for the real clock, as they are for a phone minting now.
   const inTerm = {validFrom: new Date(Date.now() - DAY), paidThrough: new Date(Date.now() + 30 * DAY)}
 
-  test("carries a personal license's features in that package's token only", async () => {
-    await personal("mu_alice", inTerm)
-
-    expect((await mint(CALL)).features).toEqual([UNLIMITED])
-    expect("features" in (await mint(NOTES))).toBe(false)
-  })
-
-  test("carries a seat's features", async () => {
+  test("carries a seat's features, in that package's token only", async () => {
     await workspaceLicense("ws_acme", ["mu_alice"], inTerm)
 
     expect(await mint(CALL)).toMatchObject({sub: "mu_alice", aud: CALL, features: [UNLIMITED]})
+    expect("features" in (await mint(NOTES))).toBe(false)
   })
 
   test("has no features claim for a person with no license", async () => {
@@ -445,13 +454,47 @@ describe("POST /api/client/auth/miniapp-token", () => {
   })
 
   test("has no features claim for a person whose license has expired", async () => {
-    await personal("mu_alice", {validFrom: new Date(Date.now() - 40 * DAY), paidThrough: new Date(Date.now() - DAY)})
+    await seated("mu_alice", {validFrom: new Date(Date.now() - 40 * DAY), paidThrough: new Date(Date.now() - DAY)})
     expect("features" in (await mint(CALL))).toBe(false)
   })
 
   test("has no features claim for a person whose license has a feature for no package", async () => {
-    await personal("mu_alice", {...inTerm, features: [{key: "service.only", packages: []}]})
+    await seated("mu_alice", {...inTerm, features: [{key: "service.only", packages: []}]})
     expect("features" in (await mint(CALL))).toBe(false)
+  })
+
+  test("carries the license its buyer got from the write that created it", async () => {
+    await WorkspaceModel.create({workspaceId: "ws_alice", name: "Alice's Workspace", status: "active"})
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_alice",
+        workspaceId: "ws_alice",
+        mentraUserId: "mu_alice",
+        role: "owner",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
+    expect("features" in (await mint(CALL))).toBe(false)
+
+    const write = {
+      licenseId: newLicenseId(),
+      revision: 1,
+      owner: {type: "workspace", workspaceId: "ws_alice"} as const,
+      product: "mentra.call.unlimited",
+      features: [{key: UNLIMITED, packages: [CALL]}],
+      quantity: 5,
+      validFrom: inTerm.validFrom.toISOString(),
+      paidThrough: inTerm.paidThrough.toISOString(),
+      assignTo: {mentraUserId: "mu_alice"},
+    }
+    expect(await applyLicenseWrite(write, {kind: "service", service: "store", email: null})).toEqual({
+      applied: true,
+      revision: 1,
+    })
+
+    expect(await mint(CALL)).toMatchObject({sub: "mu_alice", features: [UNLIMITED]})
+    expect("features" in (await mint(NOTES))).toBe(false)
   })
 
   test("carries a configured grant to a person who holds no license", async () => {

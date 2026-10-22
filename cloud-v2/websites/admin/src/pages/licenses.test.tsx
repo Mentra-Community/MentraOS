@@ -26,24 +26,10 @@ const workspaceLicense: AdminLicenseView = {
   quantity: 10,
   seatsUsed: 4,
 };
-const namedPerson: AdminLicenseView = {
+const otherWorkspace: AdminLicenseView = {
   ...base,
-  licenseId: "lic_named",
-  owner: { type: "person", mentraUserId: "mu_ada", name: "Ada Lovelace", email: "ada@analytical.test" },
-  quantity: 1,
-  seatsUsed: 1,
-};
-const emailOnlyPerson: AdminLicenseView = {
-  ...base,
-  licenseId: "lic_email",
-  owner: { type: "person", mentraUserId: "mu_grace", name: null, email: "grace@navy.test" },
-  quantity: 1,
-  seatsUsed: 1,
-};
-const anonymousPerson: AdminLicenseView = {
-  ...base,
-  licenseId: "lic_anonymous",
-  owner: { type: "person", mentraUserId: "mu_unknown", name: null, email: null },
+  licenseId: "lic_globex",
+  owner: { type: "workspace", workspaceId: "ws_globex", name: "Globex Corporation" },
   quantity: 1,
   seatsUsed: 1,
 };
@@ -61,14 +47,8 @@ const ended: AdminLicenseView = {
   endedAt: "2026-09-01T00:00:00.000Z",
   endedReason: "workspace_deleted",
 };
-const endedPerson: AdminLicenseView = {
-  ...namedPerson,
-  licenseId: "lic_ended_person",
-  endedAt: "2026-09-02T00:00:00.000Z",
-  endedReason: "account_deleted",
-};
 
-const everyLicense = [workspaceLicense, namedPerson, emailOnlyPerson, anonymousPerson, unnamedWorkspace, expired, ended, endedPerson];
+const everyLicense = [workspaceLicense, otherWorkspace, unnamedWorkspace, expired, ended];
 
 interface Served {
   items: AdminLicenseView[];
@@ -107,27 +87,26 @@ function render(pages: Served[] | null = [{ items: everyLicense, next: null }], 
 }
 
 describe("the Licenses page lists every license", () => {
-  test("shows a workspace owner by its name and a person owner by name and email", () => {
+  test("shows each license's workspace by its name and id: a workspace is the only owner", () => {
     const markup = render();
-    expect(markup).toContain("Acme Robotics");
-    // Each row is a product a workspace or a person pays for; its Assigned column counts licenses.
+    // Each row is a product a workspace pays for; its Assigned column counts licenses.
     expect(markup).toContain("All products");
-    expect(markup).toContain("Ada Lovelace");
-    expect(markup).toContain("ada@analytical.test");
-    // A person with an email but no name is shown by the email.
-    expect(markup).toContain("grace@navy.test");
-    expect(markup).toContain("Workspace");
-    expect(markup).toContain("Person");
+    expect(markup).toContain("Newest first, each with the workspace that holds it.");
+    expect(markup).toContain(">Workspace</th>");
+    expect(markup).toContain("Acme Robotics");
+    expect(markup).toContain("ws_acme");
+    expect(markup).toContain("Globex Corporation");
+    expect(markup).toContain("Workspace name, id or product");
+    expect(markup).not.toMatch(/person|people|personal|email/i);
   });
 
-  test("falls back to the owner's id when Core knows no name or email for it", () => {
-    const markup = render([{ items: [anonymousPerson, unnamedWorkspace], next: null }]);
-    expect(markup).toContain("mu_unknown");
-    expect(markup).toContain("ws_unnamed");
+  test("falls back to the workspace's id when Core knows no name for it", () => {
+    const markup = render([{ items: [unnamedWorkspace], next: null }]);
+    expect(markup.match(/ws_unnamed/g)).toHaveLength(1);
   });
 
   test("shows the product, the licenses assigned of the quantity, and the paid-through date", () => {
-    const markup = render([{ items: [workspaceLicense, namedPerson], next: null }]);
+    const markup = render([{ items: [workspaceLicense, otherWorkspace], next: null }]);
     expect(markup).toContain("mentra.call.unlimited");
     expect(markup).toMatch(/4(<!-- --> of <!-- -->| of )10/);
     expect(markup).toMatch(/1(<!-- --> of <!-- -->| of )1</);
@@ -138,18 +117,16 @@ describe("the Licenses page lists every license", () => {
   });
 
   test("says which licenses are active, expired or ended and why", () => {
-    const markup = render([{ items: [workspaceLicense, expired, ended, endedPerson], next: null }]);
+    const markup = render([{ items: [workspaceLicense, expired, ended], next: null }]);
     expect(markup).toContain("Active");
     expect(markup).toContain("Expired");
     expect(markup).toContain("Ended: workspace deleted");
-    expect(markup).toContain("Ended: account deleted");
   });
 
   test("licenseState: an ended license is ended whatever it was paid through; otherwise paid-through decides", () => {
     expect(licenseState(workspaceLicense, NOW)).toEqual({ kind: "active", label: "Active" });
     expect(licenseState(expired, NOW)).toEqual({ kind: "expired", label: "Expired" });
     expect(licenseState(ended, NOW)).toEqual({ kind: "ended", label: "Ended: workspace deleted" });
-    expect(licenseState(endedPerson, NOW)).toEqual({ kind: "ended", label: "Ended: account deleted" });
     expect(licenseState({ ...ended, endedReason: null }, NOW)).toEqual({ kind: "ended", label: "Ended" });
     // The paid-through instant itself is already over.
     expect(licenseState({ ...workspaceLicense, paidThrough: new Date(NOW).toISOString() }, NOW).kind).toBe("expired");

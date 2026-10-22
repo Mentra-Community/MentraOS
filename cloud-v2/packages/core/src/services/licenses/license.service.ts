@@ -2,22 +2,18 @@
  * @fileoverview Licenses and their seats.
  *
  * A license is Core's copy of what billing (the Store's billing module) last wrote for it
- * (`applyLicenseWrite`): a quantity of one product for a term, held by a workspace or a person. Core never
- * changes a license's terms itself; it records who holds each seat of a workspace license, and ends a
- * license when its owner is deleted.
+ * (`applyLicenseWrite`): a quantity of one product for a term, held by a workspace, and only by a workspace
+ * (a write naming any other owner is refused). Core never changes a license's terms itself; it records who
+ * holds each of its seats, and ends a license when its workspace is deleted. A person has a license only
+ * through a seat.
  *
  * **Writes are revisioned.** A write applies only when its revision is newer than the one Core has; an
- * equal one is a repeat and changes nothing, an older one is refused (`stale_revision`), and one for an
- * owner that is deleted or never existed is refused (`owner_not_found`), as is any write for a license that
- * ended with its owner. A workspace license is written in a transaction that also writes the workspace
- * document, so it conflicts with the workspace's deletion and never lands after it. A personal license is
- * one document and is written without a transaction, like an operator key; its audit event follows as a
- * separate write (`recordOrganizationEvent`), so personal licenses are not on the change feed. Every
- * personal write, a repeat included, first asks whether the person's account still exists, and ends the
- * license when it does not: a write that raced the account's deletion and failed before it could end the
- * license itself is ended by billing's next attempt.
+ * equal one is a repeat and changes nothing, an older one is refused (`stale_revision`), and one for a
+ * workspace that is deleted or never existed is refused (`owner_not_found`), as is any write for a license
+ * that ended with its workspace. A license is written in a transaction that also writes the workspace
+ * document, so it conflicts with the workspace's deletion and never lands after it.
  *
- * **The seat cap is a counter.** `seatsUsed` counts a workspace license's seats. Assigning one runs one
+ * **The seat cap is a counter.** `seatsUsed` counts a license's seats. Assigning one runs one
  * transaction: a conditional increment (`seatsUsed + 1 <= quantity` and not ended), then the seat's
  * insert and its audit event. Concurrent assignments write the same license document, so all but one
  * meet a write conflict, which `withTransaction` retries; a retry reads `seatsUsed` again. Only the
@@ -49,13 +45,17 @@
  * membership (`endMembership`: removal, leaving, account deletion) releases its seats inside that
  * transaction (`releaseSeatsForMembership`), and a rejoined member has a new membership and no seat.
  * Deleting a workspace ends its licenses and releases their seats inside the deletion's transaction
- * (`endLicensesForOwner`); deleting an account ends the person's own licenses before its `user.deleted`
- * tombstone.
+ * (`endLicensesForOwner`). Deleting an account ends no license: the person's seats go with their memberships.
+ *
+ * **The buyer's seat.** A write of a license may name the purchase's buyer (`assignTo`). Only
+ * the write that creates the license honors it, inside its transaction (`assignBuyer`): one seat, through
+ * the same conditional increment and insert as an assignment, for a buyer who is an active member and
+ * holds no seat of an in-term license of the same product in the workspace. Repeats and later revisions
+ * never assign, and two deliveries of the first write at once create one license, so it is given once.
  *
  * **Audit.** `license.written`, `license.ended`, `seat.assigned` and `seat.released` (with why: see
- * `SEAT_RELEASE_REASONS`), each with its actor. A workspace license's events are the workspace's
- * (`recordWorkspaceEvent`, and `recordWorkspaceEvents` for a batch of seats), so they are on the change
- * feed; a personal license's are the organization's.
+ * `SEAT_RELEASE_REASONS`), each with its actor. They are the workspace's (`recordWorkspaceEvent`, and
+ * `recordWorkspaceEvents` for a batch of seats), so they are on the change feed.
  */
 
 import {
@@ -76,12 +76,9 @@ import type {ClientSession} from "mongoose"
 import {withTransaction} from "../../connections/mongo.connection"
 import {LicenseSeatModel, type LicenseSeatRow} from "../../models/license-seat.model"
 import {LicenseModel, type LicenseRow} from "../../models/license.model"
-import {UserModel} from "../../models/user.model"
 import {WorkspaceMembershipModel, type WorkspaceMembershipEndedReason} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
-import {isDeletedAccountId} from "../user.service"
 import {
-  recordOrganizationEvent,
   recordWorkspaceEvent,
   recordWorkspaceEvents,
   type WorkspaceAuditEventInput,
@@ -106,9 +103,6 @@ const MAX_FEATURES = 50
 const MAX_PACKAGES_PER_FEATURE = 50
 const MAX_QUANTITY = 1_000_000
 
-/** Acting for a license's end when no person or service asked for it. */
-const SYSTEM_ACTOR: Actor = {kind: "system"}
-
 type JsonObject = Record<string, unknown>
 const isRecord = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -122,9 +116,8 @@ function invalid(message: string): never {
 
 /**
  * The license write in `body`, for the license the path names (`licenseId`), with only the write's own
- * fields. Anything malformed is `invalid_request` (400), saying what: a personal license with a quantity
- * other than 1 among them, since its owner holds its one seat, and a term whose `paidThrough` is before
- * its `validFrom`.
+ * fields. Anything malformed is `invalid_request` (400), saying what: an owner that is not a workspace among
+ * them, and a term whose `paidThrough` is before its `validFrom`. `assignTo` is absent or `{mentraUserId}`.
  */
 export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrite {
   if (!isRecord(body)) invalid("a license write must be a JSON object")
@@ -138,22 +131,24 @@ export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrit
   if (!isWholeNumber(quantity) || quantity < 0 || quantity > MAX_QUANTITY) {
     invalid(`quantity must be a whole number from 0 to ${MAX_QUANTITY}`)
   }
-  if (owner.type === "person" && quantity !== 1)
-    invalid("a personal license's quantity is 1: its owner holds its one seat")
   const validFrom = instant(body.validFrom, "validFrom")
   const paidThrough = instant(body.paidThrough, "paidThrough")
   // A term of no length is a subscription cancelled as it started; one that ends before it starts is a bug.
   if (Date.parse(paidThrough) < Date.parse(validFrom)) invalid("paidThrough must not be before validFrom")
-  return {licenseId, revision, owner, product, features, quantity, validFrom, paidThrough}
+  const write: LicenseWrite = {licenseId, revision, owner, product, features, quantity, validFrom, paidThrough}
+  if (body.assignTo === undefined) return write
+  if (!isRecord(body.assignTo) || !isId(body.assignTo.mentraUserId)) {
+    invalid('assignTo must be {"mentraUserId"}, a non-blank Core user ID')
+  }
+  return {...write, assignTo: {mentraUserId: body.assignTo.mentraUserId}}
 }
 
+/** A license's owner: a workspace, by a non-blank id. Any other owner, a person included, is refused. */
 function parseOwner(value: unknown): LicenseOwner {
-  if (isRecord(value)) {
-    if (value.type === "workspace" && isId(value.workspaceId))
-      return {type: "workspace", workspaceId: value.workspaceId}
-    if (value.type === "person" && isId(value.mentraUserId)) return {type: "person", mentraUserId: value.mentraUserId}
+  if (isRecord(value) && value.type === "workspace" && isId(value.workspaceId)) {
+    return {type: "workspace", workspaceId: value.workspaceId}
   }
-  invalid('owner must be {"type": "workspace", "workspaceId"} or {"type": "person", "mentraUserId"}')
+  invalid('owner must be {"type": "workspace", "workspaceId"}')
 }
 
 function parseFeatures(value: unknown): LicenseFeature[] {
@@ -213,16 +208,14 @@ function instant(value: unknown, field: string): string {
 /**
  * Apply a license write from billing (`actor` is the service that sent it). Resolves with `applied:
  * true` and the new revision, or `applied: false` for a repeat of the revision Core has. Throws
- * `stale_revision` for an older revision (its details carry Core's), `owner_not_found` for an owner that
- * is deleted or never existed or a license that ended with its owner, and `invalid_request` for a write
+ * `stale_revision` for an older revision (its details carry Core's), `owner_not_found` for a workspace that
+ * is deleted or never existed or a license that ended with its workspace, and `invalid_request` for a write
  * that would change a license's owner.
  */
 export async function applyLicenseWrite(write: LicenseWrite, actor: Actor): Promise<LicenseWriteResponse> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return write.owner.type === "workspace"
-        ? await applyWorkspaceLicenseWrite(write, write.owner.workspaceId, actor)
-        : await applyPersonalLicenseWrite(write, write.owner.mentraUserId, actor)
+      return await applyWorkspaceLicenseWrite(write, write.owner.workspaceId, actor)
     } catch (err) {
       // Two deliveries of a license's first write at once: the second insert meets the first's id. Its next
       // attempt finds the license and decides by revision like any other write.
@@ -247,51 +240,56 @@ async function applyWorkspaceLicenseWrite(
     await touchWorkspace(session, workspaceId)
     if (!(await saveLicense(session, existing, write)))
       throw new Error(`license ${write.licenseId} changed during its write`)
-    await recordWorkspaceEvent(session, writtenEvent(existing, write, actor))
+    // Only the write that creates the license gives its buyer one: a repeat was answered above, and a later
+    // revision finds the license.
+    const assigned = existing ? [] : await assignBuyer(session, write, workspaceId, actor)
+    // `license.written` first, then the buyer's `seat.assigned`, as the transaction's last writes.
+    await recordWorkspaceEvents(session, [writtenEvent(existing, write, actor), ...assigned])
     return {applied: true, revision: write.revision}
   })
 }
 
-async function applyPersonalLicenseWrite(
+/**
+ * Give the buyer billing names (`write.assignTo`) one seat of the license `write` has just created, in
+ * that write's transaction, and return its `seat.assigned` event for the caller to record after
+ * `license.written`. It gives none (an empty list) unless the buyer has an active membership of the
+ * workspace, the license has a seat to give, and the buyer holds no seat of an in-term, not-ended license
+ * of the same product there. Its checks are serialized as an assignment's are: the events the write
+ * records take the feed counter, so a concurrent end of the membership or assignment of another seat
+ * conflicts with it, and the retry sees that change.
+ */
+async function assignBuyer(
+  session: ClientSession,
   write: LicenseWrite,
-  mentraUserId: string,
+  workspaceId: string,
   actor: Actor,
-): Promise<LicenseWriteResponse> {
-  let existing: LicenseRow | null
-  // Without a transaction, a write that lost a race with another write of the license decides again.
-  for (;;) {
-    existing = await LicenseModel.findById(write.licenseId).lean<LicenseRow>()
-    refuseUnwritable(existing, write)
-    // Every write, a repeat or an older one included, asks whether the person still has an account. A write
-    // that landed after the account's deletion had ended the person's licenses, and then failed before the
-    // recheck below, left a live license for a deleted account and a deletion that has finished: billing
-    // sends that write again until Core answers, so its next attempt is what ends the license.
-    if (!(await UserModel.exists({mentraUserId, supportTelemetryDeletedAt: null}))) {
-      if (existing) await endOutlivedLicense(write.licenseId)
-      fail("owner_not_found", "the person's account is deleted or does not exist")
-    }
-    const answer = byRevision(existing, write)
-    if (answer) return answer
-    if (await saveLicense(null, existing, write)) break
+): Promise<WorkspaceAuditEventInput[]> {
+  const mentraUserId = write.assignTo?.mentraUserId
+  if (!mentraUserId || write.quantity < 1) return []
+  const membership = await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId, status: "active"})
+    .session(session)
+    .lean<MembershipRow>()
+  if (!membership) return []
+  const held = await LicenseSeatModel.find({workspaceId, membershipId: membership.membershipId})
+    .select({_id: 0, licenseId: 1})
+    .session(session)
+    .lean<Array<Pick<LicenseSeatRow, "licenseId">>>()
+  if (held.length > 0) {
+    const now = new Date()
+    const hasProduct = await LicenseModel.exists({
+      _id: {$in: held.map((seat) => seat.licenseId)},
+      product: write.product,
+      endedAt: null,
+      validFrom: {$lte: now},
+      paidThrough: {$gt: now},
+    }).session(session)
+    if (hasProduct) return []
   }
-  const written = writtenEvent(existing, write, actor)
-  // Account deletion marks the account before it ends the person's licenses (`account-deletion.service`).
-  // A write that passed the check above just before the mark can land after the deletion ended them, so
-  // look again: either this sees the mark and ends the license here, or the deletion ends it after this.
-  // Should this request fail before it does, billing's next attempt ends it (above).
-  if (await isDeletedAccountId(mentraUserId)) {
-    await recordOrganizationEvent(written)
-    await endOutlivedLicense(write.licenseId)
-    fail("owner_not_found", "the person's account is deleted")
-  }
-  await recordOrganizationEvent(written)
-  return {applied: true, revision: write.revision}
-}
-
-/** End a personal license whose owner's account is deleted, if it has not ended, and record that. */
-async function endOutlivedLicense(licenseId: string): Promise<void> {
-  const ended = await endLicenses(null, {_id: licenseId}, "account_deleted", SYSTEM_ACTOR)
-  for (const event of ended.organizationEvents) await recordOrganizationEvent(event)
+  const license = await takeSeats(session, write.licenseId, 1)
+  if (!license) return []
+  return insertSeats(session, actor, workspaceId, license, [
+    {membershipId: membership.membershipId, mentraUserId, email: membership.email ?? null},
+  ])
 }
 
 /** What a write does to the license Core has: null to apply it, or Core's answer when it applies nothing. */
@@ -300,11 +298,11 @@ function decide(existing: LicenseRow | null, write: LicenseWrite): LicenseWriteR
   return byRevision(existing, write)
 }
 
-/** Refuse a write that would change the license's owner (400), or one for a license that ended with its owner (404). */
+/** Refuse a write that would change the license's owner (400), or one for a license that ended with its workspace (404). */
 function refuseUnwritable(existing: LicenseRow | null, write: LicenseWrite): void {
   if (!existing) return
   if (!sameOwner(ownerOf(existing.owner), write.owner)) invalid("a license's owner never changes")
-  if (existing.endedAt) fail("owner_not_found", "the license ended with its owner")
+  if (existing.endedAt) fail("owner_not_found", "the license ended with its workspace")
 }
 
 /** By revision: null for a newer write (apply it), a no-op answer for a repeat, `stale_revision` for an older one. */
@@ -318,14 +316,10 @@ function byRevision(existing: LicenseRow | null, write: LicenseWrite): LicenseWr
 }
 
 /**
- * Insert the license, or update the one read as `existing` while it still has that revision. False when
- * it had changed (only possible outside a transaction).
+ * Insert the license, with no seat assigned, or update the one read as `existing` while it still has that
+ * revision. False when it had changed, which the transaction's snapshot rules out.
  */
-async function saveLicense(
-  session: ClientSession | null,
-  existing: LicenseRow | null,
-  write: LicenseWrite,
-): Promise<boolean> {
+async function saveLicense(session: ClientSession, existing: LicenseRow | null, write: LicenseWrite): Promise<boolean> {
   const terms = {
     product: write.product,
     features: write.features,
@@ -335,23 +329,20 @@ async function saveLicense(
     revision: write.revision,
   }
   if (!existing) {
-    await LicenseModel.create(
-      [{_id: write.licenseId, owner: write.owner, ...terms, seatsUsed: write.owner.type === "person" ? 1 : 0}],
-      session ? {session} : {},
-    )
+    await LicenseModel.create([{_id: write.licenseId, owner: write.owner, ...terms, seatsUsed: 0}], {session})
     return true
   }
   const updated = await LicenseModel.updateOne(
     {_id: write.licenseId, revision: existing.revision, endedAt: null},
     {$set: terms},
-    session ? {session} : {},
+    {session},
   )
   return updated.matchedCount === 1
 }
 
 function writtenEvent(existing: LicenseRow | null, write: LicenseWrite, actor: Actor): WorkspaceAuditEventInput {
   return {
-    workspaceId: write.owner.type === "workspace" ? write.owner.workspaceId : null,
+    workspaceId: write.owner.workspaceId,
     action: "license.written",
     actor: auditActor(actor),
     target: {licenseId: write.licenseId, product: write.product, owner: write.owner},
@@ -374,7 +365,7 @@ function terms(license: Omit<LicenseWrite, "licenseId" | "owner">): Record<strin
 
 // --- Reads -------------------------------------------------------------------
 
-/** One owner's licenses, ended ones included, oldest first, each with its seats used but not who holds them. */
+/** One workspace's licenses, ended ones included, oldest first, each with its seats used but not who holds them. */
 export async function listLicenses(owner: LicenseOwner): Promise<LicenseView[]> {
   const filter = ownerFilter(owner)
   if (!filter) return []
@@ -406,7 +397,7 @@ export async function listWorkspaceLicenses(
       : {_id: {$in: seats.map((seat) => seat.licenseId)}}
   const licenses = await LicenseModel.find(licenseFilter).sort({_id: 1}).session(session).lean<LicenseRow[]>()
   return licenses
-    .filter((license) => license.owner.type === "workspace" && license.owner.workspaceId === workspaceId)
+    .filter((license) => license.owner.workspaceId === workspaceId)
     .map((license) =>
       licenseView(
         license,
@@ -422,22 +413,17 @@ function bySeatAssignment(left: LicenseSeatRow, right: LicenseSeatRow): number {
   return left.membershipId < right.membershipId ? -1 : left.membershipId > right.membershipId ? 1 : 0
 }
 
+/** The licenses `owner` holds, by the owner index; null for a blank id, which holds none. */
 function ownerFilter(owner: LicenseOwner): Record<string, string> | null {
-  if (owner.type === "workspace") {
-    return isId(owner.workspaceId) ? {"owner.type": "workspace", "owner.workspaceId": owner.workspaceId} : null
-  }
-  return isId(owner.mentraUserId) ? {"owner.type": "person", "owner.mentraUserId": owner.mentraUserId} : null
+  return isId(owner.workspaceId) ? {"owner.type": "workspace", "owner.workspaceId": owner.workspaceId} : null
 }
 
 function ownerOf(owner: LicenseRow["owner"]): LicenseOwner {
-  return owner.type === "workspace"
-    ? {type: "workspace", workspaceId: owner.workspaceId ?? ""}
-    : {type: "person", mentraUserId: owner.mentraUserId ?? ""}
+  return {type: "workspace", workspaceId: owner.workspaceId ?? ""}
 }
 
 function sameOwner(a: LicenseOwner, b: LicenseOwner): boolean {
-  if (a.type === "workspace") return b.type === "workspace" && a.workspaceId === b.workspaceId
-  return b.type === "person" && a.mentraUserId === b.mentraUserId
+  return a.type === b.type && a.workspaceId === b.workspaceId
 }
 
 function licenseView(row: LicenseRow, seats?: LicenseSeatRow[]): LicenseView {
@@ -766,9 +752,7 @@ async function loadWorkspaceLicense(
   options: {ended?: "allowed"} = {},
 ): Promise<LicenseRow> {
   const license = isId(licenseId) ? await LicenseModel.findById(licenseId).session(session).lean<LicenseRow>() : null
-  if (license?.owner.type !== "workspace" || license.owner.workspaceId !== workspaceId) {
-    fail("license_not_found", "license not found")
-  }
+  if (!license || license.owner.workspaceId !== workspaceId) fail("license_not_found", "license not found")
   if (license.endedAt && options.ended !== "allowed") fail("license_ended", "this license has ended")
   return license
 }
@@ -831,63 +815,44 @@ function seatTarget(
 // --- Ending ------------------------------------------------------------------
 
 /**
- * End every license `owner` holds that has not ended, because the owner is being deleted (`reason`),
- * inside the deletion's transaction: release their seats (`seat.released`, reason `workspace_deleted` for
- * a deleted workspace's, `license_ended` otherwise) and set `endedAt`. A workspace's `license.ended`
- * events are recorded in the transaction. A person's are returned for the caller to record with
- * `recordOrganizationEvent` once it commits, as the organization's events are.
+ * End every license the workspace `owner` holds that has not ended, because it is being deleted (`reason`),
+ * inside the deletion's transaction: release their seats (`seat.released`, reason `workspace_deleted`),
+ * set `endedAt` and record `license.ended`. Resolves with the licenses it ended.
  */
 export async function endLicensesForOwner(
   session: ClientSession,
   owner: LicenseOwner,
   reason: LicenseEndedReason,
   actor: Actor,
-): Promise<{endedLicenseIds: string[]; organizationEvents: WorkspaceAuditEventInput[]}> {
+): Promise<string[]> {
   const filter = ownerFilter(owner)
-  if (!filter) return {endedLicenseIds: [], organizationEvents: []}
-  return endLicenses(session, filter, reason, actor)
-}
-
-async function endLicenses(
-  session: ClientSession | null,
-  filter: Record<string, unknown>,
-  reason: LicenseEndedReason,
-  actor: Actor,
-): Promise<{endedLicenseIds: string[]; organizationEvents: WorkspaceAuditEventInput[]}> {
+  if (!filter) return []
   const licenses = await LicenseModel.find({...filter, endedAt: null})
     .sort({_id: 1})
     .session(session)
     .lean<LicenseRow[]>()
-  const seatReason: SeatReleaseReason = reason === "workspace_deleted" ? "workspace_deleted" : "license_ended"
   const endedLicenseIds: string[] = []
-  const organizationEvents: WorkspaceAuditEventInput[] = []
   for (const license of licenses) {
-    // A personal license has no seat documents: the only seats are a workspace license's, ended in a transaction.
-    const seats = session
-      ? await LicenseSeatModel.find({licenseId: license._id}).session(session).lean<LicenseSeatRow[]>()
-      : []
-    if (session && seats.length > 0) await releaseSeats(session, seats, seatReason, actor)
+    const seats = await LicenseSeatModel.find({licenseId: license._id}).session(session).lean<LicenseSeatRow[]>()
+    if (seats.length > 0) await releaseSeats(session, seats, reason, actor)
     const endedAt = new Date()
     const ended = await LicenseModel.updateOne(
       {_id: license._id, endedAt: null},
       {$set: {endedAt, endedReason: reason, seatsUsed: 0}},
-      session ? {session} : {},
+      {session},
     )
     if (ended.modifiedCount !== 1) continue
     endedLicenseIds.push(license._id)
-    const owner = ownerOf(license.owner)
-    const event: WorkspaceAuditEventInput = {
-      workspaceId: owner.type === "workspace" ? owner.workspaceId : null,
+    await recordWorkspaceEvent(session, {
+      workspaceId: owner.workspaceId,
       action: "license.ended",
       actor: auditActor(actor),
-      target: {licenseId: license._id, product: license.product, owner},
+      target: {licenseId: license._id, product: license.product, owner: ownerOf(license.owner)},
       before: {endedAt: null},
       after: {endedAt: endedAt.toISOString(), reason, releasedSeats: seats.length},
-    }
-    if (owner.type === "workspace" && session) await recordWorkspaceEvent(session, event)
-    else organizationEvents.push(event)
+    })
   }
-  return {endedLicenseIds, organizationEvents}
+  return endedLicenseIds
 }
 
 function isDuplicateKeyError(err: unknown): boolean {

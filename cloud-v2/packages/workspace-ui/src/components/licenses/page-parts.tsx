@@ -1,6 +1,5 @@
 /**
- * What the Licenses page and the personal Billing page share: the header actions ("Billing & invoices ↗" and "Buy a
- * license"), the sentence a page says in place of cards, and what happens after checkout (which purchase the page is
+ * What the Licenses page and its header share: the header actions ("Billing & invoices ↗" and "Buy licenses"), the sentence the page says in place of cards, and what happens after checkout (which purchase the page is
  * showing, polling for its license, and dismissing it).
  *
  * No sentence is written here; the words are `strings/licenses.ts`.
@@ -8,8 +7,7 @@
 
 import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { BillingAction, CatalogEntry, KnownOwnerType, PurchaseStatus } from "@mentra/workspace-contract/portal-billing";
-import { catalogForOwner } from "../../lib/license-join";
+import type { BillingAction, CatalogEntry, PurchaseStatus } from "@mentra/workspace-contract/portal-billing";
 import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Card } from "../../ui/card";
@@ -41,12 +39,11 @@ export const readWaiting = (result: ReadResult): boolean => result.data === unde
 export const readRetrying = (result: ReadResult): boolean => result.isFetching && readFailed(result);
 
 /**
- * The page's header actions: "Billing & invoices ↗" (only where billing lists that action for the account) and "Buy licenses" (or, for a person,
- * "Buy a license"; only where `onBuy` is given: there is something to buy, or to add licenses to). Billing's refusal of the ↗
+ * The page's header actions: "Billing & invoices ↗" (only where billing lists that action for the account) and "Buy licenses" (only where `onBuy` is given: there is something to buy, or to add licenses to). Billing's refusal of the ↗
  * button, or the link for a tab the browser blocked, shows under them.
  *
- * They are drawn by the pages' header components (`WorkspaceLicensesHeaderActions`, `PersonalBillingHeaderActions`)
- * for the host to put in its title bar, not by the views.
+ * They are drawn by the page's header component (`WorkspaceLicensesHeaderActions`)
+ * for the host to put in its title bar, not by the view.
  */
 export function HeaderButtons({
   invoices,
@@ -58,7 +55,7 @@ export function HeaderButtons({
   invoices: BillingAction | null;
   /** Opens the catalog dialog; null where there is nothing to open it for. */
   onBuy: (() => void) | null;
-  /** What the button says: "Buy licenses" for a workspace, "Buy a license" for a person. */
+  /** What the button says: "Buy licenses". */
   buyLabel: string;
   /** The header's hosted-page flow, which the ↗ button uses. */
   hosted: HostedAction;
@@ -93,11 +90,11 @@ export function HeaderButtons({
 }
 
 /**
- * Whether billing offers `owner` something to do with the catalog: an entry sold to that owner type with an `offer`.
- * It is what makes buying copy, and "Buy licenses" or "Buy a license", exist for a viewer at all.
+ * Whether billing offers the workspace something to do with the catalog: an entry with an `offer`. It is what makes
+ * buying copy, and "Buy licenses", exist for a viewer at all.
  */
-export function hasOffer(products: readonly CatalogEntry[], owner: KnownOwnerType): boolean {
-  return catalogForOwner(products, owner).some((entry) => entry.offer !== undefined);
+export function hasOffer(products: readonly CatalogEntry[]): boolean {
+  return products.some((entry) => entry.offer !== undefined);
 }
 
 /** A sentence in place of cards, in the page's quiet type. */
@@ -153,7 +150,7 @@ export function usePurchaseFlow({
   purchaseId: string | null;
   offered: boolean;
   answer: PurchaseStatus | null | undefined;
-  /** Core lists the purchase's license (a person's license is billing's alone, so there it is always true). */
+  /** Core lists the purchase's license. */
   listed: boolean;
   poll(): void;
   pollMs: number;

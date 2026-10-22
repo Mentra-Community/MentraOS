@@ -44,8 +44,7 @@ export class BillingRefusedError extends Error {
 
 /**
  * The words for a failed billing call: Core's line for a refusal it knows, and "Billing couldn't do that. Try
- * again." for any other refusal, an unavailable answer or anything else. `context` names the product and whether
- * it is a workspace's or a person's, for the refusals that say so.
+ * again." for any other refusal, an unavailable answer or anything else. `context` names the product, for the refusals that say so.
  */
 export function billingErrorMessage(error: unknown, context: RefusalContext = {}): string {
   return refusalMessage(error instanceof BillingRefusedError ? error.code : "", context);

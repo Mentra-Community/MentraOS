@@ -57,22 +57,50 @@ account; a deleted account is refused (`404 user_not_found`).
 The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
 the top of the sidebar shows it and your role (your membership's; "Member · Organization
 Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
-**Create workspace** and your pending invitations with **Accept** and **Dismiss**. Every
-page carries its workspace:
-`/w/<workspaceId>/members` (members, with pending invitations under them),
-`/w/<workspaceId>/settings`, `/w/<workspaceId>/audit` and `/w/<workspaceId>/licenses`
-([Licenses](licenses.md#in-the-workspace-portal)); the sidebar offers only what your
-role opens. Above your account, the sidebar links to the environment's Developer Console in a
-new tab; a Private Cloud, which has no Developer Console, shows no link. `/` opens your
-last-used workspace (remembered in the browser, never an authority), else your first, else the
-first run: your pending invitations if you have any
-you can accept, otherwise **Create your workspace**. An invitation link lands on
-`/invitation`, which reads the token from the tab's session storage. A link Core reports
-as no longer valid is shown as such once and then forgotten. Pending invitations are the
-link's and those addressed to your verified email, each shown once; **Dismiss** hides one
-in this browser only (Core does not record a refusal, and its link keeps working). Company sign-in
+**Create workspace** and your pending invitations with **Accept** and **Dismiss**.
+
+**Addresses.** Your own workspace is never in the address: `/members` (members, with pending
+invitations under them), `/settings`, `/audit` and `/licenses`
+([Licenses](licenses.md#in-the-workspace-portal)) are its pages, and the sidebar offers only
+what your role opens. `/` opens the current workspace's first page. Another workspace is named
+by `?workspace=<workspaceId>` on any of them, which is how an Organization Admin opens a
+customer's; the sidebar's links carry it exactly when the workspace is not the one the bare
+address opens, and a `?workspace=` that names the bare address is dropped from the address in
+place. A `?workspace=` you cannot open is "Workspace not found". The older
+`/w/<workspaceId>[/<page>]` addresses redirect to these, keeping their query
+(`?purchase=`, `?fleet=`). There is no personal page: `/account/billing` is "Page not found".
+
+**The current workspace** is `?workspace=` when the address has one; else the workspace this
+browser tab last opened from your own list while it is still there (remembered in the browser,
+never an authority, and another tab's pick does not move this one); else your first (oldest)
+workspace; else none. A workspace you reach only as an Organization Admin is never remembered.
+
+**The first run.** With no current workspace, the portal shows the invitations you can accept in
+place, at the address you came to; another account's invitation does not count. With none, it
+asks Core for your workspace (`POST /api/portal/workspaces/ensure`) and shows "Setting up your
+workspace" while it does, then opens it at the same address, so a `?buy=` link survives.
+Core answers with your workspace if you have one and makes one named for you ("Dana Reyes's
+Workspace") if not. If that fails, or Core answers but your list still has no workspace, the page
+says "Couldn't set up your workspace." with **Try again**. Nothing is made while the portal cannot
+tell whether an invitation waits (a dropped connection or a server error reading your invitations
+or the link's): the page says so, with **Try again**, and **Dismiss** for a link. Someone who may
+not have a workspace (an unverified email, or a deployment where only Organization Admins create
+them), or whom Core refuses with a `403` because the rules changed after the page loaded, sees
+"You're not in a workspace yet." with the reason ("You can't create a workspace with this
+account." when Core gave none) and "Open an invitation link someone sent you to join their
+workspace." Accepting an invitation from the first run keeps
+the address, now in the joined workspace.
+
+An invitation link lands on `/invitation`, which reads the token from the tab's session storage.
+A link Core reports as no longer valid is shown as such once and then forgotten. Pending
+invitations are the link's and those addressed to your verified email, each shown once;
+**Dismiss** hides one in this browser only (Core does not record a refusal, and its link keeps
+working). Above your account, the sidebar links to the environment's Developer Console in a new
+tab; a Private Cloud, which has no Developer Console, shows no link. Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
+
+The sign-in page says "Use the same account you sign in to the Mentra App with."
 
 **Members** lists each member by name over email (the email alone where Core has no
 name), with a "You" mark on your own row, "Pending first sign-in" on an imported
@@ -105,6 +133,48 @@ licenses are assigned from the Licenses page.
 - Anyone signed in with a verified email may create a workspace and becomes its
   Owner. A Private Cloud may limit creation to Organization Admins with
   `CLOUD_CORE_WORKSPACE_CREATION=organization-admins`.
+- **The automatic workspace.** `POST /ensure` (no body) answers the caller's
+  workspace as a workspace detail: `200` with their oldest workspace (the first
+  `GET /` gives: the one created first), whatever made it, or, when they have none, `201` with a
+  new one made for them, with them as its Owner. The same rules as creating
+  apply to that one (`403 email_unverified`, and `403 forbidden` for a
+  non-admin under `organization-admins`); someone with a workspace gets it
+  either way. The new workspace is marked automatic, and its
+  `workspace.created` event carries `after.automatic: true`. Its name is the
+  person's last sign-in name, trimmed with inner whitespace collapsed, and
+  "'s Workspace" ("Dana Reyes's Workspace"). Without a name it is made from the
+  verified email's local part, any `+tag` dropped, split on `.`, `_` and `-`,
+  each word capitalized ("john.smith+x@…" is "John Smith's Workspace"); without
+  either it is "My Workspace". The person's part is cut so the whole is at most
+  80 characters; invisible format characters (zero-width spaces, bidi marks)
+  are dropped, and the cut never splits a character or an emoji sequence. Each ensure writes the person's `users` row
+  (`portalWorkspaceAt`) in its transaction before it looks for their
+  memberships, so two at once (two tabs, or a retry racing its first try)
+  conflict there, the one retried finds the other's workspace, and the person
+  ends with one. A join (below) writes that row too, so an ensure never answers
+  a workspace a join is deleting. Core does not look at invitations here: the portal decides
+  when to ask.
+- An automatic workspace **holds nothing** while its Owner is its only member
+  (an imported membership waiting for sign-in counts as another) and it has no
+  pending invitation, unrevoked key, license that has not ended, or deletion
+  hold. `GET /` marks each of the caller's workspaces `replaceable`: `true`
+  only for their own automatic workspace, which they own, while it holds
+  nothing. A workspace made with `POST /` never is.
+- **Giving way.** In the transaction that gives a person a membership in
+  another workspace, their automatic workspaces that hold nothing are deleted
+  (`yieldAutomaticWorkspace`): accepting an invitation (by token or by id,
+  after its checks), claiming an imported membership (`claimPendingMemberships`,
+  when it moves a membership to the person rather than merging it into one they
+  hold), and `recoverOwnership` when it creates the membership. The deletion is
+  the workspace deletion's own steps without the typed name: the memberships
+  end (`workspace_deleted`), `workspace.deleted` is recorded with
+  `after.reason: "joined_another_workspace"` (for the person, or for the system
+  in a claim), and the deletion and the join commit together or not at all, so
+  both are on the change feed or neither is. The workspace being joined is never
+  the one deleted. A workspace that holds anything is kept, as is any the person
+  did not make for themselves: one where they are a Member or share ownership,
+  or one made with `POST /`. The join then succeeds as it would for anyone, and
+  the person has both memberships.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.
@@ -192,7 +262,7 @@ session authenticates only its own routes:
 | `/api/admin/workspaces/*`, `/api/admin/organization/*` | The admin portal | Its session, or a bearer |
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
-Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
+Workspace routes (`GET`/`POST /`, `POST /ensure`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
 (by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
 its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people;

@@ -8,7 +8,7 @@ import { CheckIcon, CreditCardIcon, FlaskConicalIcon, XIcon } from "lucide-react
 import { useState, type CSSProperties } from "react";
 import type { BillingTotal, PurchaseStatus, TestMode } from "@mentra/workspace-contract/portal-billing";
 import { groupCardNumber, totalSummary } from "../../lib/billing-format";
-import { licenseStrings as t, type LicenseScope } from "../../strings/licenses";
+import { licenseStrings as t } from "../../strings/licenses";
 import { Button } from "../../ui/button";
 import { Card } from "../../ui/card";
 import { CopyButton, Spinner } from "../common";
@@ -24,18 +24,21 @@ export const PURCHASE_TIMEOUT_MS = 60_000;
  * Where the license hasn't reached Core after a minute it says so, with Reload.
  *
  * It is ready when billing's status says `ready` *and* the license is listed (`listed`: Core lists
- * `purchase.licenseId`; a person's license is billing's alone, so there it is always true). A checkout that
+ * `purchase.licenseId`). A checkout that
  * collected no payment (`paid: false`, such as a trial) says "Purchase complete" and never "Payment received".
  *
  * The minute is not counted here. The page counts it (`usePurchaseFlow`, from the purchase, not from the first time a
  * banner shows) and says so with `timedOut`, which is also what stops its polling. A late license still turns the
  * banner ready, whatever `timedOut` says.
+ *
+ * `assigned` is whether the new license's seats include the viewer's own (billing hands the buyer one): the ready
+ * banner then says so.
  */
 export function PurchaseBanner({
   purchase,
   productName,
-  scope = "workspace",
   listed,
+  assigned = false,
   timedOut = false,
   onDismiss,
   onReload,
@@ -44,8 +47,9 @@ export function PurchaseBanner({
   purchase: Pick<PurchaseStatus, "status" | "quantity" | "paid">;
   /** The product, as the catalog names it. */
   productName: string;
-  scope?: LicenseScope;
   listed: boolean;
+  /** The viewer holds one of the new license's seats. Only a ready banner says so. */
+  assigned?: boolean;
   /** The page has waited a minute for the license and given up reading. */
   timedOut?: boolean;
   onDismiss(): void;
@@ -54,28 +58,23 @@ export function PurchaseBanner({
 }) {
   const ready = purchase.status === "ready" && listed;
   const { paid, quantity } = purchase;
-  const person = scope === "person";
   const phase = ready ? "ready" : timedOut ? "timeout" : "processing";
   const title =
     phase === "ready"
-      ? person
-        ? t.purchase.personReadyTitle(productName)
+      ? assigned
+        ? t.purchase.givenTitle({ seats: quantity, product: productName, paid })
         : t.purchase.readyTitle({ seats: quantity, product: productName })
       : phase === "timeout"
         ? t.purchase.timeout.title(paid)
         : t.purchase.headline(paid);
   const body =
     phase === "ready"
-      ? person
-        ? t.purchase.personReadyBody({ product: productName, paid })
+      ? assigned
+        ? t.purchase.givenBody({ seats: quantity, product: productName, paid })
         : t.purchase.readyBody({ product: productName, paid })
       : phase === "timeout"
-        ? person
-          ? t.purchase.timeout.personBody
-          : t.purchase.timeout.body
-        : person
-          ? t.purchase.personSettingUp(productName)
-          : t.purchase.settingUpSeats({ seats: quantity, product: productName });
+        ? t.purchase.timeout.body
+        : t.purchase.settingUpSeats({ seats: quantity, product: productName });
   return (
     <section role="status" data-phase={phase} className="rounded-card bg-info text-info-foreground flex flex-wrap items-center gap-x-4 gap-y-4 p-6 max-sm:p-5">
       <span className="bg-brand flex size-12 shrink-0 items-center justify-center rounded-full text-white">
@@ -133,8 +132,7 @@ function rememberNoticeHidden(): void {
 /**
  * Dev and staging only, where billing is in test mode: which environment and the card to pay with (grouped as it is
  * read, copied as its bare digits). A small × in its top-right corner hides it, so a screenshot comes out clean: it
- * stays hidden for the rest of the browser session (`sessionStorage`, on the Licenses page and the personal Billing
- * page alike), and shows again in a new one. Where storage throws, it is hidden for the current page only. Hiding it
+ * stays hidden for the rest of the browser session (`sessionStorage`), and shows again in a new one. Where storage throws, it is hidden for the current page only. Hiding it
  * changes nothing else: test mode itself, the buy dialogs and their words are as they were.
  */
 export function TestModeBanner({ testMode }: { testMode: Pick<TestMode, "cardNumber" | "environment"> }) {
@@ -194,18 +192,10 @@ export function LicensesSummary({ total, locale }: { total: BillingTotal | null;
 
 /**
  * The page when billing (or the catalog) couldn't be read, or didn't match the contract: say so, with Retry,
- * rather than cards without names. `personal` is the personal Billing page's wording.
+ * rather than cards without names.
  */
-export function LicensesUnavailable({
-  onRetry,
-  retrying = false,
-  personal = false,
-}: {
-  onRetry(): void;
-  retrying?: boolean;
-  personal?: boolean;
-}) {
-  const words = personal ? t.personal.unavailable : t.page.unavailable;
+export function LicensesUnavailable({ onRetry, retrying = false }: { onRetry(): void; retrying?: boolean }) {
+  const words = t.page.unavailable;
   return (
     <Card role="status" className="items-center gap-4 px-6 py-14 text-center">
       <span className="bg-surface flex size-14 items-center justify-center rounded-full">
