@@ -46,7 +46,6 @@ import {
   type InvitationPreview,
   type InvitationView,
   type LicenseView,
-  type MemberView,
   type SeatAssignmentsResponse,
   type WorkspaceDetail,
   type WorkspaceRole,
@@ -93,7 +92,6 @@ import {
   listWorkspacesForUser,
   removeMember,
   renameWorkspace,
-  type MembershipRow,
 } from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {requireUserPrincipal, requireWorkspaceCapability, userActor} from "../middleware/principal.middleware"

@@ -36,6 +36,7 @@ import {
   guardIdOf,
   initializeGuards,
   releaseGuard,
+  setGuard,
 } from "../packages/core/src/services/workspaces/membership-guard.service"
 import {
   countActiveOwners,
@@ -338,9 +339,24 @@ describe("under concurrency", () => {
   test("the guard's own insert is the arbiter: a second acquire in a concurrent transaction fails whatever it read", async () => {
     const results = await Promise.allSettled(
       [1, 2].map(n =>
-        withTransaction(session =>
-          acquireGuard(session, "mu_direct", {workspaceId: `ws_${n}`, membershipId: `wm_${n}`}),
-        ),
+        withTransaction(async session => {
+          // As the services do: take the guard, then write the membership it names, in one transaction.
+          await acquireGuard(session, "mu_direct", {workspaceId: `ws_${n}`, membershipId: `wm_${n}`})
+          await WorkspaceMembershipModel.create(
+            [
+              membershipRow({
+                membershipId: `wm_${n}`,
+                workspaceId: `ws_${n}`,
+                mentraUserId: "mu_direct",
+                email: "direct@example.test",
+                role: "member",
+                status: "active",
+                startedAt: new Date(),
+              }),
+            ],
+            {session},
+          )
+        }),
       ),
     )
     expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1)
@@ -348,6 +364,7 @@ describe("under concurrency", () => {
       code: "already_in_workspace",
     })
     expect(await guardCount()).toBe(1)
+    expect(await activeCount("mu_direct")).toBe(1)
   })
 })
 
@@ -449,6 +466,93 @@ describe("initializing the guards at startup", () => {
 
     expect(await initializeGuards(3)).toBe(8)
     expect(await guardCount()).toBe(8)
+  })
+})
+
+/** A guard written from a stale read: it names `membershipId`, which is no longer anyone's active membership. */
+async function writeStaleGuard(mentraUserId: string, workspaceId: string, membershipId: string) {
+  const id = guardIdOf(mentraUserId)
+  await WorkspaceMembershipModel.collection.replaceOne(
+    {_id: id} as any,
+    {
+      _id: id,
+      membershipId: id,
+      kind: GUARD_KIND,
+      guardedUserId: mentraUserId,
+      guardedWorkspaceId: workspaceId,
+      guardedMembershipId: membershipId,
+      createdAt: new Date(),
+    } as any,
+    {upsert: true},
+  )
+}
+
+describe("a guard that names an ended membership", () => {
+  /** `mu_a` joins a workspace, then leaves it: the membership they held is `ended`, nobody holds one. */
+  async function leftWorkspace() {
+    const into = await invitationInto("mu_owner", "a@example.test")
+    const joined = await acceptInvitation(user("mu_a", {email: "a@example.test"}), into.token)
+    await leaveWorkspace(user("mu_a"), into.workspaceId)
+    expect(await guardOf("mu_a")).toBeNull()
+    return {workspaceId: into.workspaceId, membershipId: joined.membershipId}
+  }
+
+  test("is not a lock: the person can still join, and the join replaces it", async () => {
+    const ended = await leftWorkspace()
+    // What initializeGuards leaves when its read went stale and the person left before its write.
+    await writeStaleGuard("mu_a", ended.workspaceId, ended.membershipId)
+
+    const next = await invitationInto("mu_b", "a@example.test")
+    const accepted = await acceptInvitation(user("mu_a", {email: "a@example.test"}), next.token)
+
+    expect(await guardOf("mu_a")).toMatchObject({guardedWorkspaceId: next.workspaceId, guardedMembershipId: accepted.membershipId})
+    // And the new guard works as a guard: a further join is refused.
+    const third = await invitationInto("mu_c", "a@example.test")
+    await expectError(() => acceptInvitation(user("mu_a", {email: "a@example.test"}), third.token), "already_in_workspace", 409)
+  })
+
+  test("is not a lock for creating a workspace either", async () => {
+    const ended = await leftWorkspace()
+    await writeStaleGuard("mu_a", ended.workspaceId, ended.membershipId)
+
+    const created = await createWorkspace(user("mu_a"), {name: "Fresh"})
+    const membership = (await getActiveMembership(created.workspaceId, "mu_a"))!
+
+    expect(await guardOf("mu_a")).toMatchObject({guardedMembershipId: membership.membershipId})
+  })
+
+  test("two joins that both find it stale leave exactly one membership", async () => {
+    const ended = await leftWorkspace()
+    await writeStaleGuard("mu_a", ended.workspaceId, ended.membershipId)
+    const one = await invitationInto("mu_b", "a@example.test")
+    const two = await invitationInto("mu_c", "a@example.test")
+
+    const results = await Promise.allSettled([
+      acceptInvitation(user("mu_a", {email: "a@example.test"}), one.token),
+      acceptInvitation(user("mu_a", {email: "a@example.test"}), two.token),
+    ])
+
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1)
+    expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: "mu_a", status: "active"})).toBe(1)
+    const held = (await WorkspaceMembershipModel.findOne({mentraUserId: "mu_a", status: "active"}).lean())!
+    expect(await guardOf("mu_a")).toMatchObject({guardedMembershipId: held.membershipId})
+  })
+
+  test("setGuard writes only while the membership it names is the person's one active membership", async () => {
+    const ended = await leftWorkspace()
+    const next = await invitationInto("mu_b", "a@example.test")
+    const accepted = await acceptInvitation(user("mu_a", {email: "a@example.test"}), next.token)
+
+    // A cleanup plan made before the person left: it still names the ended membership.
+    const wrote = await withTransaction(session => setGuard(session, "mu_a", ended))
+    expect(wrote).toBe(false)
+    expect(await guardOf("mu_a")).toMatchObject({guardedMembershipId: accepted.membershipId})
+
+    // Leaving the new workspace still releases its guard, so nothing is left to block a later join.
+    const owner2 = await addLegacyMember(next.workspaceId, "mu_second_owner", "owner")
+    expect(owner2).toBeTruthy()
+    await leaveWorkspace(user("mu_a"), next.workspaceId)
+    expect(await guardOf("mu_a")).toBeNull()
   })
 })
 

@@ -82,6 +82,9 @@ When it disagrees with a source of truth below, the source of truth wins; then f
 6. One-workspace guard = raw doc in `workspace_memberships` (`membership-guard.service.ts`, `_id: ows:<userId>`). It
    carries none of `workspaceId`/`mentraUserId`/`status`/`role`, so no membership query matches it. A duplicate-key
    error inside a transaction aborts it, so non-throwing paths (claim) pre-check with `canJoinWorkspace`.
+   A guard counts only while the membership it names is still the person's active one: `initializeGuards` and the
+   cleanup script write from earlier reads, so a stale guard must refuse nobody (the next join replaces it). Never
+   test a guard with a membership id that has no row.
 7. Claim of imported memberships now skips a pending row when the person is in another workspace (stays pending,
    retried at later sign-ins). A person with several imported orgs gets the highest role claimed first.
 8. Tests that need one person in several workspaces must write the extra membership directly (legacy state); the

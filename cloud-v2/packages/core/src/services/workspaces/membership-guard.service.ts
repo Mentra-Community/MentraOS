@@ -29,6 +29,12 @@
  *  - written at startup for everyone who has exactly one active membership (`initializeGuards`). Someone with
  *    several has none until `scripts/one-workspace-cleanup.ts` keeps one; until then every further join is
  *    refused because the person already holds an active membership.
+ *
+ * A guard counts only while the membership it names is still that person's active membership. A guard written
+ * from a read that went stale (`initializeGuards` batches its writes, the cleanup script plans before it writes)
+ * can name a membership that has ended; it is then dead weight, never a lock: it refuses nobody, and the next
+ * join replaces it in its own transaction. So no writer has to be perfectly serialized against a leave or a
+ * rejoin for the rule to stay safe.
  */
 
 import {createLogger} from "@mentra/cloud-shared"
@@ -83,8 +89,20 @@ function isDuplicateKey(error: unknown): boolean {
  * the person who has several and has not been cleaned up yet).
  */
 export async function canJoinWorkspace(session: ClientSession, mentraUserId: string): Promise<boolean> {
-  if (await guards().findOne({_id: guardIdOf(mentraUserId)} as any, {session, projection: {_id: 1}})) return false
+  const guard = await guards().findOne({_id: guardIdOf(mentraUserId)} as any, {session})
+  if (guard && (await holdsActiveMembership(session, mentraUserId, guard as unknown as GuardRow))) return false
   return !(await WorkspaceMembershipModel.exists({mentraUserId, status: "active"}).session(session))
+}
+
+/** Whether the membership a guard names is still `mentraUserId`'s active one. A guard that is not is stale. */
+async function holdsActiveMembership(session: ClientSession, mentraUserId: string, guard: GuardRow): Promise<boolean> {
+  return Boolean(
+    await WorkspaceMembershipModel.exists({
+      membershipId: guard.guardedMembershipId,
+      mentraUserId,
+      status: "active",
+    }).session(session),
+  )
 }
 
 /**
@@ -103,14 +121,32 @@ export async function acquireGuard(
   await insertGuard(session, mentraUserId, held)
 }
 
-/** The insert alone, for a caller that has already decided with {@link canJoinWorkspace}. */
+/**
+ * The write alone, for a caller that has already decided with {@link canJoinWorkspace}. A guard that is already
+ * there and still holds an active membership refuses the join; a stale one is replaced, conditioned on the very
+ * guard that was read, so two joins that both found it stale cannot both win.
+ */
 export async function insertGuard(
   session: ClientSession,
   mentraUserId: string,
   held: {workspaceId: string; membershipId: string},
 ): Promise<void> {
+  const row = guardOf(mentraUserId, held)
+  const existing = (await guards().findOne({_id: row._id} as any, {session})) as unknown as GuardRow | null
+  if (existing) {
+    if (existing.guardedMembershipId !== held.membershipId && (await holdsActiveMembership(session, mentraUserId, existing))) {
+      fail("already_in_workspace", "already in a workspace; leave it before joining another")
+    }
+    const replaced = await guards().replaceOne(
+      {_id: row._id, guardedMembershipId: existing.guardedMembershipId} as any,
+      row as any,
+      {session},
+    )
+    if (replaced.matchedCount === 0) fail("already_in_workspace", "already in a workspace; leave it before joining another")
+    return
+  }
   try {
-    await guards().insertOne(guardOf(mentraUserId, held) as any, {session})
+    await guards().insertOne(row as any, {session})
   } catch (error) {
     if (isDuplicateKey(error)) fail("already_in_workspace", "already in a workspace; leave it before joining another")
     throw error
@@ -135,14 +171,24 @@ export async function releaseGuardsOfWorkspace(
   )
 }
 
-/** Set the guard of a person to name `held`, replacing any (the cleanup script's, after it keeps one). */
+/**
+ * Set the guard of a person to name `held`, replacing any (the cleanup script's, after it keeps one), but only
+ * while `held` is still their one active membership: a plan made earlier is checked here, in the transaction
+ * that writes, so a person who left and joined elsewhere meanwhile keeps the guard of their new membership.
+ * Returns whether it wrote.
+ */
 export async function setGuard(
   session: ClientSession,
   mentraUserId: string,
   held: {workspaceId: string; membershipId: string},
-): Promise<void> {
+): Promise<boolean> {
+  const active = await WorkspaceMembershipModel.find({mentraUserId, status: "active"}, {membershipId: 1})
+    .session(session)
+    .lean<{membershipId: string}[]>()
+  if (active.length !== 1 || active[0]!.membershipId !== held.membershipId) return false
   const row = guardOf(mentraUserId, held)
   await guards().replaceOne({_id: row._id} as any, row as any, {session, upsert: true})
+  return true
 }
 
 /**
