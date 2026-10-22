@@ -63,6 +63,15 @@ beforeEach(() => {
 })
 
 describe("the Fleet host's miniapp port", () => {
+  test("compares an assignment with the active installed release, not the newest one on disk", async () => {
+    versions = ["1.0.0", "1.2.0"]
+    activeVersion = "1.0.0"
+    identities.set("1.0.0", {bundleSha256: "a".repeat(64)})
+    expect(await port!.installedRelease(pkg)).toEqual({version: "1.0.0", bundleSha256: "a".repeat(64)})
+    activeVersion = null
+    expect(await port!.installedRelease(pkg)).toBeNull()
+  })
+
   test("hears the stop of every context, a hidden one too", () => {
     const stopped: string[] = []
     const unsubscribe = port!.onStopped((packageName) => stopped.push(packageName))

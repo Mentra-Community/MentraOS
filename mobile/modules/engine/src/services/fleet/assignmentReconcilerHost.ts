@@ -7,7 +7,6 @@
  */
 import NetInfo from "@react-native-community/netinfo"
 import {AppState} from "react-native"
-import semver from "semver"
 
 import {BgTimer} from "../../utils/timers"
 import appRegistry from "../AppRegistry"
@@ -39,13 +38,12 @@ function currentSession(): ReconcilerSession | null {
   return session?.mentraUserId ? {coreUrl: session.coreUrl, mentraUserId: session.mentraUserId} : null
 }
 
-/** The newest released (non-development) version on disk: what an assignment is compared with. */
+/**
+ * The active installed release (not a development build): what an assignment is compared with. The installer still
+ * refuses a version below any release on disk.
+ */
 function installedRelease(packageName: string): {version: string; bundleSha256?: string} | null {
-  const versions = appRegistry
-    .getInstalledVersions(packageName)
-    .filter((version) => !version.startsWith("dev-") && semver.valid(version))
-    .sort(semver.rcompare)
-  const version = versions[0]
+  const version = appRegistry.getActiveReleaseVersion(packageName)
   if (!version) return null
   const sha = appRegistry.getReleaseIdentity(packageName, version)?.bundleSha256
   return sha ? {version, bundleSha256: sha} : {version}
