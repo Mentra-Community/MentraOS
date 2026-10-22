@@ -135,6 +135,34 @@ describe("parseLicenseWrite", () => {
   test("a body that is not an object is refused", () => {
     for (const body of [null, [], "license", 5]) refused(body)
   })
+
+  test("assignTo names the buyer by Core user ID, keeping only that id; a write without one has none", () => {
+    const named = {...workspaceWrite(), assignTo: {mentraUserId: "mu_1"}}
+    expect(parseLicenseWrite(named, LICENSE_ID)).toEqual(named)
+    expect(parseLicenseWrite({...workspaceWrite(), assignTo: {mentraUserId: "mu_1", extra: true}}, LICENSE_ID)).toEqual(
+      named,
+    )
+    expect("assignTo" in parseLicenseWrite(workspaceWrite(), LICENSE_ID)).toBe(false)
+  })
+
+  test("a malformed assignTo is refused", () => {
+    for (const assignTo of [
+      "mu_1",
+      {},
+      {mentraUserId: ""},
+      {mentraUserId: "  "},
+      {mentraUserId: 5},
+      null,
+      [],
+      ["mu_1"],
+    ]) {
+      expect(refused({...workspaceWrite(), assignTo}).message).toContain("assignTo")
+    }
+  })
+
+  test("a personal license names no one to assign: its owner holds its one seat", () => {
+    expect(refused({...personWrite(), assignTo: {mentraUserId: "mu_1"}}).message).toContain("assignTo")
+  })
 })
 
 describe("parseSeatAssignments", () => {

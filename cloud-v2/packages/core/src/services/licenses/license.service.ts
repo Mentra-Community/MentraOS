@@ -52,6 +52,12 @@
  * (`endLicensesForOwner`); deleting an account ends the person's own licenses before its `user.deleted`
  * tombstone.
  *
+ * **The buyer's seat.** A write of a workspace license may name the purchase's buyer (`assignTo`). Only
+ * the write that creates the license honors it, inside its transaction (`assignBuyer`): one seat, through
+ * the same conditional increment and insert as an assignment, for a buyer who is an active member and
+ * holds no seat of an in-term license of the same product in the workspace. Repeats and later revisions
+ * never assign, and two deliveries of the first write at once create one license, so it is given once.
+ *
  * **Audit.** `license.written`, `license.ended`, `seat.assigned` and `seat.released` (with why: see
  * `SEAT_RELEASE_REASONS`), each with its actor. A workspace license's events are the workspace's
  * (`recordWorkspaceEvent`, and `recordWorkspaceEvents` for a batch of seats), so they are on the change
@@ -123,8 +129,8 @@ function invalid(message: string): never {
 /**
  * The license write in `body`, for the license the path names (`licenseId`), with only the write's own
  * fields. Anything malformed is `invalid_request` (400), saying what: a personal license with a quantity
- * other than 1 among them, since its owner holds its one seat, and a term whose `paidThrough` is before
- * its `validFrom`.
+ * other than 1 or with an `assignTo` among them, since its owner holds its one seat, and a term whose
+ * `paidThrough` is before its `validFrom`. `assignTo` is absent or `{mentraUserId}`.
  */
 export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrite {
   if (!isRecord(body)) invalid("a license write must be a JSON object")
@@ -144,7 +150,13 @@ export function parseLicenseWrite(body: unknown, licenseId: string): LicenseWrit
   const paidThrough = instant(body.paidThrough, "paidThrough")
   // A term of no length is a subscription cancelled as it started; one that ends before it starts is a bug.
   if (Date.parse(paidThrough) < Date.parse(validFrom)) invalid("paidThrough must not be before validFrom")
-  return {licenseId, revision, owner, product, features, quantity, validFrom, paidThrough}
+  const write: LicenseWrite = {licenseId, revision, owner, product, features, quantity, validFrom, paidThrough}
+  if (body.assignTo === undefined) return write
+  if (!isRecord(body.assignTo) || !isId(body.assignTo.mentraUserId)) {
+    invalid('assignTo must be {"mentraUserId"}, a non-blank Core user ID')
+  }
+  if (owner.type === "person") invalid("a personal license takes no assignTo: its owner holds its one seat")
+  return {...write, assignTo: {mentraUserId: body.assignTo.mentraUserId}}
 }
 
 function parseOwner(value: unknown): LicenseOwner {
@@ -247,9 +259,56 @@ async function applyWorkspaceLicenseWrite(
     await touchWorkspace(session, workspaceId)
     if (!(await saveLicense(session, existing, write)))
       throw new Error(`license ${write.licenseId} changed during its write`)
-    await recordWorkspaceEvent(session, writtenEvent(existing, write, actor))
+    // Only the write that creates the license gives its buyer one: a repeat was answered above, and a later
+    // revision finds the license.
+    const assigned = existing ? [] : await assignBuyer(session, write, workspaceId, actor)
+    // `license.written` first, then the buyer's `seat.assigned`, as the transaction's last writes.
+    await recordWorkspaceEvents(session, [writtenEvent(existing, write, actor), ...assigned])
     return {applied: true, revision: write.revision}
   })
+}
+
+/**
+ * Give the buyer billing names (`write.assignTo`) one seat of the license `write` has just created, in
+ * that write's transaction, and return its `seat.assigned` event for the caller to record after
+ * `license.written`. It gives none (an empty list) unless the buyer has an active membership of the
+ * workspace, the license has a seat to give, and the buyer holds no seat of an in-term, not-ended license
+ * of the same product there. Its checks are serialized as an assignment's are: the events the write
+ * records take the feed counter, so a concurrent end of the membership or assignment of another seat
+ * conflicts with it, and the retry sees that change.
+ */
+async function assignBuyer(
+  session: ClientSession,
+  write: LicenseWrite,
+  workspaceId: string,
+  actor: Actor,
+): Promise<WorkspaceAuditEventInput[]> {
+  const mentraUserId = write.assignTo?.mentraUserId
+  if (!mentraUserId || write.quantity < 1) return []
+  const membership = await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId, status: "active"})
+    .session(session)
+    .lean<MembershipRow>()
+  if (!membership) return []
+  const held = await LicenseSeatModel.find({workspaceId, membershipId: membership.membershipId})
+    .select({_id: 0, licenseId: 1})
+    .session(session)
+    .lean<Array<Pick<LicenseSeatRow, "licenseId">>>()
+  if (held.length > 0) {
+    const now = new Date()
+    const hasProduct = await LicenseModel.exists({
+      _id: {$in: held.map((seat) => seat.licenseId)},
+      product: write.product,
+      endedAt: null,
+      validFrom: {$lte: now},
+      paidThrough: {$gt: now},
+    }).session(session)
+    if (hasProduct) return []
+  }
+  const license = await takeSeats(session, write.licenseId, 1)
+  if (!license) return []
+  return insertSeats(session, actor, workspaceId, license, [
+    {membershipId: membership.membershipId, mentraUserId, email: membership.email ?? null},
+  ])
 }
 
 async function applyPersonalLicenseWrite(

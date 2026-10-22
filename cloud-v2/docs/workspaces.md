@@ -133,6 +133,48 @@ licenses are assigned from the Licenses page.
 - Anyone signed in with a verified email may create a workspace and becomes its
   Owner. A Private Cloud may limit creation to Organization Admins with
   `CLOUD_CORE_WORKSPACE_CREATION=organization-admins`.
+- **The automatic workspace.** `POST /ensure` (no body) answers the caller's
+  workspace as a workspace detail: `200` with their oldest workspace (the first
+  `GET /` gives: the one created first), whatever made it, or, when they have none, `201` with a
+  new one made for them, with them as its Owner. The same rules as creating
+  apply to that one (`403 email_unverified`, and `403 forbidden` for a
+  non-admin under `organization-admins`); someone with a workspace gets it
+  either way. The new workspace is marked automatic, and its
+  `workspace.created` event carries `after.automatic: true`. Its name is the
+  person's last sign-in name, trimmed with inner whitespace collapsed, and
+  "'s Workspace" ("Dana Reyes's Workspace"). Without a name it is made from the
+  verified email's local part, any `+tag` dropped, split on `.`, `_` and `-`,
+  each word capitalized ("john.smith+x@…" is "John Smith's Workspace"); without
+  either it is "My Workspace". The person's part is cut so the whole is at most
+  80 characters; invisible format characters (zero-width spaces, bidi marks)
+  are dropped, and the cut never splits a character or an emoji sequence. Each ensure writes the person's `users` row
+  (`portalWorkspaceAt`) in its transaction before it looks for their
+  memberships, so two at once (two tabs, or a retry racing its first try)
+  conflict there, the one retried finds the other's workspace, and the person
+  ends with one. A join (below) writes that row too, so an ensure never answers
+  a workspace a join is deleting. Core does not look at invitations here: the portal decides
+  when to ask.
+- An automatic workspace **holds nothing** while its Owner is its only member
+  (an imported membership waiting for sign-in counts as another) and it has no
+  pending invitation, unrevoked key, license that has not ended, or deletion
+  hold. `GET /` marks each of the caller's workspaces `replaceable`: `true`
+  only for their own automatic workspace, which they own, while it holds
+  nothing. A workspace made with `POST /` never is.
+- **Giving way.** In the transaction that gives a person a membership in
+  another workspace, their automatic workspaces that hold nothing are deleted
+  (`yieldAutomaticWorkspace`): accepting an invitation (by token or by id,
+  after its checks), claiming an imported membership (`claimPendingMemberships`,
+  when it moves a membership to the person rather than merging it into one they
+  hold), and `recoverOwnership` when it creates the membership. The deletion is
+  the workspace deletion's own steps without the typed name: the memberships
+  end (`workspace_deleted`), `workspace.deleted` is recorded with
+  `after.reason: "joined_another_workspace"` (for the person, or for the system
+  in a claim), and the deletion and the join commit together or not at all, so
+  both are on the change feed or neither is. The workspace being joined is never
+  the one deleted. A workspace that holds anything is kept, as is any the person
+  did not make for themselves: one where they are a Member or share ownership,
+  or one made with `POST /`. The join then succeeds as it would for anyone, and
+  the person has both memberships.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
   invitation token; the link carries the token. The email names the inviter.
@@ -220,7 +262,7 @@ session authenticates only its own routes:
 | `/api/admin/workspaces/*`, `/api/admin/organization/*` | The admin portal | Its session, or a bearer |
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
-Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
+Workspace routes (`GET`/`POST /`, `POST /ensure`, `GET`/`PATCH`/`DELETE /:workspaceId`,
 `/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
 (by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`, and `/licenses` with
 its seats and `/seat-assignments`, [Licenses](licenses.md#assigning-licenses)) are for people;
