@@ -21,7 +21,7 @@ import {
   uninstallManagedMiniapp,
 } from "../miniappReleaseInstall"
 import {resolveMiniappUrl} from "../miniappUrlResolution"
-import {miniappRunningRegistry} from "../MiniappRunningRegistry"
+import {miniappContextRegistry, miniappRunningRegistry} from "../MiniappRunningRegistry"
 import {dismissRunningUpdatePrompt, onRunningUpdatePromptDue} from "../runningUpdatePrompt"
 import {
   createAssignmentReconciler,
@@ -51,15 +51,6 @@ function installedRelease(packageName: string): {version: string; bundleSha256?:
   return sha ? {version, bundleSha256: sha} : {version}
 }
 
-function onStopped(listener: (packageName: string) => void): () => void {
-  let before = new Set(miniappRunningRegistry.getAll())
-  return miniappRunningRegistry.subscribe(() => {
-    const now = new Set(miniappRunningRegistry.getAll())
-    for (const packageName of before) if (!now.has(packageName)) listener(packageName)
-    before = now
-  })
-}
-
 const miniapps: ManagedMiniappPort = {
   resolve: (url) => resolveMiniappUrl(url),
   installedRelease: async (packageName) => installedRelease(packageName),
@@ -74,7 +65,7 @@ const miniapps: ManagedMiniappPort = {
   clearAssignment: (packageName) => void appRegistry.clearMiniappAssignment(packageName),
   uninstall: uninstallManagedMiniapp,
   isRunning: (packageName) => miniappRunningRegistry.has(packageName) || miniappLauncher.isRunning(packageName),
-  onStopped,
+  onStopped: (listener) => miniappContextRegistry.onRemoved(listener),
   onUpdateDue: onRunningUpdatePromptDue,
   revokeAccess: stopMiniappForRevocation,
   restoreAccess: (packageName) => appRegistry.restoreMiniappAccess(packageName),
