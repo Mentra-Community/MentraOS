@@ -57,11 +57,13 @@ import {legacyIdentityClaims} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {endLicensesForOwner, releaseSeatsForMembership, seatReleaseReasonFor} from "../licenses/license.service"
 import {isDeletedAccountId} from "../user.service"
+import {replaceableWorkspaces} from "./automatic-workspace.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
 
-const NAME_MAX_LENGTH = 80
+/** The longest a workspace name may be. */
+export const WORKSPACE_NAME_MAX_LENGTH = 80
 
 /**
  * Who is acting. For a user, `emailVerified` says whether the identity provider
@@ -91,7 +93,12 @@ export async function getWorkspace(workspaceId: string): Promise<WorkspaceSummar
   return row ? toSummary(row) : null
 }
 
-/** The workspaces a person belongs to, oldest first. Deleted workspaces are left out. */
+/**
+ * The workspaces a person belongs to, oldest first. Deleted workspaces are left out. Each says whether it
+ * is `replaceable`: the person's own automatic workspace, which they own, while it holds nothing
+ * (`replaceableWorkspaces`). That is asked only about such workspaces, all of them at once, so a person
+ * with none asks nothing more.
+ */
 export async function listWorkspacesForUser(mentraUserId: string): Promise<PrincipalResponse["workspaces"]> {
   // A missing id must not become a `null` filter.
   if (!isId(mentraUserId)) return []
@@ -101,6 +108,10 @@ export async function listWorkspacesForUser(mentraUserId: string): Promise<Princ
   const workspaces = await WorkspaceModel.find({workspaceId: {$in: [...byWorkspace.keys()]}, status: "active"})
     .sort({_id: 1})
     .lean()
+  const ownAutomatic = workspaces
+    .filter(workspace => workspace.automatic === true && byWorkspace.get(workspace.workspaceId)!.role === "owner")
+    .map(workspace => workspace.workspaceId)
+  const replaceable = ownAutomatic.length > 0 ? await replaceableWorkspaces(mentraUserId, ownAutomatic) : new Set()
   return workspaces.map(workspace => {
     const membership = byWorkspace.get(workspace.workspaceId)!
     const role = membership.role as WorkspaceRole
@@ -108,6 +119,7 @@ export async function listWorkspacesForUser(mentraUserId: string): Promise<Princ
       ...toSummary(workspace),
       membership: {membershipId: membership.membershipId, role},
       capabilities: [...capabilitiesForRole(role)],
+      replaceable: replaceable.has(workspace.workspaceId),
     }
   })
 }
@@ -207,54 +219,85 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
 export async function createWorkspace(actor: Actor & {kind: "user"}, input: {name: string}): Promise<WorkspaceSummary> {
   // An actor with no usable id would own a workspace nobody can ever be matched to.
   if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
+  // An unverified email is refused before a bad name, and a bad name before the creation policy.
   if (actor.emailVerified !== true) {
     fail("email_unverified", "verify your email address before creating a workspace")
   }
   const name = validateName(input?.name)
+  assertMayCreateWorkspace(actor)
+  return withTransaction(async session => {
+    await refuseDeletedAccount(session, actor.mentraUserId)
+    return (await insertWorkspace(session, actor, {name, automatic: false})).workspace
+  })
+}
+
+/**
+ * Who may create a workspace: a person whose email is verified (`email_unverified`), and under
+ * `CLOUD_CORE_WORKSPACE_CREATION=organization-admins` only an Organization Admin (`forbidden`).
+ */
+export function assertMayCreateWorkspace(actor: Actor & {kind: "user"}): void {
+  if (actor.emailVerified !== true) {
+    fail("email_unverified", "verify your email address before creating a workspace")
+  }
   if (workspaceCreationPolicy() === "organization-admins" && !actor.isOrganizationAdmin) {
     fail("forbidden", "only organization admins can create workspaces")
   }
-  return withTransaction(async session => {
-    await refuseDeletedAccount(session, actor.mentraUserId)
-    const workspaceId = `ws_${ulid()}`
-    const membershipId = `wm_${ulid()}`
-    const now = new Date()
-    await WorkspaceModel.create(
-      [
-        {
-          workspaceId,
-          name,
-          status: "active",
-          authorizationRevision: 0,
-          createdByMentraUserId: actor.mentraUserId,
-        },
-      ],
-      {session},
-    )
-    await WorkspaceMembershipModel.create(
-      [
-        {
-          membershipId,
-          workspaceId,
-          mentraUserId: actor.mentraUserId,
-          email: actor.email,
-          role: "owner",
-          roleHistory: [roleEntry("owner", now, 0)],
-          status: "active",
-          startedAt: now,
-        },
-      ],
-      {session},
-    )
-    await recordWorkspaceEvent(session, {
-      workspaceId,
-      action: "workspace.created",
-      actor: auditActor(actor),
-      target: {workspaceId, membershipId},
-      after: {name, role: "owner"},
-    })
-    return {workspaceId, name, status: "active", authorizationRevision: 0}
+}
+
+/**
+ * Insert a workspace with `actor` as its Owner, inside the caller's transaction, and record
+ * `workspace.created`. `automatic` marks a person's automatic workspace (`automatic-workspace.service`), and
+ * its event's `after` says so; any other workspace has no such field. The caller has already checked who
+ * may create one (`assertMayCreateWorkspace`) and refused a deleted account.
+ */
+export async function insertWorkspace(
+  session: ClientSession,
+  actor: Actor & {kind: "user"},
+  input: {name: string; automatic: boolean},
+): Promise<{workspace: WorkspaceSummary; membership: {membershipId: string; role: "owner"}}> {
+  const name = validateName(input.name)
+  const workspaceId = `ws_${ulid()}`
+  const membershipId = `wm_${ulid()}`
+  const now = new Date()
+  await WorkspaceModel.create(
+    [
+      {
+        workspaceId,
+        name,
+        status: "active",
+        authorizationRevision: 0,
+        createdByMentraUserId: actor.mentraUserId,
+        ...(input.automatic ? {automatic: true} : {}),
+      },
+    ],
+    {session},
+  )
+  await WorkspaceMembershipModel.create(
+    [
+      {
+        membershipId,
+        workspaceId,
+        mentraUserId: actor.mentraUserId,
+        email: actor.email,
+        role: "owner",
+        roleHistory: [roleEntry("owner", now, 0)],
+        status: "active",
+        startedAt: now,
+      },
+    ],
+    {session},
+  )
+  await recordWorkspaceEvent(session, {
+    workspaceId,
+    action: "workspace.created",
+    actor: auditActor(actor),
+    target: {workspaceId, membershipId},
+    after: {name, role: "owner", ...(input.automatic ? {automatic: true} : {})},
   })
+  return {
+    workspace: {workspaceId, name, status: "active", authorizationRevision: 0},
+    membership: {membershipId, role: "owner"},
+  }
 }
 
 export async function renameWorkspace(
@@ -564,8 +607,8 @@ export function isWorkspaceRole(value: unknown): value is WorkspaceRole {
 
 export function validateName(name: unknown): string {
   const trimmed = typeof name === "string" ? name.trim() : ""
-  if (trimmed.length < 1 || trimmed.length > NAME_MAX_LENGTH) {
-    fail("invalid_request", `name must be 1-${NAME_MAX_LENGTH} characters`)
+  if (trimmed.length < 1 || trimmed.length > WORKSPACE_NAME_MAX_LENGTH) {
+    fail("invalid_request", `name must be 1-${WORKSPACE_NAME_MAX_LENGTH} characters`)
   }
   // Names go into invitation emails' subjects and bodies: no line breaks or other control characters.
   if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) fail("invalid_request", "name must not contain control characters")

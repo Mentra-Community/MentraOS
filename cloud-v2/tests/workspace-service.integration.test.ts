@@ -16,12 +16,14 @@
 
 import {createHash} from "node:crypto"
 
-import {afterAll, beforeAll, beforeEach, describe, expect, test} from "bun:test"
+import {afterAll, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import type {Model} from "mongoose"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
+import {LicenseModel} from "../packages/core/src/models/license.model"
+import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
@@ -35,6 +37,11 @@ import {
   recordWorkspaceEvent,
   redactSecrets,
 } from "../packages/core/src/services/workspaces/audit.service"
+import {
+  ensureWorkspace,
+  holdsNothing,
+  replaceableWorkspaces,
+} from "../packages/core/src/services/workspaces/automatic-workspace.service"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {
   clearDeletionHold,
@@ -71,6 +78,8 @@ const MODELS: Model<any>[] = [
   AccessCredentialModel,
   WorkspaceAuditCounterModel,
   WorkspaceAuditEventModel,
+  SigninIdentityModel,
+  LicenseModel,
 ]
 
 let databaseUrl: string
@@ -405,6 +414,313 @@ describe("deleted accounts", () => {
     expect(await countActiveOwners(ws)).toBe(2)
     await leaveWorkspace(user("mu_owner"), ws)
     expect(await countActiveOwners(ws)).toBe(1)
+  })
+})
+
+describe("the automatic workspace", () => {
+  /** A Core user row for `actor`, as every sign-in makes, with the name its sign-ins carried (none for null). */
+  async function account(actor: UserActor, name: string | null = null) {
+    const tenantUserId = `sb-${actor.mentraUserId}`
+    await UserModel.create({mentraUserId: actor.mentraUserId, tenantId: "mentra", tenantUserId})
+    await SigninIdentityModel.create({
+      mentraUserId: actor.mentraUserId,
+      tenantId: "mentra",
+      sourceId: "mentra",
+      subject: tenantUserId,
+      email: actor.email,
+      emailVerified: actor.emailVerified,
+      name,
+      signedInAt: new Date(),
+    })
+    return actor
+  }
+
+  async function counts() {
+    return {
+      workspaces: await WorkspaceModel.countDocuments({}),
+      memberships: await WorkspaceMembershipModel.countDocuments({}),
+      events: await WorkspaceAuditEventModel.countDocuments({}),
+    }
+  }
+
+  describe("ensureWorkspace", () => {
+    test("a person in no workspace gets an automatic one, named for them, as its Owner", async () => {
+      const dana = await account(user("mu_dana"), "Dana Reyes")
+
+      const ensured = await ensureWorkspace(dana)
+
+      expect(ensured).toEqual({
+        created: true,
+        workspace: {
+          workspaceId: expect.stringMatching(/^ws_[0-9A-HJKMNP-TV-Z]{26}$/),
+          name: "Dana Reyes's Workspace",
+          status: "active",
+          authorizationRevision: 0,
+        },
+        membership: {membershipId: expect.stringMatching(/^wm_/), role: "owner"},
+      })
+      const {workspaceId} = ensured.workspace
+      expect(await WorkspaceModel.findOne({workspaceId}).lean()).toMatchObject({
+        automatic: true,
+        createdByMentraUserId: "mu_dana",
+      })
+      expect(await getActiveMembership(workspaceId, "mu_dana")).toMatchObject({
+        membershipId: ensured.membership.membershipId,
+        role: "owner",
+        email: "mu_dana@example.test",
+      })
+      const audit = await listWorkspaceAudit(workspaceId, {limit: 10})
+      expect(audit).toHaveLength(1)
+      expect(audit[0]).toMatchObject({
+        action: "workspace.created",
+        actor: {kind: "user", mentraUserId: "mu_dana"},
+        target: {workspaceId, membershipId: ensured.membership.membershipId},
+        after: {name: "Dana Reyes's Workspace", role: "owner", automatic: true},
+      })
+      // The write that serializes concurrent ensures.
+      expect((await UserModel.findOne({mentraUserId: "mu_dana"}).lean())!.portalWorkspaceAt).toBeInstanceOf(Date)
+    })
+
+    test("without a sign-in name the name comes from the email, and without either it is My Workspace", async () => {
+      const john = await account(user("mu_john", {email: "john.smith+test@example.com"}))
+      expect((await ensureWorkspace(john)).workspace.name).toBe("John Smith's Workspace")
+      const nobody = await account(user("mu_nameless", {email: null}))
+      expect((await ensureWorkspace(nobody)).workspace.name).toBe("My Workspace")
+    })
+
+    test("asking again, as a retry after a lost answer does, gives the same workspace and makes nothing", async () => {
+      const dana = await account(user("mu_dana"), "Dana Reyes")
+      const first = await ensureWorkspace(dana)
+      const before = await counts()
+
+      const again = await ensureWorkspace(dana)
+
+      expect(again).toEqual({...first, created: false})
+      expect(await counts()).toEqual(before)
+      expect(before).toEqual({workspaces: 1, memberships: 1, events: 1})
+    })
+
+    test("a person in a workspace, automatic or not, gets their oldest membership's, and nothing is made", async () => {
+      const owner = await account(user("mu_owner"))
+      const made = await createWorkspace(owner, {name: "Acme"})
+      const member = await account(user("mu_member"))
+      const theirs = await newWorkspace(user("mu_other"), "Theirs")
+      await addMember(made.workspaceId, "mu_member", "developer", {startedAt: new Date(Date.now() - 60_000)})
+      await addMember(theirs, "mu_member", "member")
+      const before = await counts()
+
+      expect(await ensureWorkspace(owner)).toMatchObject({
+        created: false,
+        workspace: {workspaceId: made.workspaceId, name: "Acme"},
+        membership: {role: "owner"},
+      })
+      expect(await ensureWorkspace(member)).toMatchObject({
+        created: false,
+        workspace: {workspaceId: made.workspaceId},
+        membership: {role: "developer"},
+      })
+      expect(await counts()).toEqual(before)
+      expect(await WorkspaceModel.countDocuments({automatic: true})).toBe(0)
+    })
+
+    test("two ensures at once leave exactly one workspace and one membership, and both answers name it", async () => {
+      for (let round = 0; round < 5; round++) {
+        const actor = await account(user(`mu_racer${round}`), `Racer ${round}`)
+
+        const answers = await Promise.all([ensureWorkspace(actor), ensureWorkspace(actor)])
+
+        const ids = new Set(answers.map(answer => answer.workspace.workspaceId))
+        expect(ids.size).toBe(1)
+        expect(answers.map(answer => answer.created).sort()).toEqual([false, true])
+        expect(new Set(answers.map(answer => answer.membership.membershipId)).size).toBe(1)
+        expect(await WorkspaceModel.countDocuments({createdByMentraUserId: actor.mentraUserId})).toBe(1)
+        expect(
+          await WorkspaceMembershipModel.countDocuments({mentraUserId: actor.mentraUserId, status: "active"}),
+        ).toBe(1)
+      }
+    })
+
+    test("an unverified email gets none (email_unverified), but still gets a workspace it is already in", async () => {
+      const unverified = await account(user("mu_unverified", {emailVerified: false}))
+      await expectError(() => ensureWorkspace(unverified), "email_unverified", 403)
+      expect(await counts()).toEqual({workspaces: 0, memberships: 0, events: 0})
+
+      const ws = await newWorkspace()
+      await addMember(ws, "mu_unverified", "member")
+      expect((await ensureWorkspace(unverified)).workspace.workspaceId).toBe(ws)
+    })
+
+    test("under organization-admins a non-admin gets none (forbidden), an Organization Admin theirs", async () => {
+      const plain = await account(user("mu_plain"))
+      const admin = await account(orgAdmin, "Ada Admin")
+      await withCreationPolicy("organization-admins", async () => {
+        await expectError(() => ensureWorkspace(plain), "forbidden", 403)
+        expect(await counts()).toEqual({workspaces: 0, memberships: 0, events: 0})
+        expect(await ensureWorkspace(admin)).toMatchObject({
+          created: true,
+          workspace: {name: "Ada Admin's Workspace"},
+          membership: {role: "owner"},
+        })
+      })
+    })
+
+    test("a deleted account, one Core has no row for, and a non-person are refused, writing nothing", async () => {
+      const gone = await account(user("mu_gone"))
+      await UserModel.updateOne({mentraUserId: "mu_gone"}, {$set: {supportTelemetryDeletedAt: new Date()}})
+      await expectError(() => ensureWorkspace(gone), "account_deleted", 403)
+      await expectError(() => ensureWorkspace(user("mu_unknown")), "user_not_found", 404)
+      for (const actor of [user(""), {kind: "system"} as unknown as UserActor, service as unknown as UserActor]) {
+        await expectError(() => ensureWorkspace(actor), "forbidden", 403)
+      }
+      expect(await counts()).toEqual({workspaces: 0, memberships: 0, events: 0})
+    })
+  })
+
+  describe("holding nothing", () => {
+    async function automaticOf(actor: UserActor): Promise<string> {
+      const ensured = await ensureWorkspace(await account(actor))
+      return ensured.workspace.workspaceId
+    }
+
+    async function license(workspaceId: string, fields: Record<string, unknown> = {}) {
+      await LicenseModel.create({
+        _id: `01LICENSE${nextId()}`.toUpperCase(),
+        owner: {type: "workspace", workspaceId},
+        product: "mentra.call.unlimited",
+        quantity: 1,
+        validFrom: new Date(Date.now() - 60_000),
+        paidThrough: new Date(Date.now() + 86_400_000),
+        revision: 1,
+        ...fields,
+      })
+    }
+
+    async function invite(workspaceId: string, fields: Record<string, unknown> = {}) {
+      await WorkspaceInvitationModel.create({
+        invitationId: `wi_${nextId()}`,
+        workspaceId,
+        email: `invitee-${nextId()}@example.test`,
+        role: "member",
+        status: "pending",
+        tokenHash: createHash("sha256").update(nextId()).digest("hex"),
+        invitedByAuthority: "system",
+        invitedByMembershipId: null,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        ...fields,
+      })
+    }
+
+    async function replaceable(actor: UserActor, workspaceId: string) {
+      const listed = (await listWorkspacesForUser(actor.mentraUserId)).find(item => item.workspaceId === workspaceId)
+      const single = await withTransaction(session => holdsNothing(session, workspaceId, actor.mentraUserId))
+      const batched = (await replaceableWorkspaces(actor.mentraUserId, [workspaceId])).has(workspaceId)
+      // The three ways of asking always agree.
+      expect({single, batched}).toEqual({single: listed?.replaceable ?? false, batched: listed?.replaceable ?? false})
+      return listed?.replaceable ?? false
+    }
+
+    test("an automatic workspace with only its Owner in it holds nothing, and is replaceable", async () => {
+      const me = user("mu_me")
+      const ws = await automaticOf(me)
+      expect(await replaceable(me, ws)).toBe(true)
+      // An expired invitation, a revoked key and an ended license hold nothing either.
+      await invite(ws, {expiresAt: new Date(Date.now() - 1000)})
+      await seedCredential(ws, null, {revokedAt: new Date()})
+      await license(ws, {endedAt: new Date(), endedReason: "workspace_deleted"})
+      expect(await replaceable(me, ws)).toBe(true)
+    })
+
+    test("a second member, a pending invitation, a key, a license or a deletion hold each hold it", async () => {
+      const cases: Array<[string, (ws: string) => Promise<unknown>]> = [
+        ["a second member", ws => addMember(ws, "mu_second", "member")],
+        ["a member imported from the Store, waiting for sign-in", ws =>
+          WorkspaceMembershipModel.create(
+            membershipRow({
+              membershipId: `wm_${nextId()}`,
+              workspaceId: ws,
+              mentraUserId: null,
+              pendingWorkosUserId: `user_${nextId()}`,
+              email: "imported@example.test",
+              role: "member",
+              status: "active",
+              startedAt: new Date(),
+            }),
+          )],
+        ["a pending invitation", ws => invite(ws)],
+        ["an unrevoked key", ws => seedCredential(ws, null)],
+        ["a license that has not ended", ws => license(ws)],
+        ["a deletion hold", ws =>
+          setDeletionHold("store", ws, {reason: "owns_miniapps", count: 1, asOf: nextHoldAsOf()})],
+      ]
+      for (const [what, hold] of cases) {
+        await Promise.all(MODELS.map(model => model.deleteMany({})))
+        const me = user("mu_me")
+        const ws = await automaticOf(me)
+        expect({what, replaceable: await replaceable(me, ws)}).toEqual({what, replaceable: true})
+        await hold(ws)
+        expect({what, replaceable: await replaceable(me, ws)}).toEqual({what, replaceable: false})
+      }
+    })
+
+    test("one made with createWorkspace, someone else's, and one with two Owners are never replaceable", async () => {
+      const me = await account(user("mu_me"))
+      const made = await createWorkspace(me, {name: "Made"})
+      expect(await replaceable(me, made.workspaceId)).toBe(false)
+      expect((await listWorkspacesForUser("mu_me"))[0]).toMatchObject({
+        workspaceId: made.workspaceId,
+        replaceable: false,
+      })
+
+      const theirs = await automaticOf(user("mu_them"))
+      expect(await replaceable(me, theirs)).toBe(false)
+      expect((await replaceableWorkspaces("mu_me", [theirs, "ws_missing", ""])).size).toBe(0)
+
+      // Recovered by someone else, the person's automatic workspace has another member: it holds something.
+      const mine = await automaticOf(user("mu_mine"))
+      await recoverOwnership(system, mine, "mu_me")
+      expect(await replaceable(user("mu_mine"), mine)).toBe(false)
+      expect(await replaceable(me, mine)).toBe(false)
+    })
+
+    test("a deleted workspace holds nothing for nobody: it is not replaceable", async () => {
+      const me = user("mu_me")
+      const ws = await automaticOf(me)
+      await deleteWorkspace(me, ws, {confirmName: (await getWorkspace(ws))!.name})
+      expect(await replaceableWorkspaces("mu_me", [ws])).toEqual(new Set())
+      expect(await withTransaction(session => holdsNothing(session, ws, "mu_me"))).toBe(false)
+    })
+
+    test("listing reads each check once for all workspaces, and nothing for ones that are not automatic", async () => {
+      const me = await account(user("mu_me"))
+      const reads = [
+        spyOn(WorkspaceMembershipModel, "aggregate"),
+        spyOn(WorkspaceInvitationModel, "distinct"),
+        spyOn(AccessCredentialModel, "distinct"),
+        spyOn(LicenseModel, "distinct"),
+      ]
+      try {
+        await createWorkspace(me, {name: "One"})
+        await createWorkspace(me, {name: "Two"})
+        for (const read of reads) read.mockClear()
+        const plain = await listWorkspacesForUser("mu_me")
+        expect(plain.map(item => item.replaceable)).toEqual([false, false])
+        expect(reads.map(read => read.mock.calls.length)).toEqual([0, 0, 0, 0])
+
+        // Two automatic workspaces of the person's (as a recovery can leave): one read per check for both.
+        const first = (await ensureWorkspace(await account(user("mu_a")))).workspace.workspaceId
+        const second = (await ensureWorkspace(await account(user("mu_b")))).workspace.workspaceId
+        await WorkspaceMembershipModel.updateMany(
+          {workspaceId: {$in: [first, second]}},
+          {$set: {mentraUserId: "mu_me"}},
+        )
+        for (const read of reads) read.mockClear()
+        const listed = await listWorkspacesForUser("mu_me")
+        expect(listed.map(item => item.replaceable)).toEqual([false, false, true, true])
+        expect(reads.map(read => read.mock.calls.length)).toEqual([1, 1, 1, 1])
+      } finally {
+        for (const read of reads) read.mockRestore()
+      }
+    })
   })
 })
 
