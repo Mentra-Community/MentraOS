@@ -1480,6 +1480,7 @@ const en = {
     roleAdmin: "Admin",
     roleOwner: "Owner",
     invitationExpired: "This invitation has expired.",
+    accessRevoked: "You no longer have access to {{name}}.",
   },
   appSettings: {
     noDescription: "No description available.",

@@ -18,9 +18,11 @@ let selectedSnapshot: string | null = null
 let storedDevUrl: string | null = null
 let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
+const revoked = new Set<string>()
 
 mock.module("../AppRegistry", () => ({
   default: {
+    isMiniappAccessRevoked: (packageName: string) => revoked.has(packageName),
     getActiveVersion: async () => activeVersion,
     getPublisherKeyFingerprint: () => publisherFingerprint,
     getSelectedDevSnapshot: () => selectedSnapshot,
@@ -148,8 +150,19 @@ describe("MiniappLauncher", () => {
     publisherFingerprint = null
     snapshotVersions = []
     waitForConnectCalls = []
+    revoked.clear()
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
+  })
+
+  test("a miniapp whose access was revoked is refused with a revocation error, spawning nothing", async () => {
+    const {MiniappAccessRevokedError} = await import("../MiniappLauncher")
+    revoked.add("com.mentra.notes")
+    await expect(miniappLauncher.ensureRunning("com.mentra.notes")).rejects.toBeInstanceOf(MiniappAccessRevokedError)
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+    revoked.delete("com.mentra.notes")
+    await miniappLauncher.ensureRunning("com.mentra.notes")
+    expect(mockRouter.spawnCalls).toHaveLength(1)
   })
 
   test("an unavailable Store cannot resolve UI or launch", async () => {

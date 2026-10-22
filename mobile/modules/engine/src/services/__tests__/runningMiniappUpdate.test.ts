@@ -49,6 +49,7 @@ mock.module("../../utils/storage/storage", () => ({
 }))
 
 const registry = {
+  isMiniappAccessRevoked: () => false,
   getInstalledMiniapps: async (): Promise<ClientApp[]> => [
     {
       packageName: pkg,

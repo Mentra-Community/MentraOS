@@ -17,6 +17,7 @@ mock.module("../../services/AppRegistry", () => ({
     getInstalledMiniapps: installedApps,
     uninstall: mock(async () => Res.ok(undefined)),
     requiresLocalSttModel: (packageName: string) => packageName === "com.test.speech",
+    isMiniappAccessRevoked: (packageName: string) => packageName === "com.test.revoked",
     subscribe: () => () => {},
   },
 }))
@@ -146,6 +147,14 @@ describe("launch reports", () => {
     modelAvailable = false
     expect(await apps.getState().start(speech, {trigger: "user"})).toBe(false)
     expect(launches).toEqual([])
+  })
+
+  test("a miniapp whose access was revoked is not a launch", async () => {
+    const revokedApp = {...target, packageName: "com.test.revoked", name: "Revoked"}
+    apps.setState({apps: [revokedApp]})
+    expect(await apps.getState().start(revokedApp, {trigger: "user"})).toBe(false)
+    expect(launches).toEqual([])
+    expect(ensureRunning).not.toHaveBeenCalled()
   })
 
   test("a package the store does not know, or one the host made unavailable, is not a launch", async () => {

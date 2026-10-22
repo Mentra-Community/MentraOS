@@ -53,6 +53,7 @@ const BOARD = {
   "fleet:updatePromptUpdate": ["Update"],
   "fleet:updateFailedTitle": ["Couldn't update Notes", {name: "Notes"}],
   "fleet:updateFailedMessage": ["You're still on version 1.4.0.", {version: "1.4.0"}],
+  "fleet:accessRevoked": ["You no longer have access to Notes.", {name: "Notes"}],
 } as const
 
 describe("Fleet copy", () => {

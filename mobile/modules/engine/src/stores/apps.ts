@@ -66,6 +66,8 @@ export interface AppStoreHooks {
    * alert / settings navigation here.
    */
   onMissingSpeechModel?: (app: ClientApp) => void
+  /** A start was refused because the miniapp's server no longer admits this account; the host explains why. */
+  onAccessRevoked?: (app: ClientApp) => void
   /**
    * An open request passed the gates — fired on EVERY open, including
    * re-opening an already-running app, so the host's navigation / open
@@ -409,6 +411,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
     if (state.updatingPackages.has(packageName)) {
       hostHooks.onUpdateBlocked?.(app)
+      return false
+    }
+    if (app.local && appRegistry.isMiniappAccessRevoked(packageName)) {
+      hostHooks.onAccessRevoked?.(app)
       return false
     }
 
