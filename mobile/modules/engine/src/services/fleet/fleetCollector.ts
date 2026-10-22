@@ -26,6 +26,12 @@
  * new. A phone with no glasses connected and the Mentra App in the background so writes about 100 records a day, a
  * checkpoint every 15 minutes, whether or not miniapps execute in the background or its glasses are being retried.
  *
+ * The installed miniapps are reported as a `miniapp_inventory` record: once when a run starts (a new run is a new
+ * account's or a new process's, which has never been told), and again, after a short settle, whenever the inventory
+ * source says it changed and what it lists is not what the last record said. Never in a snapshot. The source is
+ * injected (`InventorySource`); until the app wires one the collector sends no inventory, as it cannot tell an empty
+ * phone from an unwired one.
+ *
  * Time counts only while the collector was watching. The monotonic clock (React Native's `performance.now()`, the C++
  * steady clock) runs while the device is awake on both platforms, but not the same way through sleep, and the rules
  * below handle both:
@@ -46,10 +52,14 @@ import * as Device from "expo-device"
 import {AppState, Platform} from "react-native"
 import {
   FLEET_CAPABILITIES,
+  FLEET_INSTALL_REASONS,
   FLEET_LIMITS,
   FLEET_SCHEMA_VERSION,
+  FleetMiniappInventoryPayloadSchema,
   type FleetActivity,
   type FleetDeviceBinding,
+  type FleetInstallReason,
+  type FleetMiniappInventoryPayload,
   type FleetRecord,
 } from "@mentra/cloud-protocol"
 
@@ -79,6 +89,27 @@ export interface FleetCollector {
   stop(reason: "engine_stopped" | "account_changed" | "not_installed"): void
   /** Writes one packed `usage_checkpoint` for every open session. */
   flushCheckpoint(): void
+}
+
+/** One installed miniapp, as the inventory source reports it. Its reasons are why it is installed, not where it came from. */
+export interface InstalledMiniapp {
+  packageName: string
+  versionName: string
+  /** The installed release's digest. */
+  digest: string
+  /** Why the phone holds it: `bundled`, `explicit`, `manifest` and `assignment`, which can hold together. At least one. */
+  reasons: readonly FleetInstallReason[]
+}
+
+/**
+ * Where the collector learns what is installed. The app's registry implements it (the wiring is the registry's side);
+ * tests fake it.
+ */
+export interface InventorySource {
+  /** The miniapps installed now, or null while that is not known yet (nothing is reported then). Must be cheap. */
+  list(): readonly InstalledMiniapp[] | null
+  /** `listener` is called, on any stack, after the installed set or any miniapp's version, digest or reasons changed. */
+  subscribe(listener: () => void): () => void
 }
 
 type Capability = (typeof FLEET_CAPABILITIES)[number]
@@ -111,6 +142,8 @@ const SNAPSHOT_DEBOUNCE_MS = 2_000
  */
 const CLOCK_DRIFT_LIMIT_MS = 2 * 60_000
 const BATTERY_SNAPSHOT_STEP = 5
+/** Inventory changes this close together are one record: an install changes the set, then its reasons, then its digest. */
+const INVENTORY_DEBOUNCE_MS = 2_000
 /**
  * How long connected glasses may go without showing a serial number before they are identified without one. They send
  * it, with their Bluetooth address, within a second or two of connecting; this leaves ample room for a slow answer
@@ -170,6 +203,46 @@ function text(value: string | null | undefined): string | undefined {
 
 function iso(wall: number): string {
   return new Date(wall).toISOString()
+}
+
+/**
+ * The inventory record's payload for what the source lists, or null when there is nothing to send: the source does not
+ * know yet, or what it listed cannot make a valid record. A miniapp that cannot be described (no package, version or
+ * digest, or no known reason) is left out and counted in the warning, not allowed to sink the rest. The list is sorted
+ * by package, one entry per package, and a listing past the contract's 500 keeps the first 500, so the same phone always
+ * says the same thing.
+ */
+function inventoryPayload(listed: readonly InstalledMiniapp[] | null): FleetMiniappInventoryPayload | null {
+  if (listed === null) return null
+  const byPackage = new Map<string, FleetMiniappInventoryPayload["miniapps"][number]>()
+  let skipped = 0
+  for (const app of listed) {
+    const packageName = text(app?.packageName)
+    const versionName = text(app?.versionName)
+    const digest = text(app?.digest)
+    const reasons = FLEET_INSTALL_REASONS.filter((reason) => app?.reasons?.includes(reason))
+    if (!packageName || !versionName || !digest || reasons.length === 0) {
+      skipped += 1
+      continue
+    }
+    byPackage.set(packageName, {packageName, versionName, digest, reasons})
+  }
+  const miniapps = [...byPackage.values()]
+    .sort((a, b) => (a.packageName < b.packageName ? -1 : a.packageName > b.packageName ? 1 : 0))
+    .slice(0, FLEET_LIMITS.maxInventoryMiniapps)
+  if (skipped > 0 || byPackage.size > miniapps.length) {
+    console.warn(
+      `FleetCollector: the inventory left out ${skipped} undescribable and ${
+        byPackage.size - miniapps.length
+      } surplus miniapp(s)`,
+    )
+  }
+  const parsed = FleetMiniappInventoryPayloadSchema.safeParse({miniapps})
+  if (!parsed.success) {
+    console.warn("FleetCollector: no inventory, what the source listed is not a valid record")
+    return null
+  }
+  return parsed.data
 }
 
 function isForeground(): boolean {
@@ -398,9 +471,52 @@ interface Env {
   now: () => number
   monotonic: () => number
   modelsWithoutBattery: ReadonlySet<string>
+  inventory: InventorySource
 }
 
 const NONE: ReadonlySet<string> = new Set()
+
+/**
+ * The app's inventory source: the registry's side registers itself with `setFleetInventorySource`, and every collector
+ * the app creates reads through this. Until one is set it lists nothing known, so no inventory is sent. Setting one
+ * counts as a change.
+ */
+const inventoryListeners = new Set<() => void>()
+let appInventorySource: InventorySource | null = null
+let stopFollowingSource: (() => void) | null = null
+
+function notifyInventory(): void {
+  for (const listener of [...inventoryListeners]) {
+    try {
+      listener()
+    } catch (error) {
+      warn("inventory listener", error)
+    }
+  }
+}
+
+/** Wires (or, with null, unwires) the source of what is installed. */
+export function setFleetInventorySource(source: InventorySource | null): void {
+  stopFollowingSource?.()
+  stopFollowingSource = null
+  appInventorySource = source
+  if (source) {
+    try {
+      stopFollowingSource = source.subscribe(notifyInventory)
+    } catch (error) {
+      warn("following the inventory source", error)
+    }
+  }
+  notifyInventory()
+}
+
+const appInventory: InventorySource = {
+  list: () => appInventorySource?.list() ?? null,
+  subscribe(listener) {
+    inventoryListeners.add(listener)
+    return () => void inventoryListeners.delete(listener)
+  },
+}
 
 /** One collector run: everything a `start()` opens, and everything `stop()` closes. */
 class CollectorRun {
@@ -426,6 +542,9 @@ class CollectorRun {
   private checkpointTimer: number | null = null
   private checkpointDueMono = 0
   private snapshotDebounce: number | null = null
+  private inventoryDebounce: number | null = null
+  /** What the last inventory record of this run said, so a change that left the listing as it was writes nothing. */
+  private lastInventoryKey: string | null = null
   /** When the last snapshot was written (monotonic), and what it said, so a repeat of it can be skipped. */
   private lastSnapshotMono = 0
   private lastSnapshotKey: string | null = null
@@ -477,6 +596,10 @@ class CollectorRun {
     this.cleanups.push(() => appState.remove())
 
     this.takeSnapshot()
+    this.cleanups.push(
+      this.env.inventory.subscribe(() => this.guard("inventory change", () => this.scheduleInventory())),
+    )
+    this.takeInventory(true)
     // Launches the engine made before this run could listen: it restores miniapps while the account may still be
     // being resolved, and the reporter discards them when the account changes, so these are this run's account's.
     for (const {event, observedAt} of fleetEvents.takeUndeliveredLaunches()) {
@@ -508,7 +631,8 @@ class CollectorRun {
     if (this.checkpointTimer !== null) BgTimer.clearTimeout(this.checkpointTimer)
     if (this.snapshotDebounce !== null) BgTimer.clearTimeout(this.snapshotDebounce)
     if (this.foregroundTimer !== null) BgTimer.clearTimeout(this.foregroundTimer)
-    this.checkpointTimer = this.snapshotDebounce = this.foregroundTimer = null
+    if (this.inventoryDebounce !== null) BgTimer.clearTimeout(this.inventoryDebounce)
+    this.checkpointTimer = this.snapshotDebounce = this.foregroundTimer = this.inventoryDebounce = null
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup()
@@ -1134,6 +1258,35 @@ class CollectorRun {
     this.lastSnapshotKey = key
   }
 
+  // --- inventory -----------------------------------------------------------------------------------------------
+
+  /** Asks for an inventory record once the changes around this moment have settled. */
+  private scheduleInventory(): void {
+    if (this.inventoryDebounce !== null) return
+    const timer: number = BgTimer.setTimeout(
+      () =>
+        this.guard("inventory", () => {
+          if (this.inventoryDebounce === timer) this.inventoryDebounce = null
+          this.takeInventory(false)
+        }),
+      INVENTORY_DEBOUNCE_MS,
+    )
+    this.inventoryDebounce = timer
+  }
+
+  /** Writes the inventory; unless `always`, only if it lists something the last record of this run did not. */
+  private takeInventory(always: boolean): void {
+    const wall = this.env.now()
+    const payload = inventoryPayload(this.env.inventory.list())
+    if (!payload) return
+    const key = JSON.stringify(payload)
+    if (!always && key === this.lastInventoryKey) return
+    if (this.inventoryDebounce !== null) BgTimer.clearTimeout(this.inventoryDebounce)
+    this.inventoryDebounce = null
+    this.emit(wall, (base) => ({...base, kind: "miniapp_inventory", payload}))
+    this.lastInventoryKey = key
+  }
+
   // --- launches and photos -------------------------------------------------------------------------------------
 
   private onLaunch(event: FleetLaunchEvent, observedAt = this.env.now()): void {
@@ -1228,12 +1381,15 @@ export function createFleetCollector(deps: {
   now?: () => number
   monotonic?: () => number
   modelsWithoutBattery?: ReadonlySet<string>
+  /** What is installed. Defaults to the app's source (`setFleetInventorySource`), which reports nothing until wired. */
+  inventory?: InventorySource
 }): FleetCollector {
   const env: Env = {
     queue: deps.queue,
     now: deps.now ?? Date.now,
     monotonic: deps.monotonic ?? (() => performance.now()),
     modelsWithoutBattery: deps.modelsWithoutBattery ?? MODELS_WITHOUT_BATTERY,
+    inventory: deps.inventory ?? appInventory,
   }
   let current: CollectorRun | null = null
 

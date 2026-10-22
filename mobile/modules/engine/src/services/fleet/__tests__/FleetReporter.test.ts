@@ -89,6 +89,8 @@ type FleetCollector = ReturnType<typeof createFleetCollector>
 const {fleetEvents} = await import("../fleetEvents")
 const {miniappRunningRegistry} = await import("../../MiniappRunningRegistry")
 const {backoffDelayMs, createFleetReporter} = await import("../FleetReporter")
+const {emitAssignmentOutcome, onFleetRevision, resetFleetSignals} = await import("../fleetRevisionSignal")
+type OutcomePayload = Parameters<typeof emitAssignmentOutcome>[0]
 
 // --- the phone's Core client --------------------------------------------------------------------------------------
 
@@ -384,6 +386,7 @@ beforeEach(() => {
   core.respond = (records) => acceptAll(records)
   installFakeCloud()
   fleetEvents.discardUndeliveredLaunches()
+  resetFleetSignals()
   glassesStore.setState({...GLASSES_IDLE}, true)
   for (const packageName of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(packageName)
   Object.assign(reactNative.Platform as object, {OS: "android", Version: 35, constants: {Release: "15"}})
@@ -1567,6 +1570,322 @@ describe("with the real collector", () => {
   })
 })
 
+// --- the reconciler's side ------------------------------------------------------------------------------------------
+
+function outcome(over: Partial<OutcomePayload> = {}): OutcomePayload {
+  return {
+    assignmentId: "asg_01",
+    assignmentRevision: 3,
+    desiredRevision: 12,
+    packageName: "com.acme.weather",
+    state: "installed",
+    selectedVersion: "2.1.0",
+    installedVersion: "2.1.0",
+    attempts: 2,
+    attemptedAt: iso(clock.wall - MINUTE),
+    lastSuccessAt: iso(clock.wall - MINUTE),
+    ...over,
+  }
+}
+
+/** Every record of one kind that reached Core, in the order sent. */
+const sentOfKind = (kind: FleetRecord["kind"]) =>
+  core.sent.flatMap((call) => call.records).filter((record) => record.kind === kind)
+
+describe("assignment outcomes", () => {
+  test("an outcome the reconciler emits is queued as an assignment_outcome record and sent", async () => {
+    reporter.start()
+    emitAssignmentOutcome(outcome())
+    const [record] = queued(CORE_X, A)
+    expect(FleetRecordSchema.parse(record)).toMatchObject({
+      kind: "assignment_outcome",
+      collectorSessionId: collector.runs[0].collectorSessionId,
+      observedAt: iso(clock.wall),
+      capabilities: [],
+      payload: outcome(),
+    })
+    await advance(MINUTE)
+    expect(sentOfKind("assignment_outcome")).toHaveLength(1)
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
+  test("carries the assignment ID, both revisions, the versions, the attempts and the last success", async () => {
+    reporter.start()
+    emitAssignmentOutcome(
+      outcome({
+        assignmentId: "asg_77",
+        assignmentRevision: 9,
+        desiredRevision: 40,
+        state: "retrying",
+        reason: "download_failed",
+        selectedVersion: "2.2.0",
+        installedVersion: "2.1.0",
+        attempts: 4,
+        lastSuccessAt: "2026-10-12T08:00:00.000Z",
+      }),
+    )
+    const [record] = queued(CORE_X, A)
+    expect(record).toMatchObject({
+      payload: {
+        assignmentId: "asg_77",
+        assignmentRevision: 9,
+        desiredRevision: 40,
+        packageName: "com.acme.weather",
+        state: "retrying",
+        reason: "download_failed",
+        selectedVersion: "2.2.0",
+        installedVersion: "2.1.0",
+        attempts: 4,
+        lastSuccessAt: "2026-10-12T08:00:00.000Z",
+      },
+    })
+  })
+
+  test("each state change is its own record, in the run's sequence", async () => {
+    reporter.start()
+    emitAssignmentOutcome(
+      outcome({state: "pending", attempts: 0, installedVersion: undefined, lastSuccessAt: undefined}),
+    )
+    emitAssignmentOutcome(outcome({state: "installing", attempts: 1, lastSuccessAt: undefined}))
+    emitAssignmentOutcome(outcome())
+    const records = queued(CORE_X, A)
+    expect(records.map((r) => (r.kind === "assignment_outcome" ? r.payload.state : r.kind))).toEqual([
+      "pending",
+      "installing",
+      "installed",
+    ])
+    expect(records.map((r) => r.sequence)).toEqual([...records.map((r) => r.sequence)].sort((a, b) => a - b))
+    expect(new Set(records.map((r) => r.recordId)).size).toBe(3)
+  })
+
+  test("an outcome that is not a valid record is left out, with no content in the warning", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      reporter.start()
+      // A blocked assignment carries its reason; this one does not.
+      emitAssignmentOutcome(outcome({state: "blocked", reason: undefined, assignmentId: "asg_secret"}))
+      emitAssignmentOutcome(outcome({attempts: -1}))
+      emitAssignmentOutcome({...outcome(), extra: true} as OutcomePayload)
+      emitAssignmentOutcome(null as unknown as OutcomePayload)
+      expect(queued(CORE_X, A)).toEqual([])
+      expect(warn.mock.calls.flat().join(" ")).not.toContain("asg_secret")
+      emitAssignmentOutcome(outcome())
+      expect(queued(CORE_X, A)).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("an outcome is queued in the partition of the account running, and never sent as another", async () => {
+    reporter.start()
+    emitAssignmentOutcome(outcome({assignmentId: "asg_a"}))
+    // A signs out while its outcome waits, and B signs in.
+    signOut()
+    signIn(B)
+    await settle()
+    emitAssignmentOutcome(outcome({assignmentId: "asg_b"}))
+    const ofA = queued(CORE_X, A).map((r) => (r.kind === "assignment_outcome" ? r.payload.assignmentId : r.kind))
+    const ofB = queued(CORE_X, B).map((r) => (r.kind === "assignment_outcome" ? r.payload.assignmentId : r.kind))
+    expect(ofA).toContain("asg_a")
+    expect(ofA).not.toContain("asg_b")
+    expect(ofB).toContain("asg_b")
+    expect(ofB).not.toContain("asg_a")
+    await advance(MINUTE)
+    for (const call of core.sent) {
+      const ids = call.records.flatMap((r) => (r.kind === "assignment_outcome" ? [r.payload.assignmentId] : []))
+      if (call.as.mentraUserId === B) expect(ids).not.toContain("asg_a")
+      if (call.as.mentraUserId === A) expect(ids).not.toContain("asg_b")
+    }
+    expect(
+      sentOfKind("assignment_outcome").map((r) => (r as {payload: {assignmentId: string}}).payload.assignmentId),
+    ).toEqual(["asg_b"])
+  })
+
+  test("an outcome heard while the account is still being resolved is kept for it, the latest per assignment", async () => {
+    cloudClientService.getCoreSession = () => ({coreUrl: CORE_X, mentraUserId: null})
+    reporter.start()
+    expect(collector.runs).toEqual([])
+    emitAssignmentOutcome(outcome({state: "pending", attempts: 0}))
+    emitAssignmentOutcome(outcome({state: "installed"}))
+    emitAssignmentOutcome(outcome({assignmentId: "asg_02", packageName: "com.b"}))
+    await settle()
+    expect(collector.runs).toHaveLength(1)
+    const records = queued(CORE_X, A).filter((r) => r.kind === "assignment_outcome")
+    expect(records.map((r) => (r as {payload: {assignmentId: string; state: string}}).payload)).toMatchObject([
+      {assignmentId: "asg_01", state: "installed"},
+      {assignmentId: "asg_02"},
+    ])
+  })
+
+  test("an outcome kept for an account that never comes is discarded by a sign-in, a sign-out or a stop, not given to the next", async () => {
+    core.session = {coreUrl: CORE_X, mentraUserId: null}
+    reporter.start()
+    emitAssignmentOutcome(outcome({assignmentId: "asg_old"}))
+    signIn(B)
+    await settle()
+    expect(queued(CORE_X, B).filter((r) => r.kind === "assignment_outcome")).toEqual([])
+    await reporter.stop()
+    core.session = {coreUrl: CORE_X, mentraUserId: null}
+    reporter = makeReporter()
+    reporter.start()
+    emitAssignmentOutcome(outcome({assignmentId: "asg_older"}))
+    await reporter.stop()
+    core.session = {coreUrl: CORE_X, mentraUserId: A}
+    reporter.start()
+    expect(queued(CORE_X, A).filter((r) => r.kind === "assignment_outcome")).toEqual([])
+  })
+
+  test("outcomes after the reporter stops are ignored", async () => {
+    reporter.start()
+    await reporter.stop()
+    emitAssignmentOutcome(outcome())
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
+  test("a rejected unknown record kind does not strand the batch: the outcome and the inventory around it are removed", async () => {
+    reporter.start()
+    const [active] = [collector.active!]
+    const send = (record: unknown) => collector.queue.enqueue(active.partition, record as FleetRecord)
+    emitAssignmentOutcome(outcome())
+    const unknown = {...launchRecord(), kind: "future_kind", payload: {}} as unknown as FleetRecord
+    send(unknown)
+    send({
+      ...launchRecord(),
+      kind: "miniapp_inventory",
+      payload: {miniapps: [{packageName: "com.a", versionName: "1", digest: "sha256:a", reasons: ["bundled"]}]},
+    })
+    core.respond = (rs) => answer(rs, ["accepted", {status: "rejected", reasonCode: "schema_invalid"}, "accepted"])
+    await advance(MINUTE)
+    expect(core.calls[0].records.map((r) => r.kind)).toEqual(["assignment_outcome", "future_kind", "miniapp_inventory"])
+    const left = queued(CORE_X, A)
+    expect(left).toHaveLength(1)
+    expect(left[0]).toMatchObject({kind: "coverage_gap", payload: {reason: "record_rejected", droppedRecordCount: 1}})
+  })
+
+  test("the 10,000 cap holds for outcomes, and what it drops becomes a coverage gap", async () => {
+    reporter.start()
+    backlog(10_000)
+    expect(queue.size(partitionKey(CORE_X, A))).toBe(10_000)
+    for (let i = 0; i < 3; i += 1) emitAssignmentOutcome(outcome({assignmentId: `asg_${i}`}))
+    expect(queue.size(partitionKey(CORE_X, A))).toBe(10_000)
+    // The newest are kept; the oldest went.
+    expect(
+      queued(CORE_X, A)
+        .slice(-3)
+        .map((r) => r.kind),
+    ).toEqual(Array(3).fill("assignment_outcome"))
+    for (let i = 0; i < 40 && queue.size(partitionKey(CORE_X, A)) > 0; i += 1) await advance(MINUTE)
+    const gaps = sentOfKind("coverage_gap") as Array<{payload: {reason: string; droppedRecordCount?: number}}>
+    expect(gaps[0].payload).toMatchObject({reason: "queue_dropped", droppedRecordCount: 3})
+    expect(sentOfKind("assignment_outcome")).toHaveLength(3)
+  })
+})
+
+describe("the ack revision", () => {
+  function watch(): number[] {
+    const heard: number[] = []
+    onFleetRevision((revision) => heard.push(revision))
+    return heard
+  }
+  const ackWith = (records: FleetRecord[], revision?: unknown): FleetSendOutcome => {
+    const outcome = acceptAll(records)
+    if (outcome.kind !== "results") throw new Error("unreachable")
+    return {...outcome, ack: {...outcome.ack, ...(revision === undefined ? {} : {revision})}} as FleetSendOutcome
+  }
+
+  test("an ack that carries a revision is signalled to the reconciler", async () => {
+    const heard = watch()
+    reporter.start()
+    observe(1)
+    core.respond = (rs) => ackWith(rs, 7)
+    await advance(MINUTE)
+    expect(heard).toEqual([7])
+  })
+
+  test("an ack without a revision still settles its records and signals nothing", async () => {
+    const heard = watch()
+    reporter.start()
+    observe(2)
+    await advance(MINUTE)
+    expect(heard).toEqual([])
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+
+  test("a lower or equal revision is signalled as well; the reconciler filters", async () => {
+    const heard = watch()
+    reporter.start()
+    for (const revision of [7, 7, 3, 9]) {
+      observe(1)
+      core.respond = (rs) => ackWith(rs, revision)
+      await advance(MINUTE)
+    }
+    expect(heard).toEqual([7, 7, 3, 9])
+  })
+
+  test("a revision that is not a positive whole number is not signalled", async () => {
+    const heard = watch()
+    reporter.start()
+    for (const revision of [0, -2, 1.5, "8", null, Number.NaN]) {
+      observe(1)
+      core.respond = (rs) => ackWith(rs, revision)
+      await advance(MINUTE)
+    }
+    expect(heard).toEqual([])
+  })
+
+  test("a revision comes with an ack that asks to retry, too", async () => {
+    const heard = watch()
+    reporter.start()
+    observe(1)
+    core.respond = (rs) =>
+      ({
+        ...answer(rs, [{status: "retryable", retryAfterSeconds: 5}]),
+        ack: {...(answer(rs, [{status: "retryable", retryAfterSeconds: 5}]) as {ack: object}).ack, revision: 4},
+      }) as FleetSendOutcome
+    await advance(MINUTE)
+    expect(heard).toEqual([4])
+  })
+
+  test("a failure that carries no ack signals nothing", async () => {
+    const heard = watch()
+    reporter.start()
+    observe(1)
+    core.respond = () => unavailable()
+    await advance(MINUTE)
+    expect(heard).toEqual([])
+  })
+
+  test("an ack that arrives after the run ended is not signalled", async () => {
+    const heard = watch()
+    reporter.start()
+    observe(1)
+    let release: (outcome: FleetSendOutcome) => void = () => {}
+    core.respond = (rs) =>
+      new Promise<FleetSendOutcome>((resolve) => {
+        release = () => resolve(ackWith(rs, 11))
+      })
+    await advance(MINUTE)
+    signOut()
+    await settle()
+    release(unavailable())
+    await settle()
+    expect(heard).toEqual([])
+  })
+
+  test("a listener that throws neither stops the upload nor the other listeners", async () => {
+    onFleetRevision(() => {
+      throw new Error("reconciler broke")
+    })
+    const heard = watch()
+    reporter.start()
+    observe(1)
+    core.respond = (rs) => ackWith(rs, 5)
+    await advance(MINUTE)
+    expect(heard).toEqual([5])
+    expect(queued(CORE_X, A)).toEqual([])
+  })
+})
+
 describe("what the reporter reads", () => {
   const folder = new URL("..", import.meta.url)
   const source = readFileSync(new URL("FleetReporter.ts", folder), "utf8")
@@ -1587,6 +1906,7 @@ describe("what the reporter reads", () => {
         "./fleetEvents",
         "./fleetIds",
         "./fleetQueue",
+        "./fleetRevisionSignal",
       ].sort(),
     )
     for (const forbidden of ["deploymentStore", "isTelemetryAllowed", "getConfigValues", "isFeatureEnabled"]) {
