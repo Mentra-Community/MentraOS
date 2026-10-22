@@ -289,4 +289,25 @@ describe("LocalMiniappRuntime speaker stream state events", () => {
     expect(audioPlaybackService.play).toHaveBeenCalledTimes(1)
     expect(host.sendResult).toHaveBeenCalledWith(appId, "stale-play", true, {duration: 0})
   })
+
+  test("app teardown invalidates a play request waiting for stream abort", async () => {
+    const {host, opens, audioPlaybackService} = createHost({speakerState: "idle"})
+    await host.handleSpeakerStreamOpen(appId, {sampleRate: 24000}, "open-before-teardown")
+    const onEnded = opens[0]!.onEnded as (id: string, success: boolean, error: string | null, durationMs: number) => void
+    let releaseAbort!: () => void
+    const abortGate = new Promise<void>((resolve) => (releaseAbort = resolve))
+    audioPlaybackService.abortStream = mock(async (streamId: string) => {
+      await abortGate
+      onEnded(streamId, true, null, 12)
+    })
+
+    const play = host.handlePlayAudio(appId, {audioUrl: "file://old.wav", stopOtherAudio: true}, "teardown-play")
+    await Promise.resolve()
+    host.cancelPendingSpeakerOperation(appId)
+    releaseAbort()
+    await play
+
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+    expect(host.sendResult).toHaveBeenCalledWith(appId, "teardown-play", true, {duration: 0})
+  })
 })
