@@ -17,10 +17,10 @@ import {miniappLauncher} from "../MiniappLauncher"
 import {
   classifyManagedInstallError,
   installManagedMiniapp,
-  resolveMiniappUrl,
   stopMiniappForRevocation,
   uninstallManagedMiniapp,
 } from "../miniappReleaseInstall"
+import {resolveMiniappUrl} from "../miniappUrlResolution"
 import {miniappRunningRegistry} from "../MiniappRunningRegistry"
 import {
   createAssignmentReconciler,

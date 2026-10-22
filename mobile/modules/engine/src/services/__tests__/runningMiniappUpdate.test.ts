@@ -151,7 +151,7 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError, resolveMiniappUrl} =
+const {classifyManagedInstallError, installMiniappRelease, MiniappInstallCancelledError} =
   await import("../miniappReleaseInstall")
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
@@ -551,48 +551,6 @@ describe("installation reasons", () => {
     active = "1.1.0"
     await release({expectedVersion: "1.2.0"})
     expect(installReasons).toEqual(["explicit", undefined])
-  })
-})
-
-describe("resolving a miniapp URL", () => {
-  const serve = (status: number, body?: unknown) =>
-    (async () => new Response(body === undefined ? null : JSON.stringify(body), {status})) as unknown as typeof fetch
-
-  test("reads the manifest the URL serves; the URL decides the version", async () => {
-    const seen: string[] = []
-    const fetchImpl = (async (url: string) => {
-      seen.push(url)
-      return new Response(JSON.stringify({packageName: pkg, version: "2.0.0", bundleSha256: "A".repeat(64)}))
-    }) as unknown as typeof fetch
-    expect(await resolveMiniappUrl("https://notes.acme.example/app/", fetchImpl)).toEqual({
-      ok: true,
-      packageName: pkg,
-      version: "2.0.0",
-      bundleUrl: "https://notes.acme.example/app/bundle.zip",
-      bundleSha256: "a".repeat(64),
-    })
-    expect(seen).toEqual(["https://notes.acme.example/app/miniapp.json"])
-  })
-
-  test.each([
-    [401, "access_denied"],
-    [403, "access_denied"],
-    [404, "not_a_miniapp"],
-    [410, "archived"],
-    [503, "download_failed"],
-  ] as const)("HTTP %d is %s", async (status, reason) => {
-    expect(await resolveMiniappUrl("https://notes.acme.example", serve(status))).toEqual({ok: false, reason})
-  })
-
-  test("a page that is not a miniapp manifest is not_a_miniapp; a network error is download_failed", async () => {
-    expect(await resolveMiniappUrl("https://x.example", serve(200, {name: "site"}))).toEqual({
-      ok: false,
-      reason: "not_a_miniapp",
-    })
-    const offline = (async () => {
-      throw new TypeError("Network request failed")
-    }) as unknown as typeof fetch
-    expect(await resolveMiniappUrl("https://x.example", offline)).toEqual({ok: false, reason: "download_failed"})
   })
 })
 

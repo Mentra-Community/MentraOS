@@ -1,5 +1,4 @@
 import type {FleetAssignmentReason} from "@mentra/cloud-protocol"
-
 import {getConfigValues} from "../runtime/bootstrap"
 import {useAppStatusStore} from "../stores/apps"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
@@ -11,8 +10,8 @@ import appRegistry, {
   type MiniappInstallReason,
 } from "./AppRegistry"
 import {markMiniappUpdateDeferred} from "./deferredMiniappUpdates"
-import {checkManifestVersions} from "./manifestVersionGate"
 import {miniappLauncher} from "./MiniappLauncher"
+import type {MiniappUrlResolution} from "./miniappUrlResolution"
 import {canShowRunningUpdatePrompt, emitRunningUpdateFailed, requestRunningUpdatePrompt} from "./runningUpdatePrompt"
 
 /**
@@ -295,64 +294,6 @@ async function restartAfterUpdate(packageName: string, reopen: boolean): Promise
 
 // ---- Managed (Fleet) installs -----------------------------------------------------------------------------------
 
-/** What a miniapp URL serves now, or the assignment reason it cannot be installed. */
-export type MiniappUrlResolution =
-  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256?: string}
-  | {ok: false; reason: FleetAssignmentReason}
-
-const URL_RESOLVE_TIMEOUT_MS = 20_000
-
-/**
- * Read the manifest a miniapp URL serves (`<url>/miniapp.json`, with the archive at `<url>/bundle.zip`, the release
- * QR's layout). The URL decides the version. The server decides access: 401 and 403 are `access_denied`.
- */
-export async function resolveMiniappUrl(url: string, fetchImpl: typeof fetch = fetch): Promise<MiniappUrlResolution> {
-  const base = url.replace(/\/+$/, "")
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), URL_RESOLVE_TIMEOUT_MS)
-  let manifest: Record<string, unknown>
-  try {
-    const response = await fetchImpl(`${base}/miniapp.json`, {signal: controller.signal})
-    if (response.status === 401 || response.status === 403) return {ok: false, reason: "access_denied"}
-    if (response.status === 410) return {ok: false, reason: "archived"}
-    if (response.status === 404) return {ok: false, reason: "not_a_miniapp"}
-    if (!response.ok) return {ok: false, reason: "download_failed"}
-    try {
-      const parsed = (await response.json()) as unknown
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {ok: false, reason: "not_a_miniapp"}
-      manifest = parsed as Record<string, unknown>
-    } catch {
-      return {ok: false, reason: "not_a_miniapp"}
-    }
-  } catch {
-    return {ok: false, reason: "download_failed"}
-  } finally {
-    clearTimeout(timeout)
-  }
-  const packageName = typeof manifest.packageName === "string" ? manifest.packageName.trim() : ""
-  const version = typeof manifest.version === "string" ? manifest.version.trim() : ""
-  if (!packageName || !version) return {ok: false, reason: "not_a_miniapp"}
-  const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
-  if (hostVersion && supportedMiniappSdkRange) {
-    const versions = checkManifestVersions(
-      {
-        sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
-        minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
-      },
-      {hostVersion, supportedSdkRange: supportedMiniappSdkRange},
-    )
-    if (!versions.ok) return {ok: false, reason: "incompatible_host"}
-  }
-  const sha = typeof manifest.bundleSha256 === "string" ? manifest.bundleSha256.trim().toLowerCase() : ""
-  return {
-    ok: true,
-    packageName,
-    version,
-    bundleUrl: `${base}/bundle.zip`,
-    ...(/^[0-9a-f]{64}$/.test(sha) ? {bundleSha256: sha} : {}),
-  }
-}
-
 /** Why a managed install did not commit: an assignment reason, or it waits (`running`) or was superseded. */
 export type ManagedInstallFailure = FleetAssignmentReason | "running" | "cancelled"
 
@@ -398,11 +339,8 @@ export async function installManagedMiniapp({
   await installMiniappRelease(resolution.bundleUrl, {
     expectedPackageName: resolution.packageName,
     expectedVersion: resolution.version,
-    ...(resolution.bundleSha256 ? {expectedBundleSha256: resolution.bundleSha256} : {}),
-    releaseIdentity: {
-      source: "direct_download",
-      ...(resolution.bundleSha256 ? {bundleSha256: resolution.bundleSha256} : {}),
-    },
+    expectedBundleSha256: resolution.bundleSha256,
+    releaseIdentity: {source: "direct_download", bundleSha256: resolution.bundleSha256},
     installReason: "assignment",
     assignment,
     onlyIfStopped: true,

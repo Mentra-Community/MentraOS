@@ -43,9 +43,9 @@ export interface ReconcilerSession {
   mentraUserId: string
 }
 
-/** What a miniapp URL serves now, or why it cannot be installed. */
+/** What a miniapp URL serves now (its `miniapp.json` names the ZIP and its SHA-256), or why it cannot be installed. */
 export type ManagedResolution =
-  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256?: string}
+  | {ok: true; packageName: string; version: string; bundleUrl: string; bundleSha256: string}
   | {ok: false; reason: FleetAssignmentReason}
 
 /** The assignment a managed install commits with its bundle. */

@@ -203,7 +203,14 @@ function stop(pkg: string): void {
 }
 
 function serve(version: string, extra: Partial<Extract<ManagedResolution, {ok: true}>> = {}, url = notesUrl) {
-  served.set(url, {ok: true, packageName: notes, version, bundleUrl: `${url}/bundle.zip`, ...extra})
+  served.set(url, {
+    ok: true,
+    packageName: notes,
+    version,
+    bundleUrl: `${url}/bundle.zip`,
+    bundleSha256: "c".repeat(64),
+    ...extra,
+  })
 }
 
 const states = () => outcomes.map((o) => (o.reason ? `${o.state}:${o.reason}` : o.state))
