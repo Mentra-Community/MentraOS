@@ -425,7 +425,8 @@ export type MembershipIntervalEndReason = "left" | "removed" | "workspace_delete
  * the claim (`membership.claimed`), never the import, so records observed earlier are never counted. A membership
  * that has no account yet is not an interval at all. `end` is null while the membership is open. `role` is the role
  * held now, or the last one before the end; a role change does not split an interval (visibility follows
- * membership, not role). A leave and a later re-join are two intervals with two `membershipId`s.
+ * membership, not role), and `roles` lists the role intervals within it. A leave and a later re-join are two
+ * intervals with two `membershipId`s.
  * `membership.merged_duplicate` and `membership.replaced` act on memberships with no account and so end no interval.
  */
 export interface MembershipInterval {
@@ -438,6 +439,20 @@ export interface MembershipInterval {
   /** ISO 8601 UTC, or null while the membership is open. */
   end: string | null
   endReason: MembershipIntervalEndReason | null
+  /**
+   * The role intervals within this one that overlap the lookback window, oldest first: each role from when it took
+   * effect (never before `start`) until the next took effect, the last until `end`. Never empty.
+   */
+  roles: MembershipRoleInterval[]
+}
+
+/** One role held within a membership interval. */
+export interface MembershipRoleInterval {
+  role: WorkspaceRole
+  /** ISO 8601 UTC. */
+  start: string
+  /** ISO 8601 UTC, or null while the role is still held. */
+  end: string | null
 }
 
 /** `GET /api/internal/workspaces/workspaces/:workspaceId/members` (service `fleet` only): who is in the workspace now. */

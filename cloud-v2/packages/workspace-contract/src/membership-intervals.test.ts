@@ -29,16 +29,19 @@ function clientFor(handler: (url: string) => unknown, status = 200) {
   return {client, calls}
 }
 
-const open = (overrides: Partial<MembershipInterval> = {}): MembershipInterval => ({
-  membershipId: "wm_1",
-  workspaceId: "ws_1",
-  mentraUserId: "mu_1",
-  role: "member",
-  start: "2026-01-02T03:04:05.000Z",
-  end: null,
-  endReason: null,
-  ...overrides,
-})
+const open = (overrides: Partial<MembershipInterval> = {}): MembershipInterval => {
+  const interval = {
+    membershipId: "wm_1",
+    workspaceId: "ws_1",
+    mentraUserId: "mu_1",
+    role: "member" as const,
+    start: "2026-01-02T03:04:05.000Z",
+    end: null,
+    endReason: null,
+    ...overrides,
+  }
+  return {roles: [{role: interval.role, start: interval.start, end: interval.end}], ...interval}
+}
 
 const page = (overrides: Partial<MembershipIntervalsResponse> = {}): MembershipIntervalsResponse => ({
   lookbackDays: 120,
@@ -101,6 +104,28 @@ describe("listMembershipIntervals", () => {
     expect(result.intervals[0]!.end).toBeNull()
   })
 
+  test("returns the role intervals inside each membership interval", async () => {
+    const promoted = open({
+      role: "admin",
+      roles: [
+        {role: "member", start: "2026-01-02T03:04:05.000Z", end: "2026-02-01T00:00:00.000Z"},
+        {role: "admin", start: "2026-02-01T00:00:00.000Z", end: null},
+      ],
+    })
+    const left = open({
+      membershipId: "wm_2",
+      role: "member",
+      end: "2026-09-01T00:00:00.000Z",
+      endReason: "left",
+      roles: [
+        {role: "developer", start: "2026-01-02T03:04:05.000Z", end: "2026-03-01T00:00:00.000Z"},
+        {role: "member", start: "2026-03-01T00:00:00.000Z", end: "2026-09-01T00:00:00.000Z"},
+      ],
+    })
+    const {client} = clientFor(() => page({intervals: [promoted, left]}))
+    expect((await client.listMembershipIntervals({})).intervals).toEqual([promoted, left])
+  })
+
   test("accepts every end reason", async () => {
     for (const endReason of ["left", "removed", "workspace_deleted", "account_deleted"] as const) {
       const {client} = clientFor(() => page({intervals: [open({end: "2026-09-01T00:00:00.000Z", endReason})]}))
@@ -123,6 +148,30 @@ describe("listMembershipIntervals", () => {
       page({intervals: [open({end: "2026-09-01T00:00:00.000Z", endReason: null})]}),
       page({intervals: [open({end: "2026-09-01T00:00:00.000Z", endReason: "evicted" as never})]}),
       page({intervals: [open({start: "2026-09-02T00:00:00.000Z", end: "2026-09-01T00:00:00.000Z", endReason: "left"})]}),
+      page({intervals: [open({roles: []})]}),
+      page({intervals: [{...open(), roles: undefined}]}),
+      page({intervals: [open({roles: [{role: "boss" as never, start: "2026-01-02T03:04:05.000Z", end: null}]})]}),
+      page({intervals: [open({roles: [{role: "member", start: "2025-12-01T00:00:00.000Z", end: null}]})]}),
+      page({intervals: [open({roles: [{role: "member", start: "2026-01-02T03:04:05.000Z", end: "2026-02-01T00:00:00.000Z"}]})]}),
+      page({
+        intervals: [
+          open({
+            roles: [
+              {role: "member", start: "2026-01-02T03:04:05.000Z", end: null},
+              {role: "admin", start: "2026-02-01T00:00:00.000Z", end: null},
+            ],
+          }),
+        ],
+      }),
+      page({
+        intervals: [
+          open({
+            end: "2026-03-01T00:00:00.000Z",
+            endReason: "left",
+            roles: [{role: "member", start: "2026-01-02T03:04:05.000Z", end: "2026-04-01T00:00:00.000Z"}],
+          }),
+        ],
+      }),
       [],
     ]
     for (const body of bad) {

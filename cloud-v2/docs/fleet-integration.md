@@ -64,7 +64,9 @@ every Core variable.
   Overview calculates over up to 114 days, so a deployment that runs Fleet sets
   at least `120`; Fleet refuses a query window longer than the lookback its last
   bootstrap was given. An open membership older than the window is still
-  returned, with its real start.
+  returned, with its real start. Each interval carries `roles`, the role
+  intervals within it that overlap the window (a role held before the
+  membership's claim is never counted).
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs
   its calls to Core with (below), for example
   `{"store": ["<newest>", "<older>"], "fleet": ["<newest>", "<older>"]}`. Without

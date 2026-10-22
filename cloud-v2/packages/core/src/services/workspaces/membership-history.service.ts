@@ -9,7 +9,8 @@
  *    A claimed row from before `claimedAt` was recorded has the time on its `membership.claimed` event;
  *  - it ends at `endedAt`, for `endedReason` (left, removed, the workspace deleted, the account deleted);
  *  - a membership with no account yet (imported, waiting for its person) is not an interval;
- *  - `membership.merged_duplicate` and `membership.replaced` act only on such memberships, so they end none.
+ *  - `membership.merged_duplicate` and `membership.replaced` act only on such memberships, so they end none;
+ *  - `roles` is the row's `roleHistory` within the interval, so a role held before the claim is never counted.
  *
  * The read covers a lookback window (`CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`, default 90): every interval that
  * overlaps `[now - lookback, now]`. An open interval older than the window is returned with its real start, so a
@@ -19,7 +20,13 @@
  * already shows, never miss a change.
  */
 
-import type {MembershipInterval, MembershipIntervalEndReason, MembershipIntervalsResponse} from "@mentra/workspace-contract"
+import type {
+  MembershipInterval,
+  MembershipIntervalEndReason,
+  MembershipIntervalsResponse,
+  MembershipRoleInterval,
+  WorkspaceRole,
+} from "@mentra/workspace-contract"
 import type {Types} from "mongoose"
 import {WorkspaceAuditCounterModel, WORKSPACE_AUDIT_COUNTER_ID} from "../../models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
@@ -92,7 +99,34 @@ async function claimTimes(rows: Row[]): Promise<Map<string, Date>> {
   return times
 }
 
-function toInterval(row: Row, claimed: Map<string, Date>): MembershipInterval {
+/**
+ * The row's `roleHistory` cut to the interval `[start, end]`: each entry from when it took effect (or `start`) until
+ * the next one's `from`, the last until `end`. Role intervals that ended before the window are left out, but the
+ * last one (which reaches the interval's end) never is, so the list is never empty.
+ */
+function roleIntervals(row: Row, start: Date, end: Date | null, windowStart: Date): MembershipRoleInterval[] {
+  const at = (time: Date) => Math.min(Math.max(time.getTime(), start.getTime()), end?.getTime() ?? Infinity)
+  const entries = [...(row.roleHistory ?? [])].sort((a, b) => a.from.getTime() - b.from.getTime())
+  const roles: MembershipRoleInterval[] = []
+  entries.forEach((entry, index) => {
+    const next = entries[index + 1]
+    const from = at(entry.from)
+    const to = next ? at(next.from) : end ? end.getTime() : null
+    const last = !next
+    if (!last && (to! <= from || to! < windowStart.getTime())) return
+    roles.push({
+      role: entry.role as WorkspaceRole,
+      start: new Date(from).toISOString(),
+      end: to === null ? null : new Date(to).toISOString(),
+    })
+  })
+  if (roles.length === 0) {
+    roles.push({role: row.role as WorkspaceRole, start: start.toISOString(), end: end ? end.toISOString() : null})
+  }
+  return roles
+}
+
+function toInterval(row: Row, claimed: Map<string, Date>, windowStart: Date): MembershipInterval {
   const begun = row.claimedAt ?? claimed.get(row.membershipId) ?? row.startedAt
   const ended = row.status === "ended" ? (row.endedAt ?? null) : null
   // A row ended with no time, or before its claim, is an interval of no length at its end, never a negative one.
@@ -106,6 +140,7 @@ function toInterval(row: Row, claimed: Map<string, Date>): MembershipInterval {
     start: start.toISOString(),
     end: ended ? ended.toISOString() : null,
     endReason: ended ? (reason as MembershipIntervalEndReason) : null,
+    roles: roleIntervals(row, start, ended, windowStart),
   }
 }
 
@@ -133,7 +168,7 @@ export async function listMembershipIntervals(opts: {
     lookbackDays,
     windowStart: windowStart.toISOString(),
     feedSeq,
-    intervals: rows.map(row => toInterval(row, claimed)),
+    intervals: rows.map(row => toInterval(row, claimed, windowStart)),
     next: rows.length === size ? encodeCursor(rows[rows.length - 1]!._id) : null,
   }
 }
