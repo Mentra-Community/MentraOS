@@ -141,6 +141,33 @@ describe("installation reasons", () => {
     expect(hasAssignmentReason(packageName)).toBe(false)
   })
 
+  test("a reason change notifies subscribers; the install transaction's own reason write does not", () => {
+    const listener = mock(() => {})
+    const unsubscribe = registry.subscribe(listener)
+    try {
+      finalize("1.0.0", {source: "direct_download"}, "assignment").apply()
+      expect(listener).not.toHaveBeenCalled()
+      installed = ["1.0.0"]
+      registry.clearMiniappAssignment(packageName)
+      registry.addInstallReason(packageName, "explicit")
+      registry.setMiniappAssignment(packageName, assignment)
+      expect(listener).toHaveBeenCalledTimes(3)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test("the active release is the stored active version when it is a release on disk, else the newest release", () => {
+    installed = ["1.0.0", "1.2.0", "dev-1700000000000"]
+    expect(registry.getActiveReleaseVersion(packageName)).toBe("1.2.0")
+    values.set(`${packageName}_active_version`, "1.0.0")
+    expect(registry.getActiveReleaseVersion(packageName)).toBe("1.0.0")
+    values.set(`${packageName}_active_version`, "dev-1700000000000")
+    expect(registry.getActiveReleaseVersion(packageName)).toBe("1.2.0")
+    installed = ["dev-1700000000000"]
+    expect(registry.getActiveReleaseVersion(packageName)).toBeNull()
+  })
+
   test("an assignment install must name its assignment", async () => {
     await expect(registry["installArchive"](new Uint8Array(), {installReason: "assignment"}, false)).rejects.toThrow(
       "must name its assignment",

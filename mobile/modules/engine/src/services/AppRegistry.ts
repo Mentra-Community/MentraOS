@@ -881,6 +881,7 @@ class AppRegistry {
   /** Package names whose start() requires the on-device STT model (host-declared). */
   private sttModelRequired = new Set<string>()
   private refreshNeeded: boolean = true
+  private loaded = false
   private listeners = new Set<Listener>()
   private retainedDevVersions = new Map<string, Set<string>>()
 
@@ -914,14 +915,26 @@ class AppRegistry {
   public getInstallReasons(packageName: string): MiniappInstallReason[] {
     const stored = readStoredInstallReasons(packageName)
     if (stored) return [...stored.reasons]
-    const versions = this.getInstalledVersions(packageName).filter((version) => !version.startsWith("dev-"))
-    if (versions.length === 0) return []
-    const active = storage.load<string>(activeVersionKey(packageName))
-    const version =
-      active.is_ok() && versions.includes(active.value)
-        ? active.value
-        : (versions.filter((candidate) => semver.valid(candidate)).sort(semver.rcompare)[0] ?? versions[0])
+    const version = this.getActiveReleaseVersion(packageName)
+    if (version === null) return []
     return [inferredInstallReason(this.getReleaseIdentity(packageName, version))]
+  }
+
+  /**
+   * The installed release (not a `dev-*` snapshot) that stands for the package: the stored active version when it
+   * is a release on disk, else the newest release. Null when only development builds are on disk. Reads only.
+   */
+  public getActiveReleaseVersion(packageName: string): string | null {
+    const versions = this.getInstalledVersions(packageName).filter((version) => !version.startsWith("dev-"))
+    if (versions.length === 0) return null
+    const active = storage.load<string>(activeVersionKey(packageName))
+    if (active.is_ok() && versions.includes(active.value)) return active.value
+    return versions.filter((candidate) => semver.valid(candidate)).sort(semver.rcompare)[0] ?? versions[0]
+  }
+
+  /** True once the installed miniapps have been read from disk (the first `getInstalledMiniapps`). */
+  public isLoaded(): boolean {
+    return this.loaded
   }
 
   /** The assignment behind the package's `assignment` reason, or null. */
@@ -931,6 +944,26 @@ class AppRegistry {
 
   /** Add the `assignment` reason (or replace its assignment), keeping every other reason. */
   public setMiniappAssignment(packageName: string, assignment: MiniappAssignment): void {
+    this.recordAssignment(packageName, assignment)
+    this.notify()
+  }
+
+  /** Remove the `assignment` reason. Returns the reasons that remain. Uninstalls nothing. */
+  public clearMiniappAssignment(packageName: string): MiniappInstallReason[] {
+    const remaining = this.getInstallReasons(packageName).filter((reason) => reason !== "assignment")
+    writeStoredInstallReasons(packageName, {reasons: remaining})
+    this.notify()
+    return remaining
+  }
+
+  /** Add a reason other than `assignment` (which needs {@link setMiniappAssignment}). */
+  public addInstallReason(packageName: string, reason: Exclude<MiniappInstallReason, "assignment">): void {
+    this.recordInstallReason(packageName, reason)
+    this.notify()
+  }
+
+  /** Writes without notifying: the install transaction notifies once its files commit. */
+  private recordAssignment(packageName: string, assignment: MiniappAssignment): void {
     const reasons = new Set(this.getInstallReasons(packageName))
     reasons.add("assignment")
     writeStoredInstallReasons(packageName, {
@@ -939,15 +972,7 @@ class AppRegistry {
     })
   }
 
-  /** Remove the `assignment` reason. Returns the reasons that remain. Uninstalls nothing. */
-  public clearMiniappAssignment(packageName: string): MiniappInstallReason[] {
-    const remaining = this.getInstallReasons(packageName).filter((reason) => reason !== "assignment")
-    writeStoredInstallReasons(packageName, {reasons: remaining})
-    return remaining
-  }
-
-  /** Add a reason other than `assignment` (which needs {@link setMiniappAssignment}). */
-  public addInstallReason(packageName: string, reason: Exclude<MiniappInstallReason, "assignment">): void {
+  private recordInstallReason(packageName: string, reason: Exclude<MiniappInstallReason, "assignment">): void {
     const current = readStoredInstallReasons(packageName)
     const reasons = new Set(this.getInstallReasons(packageName))
     reasons.add(reason)
@@ -1460,8 +1485,8 @@ class AppRegistry {
           getInstallationMetadata().set(publisherKey, JSON.stringify(releaseIdentity.publisherKeyFingerprint))
         }
         getInstallationMetadata().set(releaseKey, JSON.stringify(releaseIdentity))
-        if (installReason === "assignment") this.setMiniappAssignment(packageName, assignment!)
-        else if (installReason) this.addInstallReason(packageName, installReason)
+        if (installReason === "assignment") this.recordAssignment(packageName, assignment!)
+        else if (installReason) this.recordInstallReason(packageName, installReason)
         if (!releaseInstall) recordDevSnapshotOwner(packageName, version)
         // Do not notify until the pending filesystem marker has committed.
         // A subscriber scanning here would exclude the pending version and
@@ -1971,6 +1996,10 @@ class AppRegistry {
 
       this.cachedApps = out
       this.refreshNeeded = false
+      if (!this.loaded) {
+        this.loaded = true
+        this.notify()
+      }
       return this.mergeProjectedApps(this.cachedApps, includeBackgroundOnly)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applets", error)
