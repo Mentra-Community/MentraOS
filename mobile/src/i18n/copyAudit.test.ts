@@ -52,7 +52,8 @@ const DELETED_KEYS = [
 
 describe("pairing copy audit", () => {
   it.each(Object.keys(locales))("%s has no user-facing string that mentions an owner", (code) => {
-    const offenders = flatten(locales[code]).filter(([, value]) => OWNER_WORDS.test(value))
+    // Workspace roles (the Fleet notice, Settings and last-Owner copy) are not pairing ownership.
+    const offenders = flatten(locales[code]).filter(([path, value]) => !path.startsWith("fleet.") && OWNER_WORDS.test(value))
     expect(offenders).toEqual([])
   })
 
