@@ -7,14 +7,15 @@
  * the shared forwarding code (`services/forwarding/forward.ts` and `assets.ts`: how a request is signed, what
  * the module receives, how its answer is mapped, how its UI assets are relayed). `portalModuleApi(name)` is
  * mounted at `/api/portal/<name>` in the workspace portal's API, behind its person gate
- * (`requireUserPrincipal("portal")`), and forwards three families of path:
+ * (`requireUserPrincipal("portal")`), and forwards two families of path:
  *
  *   /workspaces/:workspaceId/<rest>  ->  ${url}/v1/portal/workspaces/:workspaceId/<rest>   scope {kind: "workspace", workspaceId}
- *   /account/<rest>                  ->  ${url}/v1/portal/account/<rest>                   scope {kind: "person"}
  *   /ui/<rest>                       ->  ${url}/v1/portal/ui/<rest>                        GET and HEAD only; scope {kind: "person"}
  *
- * Anything else under the mount is a 404 `{error: "not_found"}`: the first segment must be exactly
- * `workspaces` (with a workspace after it), `account` or `ui`, in lowercase and unencoded.
+ * Anything else under the mount, `/account/<rest>` included, is a 404 `{error: "not_found"}`: the first segment
+ * must be exactly `workspaces` (with a workspace after it) or `ui`, in lowercase and unencoded. A person-scoped
+ * family of routes is not forwarded: a license is always a workspace's, so what billing sells is reached
+ * through a workspace.
  *
  * Who may call. Only people reach a module: a workspace key or an operator key is 403, and a request with no
  * principal is 401 (the gate in front says so first; this router fails closed as well). A workspace path is for
@@ -24,23 +25,23 @@
  * credential; Core's scope says only which workspace, or none, the request is about.
  *
  * The scope is Core's decision. It is built from the path, which Core has checked, and from the authenticated
- * person, and nothing the request carries, in its query, body or headers, can say otherwise: `/account/*` is
- * `{kind: "person"}` however the request asks for a workspace's. The workspace in the scope is the path's
- * segment decoded once, which is what the module decodes the path to.
+ * person, and nothing the request carries, in its query, body or headers, can say otherwise. The workspace in the
+ * scope is the path's segment decoded once, which is what the module decodes the path to. A UI asset is
+ * `{kind: "person"}`: it is the same for everyone and about no workspace.
  *
  * Outcomes, in this order:
  *  - the caller is not a signed-in person: 401 or 403;
  *  - the module is not installed, or is not visible to this person (billing is staff-only on a Core that is not
  *    prod, decision 17): 404 `{error: "module_not_installed"}`. A person the module is hidden from cannot tell
  *    it from one that is absent, whether or not it is broken. The module's open reads are the one exception
- *    (`openReads` in `services/portal-modules/portal-modules.ts`): billing's `GET .../catalog`, under either
- *    scope, and `GET` and `HEAD` of `ui/icons/<file>`, are answered as for a person who may see the module. They
+ *    (`openReads` in `services/portal-modules/portal-modules.ts`): billing's `GET /workspaces/<id>/catalog`,
+ *    and `GET` and `HEAD` of `ui/icons/<file>`, are answered as for a person who may see the module. They
  *    are decided from the request's method, family and the rest of its path as received, so every other
  *    spelling or method of them, and `ui/entry.js` with the rest of `ui/`, are the 404 of an absent module;
  *  - the settings are set but unusable: 503 `{error: "module_unavailable"}`. For a person the module is hidden
  *    from, that is only for an open read;
  *  - a path with a `.` / `..` segment, an encoded or literal separator, a control character, a bad escape or a
- *    double encoding: 400 `{error: "invalid_path"}` (`isSafeSuffix`); not one of the three families: 404;
+ *    double encoding: 400 `{error: "invalid_path"}` (`isSafeSuffix`); not one of the two families: 404;
  *  - a workspace path for a person with no standing there: 403 or 404, as above;
  *  - then the shared forwarding code: 413 and 400 for the body, 503 `{error: "module_unavailable"}` for a
  *    module that fails, times out, redirects or sends too much, an upstream 401 relayed as a 403.
@@ -86,17 +87,13 @@ function keptByNoCache(answer: Response): Response {
 const UPSTREAM_PREFIX = "/v1/portal"
 
 const WORKSPACES_SEGMENT = "workspaces"
-const ACCOUNT_SEGMENT = "account"
 
 /**
- * Which of the three families of path a request is for. `rest` is what follows the family's scope, as received
+ * Which of the two families of path a request is for. `rest` is what follows the family's scope, as received
  * (not decoded, no leading "/", no query): `catalog` for `/workspaces/ws_1/catalog`, `icons/a.png` for
  * `/ui/icons/a.png`, "" when nothing does.
  */
-type Route =
-  | {kind: "workspace"; workspaceId: string; rest: string}
-  | {kind: "account"; rest: string}
-  | {kind: "ui"; rest: string}
+type Route = {kind: "workspace"; workspaceId: string; rest: string} | {kind: "ui"; rest: string}
 
 /** What follows `scope` in `suffix` (which starts with it), after the "/" that joins them. */
 function restAfter(suffix: string, scope: string): string {
@@ -105,7 +102,7 @@ function restAfter(suffix: string, scope: string): string {
 }
 
 /**
- * The route for a path suffix (`/workspaces/ws_1/x`), or null when it is none of the three. The first segment
+ * The route for a path suffix (`/workspaces/ws_1/x`), or null when it is neither. The first segment
  * is matched exactly, as received: no case folding, no decoding, so a spelling the module's own router might
  * read differently is not a route.
  */
@@ -116,8 +113,6 @@ function routeOf(suffix: string): Route | null {
       const scope = `/${UI_ASSET_SEGMENT}/`
       return suffix.length > scope.length && suffix.startsWith(scope) ? {kind: "ui", rest: suffix.slice(scope.length)} : null
     }
-    case ACCOUNT_SEGMENT:
-      return {kind: "account", rest: restAfter(suffix, `/${ACCOUNT_SEGMENT}`)}
     case WORKSPACES_SEGMENT:
       // `isSafeSuffix` has already decoded every segment once, so this cannot throw.
       return second
@@ -193,9 +188,12 @@ function admit(c: AppContext, name: PortalModuleName): Admitted | Response {
   return {person: principal, upstream, route: parsed.route, suffix: parsed.suffix, query: parsed.query}
 }
 
-/** What the request covers, or the refusal: a workspace path needs standing in that workspace. */
-async function scopeOf(c: AppContext, person: UserPrincipal, route: Route): Promise<ForwardedScope | Response> {
-  if (route.kind !== "workspace") return {kind: "person"}
+/** What a workspace path covers, or the refusal: it needs standing in that workspace. */
+async function scopeOf(
+  c: AppContext,
+  person: UserPrincipal,
+  route: Extract<Route, {kind: "workspace"}>,
+): Promise<ForwardedScope | Response> {
   const decision = await authorize(person, {workspaceId: route.workspaceId})
   return decision.allowed ? {kind: "workspace", workspaceId: route.workspaceId} : denied(c, decision)
 }

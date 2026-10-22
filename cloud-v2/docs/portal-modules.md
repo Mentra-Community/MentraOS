@@ -19,7 +19,7 @@ There is one portal module:
 
 | Module | Kind | Mounted at | Settings | What it is |
 | --- | --- | --- | --- | --- |
-| `billing` | Data | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: what it sells, what each workspace and person holds, and the hosted pages where they pay. The portal draws the Licenses page, the Members list's licenses and the Billing page from its answers. Hosted Core only; a Private Cloud leaves it unset. |
+| `billing` | Data | `/api/portal/billing` | `CLOUD_CORE_BILLING_URL`, `CLOUD_CORE_BILLING_SECRET` | The Mentra Miniapp Store's billing module: what it sells, what each workspace holds, and the hosted pages where they pay. The portal draws the Licenses page and the Members list's licenses from its answers. Hosted Core only; a Private Cloud leaves it unset. |
 
 Billing is a data module. Fleet's is the only UI module: the admin portal mounts
 its bundle from `/api/admin/fleet/ui/entry.js` ([Fleet
@@ -104,7 +104,6 @@ the module is. Billing's are:
 | Open read | Methods | Matched |
 | --- | --- | --- |
 | `/api/portal/billing/workspaces/:workspaceId/catalog` | `GET` | The path after the workspace is exactly `catalog` |
-| `/api/portal/billing/account/catalog` | `GET` | The path after `account` is exactly `catalog` |
 | `/api/portal/billing/ui/icons/<file>` | `GET`, `HEAD` | One file name after `ui/icons/`: 1 to 255 letters, digits, `.`, `_` and `-`, and not only dots. It is the contract's rule for an icon path (`BILLING_ICON_FILE`), so every icon path the portal accepts is open |
 
 Everything else is not open, in any spelling or method: `HEAD`, `POST` and the
@@ -130,15 +129,16 @@ elsewhere.
 ### Billing's routes
 
 Billing is a data module. Its routes are under
-`/api/portal/billing/{workspaces/:workspaceId | account}/`, and the contract of
-what they send is `@mentra/workspace-contract/portal-billing`:
+`/api/portal/billing/workspaces/:workspaceId/`, since a license is always a
+workspace's, and the contract of what they send is
+`@mentra/workspace-contract/portal-billing`:
 
 | Route | What it answers | Who |
 | --- | --- | --- |
-| `GET catalog` | What billing sells to this kind of owner, and what the owner holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many licenses may be bought | Open read |
-| `GET status` | The owner's licenses as billing holds them, their dates and actions, the total, and the state of a purchase (`?purchase=`) | The module decides |
+| `GET catalog` | What billing sells to workspaces, and what this one holds. Display content for everyone; a viewer who manages billing also gets each product's price and how many licenses may be bought | Open read |
+| `GET status` | The workspace's licenses as billing holds them, their dates and actions, the total, and the state of a purchase (`?purchase=`) | The module decides |
 | `POST purchase` | Starts a purchase and answers the hosted payment page's address | The module decides |
-| `POST session` | Opens a hosted billing page for a license or the account and answers its address | The module decides |
+| `POST session` | Opens a hosted billing page for a license or for the workspace's billing and answers its address | The module decides |
 | `GET ui/icons/<file>` | A product's icon | Open read |
 
 Billing serves no `ui/entry.js`. It sends values and the actions it offers, and the
@@ -150,14 +150,15 @@ from them, and follows only the hosted-page addresses the contract accepts.
 | Core path | Forwarded to | Scope | Caller |
 | --- | --- | --- | --- |
 | `/api/portal/<module>/workspaces/:workspaceId/<rest>` | `${url}/v1/portal/workspaces/:workspaceId/<rest>` | `{"kind": "workspace", "workspaceId"}` | A member of that workspace, or an Organization Admin |
-| `/api/portal/<module>/account/<rest>` | `${url}/v1/portal/account/<rest>` | `{"kind": "person"}` | Any signed-in person |
 | `/api/portal/<module>/ui/<rest>` | `${url}/v1/portal/ui/<rest>` | `{"kind": "person"}` | Any signed-in person the module is visible to, or anyone for an open read; `GET` and `HEAD` only |
 
 The method, query string and body are forwarded. The URL may carry a path prefix;
 Core joins it to `/v1/portal/...` with or without a trailing slash. The path and
 query Core signs are exactly the ones it sends. Anything else under the mount is
-`404 {"error":"not_found"}`: the first segment must be exactly `workspaces` (with
-a workspace after it), `account` or `ui`, in lowercase and unencoded.
+`404 {"error":"not_found"}`, `/account/<rest>` included: the first segment must be
+exactly `workspaces` (with a workspace after it) or `ui`, in lowercase and
+unencoded. (To a person the module is hidden from, it is the `404
+module_not_installed` of an absent module, as below.)
 
 Only people reach a module. Core answers, in this order:
 
@@ -190,9 +191,10 @@ Only people reach a module. Core answers, in this order:
 
 Core decides which workspace a request is about, from the path alone. Nothing the
 request carries in its query, body or headers can change the scope Core signs:
-`/api/portal/billing/account/purchase?scope=workspace` is still `{"kind":
-"person"}`. The workspace in the scope is the path's segment decoded once, which
-is what the module decodes the path to.
+`/api/portal/billing/workspaces/ws_1/purchase?workspaceId=ws_2` is still
+`{"kind": "workspace", "workspaceId": "ws_1"}`. The workspace in the scope is the
+path's segment decoded once, which is what the module decodes the path to. A UI
+asset is `{"kind": "person"}`: it is the same for everyone and about no workspace.
 
 Core says which workspace the person is in, not what they may do there. The module
 decides capabilities itself: it asks Core's signed service API, `POST /authorize`
@@ -277,13 +279,14 @@ export default module
 
 - **`PortalModuleContext`.** `apiBase`
   (`/api/portal/billing`: the module sends its API requests to
-  `${apiBase}/workspaces/<workspaceId>/<rest>` or `${apiBase}/account/<rest>`, on
-  the portal's own origin, with the portal's session cookie); `me`
+  `${apiBase}/workspaces/<workspaceId>/<rest>`, on the portal's own origin, with
+  the portal's session cookie); `me`
   (`{authenticated: true, user: {mentraUserId, email, emailVerified}}`, all the host
   tells the module about the caller); `scope` (`{kind: "workspace", workspaceId}`
-  when the page is a workspace's, `{kind: "person"}` when it is the person's own
-  account; it tells the module which API root to call and grants nothing, since
-  Core decides the scope of each request from its path); `route` (`{path, query}`
+  when the page is a workspace's, `{kind: "person"}` when it is about no
+  workspace, where Core forwards no API request; it tells the module which API
+  root to call and grants nothing, since Core decides the scope of each request
+  from its path); `route` (`{path, query}`
   when the module mounts); `navigate(path, {replace?})`; and `onSessionExpired()`,
   which the module calls when the API answers `401`.
 - **Versions.** The host imports `ui/entry.js` and mounts it only when its

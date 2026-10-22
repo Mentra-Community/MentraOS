@@ -6,7 +6,7 @@
  */
 import {isWorkspaceDeletionHold} from "./deletion-holds"
 import {OWNER_NOT_FOUND_ERROR, STALE_REVISION_ERROR} from "./licenses"
-import type {LicenseOwner, LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
+import type {LicensesResponse, LicenseView, LicenseWrite, LicenseWriteResponse} from "./licenses"
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
 import type {
@@ -107,13 +107,13 @@ export interface CoreWorkspaceClient {
    * Write a license as billing last computed it (the Store only). Core applies it when `revision` is newer
    * than the one it has (`applied: true`) and answers a repeat of the revision it has with `applied:
    * false`. An older revision throws `stale_revision` (409): Core already has a newer one, so the write
-   * counts as delivered. An owner that is deleted or never existed throws `owner_not_found` (404): stop
+   * counts as delivered. A workspace that is deleted or never existed throws `owner_not_found` (404): stop
    * sending it. A Core that cannot answer throws `core_unavailable` (5xx, or no answer): send it again.
    * Any other refusal is a malformed write (`bad_request`).
    */
   putLicense(write: LicenseWrite): Promise<LicenseWriteResponse>
-  /** One owner's licenses, ended ones included, each with how many seats are assigned (the Store only). */
-  listLicenses(owner: LicenseOwner): Promise<LicensesResponse>
+  /** One workspace's licenses, ended ones included, each with how many seats are assigned (the Store only). */
+  listLicenses(workspaceId: string): Promise<LicensesResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -404,11 +404,8 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       return {applied: raw.applied, revision: raw.revision}
     },
 
-    async listLicenses(owner) {
-      const query = new URLSearchParams({
-        ownerType: owner.type,
-        ownerId: owner.type === "workspace" ? owner.workspaceId : owner.mentraUserId,
-      })
+    async listLicenses(workspaceId) {
+      const query = new URLSearchParams({ownerType: "workspace", ownerId: workspaceId})
       const path = `${LICENSES_PREFIX}?${query.toString()}`
       const raw = checkRecord(path, await call("GET", path), "the license list")
       if (!Array.isArray(raw.licenses)) throw badResponse(path, "licenses is not a list")

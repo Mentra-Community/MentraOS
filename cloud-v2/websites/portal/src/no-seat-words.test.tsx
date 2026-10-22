@@ -3,8 +3,8 @@
  * meaning): a workspace buys a number of licenses for a product, and each is assigned to one member. API and code
  * names keep `seats`, `add_seats` and the rest; this guard is about what the pages show.
  *
- * It mounts the real pages over the fake Core, drives them through every state and dialog the Licenses page, the
- * Members list and the personal Billing page have, and after each step takes everything a person or a screen reader
+ * It mounts the real pages over the fake Core, drives them through every state and dialog the Licenses page and the
+ * Members list have, and after each step takes everything a person or a screen reader
  * can get from the page: its text (visually hidden text included, and the text of dialogs that are closed) and the
  * words in its attributes (`aria-label`, `title`, `alt`, `placeholder` and the like). None may match
  * `/\bseats?\b/i`.
@@ -114,7 +114,8 @@ const portalSession = (modules: PortalModules): PortalSession => ({
 });
 
 function Routes({ me }: { me: PortalMe }) {
-  return <PortalRoutes route={parseRoute(usePathname())} me={me} />;
+  const pathname = usePathname();
+  return <PortalRoutes route={parseRoute(pathname)} me={me} />;
 }
 
 const text = () => document.body.textContent ?? "";
@@ -214,28 +215,28 @@ async function exploreCards(screen: string) {
 
 describe("a license's card, in each state", () => {
   test("active, with some licenses free and some people holding them; and one that is full", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), "Mentra Call Unlimited");
+    await open(`/licenses`, SCENARIOS.twoActive(), "Mentra Call Unlimited");
     await exploreCards("active and full");
   });
 
   test("a single license shows its roster at once, and the full one offers Add licenses", async () => {
-    await open(`/w/${ACME}/licenses`, single(FLEET_LICENSE, FLEET_BILLING), "Fleet");
+    await open(`/licenses`, single(FLEET_LICENSE, FLEET_BILLING), "Fleet");
     await exploreCards("one full license");
   });
 
   test("a single license of one, held: 'the license is assigned'", async () => {
     const license = coreLicense(CALL_LICENSE, 1, ["hannah"]);
-    await open(`/w/${ACME}/licenses`, single(license, entry(CALL_BILLING, { quantity: 1 })), "Mentra Call Unlimited");
+    await open(`/licenses`, single(license, entry(CALL_BILLING, { quantity: 1 })), "Mentra Call Unlimited");
     await exploreCards("one license of one");
   });
 
   test("nobody holds any: more than three available fold into one row", async () => {
-    await open(`/w/${ACME}/licenses`, single(coreLicense(CALL_LICENSE, 7, []), entry(CALL_BILLING, { quantity: 7 })), "Mentra Call Unlimited");
+    await open(`/licenses`, single(coreLicense(CALL_LICENSE, 7, []), entry(CALL_BILLING, { quantity: 7 })), "Mentra Call Unlimited");
     await exploreCards("empty");
   });
 
   test("a roster of more than seven has a search", async () => {
-    await open(`/w/${ACME}/licenses`, single(FLEET_LICENSE, FLEET_BILLING), "Fleet");
+    await open(`/licenses`, single(FLEET_LICENSE, FLEET_BILLING), "Fleet");
     expect(findAll("input[type=search]").length).toBeGreaterThan(0);
     await exploreCards("a long roster");
   });
@@ -249,7 +250,7 @@ describe("a license's card, in each state", () => {
         seatsStopAt: stopAt,
         actions: [action("update_payment", "Update payment method"), action("complete_payment", "Complete payment"), action("cancel", "Cancel")],
       });
-      await open(`/w/${ACME}/licenses`, { licenses: [CALL_LICENSE, FLEET_LICENSE], workspaceStatus: statusOf([CALL_BILLING, failed]) }, "Fleet");
+      await open(`/licenses`, { licenses: [CALL_LICENSE, FLEET_LICENSE], workspaceStatus: statusOf([CALL_BILLING, failed]) }, "Fleet");
       await exploreCards(`payment failed ${label} the day`);
       await cleanup();
       mock.restore();
@@ -258,7 +259,7 @@ describe("a license's card, in each state", () => {
 
   test("payment failed with no day from billing", async () => {
     const failed = entry(FLEET_BILLING, { status: "past_due", fallbackStatusLabel: "Payment failed", seatsStopAt: undefined });
-    await open(`/w/${ACME}/licenses`, single(FLEET_LICENSE, failed), "Fleet");
+    await open(`/licenses`, single(FLEET_LICENSE, failed), "Fleet");
     await exploreCards("payment failed, no day");
   });
 
@@ -270,7 +271,7 @@ describe("a license's card, in each state", () => {
       endsAt: inDays(9),
       actions: [action("renew", "Renew")],
     });
-    await open(`/w/${ACME}/licenses`, single(coreLicense(CALL_LICENSE, 3, ["hannah", "tom", "noah"]), entry(ending, { quantity: 3 })), "Mentra Call Unlimited");
+    await open(`/licenses`, single(coreLicense(CALL_LICENSE, 3, ["hannah", "tom", "noah"]), entry(ending, { quantity: 3 })), "Mentra Call Unlimited");
     await exploreCards("ending and full");
   });
 
@@ -281,7 +282,7 @@ describe("a license's card, in each state", () => {
         fallbackStatusLabel: status,
         actions: status === "incomplete" ? [action("complete_payment", "Complete payment")] : [],
       });
-      await open(`/w/${ACME}/licenses`, { licenses: [CALL_LICENSE, EXAMPLE_LICENSE], workspaceStatus: statusOf([CALL_BILLING, billing]) }, "Example Add-on");
+      await open(`/licenses`, { licenses: [CALL_LICENSE, EXAMPLE_LICENSE], workspaceStatus: statusOf([CALL_BILLING, billing]) }, "Example Add-on");
       await exploreCards(status);
       await cleanup();
       mock.restore();
@@ -290,11 +291,11 @@ describe("a license's card, in each state", () => {
 
   test("more people assigned than licenses paid for, with Add licenses and without", async () => {
     const over = coreLicense(CALL_LICENSE, 3, ["hannah", "tom", "noah", "ines", "omar"]);
-    await open(`/w/${ACME}/licenses`, single(over, entry(CALL_BILLING, { quantity: 3 })), "Mentra Call Unlimited");
+    await open(`/licenses`, single(over, entry(CALL_BILLING, { quantity: 3 })), "Mentra Call Unlimited");
     await exploreCards("over-assigned");
     await cleanup();
     mock.restore();
-    await open(`/w/${ACME}/licenses`, single(over, entry(CALL_BILLING, { quantity: 3, actions: [action("cancel", "Cancel")] })), "Mentra Call Unlimited");
+    await open(`/licenses`, single(over, entry(CALL_BILLING, { quantity: 3, actions: [action("cancel", "Cancel")] })), "Mentra Call Unlimited");
     await exploreCards("over-assigned, nothing to add");
   });
 
@@ -304,18 +305,18 @@ describe("a license's card, in each state", () => {
       fallbackStatusLabel: "Paused",
       actions: [action("add_seats", "Add licenses"), action("change_seats", "Change license count"), action("pause_collection", "Pause billing")],
     });
-    await open(`/w/${ACME}/licenses`, single(CALL_LICENSE, odd), "Mentra Call Unlimited");
+    await open(`/licenses`, single(CALL_LICENSE, odd), "Mentra Call Unlimited");
     await exploreCards("an unknown status");
   });
 
   test("a manager not offered billing sees the licenses without money", async () => {
     const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    await open(`/w/${ACME}/licenses`, scenario, "Mentra Call Unlimited", CATALOG_ONLY);
+    await open(`/licenses`, scenario, "Mentra Call Unlimited", CATALOG_ONLY);
     await exploreCards("without billing");
   });
 
   test("the total counts products", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.threeActive(), "Mentra Call Unlimited");
+    await open(`/licenses`, SCENARIOS.threeActive(), "Mentra Call Unlimited");
     expect(has("3 products")).toBe(true);
     expectNoSeat("the total");
   });
@@ -332,7 +333,7 @@ describe("a member's own card", () => {
       licenses: [CALL_LICENSE].map((license) => ({ ...license, seats: license.seats!.slice(0, 1), seatsUsed: 3 })),
       workspaceCatalog: workspaceCatalog(false),
     };
-    await open(`/w/${ACME}/licenses`, mine, t.status.youHaveASeat);
+    await open(`/licenses`, mine, t.status.youHaveASeat);
     expectNoSeat("the member's own card");
   });
 });
@@ -342,7 +343,7 @@ describe("a member's own card", () => {
 
 describe("the catalog grid and the buy dialog", () => {
   test("a workspace with nothing yet: the grid, the buy step with its stepper, and the sum", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.catalog(), t.catalog.workspace.title);
+    await open(`/licenses`, SCENARIOS.catalog(), t.catalog.title);
     expectNoSeat("the catalog grid");
     await click(one("Buy", find("[data-product='mentra.fleet']")));
     await until(() => has(t.buy.continue), "the buy step");
@@ -359,7 +360,7 @@ describe("the catalog grid and the buy dialog", () => {
   });
 
   test("the dialog from the header, with a product the workspace holds and ones it doesn't", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), "Mentra Call Unlimited");
+    await open(`/licenses`, SCENARIOS.twoActive(), "Mentra Call Unlimited");
     await click(one(t.page.buyLicenses));
     await until(() => has(t.catalog.dialog.description), "the catalog dialog");
     expectNoSeat("the catalog dialog");
@@ -370,7 +371,7 @@ describe("the catalog grid and the buy dialog", () => {
   });
 
   test("test mode", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.testMode(), t.testMode.label(TEST_MODE.environment));
+    await open(`/licenses`, SCENARIOS.testMode(), t.testMode.label(TEST_MODE.environment));
     expectNoSeat("test mode");
     // The × is named, and hiding the notice leaves the rest of the page as it was.
     await click(find(`[role='note'] button[aria-label='${t.testMode.hide}']`));
@@ -386,24 +387,56 @@ describe("after checkout", () => {
       ...SCENARIOS.twoActive(),
       workspaceStatus: statusOf([CALL_BILLING, FLEET_BILLING], { purchase: purchaseOf({ status: "processing", licenseId: null }) }),
     };
-    await open(`/w/${ACME}/licenses?purchase=pur_1`, setting, t.purchase.settingUp);
+    await open(`/licenses?purchase=pur_1`, setting, t.purchase.settingUp);
     expectNoSeat("setting up");
     await cleanup();
     mock.restore();
-    await open(`/w/${ACME}/licenses?purchase=pur_1`, SCENARIOS.purchased(), t.purchase.readyTitle({ seats: 10, product: "Fleet" }));
+    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchased(), t.purchase.readyTitle({ seats: 10, product: "Fleet" }));
     expectNoSeat("ready");
   });
 
-  test("a person's purchase", async () => {
-    const scenario: Scenario = {
-      licenses: [],
-      accountStatus: ({ purchase }) =>
-        statusOf([entry(CALL_BILLING, { licenseId: "lic_me", quantity: 1, actions: [action("cancel", "Cancel")] })], {
-          purchase: purchase === "pur_9" ? purchaseOf({ purchaseId: "pur_9", status: "ready", product: "mentra.call.unlimited", quantity: 1, licenseId: "lic_me" }) : null,
-        }),
+  test("a license given to the buyer: one, and many", async () => {
+    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchasedForYou(), t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true }));
+    expectNoSeat("given, one");
+    await cleanup();
+    mock.restore();
+    const many: Scenario = {
+      licenses: [coreLicense(FLEET_LICENSE, 3, ["dana", "tom", "noah"])],
+      workspaceStatus: ({ purchase }) =>
+        statusOf([entry(FLEET_BILLING, { quantity: 3 })], { purchase: purchase === "pur_1" ? purchaseOf({ status: "ready", quantity: 3, licenseId: "lic_fleet" }) : null }),
     };
-    await open("/account/billing?purchase=pur_9", scenario, t.purchase.personReadyTitle("Mentra Call Unlimited"));
-    expectNoSeat("a person's purchase");
+    await open(`/licenses?purchase=pur_1`, many, t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true }));
+    expectNoSeat("given, many");
+  });
+});
+
+// ---- a link to buy one product ---------------------------------------------------------------------------------------
+
+describe("a link to buy one product", () => {
+  const link = "/licenses?buy=mentra.call.unlimited";
+
+  test("the dialog for a workspace of one", async () => {
+    await open(link, SCENARIOS.solo(), "1 license ·");
+    expectNoSeat("the solo buy step");
+  });
+
+  test("the notes: held, not for sale, not allowed, not offered", async () => {
+    await open(link, SCENARIOS.twoActive(), t.page.buyLink.alreadyHas("Acme Field Services", "Mentra Call Unlimited"));
+    expectNoSeat("held");
+    await cleanup();
+    mock.restore();
+    await open("/licenses?buy=nothing.here", SCENARIOS.catalog(), t.page.buyLink.notForSale);
+    expectNoSeat("not for sale");
+    await cleanup();
+    mock.restore();
+    const member: Scenario = { ...SCENARIOS.catalog(), role: "member", workspaceCatalog: workspaceCatalog(false) };
+    await open(link, member, t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited"));
+    expectNoSeat("a member");
+    await cleanup();
+    mock.restore();
+    const admin: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
+    await open(link, admin, t.page.buyLink.notHere, CATALOG_ONLY);
+    expectNoSeat("not offered");
   });
 });
 
@@ -411,13 +444,13 @@ describe("after checkout", () => {
 
 describe("Members", () => {
   test("the list, with its licenses column", async () => {
-    await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim");
+    await open(`/members`, SCENARIOS.threeActive(), "Hannah Kim");
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     expectNoSeat("the Members list");
   });
 
   test("the row's menu, for a person, a developer, an admin and one who hasn't signed in", async () => {
-    await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim");
+    await open(`/members`, SCENARIOS.threeActive(), "Hannah Kim");
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     for (const name of ["Hannah Kim", "Sofia Alvarez", "Priya Natarajan", "Grace Oduya"]) {
       const menu = find(`button[aria-label='More for ${name}']`);
@@ -428,7 +461,7 @@ describe("Members", () => {
   });
 
   test("Remove's dialog, and a role change", async () => {
-    await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim");
+    await open(`/members`, SCENARIOS.threeActive(), "Hannah Kim");
     await click(find("button[aria-label='More for Tom Becker']"));
     await click(one(t.members.remove));
     expectNoSeat("Remove's dialog");
@@ -437,22 +470,6 @@ describe("Members", () => {
     await click(one(t.members.changeRoleTo("Developer")));
     await until(() => findAll("tbody tr").some(row => row.textContent!.includes("Tom Becker") && row.textContent!.includes("Developer")), "the new role");
     expectNoSeat("after a role change");
-  });
-});
-
-// ---- the personal Billing page ---------------------------------------------------------------------------------------
-
-describe("the personal Billing page", () => {
-  test("with a license and the catalog dialog open, and with none", async () => {
-    await open("/account/billing", SCENARIOS.personalActive(), "Mentra Call Unlimited");
-    await exploreCards("the personal page, one license");
-    await click(one(t.page.buyALicense));
-    await until(() => has(t.catalog.dialog.personDescription), "the catalog dialog");
-    expectNoSeat("the personal catalog dialog");
-    await cleanup();
-    mock.restore();
-    await open("/account/billing", SCENARIOS.personalCatalog(), t.catalog.person.title);
-    expectNoSeat("the personal catalog");
   });
 });
 
@@ -482,9 +499,7 @@ describe("the states were reached", () => {
     ["a member's badge", t.status.youHaveASeat],
     ["the catalog's held row", t.catalog.youHaveSeats(5)],
     ["the workspace's header button", t.page.buyLicenses],
-    ["the personal header button", t.page.buyALicense],
     ["the workspace's catalog dialog", t.catalog.dialog.title],
-    ["the personal catalog dialog", t.catalog.dialog.personTitle],
     ["the row's menu: Remove", t.members.remove],
     ["the row's menu: a role", t.members.changeRoleTo("Developer")],
     ["Remove's dialog", t.members.removePrompt("Tom Becker")],
@@ -496,7 +511,13 @@ describe("the states were reached", () => {
     ["the page without the notice", "Buy licenses for your members"],
     ["setting up", t.purchase.settingUpSeats({ seats: 10, product: "Fleet" })],
     ["ready", t.purchase.readyTitle({ seats: 10, product: "Fleet" })],
-    ["a person's purchase", t.purchase.personReadyTitle("Mentra Call Unlimited")],
+    ["a license given to the buyer", t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true })],
+    ["the same, for many", t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true })],
+    ["the solo buy step", "1 license ·"],
+    ["a link to a product held", t.page.buyLink.alreadyHas("Acme Field Services", "Mentra Call Unlimited")],
+    ["a link to a product not sold", t.page.buyLink.notForSale],
+    ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],
+    ["a link where billing isn't offered", t.page.buyLink.notHere],
     ["the total", "3 products"],
   ];
 

@@ -34,7 +34,9 @@ describe("package entry points", () => {
     // The license types and their error codes, for the portals and billing alike.
     expect(root.STALE_REVISION_ERROR).toBe("stale_revision")
     expect(root.OWNER_NOT_FOUND_ERROR).toBe("owner_not_found")
-    expect(root.LICENSE_OWNER_TYPES).toEqual(["workspace", "person"])
+    // A license is a workspace's: there is no other owner.
+    expect(root.LICENSE_OWNER_TYPES).toEqual(["workspace"])
+    expect(root.LICENSE_ENDED_REASONS).toEqual(["workspace_deleted"])
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
     // The Fleet UI contract names DOM types, so it has its own subpath and server packages never see it.

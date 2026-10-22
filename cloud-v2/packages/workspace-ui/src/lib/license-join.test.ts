@@ -5,7 +5,6 @@ import { catalogEntryFor, fleetEntryFor, licenseBillingFor } from "../test-billi
 import { licenseFor } from "../test-fixtures";
 import { licenseStrings as t } from "../strings/licenses";
 import {
-  catalogForOwner,
   fitFor,
   holdsSeat,
   joinLicenses,
@@ -59,14 +58,6 @@ describe("listedAction", () => {
   });
 });
 
-describe("catalogForOwner", () => {
-  test("drops the entries that aren't sold to this owner type", () => {
-    expect(catalogForOwner(CATALOG, "workspace").map((entry) => entry.product)).toEqual([CALL, FLEET]);
-    expect(catalogForOwner(CATALOG, "person").map((entry) => entry.product)).toEqual([CALL]);
-    expect(catalogForOwner([catalogEntryFor({ ownerTypes: [] })], "workspace")).toEqual([]);
-  });
-});
-
 describe("joinLicenses: a card per license", () => {
   test("joins a Core license to billing by its id and to the catalog by its product", () => {
     const license = core("lic_call", CALL, 5, 3);
@@ -113,9 +104,9 @@ describe("joinLicenses: a card per license", () => {
     expect(card).toMatchObject({ name: "acme.secret", shortName: "acme.secret", description: "", icon: null, features: [], catalog: null });
   });
 
-  test("a held product the catalog lists for another owner type is still named: it has its name, icon and features", () => {
-    // Billing sends every product the owner holds, even one re-scoped since it sold, so that its card has a name.
-    const personOnly = fleetEntryFor({ ownerTypes: ["person"], icon: "/api/portal/billing/ui/icons/fleet.png" });
+  test("a held product the catalog no longer offers is still named: it has its name, icon and features", () => {
+    // Billing sends every product the owner holds, even one it has stopped selling, so that its card has a name.
+    const personOnly = fleetEntryFor({ offer: undefined, icon: "/api/portal/billing/ui/icons/fleet.png" });
     const [card] = joinLicenses({ licenses: [core("lic_fleet", FLEET, 10, 0)], catalog: [personOnly] });
     expect(card).toMatchObject({
       name: "Fleet",
@@ -124,9 +115,6 @@ describe("joinLicenses: a card per license", () => {
     });
     expect(card!.catalog).toBe(personOnly);
     expect(card!.features.map((feature) => feature.key)).toEqual(["fleet.managed", "fleet.assignments", "fleet.usage"]);
-    // An entry with no owner types at all names a license too.
-    const [nowhere] = joinLicenses({ licenses: [core("lic_call", CALL, 5, 0)], catalog: [catalogEntryFor({ ownerTypes: [] })] });
-    expect(nowhere).toMatchObject({ name: "Mentra Call Unlimited" });
   });
 
   test("a product listed twice is named by its first entry", () => {
@@ -170,7 +158,7 @@ describe("joinLicenses: a card per license", () => {
     expect(byId.lic_half).toMatchObject({ license: null, seats: null, name: "Fleet", problem: "incomplete" });
   });
 
-  test("with no Core licenses at all (a person's page), every billing entry is a card", () => {
+  test("with no Core licenses at all, every billing entry is a card", () => {
     const cards = joinLicenses({ licenses: [], billing: [licenseBillingFor({ licenseId: "lic_me" })], catalog: CATALOG });
     expect(cards.map((card) => [card.licenseId, card.license, card.seats])).toEqual([["lic_me", null, null]]);
   });

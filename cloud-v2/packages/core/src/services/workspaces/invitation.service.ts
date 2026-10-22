@@ -60,6 +60,7 @@ import {sendEmail} from "../email/email.service"
 import {consumeRateLimit} from "../signin/rate-limit.service"
 import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
+import {yieldAutomaticWorkspace} from "./automatic-workspace.service"
 import {invitationEmail} from "./invitation-email"
 import {
   auditActor,
@@ -435,6 +436,8 @@ async function acceptPendingInvitation(
       .session(session)
       .lean()
     if (existing) fail("already_member", "already a member of this workspace")
+    // The person is about to hold a workspace of this invitation: an empty automatic one of their own gives way.
+    await yieldAutomaticWorkspace(session, actor, actor.mentraUserId, {except: invitation.workspaceId})
 
     const membershipId = `wm_${ulid()}`
     const role = invitation.role as WorkspaceRole

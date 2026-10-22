@@ -14,7 +14,7 @@ export const perSeat = (amountMinor = 2900): Price => ({
   recurrence: { interval: "month", count: 1 },
 });
 
-/** Mentra Call Unlimited as the catalog sends it: sold to workspaces and people, with its icon. */
+/** Mentra Call Unlimited as the catalog sends it: with its icon. */
 export function catalogEntryFor(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
   return {
     product: "mentra.call.unlimited",
@@ -23,7 +23,6 @@ export function catalogEntryFor(overrides: Partial<CatalogEntry> = {}): CatalogE
     description: "Unlimited Teams calls in Mentra Call.",
     icon: "/api/portal/billing/ui/icons/mentra-call.png",
     features: [{ key: "call.unlimited", name: "Unlimited Teams calls", appName: "Mentra Call" }],
-    ownerTypes: ["workspace", "person"],
     ...overrides,
   };
 }
@@ -41,7 +40,6 @@ export function fleetEntryFor(overrides: Partial<CatalogEntry> = {}): CatalogEnt
       { key: "fleet.assignments", name: "Miniapp assignments" },
       { key: "fleet.usage", name: "Usage reports" },
     ],
-    ownerTypes: ["workspace"],
     ...overrides,
   });
 }

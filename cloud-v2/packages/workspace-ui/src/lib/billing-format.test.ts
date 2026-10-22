@@ -117,21 +117,18 @@ describe("taxNote", () => {
 });
 
 describe("priceLine", () => {
-  test("a workspace pays per user, a person doesn't", () => {
-    expect(priceLine(perSeat(1500), "workspace", "en-US")).toBe("$15 per user a month");
-    expect(priceLine(perSeat(2900), "person", "en-US")).toBe("$29 a month");
+  test("a workspace pays per user", () => {
+    expect(priceLine(perSeat(1500), "en-US")).toBe("$15 per user a month");
   });
 
   test("a longer recurrence reads as 'every 3 months'", () => {
     const quarterly: Price = { scheme: "per_seat", unit: usd(2900), recurrence: { interval: "month", count: 3 } };
-    expect(priceLine(quarterly, "workspace", "en-US")).toBe("$29 per user every 3 months");
-    expect(priceLine(quarterly, "person", "en-US")).toBe("$29 every 3 months");
+    expect(priceLine(quarterly, "en-US")).toBe("$29 per user every 3 months");
   });
 
   test("an unknown scheme shows billing's own label", () => {
     const tiered: Price = { scheme: "tiered", fallbackLabel: "From $10 per user a month" };
-    expect(priceLine(tiered, "workspace", "en-US")).toBe("From $10 per user a month");
-    expect(priceLine(tiered, "person", "en-US")).toBe("From $10 per user a month");
+    expect(priceLine(tiered, "en-US")).toBe("From $10 per user a month");
   });
 });
 
@@ -162,10 +159,10 @@ describe("costFact", () => {
     expect(costFact(license({ tax: "something_new" }), "en-US").foot).toBeNull();
   });
 
-  test("a person's cost is the same: '$29 a month' over 'Before tax'", () => {
-    const personal = license({ quantity: 1, total: usd(2900) });
-    expect(costFact(personal, "en-US", "person")).toEqual({ value: "$29 a month", foot: "Before tax" });
-    expect(costFact({ ...personal, tax: "none" }, "en-US", "person")).toEqual({ value: "$29 a month", foot: null });
+  test("one license is '$29 a month' over 'Before tax'", () => {
+    const single = license({ quantity: 1, total: usd(2900) });
+    expect(costFact(single, "en-US")).toEqual({ value: "$29 a month", foot: "Before tax" });
+    expect(costFact({ ...single, tax: "none" }, "en-US")).toEqual({ value: "$29 a month", foot: null });
   });
 
   test("an unknown scheme is billing's label with no foot, whatever its total", () => {
