@@ -95,7 +95,7 @@ beforeEach(() => {
   clock = spyOn(Date, "now").mockImplementation(() => now)
   shareOpen.mockReset().mockResolvedValue(undefined)
   results = mock(() => {})
-  store = new BlobStore({sendResult: results, getUserId: () => "user"})
+  store = new BlobStore({sendResult: results, getPartition: () => ({id: "user", personalUserId: null})})
   const source = new File(Paths.document, "recording.wav")
   fs.writeFileSync(source.uri, bytes)
   Object.assign(store, {
