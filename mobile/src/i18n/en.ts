@@ -1465,7 +1465,8 @@ const en = {
     leaveWorkspace: "Leave workspace",
     roleMember: "Member",
     // Not drawn on the board; recorded in the Fleet Phase 11 plan ("Engineering choices recorded").
-    lastOwner: "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first.",
+    lastOwner:
+      "You're this workspace's only Owner. Hand over ownership or delete the workspace in Mentra Portal first.",
     somethingWentWrong: "Something went wrong. Try again.",
     // The update prompt for a running miniapp (UPDATE-2026-10-20.md); the Fleet Phase 11 plan fixes the wording.
     updatePromptTitle: "Update {{name}}?",

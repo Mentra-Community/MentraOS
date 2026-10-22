@@ -43,7 +43,11 @@ export function WorkspaceTile({name, size = 56}: {name: string; size?: number}) 
       className="items-center justify-center rounded-2xl bg-primary-foreground"
       style={{width: size, height: size}}
       testID="fleet.workspaceTile">
-      <Text text={name.trim().charAt(0).toUpperCase()} weight="semibold" className="text-2xl text-secondary-foreground" />
+      <Text
+        text={name.trim().charAt(0).toUpperCase()}
+        weight="semibold"
+        className="text-2xl text-secondary-foreground"
+      />
     </View>
   )
 }
@@ -69,12 +73,20 @@ export function SeeLists() {
   return (
     <View className="gap-4" testID="fleet.seeLists">
       <View>
-        <Text text={translate("fleet:canSeeTitle")} weight="semibold" className="mb-1 text-[15px] text-secondary-foreground" />
+        <Text
+          text={translate("fleet:canSeeTitle")}
+          weight="semibold"
+          className="mb-1 text-[15px] text-secondary-foreground"
+        />
         <SeeRow allowed text={translate("fleet:canSeeGlassesAndPhones")} />
         <SeeRow allowed text={translate("fleet:canSeeMiniapps")} />
       </View>
       <View>
-        <Text text={translate("fleet:cantSeeTitle")} weight="semibold" className="mb-1 text-[15px] text-secondary-foreground" />
+        <Text
+          text={translate("fleet:cantSeeTitle")}
+          weight="semibold"
+          className="mb-1 text-[15px] text-secondary-foreground"
+        />
         <SeeRow allowed={false} text={translate("fleet:cantSeePhotosAndVideos")} />
         <SeeRow allowed={false} text={translate("fleet:cantSeeSpeech")} />
         <SeeRow allowed={false} text={translate("fleet:cantSeePasswords")} />
@@ -87,10 +99,16 @@ export function SeeLists() {
 export function ManagementLine() {
   const {theme} = useAppTheme()
   return (
-    <View className="flex-row items-center gap-3 rounded-2xl bg-primary-foreground px-4 py-3" testID="fleet.managementLine">
+    <View
+      className="flex-row items-center gap-3 rounded-2xl bg-primary-foreground px-4 py-3"
+      testID="fleet.managementLine">
       <Icon name="shield-lock" size={22} color={theme.colors.secondary_foreground} />
       <View className="flex-1">
-        <Text text={translate("fleet:managementTitle")} weight="semibold" className="text-[15px] text-secondary-foreground" />
+        <Text
+          text={translate("fleet:managementTitle")}
+          weight="semibold"
+          className="text-[15px] text-secondary-foreground"
+        />
         <Text text={translate("fleet:managementSubtitle")} className="text-xs text-muted-foreground" />
       </View>
     </View>

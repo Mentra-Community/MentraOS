@@ -56,8 +56,8 @@ jest.mock("@/utils/storage", () => {
       save: (key: string, value: unknown) => values.set(key, value),
       load: (key: string) =>
         values.has(key)
-          ? {is_ok: () => true, value: values.get(key)}
-          : {is_ok: () => false, error: new Error(`No value found for ${key}`)},
+          ? {is_ok: (): boolean => true, value: values.get(key)}
+          : {is_ok: (): boolean => false, error: new Error(`No value found for ${key}`)},
       remove: (key: string) => values.delete(key),
       clearAll: () => values.clear(),
     },
@@ -66,7 +66,12 @@ jest.mock("@/utils/storage", () => {
 let mockUser: {id: string} | null = {id: "user-1"}
 jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: mockUser})}))
 
-const RIDGELINE: MyWorkspace = {workspaceId: "ws-r", name: "Ridgeline Field Services", role: "member", membershipId: "m-1"}
+const RIDGELINE: MyWorkspace = {
+  workspaceId: "ws-r",
+  name: "Ridgeline Field Services",
+  role: "member",
+  membershipId: "m-1",
+}
 const NORTHWIND: MyWorkspace = {workspaceId: "ws-n", name: "Northwind Labs", role: "member", membershipId: "m-n"}
 
 const invitation = (workspace: MyWorkspace, extra: Partial<InvitationPreview> = {}): InvitationPreview => ({
@@ -290,7 +295,9 @@ describe("the invitation sheet", () => {
 
   it("closes with a toast, and no API text, when Core says the invitation expired", async () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    ;(core.api.accept as jest.Mock).mockRejectedValue(failWith("invitation_expired", "invitation_expired: raw server text"))
+    ;(core.api.accept as jest.Mock).mockRejectedValue(
+      failWith("invitation_expired", "invitation_expired: raw server text"),
+    )
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
@@ -308,7 +315,9 @@ describe("the invitation sheet", () => {
   it("closes with a toast when the invitation runs out while its sheet is open", async () => {
     jest.useFakeTimers()
     try {
-      const core = fakeCore({invitations: [invitation(RIDGELINE, {expiresAt: new Date(Date.now() + 30_000).toISOString()})]})
+      const core = fakeCore({
+        invitations: [invitation(RIDGELINE, {expiresAt: new Date(Date.now() + 30_000).toISOString()})],
+      })
       setWorkspaceApi(core.api)
       screen = render(<ModalProvider>{null}</ModalProvider>)
       const run = start()
@@ -425,7 +434,7 @@ describe("the leave-first variant", () => {
 })
 
 describe("the Fleet notice", () => {
-  const joinRidgeline = async (core: ReturnType<typeof fakeCore>) => {
+  const joinRidgeline = async () => {
     const run = start()
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
     await press(screen, "Join")
@@ -437,7 +446,7 @@ describe("the Fleet notice", () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline(core)
+    const run = await joinRidgeline()
 
     expect(
       screen.getByText("By joining the Ridgeline Field Services workspace, you agree to let them manage your device."),
@@ -464,7 +473,7 @@ describe("the Fleet notice", () => {
       const core = fakeCore({invitations: [invitation(RIDGELINE)]})
       setWorkspaceApi(core.api)
       screen = render(<ModalProvider>{null}</ModalProvider>)
-      const run = await joinRidgeline(core)
+      const run = await joinRidgeline()
 
       expect(mockDrag.enabled).toBe(false)
       await act(async () => {
@@ -489,7 +498,7 @@ describe("the Fleet notice", () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline(core)
+    const run = await joinRidgeline()
 
     expect(screen.getByText("OK")).toBeTruthy()
     expect(core.calls).toContain("refreshDesiredState")
@@ -504,7 +513,7 @@ describe("the Fleet notice", () => {
     ;(core.api.refreshDesiredState as jest.Mock).mockReturnValue(new Promise(() => {}))
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline(core)
+    const run = await joinRidgeline()
     await press(screen, "OK")
     await finish(run)
 
@@ -529,7 +538,7 @@ describe("the Fleet notice", () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline(core)
+    const run = await joinRidgeline()
     await press(screen, "OK")
     await finish(run)
 
@@ -545,7 +554,7 @@ describe("the Fleet notice", () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline(core)
+    const run = await joinRidgeline()
     await press(screen, "OK")
     await finish(run)
 
@@ -558,7 +567,7 @@ describe("the Fleet notice", () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
     screen = render(<ModalProvider>{null}</ModalProvider>)
-    const first = await joinRidgeline(core)
+    const first = await joinRidgeline()
     await press(screen, "OK")
     await finish(first)
 
@@ -614,7 +623,10 @@ describe("when the sheets run", () => {
   it("looks at startup and on foreground while signed in, and not when signed out", async () => {
     let appStateListener: ((state: string) => void) | undefined
     const subscription = {remove: jest.fn()}
-    const addListener = jest.spyOn(AppState, "addEventListener").mockImplementation(((_type: string, listener: never) => {
+    const addListener = jest.spyOn(AppState, "addEventListener").mockImplementation(((
+      _type: string,
+      listener: never,
+    ) => {
       appStateListener = listener
       return subscription
     }) as never)
