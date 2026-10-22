@@ -941,6 +941,7 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      this.cancelPendingSpeakerOperation(packageName)
       this.cancelSpeech(packageName)
       // A crash respawn replaces the ConnectedMiniapp without going through
       // unregisterApp(). Abort the old incarnation's native PCM player before
@@ -1124,6 +1125,7 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    this.cancelPendingSpeakerOperation(packageName)
     this.clearActionState(packageName)
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
     // Backstop for a miniapp that crashed or was killed mid-call: the microphone profile and the
@@ -2457,8 +2459,12 @@ class LocalMiniappRuntime {
     }
   }
 
-  private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
+  private cancelPendingSpeakerOperation(packageName: string): void {
     this.currentSpeakerOperations.delete(packageName)
+  }
+
+  private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
+    this.cancelPendingSpeakerOperation(packageName)
     const app = this.connectedApps.get(packageName)
     const streamId = app?.activeSpeakerStreamId
     if (app) app.activeSpeakerStreamId = undefined

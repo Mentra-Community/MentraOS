@@ -6,6 +6,7 @@ import {readFileSync} from "node:fs"
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const methods = [
   "beginSpeakerOperation",
+  "cancelPendingSpeakerOperation",
   "finishSpeakerOperation",
   "handlePlayAudio",
   "handleSpeak",
