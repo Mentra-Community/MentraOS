@@ -2,6 +2,7 @@ import {describe, expect, test} from "bun:test"
 import {
   FLEET_ASSIGNMENT_REASONS,
   FLEET_ASSIGNMENT_STATES,
+  FLEET_INSTALL_REASONS,
   FleetDesiredStateSchema,
   FleetRecordSchema,
   FleetReportAckSchema,
@@ -250,6 +251,42 @@ describe("desired state", () => {
 
   test("rejects a non-UTC generatedAt", () => {
     expect(FleetDesiredStateSchema.safeParse(managed({generatedAt: "2026-10-21T17:30:00+08:00"})).success).toBe(false)
+  })
+})
+
+describe("the spec's lists, exactly", () => {
+  test("install reasons, outcome states and reasons are the provisioning and Fleet specs' sets", () => {
+    expect([...FLEET_INSTALL_REASONS]).toEqual(["bundled", "explicit", "manifest", "assignment"])
+    expect([...FLEET_ASSIGNMENT_STATES].sort()).toEqual(
+      ["blocked", "deferred_running", "downloading", "installed", "installing", "pending", "retrying", "withdrawn"].sort(),
+    )
+    expect([...FLEET_ASSIGNMENT_REASONS].sort()).toEqual(
+      [
+        "access_denied",
+        "archived",
+        "download_failed",
+        "incompatible_host",
+        "manifest_conflict",
+        "newer_version_installed",
+        "not_a_miniapp",
+        "signature_invalid",
+        "storage_full",
+      ].sort(),
+    )
+  })
+
+  test("the record kinds are Phase 10's five and Phase 11's two, and nothing else parses", () => {
+    const kinds = [...FleetRecordSchema.innerType().optionsMap.keys()].map(String).sort()
+    expect(kinds).toEqual(
+      ["assignment_outcome", "coverage_gap", "miniapp_inventory", "miniapp_launch", "photo_operation", "snapshot", "usage_checkpoint"].sort(),
+    )
+    expect(FleetRecordSchema.safeParse({...inventory(), kind: "telemetry_event"}).success).toBe(false)
+  })
+
+  test("a record carries no management association: membership is management, with no enrollment", () => {
+    const management = {associationId: "assoc_1", generation: 1}
+    expect(FleetRecordSchema.safeParse(inventory({management})).success).toBe(false)
+    expect(FleetRecordSchema.safeParse(outcome({}, {management})).success).toBe(false)
   })
 })
 
