@@ -28,7 +28,7 @@ import type { BillingScope } from "./billing-scope";
 // The scope and the errors live in schema-free modules (the query layer imports those, not this file); they are
 // re-exported here so a screen that uses the client has one place to import from.
 export { billingErrorMessage, BillingContractError, BillingRefusedError, BillingUnavailableError } from "./billing-errors";
-export { ACCOUNT_SCOPE, ownerTypeOf, workspaceScope, type BillingScope } from "./billing-scope";
+export { workspaceScope, type BillingScope } from "./billing-scope";
 
 export interface BillingApi {
   /** The base path without a trailing slash. It also scopes this client's query-cache keys. */
@@ -36,7 +36,7 @@ export interface BillingApi {
   /** The locale sent with every request: the portal's own. */
   readonly locale: string;
 
-  /** The products for the scope's owner type. Display content only unless the viewer may manage the owner's billing. */
+  /** The products a workspace is shown. Display content only unless the viewer may manage the owner's billing. */
   catalog(scope: BillingScope): Promise<BillingCatalog>;
   /** The owner's licenses as billing reads them, with the owner's total and actions. `purchase` is the `?purchase=` a checkout returned with. */
   status(scope: BillingScope, options?: { purchase?: string | null }): Promise<BillingStatus>;
@@ -60,8 +60,7 @@ export function createBillingApi(opts: {
   const doFetch: FetchLike = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
   const { locale } = opts;
 
-  const owner = (scope: BillingScope) =>
-    scope.kind === "workspace" ? `/workspaces/${encodeURIComponent(scope.workspaceId)}` : "/account";
+  const owner = (scope: BillingScope) => `/workspaces/${encodeURIComponent(scope.workspaceId)}`;
 
   async function send(method: "GET" | "POST", path: string, body?: Record<string, unknown>): Promise<unknown> {
     const headers: Record<string, string> = { accept: "application/json" };

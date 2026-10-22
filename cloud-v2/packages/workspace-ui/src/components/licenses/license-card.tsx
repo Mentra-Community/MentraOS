@@ -1,14 +1,13 @@
 /**
- * One license on the Licenses page (and, for a person, on the personal Billing page), drawn from a card the
+ * One license on the Licenses page, drawn from a card the
  * join made (`joinLicenses`): the product's icon, name, description and features; one status badge; a strip of
  * facts; a notice when something needs doing; the seats; and a "…" menu of what billing can do about the license.
  *
- * It has three views of the same license:
+ * It has two views of the same license:
  * - `workspace`: a manager's. Core's seats and, where the viewer is offered billing, billing's dates and cost.
  *   Without billing's entry the card shows only its Seats: no money, no actions.
  * - `member`: a person who holds a seat. "Assigned to you", since when, and where it works: no totals, no money,
  *   nothing about anyone else.
- * - `person`: a personal license. Billing's facts and actions, and no seats.
  *
  * Every action is billing's: a button or menu item exists only where billing lists that action for the license,
  * and each leaves the portal through `useHostedAction`. Billing's actions are placed by kind. The payment ones
@@ -43,13 +42,13 @@ import { FeatureChips, ProductIcon } from "./product";
 import { SeatRoster, SeatStrip, seatHolders, type AddSeatsControl, type SeatHolder } from "./seats";
 
 /** Whose eyes the card is drawn for. */
-export type LicenseCardView = "workspace" | "member" | "person";
+export type LicenseCardView = "workspace" | "member";
 
 export interface LicenseCardProps {
   /** From `joinLicenses`. */
   card: JoinedLicense;
   view: LicenseCardView;
-  /** Whose billing the actions are for: `workspaceScope(id)`, or `ACCOUNT_SCOPE` on the personal page. */
+  /** Whose billing the actions are for: `workspaceScope(id)`. */
   scope: BillingScope;
   billing: HostedBilling;
   navigateOut: NavigateOut;
@@ -155,10 +154,10 @@ function TermFact({ card, locale, now }: { card: JoinedLicense; locale: string; 
 }
 
 /** What the license costs, from billing's own total; an ending license says it has no more charges. */
-function CostFactView({ card, view, locale }: { card: JoinedLicense; view: LicenseCardView; locale: string }) {
+function CostFactView({ card, locale }: { card: JoinedLicense; locale: string }) {
   const billing = card.billing;
   if (billing === null || billing.status === "processing") return <Pending label={t.facts.cost.label} />;
-  const cost = costFact(billing, locale, view === "person" ? "person" : "workspace");
+  const cost = costFact(billing, locale);
   return <Fact label={t.facts.cost.label} value={cost.value} foot={billing.status === "ending" ? t.facts.cost.noMoreCharges : cost.foot} />;
 }
 
@@ -186,18 +185,6 @@ function factsFor(card: JoinedLicense, view: LicenseCardView, locale: string, wo
       ),
     };
   }
-  if (view === "person") {
-    if (card.billing === null) return { columns: 0, facts: null };
-    return {
-      columns: 2,
-      facts: (
-        <>
-          <TermFact card={card} locale={locale} now={now} />
-          <CostFactView card={card} view={view} locale={locale} />
-        </>
-      ),
-    };
-  }
   const seats = card.seats ? <SeatsFact seats={card.seats} /> : <Pending label={t.facts.seats.label} />;
   if (card.billing === null) return { columns: 1, facts: seats };
   return {
@@ -206,7 +193,7 @@ function factsFor(card: JoinedLicense, view: LicenseCardView, locale: string, wo
       <>
         {seats}
         <TermFact card={card} locale={locale} now={now} />
-        <CostFactView card={card} view={view} locale={locale} />
+        <CostFactView card={card} locale={locale} />
       </>
     ),
   };
@@ -423,7 +410,7 @@ interface CardSeatsProps {
 /** The card's seats: read-only where the card has no way to change them, else with assigning and unassigning. */
 function CardSeats(props: CardSeatsProps) {
   const { api, scope } = props;
-  if (api && scope.kind === "workspace") return <ManagedSeats {...props} api={api} workspaceId={scope.workspaceId} />;
+  if (api) return <ManagedSeats {...props} api={api} workspaceId={scope.workspaceId} />;
   return <SeatsLayout {...props} canAssign={false} onAssign={() => {}} onUnassign={async () => null} />;
 }
 

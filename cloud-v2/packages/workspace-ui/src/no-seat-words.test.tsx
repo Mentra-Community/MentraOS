@@ -5,7 +5,7 @@
  *
  * Two guards that the page-level one can't give:
  * - the banners, in every state they have, including the ones that need a minute of polling to reach on a page
- *   (a purchase that has not reached Core, and a person's version of each);
+ *   (a purchase that has not reached Core, and the buyer's own license among the new ones);
  * - the components' own text. A sentence belongs in `strings/licenses.ts`, and a literal or an `aria-label` written
  *   in a component is where a stray word would hide, so every string, template and piece of JSX text in the
  *   components, the controls and the audit labels is read for the word, whether or not any screen draws it.
@@ -35,9 +35,9 @@ async function draw(ui: ReactElement) {
 describe("the banners, in every state", () => {
   const noop = () => {};
 
-  test("after checkout, in a workspace and for a person: setting up, ready, and not in Core after a minute", async () => {
+  test("after checkout, with and without the buyer's own license: setting up, ready, and not in Core after a minute", async () => {
     let drawn = 0;
-    for (const scope of ["workspace", "person"] as const) {
+    for (const assigned of [false, true]) {
       for (const paid of [true, false]) {
         for (const quantity of [1, 5]) {
           const states = [
@@ -51,14 +51,14 @@ describe("the banners, in every state", () => {
               <PurchaseBanner
                 purchase={{ status: state.status, quantity, paid }}
                 productName="Mentra Call Unlimited"
-                scope={scope}
+                assigned={assigned}
                 listed={state.listed}
                 timedOut={state.timedOut}
                 onDismiss={noop}
                 onReload={noop}
               />,
             );
-            const where = JSON.stringify({ scope, paid, quantity, ...state });
+            const where = JSON.stringify({ assigned, paid, quantity, ...state });
             expect([where, words.filter((word) => SEAT.test(word))]).toEqual([where, []]);
             // The banner said something.
             expect(words.length).toBeGreaterThan(2);
@@ -84,7 +84,6 @@ describe("the banners, in every state", () => {
       ["a member with no license", <NoSeat workspaceName="Acme Field Services" />],
       ["unavailable", <LicensesUnavailable onRetry={noop} />],
       ["unavailable, retrying", <LicensesUnavailable onRetry={noop} retrying />],
-      ["the personal page unavailable", <LicensesUnavailable onRetry={noop} personal />],
     ];
     for (const [screen, ui] of screens) {
       const words = await draw(ui);

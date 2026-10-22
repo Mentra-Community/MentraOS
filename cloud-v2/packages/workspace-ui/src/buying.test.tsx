@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactElement } from "react";
 import type { CatalogEntry, LicenseBilling, Offer, Price } from "@mentra/workspace-contract/portal-billing";
 import { createBillingApi, type BillingApi } from "./billing-api";
-import { ACCOUNT_SCOPE, workspaceScope, type BillingScope } from "./billing-scope";
+import { workspaceScope, type BillingScope } from "./billing-scope";
 import { BillingRefusedError } from "./billing-errors";
 import { BuyDialog, canBuy, CatalogCard, CatalogDialog, CatalogGrid } from "./components/licenses/catalog";
 import { billingKeys } from "./queries";
@@ -24,19 +24,11 @@ const PAY = "https://pay.example.test/c/cs_1";
 
 // ---- what billing sends -------------------------------------------------------------------------------------------
 
-/** A workspace's offer: per seat, before tax, ten seats to start with. */
+/** A workspace's offer: per seat, before tax, one to five hundred licenses. */
 const workspaceOffer = (unit = 1500, overrides: Partial<Offer> = {}): Offer => ({
   price: perSeat(unit),
   tax: "excluded",
-  buy: { minSeats: 1, maxSeats: 500, defaultSeats: 10 },
-  ...overrides,
-});
-
-/** A person's offer: one seat. */
-const personOffer = (unit = 2900, overrides: Partial<Offer> = {}): Offer => ({
-  price: perSeat(unit),
-  tax: "excluded",
-  buy: { minSeats: 1, maxSeats: 1, defaultSeats: 1 },
+  buy: { minSeats: 1, maxSeats: 500 },
   ...overrides,
 });
 
@@ -53,7 +45,6 @@ const addOn = (overrides: Partial<CatalogEntry> = {}) =>
       { key: "example.one", name: "Feature one", appName: "Mentra Call" },
       { key: "example.two", name: "Feature two" },
     ],
-    ownerTypes: ["workspace", "person"],
     offer: workspaceOffer(900),
     ...overrides,
   });
@@ -185,7 +176,7 @@ describe("the catalog grid", () => {
     const { ui } = grid();
     await mount(ui);
     expect(find("h2").textContent).toBe("Buy licenses for your members");
-    expect(text()).toContain("You'll pay by card on a secure payment page, then come back here to assign the licenses.");
+    expect(text()).not.toContain("secure payment page");
     expect(findAll("[data-product]").map((element) => element.getAttribute("data-product"))).toEqual([
       "mentra.call.unlimited",
       "mentra.fleet",
@@ -197,17 +188,6 @@ describe("the catalog grid", () => {
     expect(byText("$15 per user a month", "p", card("mentra.fleet"))).toBeTruthy();
     expect(byText("$9 per user a month", "p", card("mentra.example"))).toBeTruthy();
     for (const element of findAll("[data-product]")) expect(buttons(element).map((button) => button.textContent)).toEqual(["Buy"]);
-  });
-
-  test("a person's reads 'Buy a license for yourself', with a price that has no unit in it", async () => {
-    const { ui } = grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer(2900) }), addOn({ offer: personOffer(900) })] });
-    await mount(ui);
-    expect(find("h2").textContent).toBe("Buy a license for yourself");
-    expect(text()).toContain("You'll pay by card on a secure payment page, then come back here.");
-    expect(text()).not.toContain("assign the licenses");
-    expect(byText("$29 a month", "p", card("mentra.call.unlimited"))).toBeTruthy();
-    expect(byText("$9 a month", "p", card("mentra.example"))).toBeTruthy();
-    expect(text()).not.toContain("per user");
   });
 
   test("features are a list only with more than one, each with the miniapp it works in", async () => {
@@ -230,18 +210,8 @@ describe("the catalog grid", () => {
     expect(findAll("img", card("mentra.fleet"))).toHaveLength(0);
   });
 
-  test("an entry whose ownerTypes lack the scope's type isn't shown", async () => {
-    const workspaceOnly = fleet();
-    const personOnly = addOn({ ownerTypes: ["person"], offer: personOffer(900) });
-    await mount(grid({ products: [callFor(), workspaceOnly, personOnly] }).ui);
-    expect(findAll("[data-product]").map((element) => element.getAttribute("data-product"))).toEqual(["mentra.call.unlimited", "mentra.fleet"]);
-    await cleanup();
-    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() }), workspaceOnly, personOnly] }).ui);
-    expect(findAll("[data-product]").map((element) => element.getAttribute("data-product"))).toEqual(["mentra.call.unlimited", "mentra.example"]);
-  });
-
   test("with nothing to show it draws nothing, not a heading over no cards", async () => {
-    const { container } = await mount(grid({ products: [fleet({ ownerTypes: ["person"] })] }).ui);
+    const { container } = await mount(grid({ products: [] }).ui);
     expect(container.textContent).toBe("");
   });
 
@@ -291,20 +261,6 @@ describe("a product the owner holds", () => {
     await mount(grid({ licenses: [licenseBillingFor({ quantity: 1 })] }).ui);
     expect(card("mentra.call.unlimited").textContent).toContain("You have 1 license");
     expect(card("mentra.call.unlimited").textContent).not.toContain("1 licenses");
-  });
-
-  test("a person sees 'You have it', and neither Buy nor Add licenses, even if billing listed add_seats", async () => {
-    const { ui } = grid({
-      scope: ACCOUNT_SCOPE,
-      products: [callFor({ offer: personOffer() }), addOn({ offer: personOffer(900) })],
-      licenses: [licenseBillingFor({ quantity: 1 })],
-    });
-    await mount(ui);
-    const mine = card("mentra.call.unlimited");
-    expect(mine.textContent).toContain("You have it");
-    expect(mine.textContent).not.toContain("license");
-    expect(buttons(mine)).toHaveLength(0);
-    expect(buttons(card("mentra.example")).map((button) => button.textContent)).toEqual(["Buy"]);
   });
 
   test("Add licenses is offered only when billing lists it for that license", async () => {
@@ -455,22 +411,23 @@ describe("Add licenses when billing lists it with returns: false", () => {
 
 describe("the licenses step", () => {
   async function openBuyFleet(options: GridOptions = {}) {
-    const setup = grid({ memberCount: 14, ...options });
+    const setup = grid({ memberCount: 10, ...options });
     await mount(setup.ui);
     await click(buttonNamed("Buy", card("mentra.fleet")));
     return setup;
   }
 
-  test("Buy opens 'Buy <product>' with its description, its terms, a stepper at the default, and the member count", async () => {
-    await openBuyFleet();
+  test("Buy opens 'Buy <product>' with its description, its terms, a stepper at the member count, and the member count", async () => {
+    await openBuyFleet({ memberCount: 14 });
     const dialog = topDialog();
     expect(find("h2", dialog).textContent).toBe("Buy Fleet");
     expect(dialog.textContent).toContain("Manage your members' phones and glasses, and the miniapps on them.");
     expect(dialog.textContent).toContain("$15 per user a month · Renews every month. Change the number of licenses or cancel at any time.");
-    expect(stepper(dialog).getAttribute("aria-valuenow")).toBe("10");
-    expect(stepper(dialog).value).toBe("10");
+    expect(stepper(dialog).getAttribute("aria-valuenow")).toBe("14");
+    expect(stepper(dialog).value).toBe("14");
     expect(dialog.textContent).toContain("Your workspace has 14 members.");
-    expect(dialog.textContent).toContain("You'll pay by card on a secure payment page.");
+    expect(dialog.textContent).not.toContain("secure payment page");
+    expect(dialog.textContent).not.toContain("yours once payment goes through");
     expect(buttons(dialog).map((button) => button.textContent)).toContain("Cancel");
     expect(buttonNamed("Continue to payment", dialog)).toBeTruthy();
     expect(findAll("select", dialog)).toHaveLength(0);
@@ -489,12 +446,13 @@ describe("the licenses step", () => {
   });
 
   test("one license is '1 license × $15'", async () => {
-    await openBuyFleet({ products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 1, maxSeats: 5, defaultSeats: 1 } }) })] });
+    await openBuyFleet({ memberCount: 2, products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 1, maxSeats: 5 } }) })] });
+    await click(find('[aria-label="One license fewer"]', topDialog()));
     expect(byText("1 license × $15 · $15 a month · before tax", "p", topDialog())).toBeTruthy();
   });
 
   test("the stepper is bounded by minSeats and maxSeats, and the sum follows the bound", async () => {
-    await openBuyFleet({ products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 2, maxSeats: 12, defaultSeats: 11 } }) })] });
+    await openBuyFleet({ memberCount: 11, products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 2, maxSeats: 12 } }) })] });
     const dialog = topDialog();
     const more = find<HTMLButtonElement>('[aria-label="One license more"]', dialog);
     const fewer = find<HTMLButtonElement>('[aria-label="One license fewer"]', dialog);
@@ -511,11 +469,11 @@ describe("the licenses step", () => {
     expect(byText("2 licenses × $15 · $30 a month · before tax", "p", dialog)).toBeTruthy();
   });
 
-  test("a default outside the bounds starts at the nearest bound", async () => {
-    await openBuyFleet({ products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 3, maxSeats: 8, defaultSeats: 50 } }) })] });
+  test("a member count outside the bounds starts at the nearest bound", async () => {
+    await openBuyFleet({ memberCount: 50, products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 3, maxSeats: 8 } }) })] });
     expect(stepper(topDialog()).value).toBe("8");
     await cleanup();
-    await openBuyFleet({ products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 3, maxSeats: 8, defaultSeats: 1 } }) })] });
+    await openBuyFleet({ memberCount: 2, products: [fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 3, maxSeats: 8 } }) })] });
     expect(stepper(topDialog()).value).toBe("3");
   });
 
@@ -525,16 +483,16 @@ describe("the licenses step", () => {
     const out = ways();
     const dialog = (product: CatalogEntry) => (
       <QueryClientProvider client={client}>
-        <BuyDialog open product={product} billing={billing} scope={WS} navigateOut={out.navigateOut} onClose={() => {}} />
+        <BuyDialog open product={product} billing={billing} scope={WS} navigateOut={out.navigateOut} memberCount={10} onClose={() => {}} />
       </QueryClientProvider>
     );
-    const limits = (buy: { minSeats: number; maxSeats: number; defaultSeats: number }) => fleet({ offer: workspaceOffer(1500, { buy }) });
-    const view = await render(dialog(limits({ minSeats: 1, maxSeats: 500, defaultSeats: 10 })));
+    const limits = (buy: { minSeats: number; maxSeats: number }) => fleet({ offer: workspaceOffer(1500, { buy }) });
+    const view = await render(dialog(limits({ minSeats: 1, maxSeats: 500 })));
     await click(find('[aria-label="One license more"]', topDialog()));
     await click(find('[aria-label="One license more"]', topDialog()));
     expect(stepper(topDialog()).value).toBe("12");
     // The ceiling comes down below the choice.
-    await view.rerender(dialog(limits({ minSeats: 1, maxSeats: 8, defaultSeats: 10 })));
+    await view.rerender(dialog(limits({ minSeats: 1, maxSeats: 8 })));
     expect(stepper(topDialog()).value).toBe("8");
     expect(stepper(topDialog()).getAttribute("aria-valuemax")).toBe("8");
     expect(byText("8 licenses × $15 · $120 a month · before tax", "p", topDialog())).toBeTruthy();
@@ -551,10 +509,11 @@ describe("the licenses step", () => {
       <QueryClientProvider client={client}>
         <BuyDialog
           open
-          product={fleet({ offer: workspaceOffer(1500, { buy: { minSeats, maxSeats: 500, defaultSeats: 10 } }) })}
+          product={fleet({ offer: workspaceOffer(1500, { buy: { minSeats, maxSeats: 500 } }) })}
           billing={billing}
           scope={WS}
           navigateOut={out.navigateOut}
+          memberCount={10}
           onClose={() => {}}
         />
       </QueryClientProvider>
@@ -572,12 +531,12 @@ describe("the licenses step", () => {
     const withFleet = (fleetEntry: CatalogEntry) => [callFor(), fleetEntry, addOn()];
     const gridOf = (billing: BillingApi, client: QueryClient, products: readonly CatalogEntry[]) => (
       <QueryClientProvider client={client}>
-        <CatalogGrid products={products} scope={WS} billing={billing} navigateOut={ways().navigateOut} memberCount={14} />
+        <CatalogGrid products={products} scope={WS} billing={billing} navigateOut={ways().navigateOut} memberCount={10} />
       </QueryClientProvider>
     );
     const dialogOf = (billing: BillingApi, client: QueryClient, products: readonly CatalogEntry[]) => (
       <QueryClientProvider client={client}>
-        <CatalogDialog open onClose={() => {}} products={products} scope={WS} billing={billing} navigateOut={ways().navigateOut} memberCount={14} />
+        <CatalogDialog open onClose={() => {}} products={products} scope={WS} billing={billing} navigateOut={ways().navigateOut} memberCount={10} />
       </QueryClientProvider>
     );
 
@@ -590,7 +549,7 @@ describe("the licenses step", () => {
       await click(find('[aria-label="One license more"]', topDialog()));
       expect(byText("12 licenses × $15 · $180 a month · before tax", "p", topDialog())).toBeTruthy();
       // Billing reads again: a dearer price, and a ceiling under the choice.
-      const dearer = fleet({ offer: workspaceOffer(1800, { buy: { minSeats: 1, maxSeats: 8, defaultSeats: 10 } }) });
+      const dearer = fleet({ offer: workspaceOffer(1800, { buy: { minSeats: 1, maxSeats: 8 } }) });
       await view.rerender(gridOf(billing, client, withFleet(dearer)));
       expect(topDialog().textContent).toContain("$18 per user a month");
       expect(stepper(topDialog()).getAttribute("aria-valuemax")).toBe("8");
@@ -634,8 +593,8 @@ describe("the licenses step", () => {
 
   test("with no maxSeats the sum still never leaves the safe integers", async () => {
     // $10 billion a seat: 9,007 seats is the most whose total a number can hold exactly.
-    const huge = fleet({ offer: workspaceOffer(1_000_000_000_000, { buy: { minSeats: 1, defaultSeats: 9000 } }) });
-    await openBuyFleet({ products: [huge] });
+    const huge = fleet({ offer: workspaceOffer(1_000_000_000_000, { buy: { minSeats: 1 } }) });
+    await openBuyFleet({ memberCount: 9000, products: [huge] });
     const dialog = topDialog();
     expect(stepper(dialog).getAttribute("aria-valuemax")).toBe("9007");
     for (let step = 0; step < 10; step += 1) await press(stepper(dialog), "ArrowUp");
@@ -763,71 +722,95 @@ describe("the licenses step", () => {
     expect(topDialog().textContent).not.toContain("undefined");
   });
 
-  test("one member is 'Your workspace has 1 member.'", async () => {
-    await openBuyFleet({ memberCount: 1 });
-    expect(topDialog().textContent).toContain("Your workspace has 1 member.");
+  test("two members is 'Your workspace has 2 members.', and a stepper at 2", async () => {
+    await openBuyFleet({ memberCount: 2 });
+    expect(topDialog().textContent).toContain("Your workspace has 2 members.");
+    expect(stepper(topDialog()).value).toBe("2");
   });
 });
 
-// ---- people -------------------------------------------------------------------------------------------------------
+describe("the licenses step starts at the workspace's member count", () => {
+  const range = (overrides: Record<string, number> = {}) => fleet({ offer: workspaceOffer(1500, { buy: { minSeats: 1, maxSeats: 1000, ...overrides } as Offer["buy"] }) });
+  async function openWith(memberCount: number, product = range()) {
+    const setup = grid({ memberCount, products: [product] });
+    await mount(setup.ui);
+    await click(buttonNamed("Buy", card("mentra.fleet")));
+    return setup;
+  }
 
-describe("a person's Buy", () => {
-  const personal = () => [callFor({ offer: personOffer() }), addOn({ offer: personOffer(900) })];
-
-  test("skips the licenses step: it buys one license and goes to payment", async () => {
-    const { billing, requests } = payingAt(PAY);
-    const { ui, leave } = grid({ scope: ACCOUNT_SCOPE, products: personal(), billing });
-    await mount(ui);
-    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
-    expect(openDialogs()).toHaveLength(0);
-    expect(findAll('[role="spinbutton"]')).toHaveLength(0);
-    await settle();
-    expect(requests).toEqual([
-      { method: "POST", path: "/api/portal/billing/account/purchase", body: { product: "mentra.call.unlimited", seats: 1, locale: "en-US" } },
-    ]);
-    expect(leave).toHaveBeenCalledWith(PAY);
+  test("14 members start at 14", async () => {
+    await openWith(14);
+    expect(stepper(topDialog()).value).toBe("14");
+    expect(byText("14 licenses × $15 · $210 a month · before tax", "p", topDialog())).toBeTruthy();
+    expect(topDialog().textContent).toContain("Your workspace has 14 members.");
   });
 
-  test("buys the offer's one license even if its default is not one", async () => {
-    const odd = callFor({ offer: personOffer(2900, { buy: { minSeats: 1, maxSeats: 1, defaultSeats: 4 } }) });
-    const { ui, purchase } = grid({ scope: ACCOUNT_SCOPE, products: [odd] });
-    await mount(ui);
-    await click(buttonNamed("Buy"));
-    await settle();
-    expect(purchase.mock.calls).toEqual([[ACCOUNT_SCOPE, { product: "mentra.call.unlimited", seats: 1 }]]);
+  test("2000 members start at the most billing allows", async () => {
+    await openWith(2000);
+    expect(stepper(topDialog()).value).toBe("1000");
   });
 
-  test("while it is being requested the Buy buttons can't be pressed again", async () => {
-    const pending = deferred<{ url: string }>();
-    const { ui, purchase } = grid({ scope: ACCOUNT_SCOPE, products: personal() });
-    purchase.mockImplementation(() => pending.promise);
-    await mount(ui);
-    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
-    await click(buttonNamed("Buy", card("mentra.example")));
-    await settle();
-    await click(buttonNamed("Buy", card("mentra.call.unlimited")));
-    await click(buttonNamed("Buy", card("mentra.example")));
-    expect(purchase).toHaveBeenCalledTimes(1);
-    expect(buttonNamed("Buy", card("mentra.example")).disabled).toBe(true);
-    expect(buttonNamed("Buy", card("mentra.call.unlimited")).getAttribute("aria-busy")).toBe("true");
-    await act(async () => pending.reject(new BillingRefusedError("not_for_sale", {}, 400)));
-    await settle();
-    expect(find('[role="alert"]').textContent).toBe("Mentra Call Unlimited isn't for sale right now.");
-    expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
-    expect(buttonNamed("Buy", card("mentra.example")).disabled).toBe(false);
+  test("a floor above the count lifts the start to it", async () => {
+    await openWith(2, range({ minSeats: 5 }));
+    expect(stepper(topDialog()).value).toBe("5");
   });
 
-  test("BuyDialog is the workspace's step: given a person it draws no licenses step at all", async () => {
-    const { billing } = stubBilling();
-    await mount(
-      <BuyDialog open product={callFor({ offer: personOffer() })} billing={billing} scope={ACCOUNT_SCOPE} navigateOut={ways().navigateOut} onClose={() => {}} />,
+  test("one member has no stepper: '1 license · $15 a month · before tax' with no small print, and Continue buys 1", async () => {
+    const setup = await openWith(1);
+    const dialog = topDialog();
+    expect(findAll('[role="spinbutton"]', dialog)).toHaveLength(0);
+    expect(findAll('[aria-label="One license more"]', dialog)).toHaveLength(0);
+    expect(byText("1 license · $15 a month · before tax", "p", dialog)).toBeTruthy();
+    expect(dialog.textContent).not.toContain("It's yours once payment goes through.");
+    expect(dialog.textContent).not.toContain("secure payment page");
+    expect(dialog.textContent).not.toContain("Your workspace has");
+    expect(setup.purchase).not.toHaveBeenCalled();
+    await click(buttonNamed("Continue to payment", dialog));
+    await settle();
+    expect(setup.purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 1 }]]);
+  });
+
+  test("the member count falling to one while the dialog is open buys the one license shown", async () => {
+    const client = new QueryClient();
+    const { billing, purchase } = stubBilling();
+    const out = ways();
+    const dialog = (memberCount: number) => (
+      <QueryClientProvider client={client}>
+        <BuyDialog open product={range()} billing={billing} scope={WS} navigateOut={out.navigateOut} memberCount={memberCount} onClose={() => {}} />
+      </QueryClientProvider>
     );
-    expect(openDialogs()).toHaveLength(0);
-    expect(findAll('[role="spinbutton"]')).toHaveLength(0);
+    const view = await render(dialog(2));
+    expect(stepper(topDialog()).value).toBe("2");
+    await view.rerender(dialog(1));
+    expect(findAll('[role="spinbutton"]', topDialog())).toHaveLength(0);
+    expect(byText("1 license · $15 a month · before tax", "p", topDialog())).toBeTruthy();
+    await click(buttonNamed("Continue to payment", topDialog()));
+    await settle();
+    expect(purchase.mock.calls).toEqual([[WS, { product: "mentra.fleet", seats: 1 }]]);
+  });
+
+  test("one member and a floor of two still has the stepper", async () => {
+    await openWith(1, range({ minSeats: 2 }));
+    expect(stepper(topDialog()).value).toBe("2");
   });
 });
 
-// ---- schemes billing added after this release ---------------------------------------------------------------------
+describe("BuyDialog", () => {
+  test("is the one place a purchase is started: Buy never goes to payment by itself", async () => {
+    const setup = grid({ memberCount: 3 });
+    await mount(setup.ui);
+    await click(buttonNamed("Buy", card("mentra.fleet")));
+    expect(openDialogs()).toHaveLength(1);
+    expect(setup.purchase).not.toHaveBeenCalled();
+    expect(setup.leave).not.toHaveBeenCalled();
+  });
+
+  test("Buy is a plain button, not one that leaves the portal", async () => {
+    await mount(grid().ui);
+    expect(buttonNamed("Buy", card("mentra.fleet")).textContent).toBe("Buy");
+    expect(card("mentra.fleet").textContent).not.toContain("Opens a secure billing page");
+  });
+});
 
 describe("a price of a scheme the portal doesn't know", () => {
   const unknown = () => fleet({ offer: workspaceOffer(1500, { price: tiered }) });
@@ -858,12 +841,12 @@ describe("a price of a scheme the portal doesn't know", () => {
     expect(dialog.textContent).not.toContain("before tax");
     expect(dialog.textContent).not.toContain("a month ·");
     // Seats are still asked for, since billing asked for a seat count.
-    expect(stepper(dialog).value).toBe("10");
+    expect(stepper(dialog).value).toBe("14");
     expect(dialog.textContent).toContain("Your workspace has 14 members.");
   });
 
   test("it can still be bought: Continue sends the number of licenses chosen", async () => {
-    const { ui, purchase, leave } = grid({ products: [unknown()] });
+    const { ui, purchase, leave } = grid({ products: [unknown()], memberCount: 10 });
     await mount(ui);
     await click(buttonNamed("Buy"));
     await click(find('[aria-label="One license fewer"]', topDialog()));
@@ -873,11 +856,6 @@ describe("a price of a scheme the portal doesn't know", () => {
     expect(leave).toHaveBeenCalledWith(PAY);
   });
 
-  test("a person's card shows the label too", async () => {
-    const entry = callFor({ offer: personOffer(2900, { price: tiered }) });
-    await mount(grid({ scope: ACCOUNT_SCOPE, products: [entry] }).ui);
-    expect(byText("From $10 per user a month, less in bulk", "p", card("mentra.call.unlimited"))).toBeTruthy();
-  });
 });
 
 // ---- addresses the portal won't follow ----------------------------------------------------------------------------
@@ -905,16 +883,6 @@ describe("unsafe purchase addresses", () => {
       // The dialog stays, ready to try again.
       expect(buttonNamed("Continue to payment", topDialog()).disabled).toBe(false);
     });
-
-    test(`a person's purchase answered with ${unsafe.slice(0, 28)} goes nowhere and says so`, async () => {
-      const { billing } = payingAt(unsafe);
-      const { ui, leave } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
-      await mount(ui);
-      await click(buttonNamed("Buy"));
-      await settle();
-      expect(leave).not.toHaveBeenCalled();
-      expect(find('[role="alert"]').textContent).toBe(refused);
-    });
   }
 
   test("an Add licenses session answered with an address the portal won't follow goes nowhere either", async () => {
@@ -935,9 +903,10 @@ describe("unsafe purchase addresses", () => {
       ["  https://pay.example.test/a b", "https://pay.example.test/a%20b"],
     ] as const) {
       const { billing } = payingAt(sent);
-      const { ui, leave } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
+      const { ui, leave } = grid({ billing, memberCount: 14 });
       await mount(ui);
-      await click(buttonNamed("Buy"));
+      await click(buttonNamed("Buy", card("mentra.fleet")));
+      await click(buttonNamed("Continue to payment", topDialog()));
       await settle();
       expect(leave).toHaveBeenCalledWith(followed);
       await cleanup();
@@ -946,12 +915,13 @@ describe("unsafe purchase addresses", () => {
 
   test("billing being unreachable is the same generic line", async () => {
     const billing = createBillingApi({ locale: "en-US", fetch: (async () => Promise.reject(new TypeError("offline"))) as never });
-    const { ui, leave } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
+    const { ui, leave } = grid({ billing, memberCount: 14 });
     await mount(ui);
-    await click(buttonNamed("Buy"));
+    await click(buttonNamed("Buy", card("mentra.fleet")));
+    await click(buttonNamed("Continue to payment", topDialog()));
     await settle();
     expect(leave).not.toHaveBeenCalled();
-    expect(find('[role="alert"]').textContent).toBe(refused);
+    expect(find('[role="alert"]', topDialog()).textContent).toBe(refused);
   });
 });
 
@@ -979,18 +949,6 @@ describe("refusals", () => {
     // It is held now: another try would only be refused again.
     expect(buttonNamed("Continue to payment", topDialog()).disabled).toBe(true);
     expect(buttonNamed("Cancel", topDialog()).disabled).toBe(false);
-  });
-
-  test("for a person it is 'You already have <product>.' and nothing about licenses to add", async () => {
-    const client = new QueryClient();
-    const invalidate = spyOn(client, "invalidateQueries");
-    const { billing } = refusing(409, "already_licensed", { licenseId: "lic_call" });
-    const { ui } = grid({ billing, scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] });
-    await mount(ui, client);
-    await click(buttonNamed("Buy"));
-    await settle();
-    expect(find('[role="alert"]').textContent).toBe("You already have Mentra Call Unlimited.");
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: billingKeys.owner(ACCOUNT_SCOPE) });
   });
 
   test("checkout_in_progress says a purchase is under way, and leaves the button for another try", async () => {
@@ -1079,7 +1037,7 @@ describe("the catalog dialog", () => {
   });
 
   test("Buy on a row opens the licenses step over the list, and Cancel returns to the list", async () => {
-    await mount(dialogFor({ licenses: held, memberCount: 14 }).ui);
+    await mount(dialogFor({ licenses: held, memberCount: 10 }).ui);
     await click(buttonNamed("Buy", row("mentra.example")));
     expect(openDialogs()).toHaveLength(2);
     expect(find("h2", topDialog()).textContent).toBe("Buy Example Add-on");
@@ -1098,33 +1056,12 @@ describe("the catalog dialog", () => {
     expect(leave).toHaveBeenCalledWith(PAY);
   });
 
-  test("for a person a row's Buy skips the licenses step, and a held product says 'You have it'", async () => {
-    const products = [callFor({ offer: personOffer() }), addOn({ offer: personOffer(900) })];
-    const { ui, purchase, leave } = dialogFor({ scope: ACCOUNT_SCOPE, products, licenses: [licenseBillingFor({ quantity: 1 })] });
-    await mount(ui);
-    expect(find("h2", topDialog()).textContent).toBe("Buy a license");
-    expect(topDialog().textContent).toContain("Products you can buy for yourself.");
-    expect(topDialog().textContent).not.toContain("workspace");
-    expect(row("mentra.call.unlimited").textContent).toContain("You have it");
-    expect(buttons(row("mentra.call.unlimited"))).toHaveLength(0);
-    expect(row("mentra.example").textContent).toContain("$9 a month");
-    await click(buttonNamed("Buy", row("mentra.example")));
+  test("a refusal on a row is shown in the list", async () => {
+    const { billing } = realBilling(() => ({ status: 400, body: { error: "unknown_action" } }));
+    await mount(dialogFor({ billing, licenses: held }).ui);
+    await click(buttonNamed("Add licenses", row("mentra.fleet")));
     await settle();
-    expect(openDialogs()).toHaveLength(1);
-    expect(purchase.mock.calls).toEqual([[ACCOUNT_SCOPE, { product: "mentra.example", seats: 1 }]]);
-    expect(leave).toHaveBeenCalledWith(PAY);
-  });
-
-  test("a refusal on a row is shown in the list, and already_licensed refetches", async () => {
-    const client = new QueryClient();
-    const invalidate = spyOn(client, "invalidateQueries");
-    const { billing } = realBilling(() => ({ status: 409, body: { error: "already_licensed", licenseId: "lic_call" } }));
-    const products = [callFor({ offer: personOffer() }), addOn({ offer: personOffer(900) })];
-    await mount(dialogFor({ billing, scope: ACCOUNT_SCOPE, products }).ui, client);
-    await click(buttonNamed("Buy", row("mentra.example")));
-    await settle();
-    expect(find('[role="alert"]', topDialog()).textContent).toBe("You already have Example Add-on.");
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: billingKeys.owner(ACCOUNT_SCOPE) });
+    expect(find('[role="alert"]', topDialog()).textContent).toBe("That isn't available for this subscription any more. Reload the page and try again.");
   });
 
   /** The three ways a person closes it, each as the platform delivers it. */
@@ -1145,22 +1082,21 @@ describe("the catalog dialog", () => {
   }
 
   test("reopening it starts without the old refusal", async () => {
-    const { billing } = realBilling(() => ({ status: 400, body: { error: "not_for_sale" } }));
-    const products = [callFor({ offer: personOffer() })];
-    const setup = dialogFor({ billing, scope: ACCOUNT_SCOPE, products });
+    const { billing } = realBilling(() => ({ status: 400, body: { error: "unknown_action" } }));
+    const setup = dialogFor({ billing, licenses: held });
     const { rerender } = await mount(setup.ui);
-    await click(buttonNamed("Buy"));
+    await click(buttonNamed("Add licenses", row("mentra.fleet")));
     await settle();
     expect(findAll('[role="alert"]')).toHaveLength(1);
     await click(find('[aria-label="Close"]', topDialog()));
     expect(setup.onClose).toHaveBeenCalled();
     await rerender(
       <QueryClientProvider client={new QueryClient()}>
-        {dialogFor({ billing, scope: ACCOUNT_SCOPE, products, open: false }).ui}
+        {dialogFor({ billing, licenses: held, open: false }).ui}
       </QueryClientProvider>,
     );
     expect(openDialogs()).toHaveLength(0);
-    await rerender(<QueryClientProvider client={new QueryClient()}>{dialogFor({ billing, scope: ACCOUNT_SCOPE, products }).ui}</QueryClientProvider>);
+    await rerender(<QueryClientProvider client={new QueryClient()}>{dialogFor({ billing, licenses: held }).ui}</QueryClientProvider>);
     expect(findAll('[role="alert"]')).toHaveLength(0);
   });
 
@@ -1170,8 +1106,8 @@ describe("the catalog dialog", () => {
     expect(findAll("button", find("dialog"))).toHaveLength(0);
   });
 
-  test("the owner-type rule holds here too, and an entry without an offer is a row with no price and no Buy", async () => {
-    const products = [callFor({ offer: undefined }), fleet({ ownerTypes: ["person"] }), addOn()];
+  test("an entry without an offer is a row with no price and no Buy", async () => {
+    const products = [callFor({ offer: undefined }), addOn()];
     await mount(dialogFor({ products }).ui);
     expect(findAll("[data-product]", topDialog()).map((element) => element.getAttribute("data-product"))).toEqual([
       "mentra.call.unlimited",
@@ -1202,30 +1138,19 @@ describe("the catalog dialog", () => {
 
 // ---- the heading is buying copy -----------------------------------------------------------------------------------
 
-describe("the grid's heading and its 'You'll pay by card' line", () => {
+describe("the grid's heading", () => {
   test("are drawn only when at least one entry has an offer for this viewer", async () => {
     await mount(grid({ products: [callFor({ offer: undefined }), fleet({ offer: undefined })] }).ui);
     expect(findAll("h2")).toHaveLength(0);
     expect(text()).not.toContain("Buy licenses");
-    expect(text()).not.toContain("You'll pay by card");
+    expect(text()).not.toContain("secure payment page");
     // The products themselves are display content: named, described, and nothing to buy.
     expect(findAll("[data-product]")).toHaveLength(2);
     expect(buttons()).toHaveLength(0);
     await cleanup();
     await mount(grid({ products: [callFor({ offer: undefined }), fleet()] }).ui);
     expect(find("h2").textContent).toBe("Buy licenses for your members");
-    expect(text()).toContain("You'll pay by card on a secure payment page");
-  });
-
-  test("a person's too", async () => {
-    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: undefined })] }).ui);
-    expect(findAll("h2")).toHaveLength(0);
-    expect(text()).not.toContain("Buy a license for yourself");
-    expect(text()).not.toContain("You'll pay by card");
-    await cleanup();
-    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })] }).ui);
-    expect(find("h2").textContent).toBe("Buy a license for yourself");
-    expect(text()).toContain("You'll pay by card on a secure payment page, then come back here.");
+    expect(text()).not.toContain("secure payment page");
   });
 
   test("follow the offer, not whether Buy is possible: an offer billing won't sell now still has them", async () => {
@@ -1233,12 +1158,6 @@ describe("the grid's heading and its 'You'll pay by card' line", () => {
     expect(find("h2").textContent).toBe("Buy licenses for your members");
   });
 
-  test("an entry for another owner type has no say", async () => {
-    // Only the person's product has an offer, and this is a workspace's grid: nothing here is offered to it.
-    await mount(grid({ products: [callFor({ offer: undefined }), fleet({ ownerTypes: ["person"] })] }).ui);
-    expect(findAll("h2")).toHaveLength(0);
-    expect(text()).not.toContain("You'll pay by card");
-  });
 });
 
 // ---- a first payment that isn't finished --------------------------------------------------------------------------
@@ -1317,14 +1236,6 @@ describe("a product whose first payment isn't finished", () => {
     expect(buttons(card("mentra.call.unlimited")).map((button) => button.textContent)).toEqual(["Complete payment"]);
   });
 
-  test("a person's reads the same", async () => {
-    await mount(grid({ scope: ACCOUNT_SCOPE, products: [callFor({ offer: personOffer() })], licenses: [incomplete({ quantity: 1 })] }).ui);
-    const mine = card("mentra.call.unlimited");
-    expect(mine.textContent).toContain("Payment incomplete");
-    expect(mine.textContent).not.toContain("You have it");
-    expect(buttons(mine).map((button) => button.textContent)).toEqual(["Complete payment"]);
-  });
-
   test("so does its row in the Buy licenses dialog", async () => {
     const out = ways();
     const stub = stubBilling();
@@ -1363,7 +1274,7 @@ describe("CatalogCard", () => {
   test("is the card the grid is made of: a held product with its own handlers", async () => {
     const onBuy = mock(() => {});
     await mount(
-      <CatalogCard entry={callFor()} scope="workspace" locale="en-US" held={null} busy={false} pending={false} onBuy={onBuy} onAddSeats={() => {}} />,
+      <CatalogCard entry={callFor()} locale="en-US" held={null} busy={false} pending={false} onBuy={onBuy} onAddSeats={() => {}} />,
     );
     await click(buttonNamed("Buy"));
     expect(onBuy).toHaveBeenCalledTimes(1);
@@ -1372,7 +1283,7 @@ describe("CatalogCard", () => {
   test("prices in the locale it is given", async () => {
     const entry = callFor({ offer: workspaceOffer(2900, { price: { scheme: "per_seat", unit: { amountMinor: 1450, currency: "USD" }, recurrence: { interval: "month", count: 3 } } }) });
     await mount(
-      <CatalogCard entry={entry} scope="workspace" locale="en-US" held={null} busy={false} pending={false} onBuy={() => {}} onAddSeats={() => {}} />,
+      <CatalogCard entry={entry} locale="en-US" held={null} busy={false} pending={false} onBuy={() => {}} onAddSeats={() => {}} />,
     );
     expect(byText("$14.50 per user every 3 months", "p")).toBeTruthy();
   });

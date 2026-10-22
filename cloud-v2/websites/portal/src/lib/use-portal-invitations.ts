@@ -10,7 +10,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invitationPreviewQuery, isInvitationGone, myInvitationsQuery, workspaceKeys } from "@mentra/workspace-ui";
 import { useEffect, useState } from "react";
-import { pendingInvitations, type LinkInvitation } from "./invitations";
+import { isIndeterminate, pendingInvitations, type LinkInvitation, type UnavailableInvitations } from "./invitations";
 import type { PortalSession } from "./portal";
 import { portalWorkspaceApi } from "./portal";
 import { INVITATION_PATH } from "./routes";
@@ -28,7 +28,11 @@ export function usePortalInvitations(args: {
   localStore: InviteStorage | null;
   /** The link's token was forgotten: the host drops any copy it keeps. */
   onTokenForgotten?(): void;
-}): Pick<PortalSession, "link" | "invitations" | "forgetInvitation"> & { inviteToken: string | null } {
+}): Pick<PortalSession, "link" | "invitations" | "forgetInvitation"> & {
+  inviteToken: string | null;
+  /** Invitations that could not be read, so the first run waits for them (lib/invitations). */
+  unavailable: UnavailableInvitations | null;
+} {
   const { signedIn, accountEmail, pathname, sessionStore, localStore } = args;
   const qc = useQueryClient();
   const [inviteToken, setInviteToken] = useState<string | null>(args.initialToken);
@@ -70,7 +74,23 @@ export function usePortalInvitations(args: {
           ? { status: "unavailable", token: inviteToken, error: peek.error, retry: () => void peek.refetch() }
           : { status: "checking", token: inviteToken };
 
+  // Neither source is "none" while its failure may pass: a dropped connection or a 5xx. A 4xx is an answer.
+  const linkUnreadable = signedIn && link.status === "unavailable" && isIndeterminate(link.error);
+  const mineUnreadable = signedIn && mine.isError && isIndeterminate(mine.error);
+  const unavailable: UnavailableInvitations | null =
+    linkUnreadable || mineUnreadable
+      ? {
+          error: link.status === "unavailable" && linkUnreadable ? link.error : mine.error,
+          token: linkUnreadable && link.status === "unavailable" ? link.token : null,
+          retry() {
+            if (linkUnreadable) void peek.refetch();
+            if (mineUnreadable) void mine.refetch();
+          },
+        }
+      : null;
+
   return {
+    unavailable,
     // The token is never offered once it is known to be dead, even before it is forgotten.
     inviteToken: peekGone ? null : inviteToken,
     link,

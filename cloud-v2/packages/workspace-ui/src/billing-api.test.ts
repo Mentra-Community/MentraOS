@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { BillingCatalog, BillingStatus } from "@mentra/workspace-contract/portal-billing";
 import {
-  ACCOUNT_SCOPE,
   BillingContractError,
   BillingRefusedError,
   BillingUnavailableError,
@@ -49,11 +48,10 @@ const CATALOG: BillingCatalog = {
       description: "Unlimited calls.",
       icon: "/api/portal/billing/ui/icons/call.png",
       features: [{ key: "call.unlimited", name: "Unlimited calls", appName: "Mentra Call" }],
-      ownerTypes: ["workspace", "person"],
       offer: {
         price: { scheme: "per_seat", unit: usd(2900), recurrence: { interval: "month", count: 1 } },
         tax: "excluded",
-        buy: { minSeats: 1, maxSeats: 500, defaultSeats: 5 },
+        buy: { minSeats: 1, maxSeats: 500 },
       },
     },
   ],
@@ -95,15 +93,29 @@ describe("createBillingApi: routes and the locale", () => {
     expect(rec.calls[0]!.body).toBeUndefined();
   });
 
-  test("reads the account's catalog and status under /account", async () => {
-    const rec = recordingFetch(Response.json(CATALOG), Response.json(STATUS));
+  test("every route is under a workspace: there is no account family", async () => {
+    const rec = recordingFetch(Response.json(CATALOG), Response.json(STATUS), Response.json({ url: "https://pay.example.test/c" }), Response.json({ url: "https://pay.example.test/s" }));
     const billing = createBillingApi({ fetch: rec.fetch, locale: "en-US" });
-    await billing.catalog(ACCOUNT_SCOPE);
-    await billing.status(ACCOUNT_SCOPE, {});
-    expect(rec.calls.map((call) => call.url)).toEqual([
-      "/api/portal/billing/account/catalog?locale=en-US",
-      "/api/portal/billing/account/status?locale=en-US",
+    await billing.catalog(WORKSPACE);
+    await billing.status(WORKSPACE, {});
+    await billing.purchase(WORKSPACE, { product: "p", seats: 1 });
+    await billing.session(WORKSPACE, { action: "billing_and_invoices" });
+    expect(rec.calls.map((call) => new URL(call.url, "https://x.test").pathname)).toEqual([
+      "/api/portal/billing/workspaces/ws_acme/catalog",
+      "/api/portal/billing/workspaces/ws_acme/status",
+      "/api/portal/billing/workspaces/ws_acme/purchase",
+      "/api/portal/billing/workspaces/ws_acme/session",
     ]);
+  });
+
+  test("an older Store's ownerTypes and defaultSeats are stripped from the catalog it answers", async () => {
+    const old = structuredClone(CATALOG) as unknown as { products: Array<Record<string, unknown> & { offer: { buy: Record<string, unknown> } }> };
+    old.products[0]!.ownerTypes = ["workspace", "person"];
+    old.products[0]!.offer.buy.defaultSeats = 5;
+    const rec = recordingFetch(Response.json(old));
+    const catalog = await createBillingApi({ fetch: rec.fetch, locale: "en-US" }).catalog(WORKSPACE);
+    expect(catalog).toEqual(CATALOG);
+    expect("ownerTypes" in catalog.products[0]!).toBe(false);
   });
 
   test("status carries the purchase to look up, when there is one, and the locale", async () => {
@@ -152,8 +164,8 @@ describe("createBillingApi: routes and the locale", () => {
     const billing = createBillingApi({ fetch: rec.fetch, locale: "fr-CA" });
     await billing.catalog(WORKSPACE);
     await billing.status(WORKSPACE, {});
-    await billing.purchase(ACCOUNT_SCOPE, { product: "p", seats: 1 });
-    await billing.session(ACCOUNT_SCOPE, { action: "billing_and_invoices" });
+    await billing.purchase(WORKSPACE, { product: "p", seats: 1 });
+    await billing.session(WORKSPACE, { action: "billing_and_invoices" });
     expect(new URL(rec.calls[0]!.url, "https://x.test").searchParams.get("locale")).toBe("fr-CA");
     expect(new URL(rec.calls[1]!.url, "https://x.test").searchParams.get("locale")).toBe("fr-CA");
     expect((rec.calls[2]!.body as { locale: string }).locale).toBe("fr-CA");
@@ -329,9 +341,6 @@ describe("billingErrorMessage", () => {
     expect(billingErrorMessage(refused("already_licensed"), { product: "Mentra Call Unlimited" })).toBe(
       "You already have Mentra Call Unlimited. Add licenses instead.",
     );
-    expect(billingErrorMessage(refused("already_licensed"), { product: "Mentra Call Unlimited", scope: "person" })).toBe(
-      "You already have Mentra Call Unlimited.",
-    );
     expect(billingErrorMessage(refused("checkout_in_progress"), { product: "Mentra Call Unlimited" })).toBe(
       "A purchase of Mentra Call Unlimited is already under way. Finish it, or try again in a minute.",
     );
@@ -362,7 +371,6 @@ describe("what a screen that doesn't use billing pulls in", () => {
     expect(api.BillingUnavailableError).toBe(errors.BillingUnavailableError);
     expect(api.billingErrorMessage).toBe(errors.billingErrorMessage);
     expect(api.workspaceScope).toBe(scope.workspaceScope);
-    expect(api.ACCOUNT_SCOPE).toBe(scope.ACCOUNT_SCOPE);
-    expect(api.ownerTypeOf).toBe(scope.ownerTypeOf);
+    expect("ACCOUNT_SCOPE" in scope || "ownerTypeOf" in scope || "ACCOUNT_SCOPE" in api || "ownerTypeOf" in api).toBe(false);
   });
 });
