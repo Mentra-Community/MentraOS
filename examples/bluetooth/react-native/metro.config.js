@@ -30,12 +30,16 @@ const defaultResolveRequest = config.resolver.resolveRequest;
 
 // Inside MentraOS this app is a member of the examples/ Bun workspace, which
 // links the @mentra packages to the SDK source in mobile/modules and
-// cloud-v2/packages and keeps npm packages in examples/node_modules. Metro
-// only serves files inside watched folders, so watch those trees. In a
-// standalone copy of this example every package is under its node_modules.
+// cloud-v2/packages and keeps npm packages in examples/node_modules. The SDK
+// packages are also members of the mobile/ and cloud-v2/ workspaces, so their
+// own dependency links point into whichever of those stores was installed
+// last. Metro only serves files inside watched folders, so watch all of them.
+// In a standalone copy of this example every package is under its node_modules.
 const repoRoot = path.resolve(projectRoot, "..", "..", "..");
 const sourceFolders = [
   path.join(repoRoot, "examples", "node_modules"),
+  path.join(repoRoot, "mobile", "node_modules"),
+  path.join(repoRoot, "cloud-v2", "node_modules"),
   path.join(repoRoot, "mobile", "modules"),
   path.join(repoRoot, "cloud-v2", "packages"),
 ];

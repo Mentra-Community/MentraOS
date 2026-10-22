@@ -12,13 +12,24 @@ const config = getDefaultConfig(projectRoot)
 
 // This app is a member of the examples/ Bun workspace (examples/package.json),
 // which links the @mentra packages to the SDK source in mobile/modules and
-// cloud-v2/packages. Bun's isolated linker places the real npm packages in the
-// workspace store (examples/node_modules/.bun). Metro only serves files inside
-// watched folders, so watch the store and the source trees. Only watch folders
-// that exist: Metro's verifyRootExists() throws ENOENT on a missing
-// watchFolder, which kills the release bundle outright.
+// cloud-v2/packages. Those packages are also members of the mobile/ and
+// cloud-v2/ workspaces, so their node_modules links point into whichever
+// workspace store (node_modules/.bun) was installed last. Metro only serves
+// files inside watched folders, so keep Expo's defaults and watch every store
+// and the source trees. Only watch folders that exist: Metro's
+// verifyRootExists() throws ENOENT on a missing watchFolder, which kills the
+// release bundle outright.
 const workspaceNodeModules = path.resolve(projectRoot, "..", "node_modules")
-config.watchFolders = [workspaceNodeModules, modulesRoot, cloudPackagesRoot].filter((folder) => fs.existsSync(folder))
+const sharedFolders = [
+  workspaceNodeModules,
+  path.resolve(repoRoot, "mobile", "node_modules"),
+  path.resolve(repoRoot, "cloud-v2", "node_modules"),
+  modulesRoot,
+  cloudPackagesRoot,
+]
+config.watchFolders = Array.from(
+  new Set([...(config.watchFolders ?? []), ...sharedFolders.filter((folder) => fs.existsSync(folder))]),
+)
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
