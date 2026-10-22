@@ -123,6 +123,8 @@ let otherReasons: Set<string>
 let assignments: Map<string, ManagedAssignment>
 let running: Set<string>
 let devSelections: Set<string>
+/** Packages whose release this deployment's policy would not run. */
+let disallowed: Set<string>
 let revoked: Set<string>
 let stopListeners: Set<(packageName: string) => void>
 let dueListeners: Set<(packageName: string) => void>
@@ -159,6 +161,7 @@ function start(): AssignmentReconciler {
       assignment: (pkg) => assignments.get(pkg) ?? null,
       assignedPackages: () => [...assignments.keys()],
       hasDevelopmentSelection: (pkg) => devSelections.has(pkg),
+      allowsRelease: (pkg) => !disallowed.has(pkg),
       clearDevelopmentSelection: async (pkg) => {
         calls.push(`clear-dev:${pkg}`)
         devSelections.delete(pkg)
@@ -263,6 +266,7 @@ beforeEach(() => {
   assignments = new Map()
   running = new Set()
   devSelections = new Set()
+  disallowed = new Set()
   revoked = new Set()
   stopListeners = new Set()
   dueListeners = new Set()
@@ -442,6 +446,26 @@ describe("managed desired state", () => {
     expect(assignments.has(notes)).toBe(true)
     expect(calls).not.toContain("uninstall:com.acme.notes")
     expect(calls).not.toContain("unassign:com.acme.notes")
+  })
+
+  test("a release the deployment would not run is blocked, not installed or reported installed", async () => {
+    disallowed.add(notes)
+    const r = await startAndSettle()
+    expect(calls).toEqual([])
+    expect(states()).toEqual(["blocked:incompatible_host"])
+
+    installed.set(notes, {version: "1.0.0", bundleSha256: "c".repeat(64)})
+    answer = async () => managed(2, [{rev: 2}])
+    r.trigger("revision", 2)
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual([])
+    expect(states().at(-1)).toBe("blocked:incompatible_host")
+
+    disallowed.clear()
+    r.trigger("foreground")
+    await timers.advance(TRIGGER_JITTER_MS)
+    expect(calls).toEqual(["assign:com.acme.notes"])
+    expect(states().at(-1)).toBe("installed")
   })
 
   test("a running miniapp is deferred_running and installs when it stops", async () => {

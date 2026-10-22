@@ -77,6 +77,11 @@ export interface ManagedMiniappPort {
   hasDevelopmentSelection(packageName: string): boolean
   /** Clear the package's live-development selection, so launching runs its installed release. */
   clearDevelopmentSelection(packageName: string): Promise<void>
+  /**
+   * The deployment's policy lets the phone run this release once it is installed: the release on disk when it has
+   * these bytes, otherwise one installed from its URL.
+   */
+  allowsRelease(packageName: string, version: string, bundleSha256: string): boolean
   install(request: {
     resolution: Extract<ManagedResolution, {ok: true}>
     assignment: ManagedAssignment
@@ -597,6 +602,16 @@ export function createAssignmentReconciler(deps: AssignmentReconcilerDeps): Assi
         previous.reason === "not_a_miniapp" ||
         previous.reason === "incompatible_host")
     ) {
+      return
+    }
+    // A release the phone would not run here is neither downloaded nor reported installed.
+    if (!miniapps.allowsRelease(entry.packageName, selectedVersion, resolution.bundleSha256)) {
+      record(entry, desired.revision, {
+        state: "blocked",
+        reason: "incompatible_host",
+        selectedVersion,
+        installedVersion: installed?.version,
+      })
       return
     }
     if (installed) {

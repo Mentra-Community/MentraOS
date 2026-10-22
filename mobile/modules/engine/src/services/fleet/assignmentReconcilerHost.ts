@@ -8,6 +8,7 @@
 import NetInfo from "@react-native-community/netinfo"
 import {AppState} from "react-native"
 
+import {isInstalledMiniappAllowed} from "../../runtime/bootstrap"
 import {BgTimer} from "../../utils/timers"
 import appRegistry from "../AppRegistry"
 import {cloudClientService} from "../CloudClientService"
@@ -49,6 +50,18 @@ function installedRelease(packageName: string): {version: string; bundleSha256?:
   return sha ? {version, bundleSha256: sha} : {version}
 }
 
+function allowsRelease(packageName: string, version: string, bundleSha256: string): boolean {
+  const onDisk = appRegistry.getInstalledVersions(packageName).includes(version)
+    ? appRegistry.getReleaseIdentity(packageName, version)
+    : null
+  const sameBytes = onDisk && (!onDisk.bundleSha256 || onDisk.bundleSha256 === bundleSha256)
+  return isInstalledMiniappAllowed(
+    packageName,
+    version,
+    sameBytes ? onDisk : {source: "direct_download", bundleSha256},
+  )
+}
+
 const miniapps: ManagedMiniappPort = {
   resolve: (url) => resolveMiniappUrl(url),
   installedRelease: async (packageName) => installedRelease(packageName),
@@ -57,6 +70,7 @@ const miniapps: ManagedMiniappPort = {
   assignedPackages: () => appRegistry.getAssignedPackages(),
   hasDevelopmentSelection: (packageName) => appRegistry.hasDevelopmentSelection(packageName),
   clearDevelopmentSelection: (packageName) => appRegistry.clearDevelopmentSelection(packageName),
+  allowsRelease,
   install: (request) => installManagedMiniapp(request),
   classify: classifyManagedInstallError,
   setAssignment: (packageName, assignment) => appRegistry.setMiniappAssignment(packageName, assignment),
