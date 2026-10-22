@@ -227,7 +227,8 @@ jobs:
               echo "$BRANCH already carries $current."
               exit 0
             fi
-            # The kit keeps its own .github (its CI); everything else is the export.
+            # The kit keeps its own .github (its CI); everything else is the export,
+            # in the kit's layout: shared files at the root, apps under examples/.
             find kit -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
             cp -a export/. kit/
             git -C kit config user.name "mentra-starter-kit-export[bot]"

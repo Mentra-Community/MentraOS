@@ -28,8 +28,10 @@ checkout, with no published packages and no version pins:
 | `ios`, `macos` | Local Swift package `mobile/modules/bluetooth-sdk` |
 | `react-native`, `react-native-elevenlabs-audio`, `react-native-macos` | Members of the `examples/` Bun workspace; `@mentra/*` are `workspace:*` links to `mobile/modules` and `cloud-v2/packages` |
 
-Paths in this folder's docs are relative to the Starter Kit root, which is
-`examples/bluetooth` in MentraOS. The `Example App Builds` workflow in MentraOS
+In the standalone Starter Kit the shared files (this README, `LICENSE`,
+`docs/`) sit at the repository root and each app under `examples/<app>`; in
+MentraOS every app sits directly in `examples/bluetooth`. The export moves the
+apps and rewrites the relative links between them. The `Example App Builds` workflow in MentraOS
 builds every example on changes to them or to the SDK.
 
 The standalone

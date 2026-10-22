@@ -22,7 +22,7 @@
 //   guard      fail if anything still points at the MentraOS tree
 import {spawnSync} from "node:child_process"
 import {createHash} from "node:crypto"
-import {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs"
+import {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
@@ -351,8 +351,74 @@ export function transformStarterKit({
     pinPackageJson(path.join(directory, "package.json"), coordinates, patches)
   }
 
+  arrangeKitLayout(output)
   writeJson(path.join(output, RELEASE_RECORD_NAME), starterKitReleaseRecord({record, recordSha256, coordinates}))
-  return {coordinates, examples}
+  return {coordinates, examples: examples.map((example) => `${KIT_APPS_DIRECTORY}/${example}`)}
+}
+
+// --- kit layout -------------------------------------------------------------
+
+// The kit repository keeps its shared files (README, LICENSE, docs) at the root
+// and each app under examples/<app>, where its own CI builds them. In MentraOS
+// every app sits directly in examples/bluetooth.
+export const KIT_APPS_DIRECTORY = "examples"
+const MENTRAOS_SOURCE_URL = "https://github.com/Mentra-Community/MentraOS/blob/dev"
+const SHARED_DIRECTORIES = new Set(["docs", ".github"])
+
+function kitApps(root) {
+  return readdirSync(root, {withFileTypes: true})
+    .filter((entry) => entry.isDirectory() && !SHARED_DIRECTORIES.has(entry.name) && entry.name !== KIT_APPS_DIRECTORY)
+    .map((entry) => entry.name)
+}
+
+// Rewrites one relative Markdown link of `fromFile` (a path in the MentraOS
+// layout) for the kit layout. Links that leave examples/bluetooth point at
+// MentraOS on GitHub.
+export function kitLink(fromFile, target, apps) {
+  if (/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(target)) return target
+  const [linkPath, ...fragment] = target.split("#")
+  const hash = fragment.length > 0 ? `#${fragment.join("#")}` : ""
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), linkPath))
+  if (resolved === ".." || resolved.startsWith("../")) {
+    return `${MENTRAOS_SOURCE_URL}/${path.posix.normalize(path.posix.join("examples/bluetooth", resolved))}${hash}`
+  }
+  const appOf = (file) => (apps.includes(file.split("/")[0]) ? file.split("/")[0] : null)
+  // Within one app, or between shared files, nothing moves relative to the other.
+  if (appOf(fromFile) === appOf(resolved)) return target
+  const toKit = (file) => (appOf(file) ? `${KIT_APPS_DIRECTORY}/${file}` : file)
+  return `${path.posix.relative(path.posix.dirname(toKit(fromFile)), toKit(resolved)) || "."}${hash}`
+}
+
+function listMarkdown(directory, base = directory) {
+  return readdirSync(directory, {withFileTypes: true}).flatMap((entry) => {
+    const file = path.join(directory, entry.name)
+    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : listMarkdown(file, base)
+    return entry.name.endsWith(".md") ? [path.relative(base, file).split(path.sep).join("/")] : []
+  })
+}
+
+// Moves each app into examples/<app>, then fixes the relative Markdown links
+// and the .gitignore patterns anchored to the old root.
+export function arrangeKitLayout(root) {
+  const apps = kitApps(root)
+  const markdown = listMarkdown(root)
+  for (const file of markdown) {
+    const absolute = path.join(root, file)
+    const contents = readFileSync(absolute, "utf8")
+    const rewritten = contents.replace(/\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g, (_match, target, title) => {
+      return `](${kitLink(file, target, apps)}${title})`
+    })
+    if (rewritten !== contents) writeFileSync(absolute, rewritten)
+  }
+  const ignoreFile = path.join(root, ".gitignore")
+  if (existsSync(ignoreFile)) {
+    // App names are plain directory names ([A-Za-z0-9._-]).
+    const pattern = new RegExp(`^(!?)/(${apps.join("|").replaceAll(".", "\\.")})(?=/|$)`, "gm")
+    writeFileSync(ignoreFile, readFileSync(ignoreFile, "utf8").replace(pattern, `$1${KIT_APPS_DIRECTORY}/$2`))
+  }
+  mkdirSync(path.join(root, KIT_APPS_DIRECTORY), {recursive: true})
+  for (const app of apps) renameSync(path.join(root, app), path.join(root, KIT_APPS_DIRECTORY, app))
+  return apps
 }
 
 // Seeds each example's lockfile from the workspace lockfile, so the standalone

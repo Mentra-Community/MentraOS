@@ -1435,4 +1435,3 @@ test("the docs verification receives the release identity and both example links
     assert.match(script, new RegExp(`process\\.env\\.${name}`), name)
   }
 })
-
