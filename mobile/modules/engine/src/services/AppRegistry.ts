@@ -417,9 +417,7 @@ function readStoredInstallReasons(packageName: string): StoredInstallReasons | n
       ? MINIAPP_INSTALL_REASONS.filter((reason) => parsed.reasons!.includes(reason))
       : []
     const assignment = reasons.includes("assignment") && parsed.assignment ? parsed.assignment : undefined
-    return assignment
-      ? {reasons, assignment}
-      : {reasons: reasons.filter((reason) => reason !== "assignment")}
+    return assignment ? {reasons, assignment} : {reasons: reasons.filter((reason) => reason !== "assignment")}
   } catch {
     return null
   }
