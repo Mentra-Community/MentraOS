@@ -157,10 +157,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           # Scoped by job and runner.environment, as in the Mentra App build.
-          key: gradle-${{ runner.environment }}-${{ runner.os }}-example-android-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bluetooth/android/**/*.gradle*', 'examples/bluetooth/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/modules/bluetooth-sdk/android/**/*.gradle*') }}
+          # Holds Gradle's local build cache (caches/build-cache-1) too. Bump
+          # the version prefix to save a fresh cache after a change.
+          key: gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-android-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bluetooth/android/**/*.gradle*', 'examples/bluetooth/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/modules/bluetooth-sdk/android/**/*.gradle*') }}
           restore-keys: |
-            gradle-${{ runner.environment }}-${{ runner.os }}-example-android-${{ steps.cache-week.outputs.week }}-
-            gradle-${{ runner.environment }}-${{ runner.os }}-example-android-
+            gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-android-${{ steps.cache-week.outputs.week }}-
+            gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-android-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -180,7 +182,7 @@ jobs:
         # settings.gradle.kts includes mobile/modules/bluetooth-sdk/android
         # and substitutes com.mentraglass:bluetooth-sdk with it.
         working-directory: examples/bluetooth/android
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug --no-daemon --build-cache
 
       - name: Verify foreground service types
         working-directory: examples/bluetooth/android
@@ -232,10 +234,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           # Scoped by job and runner.environment, as in the Mentra App build.
-          key: gradle-${{ runner.environment }}-${{ runner.os }}-example-react-native-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bun.lock', 'examples/bluetooth/react-native/**/*.gradle') }}
+          # Holds Gradle's local build cache (caches/build-cache-1) too. Bump
+          # the version prefix to save a fresh cache after a change.
+          key: gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-react-native-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bun.lock', 'examples/bluetooth/react-native/**/*.gradle') }}
           restore-keys: |
-            gradle-${{ runner.environment }}-${{ runner.os }}-example-react-native-${{ steps.cache-week.outputs.week }}-
-            gradle-${{ runner.environment }}-${{ runner.os }}-example-react-native-
+            gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-react-native-${{ steps.cache-week.outputs.week }}-
+            gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-react-native-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -332,7 +336,7 @@ jobs:
 
       - name: Build release Android app
         working-directory: examples/bluetooth/react-native/android
-        run: ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
+        run: ./gradlew :app:assembleRelease --no-daemon --build-cache -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
 
       - name: Verify Android 16 KB page-size support
         run: examples/bluetooth/react-native/scripts/check-android-16kb.sh examples/bluetooth/react-native/android/app/build/outputs/apk/release/app-release.apk
@@ -382,10 +386,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           # Scoped by job and runner.environment, as in the Mentra App build.
-          key: gradle-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bun.lock', 'examples/bluetooth/react-native-elevenlabs-audio/**/*.gradle') }}
+          # Holds Gradle's local build cache (caches/build-cache-1) too. Bump
+          # the version prefix to save a fresh cache after a change.
+          key: gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-${{ steps.cache-week.outputs.week }}-${{ hashFiles('examples/bun.lock', 'examples/bluetooth/react-native-elevenlabs-audio/**/*.gradle') }}
           restore-keys: |
-            gradle-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-${{ steps.cache-week.outputs.week }}-
-            gradle-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-
+            gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-${{ steps.cache-week.outputs.week }}-
+            gradle-v2-${{ runner.environment }}-${{ runner.os }}-example-rn-elevenlabs-audio-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -463,7 +469,7 @@ jobs:
 
       - name: Build release Android app
         working-directory: examples/bluetooth/react-native-elevenlabs-audio/android
-        run: ./gradlew :app:assembleRelease --no-daemon
+        run: ./gradlew :app:assembleRelease --no-daemon --build-cache
 
       - name: Name the APK
         env:

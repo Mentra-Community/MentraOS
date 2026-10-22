@@ -964,7 +964,9 @@ test("example builds outside releases compile one architecture and reuse caches"
   assert.doesNotMatch(reusable, /cache: gradle/)
   for (const job of ["android", "react-native", "react-native-elevenlabs-audio"]) {
     const block = jobBlock(reusable, job)
-    assert.match(block, /key: gradle-\$\{\{ runner\.environment \}\}-\$\{\{ runner\.os \}\}-example-[a-z-]+-\$\{\{ steps\.cache-week\.outputs\.week \}\}-/, job)
+    assert.match(block, /key: gradle-v2-\$\{\{ runner\.environment \}\}-\$\{\{ runner\.os \}\}-example-[a-z-]+-\$\{\{ steps\.cache-week\.outputs\.week \}\}-/, job)
+    // Gradle's local build cache lives in the cached ~/.gradle/caches.
+    assert.match(block, /\.\/gradlew :app:assemble(Debug|Release) --no-daemon --build-cache/, job)
   }
   for (const job of ["react-native", "react-native-elevenlabs-audio"]) {
     const block = jobBlock(reusable, job)
