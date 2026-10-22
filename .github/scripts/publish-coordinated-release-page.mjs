@@ -8,7 +8,7 @@ import {pathToFileURL} from "node:url"
 import {exampleArtifacts} from "./bluetooth-example-artifacts.mjs"
 import {finalizeReleaseManifest} from "./release-family.mjs"
 import {downloadNames} from "./coordinated-install-downloads.mjs"
-import {artifactUrl} from "./release-artifact-storage.mjs"
+import {artifactUrl, releaseBodyUpdate} from "./release-artifact-storage.mjs"
 
 const START = "<!-- mentra-release-downloads:start -->"
 const END = "<!-- mentra-release-downloads:end -->"
@@ -136,7 +136,12 @@ export function publishProductionReleasePage({plan, manifest, repository, releas
   assert.equal(release.prerelease, false)
   const body = updateDownloadNotes(release.body || "", notes)
   if (body === release.body) return release
-  return api(`repos/${repository}/releases/${release.id}`, {method: "PATCH", data: {body}})
+  // The stable release is a draft until it is published by hand; keep its tag
+  // (and so the release) by sending it with the body.
+  return api(`repos/${repository}/releases/${release.id}`, {
+    method: "PATCH",
+    data: releaseBodyUpdate(release, release.tag_name, body),
+  })
 }
 
 export function updateDownloadNotes(body = "", notes) {
@@ -177,7 +182,10 @@ export function publishCoordinatedReleasePage({plan, manifest, repository, examp
     assert.equal(existing.prerelease, true)
     const body = updateDownloadNotes(existing.body || "", notes)
     if (body === existing.body) return existing
-    return api(`${route}/releases/${existing.id}`, {method: "PATCH", data: {body}})
+    return api(`${route}/releases/${existing.id}`, {
+      method: "PATCH",
+      data: releaseBodyUpdate(existing, existing.tag_name, body),
+    })
   }
   return api(`${route}/releases`, {
     method: "POST",
