@@ -199,7 +199,7 @@ describe("credentials panel: who sees what", () => {
     expect(lowerMember).not.toContain("Create key");
   });
 
-  test("a developer can create and revoke from the same panel, behind a confirm step", () => {
+  test("a developer can create and revoke from the same panel, and Revoke asks in a dialog that is not there until then", () => {
     const { api } = offlineApi();
     const markup = renderSeeded(
       api,
@@ -208,7 +208,7 @@ describe("credentials panel: who sees what", () => {
     );
     expect(markup).toContain("Create key");
     expect(markup).toContain('aria-label="Revoke CI publisher"');
-    expect(markup).not.toContain("Confirm revoke");
+    expect(markup).not.toContain("<dialog");
     expect(markup).toContain("com.acme.scanner");
   });
 });

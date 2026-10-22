@@ -20,9 +20,9 @@ on:
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
-      - "sdk/example-oem-app/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
+      - "examples/oem-app/**"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
   push:
     branches:
@@ -34,9 +34,9 @@ on:
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
-      - "sdk/example-oem-app/**"
-      - "sdk/package.json"
-      - "sdk/bun.lock"
+      - "examples/oem-app/**"
+      - "examples/package.json"
+      - "examples/bun.lock"
       - ".github/workflows/oem-host-gate.yml"
   workflow_dispatch:
 
@@ -63,30 +63,19 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install SDK workspace
-        working-directory: sdk
-        # The sdk postinstall builds @mentra/miniapp, whose types engine's
-        # build imports — let it run.
+      - name: Install the examples workspace
+        # The workspace links the @mentra packages to their source; installing
+        # runs their prepare scripts, which build the bluetooth-sdk, crust and
+        # miniapp types that engine's build imports.
+        working-directory: examples
         run: bun install --frozen-lockfile
-
-      - name: Build bluetooth-sdk types
-        # engine's public entry re-exports event types from
-        # @mentra/bluetooth-sdk, so its build/*.d.ts must exist first.
-        working-directory: mobile/modules/bluetooth-sdk
-        run: bun run build
-
-      - name: Build crust types
-        # engine's services import @mentra/crust, whose types point at its
-        # build output.
-        working-directory: mobile/modules/crust
-        run: bun run build
 
       - name: Build engine public types
         working-directory: mobile/modules/engine
         run: bun run build
 
       - name: Typecheck example OEM app against the built public entry
-        working-directory: sdk/example-oem-app
+        working-directory: examples/oem-app
         run: bunx tsc --noEmit
 
       - name: Forbid internal-surface imports in the OEM app
@@ -103,13 +92,13 @@ jobs:
             -e '@mentra/engine/devtools' \
             -e '@mentra/bluetooth-sdk/internal' \
             -e '@mentra/bluetooth-sdk-internal' \
-            sdk/example-oem-app || true)
+            examples/oem-app || true)
           if [ -n "$violations" ]; then
             echo "Internal-surface imports found in the example OEM app:" >&2
             echo "$violations" >&2
             exit 1
           fi
-          if grep -n 'internal' sdk/example-oem-app/tsconfig.json; then
+          if grep -n 'internal' examples/oem-app/tsconfig.json; then
             echo "tsconfig.json must not path-map internal entries" >&2
             exit 1
           fi

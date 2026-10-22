@@ -326,6 +326,23 @@ describe("Members", () => {
     expect(t.members.cancel).toBe("Cancel");
   });
 
+  test("Leave, Delete and Revoke ask in a dialog too: the question, one plain line, and the action's name", () => {
+    expect(t.confirm.cancel).toBe("Cancel");
+    expect(t.confirm.leave.title("Acme Robotics")).toBe("Leave Acme Robotics?");
+    expect(t.confirm.leave.body).toBe("You lose access to this workspace.");
+    expect(t.confirm.leave.action).toBe("Leave");
+    expect(t.confirm.delete.title("Acme Robotics")).toBe("Delete Acme Robotics?");
+    expect(t.confirm.delete.body).toBe("Deleting a workspace ends every membership and invitation and revokes every key. It cannot be undone.");
+    expect(t.confirm.delete.typeName("Acme Robotics")).toEqual({ lead: "Type ", name: "Acme Robotics", rest: " to confirm" });
+    expect(t.confirm.delete.action).toBe("Delete");
+    expect(t.confirm.revokeInvitation.title("jamie@acme.test")).toBe("Revoke the invitation for jamie@acme.test?");
+    expect(t.confirm.revokeInvitation.body).toBe("The link they were sent stops working.");
+    expect(t.confirm.revokeInvitation.action).toBe("Revoke");
+    expect(t.confirm.revokeKey.title("CI publisher")).toBe("Revoke CI publisher?");
+    expect(t.confirm.revokeKey.body).toBe("Anything using it stops working.");
+    expect(t.confirm.revokeKey.action).toBe("Revoke");
+  });
+
   test("what fits, when licenses are given to several people at once (the people picker's lines)", () => {
     expect(t.assign.enough({ free: 2, quantity: 5, chosen: 2 })).toBe("2 of 5 licenses available: enough for both.");
     expect(t.assign.enough({ free: 4, quantity: 5, chosen: 3 })).toBe("4 of 5 licenses available: enough for all 3.");
@@ -575,6 +592,11 @@ const SAMPLES: Record<string, unknown[][]> = {
   "members.moreFor": [["Dana Reyes"]],
   "members.changeRoleTo": [["Admin"]],
   "members.removePrompt": [["Dana Reyes"]],
+  "confirm.leave.title": [["Acme Field Services"]],
+  "confirm.delete.title": [["Acme Field Services"]],
+  "confirm.delete.typeName": [["Acme Field Services"]],
+  "confirm.revokeInvitation.title": [["jamie@acme.test"]],
+  "confirm.revokeKey.title": [["CI publisher"]],
   "assign.enough": [
     [{ free: 2, quantity: 5, chosen: 1 }],
     [{ free: 2, quantity: 5, chosen: 2 }],

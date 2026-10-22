@@ -538,6 +538,8 @@ describe("the row's menu: Change role and Remove from workspace", () => {
       expect(find('[role="alert"]', removeDialog()).textContent).toBe("This workspace changed. Review and try again.");
       expect(findAll('[role="alert"]').map(isNeutral)).toEqual([true]);
       expect(byText("Remove", "button", removeDialog()).hasAttribute("disabled")).toBe(false);
+      // Focus is back on the button, which was disabled while the request was out.
+      expect(document.activeElement).toBe(byText("Remove", "button", removeDialog()));
       // Another try, once Core agrees.
       world.fail = undefined;
       await click(byText("Remove", "button", removeDialog()));

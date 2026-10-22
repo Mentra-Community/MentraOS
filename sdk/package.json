@@ -5,7 +5,6 @@
   },
   "workspaces": [
     "create-mentra-miniapp",
-    "example-oem-app",
     "miniapp-cli",
     "../cloud-v2/packages/*",
     "!../cloud-v2/packages/workspace-ui",
