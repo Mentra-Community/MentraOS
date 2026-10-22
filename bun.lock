@@ -62,6 +62,7 @@
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
+        "@mentra/workspace-contract": "workspace:*",
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
@@ -159,6 +160,9 @@
     "cloud-v2/packages/workspace-contract": {
       "name": "@mentra/workspace-contract",
       "version": "0.0.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
     },
     "miniapps/captions": {
       "name": "local-captions",
