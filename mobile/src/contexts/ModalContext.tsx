@@ -1,7 +1,7 @@
 /**
  * The Mentra App's one alert surface: a bottom sheet with an optional icon, a title, a message, optional
- * content and stacked buttons. Both `showAlert` here and the older `showAlert` in `@/utils/AlertUtils`
- * present through it.
+ * content and buttons. Both `showAlert` here and the older `showAlert` in `@/utils/AlertUtils` present
+ * through it.
  *
  * - Alerts queue. One sheet shows at a time, in the order they were asked for. An alert identical to one
  *   already waiting (same title, message and buttons) joins it instead of showing twice: every caller
@@ -10,10 +10,21 @@
  *   permission prompt, a picker) never races the sheet.
  * - Swiping the sheet down, tapping outside it and Android back answer with the cancel button, and only
  *   when the alert has one and allows dismissal. Otherwise the sheet waits for a button.
+ * - Buttons follow iOS alerts: two buttons sit side by side with the main action on the right, unless a
+ *   label wouldn't fit on one line. Then, and with three or more buttons, they stack, main action on top.
  */
 import {StatusBar} from "expo-status-bar"
 import {type ReactNode, useCallback, useEffect, useReducer, useRef, useState} from "react"
-import {BackHandler, Keyboard, Pressable, ScrollView, type TextStyle, useWindowDimensions, View} from "react-native"
+import {
+  BackHandler,
+  Keyboard,
+  type LayoutChangeEvent,
+  Pressable,
+  ScrollView,
+  type TextStyle,
+  useWindowDimensions,
+  View,
+} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming} from "react-native-reanimated"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
@@ -22,6 +33,7 @@ import {scheduleOnRN} from "react-native-worklets"
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
+import {spacing} from "@/theme"
 
 export type ButtonStyle = "default" | "cancel" | "destructive"
 
@@ -89,9 +101,9 @@ export interface SheetButton {
 }
 
 /**
- * The sheet's buttons, top to bottom. Callers list buttons dialog-style, with the main action last, so the
- * other buttons go last-first and cancel buttons go to the bottom. The top button is the primary one,
- * unless it's a cancel button among others.
+ * The sheet's buttons stacked, top to bottom; side by side, they run right to left. Callers list buttons
+ * dialog-style, with the main action last, so the other buttons go last-first and cancel buttons go to the
+ * bottom. The top button is the primary one, unless it's a cancel button among others.
  */
 export function sheetButtonOrder(buttons: AlertButton[]): SheetButton[] {
   const indexed = buttons.map((button, index) => ({button, index}))
@@ -109,9 +121,95 @@ const HIDE = {duration: 220, easing: Easing.in(Easing.cubic)}
 const DISMISS_DISTANCE = 96
 const DISMISS_VELOCITY = 800
 const BUTTON_TEXT: TextStyle = {fontSize: 16}
+/** The label style the Button preset ends up with, for measuring labels outside a button. */
+const LABEL_TEXT: TextStyle = {...BUTTON_TEXT, fontWeight: 500}
+/** Matches the `gap-2.5` between buttons. */
+const BUTTON_GAP = 10
+/** A button's horizontal padding and border on each side of its label. */
+const BUTTON_INSET = spacing.s3 + 1
+
+/** Whether every label fits on one line in a button half the row's width. */
+export function buttonsFitSideBySide(rowWidth: number, labelWidths: number[]): boolean {
+  const room = (rowWidth - BUTTON_GAP) / 2 - 2 * BUTTON_INSET
+  return labelWidths.every((width) => width <= room)
+}
+
+/**
+ * The sheet's buttons. Two buttons go side by side, main action on the right, once their labels are
+ * measured to fit; otherwise they stack in `sheetButtonOrder`.
+ */
+function SheetButtons({
+  buttons,
+  disabled,
+  onPress,
+}: {
+  buttons: AlertButton[]
+  disabled: boolean
+  onPress: (index: number) => void
+}) {
+  const {theme} = useAppTheme()
+  const [rowWidth, setRowWidth] = useState(0)
+  const [labelWidths, setLabelWidths] = useState<number[]>([])
+
+  const ordered = sheetButtonOrder(buttons)
+  const pair = ordered.length === 2
+  const measured = rowWidth > 0 && ordered.every((_, position) => (labelWidths[position] ?? 0) > 0)
+  // Until the labels are measured (the first frame, while the sheet is still below the screen), assume they fit.
+  const sideBySide = pair && (!measured || buttonsFitSideBySide(rowWidth, labelWidths))
+
+  const measureLabel = (position: number) => (event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width
+    setLabelWidths((widths) => {
+      if (widths[position] === width) return widths
+      const next = [...widths]
+      next[position] = width
+      return next
+    })
+  }
+
+  return (
+    <View
+      className={sideBySide ? "mt-6 flex-row gap-2.5" : "mt-6 gap-2.5"}
+      onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
+      testID={sideBySide ? "alert.buttons.row" : "alert.buttons.stack"}>
+      {pair && (
+        <View
+          className="absolute left-0 right-0 top-0 items-start opacity-0"
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          testID="alert.buttons.measure">
+          {ordered.map(({button, index}, position) => (
+            <Text
+              key={index}
+              text={button.text}
+              style={LABEL_TEXT}
+              numberOfLines={1}
+              onLayout={measureLabel(position)}
+            />
+          ))}
+        </View>
+      )}
+      {(sideBySide ? [...ordered].reverse() : ordered).map(({button, index, primary}) => {
+        const destructive = button.style === "destructive"
+        return (
+          <Button
+            key={index}
+            text={button.text}
+            preset={primary ? (destructive ? "destructive" : "primary") : "alternate"}
+            flex={sideBySide}
+            className="min-h-[50px]"
+            textStyle={[BUTTON_TEXT, destructive && !primary && {color: theme.colors.error}]}
+            disabled={disabled}
+            onPress={() => onPress(index)}
+          />
+        )
+      })}
+    </View>
+  )
+}
 
 export function ModalProvider({children}: {children: ReactNode}) {
-  const {theme} = useAppTheme()
   const insets = useSafeAreaInsets()
   const {height: windowHeight} = useWindowDimensions()
 
@@ -291,22 +389,7 @@ export function ModalProvider({children}: {children: ReactNode}) {
                 )}
                 {current.options.content && <View className="mt-4">{current.options.content}</View>}
               </ScrollView>
-              <View className="mt-6 gap-2.5">
-                {sheetButtonOrder(current.buttons).map(({button, index, primary}) => {
-                  const destructive = button.style === "destructive"
-                  return (
-                    <Button
-                      key={index}
-                      text={button.text}
-                      preset={primary ? (destructive ? "destructive" : "primary") : "alternate"}
-                      className="min-h-[50px]"
-                      textStyle={[BUTTON_TEXT, destructive && !primary && {color: theme.colors.error}]}
-                      disabled={!!closing.current}
-                      onPress={() => close(index)}
-                    />
-                  )
-                })}
-              </View>
+              <SheetButtons buttons={current.buttons} disabled={!!closing.current} onPress={close} />
             </Animated.View>
           </GestureDetector>
         </View>

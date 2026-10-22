@@ -1,7 +1,14 @@
-import {act, fireEvent, render} from "@testing-library/react-native"
+import {act, fireEvent, render, within} from "@testing-library/react-native"
 import {BackHandler} from "react-native"
 
-import {dismissAlert, ModalProvider, NO_ANSWER, sheetButtonOrder, showAlert} from "@/contexts/ModalContext"
+import {
+  buttonsFitSideBySide,
+  dismissAlert,
+  ModalProvider,
+  NO_ANSWER,
+  sheetButtonOrder,
+  showAlert,
+} from "@/contexts/ModalContext"
 
 /** The sheet's drag gesture as last built: whether it's on, and its end handler. */
 const mockDrag: {enabled: boolean; onEnd?: (event: {translationY: number; velocityY: number}) => void} = {
@@ -28,7 +35,7 @@ jest.mock("@/contexts/ThemeContext", () => ({
 jest.mock("@/components/ignite", () => {
   const {Pressable, Text} = require("react-native")
   return {
-    Text: ({text}: {text?: string}) => <Text>{text}</Text>,
+    Text: ({text, ...props}: {text?: string}) => <Text {...props}>{text}</Text>,
     Button: ({text, onPress, disabled}: {text: string; onPress: () => void; disabled?: boolean}) => (
       <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled}>
         <Text>{text}</Text>
@@ -36,6 +43,22 @@ jest.mock("@/components/ignite", () => {
     ),
   }
 })
+
+/** The visible buttons' labels, in screen order. */
+const buttonLabels = (screen: ReturnType<typeof render>, labels: string[]) =>
+  screen.getAllByText(new RegExp(`^(${labels.join("|")})$`)).map((label) => label.props.children)
+
+/** Lays out the button area at `rowWidth` and each measured label at its width, in stacked order. */
+function layOut(screen: ReturnType<typeof render>, rowWidth: number, labels: Record<string, number>) {
+  const area = screen.queryByTestId("alert.buttons.row") ?? screen.getByTestId("alert.buttons.stack")
+  fireEvent(area, "layout", {nativeEvent: {layout: {width: rowWidth}}})
+  for (const [label, width] of Object.entries(labels)) {
+    const measure = screen.getByTestId("alert.buttons.measure", {includeHiddenElements: true})
+    fireEvent(within(measure).getByText(label, {includeHiddenElements: true}), "layout", {
+      nativeEvent: {layout: {width}},
+    })
+  }
+}
 
 const UPDATE = {title: "Update Notes?", buttons: [{text: "Not now", style: "cancel" as const}, {text: "Update"}]}
 
@@ -180,6 +203,45 @@ describe("alert sheet", () => {
     expect(mockDrag.enabled).toBe(false)
   })
 
+  it("puts two buttons side by side, main action on the right", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await show(UPDATE)
+    expect(screen.getByTestId("alert.buttons.row")).toBeTruthy()
+    expect(buttonLabels(screen, ["Not now", "Update"])).toEqual(["Not now", "Update"])
+  })
+
+  it("stacks two buttons whose labels don't fit side by side", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await show({
+      title: "Bluetooth is off",
+      buttons: [{text: "Not now", style: "cancel"}, {text: "Open Bluetooth Settings"}],
+    })
+    await act(async () => {
+      layOut(screen, 320, {"Not now": 60, "Open Bluetooth Settings": 190})
+    })
+    expect(screen.getByTestId("alert.buttons.stack")).toBeTruthy()
+    expect(buttonLabels(screen, ["Not now", "Open Bluetooth Settings"])).toEqual(["Open Bluetooth Settings", "Not now"])
+  })
+
+  it("keeps two short labels side by side once measured", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await show(UPDATE)
+    await act(async () => {
+      layOut(screen, 320, {"Not now": 60, "Update": 55})
+    })
+    expect(screen.getByTestId("alert.buttons.row")).toBeTruthy()
+  })
+
+  it("stacks three or more buttons", async () => {
+    const screen = render(<ModalProvider>{null}</ModalProvider>)
+    await show({
+      title: "Photo",
+      buttons: [{text: "Cancel", style: "cancel"}, {text: "Delete", style: "destructive"}, {text: "Share"}],
+    })
+    expect(screen.getByTestId("alert.buttons.stack")).toBeTruthy()
+    expect(buttonLabels(screen, ["Cancel", "Delete", "Share"])).toEqual(["Share", "Delete", "Cancel"])
+  })
+
   it("closes an alert by title without a button, and drops queued copies", async () => {
     const screen = render(<ModalProvider>{null}</ModalProvider>)
     const {answer: showing} = await show({title: "Your glasses are in pairing mode", buttons: [{text: "OK"}]})
@@ -199,6 +261,14 @@ describe("alert sheet", () => {
       fireEvent.press(screen.getByText("OK"))
     })
     await expect(other).resolves.toBe(0)
+  })
+})
+
+describe("buttonsFitSideBySide", () => {
+  it("fits labels that leave room for the button's padding in half the row", () => {
+    // (320 - 10) / 2 - 2 * 13 = 129
+    expect(buttonsFitSideBySide(320, [60, 129])).toBe(true)
+    expect(buttonsFitSideBySide(320, [60, 130])).toBe(false)
   })
 })
 
