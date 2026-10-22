@@ -72,7 +72,7 @@ export default function MainSettingsPage() {
           {workspace && (
             <Group title={translate("fleet:settingsGroup")}>
               <RouteButton
-                icon={<Icon name="user-round" size={24} color={theme.colors.secondary_foreground} />}
+                icon={<Icon name="building-2" size={24} color={theme.colors.secondary_foreground} />}
                 label={workspace.name}
                 subtitle={roleLabel(workspace.role)}
                 onPress={() => push("/miniapps/settings/workspace")}

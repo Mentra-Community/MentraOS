@@ -42,6 +42,8 @@ export function WorkspaceTile({name, size = 56}: {name: string; size?: number}) 
     <View
       className="items-center justify-center rounded-2xl bg-primary-foreground"
       style={{width: size, height: size}}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
       testID="fleet.workspaceTile">
       <Text
         text={name.trim().charAt(0).toUpperCase()}
@@ -76,6 +78,7 @@ export function SeeLists() {
         <Text
           text={translate("fleet:canSeeTitle")}
           weight="semibold"
+          accessibilityRole="header"
           className="mb-1 text-[15px] text-secondary-foreground"
         />
         <SeeRow allowed text={translate("fleet:canSeeGlassesAndPhones")} />
@@ -85,6 +88,7 @@ export function SeeLists() {
         <Text
           text={translate("fleet:cantSeeTitle")}
           weight="semibold"
+          accessibilityRole="header"
           className="mb-1 text-[15px] text-secondary-foreground"
         />
         <SeeRow allowed={false} text={translate("fleet:cantSeePhotosAndVideos")} />
@@ -102,7 +106,7 @@ export function ManagementLine() {
     <View
       className="flex-row items-center gap-3 rounded-2xl bg-primary-foreground px-4 py-3"
       testID="fleet.managementLine">
-      <Icon name="shield-lock" size={22} color={theme.colors.secondary_foreground} />
+      <Icon name="shield-check" size={22} color={theme.colors.secondary_foreground} />
       <View className="flex-1">
         <Text
           text={translate("fleet:managementTitle")}
