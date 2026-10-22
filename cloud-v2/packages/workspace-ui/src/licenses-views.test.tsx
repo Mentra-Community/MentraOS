@@ -554,7 +554,7 @@ describe("the layout", () => {
     const r = rig({ licenses: [], status: statusFor({ licenses: [], total: null, actions: [] }) });
     await mountView(r);
     expect(find("h2").textContent).toBe("Buy licenses for your members");
-    expect(text()).toContain("You'll pay by card on a secure payment page, then come back here to assign the licenses.");
+    expect(text()).not.toContain("secure payment page");
     expect(gridProducts()).toEqual([CALL, FLEET, "mentra.example"]);
     expect(cardNames()).toEqual([]);
     expect(hasButton("Buy licenses")).toBe(false);
@@ -939,7 +939,7 @@ describe("the ?buy= link", () => {
     await until(() => openDialogs().length === 1, "the Buy dialog");
     const dialog = openDialogs()[0]!;
     expect(findAll('[role="spinbutton"]', dialog)).toHaveLength(0);
-    expect(text(dialog)).toContain("It's yours once payment goes through.");
+    expect(text(dialog)).not.toContain("It's yours once payment goes through.");
   });
 
   test("with no link nothing opens and the host is not told", async () => {

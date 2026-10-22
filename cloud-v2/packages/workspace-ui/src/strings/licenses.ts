@@ -211,7 +211,6 @@ export const licenseStrings = {
 
   catalog: {
     title: "Buy licenses for your members",
-    intro: "You'll pay by card on a secure payment page, then come back here to assign the licenses.",
     buy: "Buy",
     youHaveSeats: (n: number) => `You have ${plural(n, "license")}`,
     dialog: {
@@ -230,11 +229,9 @@ export const licenseStrings = {
     members: (n: number) => `Your workspace has ${plural(n, "member")}.`,
     /** A workspace of one member buys one license, with no number to choose: "1 license · $29 a month · before tax". */
     solo: (parts: { total: string; rate: string; note: string | null }) => `1 license · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
-    yoursOnPayment: "It's yours once payment goes through.",
     /** "10 licenses × $15 · $150 a month · before tax": the one sum Core shows. */
     summary: (parts: { seats: number; unit: string; total: string; rate: string; note: string | null }) =>
       `${plural(parts.seats, "license")} × ${parts.unit} · ${parts.total} ${parts.rate}${parts.note ? ` · ${parts.note}` : ""}`,
-    payNote: "You'll pay by card on a secure payment page.",
     cancel: "Cancel",
     continue: "Continue to payment",
   },

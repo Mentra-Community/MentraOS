@@ -58,7 +58,7 @@ describe("the pages", () => {
 describe("the catalog and buying", () => {
   test("the catalog's heading", () => {
     expect(t.catalog.title).toBe("Buy licenses for your members");
-    expect(t.catalog.intro).toBe("You'll pay by card on a secure payment page, then come back here to assign the licenses.");
+    expect("intro" in t.catalog).toBe(false);
     expect(t.catalog.buy).toBe("Buy");
   });
 
@@ -88,8 +88,8 @@ describe("the catalog and buying", () => {
     // A workspace of one member buys one license with no number to choose.
     expect(t.buy.solo({ total: "$29", rate: "a month", note: "before tax" })).toBe("1 license · $29 a month · before tax");
     expect(t.buy.solo({ total: "$29", rate: "a month", note: null })).toBe("1 license · $29 a month");
-    expect(t.buy.yoursOnPayment).toBe("It's yours once payment goes through.");
-    expect(t.buy.payNote).toBe("You'll pay by card on a secure payment page.");
+    expect("yoursOnPayment" in t.buy).toBe(false);
+    expect("payNote" in t.buy).toBe(false);
     expect([t.buy.cancel, t.buy.continue]).toEqual(["Cancel", "Continue to payment"]);
   });
 });

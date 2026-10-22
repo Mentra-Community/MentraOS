@@ -295,7 +295,7 @@ describe("a link that asks to buy one product", () => {
     const { core } = await open(CALL_LINK, SCENARIOS.solo(), { ready: "Continue to payment" });
     expect(findAll("input[role=spinbutton]", dialog()!)).toHaveLength(0);
     expect(dialog()!.textContent).toContain("1 license");
-    expect(dialog()!.textContent).toContain("It's yours once payment goes through.");
+    expect(dialog()!.textContent).not.toContain("It's yours once payment goes through.");
     expect(has("Your workspace has")).toBe(false);
     ways();
     await click(buttonNamed(/Continue to payment/)!);

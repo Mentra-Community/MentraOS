@@ -416,7 +416,7 @@ describe("a link to buy one product", () => {
   const link = "/licenses?buy=mentra.call.unlimited";
 
   test("the dialog for a workspace of one", async () => {
-    await open(link, SCENARIOS.solo(), t.buy.yoursOnPayment);
+    await open(link, SCENARIOS.solo(), "1 license ·");
     expectNoSeat("the solo buy step");
   });
 
@@ -513,7 +513,7 @@ describe("the states were reached", () => {
     ["ready", t.purchase.readyTitle({ seats: 10, product: "Fleet" })],
     ["a license given to the buyer", t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true })],
     ["the same, for many", t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true })],
-    ["the solo buy step", t.buy.yoursOnPayment],
+    ["the solo buy step", "1 license ·"],
     ["a link to a product held", t.page.buyLink.alreadyHas("Acme Field Services", "Mentra Call Unlimited")],
     ["a link to a product not sold", t.page.buyLink.notForSale],
     ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", "Mentra Call Unlimited")],

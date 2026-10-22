@@ -332,19 +332,16 @@ export function CatalogGrid({ products, licenses, memberCount, ...host }: Catalo
   const copy = t.catalog;
   const onBuy = chooseToBuy(setBuying);
   const onAddSeats = addSeatsOf(hosted);
-  // The heading and "You'll pay by card…" are buying copy: they belong to a viewer billing offers something to
+  // The heading is buying copy: they belong to a viewer billing offers something to
   // (an entry with an `offer`). For anyone else the entries are display content, and say nothing about buying.
   const offered = entries.some((entry) => entry.offer !== undefined);
 
   return (
     <section aria-labelledby={offered ? headingId : undefined} className="space-y-4">
       {offered ? (
-        <div>
-          <h2 id={headingId} className="text-lg font-semibold">
-            {copy.title}
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">{copy.intro}</p>
-        </div>
+        <h2 id={headingId} className="text-lg font-semibold">
+          {copy.title}
+        </h2>
       ) : null}
       <HostedFeedback action={hosted} />
       <div className={cn("grid gap-4", entries.length >= 3 ? "md:grid-cols-3" : "md:grid-cols-2")}>
@@ -557,11 +554,9 @@ function BuyForm({
           </div>
         )}
         {sum !== null ? <p className="border-t pt-4 text-sm font-semibold tabular-nums">{sum}</p> : null}
-        {solo ? <p className="text-muted-foreground text-sm">{t.buy.yoursOnPayment}</p> : null}
         <HostedFeedback action={hosted} />
       </div>
-      <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
-        <span className="text-muted-foreground max-w-[220px] text-xs leading-4">{t.buy.payNote}</span>
+      <div className="-mx-6 -mb-6 flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4 sm:-mx-7 sm:-mb-7 sm:px-7">
         <div className="flex gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             {t.buy.cancel}

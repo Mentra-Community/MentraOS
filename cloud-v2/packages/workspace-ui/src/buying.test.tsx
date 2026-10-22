@@ -176,7 +176,7 @@ describe("the catalog grid", () => {
     const { ui } = grid();
     await mount(ui);
     expect(find("h2").textContent).toBe("Buy licenses for your members");
-    expect(text()).toContain("You'll pay by card on a secure payment page, then come back here to assign the licenses.");
+    expect(text()).not.toContain("secure payment page");
     expect(findAll("[data-product]").map((element) => element.getAttribute("data-product"))).toEqual([
       "mentra.call.unlimited",
       "mentra.fleet",
@@ -426,7 +426,8 @@ describe("the licenses step", () => {
     expect(stepper(dialog).getAttribute("aria-valuenow")).toBe("14");
     expect(stepper(dialog).value).toBe("14");
     expect(dialog.textContent).toContain("Your workspace has 14 members.");
-    expect(dialog.textContent).toContain("You'll pay by card on a secure payment page.");
+    expect(dialog.textContent).not.toContain("secure payment page");
+    expect(dialog.textContent).not.toContain("yours once payment goes through");
     expect(buttons(dialog).map((button) => button.textContent)).toContain("Cancel");
     expect(buttonNamed("Continue to payment", dialog)).toBeTruthy();
     expect(findAll("select", dialog)).toHaveLength(0);
@@ -754,13 +755,14 @@ describe("the licenses step starts at the workspace's member count", () => {
     expect(stepper(topDialog()).value).toBe("5");
   });
 
-  test("one member has no stepper: '1 license · $15 a month · before tax', 'It's yours once payment goes through.', and Continue buys 1", async () => {
+  test("one member has no stepper: '1 license · $15 a month · before tax' with no small print, and Continue buys 1", async () => {
     const setup = await openWith(1);
     const dialog = topDialog();
     expect(findAll('[role="spinbutton"]', dialog)).toHaveLength(0);
     expect(findAll('[aria-label="One license more"]', dialog)).toHaveLength(0);
     expect(byText("1 license · $15 a month · before tax", "p", dialog)).toBeTruthy();
-    expect(dialog.textContent).toContain("It's yours once payment goes through.");
+    expect(dialog.textContent).not.toContain("It's yours once payment goes through.");
+    expect(dialog.textContent).not.toContain("secure payment page");
     expect(dialog.textContent).not.toContain("Your workspace has");
     expect(setup.purchase).not.toHaveBeenCalled();
     await click(buttonNamed("Continue to payment", dialog));
@@ -1117,19 +1119,19 @@ describe("the catalog dialog", () => {
 
 // ---- the heading is buying copy -----------------------------------------------------------------------------------
 
-describe("the grid's heading and its 'You'll pay by card' line", () => {
+describe("the grid's heading", () => {
   test("are drawn only when at least one entry has an offer for this viewer", async () => {
     await mount(grid({ products: [callFor({ offer: undefined }), fleet({ offer: undefined })] }).ui);
     expect(findAll("h2")).toHaveLength(0);
     expect(text()).not.toContain("Buy licenses");
-    expect(text()).not.toContain("You'll pay by card");
+    expect(text()).not.toContain("secure payment page");
     // The products themselves are display content: named, described, and nothing to buy.
     expect(findAll("[data-product]")).toHaveLength(2);
     expect(buttons()).toHaveLength(0);
     await cleanup();
     await mount(grid({ products: [callFor({ offer: undefined }), fleet()] }).ui);
     expect(find("h2").textContent).toBe("Buy licenses for your members");
-    expect(text()).toContain("You'll pay by card on a secure payment page");
+    expect(text()).not.toContain("secure payment page");
   });
 
   test("follow the offer, not whether Buy is possible: an offer billing won't sell now still has them", async () => {
