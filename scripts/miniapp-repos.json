@@ -6,10 +6,5 @@
   "livestreamer": {
     "repo": "../Livestreamer-Miniapp",
     "packScript": "pack:prod"
-  },
-  "store": {
-    "repo": "../miniapp-store",
-    "packageName": "com.mentra.store",
-    "packScript": "pack"
   }
 }

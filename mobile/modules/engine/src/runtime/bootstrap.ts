@@ -64,6 +64,13 @@ export interface IslandConfigValues {
   bundledStoreMiniappPackages?: readonly string[]
   /** Bundled package -> the bundled Store allowed to update it automatically. */
   bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
+  /**
+   * Where Mentra hosts its own miniapps for this deployment, for example
+   * `https://miniapps.mentraglass.com/`. Each bundled miniapp updates from
+   * `<firstPartyMiniappsUrl><packageName>/`. Null or omitted keeps bundled
+   * miniapps on the versions the build or deployment ships.
+   */
+  firstPartyMiniappsUrl?: string | null
   /** Optional per-package configuration supplied by the host deployment. */
   miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** Deployment-scoped key for the persisted Core refresh token. */
@@ -195,6 +202,7 @@ export function isInstalledMiniappAllowed(
   releaseIdentity: {
     source: string
     storePackageName?: string
+    sourceUrl?: string
     bundleSha256?: string
     deploymentId?: string
     deploymentOrigin?: string
@@ -206,8 +214,9 @@ export function isInstalledMiniappAllowed(
 
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
   if (systemApproved && releaseIdentity?.source === "bundled_asset") return true
-  // A compatible update of an approved bundled package, applied by the Store the
-  // build assigns to it, keeps the visibility of the bundled release it replaced.
+  // A compatible update of an approved bundled package, from Mentra's own host
+  // or the Store the build assigns to it, keeps the visibility of the bundled
+  // release it replaced.
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
   // A release a developer installed from the scanner's release QR.
   if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()

@@ -152,9 +152,10 @@ interface InstalledLma {
 
 export interface MiniappReleaseIdentity {
   /**
-   * `store`: installed by a bundled Store. `system_store`: a bundled package
-   * updated by the Store the build assigns to it. `preinstalled_registry`:
-   * installed by Core's retired preinstall registry (read for existing installs).
+   * `url`: installed from the miniapp's own URL (`sourceUrl`). `store`:
+   * installed by a bundled Store. `system_store`: a bundled package updated by
+   * the Store the build assigns to it. `preinstalled_registry`: installed by
+   * Core's retired preinstall registry (read for existing installs).
    */
   source:
     | "direct_download"
@@ -162,8 +163,11 @@ export interface MiniappReleaseIdentity {
     | "preinstalled_registry"
     | "deployment_manifest"
     | "dev_snapshot"
+    | "url"
     | "store"
     | "system_store"
+  /** The miniapp URL (`url` releases): the base that serves `miniapp.json`, ending in `/`. */
+  sourceUrl?: string
   releaseId?: string
   bundleSha256?: string
   channel?: string

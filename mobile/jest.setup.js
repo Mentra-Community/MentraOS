@@ -640,6 +640,9 @@ const mockIslandEntries = () => {
         onUpdatePrompt: jest.fn(() => () => {}),
         onUpdateFailed: jest.fn(() => () => {}),
         onDeferredUpdateReady: jest.fn(() => () => {}),
+        checkForUpdates: jest.fn(() => Promise.resolve()),
+        checkOpenedForUpdate: jest.fn(() => Promise.resolve()),
+        onOpened: jest.fn(() => () => {}),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),

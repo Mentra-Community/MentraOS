@@ -390,7 +390,7 @@ function makeLocationHost(savedTier: string) {
     lastAppliedLocationRate: string | null
   }
   Object.assign(runtime, {
-    storeSessionEpoch: 0,
+    installSessionEpoch: 0,
     connectedApps: new Map(),
     streamSubscribers: new Map(),
     foregroundProbeTimers: new Map(),
