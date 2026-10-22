@@ -152,8 +152,9 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
   const receipt = found[0]!
   if (receipt.outcome === 'unknown' && receipt.checkOperationId) {
     const journal = host.resourceReservations?.resourceChecks?.find(value => value.operationId === receipt.checkOperationId)
-    return journal && Date.parse(journal.observedAt) <= now && Date.parse(journal.observedAt) <= Date.parse(host.observedAt) &&
-      candidateNeverBegan(pending, journal) ? receipt : undefined
+    if (journal && Date.parse(journal.observedAt) <= now && Date.parse(journal.observedAt) <= Date.parse(host.observedAt) &&
+      candidateNeverBegan(pending, journal)) return receipt
+    // A closed UNKNOWN read still needs every ordinary exact-return check below.
   }
   if (!receipt.checkOperationId) return receipt.outcome === 'unknown' && !pending.backendTarget && !pending.claimReceipt && !pending.returnReceipt ? receipt : undefined
   const returned = exclusiveResourceReturnSchema.safeParse(pending.returnReceipt)
@@ -174,9 +175,9 @@ export function candidateSettlement(pending: FleetCandidatePreparation, host: Te
     qualification.preparing || qualification.local || health.check.operationId !== receipt.checkOperationId ||
     !isDeepStrictEqual(health.target, pending.backendTarget) || qualification.inputSha256 !== requestInputDigest(pending.target.proposedInput) ||
     health.releasedGeneration !== subject.generation || observedAt < Date.parse(pending.candidate.requestedAt) ||
-    observedAt > closedAt || closedAt > releasedAt || releasedAt > now || observedAt > Date.parse(pending.target.deadline) ||
-    // A returned negative settles immutable history; only a current positive may select executable resources.
-    receipt.outcome === 'qualified' && now - observedAt > 120_000) return undefined
+    observedAt > closedAt || closedAt > releasedAt || releasedAt > now || observedAt > Date.parse(pending.target.deadline)) return undefined
+  // Exact returned observations settle immutable history at any age. Current
+  // qualifiedCandidate checks independently fence resource admission and renewal.
   return receipt
 }
 /** Retained positive identity is necessary but never sufficient for current admission. */
