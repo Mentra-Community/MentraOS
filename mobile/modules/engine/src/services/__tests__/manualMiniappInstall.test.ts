@@ -85,6 +85,7 @@ test("a release QR replaces a running miniapp and binds the ZIP to the manifest 
   expect(installOptions).toEqual({
     expectedPackageName: "com.mentra.notes",
     expectedVersion: "2.0.0",
+    installReason: "explicit",
     releaseIdentity: {source: "direct_download"},
   })
 })
