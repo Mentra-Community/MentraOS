@@ -126,7 +126,14 @@ When it disagrees with a source of truth below, the source of truth wins; then f
     and `AppRegistry.getActiveVersion` treat as a developer release under a workspace `localMiniappPolicy`. Phase 16
     (`installMiniapp(url)`) needs a URL provenance. Compare installs against released versions on disk, not
     `getActiveVersion`. Reconciler state is per Core + account in the `mentra-fleet` MMKV (`fleet.assignments.v1/`);
-    no lock is persisted. `assignmentReconcilerHost.ts` is started by the host, not by `engine.ts` yet.
+    no lock is persisted.
+18. App wiring (integration branch): `engine.ts` sets `registryInventorySource` (`services/fleet/`), then starts the
+    reporter and `startAssignmentReconciler(fleetDesiredStateClient)` (`CloudClientService.ts`, account-bound
+    `desiredStateAs`); stop runs in reverse. `AppRegistry` notifies on its first load and on assignment/reason writes,
+    except inside an install transaction's `apply` (a subscriber there could move the active pointer). The real
+    `WorkspaceApi` is `mobile/src/services/fleet/cloudWorkspaceApi.ts`, installed by `MantleManager` before
+    `engine.start()`. Inventory drops entries without `bundleSha256`: bundled and release-QR installs record none.
+    `isMiniappAccessRevoked` is gated in `stores/apps.ts` `start` (host `onAccessRevoked` alert) and `ensureRunning`.
 
 ## Open items
 
