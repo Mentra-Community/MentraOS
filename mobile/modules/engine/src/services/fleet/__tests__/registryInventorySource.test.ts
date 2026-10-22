@@ -58,7 +58,11 @@ beforeEach(() => {
       reasons: ["explicit", "assignment"],
     },
     "com.acme.devonly": {versions: ["dev-1700000000000"], identities: {}, reasons: []},
-    "com.mentra.captions": {versions: ["2.0.0"], identities: {"2.0.0": {source: "bundled_asset"}}, reasons: ["bundled"]},
+    "com.mentra.captions": {
+      versions: ["2.0.0"],
+      identities: {"2.0.0": {source: "bundled_asset"}},
+      reasons: ["bundled"],
+    },
   }
 })
 

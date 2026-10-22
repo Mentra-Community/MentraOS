@@ -520,8 +520,16 @@ describe("the reconciler's desired-state client", () => {
   })
 
   const failures: Array<[string, () => Response | Promise<Response>, (error: unknown) => void]> = [
-    ["503 fleet_unavailable", () => json(503, {error: "fleet_unavailable"}), (e) => expectStatus(e, 503, "fleet_unavailable")],
-    ["404 fleet_not_installed", () => json(404, {error: "fleet_not_installed"}), (e) => expectStatus(e, 404, "fleet_not_installed")],
+    [
+      "503 fleet_unavailable",
+      () => json(503, {error: "fleet_unavailable"}),
+      (e) => expectStatus(e, 503, "fleet_unavailable"),
+    ],
+    [
+      "404 fleet_not_installed",
+      () => json(404, {error: "fleet_not_installed"}),
+      (e) => expectStatus(e, 404, "fleet_not_installed"),
+    ],
     ["404 without Fleet's code", () => new Response("not found", {status: 404}), (e) => expectStatus(e, 404)],
     ["403", () => json(403, {error: "forbidden"}), (e) => expectStatus(e, 403)],
     ["429", () => json(429, {error: "rate_limited"}), (e) => expectStatus(e, 429)],
@@ -535,8 +543,16 @@ describe("the reconciler's desired-state client", () => {
     ],
     ["an unknown status", () => json(200, {...managed, status: "paused"}), (e) => expectResponse(e, "unknown_status")],
     ["a body that is not desired state", () => json(200, {hello: "world"}), (e) => expectResponse(e, "invalid_shape")],
-    ["a partial answer", () => json(200, {...managed, workspace: undefined}), (e) => expectResponse(e, "invalid_shape")],
-    ["an entry without its URL", () => json(200, {...managed, entries: [{...managed.entries[0], url: undefined}]}), (e) => expectResponse(e, "invalid_shape")],
+    [
+      "a partial answer",
+      () => json(200, {...managed, workspace: undefined}),
+      (e) => expectResponse(e, "invalid_shape"),
+    ],
+    [
+      "an entry without its URL",
+      () => json(200, {...managed, entries: [{...managed.entries[0], url: undefined}]}),
+      (e) => expectResponse(e, "invalid_shape"),
+    ],
     ["an empty 200", () => new Response(null, {status: 200}), (e) => expect(e).toBeInstanceOf(CoreResponseError)],
   ]
 

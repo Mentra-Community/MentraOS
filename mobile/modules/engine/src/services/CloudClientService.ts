@@ -1067,7 +1067,8 @@ export const cloudClientService = {
       ): Promise<FleetDesiredState> {
         const c = client
         if (!c?.core) throw new SessionChangedError("signed_out")
-        if (!clientCoreUrl || !sameCoreUrl(clientCoreUrl, expected.coreUrl)) throw new SessionChangedError("other_account")
+        if (!clientCoreUrl || !sameCoreUrl(clientCoreUrl, expected.coreUrl))
+          throw new SessionChangedError("other_account")
         const state = await c.core.fleet.desiredState({
           expectedAccount: expected.mentraUserId,
           ...(opts?.signal ? {signal: opts.signal} : {}),

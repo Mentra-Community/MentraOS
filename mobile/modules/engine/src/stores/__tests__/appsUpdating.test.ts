@@ -199,7 +199,9 @@ describe("miniapp update availability", () => {
     revoked.add(target.packageName)
     expect(await apps.getState().start(target)).toBe(false)
     expect(accessRevoked).toHaveBeenCalledTimes(1)
-    expect(accessRevoked).toHaveBeenCalledWith(expect.objectContaining({packageName: target.packageName, name: "Notes"}))
+    expect(accessRevoked).toHaveBeenCalledWith(
+      expect.objectContaining({packageName: target.packageName, name: "Notes"}),
+    )
     expect(opened).not.toHaveBeenCalled()
     expect(ensureRunning).not.toHaveBeenCalled()
     expect(apps.getState().apps[0].running).toBe(false)
