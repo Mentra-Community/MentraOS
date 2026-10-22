@@ -13,6 +13,9 @@ via TestFlight.
 
 Microsoft's Expo Modules integration is experimental. Keep
 `react-native-macos` on the release line matching the `react-native` version.
+Expo SDK 55's `expo-modules-core` redeclares `UIApplication` on macOS, which
+React Native macOS 0.83 already declares; `examples/patches` backports the
+upstream `expo-modules-core` fix until an SDK 55 release includes it.
 
 ## Run
 
