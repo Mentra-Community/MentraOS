@@ -5,10 +5,12 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
+import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { CredentialView, InvitationView, WorkspaceRole } from "@mentra/workspace-contract";
 import type { ReactElement } from "react";
 import { createWorkspaceApi, type FetchLike, type WorkspaceApi } from "./api";
+import { ConfirmDialog } from "./components/confirm-dialog";
 import { WorkspaceCredentialsPanel } from "./components/credentials-panel";
 import { WorkspacePendingInvitationsPanel } from "./components/invitations-panel";
 import { WorkspaceSettingsPanel } from "./components/settings-panel";
@@ -250,5 +252,35 @@ describe("Revoke key", () => {
     await until(() => openDialogs().length === 0 && findAll('button[aria-label="Revoke CI publisher"]').length === 0, "the key to go");
     expect(writes()).toEqual([{ method: "DELETE", path: `${WS}/credentials/cred_ci`, body: undefined }]);
     expect(document.activeElement).toBe(trigger("Revoke Docs bot"));
+  });
+
+  test("a refusal is shown in the dialog, which stays open", async () => {
+    const { world } = await keys();
+    world.refuse = (call) => (call.method === "DELETE" ? reply(403, { error: "forbidden" }) : undefined);
+    await click(trigger("Revoke Docs bot"));
+    await click(inDialog("Revoke"));
+    await until(() => findAll('[role="alert"]', theDialog()).length === 1, "the refusal");
+    expect(find('[role="alert"]', theDialog()).textContent).toBe("You do not have permission to do that.");
+    expect(document.activeElement).toBe(inDialog("Revoke"));
+  });
+});
+
+describe("how a dialog reports that it ended", () => {
+  test("once the request went through, a close the platform raises as the dialog leaves is not the person backing out", async () => {
+    const closed: boolean[] = [];
+    await render(
+      <ConfirmDialog
+        title="Revoke it?"
+        description="It stops working."
+        cancelLabel="Cancel"
+        confirmLabel="Revoke"
+        onConfirm={async () => null}
+        onClose={(done) => closed.push(done)}
+      />,
+    );
+    await click(inDialog("Revoke"));
+    expect(closed).toEqual([true]);
+    await act(async () => void theDialog().dispatchEvent(new Event("close")));
+    expect(closed).toEqual([true]);
   });
 });

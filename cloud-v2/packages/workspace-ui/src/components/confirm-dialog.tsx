@@ -50,6 +50,7 @@ export function ConfirmDialog({
   const field = useRef<HTMLInputElement>(null);
   const confirmButton = useRef<HTMLButtonElement>(null);
   const wasPending = useRef(false);
+  const wentThrough = useRef(false);
   const ready = typeToConfirm === undefined || typed === typeToConfirm.phrase;
 
   // A field to type in is where the person starts.
@@ -67,6 +68,14 @@ export function ConfirmDialog({
     }
   }, [pending]);
 
+  // The one report of how it ended. Once the request went through the caller unmounts the dialog, and the platform may
+  // raise a `close` as an open modal leaves the document: that is not the person backing out.
+  function end(done: boolean) {
+    if (wentThrough.current) return;
+    wentThrough.current = done;
+    onClose(done);
+  }
+
   async function confirm() {
     setPending(true);
     setRefusal(null);
@@ -78,7 +87,7 @@ export function ConfirmDialog({
     } finally {
       setPending(false);
     }
-    if (refused === null) onClose(true);
+    if (refused === null) end(true);
     else setRefusal(refused);
   }
 
@@ -88,7 +97,7 @@ export function ConfirmDialog({
   }
 
   return (
-    <Dialog open onClose={() => onClose(false)} locked={pending} title={title} description={description}>
+    <Dialog open onClose={() => end(false)} locked={pending} title={title} description={description}>
       <form onSubmit={submit} className="space-y-6">
         {typeToConfirm ? (
           <div className="grid gap-2">
@@ -107,7 +116,7 @@ export function ConfirmDialog({
         ) : null}
         {refusal !== null ? <AlertText tone="neutral">{refusal}</AlertText> : null}
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <Button type="button" variant="secondary" disabled={pending} onClick={() => onClose(false)}>
+          <Button type="button" variant="secondary" disabled={pending} onClick={() => end(false)}>
             {cancelLabel}
           </Button>
           <Button ref={confirmButton} type="submit" variant="destructive" disabled={pending || !ready} aria-busy={pending || undefined}>
