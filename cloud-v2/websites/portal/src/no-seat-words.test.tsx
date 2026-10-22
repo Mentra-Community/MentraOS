@@ -3,8 +3,8 @@
  * meaning): a workspace buys a number of licenses for a product, and each is assigned to one member. API and code
  * names keep `seats`, `add_seats` and the rest; this guard is about what the pages show.
  *
- * It mounts the real pages over the fake Core, drives them through every state and dialog the Licenses page, the
- * Members list and the personal Billing page have, and after each step takes everything a person or a screen reader
+ * It mounts the real pages over the fake Core, drives them through every state and dialog the Licenses page and the
+ * Members list have, and after each step takes everything a person or a screen reader
  * can get from the page: its text (visually hidden text included, and the text of dialogs that are closed) and the
  * words in its attributes (`aria-label`, `title`, `alt`, `placeholder` and the like). None may match
  * `/\bseats?\b/i`.
@@ -24,7 +24,6 @@ import type { PortalMe, PortalModules } from "./lib/api";
 import { usePathname } from "./lib/navigation";
 import { PortalProvider, type PortalSession } from "./lib/portal";
 import { parseRoute } from "./lib/routes";
-import { AccountBillingScreen } from "./pages/account-billing";
 import {
   ACME,
   CALL_BILLING,
@@ -116,8 +115,6 @@ const portalSession = (modules: PortalModules): PortalSession => ({
 
 function Routes({ me }: { me: PortalMe }) {
   const pathname = usePathname();
-  // The personal Billing page has no address any more; it is mounted by hand until it is removed.
-  if (pathname === "/account/billing") return <AccountBillingScreen />;
   return <PortalRoutes route={parseRoute(pathname)} me={me} />;
 }
 
@@ -346,7 +343,7 @@ describe("a member's own card", () => {
 
 describe("the catalog grid and the buy dialog", () => {
   test("a workspace with nothing yet: the grid, the buy step with its stepper, and the sum", async () => {
-    await open(`/licenses`, SCENARIOS.catalog(), t.catalog.workspace.title);
+    await open(`/licenses`, SCENARIOS.catalog(), t.catalog.title);
     expectNoSeat("the catalog grid");
     await click(one("Buy", find("[data-product='mentra.fleet']")));
     await until(() => has(t.buy.continue), "the buy step");
@@ -398,16 +395,48 @@ describe("after checkout", () => {
     expectNoSeat("ready");
   });
 
-  test("a person's purchase", async () => {
-    const scenario: Scenario = {
-      licenses: [],
-      accountStatus: ({ purchase }) =>
-        statusOf([entry(CALL_BILLING, { licenseId: "lic_me", quantity: 1, actions: [action("cancel", "Cancel")] })], {
-          purchase: purchase === "pur_9" ? purchaseOf({ purchaseId: "pur_9", status: "ready", product: "mentra.call.unlimited", quantity: 1, licenseId: "lic_me" }) : null,
-        }),
+  test("a license given to the buyer: one, and many", async () => {
+    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchasedForYou(), t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true }));
+    expectNoSeat("given, one");
+    await cleanup();
+    mock.restore();
+    const many: Scenario = {
+      licenses: [coreLicense(FLEET_LICENSE, 3, ["dana", "tom", "noah"])],
+      workspaceStatus: ({ purchase }) =>
+        statusOf([entry(FLEET_BILLING, { quantity: 3 })], { purchase: purchase === "pur_1" ? purchaseOf({ status: "ready", quantity: 3, licenseId: "lic_fleet" }) : null }),
     };
-    await open("/account/billing?purchase=pur_9", scenario, t.purchase.personReadyTitle("Mentra Call Unlimited"));
-    expectNoSeat("a person's purchase");
+    await open(`/licenses?purchase=pur_1`, many, t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true }));
+    expectNoSeat("given, many");
+  });
+});
+
+// ---- a link to buy one product ---------------------------------------------------------------------------------------
+
+describe("a link to buy one product", () => {
+  const link = "/licenses?buy=mentra.call.unlimited";
+
+  test("the dialog for a workspace of one", async () => {
+    await open(link, SCENARIOS.solo(), t.buy.yoursOnPayment);
+    expectNoSeat("the solo buy step");
+  });
+
+  test("the notes: held, not for sale, not allowed, not offered", async () => {
+    await open(link, SCENARIOS.twoActive(), t.page.buyLink.alreadyHas("Acme Field Services", "Mentra Call Unlimited"));
+    expectNoSeat("held");
+    await cleanup();
+    mock.restore();
+    await open("/licenses?buy=nothing.here", SCENARIOS.catalog(), t.page.buyLink.notForSale);
+    expectNoSeat("not for sale");
+    await cleanup();
+    mock.restore();
+    const member: Scenario = { ...SCENARIOS.catalog(), role: "member", workspaceCatalog: workspaceCatalog(false) };
+    await open(link, member, t.page.buyLink.askAnAdmin("Acme Field Services", t.page.buyLink.anyProduct));
+    expectNoSeat("a member");
+    await cleanup();
+    mock.restore();
+    const admin: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
+    await open(link, admin, t.page.buyLink.notHere, CATALOG_ONLY);
+    expectNoSeat("not offered");
   });
 });
 
@@ -444,22 +473,6 @@ describe("Members", () => {
   });
 });
 
-// ---- the personal Billing page ---------------------------------------------------------------------------------------
-
-describe("the personal Billing page", () => {
-  test("with a license and the catalog dialog open, and with none", async () => {
-    await open("/account/billing", SCENARIOS.personalActive(), "Mentra Call Unlimited");
-    await exploreCards("the personal page, one license");
-    await click(one(t.page.buyALicense));
-    await until(() => has(t.catalog.dialog.personDescription), "the catalog dialog");
-    expectNoSeat("the personal catalog dialog");
-    await cleanup();
-    mock.restore();
-    await open("/account/billing", SCENARIOS.personalCatalog(), t.catalog.person.title);
-    expectNoSeat("the personal catalog");
-  });
-});
-
 // ---- the screens were reached ----------------------------------------------------------------------------------------
 
 describe("the states were reached", () => {
@@ -486,9 +499,7 @@ describe("the states were reached", () => {
     ["a member's badge", t.status.youHaveASeat],
     ["the catalog's held row", t.catalog.youHaveSeats(5)],
     ["the workspace's header button", t.page.buyLicenses],
-    ["the personal header button", t.page.buyALicense],
     ["the workspace's catalog dialog", t.catalog.dialog.title],
-    ["the personal catalog dialog", t.catalog.dialog.personTitle],
     ["the row's menu: Remove", t.members.remove],
     ["the row's menu: a role", t.members.changeRoleTo("Developer")],
     ["Remove's dialog", t.members.removePrompt("Tom Becker")],
@@ -500,7 +511,13 @@ describe("the states were reached", () => {
     ["the page without the notice", "Buy licenses for your members"],
     ["setting up", t.purchase.settingUpSeats({ seats: 10, product: "Fleet" })],
     ["ready", t.purchase.readyTitle({ seats: 10, product: "Fleet" })],
-    ["a person's purchase", t.purchase.personReadyTitle("Mentra Call Unlimited")],
+    ["a license given to the buyer", t.purchase.givenTitle({ seats: 1, product: "Mentra Call Unlimited", paid: true })],
+    ["the same, for many", t.purchase.givenBody({ seats: 3, product: "Fleet", paid: true })],
+    ["the solo buy step", t.buy.yoursOnPayment],
+    ["a link to a product held", t.page.buyLink.alreadyHas("Acme Field Services", "Mentra Call Unlimited")],
+    ["a link to a product not sold", t.page.buyLink.notForSale],
+    ["a link a member can't follow", t.page.buyLink.askAnAdmin("Acme Field Services", t.page.buyLink.anyProduct)],
+    ["a link where billing isn't offered", t.page.buyLink.notHere],
     ["the total", "3 products"],
   ];
 

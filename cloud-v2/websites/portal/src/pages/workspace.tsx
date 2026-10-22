@@ -46,7 +46,7 @@ import type { PortalMe } from "@/lib/api";
 import { navigate, Redirect, useSearch } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
 import { keepQuery, sectionHref, type WorkspaceSection } from "@/lib/routes";
-import { billingOffered, LicensesHeaderActions, LicensesScreen } from "./licenses";
+import { billingOffered, buyParam, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
 type SectionMeta = {
@@ -217,7 +217,14 @@ export function WorkspaceScreen({
   // A licenses address whose list failed to load still opens the page, which says so and offers to try again,
   // rather than sending the person elsewhere over a dropped connection.
   const licensesFailed = section === "licenses" && licenses.isError && licenses.data === undefined;
-  const sections = data ? visibleSections(data, { licenses: licensesPartShown(billing, licenses.data) || licensesFailed }) : [];
+  // A link that asks to buy a product opens the page for anyone, so that a Member with no license is told who to ask
+  // instead of being sent to another section with the question unanswered. The page removes `?buy=` once it has acted,
+  // so the link is remembered for as long as the address stays on Licenses.
+  const [linkedToBuy, setLinkedToBuy] = useState(false);
+  const wantsToBuy = section === "licenses" && buyParam(search) !== null;
+  if (wantsToBuy !== linkedToBuy && (wantsToBuy || section !== "licenses")) setLinkedToBuy(wantsToBuy);
+  const buyLinked = section === "licenses" && (linkedToBuy || wantsToBuy);
+  const sections = data ? visibleSections(data, { licenses: licensesPartShown(billing, licenses.data) || licensesFailed || buyLinked }) : [];
   const active = section && sections.includes(section) ? section : null;
   // The address is the licenses page and the list has not answered yet: wait for it instead of leaving.
   const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;

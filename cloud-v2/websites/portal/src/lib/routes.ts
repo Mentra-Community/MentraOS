@@ -24,9 +24,6 @@ export type EnterprisePage = (typeof ENTERPRISE_PAGES)[number];
 
 export const INVITATION_PATH = "/invitation";
 
-/** The person's own billing page: personal licenses, not a workspace's. */
-export const ACCOUNT_BILLING_PATH = "/account/billing";
-
 export type PortalRoute =
   | { kind: "home" }
   | { kind: "invitation" }

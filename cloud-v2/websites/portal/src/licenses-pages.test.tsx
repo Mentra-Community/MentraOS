@@ -1,5 +1,5 @@
 /**
- * The portal's Licenses page, Members list and personal Billing page, mounted over the real clients (the workspace
+ * The portal's Licenses page and Members list, mounted over the real clients (the workspace
  * API, billing's contract-checked client, the portal's own navigation) and a fake Core (test-core.ts) that answers
  * from the approved design's scenarios. A DOM (happy-dom) stands in for the browser, so a click, the address and the
  * window's ways out are the real ones. `app.test.tsx` has the server-rendered checks of the frame around them.
@@ -13,7 +13,6 @@ import { fetchPortalMe, type PortalMe, type PortalModules } from "./lib/api";
 import { usePathname } from "./lib/navigation";
 import { PORTAL_ME_KEY, PortalProvider, type PortalSession } from "./lib/portal";
 import { parseRoute } from "./lib/routes";
-import { AccountBillingScreen } from "./pages/account-billing";
 import {
   ACME,
   CALL_BILLING,
@@ -22,6 +21,7 @@ import {
   FLEET_BILLING,
   FLEET_PAST_DUE,
   HOSTED,
+  PEOPLE,
   SCENARIOS,
   TEST_MODE,
   fakeCore,
@@ -72,8 +72,6 @@ const portalSession = (modules: PortalModules): PortalSession => ({
 /** The app's routing over a path: what `PortalPage` does with `usePathname`. */
 function Routes({ me }: { me: PortalMe }) {
   const pathname = usePathname();
-  // The personal Billing page has no address any more; it is mounted by hand until it is removed.
-  if (pathname === "/account/billing") return <AccountBillingScreen />;
   return <PortalRoutes route={parseRoute(pathname)} me={me} />;
 }
 
@@ -167,7 +165,7 @@ describe("the Licenses page", () => {
   });
 
   test("and the pages that draw licenses do not so much as import the module host", async () => {
-    for (const file of ["pages/licenses.tsx", "pages/account-billing.tsx", "pages/workspace.tsx"]) {
+    for (const file of ["pages/licenses.tsx", "pages/workspace.tsx"]) {
       const source = await Bun.file(new URL(`./${file}`, import.meta.url)).text();
       const specifiers = new Bun.Transpiler({ loader: "tsx" }).scanImports(source).map(entry => entry.path);
       expect(specifiers.filter(path => path.includes("portal-module-host"))).toEqual([]);
@@ -203,7 +201,7 @@ describe("the Licenses page", () => {
     expect(buttonNamed(/^Billing$/)).toBeUndefined();
   });
 
-  test("and the account menu has no Billing, even for someone offered billing: that page has no address", async () => {
+  test("and the account menu has no Billing, even for someone offered billing", async () => {
     await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(hrefs()).not.toContain("/account/billing");
     await click(find("button[aria-label='Open account menu']"));
@@ -271,43 +269,110 @@ describe("coming back from checkout", () => {
   });
 });
 
-// ---- the personal page --------------------------------------------------------------------------------------------
+// ---- the ?buy= link -----------------------------------------------------------------------------------------------
 
-describe("the personal Billing page", () => {
-  test("/account/billing renders the personal view for someone offered billing", async () => {
-    const { core } = await open("/account/billing", SCENARIOS.personalActive(), { ready: "Mentra Call Unlimited" });
-    expect(find("h1").textContent).toBe("Billing");
-    expect(has("Licenses you buy for yourself, apart from any workspace's.")).toBe(true);
-    expect(has("$29")).toBe(true);
-    expect(find("header").textContent).toContain("Billing & invoices");
-    // Billing's account routes, not a workspace's.
-    const paths = billingRequests(core).map(request => request.path);
-    expect(paths).toEqual(expect.arrayContaining(["/api/portal/billing/account/catalog", "/api/portal/billing/account/status"]));
-    expect(paths.some(path => path.includes("/workspaces/"))).toBe(false);
-    for (const request of billingRequests(core)) expect(request.query.get("locale")).toBe("en-US");
-    // The personal layout: Your account, with Billing under it.
-    expect(find("nav[aria-label='Account']").textContent).toContain("Your account");
-  });
+describe("a link that asks to buy one product", () => {
+  const CALL_LINK = "/licenses?buy=mentra.call.unlimited";
+  const dialog = () => document.querySelector<HTMLDialogElement>("dialog[open]");
+  const purchases = (core: ReturnType<typeof fakeCore>) => core.requests.filter(request => request.method === "POST" && request.path.endsWith("/purchase"));
 
-  test("shows the catalog to someone with nothing yet", async () => {
-    await open("/account/billing", SCENARIOS.personalCatalog(), { ready: "Mentra Call Unlimited" });
-    expect(has("Example Add-on")).toBe(true);
-    // Fleet is sold to workspaces only.
-    expect(has("Fleet")).toBe(false);
-  });
-
-  test("?purchase= is followed and dismissed on the personal page too", async () => {
-    const scenario: Scenario = {
-      ...SCENARIOS.personalActive(),
-      accountStatus: ({ purchase }) =>
-        statusOf(SCENARIOS.personalActive().accountStatus ? (SCENARIOS.personalActive().accountStatus as ReturnType<typeof statusOf>).licenses : [], {
-          purchase: purchase === "pur_9" ? purchaseOf({ purchaseId: "pur_9", status: "ready", product: "mentra.call.unlimited", quantity: 1, licenseId: "lic_me" }) : null,
-        }),
-    };
-    const { core } = await open("/account/billing?purchase=pur_9", scenario, { ready: "is ready" });
-    expect(billingRequests(core).filter(request => request.path.endsWith("/status")).every(request => request.query.get("purchase") === "pur_9")).toBe(true);
-    await click(buttonNamed(/^Dismiss$/)!);
+  test("an Owner gets the Buy dialog on that product, the address loses ?buy= in place, and nothing is bought until she asks", async () => {
+    const before = window.history.length;
+    const { core } = await open(CALL_LINK, SCENARIOS.catalog(), { ready: "Continue to payment" });
+    expect(dialog()!.textContent).toContain("Mentra Call Unlimited");
+    expect(window.location.pathname).toBe("/licenses");
     expect(search()).toBe("");
+    expect(window.history.length).toBe(before);
+    expect(purchases(core)).toEqual([]);
+  });
+
+  test("the dialog starts at the workspace's member count", async () => {
+    await open(CALL_LINK, SCENARIOS.catalog(), { ready: "Continue to payment" });
+    expect(find<HTMLInputElement>("input[role=spinbutton]", dialog()!).value).toBe(String(PEOPLE.length));
+  });
+
+  test("in a workspace of one person there is no number to choose: one license, and it is hers", async () => {
+    const { core } = await open(CALL_LINK, SCENARIOS.solo(), { ready: "Continue to payment" });
+    expect(findAll("input[role=spinbutton]", dialog()!)).toHaveLength(0);
+    expect(dialog()!.textContent).toContain("1 license");
+    expect(dialog()!.textContent).toContain("It's yours once payment goes through.");
+    expect(has("Your workspace has")).toBe(false);
+    ways();
+    await click(buttonNamed(/Continue to payment/)!);
+    await until(() => purchases(core).length > 0, "the purchase");
+    expect(purchases(core)[0]!.body).toMatchObject({ seats: 1 });
+  });
+
+  test("?workspace= naming the person's own workspace goes with it: both leave the address", async () => {
+    await open(`${CALL_LINK}&workspace=${ACME}`, SCENARIOS.catalog(), { ready: "Continue to payment" });
+    expect(window.location.pathname + search()).toBe("/licenses");
+  });
+
+  test("a Member is told who to ask, and the address keeps no ?buy=", async () => {
+    const scenario: Scenario = { ...SCENARIOS.catalog(), role: "member", workspaceCatalog: workspaceCatalog(false) };
+    await open(CALL_LINK, scenario, { ready: "Ask one of them." });
+    // A Member holding nothing is not sent the catalog, so the note cannot name the product.
+    expect(has("Only Admins and Owners of Acme Field Services can buy licenses. Ask one of them.")).toBe(true);
+    expect(dialog()).toBeNull();
+    expect(window.location.pathname + search()).toBe("/licenses");
+  });
+
+  test("a Member who holds a license gets the same note on the page they already have", async () => {
+    const scenario: Scenario = {
+      ...SCENARIOS.twoActive(),
+      role: "member",
+      viewer: "hannah",
+      licenses: [CALL_LICENSE],
+      workspaceCatalog: workspaceCatalog(false),
+    };
+    await open(CALL_LINK, scenario, { ready: "Ask one of them." });
+    expect(has("Only Admins and Owners of Acme Field Services can buy Mentra Call Unlimited. Ask one of them.")).toBe(true);
+    expect(has("Assigned to you")).toBe(true);
+    expect(search()).toBe("");
+  });
+
+  test("a product the workspace holds is a note, not a second purchase", async () => {
+    await open(CALL_LINK, SCENARIOS.twoActive(), { ready: "Acme Field Services already has Mentra Call Unlimited." });
+    expect(dialog()).toBeNull();
+    expect(search()).toBe("");
+  });
+
+  test("a product that isn't for sale is a note too", async () => {
+    await open("/licenses?buy=nothing.here", SCENARIOS.catalog(), { ready: "That product isn't for sale." });
+    expect(dialog()).toBeNull();
+    expect(search()).toBe("");
+  });
+
+  test("a manager whose portal is not offered billing is told licenses can't be bought here", async () => {
+    const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
+    await open(CALL_LINK, scenario, { modules: CATALOG_ONLY, ready: "Licenses can't be bought here." });
+    expect(search()).toBe("");
+  });
+
+  test("no ?buy= in the address, no note and no dialog", async () => {
+    await open("/licenses", SCENARIOS.catalog(), { ready: "Mentra Call Unlimited" });
+    expect(dialog()).toBeNull();
+    expect(has("Ask one of them.")).toBe(false);
+    expect(has("isn't for sale")).toBe(false);
+  });
+});
+
+describe("coming back from checkout, to the person's own workspace", () => {
+  test("/licenses?workspace=<own>&purchase=pur_1 shows the banner at /licenses?purchase=pur_1", async () => {
+    await open(`/licenses?workspace=${ACME}&purchase=pur_1`, SCENARIOS.purchased(), { ready: "Your 10 Fleet licenses are ready" });
+    await until(() => window.location.pathname + search() === "/licenses?purchase=pur_1", "the address to lose ?workspace=");
+  });
+
+  test("the buyer was given one: the banner says it is hers", async () => {
+    await open(`/licenses?purchase=pur_1`, SCENARIOS.purchasedForYou(), { ready: "Your Mentra Call Unlimited license is ready" });
+    expect(has("Payment received, and it's assigned to you.")).toBe(true);
+  });
+});
+
+describe("what the portal no longer has", () => {
+  test("/account/billing is the not-found page, and no link in the portal leads there", async () => {
+    await open("/account/billing", SCENARIOS.twoActive(), { ready: "Page not found" });
+    expect(hrefs()).not.toContain("/account/billing");
   });
 });
 
@@ -523,7 +588,8 @@ describe("leaving for a hosted page", () => {
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
     expect(out.assign.mock.calls).toEqual([[HOSTED.checkout]]);
     const posted = core.requests.find(request => request.method === "POST" && request.path.endsWith("/purchase"))!;
-    expect(posted.body).toMatchObject({ seats: 10, locale: "en-US" });
+    // The number to buy starts at the workspace's member count.
+    expect(posted.body).toMatchObject({ seats: PEOPLE.length, locale: "en-US" });
   });
 });
 
@@ -531,13 +597,9 @@ describe("leaving for a hosted page", () => {
 
 describe("the test-mode notice", () => {
   const HIDE = "[role='note'] button[aria-label='Hide the test mode notice']";
-  const personalWithTestMode = (): Scenario => {
-    const base = SCENARIOS.personalActive();
-    return { ...base, accountStatus: statusOf((base.accountStatus as ReturnType<typeof statusOf>).licenses, { testMode: TEST_MODE }) };
-  };
   afterEach(() => window.sessionStorage.clear());
 
-  test("× hides it on the Licenses page and, in the same session, on the personal Billing page, and the other way round", async () => {
+  test("× hides it on the Licenses page for the rest of the session, and a new session shows it again", async () => {
     await open(`/licenses`, SCENARIOS.testMode(), { ready: "Test mode · Staging" });
     expect(findAll("[role='note']")).toHaveLength(1);
     await click(find(HIDE));
@@ -545,18 +607,13 @@ describe("the test-mode notice", () => {
     expect(has("Buy licenses for your members")).toBe(true);
     await cleanup();
     mock.restore();
-    await open("/account/billing", personalWithTestMode(), { ready: "Mentra Call Unlimited" });
-    expect(findAll("[role='note']")).toHaveLength(0);
-    await cleanup();
-    mock.restore();
-    // A new session shows it again, here, and hiding it here hides it on the Licenses page.
-    window.sessionStorage.clear();
-    await open("/account/billing", personalWithTestMode(), { ready: "Test mode · Staging" });
-    await click(find(HIDE));
-    await cleanup();
-    mock.restore();
     await open(`/licenses`, SCENARIOS.testMode(), { ready: "Buy licenses for your members" });
     expect(findAll("[role='note']")).toHaveLength(0);
+    await cleanup();
+    mock.restore();
+    window.sessionStorage.clear();
+    await open(`/licenses`, SCENARIOS.testMode(), { ready: "Test mode · Staging" });
+    expect(findAll("[role='note']")).toHaveLength(1);
   });
 });
 
@@ -564,11 +621,10 @@ describe("what no page says", () => {
   const PROCESSOR = new RegExp(["st", "ripe"].join(""), "i");
   const IDS = /\b(?:cus|sub|price|prod|pi|cs|in|si|seti|plink)_[A-Za-z0-9]{6,}/;
 
-  test("neither the processor's name nor one of its ids, on the Licenses page, Members, or the personal page", async () => {
+  test("neither the processor's name nor one of its ids, on the Licenses page or Members", async () => {
     const pages: Array<[string, Scenario, string]> = [
       [`/licenses`, SCENARIOS.paymentFailed(), "Mentra Call Unlimited"],
       [`/members`, SCENARIOS.threeActive(), "Hannah Kim"],
-      ["/account/billing", SCENARIOS.personalActive(), "Mentra Call Unlimited"],
       [`/licenses`, SCENARIOS.testMode(), "Mentra Call Unlimited"],
     ];
     for (const [path, scenario, ready] of pages) {

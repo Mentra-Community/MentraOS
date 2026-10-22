@@ -55,7 +55,7 @@ export interface PendingInvitation {
 
 /**
  * The invitations to offer, the link's first, then the person's own newest first. Undefined while either
- * source is still being looked up, so a screen never offers "Create your workspace" and then swaps it.
+ * source is still being looked up, so the first run never makes a workspace and then shows an invitation that would have replaced it.
  */
 export function pendingInvitations(args: {
   link: LinkInvitation;

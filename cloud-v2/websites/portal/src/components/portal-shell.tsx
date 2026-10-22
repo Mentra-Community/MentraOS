@@ -8,7 +8,6 @@ import {
   workspaceListQuery,
   type ExternalNavItem,
   type NavGroup,
-  type NavItem,
   type SwitcherCurrent,
   type SwitcherInvitation,
   type SwitcherWorkspace,
@@ -105,11 +104,6 @@ export function portalLinks(developerConsoleUrl: string | null): ExternalNavItem
   return [{ key: "developer-console", label: "Developer Console", icon: CodeXml, href: developerConsoleUrl }];
 }
 
-/** The account menu's pages. None: the person's own Billing page has no address any more. */
-export function accountItems(_billing: boolean): NavItem[] {
-  return [];
-}
-
 /**
  * The shared `AppShell` as the portal's: named Mentra Portal, on MentraOS, with the portal's History-API
  * `Link`, the workspace switcher wired to the person's workspaces, this tab's invitation and the
@@ -173,7 +167,6 @@ export function PortalShell({
       navLabel={navLabel}
       active={item => item.key === activeKey}
       links={portalLinks(portal.developerConsoleUrl)}
-      accountItems={accountItems(portal.modules.billing)}
       title={title}
       description={description}
       headerAction={headerAction}

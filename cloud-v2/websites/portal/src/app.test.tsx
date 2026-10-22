@@ -20,7 +20,7 @@ import {
 } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoginGate, PortalRoutes } from "./App";
-import { accountItems, portalLinks, switcherInvitation } from "./components/portal-shell";
+import { portalLinks, switcherInvitation } from "./components/portal-shell";
 import type { PortalMe } from "./lib/api";
 import type { PendingInvitation } from "./lib/invitations";
 import { Link } from "./lib/navigation";
@@ -36,7 +36,6 @@ import {
 import { parseRoute } from "./lib/routes";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import type { InviteStorage } from "./lib/workspace-invite";
-import { accountNav } from "./pages/account-billing";
 import { billingOffered } from "./pages/licenses";
 import { isNoAccess, licensesPartShown, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
 
@@ -930,23 +929,7 @@ describe("when the workspace's licenses cannot be loaded", () => {
   });
 });
 
-describe("Billing in the account menu and the personal Billing page", () => {
-  const menu = (billing: boolean) =>
-    renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={accountItems(billing)} defaultOpen />);
-
-  test("the account menu has no Billing page to offer, and always has Sign out", () => {
-    // The personal Billing page has no address any more, so nothing links to it.
-    expect(accountItems(true)).toEqual([]);
-    expect(accountItems(false)).toEqual([]);
-    const withBilling = menu(true);
-    expect(withBilling).not.toContain("/account/billing");
-    expect(withBilling).toContain("Sign out");
-    const without = menu(false);
-    expect(without).not.toContain("Billing");
-    expect(without).not.toContain("/account/billing");
-    expect(without).toContain("Sign out");
-  });
-
+describe("the personal Billing page is gone", () => {
   test("/account/billing is not found, whether or not the person is offered billing", () => {
     for (const markup of [
       renderAs(false, "/account/billing", { list: [] }),
@@ -959,14 +942,17 @@ describe("Billing in the account menu and the personal Billing page", () => {
     }
   });
 
-  test("the personal navigation is Your account with Billing, then the way back to a workspace if there is one", () => {
-    const none = accountNav(null);
-    expect(none.map(group => [group.key, group.label, group.items.map(item => item.label)])).toEqual([
-      ["account", "Your account", ["Billing"]],
-      ["workspace", undefined, []],
-    ]);
-    const one = accountNav({ workspaceId: "ws/odd id", name: "Odd" });
-    expect(one[1]!.items).toEqual([expect.objectContaining({ label: "Back to Odd", href: "/" })]);
+  test("the portal's source has no account items and no Billing address", async () => {
+    const shell = await Bun.file(new URL("./components/portal-shell.tsx", import.meta.url)).text();
+    expect(shell).not.toContain("accountItems");
+    const routes = await Bun.file(new URL("./lib/routes.ts", import.meta.url)).text();
+    expect(routes).not.toContain("ACCOUNT_BILLING_PATH");
+  });
+
+  test("the account menu is Sign out alone", () => {
+    const menu = renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={[]} defaultOpen />);
+    expect(menu).toContain("Sign out");
+    expect(menu).not.toContain("Billing");
   });
 });
 
@@ -994,7 +980,7 @@ describe("no page names the payment processor", () => {
       renderAs(false, `/licenses`, withLicenses([LICENSE])),
       renderAs(true, `/licenses`, withLicenses([LICENSE])),
       renderAs(true, `/licenses`, memberOfAcme([MEMBERS_OWN_LICENSE])),
-      renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={accountItems(true)} defaultOpen />),
+      renderToStaticMarkup(<AccountFooter userEmail="sam@acme.test" items={[]} defaultOpen />),
     ];
     expect(pages.every(markup => markup.length > 0)).toBe(true);
     for (const markup of pages) expect(markup).not.toMatch(PROCESSOR_NAME);

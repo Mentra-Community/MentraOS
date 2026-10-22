@@ -105,8 +105,7 @@ export const EXAMPLE_LICENSE = coreLicense("lic_example", EXAMPLE, "example.one"
 
 // ---- billing's catalog and status ---------------------------------------------------------------------------------
 
-const workspaceOffer = (unit: number): Offer => ({ price: perSeat(unit), tax: "excluded", buy: { minSeats: 1, maxSeats: 500, defaultSeats: 10 } });
-const personOffer = (unit: number): Offer => ({ price: perSeat(unit), tax: "excluded", buy: { minSeats: 1, maxSeats: 1, defaultSeats: 1 } });
+const workspaceOffer = (unit: number): Offer => ({ price: perSeat(unit), tax: "excluded", buy: { minSeats: 1, maxSeats: 500 } });
 
 const CALL_ENTRY = {
   product: CALL,
@@ -115,7 +114,6 @@ const CALL_ENTRY = {
   description: "Unlimited Teams calls in Mentra Call.",
   icon: "/api/portal/billing/ui/icons/mentra-call.png",
   features: [{ key: "call.unlimited", name: "Unlimited Teams calls", appName: "Mentra Call" }],
-  ownerTypes: ["workspace", "person"],
 } satisfies CatalogEntry;
 const FLEET_ENTRY = {
   product: FLEET,
@@ -127,7 +125,6 @@ const FLEET_ENTRY = {
     { key: "fleet.assignments", name: "Miniapp assignments" },
     { key: "fleet.usage", name: "Usage reports" },
   ],
-  ownerTypes: ["workspace"],
 } satisfies CatalogEntry;
 const EXAMPLE_ENTRY = {
   product: EXAMPLE,
@@ -138,7 +135,6 @@ const EXAMPLE_ENTRY = {
     { key: "example.one", name: "Feature one" },
     { key: "example.two", name: "Feature two" },
   ],
-  ownerTypes: ["workspace", "person"],
 } satisfies CatalogEntry;
 
 /** The workspace catalog. `offers` false is display content only, as a viewer not offered billing gets it. */
@@ -149,17 +145,6 @@ export function workspaceCatalog(offers = true): BillingCatalog {
     { ...EXAMPLE_ENTRY, ...(offers ? { offer: workspaceOffer(900) } : {}) },
   ];
   return { locale: "en-US", products: entries };
-}
-
-/** What a person is offered: the products sold to people, at one seat. */
-export function accountCatalog(): BillingCatalog {
-  return {
-    locale: "en-US",
-    products: [
-      { ...CALL_ENTRY, offer: personOffer(2900) },
-      { ...EXAMPLE_ENTRY, offer: personOffer(900) },
-    ],
-  };
 }
 
 const action = (kind: string, fallbackLabel: string, returns?: boolean): BillingAction => ({ kind, fallbackLabel, ...(returns === false ? { returns } : {}) });
@@ -232,8 +217,6 @@ export interface Scenario {
   workspaceCatalog?: BillingCatalog;
   /** Billing's status for Acme; a function sees the `purchase` the page asked about. */
   workspaceStatus?: BillingStatus | ((query: { purchase: string | null }) => BillingStatus);
-  accountCatalog?: BillingCatalog;
-  accountStatus?: BillingStatus | ((query: { purchase: string | null }) => BillingStatus);
   /** The answer to `POST session` and `POST purchase`: a URL, or a refusal's status and body. */
   hosted?: (request: { route: "session" | "purchase"; body: Record<string, unknown> }) => { url: string } | { status: number; body: unknown };
 }
@@ -301,21 +284,13 @@ export function fakeCore(scenario: Scenario) {
     if (path === `${workspaces}/${ACME}/licenses`) return json({ items: licenses });
 
     const billing = "/api/portal/billing";
-    const catalogOf = (kind: "workspace" | "account") =>
-      kind === "workspace" ? (scenario.workspaceCatalog ?? workspaceCatalog()) : (scenario.accountCatalog ?? accountCatalog());
-    const statusOfOwner = (kind: "workspace" | "account") =>
-      pick((kind === "workspace" ? scenario.workspaceStatus : scenario.accountStatus) ?? statusOf([]), url.searchParams);
-    for (const [kind, prefix] of [
-      ["workspace", `${billing}/workspaces/${ACME}`],
-      ["account", `${billing}/account`],
-    ] as const) {
-      if (path === `${prefix}/catalog` && method === "GET") return json(catalogOf(kind));
-      if (path === `${prefix}/status` && method === "GET") return json(statusOfOwner(kind));
-      if ((path === `${prefix}/session` || path === `${prefix}/purchase`) && method === "POST") {
-        const route = path.endsWith("session") ? "session" : "purchase";
-        const answer = scenario.hosted?.({ route, body: body ?? {} }) ?? { url: HOSTED.checkout };
-        return "url" in answer ? json(answer) : json(answer.body, answer.status);
-      }
+    const prefix = `${billing}/workspaces/${ACME}`;
+    if (path === `${prefix}/catalog` && method === "GET") return json(scenario.workspaceCatalog ?? workspaceCatalog());
+    if (path === `${prefix}/status` && method === "GET") return json(pick(scenario.workspaceStatus ?? statusOf([]), url.searchParams));
+    if ((path === `${prefix}/session` || path === `${prefix}/purchase`) && method === "POST") {
+      const route = path.endsWith("session") ? "session" : "purchase";
+      const answer = scenario.hosted?.({ route, body: body ?? {} }) ?? { url: HOSTED.checkout };
+      return "url" in answer ? json(answer) : json(answer.body, answer.status);
     }
     return json({ error: "not_found", error_description: `the fake Core has no ${method} ${path}` }, 404);
   }
@@ -343,6 +318,19 @@ export const SCENARIOS = {
     workspaceStatus: ({ purchase }) =>
       statusOf([CALL_BILLING, FLEET_BILLING], { purchase: purchase === "pur_1" ? purchaseOf({ status: "ready", licenseId: "lic_fleet" }) : null }),
   }),
+  /** Buying in a workspace of one person (Dana alone): the Buy dialog has no number to choose. */
+  solo: (): Scenario => ({ licenses: [], members: [PEOPLE[0]!], workspaceStatus: statusOf([]) }),
+  /** After checkout, when Core gave the buyer the one license she bought. */
+  purchasedForYou: (): Scenario => {
+    const mine = coreLicense("lic_me", CALL, "call.unlimited", 1, ["dana"]);
+    return {
+      licenses: [mine],
+      workspaceStatus: ({ purchase }) =>
+        statusOf([licenseBilling("lic_me", CALL, 2900, 1, "2026-11-20T12:00:00.000Z")], {
+          purchase: purchase === "pur_1" ? purchaseOf({ status: "ready", product: CALL, quantity: 1, licenseId: "lic_me" }) : null,
+        }),
+    };
+  },
   /** v2-04 to v2-06: three licenses, for the Members list. */
   threeActive: (): Scenario => ({
     licenses: [CALL_LICENSE, FLEET_LICENSE, EXAMPLE_LICENSE],
@@ -350,11 +338,4 @@ export const SCENARIOS = {
   }),
   /** v2-09: test mode, the catalog. */
   testMode: (): Scenario => ({ licenses: [], workspaceStatus: statusOf([], { testMode: TEST_MODE }) }),
-  /** v2-P2: the person's own Call license. */
-  personalActive: (): Scenario => ({
-    licenses: [],
-    accountStatus: statusOf([licenseBilling("lic_me", CALL, 2900, 1, "2026-11-20T12:00:00.000Z", { actions: [action("cancel", "Cancel")] })]),
-  }),
-  /** v2-P1: nothing yet. */
-  personalCatalog: (): Scenario => ({ licenses: [], accountStatus: statusOf([]) }),
 } as const;
