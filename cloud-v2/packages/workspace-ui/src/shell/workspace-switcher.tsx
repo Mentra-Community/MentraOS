@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, Mail, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Mail } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Count, WorkspaceAvatar } from "../components/common";
 import { cn } from "../lib/utils";
@@ -34,19 +34,37 @@ export const SWITCHER_ITEM_CLASS =
   "flex items-center gap-2.5 hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]";
 
 /**
- * The workspace switcher at the top of the sidebar: the current workspace (initial, name, your role), and
- * a menu of your workspaces, the host's `extraItems`, "Create workspace" and the pending invitations. It
- * is presentational: data and actions come in through props, so it renders the same on the server and in
- * a test, whatever the host's router.
+ * The person's one workspace at the top of the workspace portal's sidebar: its initial, name and their role. A
+ * person belongs to at most one workspace, so there is nothing to switch to and nothing to create: no chevron, no
+ * menu, no "New workspace". `invitations` is whatever the host shows under it (a link to the pending invitations).
+ */
+export function WorkspaceLabel({ current, invitations }: { current: SwitcherCurrent; invitations?: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div data-slot="workspace-label" className="rounded-menu bg-background flex w-full items-center gap-3 border px-2.5 py-2">
+        <WorkspaceAvatar name={current.name} className="size-9 rounded-[10px] text-[15px]" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] leading-5 font-semibold">{current.name}</span>
+          {/* Two lines at most, so a longer role ("Member · Organization Admin") is read whole, not cut. */}
+          <span className="text-muted-foreground line-clamp-2 block text-xs leading-4">{current.roleLabel ?? " "}</span>
+        </span>
+      </div>
+      {invitations}
+    </div>
+  );
+}
+
+/**
+ * The workspace menu at the top of a sidebar: the current workspace (initial, name, your role), and a menu
+ * of your workspaces, the host's `extraItems` and the pending invitations. It is presentational: data and
+ * actions come in through props, so it renders the same on the server and in a test, whatever the host's
+ * router. A person belongs to one workspace, so nothing here creates another; the workspace portal itself
+ * shows {@link WorkspaceLabel}, which has no menu at all.
  */
 export function WorkspaceSwitcher({
   current,
   workspaces,
   invitations,
-  canCreate,
-  createNotice,
-  onCreate,
-  hideCreate = false,
   listFailed = false,
   onRetry,
   linkComponent: Link = PlainLink,
@@ -65,16 +83,10 @@ export function WorkspaceSwitcher({
   listFailed?: boolean;
   onRetry?(): void;
   invitations: readonly SwitcherInvitation[];
-  canCreate: boolean;
-  /** Why creating is not offered, shown in its place. */
-  createNotice: string | null;
-  onCreate(): void;
-  /** Leave Create workspace out of the menu entirely (a person belongs to one workspace, so nobody makes a second). */
-  hideCreate?: boolean;
   /** The host's in-app link, for workspaces with an `href`. Defaults to a plain anchor. */
   linkComponent?: ShellLinkComponent;
   /**
-   * More menu items, under the workspaces and above Create workspace ("Manage workspace"). Style them with
+   * More menu items, under the workspaces ("Manage workspace"). Style them with
    * `SWITCHER_ITEM_CLASS`. A link closes the menu when clicked; so does a control marked `data-navigates`.
    */
   extraItems?: ReactNode;
@@ -232,32 +244,6 @@ export function WorkspaceSwitcher({
 
           <MenuSeparator />
           {extraItems}
-          {hideCreate ? null : canCreate ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                onCreate();
-              }}
-              className="flex w-full cursor-pointer items-center gap-2.5 text-left font-semibold hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]"
-            >
-              <span className="text-muted-foreground flex size-8 items-center justify-center rounded-[9px] border border-dashed">
-                <Plus className="size-4" />
-              </span>
-              Create workspace
-            </button>
-          ) : (
-            <div role="menuitem" aria-disabled="true" className="flex items-start gap-2.5 rounded-[12px] px-2 py-1.5 text-sm">
-              <span className="text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-[9px] border border-dashed opacity-45">
-                <Plus className="size-4" />
-              </span>
-              <span className="min-w-0">
-                <span className="text-muted-foreground block font-semibold">Create workspace</span>
-                {createNotice ? <span className="text-muted-foreground block text-xs leading-4">{createNotice}</span> : null}
-              </span>
-            </div>
-          )}
 
           {invitations.length > 0 ? (
             <>
