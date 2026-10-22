@@ -220,17 +220,7 @@ test("the export pins exactly the coordinates the completed release published", 
 test("an export is skipped when the branch already has the release or a newer one", () => {
   assert.equal(exportStatus({kitRecord: null, identity, tagExists: false}).needed, true)
   assert.equal(exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1035"}, identity, tagExists: false}).needed, true)
-  // A branch that already carries the release but lost its tag gets the tag back.
-  assert.deepEqual(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: false}), {
-    needed: false,
-    repairTag: true,
-    reason: `the branch carries ${identity} but sdk-${identity} is missing`,
-  })
-  assert.equal(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: true}).repairTag, false)
-  assert.equal(
-    exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1041"}, identity, tagExists: false}).repairTag,
-    false,
-  )
+  assert.equal(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: true}).needed, false)
   assert.equal(exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1041"}, identity, tagExists: false}).needed, false)
   assert.equal(exportStatus({kitRecord: null, identity, tagExists: true}).needed, false)
 })
@@ -459,4 +449,13 @@ test("a production release record pins the plain versions it promoted", () => {
   assert.equal(coordinates.otaManifest.url, record.otaManifest.url)
   record.releaseFamily.members["@mentra/bluetooth-sdk"].publishTargets = ["npm"]
   assert.throws(() => exportCoordinates(record), /Maven/)
+})
+
+test("a branch carrying the release without its tag stops the export", () => {
+  // Branch and tag are pushed atomically, so this state was made outside the
+  // export: fail with a clear error instead of skipping or repairing it.
+  assert.throws(
+    () => exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: false}),
+    /already carries 3\.4\.0-dev\.1040 but sdk-3\.4\.0-dev\.1040 does not exist/,
+  )
 })

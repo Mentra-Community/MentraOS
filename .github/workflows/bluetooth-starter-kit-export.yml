@@ -173,7 +173,7 @@ jobs:
 
       - name: Create the Starter Kit push token
         id: token
-        if: (steps.wait.outputs.ready == 'true' || steps.status.outputs.repair_tag == 'true') && inputs.dry_run != true
+        if: steps.wait.outputs.ready == 'true' && inputs.dry_run != true
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
@@ -183,21 +183,6 @@ jobs:
           permission-contents: write
           # The export carries the kit's own CI in .github/workflows.
           permission-workflows: write
-
-      # An earlier run advanced the branch but did not create the tag.
-      - name: Restore the missing release tag
-        id: repair
-        if: steps.status.outputs.repair_tag == 'true' && inputs.dry_run != true
-        env:
-          TOKEN: ${{ steps.token.outputs.token }}
-          IDENTITY: ${{ steps.release.outputs.identity }}
-        run: |
-          set -euo pipefail
-          remote="https://x-access-token:${TOKEN}@github.com/${STARTER_KIT_REPOSITORY}.git"
-          commit=$(git -C kit rev-parse HEAD)
-          git -C kit tag "sdk-$IDENTITY" "$commit"
-          git -C kit push --quiet "$remote" "refs/tags/sdk-$IDENTITY"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push the release
         id: push
@@ -224,12 +209,6 @@ jobs:
             node tooling/.github/scripts/export-bluetooth-starter-kit.mjs status \
               --kit-dir kit --identity "$IDENTITY" --tag-exists "$tag_exists" > kit-status.txt
             cat kit-status.txt
-            if grep -qx 'repair_tag=true' kit-status.txt; then
-              git -C kit tag "sdk-$IDENTITY" HEAD
-              git -C kit push --quiet "$remote" "$tag"
-              echo "commit=$(git -C kit rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
             if grep -qx 'needed=false' kit-status.txt; then
               exit 0
             fi
@@ -271,8 +250,7 @@ jobs:
           PRESENT: ${{ steps.source.outputs.present }}
           READY: ${{ steps.wait.outputs.ready }}
           MISSING: ${{ steps.wait.outputs.missing }}
-          COMMIT: ${{ steps.push.outputs.commit || steps.repair.outputs.commit }}
-          REPAIRED: ${{ steps.repair.outputs.commit != '' }}
+          COMMIT: ${{ steps.push.outputs.commit }}
           DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
           {
@@ -280,8 +258,6 @@ jobs:
             echo
             if [[ "$FOUND" != true ]]; then
               echo "No completed ${{ matrix.channel }} release record${IDENTITY:+ for \`$IDENTITY\`} yet; nothing to export."
-            elif [[ "$REPAIRED" == true ]]; then
-              echo "\`$IDENTITY\` was already on \`$BRANCH\`; restored its missing tag \`sdk-$IDENTITY\` on $COMMIT."
             elif [[ "$NEEDED" != true ]]; then
               echo "Skipped \`$IDENTITY\`: $REASON."
             elif [[ "$PRESENT" != true ]]; then

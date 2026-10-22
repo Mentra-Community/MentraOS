@@ -984,12 +984,11 @@ test("the Starter Kit export is idempotent, deferrable, and pushes only to the k
   assert.match(exporter, /permission-contents: write/)
   assert.match(exporter, /permission-workflows: write/)
   assert.doesNotMatch(exporter, /permission-actions|MentraOS\n\s+Mentra-Bluetooth|--force|push -f/)
-  // Branch and tag land together, failures are explicit, and a branch that
-  // already carries the release gets its missing tag back instead of a skip.
+  // Branch and tag land together and failures are explicit; nothing repairs
+  // a missing tag, because an atomic push cannot leave one behind.
   assert.match(exporter, /git -C kit push --quiet --atomic "\$remote" "HEAD:refs\/heads\/\$BRANCH" "\$tag" \|\| push_status=\$\?/)
   assert.doesNotMatch(exporter, /if ! publish|publish\(\) \(/)
-  assert.match(exporter, /- name: Restore the missing release tag\n        id: repair\n        if: steps\.status\.outputs\.repair_tag == 'true'/)
-  assert.match(exporter, /grep -qx 'repair_tag=true' kit-status\.txt/)
+  assert.doesNotMatch(exporter, /repair_tag|Restore the missing release tag/)
   assert.match(exporter, /Could not push \$IDENTITY to \$BRANCH\.[^\n]*\n\s+exit 1/)
   assert.match(exporter, /Deferred/)
   const rollout = workflow("production-release-rollout.yml")
