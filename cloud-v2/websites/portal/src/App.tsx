@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrandPage, buttonVariants, Spinner, workspaceListQuery } from "@mentra/workspace-ui";
-import { useEffect, useState } from "react";
-import { PortalShell, TabWorkspaceProvider, useTabWorkspace } from "@/components/portal-shell";
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BrandPage, Button, buttonVariants, Spinner, workspaceKeys, workspaceListQuery } from "@mentra/workspace-ui";
+import { useEffect, useRef, useState } from "react";
+import { PortalCenteredLayout, PortalShell, TabWorkspaceProvider, useTabWorkspace } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
 import { fetchPortalMe, safeLocalStorage, type PortalMe } from "./lib/api";
 import { DEVELOPER_CONSOLE_URL } from "./lib/config";
@@ -164,6 +164,11 @@ function RouteScreen({ route, me, pathname, search }: { route: PortalRoute; me: 
  * `/` and a section's address: the current workspace (`?workspace=`, else the last one opened from the person's
  * own list, else their first), or the first run when there is none.
  *
+ * The first run keeps the address it was opened at, so a `?buy=` survives both the workspace made for the person and
+ * an invitation they accept. It asks Core for a workspace (`ensure`) only when nothing else is left to offer: no
+ * `?workspace=` (the person came to a workspace by its id), no invitation they can accept, and a deployment that lets
+ * them have one.
+ *
  * The remembered workspace is this tab's own (`TabWorkspaceProvider`): another tab's pick does not move this one.
  * A workspace opened from the person's list through `?workspace=` is remembered, and a `?workspace=` that names
  * what the bare address opens is dropped from the address in place. One the person is not in (an Organization Admin
@@ -171,7 +176,7 @@ function RouteScreen({ route, me, pathname, search }: { route: PortalRoute; me: 
  */
 function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | null; search: string; me: PortalMe }) {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const { invitations } = usePortal();
+  const { invitations, creation } = usePortal();
   const tab = useTabWorkspace();
   const param = workspaceParam(search);
   const workspaces = list.data;
@@ -188,13 +193,65 @@ function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | n
     if (param && param === bare) setQueryParam("workspace", null, { replace: true });
   }, [param, bare]);
 
+  // An invitation the person can accept comes first: the first run shows it in place and makes nothing. One for
+  // another account does not count. Nothing is made while the list or the invitations are still being looked up.
+  const acceptable = invitations?.filter(invitation => !invitation.forOtherAccount) ?? [];
+  const makes = !current && workspaces !== undefined && !list.isFetching && invitations !== undefined && acceptable.length === 0 && creation.allowed;
+  const ensure = useEnsureWorkspace({ wanted: makes, has: current !== null });
+
   if (workspaces === undefined && !list.isError) return <Splash label="Loading your workspaces" />;
   if (!current) {
-    // The first run offers the person's invitations instead of creating a workspace, so it waits for them.
+    // The first run offers the person's invitations instead of a workspace, so it waits for them.
     if (invitations === undefined) return <Splash label="Looking for your invitations" />;
-    return <WelcomeScreen />;
+    if (workspaces === undefined || acceptable.length > 0 || !creation.allowed) return <WelcomeScreen />;
+    return <FirstRun failed={ensure.isError} retry={() => ensure.mutate()} />;
   }
   return <WorkspaceScreen key={current} workspaceId={current} bareWorkspaceId={bare} section={section} me={me} />;
+}
+
+/**
+ * Asks Core for the person's workspace (`POST /ensure`) once `wanted` turns true, and again only when asked (the
+ * mutation's `mutate`, from Try again) or after the person has had a workspace and lost it (`has` goes true, then
+ * false). The answer goes into the cache and the workspace list is read again, which is what opens it. A ref holds
+ * "asked", because React's strict mode runs an effect twice from the same render.
+ */
+function useEnsureWorkspace({ wanted, has }: { wanted: boolean; has: boolean }) {
+  const qc = useQueryClient();
+  const asked = useRef(false);
+  const ensure = useMutation({
+    mutationFn: () => portalWorkspaceApi.ensureWorkspace(),
+    gcTime: 0,
+    onSuccess: async created => {
+      qc.setQueryData(workspaceKeys.detail(portalWorkspaceApi, created.workspaceId), created);
+      await qc.invalidateQueries({ queryKey: workspaceKeys.list(portalWorkspaceApi) });
+    },
+  });
+  const { reset, mutate, isIdle } = ensure;
+  useEffect(() => {
+    if (has) {
+      asked.current = false;
+      if (!isIdle) reset();
+    } else if (wanted && !asked.current) {
+      asked.current = true;
+      mutate();
+    }
+  }, [wanted, has]);
+  return ensure;
+}
+
+/** The first run while Core makes the person's workspace, or when it could not. */
+function FirstRun({ failed, retry }: { failed: boolean; retry(): void }) {
+  if (!failed) return <Splash label="Setting up your workspace" />;
+  return (
+    <PortalCenteredLayout>
+      <div role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-center text-sm">
+        <p>Couldn't set up your workspace.</p>
+        <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={retry}>
+          Try again
+        </Button>
+      </div>
+    </PortalCenteredLayout>
+  );
 }
 
 /** `/invitation`: the invitation link this tab holds (or, once, that it is no longer valid); without one, home. */
@@ -217,7 +274,7 @@ export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { i
       <a className={buttonVariants({ size: "lg", className: "w-full" })} href={loginUrl}>
         Sign in
       </a>
-      <p className="text-muted-foreground mt-6 text-sm">Sign in with your Mentra account.</p>
+      <p className="text-muted-foreground mt-6 text-sm">Use the same account you sign in to the Mentra App with.</p>
     </BrandPage>
   );
 }

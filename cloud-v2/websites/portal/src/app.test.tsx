@@ -402,11 +402,11 @@ describe("the workspace switcher", () => {
 });
 
 describe("before a workspace", () => {
-  test("with no workspaces, / is the first run: a centred Create your workspace card", () => {
+  test("with no workspaces and nothing to accept, / is the first run: the workspace is being made, nothing is asked", () => {
     const markup = render("/", { list: [] });
-    expect(markup).toContain("Welcome to Mentra");
-    expect(markup).toContain("Create your workspace");
-    expect(markup).toContain("Workspace name");
+    expect(markup).toContain("Setting up your workspace");
+    expect(markup).not.toContain("Create your workspace");
+    expect(markup).not.toContain("Workspace name");
     expect(markup).not.toContain("Pending invitation");
   });
 
@@ -433,30 +433,56 @@ describe("before a workspace", () => {
     expect(markup).not.toContain("Create your workspace");
   });
 
-  test("once the invitations are dismissed, the first run offers Create your workspace", () => {
+  test("once the invitations are dismissed, the first run sets the workspace up", () => {
     const pending = render("/", { list: [] }, withLink(invitationTo("Acme Field Team")));
-    expect(pending).not.toContain("Create your workspace");
+    expect(pending).not.toContain("Setting up your workspace");
     // Dismiss forgets the invitation (PortalSession.forgetInvitation): none is left to offer.
     const dismissed = render("/", { list: [] }, { link: { status: "none" }, invitations: [] });
-    expect(dismissed).toContain("Create your workspace");
-    expect(dismissed).toContain("Workspace name");
+    expect(dismissed).toContain("Setting up your workspace");
     expect(dismissed).not.toContain("Pending invitation");
     expect(dismissed).not.toContain("Accept invitation");
   });
 
-  test("a link for another account says so and offers Switch account, and does not hide Create your workspace", () => {
+  test("a link for another account does not hold the workspace back: it is set up, and /invitation is where the link explains itself", () => {
     const markup = render("/", { list: [] }, withLink(invitationTo("Acme Field Team", { email: "b@else.test" })));
+    expect(markup).toContain("Setting up your workspace");
+    expect(markup).not.toContain("Accept invitation");
+    expect(markup).not.toContain("Welcome to Mentra");
+  });
+
+  test("where creating is not allowed, a link for another account still offers Switch account", () => {
+    const markup = render(
+      "/",
+      { list: [] },
+      { ...withLink(invitationTo("Acme Field Team", { email: "b@else.test" })), creation: { allowed: false, reason: "email_unverified" } },
+    );
     expect(markup).toContain("This invitation is for <strong");
     expect(markup).toContain(">b@else.test</strong>. You&#x27;re signed in as <strong");
     expect(markup).toContain(">Switch account<");
     expect(markup).not.toContain("Accept invitation");
-    expect(markup).toContain("Create your workspace");
+    expect(markup).toContain("You&#x27;re not in a workspace yet.");
   });
 
-  test("when creating is not allowed the first run says why", () => {
+  test("when creating is not allowed the first run says why, and the way into a workspace", () => {
     const markup = render("/", { list: [] }, { creation: { allowed: false, reason: "email_unverified" } });
+    expect(markup).toContain("You&#x27;re not in a workspace yet.");
     expect(markup).toContain("Verify your account");
+    expect(markup).toContain("Open an invitation link someone sent you to join their workspace.");
+    expect(markup).not.toContain("Setting up your workspace");
     expect(markup).not.toContain("Workspace name");
+  });
+
+  test("where creating is not allowed an invitation is still shown, and no workspace is on the way", () => {
+    const markup = render("/", { list: [] }, { creation: { allowed: false, reason: "organization_admins_only" }, ...withMine(invitationTo("Dev check")) });
+    expect(markup).toContain("Join Dev check");
+    expect(markup).not.toContain("Setting up your workspace");
+    expect(markup).not.toContain("not in a workspace yet");
+  });
+
+  test("a ?workspace= opens that workspace's page, not the first run", () => {
+    const markup = render("/members?workspace=ws_x", { list: [], details: [detail("ws_x", "Customer", "owner", false)], members: MEMBERS });
+    expect(markup).not.toContain("Setting up your workspace");
+    expect(markup).not.toContain("not in a workspace yet");
   });
 
   test("an invitation link opens the accept card, with the way back to your workspaces", () => {
@@ -561,10 +587,9 @@ describe("invitations as the app finds them", () => {
       </QueryClientProvider>,
     );
 
-  test("no workspaces and a dead stored link: the first run is Create your workspace, with no invitation copy", async () => {
+  test("no workspaces and a dead stored link: the first run sets the workspace up, with no invitation copy", async () => {
     const markup = renderHooked(await client(gone(), []), "/", TOKEN);
-    expect(markup).toContain("Create your workspace");
-    expect(markup).toContain("Workspace name");
+    expect(markup).toContain("Setting up your workspace");
     for (const copy of ["Pending invitation", "invited", "no longer valid", "Accept invitation", "Join the workspace"]) {
       expect(markup).not.toContain(copy);
     }
@@ -627,16 +652,16 @@ describe("invitations as the app finds them", () => {
     const preview = invitationTo("Dev check");
     const local = memoryStorage({ "mentra.dismissedInvitations": JSON.stringify([preview.invitationId]) });
     const dismissed = renderHooked(await client(null, [preview]), "/", null, local);
-    expect(dismissed).toContain("Create your workspace");
+    expect(dismissed).toContain("Setting up your workspace");
     expect(dismissed).not.toContain("Join Dev check");
 
     const unverified = Response.json({ error: "email_unverified", error_description: "verify your email" }, { status: 403 });
     const refused = renderHooked(await client(null, unverified), "/", null);
-    expect(refused).toContain("Create your workspace");
+    expect(refused).toContain("Setting up your workspace");
 
     const listed = renderHooked(await client(null, [preview]), "/", null);
     expect(listed).toContain("Join Dev check");
-    expect(listed).not.toContain("Create your workspace");
+    expect(listed).not.toContain("Setting up your workspace");
   });
 });
 
@@ -690,6 +715,12 @@ describe("an Organization Admin is labelled by their own role", () => {
 
 test("the login gate names the site", () => {
   expect(renderToStaticMarkup(<LoginGate loginUrl="/api/portal/auth/login" />)).toContain("Sign into Mentra Portal");
+});
+
+test("the login gate says to use the account the Mentra App signs in with", () => {
+  const markup = renderToStaticMarkup(<LoginGate loginUrl="/api/portal/auth/login" />);
+  expect(markup).toContain("Use the same account you sign in to the Mentra App with.");
+  expect(markup).not.toContain("Sign in with your Mentra account.");
 });
 
 test("the login gate says to sign in with the invited address when an invitation is pending", () => {

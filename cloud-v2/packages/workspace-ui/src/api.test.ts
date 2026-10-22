@@ -65,6 +65,25 @@ describe("createWorkspaceApi: routes", () => {
     expect(rec.calls[0]!.headers["content-type"]).toBe("application/json");
   });
 
+  test("ensures the caller's workspace with POST {base}/ensure and no body, whether it answers 200 or 201", async () => {
+    const detail = { workspaceId: "ws_auto", name: "Dana's Workspace" };
+    const rec = recordingFetch(Response.json(detail, { status: 201 }), Response.json(detail, { status: 200 }));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    expect(await api.ensureWorkspace()).toEqual(detail as never);
+    expect(await api.ensureWorkspace()).toEqual(detail as never);
+    for (const call of rec.calls) {
+      expect(call).toMatchObject({ url: "/api/portal/workspaces/ensure", method: "POST", credentials: "same-origin" });
+      expect(call.body).toBeUndefined();
+      expect(call.headers["content-type"]).toBeUndefined();
+    }
+  });
+
+  test("a refused ensure is a typed error", async () => {
+    const rec = recordingFetch(Response.json({ error: "workspace_creation_not_allowed", error_description: "no" }, { status: 403 }));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    await expect(api.ensureWorkspace()).rejects.toMatchObject({ status: 403, code: "workspace_creation_not_allowed" });
+  });
+
   test("reads, renames and deletes a workspace", async () => {
     const rec = recordingFetch(Response.json({}), Response.json({}), noContent());
     const api = createWorkspaceApi({ basePath: "/api/workspaces", fetch: rec.fetch });
