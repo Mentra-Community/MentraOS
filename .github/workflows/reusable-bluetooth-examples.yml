@@ -11,8 +11,9 @@ name: Reusable Bluetooth Examples
 # Example App Builds calls this for pull requests. A coordinated release calls
 # it with its release plan and OTA manifest: the SDK and Engine are then
 # stamped with the release metadata exactly as the Mentra App build stamps
-# them, every example is named after the release, and the files are uploaded
-# with examples-build.json for publication once the release finalizes.
+# them, every example is named after the release, and the last job uploads the
+# APKs and the unsigned iOS IPA to the release container under those names, as
+# the Mentra App build does. The release never waits for the examples.
 
 on:
   workflow_call:
@@ -35,21 +36,29 @@ on:
         required: false
         default: ""
         type: string
+      release_id:
+        description: Release container to upload the release's examples to
+        required: false
+        default: ""
+        type: string
       desktop:
         description: Also build the macOS examples, which have no release artifact
         required: false
         default: true
         type: boolean
     outputs:
-      result_artifact:
-        description: Actions artifact holding the release's example files and examples-build.json
-        value: ${{ jobs.result.outputs.result_artifact }}
+      react_native_name:
+        value: ${{ jobs.publish.outputs.react_native_name }}
+      react_native_url:
+        value: ${{ jobs.publish.outputs.react_native_url }}
 
 permissions:
   actions: read
   contents: read
 
 env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
   CI: true
   GSTREAMER_VERSION: 1.28.2
 
@@ -112,28 +121,24 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-input/plan
 
-      # The same stamping as the Mentra App build: release versions for the
-      # family packages, and the release identity and OTA manifest pin in the
-      # SDK and Engine metadata.
+      # The tooling comes from the workflow revision: the frozen source of a
+      # production example may predate the stamping action.
+      - name: Check out the release tooling
+        if: needs.prepare.outputs.release == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
       - name: Stamp the release into the SDK and Engine
         if: needs.prepare.outputs.release == 'true'
-        env:
-          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
-          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          plan=release-input/plan/release-plan.json
-          node .github/scripts/stage-release-family.mjs --plan "$plan"
-          metadata=(
-            --family-base-version "$(jq -er .familyBaseVersion "$plan")"
-            --release-identity "$(jq -er .releaseIdentity "$plan")"
-            --release-set-id "$(jq -er .releaseSetId "$plan")"
-            --source-commit "$(jq -er .sourceCommit "$plan")"
-            --ota-manifest-url "$OTA_MANIFEST_URL"
-            --ota-manifest-sha256 "$OTA_MANIFEST_SHA256"
-          )
-          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
-          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+        uses: ./release-tooling/.github/actions/stamp-release
+        with:
+          plan: release-input/plan/release-plan.json
+          ota-manifest-url: ${{ inputs.ota_manifest_url }}
+          ota-manifest-sha256: ${{ inputs.ota_manifest_sha256 }}
 
       - name: Get cache week number
         id: cache-week
@@ -277,28 +282,24 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-input/plan
 
-      # The same stamping as the Mentra App build: release versions for the
-      # family packages, and the release identity and OTA manifest pin in the
-      # SDK and Engine metadata.
+      # The tooling comes from the workflow revision: the frozen source of a
+      # production example may predate the stamping action.
+      - name: Check out the release tooling
+        if: needs.prepare.outputs.release == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
       - name: Stamp the release into the SDK and Engine
         if: needs.prepare.outputs.release == 'true'
-        env:
-          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
-          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          plan=release-input/plan/release-plan.json
-          node .github/scripts/stage-release-family.mjs --plan "$plan"
-          metadata=(
-            --family-base-version "$(jq -er .familyBaseVersion "$plan")"
-            --release-identity "$(jq -er .releaseIdentity "$plan")"
-            --release-set-id "$(jq -er .releaseSetId "$plan")"
-            --source-commit "$(jq -er .sourceCommit "$plan")"
-            --ota-manifest-url "$OTA_MANIFEST_URL"
-            --ota-manifest-sha256 "$OTA_MANIFEST_SHA256"
-          )
-          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
-          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+        uses: ./release-tooling/.github/actions/stamp-release
+        with:
+          plan: release-input/plan/release-plan.json
+          ota-manifest-url: ${{ inputs.ota_manifest_url }}
+          ota-manifest-sha256: ${{ inputs.ota_manifest_sha256 }}
 
       - name: Build Engine types
         # Engine has no prepare script; tsc reads its build/*.d.ts.
@@ -423,28 +424,24 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-input/plan
 
-      # The same stamping as the Mentra App build: release versions for the
-      # family packages, and the release identity and OTA manifest pin in the
-      # SDK and Engine metadata.
+      # The tooling comes from the workflow revision: the frozen source of a
+      # production example may predate the stamping action.
+      - name: Check out the release tooling
+        if: needs.prepare.outputs.release == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
       - name: Stamp the release into the SDK and Engine
         if: needs.prepare.outputs.release == 'true'
-        env:
-          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
-          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          plan=release-input/plan/release-plan.json
-          node .github/scripts/stage-release-family.mjs --plan "$plan"
-          metadata=(
-            --family-base-version "$(jq -er .familyBaseVersion "$plan")"
-            --release-identity "$(jq -er .releaseIdentity "$plan")"
-            --release-set-id "$(jq -er .releaseSetId "$plan")"
-            --source-commit "$(jq -er .sourceCommit "$plan")"
-            --ota-manifest-url "$OTA_MANIFEST_URL"
-            --ota-manifest-sha256 "$OTA_MANIFEST_SHA256"
-          )
-          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
-          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+        uses: ./release-tooling/.github/actions/stamp-release
+        with:
+          plan: release-input/plan/release-plan.json
+          ota-manifest-url: ${{ inputs.ota_manifest_url }}
+          ota-manifest-sha256: ${{ inputs.ota_manifest_sha256 }}
 
       - name: Type check TypeScript
         working-directory: examples/bluetooth/react-native-elevenlabs-audio
@@ -510,28 +507,24 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-input/plan
 
-      # The same stamping as the Mentra App build: release versions for the
-      # family packages, and the release identity and OTA manifest pin in the
-      # SDK and Engine metadata.
+      # The tooling comes from the workflow revision: the frozen source of a
+      # production example may predate the stamping action.
+      - name: Check out the release tooling
+        if: needs.prepare.outputs.release == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
       - name: Stamp the release into the SDK and Engine
         if: needs.prepare.outputs.release == 'true'
-        env:
-          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
-          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          plan=release-input/plan/release-plan.json
-          node .github/scripts/stage-release-family.mjs --plan "$plan"
-          metadata=(
-            --family-base-version "$(jq -er .familyBaseVersion "$plan")"
-            --release-identity "$(jq -er .releaseIdentity "$plan")"
-            --release-set-id "$(jq -er .releaseSetId "$plan")"
-            --source-commit "$(jq -er .sourceCommit "$plan")"
-            --ota-manifest-url "$OTA_MANIFEST_URL"
-            --ota-manifest-sha256 "$OTA_MANIFEST_SHA256"
-          )
-          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
-          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+        uses: ./release-tooling/.github/actions/stamp-release
+        with:
+          plan: release-input/plan/release-plan.json
+          ota-manifest-url: ${{ inputs.ota_manifest_url }}
+          ota-manifest-sha256: ${{ inputs.ota_manifest_sha256 }}
 
       - name: Install GStreamer iOS SDK
         # Installs to ~/Library/Developer/GStreamer/iPhone.sdk once per runner
@@ -688,21 +681,25 @@ jobs:
         working-directory: examples/bluetooth/react-native-macos/macos
         run: rm -rf build Pods
 
-  result:
-    name: Record the release's example builds
+  publish:
+    name: Upload the release's example apps
     needs: [prepare, android, react-native, react-native-elevenlabs-audio, ios]
     if: needs.prepare.outputs.release == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     outputs:
-      result_artifact: ${{ steps.record.outputs.result_artifact }}
+      react_native_name: ${{ steps.names.outputs.react_native_name }}
+      react_native_url: ${{ steps.names.outputs.react_native_url }}
     steps:
-      # The record script runs from the workflow revision: a production
-      # example builds a promoted beta's source, which may predate it.
+      # The scripts run from the workflow revision: a production example
+      # builds a promoted beta's source, which may predate them.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
+          sparse-checkout-cone-mode: false
 
       - uses: actions/setup-node@v4
         with:
@@ -719,22 +716,30 @@ jobs:
           path: release-output
           merge-multiple: true
 
-      - name: Describe the example builds
-        id: record
+      # Deterministic names, so the release page, the docs and Slack link the
+      # files without a record. A file an earlier attempt already uploaded
+      # keeps its bytes; the immutable publisher refuses different ones.
+      - name: Upload the examples to the release container
+        id: names
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
         run: |
           set -euo pipefail
-          node .github/scripts/bluetooth-examples-result.mjs build \
-            --plan release-input/plan/release-plan.json \
-            --dir release-output \
-            --ota-manifest-url "${{ inputs.ota_manifest_url }}" \
-            --ota-manifest-sha256 "${{ inputs.ota_manifest_sha256 }}" \
-            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --output release-output/examples-build.json
-          echo "result_artifact=coordinated-examples-$(jq -er .releaseSetId release-input/plan/release-plan.json)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.record.outputs.result_artifact }}
-          path: release-output
-          if-no-files-found: error
-          retention-days: 90
+          plan=release-input/plan/release-plan.json
+          [[ -n "$RELEASE_ID" ]]
+          existing=$(node .github/scripts/release-assets.mjs list --repository "$GITHUB_REPOSITORY" --release-id "$RELEASE_ID")
+          while IFS= read -r name; do
+            test -s "release-output/$name"
+            if jq -e --arg name "$name" 'any(.[]; .name == $name and .state == "uploaded")' <<< "$existing" > /dev/null; then
+              echo "Keeping the uploaded $name"
+              continue
+            fi
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "release-output/$name" --name "$name" \
+              --release-id "$RELEASE_ID" --repository "$GITHUB_REPOSITORY"
+          done < <(node .github/scripts/bluetooth-example-artifacts.mjs names --plan "$plan")
+          node .github/scripts/bluetooth-example-artifacts.mjs urls --plan "$plan" \
+            --repository "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"

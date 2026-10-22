@@ -3,11 +3,10 @@ name: Production Release - Bluetooth Example
 # Builds the production Bluetooth example for a promoted beta: examples/bluetooth
 # at the beta's source commit, stamped with the production identity and the
 # beta's frozen OTA pin, distributed through the public TestFlight link and a
-# dedicated closed Play track, and recorded as mentra-example-release-X.Y.Z.json in the
-# stable release container. Like the stable packages it is keyed on the beta,
-# never on a promotion attempt, and it never promotes a store listing. The
-# standalone Starter Kit's main branch is exported separately, once the
-# production release record exists.
+# dedicated closed Play track. The example apps are uploaded to the stable
+# release container, whose download page lists them once the production
+# release record is written. Like the stable packages it is keyed on the beta,
+# never on a promotion attempt, and it never promotes a store listing.
 
 on:
   workflow_dispatch:
@@ -48,8 +47,6 @@ jobs:
       testflight_audience: ${{ steps.plan.outputs.testflight_audience }}
       play_track: ${{ steps.plan.outputs.play_track }}
       plan_artifact: ${{ steps.artifact.outputs.plan }}
-      beta_artifact: ${{ steps.artifact.outputs.beta }}
-      beta_manifest_url: ${{ steps.beta.outputs.manifest_url }}
       stable_release_id: ${{ steps.container.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
@@ -291,20 +288,12 @@ jobs:
         run: |
           {
             echo "plan=production-example-plan-${GITHUB_RUN_ID}"
-            echo "beta=production-example-beta-${GITHUB_RUN_ID}"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.plan }}
           path: release-intent/release-plan.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.artifact.outputs.beta }}
-          path: ${{ steps.beta.outputs.manifest_path }}
           if-no-files-found: error
           retention-days: 30
 
@@ -333,96 +322,13 @@ jobs:
       release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
       ota_manifest_url: ${{ needs.load.outputs.ota_url }}
       ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
+      release_id: ${{ needs.load.outputs.stable_release_id }}
       desktop: false
-
-  publish-examples:
-    name: Publish the production example builds
-    needs: [load, examples]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
-    outputs:
-      result_artifact: production-examples-result-${{ github.run_id }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.load.outputs.plan_artifact }}
-          path: release-input/plan
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.examples.outputs.result_artifact }}
-          path: release-input/examples
-
-      # A file an earlier run of this example release published keeps its
-      # bytes; the immutable publisher refuses different bytes under one name.
-      - name: Publish the example files to the stable container
-        env:
-          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          existing=$(node .github/scripts/release-assets.mjs list --repository "$GITHUB_REPOSITORY" --release-id "${{ needs.load.outputs.stable_release_id }}")
-          while IFS= read -r name; do
-            if jq -e --arg name "$name" 'any(.[]; .name == $name and .state == "uploaded")' <<< "$existing" > /dev/null; then
-              echo "Keeping the published $name"
-              continue
-            fi
-            node .github/scripts/publish-immutable-release-asset.mjs \
-              --file "release-input/examples/$name" \
-              --name "$name" \
-              --release-id "${{ needs.load.outputs.stable_release_id }}" \
-              --repository "$GITHUB_REPOSITORY"
-          done < <(jq -r '.artifacts[].name' release-input/examples/examples-build.json)
-
-      - name: Record the published examples
-        env:
-          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p examples-result
-          node .github/scripts/release-assets.mjs list --repository "$GITHUB_REPOSITORY" \
-            --release-id "${{ needs.load.outputs.stable_release_id }}" > release-assets.json
-          node .github/scripts/bluetooth-examples-result.mjs locate \
-            --plan release-input/plan/release-plan.json \
-            --build release-input/examples/examples-build.json \
-            --repository "$GITHUB_REPOSITORY" \
-            --container-tag "${{ needs.load.outputs.stable_tag }}" \
-            --assets release-assets.json \
-            --output examples-result/examples-result.json
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: production-examples-result-${{ github.run_id }}
-          path: examples-result/examples-result.json
-          if-no-files-found: error
-          retention-days: 90
-
-      # The stable release's own block for the example apps; the production
-      # record's downloads block never replaces it.
-      - name: Add the example apps to the stable release downloads
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-coordinated-release-page.mjs
-          --plan release-input/plan/release-plan.json
-          --examples examples-result/examples-result.json
-          --repository "${{ github.repository }}"
-          --release-id "${{ needs.load.outputs.stable_release_id }}"
+    secrets: inherit
 
   example-testflight:
     name: Distribute the example through TestFlight
-    needs: [load, publish-examples]
+    needs: load
     uses: ./.github/workflows/reusable-coordinated-example-testflight.yml
     with:
       source_commit: ${{ needs.load.outputs.source_commit }}
@@ -436,7 +342,7 @@ jobs:
 
   example-google-play:
     name: Distribute the example through its closed Play track
-    needs: [load, publish-examples]
+    needs: load
     uses: ./.github/workflows/reusable-coordinated-example-google-play.yml
     with:
       source_commit: ${{ needs.load.outputs.source_commit }}
@@ -446,129 +352,3 @@ jobs:
       release_id: ${{ needs.load.outputs.stable_release_id }}
       play_track: ${{ needs.load.outputs.play_track }}
     secrets: inherit
-
-  finalize-example:
-    name: Record the production Bluetooth example
-    needs: [load, publish-examples, example-testflight, example-google-play]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.load.outputs.plan_artifact }}
-          path: release-input/plan
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.load.outputs.beta_artifact }}
-          path: release-input/beta
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.publish-examples.outputs.result_artifact }}
-          path: release-input/examples
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.example-testflight.outputs.result_artifact }}
-          path: release-input/example-testflight
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.example-google-play.outputs.result_artifact }}
-          path: release-input/example-google-play
-
-      - name: Assemble the example release record against the promoted beta
-        id: results
-        env:
-          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p finalized-example
-          plan=release-input/plan/release-plan.json
-          identity=$(jq -er .releaseIdentity "$plan")
-          beta_manifest=$(find release-input/beta -type f -name 'mentra-release-*.json' -print -quit)
-          examples=release-input/examples/examples-result.json
-          example_testflight=$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)
-          test -s "$beta_manifest"
-          test -s "$examples"
-          test -n "$example_testflight"
-          record_name="mentra-example-release-$identity.json"
-          # A rerun re-observes the same candidates (reused uploads, a new run
-          # URL) rather than reproducing the first observation byte for byte.
-          # The record published by the first completed run is therefore the
-          # canonical one: it is validated and checked against this run's
-          # candidate identities instead of being regenerated. The container is
-          # a draft, so the record is read through the release API.
-          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${{ needs.load.outputs.stable_release_id }}")
-          asset_id=$(jq -r --arg name "$record_name" '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' <<< "$assets")
-          if [[ -n "$asset_id" ]]; then
-            node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > "finalized-example/$record_name"
-            echo "Reconciling this run's candidates against the example record already published as $record_name"
-            node .github/scripts/example-release-records.mjs reconcile \
-              --plan "$plan" \
-              --record "finalized-example/$record_name" \
-              --examples "$examples" \
-              --example-testflight "$example_testflight" \
-              --example-google-play release-input/example-google-play/example-google-play-publication.json
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            node .github/scripts/example-release-records.mjs assemble \
-              --plan "$plan" \
-              --beta-manifest "$beta_manifest" \
-              --beta-manifest-url "${{ needs.load.outputs.beta_manifest_url }}" \
-              --examples "$examples" \
-              --example-testflight "$example_testflight" \
-              --example-google-play release-input/example-google-play/example-google-play-publication.json \
-              --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-              --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              --output "finalized-example/$record_name"
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
-          {
-            echo "identity=$identity"
-            echo "record_name=$record_name"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Publish the immutable example release record
-        if: steps.results.outputs.published != 'true'
-        env:
-          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-immutable-release-asset.mjs
-          --file "finalized-example/${{ steps.results.outputs.record_name }}"
-          --name "${{ steps.results.outputs.record_name }}"
-          --release-id "${{ needs.load.outputs.stable_release_id }}"
-          --repository "${{ github.repository }}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: production-example-release-result-${{ github.run_id }}
-          path: finalized-example
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Summarize the production example
-        run: |
-          {
-            echo "## Production Bluetooth example"
-            echo ""
-            echo "- Release: \`${{ steps.results.outputs.identity }}\`"
-            echo "- Record: \`${{ steps.results.outputs.record_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
-            echo "- TestFlight: ${{ needs.example-testflight.outputs.install_url }}"
-            echo "- Google Play: ${{ needs.example-google-play.outputs.install_url }}"
-            echo ""
-            echo "The example was not promoted to a public store."
-          } >> "$GITHUB_STEP_SUMMARY"

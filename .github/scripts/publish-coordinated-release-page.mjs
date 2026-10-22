@@ -5,18 +5,13 @@ import {readFileSync} from "node:fs"
 import path from "node:path"
 import {pathToFileURL} from "node:url"
 
-import {validateExamplesResult} from "./bluetooth-examples-result.mjs"
+import {exampleArtifacts} from "./bluetooth-example-artifacts.mjs"
 import {finalizeReleaseManifest} from "./release-family.mjs"
 import {downloadNames} from "./coordinated-install-downloads.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 const START = "<!-- mentra-release-downloads:start -->"
 const END = "<!-- mentra-release-downloads:end -->"
-// The example apps are published after the release downloads, by another job
-// (and for production by another workflow), so they own a separate block that
-// republishing either one never removes.
-const EXAMPLES_START = "<!-- mentra-example-downloads:start -->"
-const EXAMPLES_END = "<!-- mentra-example-downloads:end -->"
 
 export function completedReleaseDownloads(plan, manifest) {
   if (
@@ -44,7 +39,17 @@ const EXAMPLE_LABELS = Object.freeze({
   ios: "Native iOS example IPA (unsigned)",
 })
 
-export function releaseDownloadNotes({plan, manifest, repository}) {
+// The release's Bluetooth example apps, by their deterministic names. Only the
+// published ones are listed: `published` is a predicate on the file name.
+function exampleLines(plan, repository, published) {
+  const examples = exampleArtifacts(plan, repository).filter(({name}) => published(name))
+  if (examples.length === 0) return []
+  return ["", "## Bluetooth example apps", ...examples.map(({key, url}) => `- [${EXAMPLE_LABELS[key]}](${url})`)]
+}
+
+// A dev or beta page, written once per release after finalize and the
+// examples. `examples` says whether the examples workflow published them.
+export function releaseDownloadNotes({plan, manifest, repository, examples = false}) {
   const {apk, aab, ipa, install, mac} = completedReleaseDownloads(plan, manifest)
   const download = (label, asset) => `- [${label}](${asset.url})`
   const asg = manifest.artifacts.find(
@@ -75,9 +80,10 @@ export function releaseDownloadNotes({plan, manifest, repository}) {
     download("Release manifest and SHA-256 checksums", {
       url: artifactUrl(repository, plan.artifactContainerTag, plan.artifactNames.releaseManifest),
     }),
+    ...exampleLines(plan, repository, () => examples),
     "",
     `Source: [\`${plan.sourceCommit.slice(0, 7)}\`](https://github.com/${repository}/commit/${plan.sourceCommit}).`,
-    "Downloads are hosted on Mentra's artifact CDN. The Bluetooth example apps are listed below once they are published.",
+    "Downloads are hosted on Mentra's artifact CDN.",
     END,
   ].join("\n")
 }
@@ -85,7 +91,9 @@ export function releaseDownloadNotes({plan, manifest, repository}) {
 // A production release promotes a beta: its container holds the canonical
 // production record and byte-identical copies of the beta's OTA manifest and
 // portable OTA bundle. The Mentra App ships through the stores.
-export function productionReleaseDownloadNotes({plan, manifest, repository}) {
+// `assetNames` are the files in the stable release container; the production
+// example apps are listed when the production example workflow published them.
+export function productionReleaseDownloadNotes({plan, manifest, repository, assetNames = []}) {
   if (plan.channel !== "production" || manifest.kind !== "mentra-production-release") {
     throw new Error("Production download notes need a production plan and release record")
   }
@@ -109,6 +117,7 @@ export function productionReleaseDownloadNotes({plan, manifest, repository}) {
     download("Release record and SHA-256 checksums", {
       url: artifactUrl(repository, plan.artifactContainerTag, plan.artifactNames.releaseManifest),
     }),
+    ...exampleLines(plan, repository, (name) => assetNames.includes(name)),
     "",
     `The OTA manifest and bundle are byte-identical copies of beta ${beta}'s, which the Bluetooth SDK ${plan.releaseIdentity} packages pin.`,
     `Source: [\`${plan.sourceCommit.slice(0, 7)}\`](https://github.com/${repository}/commit/${plan.sourceCommit}).`,
@@ -119,9 +128,9 @@ export function productionReleaseDownloadNotes({plan, manifest, repository}) {
 // Updates the stable production release's downloads in place. That release is
 // created as a draft and published by hand after the final availability
 // checks, so this never creates, publishes or retags it.
-export function publishProductionReleasePage({plan, manifest, repository, releaseId, api = githubApi}) {
+export function publishProductionReleasePage({plan, manifest, repository, releaseId, assetNames, api = githubApi}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid repository")
-  const notes = productionReleaseDownloadNotes({plan, manifest, repository})
+  const notes = productionReleaseDownloadNotes({plan, manifest, repository, assetNames})
   const release = api(`repos/${repository}/releases/${releaseId}`)
   assert.equal(release.tag_name, plan.artifactContainerTag, "The release must be the production container")
   assert.equal(release.prerelease, false)
@@ -130,58 +139,12 @@ export function publishProductionReleasePage({plan, manifest, repository, releas
   return api(`repos/${repository}/releases/${release.id}`, {method: "PATCH", data: {body}})
 }
 
-// The published Bluetooth example apps of any channel, from the located
-// example builds (bluetooth-examples-result.mjs).
-export function exampleDownloadNotes({plan, examples}) {
-  const artifacts = validateExamplesResult(plan, examples).artifacts
-  return [
-    EXAMPLES_START,
-    "## Bluetooth example apps",
-    ...Object.entries(EXAMPLE_LABELS).map(
-      ([key, label]) => `- [${label}](${artifacts.find((artifact) => artifact.key === key).url})`,
-    ),
-    "",
-    `Built from \`examples/bluetooth\` at \`${plan.sourceCommit.slice(0, 7)}\`, stamped as release ${plan.releaseIdentity}.`,
-    EXAMPLES_END,
-  ].join("\n")
-}
-
-function updateManagedBlock(body, notes, start, end, label) {
-  const from = body.indexOf(start)
-  const to = body.indexOf(end)
-  if (from < 0 && to < 0) return [body.trimEnd(), notes].filter(Boolean).join("\n\n") + "\n"
-  if (from < 0 || to < from) throw new Error(`Malformed managed ${label}`)
-  return body.slice(0, from) + notes + body.slice(to + end.length)
-}
-
 export function updateDownloadNotes(body = "", notes) {
-  return updateManagedBlock(body, notes, START, END, "download notes")
-}
-
-export function updateExampleNotes(body = "", notes) {
-  return updateManagedBlock(body, notes, EXAMPLES_START, EXAMPLES_END, "example notes")
-}
-
-// Adds or refreshes the example apps on the release page that already exists:
-// the dev or beta page at the source tag, or the stable production release
-// (a draft until it is published by hand). It never creates or publishes one.
-export function publishExampleDownloads({plan, examples, repository, releaseId, api = githubApi}) {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid repository")
-  const notes = exampleDownloadNotes({plan, examples})
-  const route = `repos/${repository}`
-  let release
-  if (plan.channel === "production") {
-    release = api(`${route}/releases/${releaseId}`)
-    assert.equal(release.tag_name, plan.artifactContainerTag, "The release must be the production container")
-    assert.equal(release.prerelease, false)
-  } else {
-    release = api(`${route}/releases/tags/mentra-v${plan.releaseIdentity}`)
-    assert.equal(release.draft, false, "Do not publish a draft through download-page repair")
-    assert.equal(release.prerelease, true)
-  }
-  const body = updateExampleNotes(release.body || "", notes)
-  if (body === release.body) return release
-  return api(`${route}/releases/${release.id}`, {method: "PATCH", data: {body}})
+  const start = body.indexOf(START)
+  const end = body.indexOf(END)
+  if (start < 0 && end < 0) return [body.trimEnd(), notes].filter(Boolean).join("\n\n") + "\n"
+  if (start < 0 || end < start) throw new Error("Malformed managed download notes")
+  return body.slice(0, start) + notes + body.slice(end + END.length)
 }
 
 function githubApi(route, {method = "GET", data, allowMissing = false} = {}) {
@@ -199,9 +162,9 @@ function githubApi(route, {method = "GET", data, allowMissing = false} = {}) {
   }
 }
 
-export function publishCoordinatedReleasePage({plan, manifest, repository, api = githubApi}) {
+export function publishCoordinatedReleasePage({plan, manifest, repository, examples = false, api = githubApi}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid repository")
-  const notes = releaseDownloadNotes({plan, manifest, repository})
+  const notes = releaseDownloadNotes({plan, manifest, repository, examples})
   const tag = `mentra-v${plan.releaseIdentity}`
   const route = `repos/${repository}`
   // Finalization owns the source tag. Never create or move one while repairing notes.
@@ -238,21 +201,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   }
   const optional = (name) => (process.argv.includes(`--${name}`) ? option(name) : undefined)
   const plan = JSON.parse(readFileSync(option("plan"), "utf8"))
-  const repository = option("repository")
-  let release
-  if (optional("examples")) {
-    release = publishExampleDownloads({
-      plan,
-      examples: JSON.parse(readFileSync(option("examples"), "utf8")),
-      repository,
-      releaseId: optional("release-id"),
-    })
-  } else {
-    const input = {plan, manifest: JSON.parse(readFileSync(option("manifest"), "utf8")), repository}
-    release =
-      plan.channel === "production"
-        ? publishProductionReleasePage({...input, releaseId: option("release-id")})
-        : publishCoordinatedReleasePage(input)
-  }
+  const input = {plan, manifest: JSON.parse(readFileSync(option("manifest"), "utf8")), repository: option("repository")}
+  const release =
+    plan.channel === "production"
+      ? publishProductionReleasePage({
+          ...input,
+          releaseId: option("release-id"),
+          assetNames: optional("assets")
+            ? JSON.parse(readFileSync(option("assets"), "utf8"))
+                .filter((asset) => asset.state === "uploaded")
+                .map((asset) => asset.name)
+            : [],
+        })
+      : publishCoordinatedReleasePage({...input, examples: optional("examples") === "true"})
   console.log(release.html_url)
 }

@@ -3,7 +3,7 @@ import {cpSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} 
 import path from "node:path"
 import {pathToFileURL} from "node:url"
 
-import {validateExamplesResult} from "./bluetooth-examples-result.mjs"
+import {exampleArtifactName} from "./bluetooth-example-artifacts.mjs"
 
 const RELEASE_IDENTITY_PATTERN = /^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/
 
@@ -39,12 +39,14 @@ function parseArgs(args) {
   return values
 }
 
-function publishedReactNativeExample(releasePlan, examplesResult) {
-  if (!examplesResult) throw new Error("Coordinated prerelease docs require the published example builds")
-  const reactNative = validateExamplesResult(releasePlan, examplesResult).artifacts.find(
-    (artifact) => artifact.key === "reactNative",
-  )
-  return reactNative
+// The React Native example APK the examples workflow published for the release.
+function publishedReactNativeExample(releasePlan, exampleApkUrl) {
+  if (!exampleApkUrl) throw new Error("Coordinated prerelease docs require the published example APK URL")
+  const name = exampleArtifactName("reactNative", releasePlan.releaseIdentity)
+  if (!/^https:\/\//.test(exampleApkUrl) || !exampleApkUrl.endsWith(`/${releasePlan.artifactContainerTag}/${name}`)) {
+    throw new Error(`The example APK URL must be ${name} in ${releasePlan.artifactContainerTag}`)
+  }
+  return exampleApkUrl
 }
 
 function validateExampleTestflightResult(releasePlan, exampleTestflightResult) {
@@ -76,7 +78,7 @@ export function renderCoordinatedDocs({
   sourceDir,
   outputDir,
   releasePlan,
-  examplesResult,
+  exampleApkUrl,
   exampleTestflightResult,
   repository,
 }) {
@@ -121,10 +123,10 @@ export function renderCoordinatedDocs({
   config.variables["release-artifacts-url"] =
     `https://github.com/${repository}/releases/tag/${releasePlan.artifactContainerTag}`
   if (releasePlan.releaseIdentity.includes("-")) {
-    const reactNative = publishedReactNativeExample(releasePlan, examplesResult)
+    const reactNativeUrl = publishedReactNativeExample(releasePlan, exampleApkUrl)
     config.variables["example-app-download-label"] =
       `Download the React Native example APK for SDK ${releasePlan.releaseIdentity}`
-    config.variables["example-app-url"] = reactNative.url
+    config.variables["example-app-url"] = reactNativeUrl
     config.variables["example-app-ios-url"] = validateExampleTestflightResult(releasePlan, exampleTestflightResult)
   }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
@@ -137,7 +139,7 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve
 if (isMain) {
   const args = parseArgs(process.argv.slice(2))
   const plan = JSON.parse(readFileSync(path.resolve(args.plan), "utf8"))
-  const examplesResult = args.examples ? JSON.parse(readFileSync(path.resolve(args.examples), "utf8")) : undefined
+  const exampleApkUrl = args["example-apk-url"]
   const exampleTestflightResult = args["example-testflight"]
     ? JSON.parse(readFileSync(path.resolve(args["example-testflight"]), "utf8"))
     : undefined
@@ -145,7 +147,7 @@ if (isMain) {
     sourceDir: path.resolve(args.source),
     outputDir: path.resolve(args.output),
     releasePlan: plan,
-    examplesResult,
+    exampleApkUrl,
     exampleTestflightResult,
     repository: args.repository,
   })

@@ -126,8 +126,8 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(stagingBlock, /echo "play_track=beta"/)
   assert.doesNotMatch(devBlock, /echo "play_track=beta"/)
   assert.doesNotMatch(stagingBlock, /echo "play_track=internal"/)
-  assert.match(workflow, /^    needs: \[plan, publish-examples, example-testflight, example-google-play\]$/m)
-  assert.match(workflow, /--example-google-play release-input\/example-google-play/)
+  assert.match(workflow, /^    needs: \[plan, ota, finalize\]$/m)
+  assert.match(workflow, /EXAMPLE_GOOGLE_PLAY_RESULT: \$\{\{ needs\.example-google-play\.result \}\}/)
   const reusable = readFileSync(
     new URL("../workflows/reusable-coordinated-example-google-play.yml", import.meta.url),
     "utf8",
@@ -136,7 +136,7 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   // The store build is the example at the release source, stamped like the app.
   assert.doesNotMatch(reusable, /starter|Starter Kit/i)
   assert.match(reusable, /working-directory: examples\/bluetooth\/react-native\n/)
-  assert.match(reusable, /write-release-metadata\.mjs/)
+  assert.match(reusable, /uses: \.\/release-tooling\/\.github\/actions\/stamp-release/)
   assert.match(reusable, /cancel-in-progress: false/)
   assert.match(reusable, /queue: max/)
   assert.ok(reusable.indexOf(".mjs verify-aab") < reusable.indexOf("publish-immutable-release-asset.mjs"))
@@ -149,7 +149,7 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(reusable, /arm64-v8a,x86_64/)
   assert.doesNotMatch(reusable, /track_promote|GOOGLE_PLAY_TRACK: production/)
   const notification = readFileSync(new URL("notify-coordinated-release-slack.sh", import.meta.url), "utf8")
-  assert.match(notification, /checks_line\+=" \| Example Google Play:/)
+  assert.match(notification, /examples_line\+=" \| Google Play:/)
 })
 
 test("the production example has its own closed Play track for an internal audience", () => {

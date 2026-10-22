@@ -230,28 +230,24 @@ jobs:
           fi
           bun install --frozen-lockfile
 
-      # The same stamping as the Mentra App build: release versions for the
-      # family packages, and the release identity and OTA manifest pin in the
-      # SDK and Engine metadata.
+      # The tooling comes from the workflow revision: the frozen source of a
+      # production example may predate the stamping action.
+      - name: Check out the release tooling
+        if: steps.app-store.outputs.exists != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
       - name: Stamp the release into the SDK and Engine
         if: steps.app-store.outputs.exists != 'true'
-        env:
-          OTA_MANIFEST_URL: ${{ inputs.ota_manifest_url }}
-          OTA_MANIFEST_SHA256: ${{ inputs.ota_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          plan=release-input/plan/release-plan.json
-          node .github/scripts/stage-release-family.mjs --plan "$plan"
-          metadata=(
-            --family-base-version "$(jq -er .familyBaseVersion "$plan")"
-            --release-identity "$(jq -er .releaseIdentity "$plan")"
-            --release-set-id "$(jq -er .releaseSetId "$plan")"
-            --source-commit "$(jq -er .sourceCommit "$plan")"
-            --ota-manifest-url "$OTA_MANIFEST_URL"
-            --ota-manifest-sha256 "$OTA_MANIFEST_SHA256"
-          )
-          node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
-          node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
+        uses: ./release-tooling/.github/actions/stamp-release
+        with:
+          plan: release-input/plan/release-plan.json
+          ota-manifest-url: ${{ inputs.ota_manifest_url }}
+          ota-manifest-sha256: ${{ inputs.ota_manifest_sha256 }}
 
       - name: Install GStreamer iOS SDK
         if: steps.app-store.outputs.exists != 'true'

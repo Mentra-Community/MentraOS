@@ -50,25 +50,18 @@ jobs:
           node .github/scripts/release-assets.mjs download --tag "$tag" \
             --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
             --pattern "mentra-release-$BETA_IDENTITY.json" \
-            --pattern "mentra-example-release-$BETA_IDENTITY.json" \
             --dir selected-beta
           plan="selected-beta/mentra-release-plan-$BETA_IDENTITY.json"
           manifest="selected-beta/mentra-release-$BETA_IDENTITY.json"
-          example="selected-beta/mentra-example-release-$BETA_IDENTITY.json"
           [[ "$(jq -er .releaseIdentity "$plan")" == "$BETA_IDENTITY" ]]
           [[ "$(jq -er .releaseIdentity "$manifest")" == "$BETA_IDENTITY" ]]
-          [[ "$(jq -er .releaseIdentity "$example")" == "$BETA_IDENTITY" ]]
           [[ "$(jq -er .releaseSetId "$plan")" == "$(jq -er .releaseSetId "$manifest")" ]]
-          # Example records before schema version 2 kept TestFlight under starterKit.
-          testflight=$(jq -ec '.testflight // .starterKit.testflight' "$example")
-          [[ "$(jq -er .app.id <<< "$testflight")" == "$EXAMPLE_APP_ID" ]]
-          [[ "$(jq -er .app.bundleId <<< "$testflight")" == "$EXAMPLE_BUNDLE_ID" ]]
-          [[ "$(jq -er .distribution.status <<< "$testflight")" == "skipped" ]]
+          # The beta's example build has the beta's marketing version and
+          # build number; App Store Connect identifies the exact build.
           {
             echo "beta_identity=$BETA_IDENTITY"
-            echo "marketing_version=$(jq -er .version.marketingVersion <<< "$testflight")"
-            echo "build_number=$(jq -er .version.buildNumber <<< "$testflight")"
-            echo "build_id=$(jq -er .build.id <<< "$testflight")"
+            echo "marketing_version=$(jq -er .native.marketingVersion "$plan")"
+            echo "build_number=$(jq -er .native.buildNumber "$plan")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Inject App Store Connect API credential
@@ -86,6 +79,23 @@ jobs:
           key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
           test -f "$key_path"
           echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Find the beta's processed example build
+        id: build
+        run: |
+          set -euo pipefail
+          : > lookup.txt
+          GITHUB_OUTPUT=lookup.txt node mobile/scripts/app-store-connect-build.mjs lookup \
+            --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}" \
+            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+            --key-path "${{ steps.asc.outputs.key_path }}" \
+            --app-id "$EXAMPLE_APP_ID" \
+            --bundle-id "$EXAMPLE_BUNDLE_ID" \
+            --marketing-version "${{ steps.coordinates.outputs.marketing_version }}" \
+            --build-number "${{ steps.coordinates.outputs.build_number }}"
+          cat lookup.txt >> "$GITHUB_OUTPUT"
+          grep -qx 'exists=true' lookup.txt || { echo "App Store Connect has no example build for ${{ steps.coordinates.outputs.beta_identity }}." >&2; exit 1; }
+          grep -qx 'processed=true' lookup.txt || { echo "The example build for ${{ steps.coordinates.outputs.beta_identity }} has not finished processing." >&2; exit 1; }
 
       - name: Verify the review lane can accept a replacement
         id: preflight
@@ -111,7 +121,7 @@ jobs:
           exit 1
 
       - name: Refuse to resubmit the rejected build itself
-        if: steps.preflight.outputs.review_state == 'REJECTED' && steps.preflight.outputs.review_build_id == steps.coordinates.outputs.build_id
+        if: steps.preflight.outputs.review_state == 'REJECTED' && steps.preflight.outputs.review_build_id == steps.build.outputs.build_id
         run: |
           echo "${{ steps.coordinates.outputs.beta_identity }} still identifies the rejected build; select a later skipped beta containing the review fix." >&2
           exit 1
@@ -121,7 +131,7 @@ jobs:
         env:
           MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
           BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
-          BUILD_ID: ${{ steps.coordinates.outputs.build_id }}
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
           REVIEW_NOTES: ${{ inputs.review_notes }}
         run: >-
           node mobile/scripts/app-store-connect-build.mjs assign

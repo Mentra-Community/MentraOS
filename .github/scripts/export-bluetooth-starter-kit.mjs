@@ -14,26 +14,21 @@
 // it records the exact npm, Maven Central and Swift Package Manager
 // coordinates and the OTA manifest the SDK pins.
 //
-// Commands:
-//   resolve    find the newest completed release of a channel (or check a given
-//              identity), download and validate its record
-//   status     decide whether a Starter Kit branch still needs the release
-//   wait       poll until the registries serve every pinned package
-//   transform  copy examples/bluetooth and pin it to the release
-//   lockfiles  write each React Native example's own bun.lock
+// The scheduled export workflow decides cheaply, without this script, whether
+// a release needs exporting and whether its packages are served. This script
+// only builds the tree:
+//   transform  copy examples/bluetooth, pin it to the release, write each React
+//              Native example's own bun.lock, and run the guard
 //   guard      fail if anything still points at the MentraOS tree
 import {spawnSync} from "node:child_process"
 import {createHash} from "node:crypto"
-import {appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs"
+import {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs"
 import path from "node:path"
-import {setTimeout as sleep} from "node:timers/promises"
 import {fileURLToPath} from "node:url"
 
 export const STARTER_KIT_REPOSITORY = "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit"
 export const RELEASE_RECORD_NAME = "starter-kit-release.json"
 const ARTIFACT_BASE_URL = "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases"
-const NPM_REGISTRY = "https://registry.npmjs.org"
-const MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
 const SDK_PACKAGE = "@mentra/bluetooth-sdk"
 const SWIFT_PACKAGE_REPOSITORY = "Mentra-Community/mentra-bluetooth-sdk-ios"
 const ENGINE_PACKAGE = "@mentra/engine"
@@ -48,12 +43,6 @@ export const CHANNELS = Object.freeze({
   beta: {branch: "staging", distTag: "beta", prerelease: "beta"},
   production: {branch: "main", distTag: "latest", prerelease: null},
 })
-
-function channelOf(channel) {
-  const config = CHANNELS[channel]
-  if (!config) throw new Error(`Unsupported Starter Kit channel ${JSON.stringify(channel)}`)
-  return config
-}
 
 export function parseIdentity(identity) {
   const match = IDENTITY_PATTERN.exec(identity || "")
@@ -71,20 +60,6 @@ export function identityChannel(identity) {
   return prerelease === "dev" ? "dev" : prerelease === "beta" ? "beta" : "production"
 }
 
-// Orders identities of one channel: by base version, then by sequence. A plain
-// X.Y.Z sorts after its own prereleases, as in semver.
-export function compareIdentities(left, right) {
-  const a = parseIdentity(left)
-  const b = parseIdentity(right)
-  for (let index = 0; index < 3; index += 1) {
-    if (a.numbers[index] !== b.numbers[index]) return a.numbers[index] - b.numbers[index]
-  }
-  if (a.sequence === null || b.sequence === null) {
-    return (a.sequence === null ? 1 : 0) - (b.sequence === null ? 1 : 0)
-  }
-  return a.sequence - b.sequence
-}
-
 export function releaseContainer(identity) {
   const {base, prerelease} = parseIdentity(identity)
   return prerelease ? `mentra-builds-v${base}` : `mentra-v${identity}`
@@ -92,17 +67,6 @@ export function releaseContainer(identity) {
 
 export function releaseRecordUrl(identity) {
   return `${ARTIFACT_BASE_URL}/${releaseContainer(identity)}/mentra-release-${identity}.json`
-}
-
-// The newest completed record of a channel in one release container's index.
-export function newestRecordedIdentity(index, channel) {
-  const prerelease = channelOf(channel).prerelease
-  const identities = (index?.assets || [])
-    .filter((asset) => asset?.state === "uploaded")
-    .map((asset) => /^mentra-release-(.+)\.json$/.exec(asset.name || "")?.[1])
-    .filter((identity) => identity && IDENTITY_PATTERN.test(identity))
-    .filter((identity) => parseIdentity(identity).prerelease === prerelease)
-  return identities.sort(compareIdentities).at(-1) || null
 }
 
 function versionOf(coordinate, prefix, label) {
@@ -186,77 +150,6 @@ export function exportCoordinates(record, {channel, identity} = {}) {
       version: swift[2],
     },
   }
-}
-
-// --- status -----------------------------------------------------------------
-
-// A branch needs the release unless it already carries it or a newer release
-// of the same channel, or the release tag exists. This keeps nightly reruns
-// no-ops and stops a late older run from replacing a newer export.
-export function exportStatus({kitRecord, identity, tagExists}) {
-  const current = kitRecord?.releaseIdentity
-  if (current === identity) {
-    // The branch and its tag are pushed atomically, so a branch that carries
-    // this release without sdk-<identity> was changed outside the export.
-    if (!tagExists) {
-      throw new Error(
-        `The Starter Kit branch already carries ${identity} but sdk-${identity} does not exist; ` +
-          "the export pushes both atomically, so restore the tag by hand after checking the branch",
-      )
-    }
-    return {needed: false, reason: `the branch already carries ${current}`}
-  }
-  if (tagExists) return {needed: false, reason: `sdk-${identity} already exists`}
-  if (current && IDENTITY_PATTERN.test(current) && identityChannel(current) === identityChannel(identity)) {
-    if (compareIdentities(current, identity) >= 0) {
-      return {needed: false, reason: `the branch already carries ${current}`}
-    }
-  }
-  return {needed: true, reason: current ? `the branch carries ${current}` : "the branch has no exported release"}
-}
-
-// --- availability -------------------------------------------------------------
-
-export function mavenPomUrl(coordinate) {
-  const [group, artifact, version] = coordinate.split(":")
-  return `${MAVEN_CENTRAL}/${group.replaceAll(".", "/")}/${artifact}/${version}/${artifact}-${version}.pom`
-}
-
-export async function missingPublications(coordinates, {fetchImpl = fetch, lsRemote = gitTagExists} = {}) {
-  const missing = []
-  const ok = async (url) => {
-    try {
-      const response = await fetchImpl(url, {method: "GET", redirect: "follow"})
-      return response.ok
-    } catch {
-      return false
-    }
-  }
-  for (const [name, version] of Object.entries(coordinates.npm)) {
-    if (!(await ok(`${NPM_REGISTRY}/${name.replace("/", "%2f")}/${version}`))) missing.push(`npm ${name}@${version}`)
-  }
-  for (const coordinate of coordinates.maven) {
-    if (!(await ok(mavenPomUrl(coordinate)))) missing.push(`Maven Central ${coordinate}`)
-  }
-  const swift = coordinates.swiftPackage
-  if (!(await lsRemote(swift.url, swift.version))) missing.push(`Swift package ${swift.repository}@${swift.version}`)
-  try {
-    const response = await fetchImpl(coordinates.otaManifest.url, {redirect: "follow"})
-    const bytes = response.ok ? Buffer.from(await response.arrayBuffer()) : null
-    if (!bytes || createHash("sha256").update(bytes).digest("hex") !== coordinates.otaManifest.sha256) {
-      missing.push(`OTA manifest ${coordinates.otaManifest.url}`)
-    }
-  } catch {
-    missing.push(`OTA manifest ${coordinates.otaManifest.url}`)
-  }
-  return missing
-}
-
-function gitTagExists(url, tag) {
-  const result = spawnSync("git", ["ls-remote", "--exit-code", "--tags", url, `refs/tags/${tag}`], {
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-  return result.status === 0
 }
 
 // --- transform ----------------------------------------------------------------
@@ -549,92 +442,9 @@ function parseArgs(args) {
   return values
 }
 
-function output(values, githubOutput) {
-  for (const [key, value] of Object.entries(values)) {
-    if (/[\r\n]/.test(String(value))) throw new Error(`Output ${key} must be a single line`)
-    console.log(`${key}=${value}`)
-    if (githubOutput) appendFileSync(githubOutput, `${key}=${value}\n`)
-  }
-}
-
-async function fetchBytes(url) {
-  const response = await fetch(url, {redirect: "follow"})
-  if (response.status === 404) return null
-  if (!response.ok) throw new Error(`GET ${url} returned HTTP ${response.status}`)
-  return Buffer.from(await response.arrayBuffer())
-}
-
-async function resolve(args) {
-  const channel = args.channel
-  const config = channelOf(channel)
-  let identity = args.identity || ""
-  if (!identity) {
-    const tags = JSON.parse(
-      (await fetchBytes(`${NPM_REGISTRY}/-/package/${SDK_PACKAGE.replace("/", "%2f")}/dist-tags`)).toString(),
-    )
-    const current = tags[config.distTag]
-    if (!current) throw new Error(`${SDK_PACKAGE} has no ${config.distTag} dist-tag`)
-    if (channel === "production") {
-      identity = current
-    } else {
-      // The dist-tag moves when npm publishes, before the release finishes;
-      // the container index lists only the records of completed releases.
-      const indexBytes = await fetchBytes(`${ARTIFACT_BASE_URL}/${releaseContainer(current)}/_assets.json`)
-      identity = indexBytes ? newestRecordedIdentity(JSON.parse(indexBytes.toString()), channel) || "" : ""
-    }
-  }
-  if (identity && identityChannel(identity) !== channel) {
-    throw new Error(`${identity} is not a ${channel} release`)
-  }
-  const bytes = identity ? await fetchBytes(releaseRecordUrl(identity)) : null
-  if (!bytes) {
-    output({found: "false", identity, branch: config.branch}, args["github-output"])
-    return
-  }
-  const record = JSON.parse(bytes.toString())
-  const coordinates = exportCoordinates(record, {channel, identity})
-  mkdirSync(path.dirname(path.resolve(args.output)), {recursive: true})
-  writeFileSync(path.resolve(args.output), bytes)
-  output(
-    {
-      found: "true",
-      identity: coordinates.releaseIdentity,
-      branch: coordinates.branch,
-      source_commit: coordinates.sourceCommit,
-      record_url: releaseRecordUrl(coordinates.releaseIdentity),
-      record_sha256: createHash("sha256").update(bytes).digest("hex"),
-    },
-    args["github-output"],
-  )
-}
-
-async function wait(args) {
-  const record = readJson(path.resolve(args.record))
-  const coordinates = exportCoordinates(record)
-  const deadline = Date.now() + Number(args["timeout-minutes"] || 45) * 60_000
-  const interval = Number(args["interval-seconds"] || 60) * 1000
-  let missing
-  for (;;) {
-    missing = await missingPublications(coordinates)
-    if (missing.length === 0 || Date.now() + interval > deadline) break
-    console.log(`Waiting for: ${missing.join("; ")}`)
-    await sleep(interval)
-  }
-  output({ready: String(missing.length === 0), missing: missing.join("; ")}, args["github-output"])
-}
-
 async function main() {
   const [command, ...rest] = process.argv.slice(2)
   const args = parseArgs(rest)
-  if (command === "resolve") return resolve(args)
-  if (command === "wait") return wait(args)
-  if (command === "status") {
-    const file = path.join(path.resolve(args["kit-dir"]), RELEASE_RECORD_NAME)
-    const kitRecord = existsSync(file) ? readJson(file) : null
-    const status = exportStatus({kitRecord, identity: args.identity, tagExists: args["tag-exists"] === "true"})
-    output({needed: String(status.needed), reason: status.reason}, args["github-output"])
-    return
-  }
   if (command === "transform") {
     const recordBytes = readFileSync(path.resolve(args.record))
     const {examples} = transformStarterKit({

@@ -232,16 +232,25 @@ jobs:
             echo "plan=$plan"
           } >> "$GITHUB_OUTPUT"
 
+      # The one writer of the stable release's downloads. The production
+      # example apps, uploaded by the production example workflow, are listed
+      # when the stable container holds them.
       - name: List the production downloads on the stable release
         if: inputs.action == 'complete'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-coordinated-release-page.mjs
-          --plan "${{ steps.stable.outputs.plan }}"
-          --manifest "production-finalization/${{ steps.stable.outputs.manifest_name }}"
-          --repository "${{ github.repository }}"
-          --release-id "${{ steps.stable.outputs.release_id }}"
+        run: |
+          set -euo pipefail
+          node .github/scripts/release-assets.mjs list --repository "$GITHUB_REPOSITORY" \
+            --release-id "${{ steps.stable.outputs.release_id }}" > production-finalization/stable-assets.json
+          node .github/scripts/publish-coordinated-release-page.mjs \
+            --plan "${{ steps.stable.outputs.plan }}" \
+            --manifest "production-finalization/${{ steps.stable.outputs.manifest_name }}" \
+            --assets production-finalization/stable-assets.json \
+            --repository "${{ github.repository }}" \
+            --release-id "${{ steps.stable.outputs.release_id }}"
 
       - name: Publish the completed promotion state
         if: inputs.action == 'complete'
@@ -262,18 +271,3 @@ jobs:
             echo "The immutable promotion chain is complete and the canonical plan, finalizing checkpoint, and manifest are staged in draft release \`${{ steps.stable.outputs.tag }}\`."
             echo "Publish that stable GitHub release only after the README final public-availability checks have also passed."
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # The standalone Starter Kit's main branch follows the production release
-  # record: it is exported once the record exists, pinned to the plain X.Y.Z
-  # packages. A deferral never fails the rollout; the nightly export retries.
-  export-starter-kit:
-    name: Export the production Starter Kit
-    needs: record
-    if: inputs.action == 'complete'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/bluetooth-starter-kit-export.yml
-    with:
-      channel: production
-      identity: ${{ inputs.release_identity }}
-    secrets: inherit

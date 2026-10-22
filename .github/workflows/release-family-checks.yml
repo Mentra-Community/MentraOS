@@ -9,6 +9,7 @@ on:
       - ".github/scripts/*.mjs"
       - ".github/artifact-storage/**"
       - ".github/workflows/coordinated-*.yml"
+      - ".github/actions/stamp-release/**"
       - ".github/workflows/bluetooth-starter-kit-export.yml"
       - ".github/workflows/example-app-builds.yml"
       - ".github/workflows/reusable-bluetooth-examples.yml"

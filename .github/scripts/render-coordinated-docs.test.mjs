@@ -5,7 +5,6 @@ import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
-import {EXAMPLE_ARTIFACTS, EXAMPLES_BUILD_KIND, exampleArtifactName} from "./bluetooth-examples-result.mjs"
 import {renderCoordinatedDocs} from "./render-coordinated-docs.mjs"
 
 function fixture() {
@@ -48,28 +47,8 @@ test("renders exact coordinated release variables without changing source", (con
     channel: "beta",
     native: {marketingVersion: "3.1.0", buildNumber: 310000057},
   }
-  const examplesResult = {
-    schemaVersion: 1,
-    kind: EXAMPLES_BUILD_KIND,
-    releaseSetId: plan.releaseSetId,
-    releaseIdentity: plan.releaseIdentity,
-    channel: plan.channel,
-    sourceCommit: plan.sourceCommit,
-    otaManifest: {url: "https://example.com/ota.json", sha256: "c".repeat(64)},
-    artifacts: EXAMPLE_ARTIFACTS.map(({key}) => {
-      const name = exampleArtifactName(key, plan.releaseIdentity)
-      return {
-        key,
-        name,
-        sha256: "b".repeat(64),
-        size: 1,
-        status: "published",
-        url: `https://artifactscdn.mentraglass.com/Mentra/MentraOS/releases/mentra-builds-v3.1.0/${name}`,
-      }
-    }),
-    provenanceUrl: "https://github.com/Mentra/MentraOS/actions/runs/1",
-  }
-  const reactNativeUrl = examplesResult.artifacts.find((artifact) => artifact.key === "reactNative").url
+  const reactNativeUrl =
+    "https://artifactscdn.mentraglass.com/Mentra/MentraOS/releases/mentra-builds-v3.1.0/mentra-example-react-native-3.1.0-beta.57.apk"
   const exampleTestflightResult = {
     schemaVersion: 2,
     releaseSetId: plan.releaseSetId,
@@ -89,7 +68,7 @@ test("renders exact coordinated release variables without changing source", (con
     sourceDir: source,
     outputDir: output,
     releasePlan: plan,
-    examplesResult,
+    exampleApkUrl: reactNativeUrl,
     exampleTestflightResult,
     repository: "Mentra/MentraOS",
   })
@@ -120,6 +99,19 @@ test("renders exact coordinated release variables without changing source", (con
     ].join("\n"),
   )
   assert.match(readFileSync(path.join(source, "page.mdx"), "utf8"), /\{\{example-app-url\}\}/)
+  // The APK must be the release's own, in its own container.
+  assert.throws(
+    () =>
+      renderCoordinatedDocs({
+        sourceDir: source,
+        outputDir: output,
+        releasePlan: plan,
+        exampleApkUrl: reactNativeUrl.replace("3.1.0-beta.57.apk", "3.1.0-beta.56.apk"),
+        exampleTestflightResult,
+        repository: "Mentra/MentraOS",
+      }),
+    /must be mentra-example-react-native-3\.1\.0-beta\.57\.apk/,
+  )
 })
 
 test("source-only and stable docs use honest version-neutral example links", (context) => {
@@ -219,7 +211,7 @@ test("rejects prerelease docs without matching example artifacts", (context) => 
         },
         repository: "Mentra/MentraOS",
       }),
-    /require the published example builds/,
+    /require the published example APK URL/,
   )
 })
 

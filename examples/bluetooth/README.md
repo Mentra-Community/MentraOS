@@ -38,8 +38,8 @@ is generated from this folder, with the SDK dependencies pinned to published
 versions so it can be cloned and built without a MentraOS checkout. Each
 completed MentraOS release pushes one `Release <version>` commit and an
 `sdk-<version>` tag to the kit branch of its channel, and records its inputs in
-`starter-kit-release.json`. This folder's `.github/workflows` is the kit's own
-CI; it builds the examples from the published packages.
+`starter-kit-release.json`. The kit repository keeps its own CI, which builds the
+examples from the published packages.
 
 ## Documentation
 

@@ -63,11 +63,10 @@ of the promoted beta's OTA manifest and portable OTA bundle.
 The Bluetooth SDK examples live in `examples/bluetooth`. Each coordinated
 release builds them from that source, in parallel with the package and app
 builds and stamped with the same release metadata and OTA pin
-(`reusable-bluetooth-examples.yml`). Once the release is finalized, the example
-APKs and the unsigned iOS IPA are published to the release container and listed
-on its download page, the React Native example goes to TestFlight and Google
-Play, and `mentra-example-release-<identity>.json` records them. Examples never
-gate the release.
+(`reusable-bluetooth-examples.yml`), which uploads the example APKs and the
+unsigned iOS IPA to the release container under deterministic names. After
+finalize, the release page lists them, and the React Native example goes to
+TestFlight and Google Play. Examples never gate the release.
 
 The standalone
 [Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit)
@@ -76,8 +75,10 @@ is exported from the completed release record by
 with every SDK reference pinned to the published npm, Maven Central and Swift
 Package Manager packages, pushed as one `Release <identity>` commit and an
 `sdk-<identity>` tag to the channel's branch (`dev`, `staging` for beta, `main`
-for production). The export waits up to 45 minutes for the registries; a release
-that is not served by then is exported by the nightly run.
+for production). It runs every 30 minutes: a cheap first check stops at once
+when the kit already has the release, or when npm, Maven Central, the Swift
+package or the OTA manifest do not serve it yet; a later run retries. The kit
+keeps its own `.github`.
 
 ## Portable OTA Bundle
 

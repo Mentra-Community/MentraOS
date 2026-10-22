@@ -28,52 +28,32 @@ function notification(scope, overrides = {}) {
   )
 }
 
-test("core completion is reported without pending example and docs results", () => {
-  const payload = notification("core")
-  assert.match(payload.blocks[0].text.text, /Dev release complete/)
-  const text = JSON.stringify(payload)
-  assert.match(text, /Examples and docs are reported separately/)
-  assert.doesNotMatch(text, /Bluetooth example|Example checks|\*.*Docs\*/)
-  assert.match(text, /Routine results for published app builds/)
-  assert.match(text, /current Harness routine source inventory is unavailable/)
-  assert.doesNotMatch(text, /No-glasses UI|Requested tests/)
-  assert.match(text, /Request pipeline/)
-})
-
-test("example notification reports Play failure alongside independently successful docs", () => {
-  const payload = notification("examples", {
-    FINALIZE_EXAMPLE_RESULT: "skipped",
-    DOCS_RESULT: "success",
-    DOCS_URL: "https://docs-dev.mentraglass.com",
-    EXAMPLE_GOOGLE_PLAY_RESULT: "failure",
-  })
-  assert.match(payload.blocks[0].text.text, /examples and docs incomplete/)
-  const text = JSON.stringify(payload)
-  assert.match(text, /Docs\* - passed/)
-  assert.match(text, /Google Play: :x: failed/)
-  assert.doesNotMatch(text, /Release checks|ASG \+ OTA/)
-  assert.doesNotMatch(text, /Requested tests/)
-})
-
-test("the example notification reports the in-run example builds and the Starter Kit export", (t) => {
+test("one release message reports the release, the examples and the docs", (t) => {
   const bin = mkdtempSync(path.join(tmpdir(), "notification-http-"))
   t.after(() => rmSync(bin, {recursive: true, force: true}))
   writeFileSync(path.join(bin, "curl"), "#!/bin/sh\nexit 0\n", {mode: 0o755})
-  const text = JSON.stringify(
-    notification("examples", {
-      PATH: `${bin}:${process.env.PATH}`,
-      EXAMPLES_RESULT: "success",
-      EXAMPLE_APK_NAME: "mentra-example-react-native-3.2.0-dev.265.apk",
-      EXAMPLE_APK_URL: "https://artifactscdn.mentraglass.com/x/mentra-example-react-native-3.2.0-dev.265.apk",
-      EXAMPLE_RECORD_URL: "https://artifactscdn.mentraglass.com/x/mentra-example-release-3.2.0-dev.265.json",
-      STARTER_KIT_EXPORT_RESULT: "success",
-    }),
-  )
-  assert.match(text, /Example builds: :white_check_mark: passed/)
-  assert.match(text, /mentra-example-react-native-3\.2\.0-dev\.265\.apk/)
-  assert.match(text, /All example builds/)
-  assert.match(text, /Starter Kit export: :white_check_mark: passed/)
-  assert.doesNotMatch(text, /Starter Kit build|dispatch/)
+  const payload = notification("core", {
+    PATH: `${bin}:${process.env.PATH}`,
+    EXAMPLES_RESULT: "success",
+    EXAMPLE_APK_URL: "https://artifactscdn.mentraglass.com/x/mentra-example-react-native-3.2.0-dev.265.apk",
+    EXAMPLE_TESTFLIGHT_RESULT: "success",
+    EXAMPLE_TESTFLIGHT_INSTALL_URL: "https://testflight.apple.com/join/abc",
+    EXAMPLE_GOOGLE_PLAY_RESULT: "failure",
+    DOCS_RESULT: "success",
+    DOCS_URL: "https://docs-dev.mentraglass.com",
+  })
+  // An example or Play failure never makes the Mentra release incomplete.
+  assert.match(payload.blocks[0].text.text, /Dev release complete/)
+  const text = JSON.stringify(payload)
+  assert.match(text, /Bluetooth examples and docs/)
+  assert.match(text, /Example builds: :white_check_mark: passed - <https:\/\/artifactscdn[^|]+\|React Native example APK>/)
+  assert.match(text, /TestFlight: :white_check_mark: passed - <https:\/\/testflight\.apple\.com\/join\/abc\|Open TestFlight>/)
+  assert.match(text, /Google Play: :x: failed/)
+  assert.match(text, /Docs: :white_check_mark: passed - <https:\/\/docs-dev\.mentraglass\.com\|Open docs>/)
+  assert.match(text, /Routine results for published app builds/)
+  assert.match(text, /current Harness routine source inventory is unavailable/)
+  assert.doesNotMatch(text, /No-glasses UI|Requested tests|reported separately|Starter Kit|Example finalize/)
+  assert.match(text, /Request pipeline/)
 })
 
 test("page publication failure preserves core success and links the artifact container", () => {
@@ -101,20 +81,6 @@ test("mobile links can mix a historical GitHub APK and a new CDN IPA", (t) => {
   )
   assert.ok(text.includes(apk))
   assert.ok(text.includes(ipa))
-  const examples = JSON.stringify(
-    notification("examples", {
-      PATH: `${bin}:${process.env.PATH}`,
-      MOBILE_APK_URL: apk,
-      MOBILE_IPA_URL: ipa,
-      APK_NAME: "app.apk",
-      IPA_NAME: "app.ipa",
-      EXAMPLE_GOOGLE_PLAY_RESULT: "failure",
-    }),
-  )
-  assert.ok(examples.includes("Mentra App downloads"))
-  assert.ok(examples.includes(apk))
-  assert.ok(examples.includes(ipa))
-  assert.match(examples, /Google Play: :x: failed/)
 })
 
 

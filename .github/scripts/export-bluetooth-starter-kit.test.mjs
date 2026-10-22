@@ -1,19 +1,13 @@
 import assert from "node:assert/strict"
-import {createHash} from "node:crypto"
-import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {
-  compareIdentities,
   exportCoordinates,
-  exportStatus,
   guardStarterKit,
-  mavenPomUrl,
-  missingPublications,
-  newestRecordedIdentity,
   releaseContainer,
   releaseRecordUrl,
   sourceReferences,
@@ -74,7 +68,6 @@ function fixtureWorkspace() {
   write(workspace, "patches/expo-modules-core@55.0.25.patch", "diff --git a/x b/x\n")
   const kit = path.join(workspace, "bluetooth")
   write(kit, "README.md", "# Kit\n\nIn MentraOS this builds from mobile/modules/bluetooth-sdk.\n")
-  write(kit, ".github/workflows/example-app-builds.yml", "name: Example App Builds\n")
   write(
     kit,
     "android/settings.gradle.kts",
@@ -166,32 +159,13 @@ function fixtureWorkspace() {
   return {root, workspace, kit}
 }
 
-test("identities order by version and sequence within a channel", () => {
-  assert.ok(compareIdentities("3.4.0-dev.1040", "3.4.0-dev.999") > 0)
-  assert.ok(compareIdentities("3.4.0-dev.1", "3.3.9-dev.2000") > 0)
-  assert.ok(compareIdentities("3.3.0", "3.3.0-beta.12") > 0)
-  assert.equal(compareIdentities("3.3.0-beta.12", "3.3.0-beta.12"), 0)
+test("release records live in the channel's release container", () => {
   assert.equal(releaseContainer("3.4.0-dev.1040"), "mentra-builds-v3.4.0")
   assert.equal(releaseContainer("3.3.0"), "mentra-v3.3.0")
   assert.equal(
     releaseRecordUrl("3.3.0-beta.7"),
     "https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/mentra-builds-v3.3.0/mentra-release-3.3.0-beta.7.json",
   )
-})
-
-test("the newest completed record of a channel comes from the container index", () => {
-  const index = {
-    assets: [
-      {name: "mentra-release-3.4.0-dev.999.json", state: "uploaded"},
-      {name: "mentra-release-3.4.0-dev.1035.json", state: "uploaded"},
-      {name: "mentra-release-3.4.0-dev.1039.json", state: "pending"},
-      {name: "mentra-release-plan-3.4.0-dev.1040.json", state: "uploaded"},
-      {name: "mentra-release-3.4.0-beta.2000.json", state: "uploaded"},
-    ],
-  }
-  assert.equal(newestRecordedIdentity(index, "dev"), "3.4.0-dev.1035")
-  assert.equal(newestRecordedIdentity(index, "beta"), "3.4.0-beta.2000")
-  assert.equal(newestRecordedIdentity({assets: []}, "dev"), null)
 })
 
 test("the export pins exactly the coordinates the completed release published", () => {
@@ -215,41 +189,6 @@ test("the export pins exactly the coordinates the completed release published", 
   delete incomplete.publications["@mentra/bluetooth-sdk"]["maven-central"]
   assert.throws(() => exportCoordinates(incomplete), /Maven/)
   assert.throws(() => exportCoordinates({...releaseRecord(), otaManifest: undefined}), /OTA manifest/)
-})
-
-test("an export is skipped when the branch already has the release or a newer one", () => {
-  assert.equal(exportStatus({kitRecord: null, identity, tagExists: false}).needed, true)
-  assert.equal(exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1035"}, identity, tagExists: false}).needed, true)
-  assert.equal(exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: true}).needed, false)
-  assert.equal(exportStatus({kitRecord: {releaseIdentity: "3.4.0-dev.1041"}, identity, tagExists: false}).needed, false)
-  assert.equal(exportStatus({kitRecord: null, identity, tagExists: true}).needed, false)
-})
-
-test("availability reports every registry that does not serve the release yet", async () => {
-  const coordinates = exportCoordinates(releaseRecord())
-  const manifest = Buffer.from("{}")
-  coordinates.otaManifest.sha256 = createHash("sha256").update(manifest).digest("hex")
-  const served = new Set([
-    `https://registry.npmjs.org/@mentra%2fbluetooth-sdk/${identity}`,
-    `https://registry.npmjs.org/@mentra%2fengine/${identity}`,
-    mavenPomUrl(`com.mentraglass:lc3Lib:${identity}`),
-    coordinates.otaManifest.url,
-  ])
-  const fetchImpl = async (url) => ({
-    ok: served.has(url),
-    arrayBuffer: async () => manifest,
-  })
-  const missing = await missingPublications(coordinates, {fetchImpl, lsRemote: () => false})
-  assert.deepEqual(missing, [
-    `Maven Central com.mentraglass:bluetooth-sdk:${identity}`,
-    `Swift package Mentra-Community/mentra-bluetooth-sdk-ios@${identity}`,
-  ])
-  served.add(mavenPomUrl(`com.mentraglass:bluetooth-sdk:${identity}`))
-  assert.deepEqual(await missingPublications(coordinates, {fetchImpl, lsRemote: () => true}), [])
-  assert.equal(
-    mavenPomUrl(`com.mentraglass:bluetooth-sdk:${identity}`),
-    `https://repo1.maven.org/maven2/com/mentraglass/bluetooth-sdk/${identity}/bluetooth-sdk-${identity}.pom`,
-  )
 })
 
 test("a fixture example tree becomes a standalone kit with no source references", () => {
@@ -305,7 +244,6 @@ test("a fixture example tree becomes a standalone kit with no source references"
     assert.deepEqual(app.patchedDependencies, {"expo-modules-core@55.0.25": "patches/expo-modules-core@55.0.25.patch"})
     assert.equal(read("react-native-macos/patches/expo-modules-core@55.0.25.patch"), "diff --git a/x b/x\n")
     assert.equal(read("README.md"), "# Kit\n\nIn MentraOS this builds from mobile/modules/bluetooth-sdk.\n")
-    assert.equal(read(".github/workflows/example-app-builds.yml"), "name: Example App Builds\n")
     assert.throws(() => read("react-native/node_modules/ignored/package.json"), /ENOENT/)
 
     const kitRecord = JSON.parse(read("starter-kit-release.json"))
@@ -414,11 +352,8 @@ test("the MentraOS examples tree exports to a standalone kit", () => {
     assert.deepEqual(examples.sort(), ["react-native", "react-native-elevenlabs-audio", "react-native-macos"])
     // Lockfiles are written by the export workflow; everything else is final.
     assert.deepEqual(sourceReferences(path.join(out, "kit")), [])
-    // The kit's own CI ships with it and runs once the kit is its own repository.
-    assert.match(
-      readFileSync(path.join(out, "kit/.github/workflows/example-app-builds.yml"), "utf8"),
-      /working-directory: react-native/,
-    )
+    // The kit keeps its own CI in its repository; the export never carries one.
+    assert.equal(existsSync(path.join(out, "kit/.github")), false)
   } finally {
     rmSync(out, {recursive: true, force: true})
   }
@@ -449,13 +384,4 @@ test("a production release record pins the plain versions it promoted", () => {
   assert.equal(coordinates.otaManifest.url, record.otaManifest.url)
   record.releaseFamily.members["@mentra/bluetooth-sdk"].publishTargets = ["npm"]
   assert.throws(() => exportCoordinates(record), /Maven/)
-})
-
-test("a branch carrying the release without its tag stops the export", () => {
-  // Branch and tag are pushed atomically, so this state was made outside the
-  // export: fail with a clear error instead of skipping or repairing it.
-  assert.throws(
-    () => exportStatus({kitRecord: {releaseIdentity: identity}, identity, tagExists: false}),
-    /already carries 3\.4\.0-dev\.1040 but sdk-3\.4\.0-dev\.1040 does not exist/,
-  )
 })

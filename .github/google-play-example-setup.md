@@ -44,9 +44,9 @@ version/build number. It preserves the example's
 existing Android ABI configuration, signs the AAB with the shared upload key,
 and persists it in the immutable coordinated release container before upload.
 
-The example release record (`mentra-example-release-<identity>.json`) records the
-package, track, audience, version, exact source, AAB URL/hash/size, and workflow
-provenance under `googlePlay`.
+The job's publication result (`example-google-play-publication.json`, kept as a
+workflow artifact) records the package, track, audience, version, exact source,
+AAB URL/hash/size, and workflow provenance.
 `submitted` means the upload was accepted and the exact version code was read
 back from the track. It does not assert review approval or tester availability.
 The finalizer fails if the required Play job or its publication evidence is
