@@ -231,7 +231,8 @@ async function workspaceLicense(workspaceId: string, overrides: Partial<LicenseW
 
 /** The license as Core shows it, without seats. */
 function viewOf(write: LicenseWrite, fields: {seatsUsed: number; endedAt?: string | null}): LicenseView {
-  const {licenseId, ...rest} = write
+  // Whom billing named to assign is the write's, not the license's.
+  const {licenseId, assignTo: _assignTo, ...rest} = write
   return {licenseId, ...rest, seatsUsed: fields.seatsUsed, endedAt: fields.endedAt ?? null}
 }
 
@@ -1888,5 +1889,256 @@ describe("audit", () => {
       "license.written",
       "license.written",
     ])
+  })
+})
+
+// --- The buyer's license ---------------------------------------------------
+
+describe("the buyer's license", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000
+  /** A term from `fromDays` to `toDays` days around the real clock's now, which is what "in its term" asks about. */
+  const term = (fromDays: number, toDays: number) => ({
+    validFrom: new Date(Date.now() + fromDays * DAY_MS).toISOString(),
+    paidThrough: new Date(Date.now() + toDays * DAY_MS).toISOString(),
+  })
+  const inTerm = () => term(-1, 30)
+  const buyer = (who: {mentraUserId: string}) => ({assignTo: {mentraUserId: who.mentraUserId}})
+  const ownerOf = (workspaceId: string): LicenseOwner => ({type: "workspace", workspaceId})
+  /** Every audit event of one license, in commit order. */
+  const eventsOf = (licenseId: string) =>
+    WorkspaceAuditEventModel.find({"target.licenseId": licenseId}).sort({seq: 1}).lean()
+
+  test("the write that creates a license gives its buyer one, recorded after the write, by the Store", async () => {
+    const ws = await newWorkspace()
+    const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(ws.member)})
+
+    expect(await store().putLicense(write)).toEqual({applied: true, revision: 1})
+
+    expect(await store().listLicenses(ownerOf(ws.workspaceId))).toEqual({licenses: [viewOf(write, {seatsUsed: 1})]})
+    const seats = await seatsOf(write.licenseId)
+    expect(seats).toHaveLength(1)
+    expect(seats[0]).toMatchObject({
+      workspaceId: ws.workspaceId,
+      membershipId: ws.memberMembershipId,
+      mentraUserId: ws.member.mentraUserId,
+      assignedBy: null,
+    })
+    // The member sees it as their own.
+    const mine = await call("GET", `/api/workspaces/${ws.workspaceId}/licenses`, ws.member)
+    expect(
+      (mine.json.items as LicenseView[]).map((license) => [
+        license.licenseId,
+        license.seats?.map((s) => s.membershipId),
+      ]),
+    ).toEqual([[write.licenseId, [ws.memberMembershipId]]])
+
+    // `license.written`, then `seat.assigned`, next to each other on the feed, both the Store's.
+    const events = await eventsOf(write.licenseId)
+    expect(events.map((event) => [event.action, event.actor])).toEqual([
+      ["license.written", {kind: "service", service: "store"}],
+      ["seat.assigned", {kind: "service", service: "store"}],
+    ])
+    expect(events[1]!.seq).toBe(events[0]!.seq! + 1)
+    expect(events[1]).toMatchObject({
+      workspaceId: ws.workspaceId,
+      target: {
+        licenseId: write.licenseId,
+        membershipId: ws.memberMembershipId,
+        mentraUserId: ws.member.mentraUserId,
+        email: ws.member.email,
+      },
+      before: null,
+      after: {seatsUsed: 1, quantity: 5},
+    })
+    expect((await feed()).filter((event) => event.target?.licenseId === write.licenseId).map((e) => e.action)).toEqual([
+      "license.written",
+      "seat.assigned",
+    ])
+  })
+
+  test("a license of one gives its one license to the buyer, and no further assignment fits", async () => {
+    const ws = await newWorkspace()
+    const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 1, ...inTerm(), ...buyer(ws.owner)})
+    await store().putLicense(write)
+
+    expect(await licenseRow(write.licenseId)).toMatchObject({quantity: 1, seatsUsed: 1})
+    expect((await seatsOf(write.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.ownerMembershipId])
+    expect(
+      (await refusal(assignSeat(actorOf(ws.admin), ws.workspaceId, write.licenseId, ws.memberMembershipId))).code,
+    ).toBe("no_seats_available")
+  })
+
+  test("only the creating write assigns: a repeat changes nothing, and a later revision gives nothing back", async () => {
+    const ws = await newWorkspace()
+    const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(ws.member)})
+    await store().putLicense(write)
+
+    // Billing sends the same revision again.
+    expect(await store().putLicense(write)).toEqual({applied: false, revision: 1})
+    expect(await licenseRow(write.licenseId)).toMatchObject({seatsUsed: 1})
+    expect(await seatsOf(write.licenseId)).toHaveLength(1)
+
+    // An Admin unassigns the buyer; the next revision names them again and assigns nothing.
+    await releaseSeat(actorOf(ws.admin), ws.workspaceId, write.licenseId, ws.memberMembershipId)
+    expect(await store().putLicense({...write, revision: 2, quantity: 6})).toEqual({applied: true, revision: 2})
+    expect(await licenseRow(write.licenseId)).toMatchObject({quantity: 6, seatsUsed: 0})
+    expect(await seatsOf(write.licenseId)).toEqual([])
+    expect((await eventsOf(write.licenseId)).map((event) => event.action)).toEqual([
+      "license.written",
+      "seat.assigned",
+      "seat.released",
+      "license.written",
+    ])
+  })
+
+  test("out of order, whichever revision arrives first creates the license and assigns once", async () => {
+    const ws = await newWorkspace()
+    const first = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(ws.member)})
+    const second = {...first, revision: 2, quantity: 3}
+
+    expect(await store().putLicense(second)).toEqual({applied: true, revision: 2})
+    await expectClientError(store().putLicense(first), "stale_revision", 409)
+    expect(await store().putLicense(second)).toEqual({applied: false, revision: 2})
+
+    expect(await licenseRow(first.licenseId)).toMatchObject({revision: 2, quantity: 3, seatsUsed: 1})
+    expect((await seatsOf(first.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.memberMembershipId])
+    expect(await audit("seat.assigned")).toHaveLength(1)
+  })
+
+  test("no license for someone who is not an active member: never joined, left, or an Organization Admin outside it", async () => {
+    const ws = await newWorkspace()
+    const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
+    const leaver = await person("leaver")
+    await addMember(ws.workspaceId, leaver, "member")
+    await leaveWorkspace(actorOf(leaver), ws.workspaceId)
+    // A member of another workspace is not a member of this one.
+    const elsewhere = await newWorkspace("Elsewhere")
+
+    for (const who of [ws.stranger, leaver, orgAdmin, elsewhere.member, {mentraUserId: "mu_never"}]) {
+      const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(who)})
+      expect(await store().putLicense(write)).toEqual({applied: true, revision: 1})
+      expect(await licenseRow(write.licenseId)).toMatchObject({seatsUsed: 0})
+    }
+    expect(await LicenseSeatModel.countDocuments({})).toBe(0)
+    expect(await audit("seat.assigned")).toEqual([])
+    expect(await audit("license.written")).toHaveLength(5)
+  })
+
+  test("no license from a write of quantity 0, and none from a write that names no one", async () => {
+    const ws = await newWorkspace()
+    const none = licenseWrite(ownerOf(ws.workspaceId), {quantity: 0, ...inTerm(), ...buyer(ws.member)})
+    const unnamed = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm()})
+
+    expect(await store().putLicense(none)).toEqual({applied: true, revision: 1})
+    expect(await store().putLicense(unnamed)).toEqual({applied: true, revision: 1})
+
+    expect(await licenseRow(none.licenseId)).toMatchObject({quantity: 0, seatsUsed: 0})
+    expect(await licenseRow(unnamed.licenseId)).toMatchObject({quantity: 5, seatsUsed: 0})
+    expect(await LicenseSeatModel.countDocuments({})).toBe(0)
+    expect(await audit("seat.assigned")).toEqual([])
+  })
+
+  test("no second license of a product the buyer already holds there in its term; another product, term or workspace doesn't count", async () => {
+    const ws = await newWorkspace()
+    const other = await newWorkspace("Other")
+    const held = await workspaceLicense(ws.workspaceId, inTerm())
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, held.licenseId, ws.memberMembershipId)
+
+    const again = licenseWrite(ownerOf(ws.workspaceId), {...inTerm(), ...buyer(ws.member)})
+    await store().putLicense(again)
+    expect(await licenseRow(again.licenseId)).toMatchObject({seatsUsed: 0})
+
+    // What doesn't count: another product, an expired or not-yet-started license of it, and the same product
+    // held in another workspace.
+    const fleet = await workspaceLicense(ws.workspaceId, {product: "mentra.fleet", ...inTerm()})
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, fleet.licenseId, ws.developerMembershipId)
+    const expired = await workspaceLicense(ws.workspaceId, term(-60, -30))
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, expired.licenseId, ws.adminMembershipId)
+    const upcoming = await workspaceLicense(ws.workspaceId, term(10, 40))
+    await assignSeat(actorOf(ws.admin), ws.workspaceId, upcoming.licenseId, ws.ownerMembershipId)
+    const dual = await person("dual")
+    const dualMembershipId = await addMember(ws.workspaceId, dual, "member")
+    const there = await workspaceLicense(other.workspaceId, inTerm())
+    await assignSeat(
+      actorOf(other.owner),
+      other.workspaceId,
+      there.licenseId,
+      await addMember(other.workspaceId, dual, "member"),
+    )
+    await assignSeat(
+      actorOf(other.owner),
+      other.workspaceId,
+      there.licenseId,
+      await addMember(other.workspaceId, ws.member, "member"),
+    )
+
+    for (const [who, membershipId] of [
+      [ws.developer, ws.developerMembershipId],
+      [ws.admin, ws.adminMembershipId],
+      [ws.owner, ws.ownerMembershipId],
+      [dual, dualMembershipId],
+    ] as const) {
+      const write = licenseWrite(ownerOf(ws.workspaceId), {...inTerm(), ...buyer(who)})
+      await store().putLicense(write)
+      expect((await seatsOf(write.licenseId)).map((seat) => seat.membershipId)).toEqual([membershipId])
+    }
+    // In the other workspace, the member holds the product already.
+    const inOther = licenseWrite(ownerOf(other.workspaceId), {...inTerm(), ...buyer(ws.member)})
+    await store().putLicense(inOther)
+    expect(await licenseRow(inOther.licenseId)).toMatchObject({seatsUsed: 0})
+    const inThis = licenseWrite(ownerOf(ws.workspaceId), {product: "mentra.fleet", ...inTerm(), ...buyer(ws.member)})
+    await store().putLicense(inThis)
+    expect((await seatsOf(inThis.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.memberMembershipId])
+  })
+
+  test("the creating write delivered many times at once makes one license and one seat", async () => {
+    for (let round = 0; round < 3; round++) {
+      const ws = await newWorkspace()
+      const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(ws.member)})
+
+      const results = await Promise.all(Array.from({length: 8}, () => store().putLicense(write)))
+
+      expect(results.filter((result) => result.applied)).toHaveLength(1)
+      expect(results.every((result) => result.revision === 1)).toBe(true)
+      expect(await licenseRow(write.licenseId)).toMatchObject({seatsUsed: 1})
+      expect((await seatsOf(write.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.memberMembershipId])
+      expect((await eventsOf(write.licenseId)).map((event) => event.action)).toEqual([
+        "license.written",
+        "seat.assigned",
+      ])
+    }
+  })
+
+  test("two revisions of the first write racing, both naming the buyer, assign once", async () => {
+    for (let round = 0; round < 3; round++) {
+      const ws = await newWorkspace()
+      const first = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(ws.member)})
+      const writes = [first, {...first, revision: 2}, first, {...first, revision: 2}]
+
+      await Promise.allSettled(writes.map((write) => store().putLicense(write)))
+
+      expect(await licenseRow(first.licenseId)).toMatchObject({revision: 2, seatsUsed: 1})
+      expect((await seatsOf(first.licenseId)).map((seat) => seat.membershipId)).toEqual([ws.memberMembershipId])
+      expect((await eventsOf(first.licenseId)).filter((event) => event.action === "seat.assigned")).toHaveLength(1)
+    }
+  })
+
+  test("the creating write racing the buyer's removal never leaves a seat behind the ended membership", async () => {
+    const ws = await newWorkspace()
+    for (let round = 0; round < 5; round++) {
+      const buyerPerson = await person(`buyer-${round}`)
+      const membershipId = await addMember(ws.workspaceId, buyerPerson, "member")
+      const write = licenseWrite(ownerOf(ws.workspaceId), {quantity: 5, ...inTerm(), ...buyer(buyerPerson)})
+
+      const [written] = await Promise.allSettled([
+        store().putLicense(write),
+        removeMember(actorOf(ws.owner), ws.workspaceId, membershipId, await revisionOf(ws.workspaceId)),
+      ])
+
+      expect(written.status).toBe("fulfilled")
+      expect((await WorkspaceMembershipModel.findOne({membershipId}).lean())!.status).toBe("ended")
+      expect(await seatsOf(write.licenseId)).toEqual([])
+      expect(await licenseRow(write.licenseId)).toMatchObject({seatsUsed: 0})
+    }
   })
 })

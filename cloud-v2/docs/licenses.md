@@ -51,6 +51,7 @@ is `403 forbidden`; an unsigned or wrongly signed call is
 | `features` | `[{key, packages}]`; `packages` may be empty. |
 | `quantity` | The number of licenses bought, a whole number of 0 or more. Always 1 for a person. |
 | `validFrom`, `paidThrough` | RFC 3339 times in UTC (`2026-10-01T00:00:00Z`). |
+| `assignTo` | Optional, workspace licenses only: `{"mentraUserId"}`, the purchase's buyer ([The buyer's license](#the-buyers-license)). |
 
 Core applies a write only if its revision is newer than the one it has, so
 billing sends the latest version of each license until Core accepts it, and
@@ -62,7 +63,7 @@ repeats and late deliveries are harmless:
 | `200 {"applied": false, "revision"}` | The revision Core has. Nothing changes. | Delivered. |
 | `409 stale_revision` | An older revision. The body's `revision` is Core's. | Delivered: Core has a newer one. |
 | `404 owner_not_found` | The workspace or account is deleted, or never existed, or the license ended with its owner. For a personal license this is checked on every write, a repeat or an older revision included. | Stop sending it. |
-| `400 invalid_request` | A malformed write, another license than the path's, a person's quantity other than 1, a `paidThrough` before `validFrom`, or a change of owner. | A bug to fix. |
+| `400 invalid_request` | A malformed write, another license than the path's, a person's quantity other than 1, a `paidThrough` before `validFrom`, an `assignTo` other than `{"mentraUserId"}` with a non-blank ID or one on a personal license, or a change of owner. | A bug to fix. |
 | `5xx` | Core could not answer. | Send it again. |
 
 `GET /api/internal/licenses?ownerType=workspace|person&ownerId=` answers
@@ -82,6 +83,23 @@ included, first checks that the person's account still exists; if it does not,
 Core ends the license and answers `404 owner_not_found`. So a write that races
 the person's account deletion is ended at once, or, should that request fail
 first, by billing's next attempt.
+
+### The buyer's license
+
+Billing names a purchase's buyer, by Core user ID, as `assignTo` on every
+write of a subscription it checked out, so whichever write reaches Core first
+carries it, in any order. Core honors it only on the write that creates the
+license, inside that write's transaction: when the buyer has an active
+membership in the owner workspace, the license has a seat to give (`quantity`
+of 1 or more), and the buyer holds no seat of an in-term, not-ended license of
+the same product in that workspace, Core takes one seat through the same
+conditional increment as an assignment, inserts it, and records
+`seat.assigned` (actor `store`) right after `license.written`. Otherwise it
+assigns nothing. A repeat and every later revision assign nothing, even after
+the buyer is unassigned, and deliveries of the first write that race create the
+license once, so the buyer gets one seat at most. The buyer has their license
+whether or not they come back to the page; an Organization Admin who buys for a
+workspace they aren't a member of gets none.
 
 ## Assigning licenses
 
@@ -433,7 +451,8 @@ the page does.
 ## Audit and the change feed
 
 Every license and seat change is in Core's audit trail, with its actor (the
-`store` service for a license write, the person for a seat change). A workspace
+`store` service for a license write and the buyer's seat it gives, the person
+for a seat change). A workspace
 license's events are the workspace's, so they are on its audit page and on the
 [change feed](fleet-integration.md#the-change-feed); a personal license's are the
 organization's, and not on the feed.
