@@ -28,6 +28,7 @@ import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
 import { portalModuleAvailability } from "../../services/portal-modules/portal-modules";
 import { fleetInstalled } from "../../services/fleet/fleet-config";
+import { SigninIdentityModel } from "../../models/signin-identity.model";
 import { authorize, organizationView } from "../../services/workspaces/authorization.service";
 import { listWorkspacesForUser } from "../../services/workspaces/workspace.service";
 import { requireUserPrincipal, userPrincipal } from "../middleware/principal.middleware";
@@ -83,7 +84,15 @@ async function getMe(c: AppContext) {
   return c.json({
     authenticated: true,
     // `mentraUserId` is the Fleet UI contract's name for `id`.
-    user: { id: user.mentraUserId, mentraUserId: user.mentraUserId, email: user.email, emailVerified: principal.emailVerified },
+    user: {
+      id: user.mentraUserId,
+      mentraUserId: user.mentraUserId,
+      email: user.email,
+      // The name the person's last sign-in carried, which the portal shows in place of their address; null when
+      // no sign-in has carried one.
+      name: await signInName(user.mentraUserId),
+      emailVerified: principal.emailVerified,
+    },
     workspaceCreation: organizationView(principal).workspaceCreation,
     onboardingRequired: org === null,
     org,
@@ -96,6 +105,13 @@ async function getMe(c: AppContext) {
     workspaces: await fleetWorkspacesOf(principal, c.req.query("workspaceId")),
     fleet: { installed: fleetInstalled() },
   });
+}
+
+/** The last name a sign-in carried for this person, trimmed; null when there is none. One indexed read. */
+async function signInName(mentraUserId: string): Promise<string | null> {
+  const identity = await SigninIdentityModel.findOne({ mentraUserId }, { name: 1 }).lean();
+  const name = typeof identity?.name === "string" ? identity.name.trim() : "";
+  return name === "" ? null : name;
 }
 
 /**

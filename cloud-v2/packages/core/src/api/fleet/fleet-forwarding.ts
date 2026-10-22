@@ -12,7 +12,6 @@
  *   /api/portal/fleet/workspaces/:workspaceId/ui/<rest>
  *                             ->  ${CLOUD_CORE_FLEET_URL}/v1/portal/ui/<rest>   (the workspace portal's Fleet UI assets,
  *                                                                        for a person holding `fleet.read` there)
- *   /api/portal/fleet/ui/<rest>  ->  ${CLOUD_CORE_FLEET_URL}/v1/portal/ui/<rest>   (the same, for any signed-in person)
  *
  * What is Fleet's here is who may call, what the request covers and how Fleet is configured. How a request
  * is signed and sent, what Fleet receives, how its answer is mapped and how its UI assets are relayed are
@@ -32,7 +31,7 @@
  *    for every other method. An Organization Admin holds every workspace capability as an Owner does, member or
  *    not; a Member or Developer holds neither and gets 403; an unknown or deleted workspace is 404. Fleet is not
  *    called for a refused request. A workspace's UI assets (`/workspaces/:workspaceId/ui/*`) need `fleet.read`
- *    there, whatever the method; the older `/ui/*` needs only the signed-in person.
+ *    there, whatever the method. There is no unscoped `/api/portal/fleet/ui/*`: it is a 404.
  *
  * The scope is Core's decision. A person's Fleet request covers the organization (`scope:
  * {kind: "organization"}`) and nothing the request carries, in its query, body or headers, can say
@@ -300,7 +299,6 @@ const WORKSPACES_SEGMENT = "workspaces"
 type PortalRoute =
   | {kind: "workspace"; workspaceId: string}
   | {kind: "workspace-ui"; workspaceId: string; assetPath: string}
-  | {kind: "ui"}
 
 /** Whether `rest` (the path after a `ui` segment) names an asset: a `/` and at least one more character. */
 function isAssetRest(rest: string): boolean {
@@ -308,7 +306,7 @@ function isAssetRest(rest: string): boolean {
 }
 
 /**
- * The route for a path suffix (`/workspaces/ws_1/x`, `/workspaces/ws_1/ui/entry.js`, `/ui/main.js`), or null when
+ * The route for a path suffix (`/workspaces/ws_1/x`, `/workspaces/ws_1/ui/entry.js`), or null when
  * it is none. Segments are matched exactly, as received: no case folding, no decoding, so a spelling Fleet's own
  * router might read differently is not a route, and a workspace path whose third segment is another spelling of
  * `ui` (`UI`, `%75i`) is refused rather than forwarded as JSON. `isSafeSuffix` has already decoded every segment
@@ -316,9 +314,6 @@ function isAssetRest(rest: string): boolean {
  */
 function portalRouteOf(suffix: string): PortalRoute | null {
   const [, first, second, third] = suffix.split("/")
-  if (first === UI_ASSET_SEGMENT) {
-    return isAssetRest(suffix.slice(`/${UI_ASSET_SEGMENT}`.length)) ? {kind: "ui"} : null
-  }
   if (first !== WORKSPACES_SEGMENT || !second) return null
   const workspaceId = decodeURIComponent(second)
   if (third === undefined || decodeURIComponent(third).toLowerCase() !== UI_ASSET_SEGMENT) {
@@ -356,10 +351,6 @@ function forwardPortal(): Handler<AppEnv> {
 
     const request = {upstream, path: fleetPath("portal", suffix), query, audience: "portal"}
     const person = () => forwardedUser(caller.person, {kind: "person"})
-    if (route.kind === "ui") {
-      if (c.req.method !== "GET" && c.req.method !== "HEAD") return methodNotAllowed(c)
-      return relayAsset(c, {...request, principal: person})
-    }
     const capability = route.kind === "workspace-ui" ? "fleet.read" : capabilityFor(c.req.method)
     const decision = await authorize(caller.person, {workspaceId: route.workspaceId, capability})
     if (!decision.allowed) return denied(c, decision)
@@ -380,6 +371,5 @@ function forwardPortal(): Handler<AppEnv> {
  */
 export const portalFleetApi = new Hono<AppEnv>()
 portalFleetApi.use("*", jsonAnswerHeaders)
-portalFleetApi.use(`/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
 portalFleetApi.use(`/${WORKSPACES_SEGMENT}/:workspaceId/${UI_ASSET_SEGMENT}/*`, assetResponseHeaders)
 portalFleetApi.all("/*", limitFleetBody, forwardPortal())

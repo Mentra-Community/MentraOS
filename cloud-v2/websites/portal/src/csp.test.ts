@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { FLEET_MODULE_URL } from "./pages/fleet";
+import { fleetModuleUrl } from "./pages/fleet";
 
 /**
- * The portal loads Fleet Management's UI as a script from its own origin (`FLEET_MODULE_URL`) and mounts it in
+ * The portal loads Fleet Management's UI as a script from its own origin (`fleetModuleUrl`) and mounts it in
  * a shadow root that carries its own styles; the module calls the portal's own `/api`. The policy in
  * `public/_headers` has to allow exactly that and nothing wider.
  */
@@ -24,7 +24,8 @@ const policy = (() => {
 
 describe("the portal's Content-Security-Policy", () => {
   test("the Fleet module is a same-origin script, so script-src 'self' loads it and nothing else does", () => {
-    expect(FLEET_MODULE_URL.startsWith("/")).toBe(true);
+    expect(fleetModuleUrl("ws_acme").startsWith("/")).toBe(true);
+    expect(fleetModuleUrl("ws_acme").startsWith("//")).toBe(false);
     expect(policy.get("script-src")).toEqual(["'self'"]);
   });
 

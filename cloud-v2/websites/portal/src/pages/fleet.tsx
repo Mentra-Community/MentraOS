@@ -2,7 +2,9 @@
  * Fleet Management in the workspace portal: `/w/<workspaceId>/fleet?fleet=<path>`.
  *
  * A host for the Fleet UI module that the Fleet integration serves through Core
- * (`/api/portal/fleet/ui/entry.js`, same origin, so the portal's `script-src 'self'` allows it). The page
+ * (`/api/portal/fleet/workspaces/<id>/ui/entry.js`, same origin, so the portal's `script-src 'self'` allows it, and
+ * behind `fleet.read` in that workspace, like the module's API). What the module loads (chunks, CSS) is relative
+ * to its entry, so it comes from the same workspace's `ui/` folder under the same check. The page
  * checks that the module speaks this page's contract version, mounts it into an open shadow root, and tells it
  * the route (the `?fleet=` query). The module's API base is this one workspace, so Core takes the workspace from
  * the path and never from the module. The module is imported once; a route change reaches it through
@@ -27,12 +29,14 @@ import { navigate, useSearch } from "@/lib/navigation";
 import { usePortal } from "@/lib/portal";
 import { fleetPath } from "@/lib/routes";
 
-/** The module's entry, served by Core from the Fleet integration. Same origin, never a client-chosen URL. */
-export const FLEET_MODULE_URL = "/api/portal/fleet/ui/entry.js";
-
 /** Where the module sends its API requests: Core forwards it to Fleet scoped to this workspace. */
 export function fleetApiBase(workspaceId: string): string {
   return `/api/portal/fleet/workspaces/${encodeURIComponent(workspaceId)}`;
+}
+
+/** The module's entry for this workspace, served by Core from the Fleet integration. Same origin, never a client-chosen URL. */
+export function fleetModuleUrl(workspaceId: string): string {
+  return `${fleetApiBase(workspaceId)}/ui/entry.js`;
 }
 
 /** The longest route kept in the address. Nothing Fleet shows needs more; a longer one is taken for junk. */
@@ -91,8 +95,9 @@ export type FleetEntryImporter = (specifier: string) => Promise<unknown>;
 /** The real import. The URL is a parameter so the bundler leaves `import()` to the browser. */
 export const importFleetEntry: FleetEntryImporter = specifier => import(specifier);
 
-function fleetModuleUrl(retry: number | undefined): string {
-  return retry === undefined ? FLEET_MODULE_URL : `${FLEET_MODULE_URL}?retry=${retry}`;
+function entryUrl(workspaceId: string, retry: number | undefined): string {
+  const url = fleetModuleUrl(workspaceId);
+  return retry === undefined ? url : `${url}?retry=${retry}`;
 }
 
 /**
@@ -100,10 +105,14 @@ function fleetModuleUrl(retry: number | undefined): string {
  * installed or cannot answer), an entry without a module as its default export, and a module built for another
  * contract version all give {@link FleetUnavailableError}.
  */
-export async function loadFleetModule(importEntry: FleetEntryImporter = importFleetEntry, retry?: number): Promise<FleetUiModule> {
+export async function loadFleetModule(
+  workspaceId: string,
+  importEntry: FleetEntryImporter = importFleetEntry,
+  retry?: number,
+): Promise<FleetUiModule> {
   let entry: unknown;
   try {
-    entry = await importEntry(fleetModuleUrl(retry));
+    entry = await importEntry(entryUrl(workspaceId, retry));
   } catch (cause) {
     throw new FleetUnavailableError("The Fleet module could not be loaded.", { cause });
   }
@@ -203,7 +212,7 @@ export function createFleetHost(options: {
     loading = true;
     onPhase(LOADING);
     try {
-      const module = await loadFleetModule(importEntry, retry);
+      const module = await loadFleetModule(workspaceId, importEntry, retry);
       if (!live) return;
       loaded = module;
       mountLoaded(module);

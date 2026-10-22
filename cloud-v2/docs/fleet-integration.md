@@ -101,10 +101,11 @@ setting above allows it. Core has no capabilities endpoint:
 | `/api/admin/fleet/<rest>`  | `${CLOUD_CORE_FLEET_URL}/v1/admin/<rest>`  | An Organization Admin (`organization.fleet.administer`) |
 | `/api/portal/fleet/workspaces/<workspaceId>/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/portal/workspaces/<workspaceId>/<rest>` | A person on the workspace portal's session cookie (never a bearer) who `authorize` allows `fleet.read` (GET, HEAD) or `miniapps.assign` (every other method) in that workspace; an Organization Admin counts as Owner |
 | `/api/portal/fleet/workspaces/<workspaceId>/ui/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/portal/ui/<rest>` | The workspace's UI assets: a person on the portal's session cookie whom `authorize` allows `fleet.read` in that workspace, whatever the method; `GET` and `HEAD` only (any other is `405`), signed with `scope: {kind: "person"}`. Only that exact `ui` segment; another spelling (`UI`, `%75i`) is 404 |
-| `/api/portal/fleet/ui/<rest>` | `${CLOUD_CORE_FLEET_URL}/v1/portal/ui/<rest>` | Any signed-in portal person; `GET` and `HEAD` only. Kept until the workspace portal loads its module from the workspace route above |
 
 The workspace portal's principal is signed with `scope: {kind: "workspace", workspaceId}` taken from the
-path only; nothing in the query, headers or body can change it. Any other path under `/api/portal/fleet` is 404.
+path only; nothing in the query, headers or body can change it. Any other path under `/api/portal/fleet` is 404,
+the old unscoped `/api/portal/fleet/ui/*` included: the portal loads its module from the workspace route above, so a
+person who may not read Fleet in a workspace cannot fetch its UI either.
 
 The method, query string and body are forwarded. Fleet's URL may carry a path
 prefix; Core joins it to `/v1/...` the same way with or without a trailing slash

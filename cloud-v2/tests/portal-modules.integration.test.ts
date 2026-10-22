@@ -647,6 +647,18 @@ describe("GET /api/portal/me", () => {
     }
   })
 
+  test("reports the name the person's sign-in carried, and null when none has", async () => {
+    const named = await person("named")
+    const unnamed = await person("unnamed")
+    await SigninIdentityModel.updateOne({mentraUserId: named.mentraUserId}, {$set: {name: "  Ada Lovelace "}}, {upsert: true})
+    await SigninIdentityModel.updateOne({mentraUserId: unnamed.mentraUserId}, {$set: {name: "   "}}, {upsert: true})
+    const reply = await fromPerson(named, "GET", "/me")
+    expect(reply.status).toBe(200)
+    expect(reply.json.user.name).toBe("Ada Lovelace")
+    expect(reply.json.user.email).toBe(named.email)
+    expect((await fromPerson(unnamed, "GET", "/me")).json.user.name).toBeNull()
+  })
+
   test("reports both true when billing is installed and visible to this person", async () => {
     useBilling("prod")
     const someone = await person("someone")

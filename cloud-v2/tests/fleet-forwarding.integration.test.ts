@@ -1270,7 +1270,7 @@ describe("the workspace portal", () => {
       expect(reply.status).toBe(403)
     }
     expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/people`)).status).toBe(401)
-    expect((await send("GET", "/api/portal/fleet/ui/main.js")).status).toBe(401)
+    expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/ui/main.js`)).status).toBe(401)
     // A phone's token is not a portal session either.
     const phone = await phoneSession("p-phone")
     expect((await send("GET", `/api/portal/fleet/workspaces/${ws}/people`, {headers: {authorization: `Bearer ${phone.token}`}})).status).toBe(401)
@@ -1307,21 +1307,17 @@ describe("the workspace portal", () => {
     expect(received).toEqual([])
   })
 
-  test("the UI assets need only a signed-in person, relay GET and HEAD as the person, and refuse other methods", async () => {
+  test("there is no unscoped UI route: /api/portal/fleet/ui/* is a 404 for every signed-in person and nothing is forwarded", async () => {
     const owner = await portalPerson("p-owner")
     const member = await portalPerson("p-member")
     await workspaceWith(owner, {member})
     for (const who of [owner, member]) {
-      const get = await fromPortal(who, "GET", "/ui/entry.js?v=1")
-      const head = await fromPortal(who, "HEAD", "/ui/entry.js?v=1")
-      expect(get.status).toBe(200)
-      expect(head.status).toBe(200)
-      expect((get.json as Echo).pathWithQuery).toBe("/v1/portal/ui/entry.js?v=1")
-      expect((get.json as Echo).principal).toMatchObject({kind: "user", scope: {kind: "person"}})
-      expect(get.headers.get("x-content-type-options")).toBe("nosniff")
+      for (const method of ["GET", "HEAD", "POST"]) {
+        const reply = await fromPortal(who, method, "/ui/entry.js?v=1", method === "POST" ? {body: "{}"} : undefined)
+        expect(reply.status).toBe(404)
+      }
     }
-    expect((await fromPortal(owner, "POST", "/ui/entry.js", {body: "{}"})).status).toBe(405)
-    expect((await fromPortal(owner, "DELETE", "/ui/entry.js")).status).toBe(405)
+    expect(received).toEqual([])
   })
 
   test("a workspace's UI assets are behind its fleet.read: relayed from /v1/portal/ui as the person", async () => {
