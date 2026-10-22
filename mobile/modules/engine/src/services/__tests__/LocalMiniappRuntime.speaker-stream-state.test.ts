@@ -100,7 +100,7 @@ function createHost(app: {speakerState: string; activeSpeakerStreamId?: string})
   host.speakerStreamCounter = 0
   host.speechRuns = new Map()
   host.speakerOperationCounter = 0
-  host.currentSpeakerOperations = new Map()
+  host.currentSpeakerOperation = undefined
   host.sendResult = mock(() => {})
   host.cancelSpeech = mock(() => {})
   host.sendToMiniapp = mock((packageName: string, payload: Record<string, unknown>) => {
@@ -309,5 +309,32 @@ describe("LocalMiniappRuntime speaker stream state events", () => {
 
     expect(audioPlaybackService.play).not.toHaveBeenCalled()
     expect(host.sendResult).toHaveBeenCalledWith(appId, "teardown-play", true, {duration: 0})
+  })
+
+  test("a newer play from another app supersedes a play waiting for stream abort", async () => {
+    const {host, opens, audioPlaybackService} = createHost({speakerState: "idle"})
+    const otherAppId = "com.mentra.other"
+    host.connectedApps.set(otherAppId, {speakerState: "idle"})
+    await host.handleSpeakerStreamOpen(appId, {sampleRate: 24000}, "open-before-cross-app-play")
+    const onEnded = opens[0]!.onEnded as (id: string, success: boolean, error: string | null, durationMs: number) => void
+    let releaseAbort!: () => void
+    const abortGate = new Promise<void>((resolve) => (releaseAbort = resolve))
+    audioPlaybackService.abortStream = mock(async (streamId: string) => {
+      await abortGate
+      onEnded(streamId, true, null, 12)
+    })
+
+    const firstPlay = host.handlePlayAudio(appId, {audioUrl: "file://first.wav", stopOtherAudio: true}, "first-app-play")
+    await Promise.resolve()
+    await host.handlePlayAudio(otherAppId, {audioUrl: "file://second.wav", stopOtherAudio: true}, "second-app-play")
+    releaseAbort()
+    await firstPlay
+
+    expect(audioPlaybackService.play).toHaveBeenCalledTimes(1)
+    expect(audioPlaybackService.play).toHaveBeenCalledWith(
+      expect.objectContaining({requestId: "second-app-play", appId: otherAppId}),
+      expect.any(Function),
+    )
+    expect(host.sendResult).toHaveBeenCalledWith(appId, "first-app-play", true, {duration: 0})
   })
 })

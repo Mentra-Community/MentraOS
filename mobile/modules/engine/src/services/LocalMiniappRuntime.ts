@@ -671,7 +671,7 @@ class LocalMiniappRuntime {
 
   private speechRuns = new Map<string, SpeechRun>()
   private speakerOperationCounter = 0
-  private currentSpeakerOperations = new Map<string, number>()
+  private currentSpeakerOperation: {packageName: string; operationId: number} | undefined
   private runtimeSeq = 0
   private authSessionSeq = 0
 
@@ -2445,22 +2445,29 @@ class LocalMiniappRuntime {
 
   private beginSpeakerOperation(packageName: string): number {
     const operationId = ++this.speakerOperationCounter
-    this.currentSpeakerOperations.set(packageName, operationId)
+    // URL playback uses one native player across all miniapps, so the latest
+    // request owns this pending preemption globally, not just per package.
+    this.currentSpeakerOperation = {packageName, operationId}
     return operationId
   }
 
   private isCurrentSpeakerOperation(packageName: string, operationId: number): boolean {
-    return this.currentSpeakerOperations.get(packageName) === operationId
+    return (
+      this.currentSpeakerOperation?.packageName === packageName &&
+      this.currentSpeakerOperation.operationId === operationId
+    )
   }
 
   private finishSpeakerOperation(packageName: string, operationId: number): void {
     if (this.isCurrentSpeakerOperation(packageName, operationId)) {
-      this.currentSpeakerOperations.delete(packageName)
+      this.currentSpeakerOperation = undefined
     }
   }
 
   private cancelPendingSpeakerOperation(packageName: string): void {
-    this.currentSpeakerOperations.delete(packageName)
+    if (this.currentSpeakerOperation?.packageName === packageName) {
+      this.currentSpeakerOperation = undefined
+    }
   }
 
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
