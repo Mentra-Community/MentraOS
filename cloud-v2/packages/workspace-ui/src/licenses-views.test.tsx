@@ -1069,6 +1069,26 @@ describe("the ?buy= link", () => {
     expect(note("already has")).toBeDefined();
     expect(handled).toHaveBeenCalledTimes(1);
   });
+
+  test("a newer link replaces the outcome of the earlier one: no note behind the dialog, no dialog behind a note", async () => {
+    const r = rig();
+    const handled = onBuyHandled();
+    const { rerender, client } = await mountView(r, { buyProduct: CALL, onBuyHandled: handled });
+    await until(() => note("already has") !== undefined, "the note");
+    const follow = (buyProduct: string) =>
+      rerender(
+        <QueryClientProvider client={client}>
+          <WorkspaceLicensesView {...viewProps(r, { buyProduct, onBuyHandled: handled })} />
+        </QueryClientProvider>,
+      );
+    await follow(EXAMPLE);
+    await until(() => openDialogs().length === 1, "the Buy dialog");
+    expect(note("already has")).toBeUndefined();
+    await follow(CALL);
+    await until(() => note("already has") !== undefined, "the note again");
+    noDialogs();
+    expect(handled).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("the purchase banner when the viewer was given a license", () => {

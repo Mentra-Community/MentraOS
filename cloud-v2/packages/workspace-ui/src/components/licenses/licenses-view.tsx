@@ -264,7 +264,7 @@ interface LicensesBodyProps {
 
 /**
  * What the page does with a `?buy=` product, once: the Buy dialog on it (`linked`), or a neutral note saying why
- * not (`note`). The note stays until the person leaves the page. It acts when the page's reads are in (it lives in
+ * not (`note`). The note stays until the person leaves the page or follows another link. It acts when the page's reads are in (it lives in
  * the body, which only exists then) and tells the host with `onBuyHandled`, which removes `?buy=` from the address;
  * the same product is not acted on again however often the page reads again.
  */
@@ -290,8 +290,9 @@ function useBuyLink({
     if (done.current === buyProduct) return;
     done.current = buyProduct;
     const outcome = latest.current.decide(buyProduct);
-    if ("note" in outcome) setNote(outcome.note);
-    else setLinked(outcome.entry);
+    // A newer link replaces what an earlier one left: a note never stays up behind the dialog, nor the dialog behind a note.
+    setNote("note" in outcome ? outcome.note : null);
+    setLinked("entry" in outcome ? outcome.entry : null);
     latest.current.onBuyHandled?.();
   }, [buyProduct]);
   return { note, linked, closeLinked: () => setLinked(null) };
