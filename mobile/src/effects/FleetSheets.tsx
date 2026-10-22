@@ -9,6 +9,7 @@
  * Words are verbatim from the Fleet design board (round 2); `UPDATE-2026-10-20.md` overrides older drawings.
  * The invitation is not swipeable (Decline cannot be undone), unlike the board's drawing.
  */
+import {getFleetManagementState, onFleetManagementStateChanged} from "@mentra/engine-host-internal"
 import {useEffect} from "react"
 import {AppState, View} from "react-native"
 import Toast from "react-native-toast-message"
@@ -18,6 +19,7 @@ import {dismissAlert, NO_ANSWER, showAlert, waitForAlertHost} from "@/contexts/M
 import {useAuth} from "@/contexts/AuthContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
+import {type FleetManagementState} from "@/services/fleet/fleetManagement"
 import {useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
 import {
   getWorkspaceApi,
@@ -28,8 +30,11 @@ import {
 } from "@/services/fleet/workspaceApi"
 import {storage} from "@/utils/storage"
 
-/** The membership whose Fleet notice was last shown. A new join is a new membership, so it shows again. */
-const NOTICE_SHOWN_KEY = "fleet.noticeShownMembershipId"
+/**
+ * The workspace whose Fleet notice was last shown. It is forgotten when the person leaves, or when Fleet answers
+ * that they are unmanaged, so a rejoin (the same workspace included) shows it again.
+ */
+const NOTICE_SHOWN_KEY = "fleet.noticeShownWorkspaceId"
 
 /** `setTimeout` takes at most 2^31 - 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647
@@ -238,16 +243,32 @@ const shownNoticeFor = (): string | null => {
   return saved.is_ok() ? saved.value : null
 }
 
-/** Shows the notice for this membership once. It is marked shown first, so a restart never shows it again. */
-async function showNoticeOnce(workspace: MyWorkspace): Promise<void> {
-  if (shownNoticeFor() === workspace.membershipId) return
-  storage.save(NOTICE_SHOWN_KEY, workspace.membershipId)
-  await presentNotice(workspace.name)
+/** Notices on screen or waiting, by workspace: a change heard twice never queues the notice twice. */
+const noticePending = new Set<string>()
+
+/**
+ * The Fleet notice follows what Fleet says. It shows on the first move to `managed` for a workspace whose notice
+ * has not been shown, and never while the state is `unknown` or `unmanaged`. It is marked shown first, so a
+ * restart never shows it again. An `unmanaged` answer forgets it, so the next join shows it again.
+ */
+export async function showNoticeForFleetState(state: FleetManagementState = getFleetManagementState()): Promise<void> {
+  if (state.status === "unmanaged") {
+    storage.remove(NOTICE_SHOWN_KEY)
+    return
+  }
+  if (state.status !== "managed") return
+  if (shownNoticeFor() === state.workspaceId || noticePending.has(state.workspaceId)) return
+  noticePending.add(state.workspaceId)
+  try {
+    storage.save(NOTICE_SHOWN_KEY, state.workspaceId)
+    await presentNotice(state.workspaceName)
+  } finally {
+    noticePending.delete(state.workspaceId)
+  }
 }
 
-/** The person left their workspace: its notice is theirs to see again after a rejoin. */
+/** The person left their workspace. Fleet's `unmanaged` answer, fetched at once, lets the notice show again. */
 function leftWorkspace(): void {
-  storage.remove(NOTICE_SHOWN_KEY)
   useMyWorkspaceStore.getState().set(null)
   refreshDesiredStateNow()
 }
@@ -333,9 +354,8 @@ async function handleInvitation(invitation: InvitationPreview): Promise<void> {
     try {
       const joined = await api.accept(invitation.invitationId)
       useMyWorkspaceStore.getState().set(joined)
-      // Managed from this moment: the fetch starts now, and the notice informs while it runs.
+      // The notice follows Fleet's answer: it shows when the phone first hears `managed`.
       refreshDesiredStateNow()
-      await showNoticeOnce(joined)
       return
     } catch (error) {
       const code = workspaceErrorCode(error)
@@ -355,14 +375,13 @@ async function handleInvitation(invitation: InvitationPreview): Promise<void> {
   }
 }
 
-/** One look at Core: the notice for a workspace the person joined elsewhere, then each invitation. */
+/** One look at Core: the person's workspace, then each invitation. */
 async function pass(): Promise<void> {
   const api = getWorkspaceApi()
   const [mine, invitations] = await Promise.allSettled([api.mine(), api.invitations()])
 
   if (mine.status === "fulfilled") {
     useMyWorkspaceStore.getState().set(mine.value)
-    if (mine.value) await showNoticeOnce(mine.value)
   } else {
     console.warn("Fleet: could not read the workspace", mine.reason)
   }
@@ -405,7 +424,7 @@ export function runFleetSheets(): Promise<void> {
   return running
 }
 
-/** Runs the Fleet sheets at startup and on foreground, while someone is signed in. */
+/** Runs the Fleet sheets at startup and on foreground, and the notice on Fleet's answers, while someone is signed in. */
 export function FleetSheets() {
   const {user} = useAuth()
   const userId = user?.id
@@ -416,10 +435,15 @@ export function FleetSheets() {
       return
     }
     void runFleetSheets()
+    void showNoticeForFleetState()
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void runFleetSheets()
     })
-    return () => subscription.remove()
+    const unsubscribe = onFleetManagementStateChanged((state) => void showNoticeForFleetState(state))
+    return () => {
+      subscription.remove()
+      unsubscribe()
+    }
   }, [userId])
 
   return null

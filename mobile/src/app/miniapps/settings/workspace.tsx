@@ -6,18 +6,20 @@ import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {leaveWithConfirm, ManagementLine, roleLabel, SeeLists, WorkspaceTile} from "@/effects/FleetSheets"
 import {translate} from "@/i18n/translate"
+import {useIsManagedByFleet} from "@/services/fleet/fleetManagement"
 import {refreshMyWorkspace, useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
 import {useNavigationStore} from "@/stores/navigation"
 
 /**
- * The workspace the person is in: its name and their role, who manages them, what the workspace can and can't
- * see, and Leave. Hidden when they are in no workspace. The role is read again each time the page gains focus.
+ * The workspace the person is in: its name and their role, who manages them (only while Fleet manages them), what
+ * the workspace can and can't see, and Leave. Hidden when they are in no workspace. The role is read again each time the page gains focus.
  */
 export default function WorkspaceScreen() {
   const {goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
   const workspace = useMyWorkspaceStore((state) => state.workspace)
   const loaded = useMyWorkspaceStore((state) => state.loaded)
+  const managed = useIsManagedByFleet()
   const [lastOwner, setLastOwner] = useState(false)
   const [leaving, setLeaving] = useState(false)
 
@@ -55,7 +57,7 @@ export default function WorkspaceScreen() {
             <Text text={roleLabel(workspace.role)} className="text-sm text-muted-foreground" testID="workspace.role" />
           </View>
         </View>
-        <ManagementLine />
+        {managed && <ManagementLine />}
         <SeeLists />
         {lastOwner ? (
           <Text

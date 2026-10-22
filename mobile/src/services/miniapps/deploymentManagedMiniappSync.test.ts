@@ -1008,7 +1008,7 @@ describe("workspace updates while a managed miniapp may be open", () => {
     await ownCurrentRelease()
     mockDownload.mockClear()
     mockRunning.add(pkg)
-    // In the background, or within a day of the last prompt.
+    // In the background, or after Not now and before the miniapp is opened again.
     mockCanPrompt = false
     await deploymentManagedMiniappSync.sync(updated)
     await deploymentManagedMiniappSync.sync(updated)

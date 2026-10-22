@@ -4,8 +4,9 @@ import {Alert, AppState, BackHandler} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {ModalProvider} from "@/contexts/ModalContext"
-import {FleetSheets, runFleetSheets} from "@/effects/FleetSheets"
+import {FleetSheets, runFleetSheets, showNoticeForFleetState} from "@/effects/FleetSheets"
 import en from "@/i18n/en"
+import type {FleetManagementState} from "@/services/fleet/fleetManagement"
 import {useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
 import {
   type InvitationPreview,
@@ -13,6 +14,14 @@ import {
   setWorkspaceApi,
   type WorkspaceApi,
 } from "@/services/fleet/workspaceApi"
+
+/** The engine's Fleet answer. The Jest setup runs the engine's real (pure) module, so tests drive it directly. */
+const {resetFleetManagementStateForTests, setFleetManagementState} = jest.requireMock(
+  "@mentra/engine-host-internal",
+) as {
+  resetFleetManagementStateForTests(): void
+  setFleetManagementState(state: FleetManagementState): void
+}
 
 /** The sheet's drag gesture as last built: whether it's on. */
 const mockDrag: {enabled: boolean} = {enabled: false}
@@ -167,6 +176,7 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  resetFleetManagementStateForTests()
   mockUser = {id: "user-1"}
   useMyWorkspaceStore.getState().reset()
   require("@/utils/storage").storage.clearAll()
@@ -349,9 +359,8 @@ describe("the invitation sheet", () => {
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
 
     await press(screen, "Join")
-    await screen.findByText("You've now joined the Ridgeline Field Services workspace")
-    await press(screen, "OK")
     await finish(run)
+    expect(core.api.accept).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -359,8 +368,6 @@ describe("the leave-first variant", () => {
   it("names the current workspace, puts Leave on top, and goes Leave -> confirm -> Join", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
-    // The notice for Northwind was already shown on an earlier start.
-    require("@/utils/storage").storage.save("fleet.noticeShownMembershipId", NORTHWIND.membershipId)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
 
@@ -394,7 +401,6 @@ describe("the leave-first variant", () => {
   it("comes back to the invitation when the leave confirm is cancelled", async () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
     setWorkspaceApi(core.api)
-    require("@/utils/storage").storage.save("fleet.noticeShownMembershipId", NORTHWIND.membershipId)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
@@ -411,7 +417,6 @@ describe("the leave-first variant", () => {
     const core = fakeCore({mine: NORTHWIND, invitations: [invitation(RIDGELINE)]})
     ;(core.api.leave as jest.Mock).mockRejectedValue(failWith("last_owner"))
     setWorkspaceApi(core.api)
-    require("@/utils/storage").storage.save("fleet.noticeShownMembershipId", NORTHWIND.membershipId)
     screen = render(<ModalProvider>{null}</ModalProvider>)
     const run = start()
     await screen.findByText("Ridgeline Field Services invited you to join their workspace")
@@ -434,20 +439,37 @@ describe("the leave-first variant", () => {
 })
 
 describe("the Fleet notice", () => {
-  const joinRidgeline = async () => {
-    const run = start()
-    await screen.findByText("Ridgeline Field Services invited you to join their workspace")
-    await press(screen, "Join")
-    await screen.findByText("You've now joined the Ridgeline Field Services workspace")
-    return run
+  const RIDGELINE_MANAGED = {
+    status: "managed",
+    workspaceId: "ws-r",
+    workspaceName: "Ridgeline Field Services",
+  } as const
+  const NORTHWIND_MANAGED = {status: "managed", workspaceId: "ws-n", workspaceName: "Northwind Labs"} as const
+  const NOTICE = "You've now joined the Ridgeline Field Services workspace"
+
+  /** The Mentra App with the Fleet sheets running, as it is at startup. */
+  const renderApp = async () => {
+    screen = render(
+      <ModalProvider>
+        <FleetSheets />
+      </ModalProvider>,
+    )
+    await act(async () => {
+      for (let tick = 0; tick < 20; tick++) await Promise.resolve()
+    })
   }
+  const hearFleet = (state: FleetManagementState) =>
+    act(async () => {
+      setFleetManagementState(state)
+      for (let tick = 0; tick < 20; tick++) await Promise.resolve()
+    })
 
   it("confirms the join in the board's words with OK only, and no handle", async () => {
-    const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline()
+    setWorkspaceApi(fakeCore().api)
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
 
+    expect(screen.getByText(NOTICE)).toBeTruthy()
     expect(
       screen.getByText("By joining the Ridgeline Field Services workspace, you agree to let them manage your device."),
     ).toBeTruthy()
@@ -460,7 +482,8 @@ describe("the Fleet notice", () => {
     expect(mockDrag.enabled).toBe(false)
 
     await press(screen, "OK")
-    await finish(run)
+    expect(screen.queryByText(NOTICE)).toBeNull()
+    expect(systemAlert).not.toHaveBeenCalled()
   })
 
   it("resists the swipe, the backdrop and Android back", async () => {
@@ -470,10 +493,9 @@ describe("the Fleet notice", () => {
       return {remove: () => listeners.splice(listeners.indexOf(listener), 1)}
     })
     try {
-      const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-      setWorkspaceApi(core.api)
-      screen = render(<ModalProvider>{null}</ModalProvider>)
-      const run = await joinRidgeline()
+      setWorkspaceApi(fakeCore().api)
+      await renderApp()
+      await hearFleet(RIDGELINE_MANAGED)
 
       expect(mockDrag.enabled).toBe(false)
       await act(async () => {
@@ -484,126 +506,147 @@ describe("the Fleet notice", () => {
         handled = listeners[listeners.length - 1]?.()
       })
       expect(handled).toBe(true)
-      expect(screen.getByText("You've now joined the Ridgeline Field Services workspace")).toBeTruthy()
+      expect(screen.getByText(NOTICE)).toBeTruthy()
 
       await press(screen, "OK")
-      await finish(run)
-      expect(screen.queryByText("You've now joined the Ridgeline Field Services workspace")).toBeNull()
+      expect(screen.queryByText(NOTICE)).toBeNull()
     } finally {
       addListener.mockRestore()
     }
   })
 
-  it("starts management before OK: the desired state is fetched while the notice is open", async () => {
-    const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline()
+  it("never shows while Fleet's state is unknown or unmanaged", async () => {
+    setWorkspaceApi(fakeCore({mine: RIDGELINE}).api)
+    await renderApp()
+    expect(screen.queryByText(NOTICE)).toBeNull()
 
-    expect(screen.getByText("OK")).toBeTruthy()
-    expect(core.calls).toContain("refreshDesiredState")
-    expect(core.calls.indexOf("accept:inv-ws-r")).toBeLessThan(core.calls.indexOf("refreshDesiredState"))
-
-    await press(screen, "OK")
-    await finish(run)
+    await hearFleet({status: "unmanaged"})
+    expect(screen.queryByText(NOTICE)).toBeNull()
+    await hearFleet({status: "unknown"})
+    expect(screen.queryByText(NOTICE)).toBeNull()
+    // Being in a workspace is not being managed: Core without Fleet never answers `managed`.
+    expect(useMyWorkspaceStore.getState().workspace?.name).toBe("Ridgeline Field Services")
+    expect(screen.queryByText("OK")).toBeNull()
   })
 
-  it("does not wait for the desired-state fetch, and a failed fetch does not stop the notice", async () => {
+  it("waits for Fleet's answer after a join, starting the fetch at once and never blocking on it", async () => {
     const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    ;(core.api.refreshDesiredState as jest.Mock).mockReturnValue(new Promise(() => {}))
+    ;(core.api.refreshDesiredState as jest.Mock).mockImplementation(() => {
+      core.calls.push("refreshDesiredState")
+      return new Promise(() => {})
+    })
     setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline()
-    await press(screen, "OK")
-    await finish(run)
+    await renderApp()
+    await screen.findByText("Ridgeline Field Services invited you to join their workspace")
+    await press(screen, "Join")
 
-    const failing = fakeCore({invitations: [invitation(NORTHWIND)]})
-    ;(failing.api.refreshDesiredState as jest.Mock).mockRejectedValue(new Error("503"))
+    expect(core.calls.indexOf("accept:inv-ws-r")).toBeLessThan(core.calls.indexOf("refreshDesiredState"))
+    expect(screen.queryByText(NOTICE)).toBeNull()
+
+    await hearFleet(RIDGELINE_MANAGED)
+    expect(screen.getByText(NOTICE)).toBeTruthy()
+    await press(screen, "OK")
+  })
+
+  it("does not stop for a failed desired-state fetch: the notice comes with the next answer", async () => {
+    const core = fakeCore({invitations: [invitation(NORTHWIND)]})
+    ;(core.api.refreshDesiredState as jest.Mock).mockRejectedValue(new Error("503"))
+    setWorkspaceApi(core.api)
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {})
     try {
-      useMyWorkspaceStore.getState().reset()
-      setWorkspaceApi(failing.api)
-      const second = start()
+      await renderApp()
       await screen.findByText("Northwind Labs invited you to join their workspace")
       await press(screen, "Join")
-      expect(await screen.findByText("You've now joined the Northwind Labs workspace")).toBeTruthy()
+      expect(screen.queryByText("You've now joined the Northwind Labs workspace")).toBeNull()
+      await hearFleet(NORTHWIND_MANAGED)
+      expect(screen.getByText("You've now joined the Northwind Labs workspace")).toBeTruthy()
       await press(screen, "OK")
-      await finish(second)
     } finally {
       warn.mockRestore()
     }
   })
 
-  it("shows once per join: not again after a restart", async () => {
-    const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline()
+  it("shows for a workspace joined elsewhere (the portal) once the phone is already managed at startup", async () => {
+    setFleetManagementState(RIDGELINE_MANAGED)
+    setWorkspaceApi(fakeCore({mine: RIDGELINE, invitations: [invitation(NORTHWIND)]}).api)
+    await renderApp()
+    expect(screen.getByText(NOTICE)).toBeTruthy()
     await press(screen, "OK")
-    await finish(run)
-
-    // Restart: nothing is kept in memory, only what was stored.
-    useMyWorkspaceStore.getState().reset()
-    const afterRestart = start()
-    await finish(afterRestart)
-    expect(screen.queryByText("You've now joined the Ridgeline Field Services workspace")).toBeNull()
-    expect(useMyWorkspaceStore.getState().workspace?.name).toBe("Ridgeline Field Services")
+    // The invitation waits its turn behind the notice, then shows.
+    expect(await screen.findByText("Northwind Labs invited you to join their workspace")).toBeTruthy()
+    await press(screen, "Decline")
   })
 
-  it("is not shown again for the same join when the app returns to the foreground", async () => {
-    const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = await joinRidgeline()
+  it("shows once per workspace: not on a restart, a foreground, a renamed workspace or a repeated answer", async () => {
+    setWorkspaceApi(fakeCore({mine: RIDGELINE}).api)
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
     await press(screen, "OK")
-    await finish(run)
 
-    const again = start()
-    await finish(again)
+    await hearFleet({...RIDGELINE_MANAGED, workspaceName: "Ridgeline Field Services Inc"})
+    expect(screen.queryByText("OK")).toBeNull()
+    // The answer is lost (signed out) and comes back: still the same workspace.
+    await hearFleet({status: "unknown"})
+    await hearFleet(RIDGELINE_MANAGED)
+    expect(screen.queryByText("OK")).toBeNull()
+
+    // A restart: nothing in memory, the phone is managed from its stored answer.
+    screen.unmount()
+    await renderApp()
+    await act(async () => {
+      await showNoticeForFleetState(RIDGELINE_MANAGED)
+    })
     expect(screen.queryByText("OK")).toBeNull()
   })
 
-  it("shows again after leaving and rejoining", async () => {
-    const core = fakeCore({invitations: [invitation(RIDGELINE)]})
-    setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const first = await joinRidgeline()
-    await press(screen, "OK")
-    await finish(first)
-
-    const {leaveWithConfirm} = require("@/effects/FleetSheets") as typeof import("@/effects/FleetSheets")
-    let leaving!: Promise<string>
-    act(() => {
-      leaving = leaveWithConfirm(useMyWorkspaceStore.getState().workspace!)
-    })
-    await screen.findByText("Leave Ridgeline Field Services?")
-    await press(screen, "Leave")
+  it("does not queue the notice twice when Fleet's answer is heard twice at once", async () => {
+    setWorkspaceApi(fakeCore().api)
+    await renderApp()
     await act(async () => {
-      await expect(leaving).resolves.toBe("left")
+      void showNoticeForFleetState(RIDGELINE_MANAGED)
+      void showNoticeForFleetState(RIDGELINE_MANAGED)
+      for (let tick = 0; tick < 20; tick++) await Promise.resolve()
     })
-
-    core.state.invitations = [invitation(RIDGELINE)]
-    const second = start()
-    await screen.findByText("Ridgeline Field Services invited you to join their workspace")
-    await press(screen, "Join")
-    expect(await screen.findByText("You've now joined the Ridgeline Field Services workspace")).toBeTruthy()
+    expect(screen.getAllByText(NOTICE)).toHaveLength(1)
     await press(screen, "OK")
-    await finish(second)
+    expect(screen.queryByText(NOTICE)).toBeNull()
   })
 
-  it("shows for a membership that began elsewhere (the portal), once, and then the invitations", async () => {
-    const core = fakeCore({mine: RIDGELINE, invitations: [invitation(NORTHWIND)]})
-    setWorkspaceApi(core.api)
-    screen = render(<ModalProvider>{null}</ModalProvider>)
-    const run = start()
-    expect(await screen.findByText("You've now joined the Ridgeline Field Services workspace")).toBeTruthy()
-    // The invitation waits its turn behind the notice.
-    expect(screen.queryByText("Northwind Labs invited you to join their workspace")).toBeNull()
+  it("shows again after Fleet says unmanaged and the person is managed again", async () => {
+    setWorkspaceApi(fakeCore().api)
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
     await press(screen, "OK")
-    expect(await screen.findByText("Northwind Labs invited you to join their workspace")).toBeTruthy()
-    expect(screen.getByText("You're in Ridgeline Field Services. Leave it to join Northwind Labs.")).toBeTruthy()
-    await press(screen, "Decline")
-    await finish(run)
+
+    await hearFleet({status: "unmanaged"})
+    await hearFleet(RIDGELINE_MANAGED)
+    expect(screen.getByText(NOTICE)).toBeTruthy()
+    await press(screen, "OK")
+  })
+
+  it("shows for a different workspace the person moves to", async () => {
+    setWorkspaceApi(fakeCore().api)
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
+    await press(screen, "OK")
+
+    await hearFleet(NORTHWIND_MANAGED)
+    expect(screen.getByText("You've now joined the Northwind Labs workspace")).toBeTruthy()
+    await press(screen, "OK")
+  })
+
+  it("is the same on a stored answer after a restart, and is not shown again", async () => {
+    setWorkspaceApi(fakeCore().api)
+    await renderApp()
+    await hearFleet(RIDGELINE_MANAGED)
+    await press(screen, "OK")
+    screen.unmount()
+
+    // The engine restores its stored `managed` answer before the sheets mount.
+    setFleetManagementState({status: "unknown"})
+    setFleetManagementState(RIDGELINE_MANAGED)
+    await renderApp()
+    expect(screen.queryByText("OK")).toBeNull()
   })
 })
 

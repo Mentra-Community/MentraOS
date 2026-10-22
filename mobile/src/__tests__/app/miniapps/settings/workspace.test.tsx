@@ -6,8 +6,17 @@ import MainSettingsPage from "@/app/miniapps/settings/main"
 import WorkspaceScreen from "@/app/miniapps/settings/workspace"
 import {ModalProvider} from "@/contexts/ModalContext"
 import en from "@/i18n/en"
+import type {FleetManagementState} from "@/services/fleet/fleetManagement"
 import {useMyWorkspaceStore} from "@/services/fleet/myWorkspace"
 import {type MyWorkspace, setWorkspaceApi, type WorkspaceApi} from "@/services/fleet/workspaceApi"
+
+/** The engine's Fleet answer. The Jest setup runs the engine's real (pure) module, so tests drive it directly. */
+const {resetFleetManagementStateForTests, setFleetManagementState} = jest.requireMock(
+  "@mentra/engine-host-internal",
+) as {
+  resetFleetManagementStateForTests(): void
+  setFleetManagementState(state: FleetManagementState): void
+}
 
 const mockNav = {goBack: jest.fn(), push: jest.fn()}
 /** The effects the screens run on focus: calling them again is the person coming back to the screen. */
@@ -157,7 +166,10 @@ beforeAll(async () => {
   await i18n.init({lng: "en", resources: {en: en as never}, interpolation: {escapeValue: false}})
 })
 
+const MANAGED = {status: "managed", workspaceId: "ws-r", workspaceName: "Ridgeline Field Services"} as const
+
 beforeEach(() => {
+  resetFleetManagementStateForTests()
   mockNav.goBack.mockClear()
   mockNav.push.mockClear()
   mockFocusEffects.clear()
@@ -176,7 +188,9 @@ describe("Settings: the Workspace row", () => {
     expect(screen.getByText("Workspace")).toBeTruthy()
     expect(screen.getByText("Ridgeline Field Services")).toBeTruthy()
     expect(screen.getByTestId("route.subtitle").props.children).toBe("Member")
-    // One workspace row: the separate "Mentra Fleet Management" row is gone.
+    // One workspace row: the separate "Mentra Fleet Management" row is gone, managed or not.
+    expect(screen.queryByText("Mentra Fleet Management")).toBeNull()
+    act(() => setFleetManagementState(MANAGED))
     expect(screen.queryByText("Mentra Fleet Management")).toBeNull()
   })
 
@@ -235,6 +249,7 @@ describe("Settings: the workspace page", () => {
 
   it("shows the board's words: the name and role, who manages, both lists and Leave workspace", async () => {
     setWorkspaceApi(fakeCore(RIDGELINE).api)
+    setFleetManagementState(MANAGED)
     const screen = renderPage()
     await settle()
 
@@ -255,6 +270,39 @@ describe("Settings: the workspace page", () => {
     ]) {
       expect(screen.getByText(text)).toBeTruthy()
     }
+  })
+
+  it.each([
+    ["unknown", {status: "unknown"}],
+    ["unmanaged", {status: "unmanaged"}],
+  ] as const)(
+    "does not say Fleet manages the person while the state is %s, but still shows the workspace, lists and Leave",
+    async (_name, state) => {
+      setWorkspaceApi(fakeCore(RIDGELINE).api)
+      setFleetManagementState(state)
+      const screen = renderPage()
+      await settle()
+
+      expect(screen.queryByText("Mentra Fleet Management")).toBeNull()
+      expect(screen.queryByText("Managed by your workspace's admins")).toBeNull()
+      expect(screen.getByText("Ridgeline Field Services")).toBeTruthy()
+      expect(screen.getByText("Your workspace can see")).toBeTruthy()
+      expect(screen.getByText("Leave workspace")).toBeTruthy()
+    },
+  )
+
+  it("shows the Fleet line when Fleet starts managing the person, and drops it when they are unmanaged", async () => {
+    setWorkspaceApi(fakeCore(RIDGELINE).api)
+    const screen = renderPage()
+    await settle()
+    expect(screen.queryByText("Mentra Fleet Management")).toBeNull()
+
+    act(() => setFleetManagementState(MANAGED))
+    expect(screen.getByText("Mentra Fleet Management")).toBeTruthy()
+    expect(screen.getByText("Managed by your workspace's admins")).toBeTruthy()
+
+    act(() => setFleetManagementState({status: "unmanaged"}))
+    expect(screen.queryByText("Mentra Fleet Management")).toBeNull()
   })
 
   it("leaves through the confirm, then Core, then at once the desired state", async () => {
