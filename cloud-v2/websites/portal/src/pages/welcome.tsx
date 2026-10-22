@@ -23,12 +23,11 @@ import {
 import { ArrowLeft, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { PendingInvitationCard } from "@/components/pending-invitation";
-import { PortalCenteredLayout } from "@/components/portal-shell";
-import { safeLocalStorage } from "@/lib/api";
+import { PortalCenteredLayout, useBareWorkspaceId } from "@/components/portal-shell";
 import type { PendingInvitation } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { homeWorkspace, recallWorkspace, workspacePath } from "@/lib/routes";
+import { sectionHref } from "@/lib/routes";
 
 export const GONE_EXPLANATION =
   "It may have expired, been revoked, been replaced by a newer one or already been used. Ask the person who invited you to send a new one.";
@@ -36,9 +35,8 @@ export const GONE_EXPLANATION =
 /** The workspace `/` would open, if the person has any. */
 function useHomeWorkspace() {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const workspaces = list.data;
-  const homeId = workspaces ? homeWorkspace(workspaces, recallWorkspace(safeLocalStorage())) : null;
-  return { list, home: workspaces?.find(item => item.workspaceId === homeId) ?? null };
+  const homeId = useBareWorkspaceId();
+  return { list, home: list.data?.find(item => item.workspaceId === homeId) ?? null };
 }
 
 function Heading({ title, children }: { title: string; children?: ReactNode }) {
@@ -67,10 +65,11 @@ function InvitationList({ invitations }: { invitations: readonly PendingInvitati
   );
 }
 
-function BackHome({ name, workspaceId }: { name: string; workspaceId: string }) {
+/** Back to the workspace the bare address opens. */
+function BackHome({ name }: { name: string }) {
   return (
     <Link
-      href={workspacePath(workspaceId)}
+      href="/"
       className="text-muted-foreground hover:text-foreground mt-7 inline-flex items-center gap-1.5 self-center text-[15px] font-semibold"
     >
       <ArrowLeft className="size-4" />
@@ -142,7 +141,7 @@ export function InvitationScreen() {
           <p className="text-muted-foreground mx-auto mt-2 max-w-[420px]">{GONE_EXPLANATION}</p>
           <div className="mt-7 grid">
             {home ? (
-              <Link href={workspacePath(home.workspaceId)} className={buttonVariants({ size: "lg" })}>
+              <Link href="/" className={buttonVariants({ size: "lg" })}>
                 Go to {home.name}
               </Link>
             ) : (
@@ -174,7 +173,7 @@ export function InvitationScreen() {
             acceptError={null}
           />
         </div>
-        {home ? <BackHome name={home.name} workspaceId={home.workspaceId} /> : null}
+        {home ? <BackHome name={home.name} /> : null}
       </PortalCenteredLayout>
     );
   }
@@ -195,7 +194,7 @@ export function InvitationScreen() {
         <Heading title="You're invited">Accept to join the workspace with the account you're signed in with.</Heading>
       )}
       <InvitationList invitations={[invitation]} />
-      {home ? <BackHome name={home.name} workspaceId={home.workspaceId} /> : null}
+      {home ? <BackHome name={home.name} /> : null}
     </PortalCenteredLayout>
   );
 }
@@ -222,7 +221,7 @@ function CreateFirstWorkspace() {
           <CreateWorkspaceForm
             api={portalWorkspaceApi}
             wide
-            onCreated={created => navigate(workspacePath(created.workspaceId), { replace: true })}
+            onCreated={created => navigate(sectionHref(null, created.workspaceId, null), { replace: true })}
           />
         ) : (
           <p className="rounded-notice bg-surface px-4 py-3 text-sm">

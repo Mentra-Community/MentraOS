@@ -13,6 +13,7 @@ import { fetchPortalMe, type PortalMe, type PortalModules } from "./lib/api";
 import { usePathname } from "./lib/navigation";
 import { PORTAL_ME_KEY, PortalProvider, type PortalSession } from "./lib/portal";
 import { parseRoute } from "./lib/routes";
+import { AccountBillingScreen } from "./pages/account-billing";
 import {
   ACME,
   CALL_BILLING,
@@ -70,7 +71,10 @@ const portalSession = (modules: PortalModules): PortalSession => ({
 
 /** The app's routing over a path: what `PortalPage` does with `usePathname`. */
 function Routes({ me }: { me: PortalMe }) {
-  return <PortalRoutes route={parseRoute(usePathname())} me={me} />;
+  const pathname = usePathname();
+  // The personal Billing page has no address any more; it is mounted by hand until it is removed.
+  if (pathname === "/account/billing") return <AccountBillingScreen />;
+  return <PortalRoutes route={parseRoute(pathname)} me={me} />;
 }
 
 const text = () => document.body.textContent ?? "";
@@ -134,8 +138,8 @@ const search = () => window.location.search;
 // ---- the Licenses page --------------------------------------------------------------------------------------------
 
 describe("the Licenses page", () => {
-  test("/w/<id>/licenses renders the view: the cards, the total and the header actions, with billing's data", async () => {
-    const { core } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
+  test("/licenses renders the view: the cards, the total and the header actions, with billing's data", async () => {
+    const { core } = await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(find("h1").textContent).toBe("Licenses");
     // The title has no subtitle.
     expect(has("pays for")).toBe(false);
@@ -154,7 +158,7 @@ describe("the Licenses page", () => {
   });
 
   test("mounts no module: nothing is imported from Core, and nothing of a module's host is on the page", async () => {
-    const { core } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
+    const { core } = await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(core.requests.some(request => request.path.includes("/ui/"))).toBe(false);
     expect(document.querySelector("section[aria-label='Billing']")).toBeNull();
     expect(document.querySelector("section[aria-label='Fleet Management']")).toBeNull();
@@ -171,7 +175,7 @@ describe("the Licenses page", () => {
   });
 
   test("an Owner offered billing sees the money, and may buy; the page is the view, not the old panel", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
+    await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(has("$145")).toBe(true);
     expect(buttonNamed(/^Buy licenses$/)).toBeDefined();
     expect(buttonNamed(/Billing & invoices/)).toBeDefined();
@@ -181,8 +185,8 @@ describe("the Licenses page", () => {
 
   test("a non-staff Admin on staging (licenses, no billing) gets the Licenses item and cards without money", async () => {
     const scenario: Scenario = { ...SCENARIOS.twoActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    const { core } = await open(`/w/${ACME}/licenses`, scenario, { modules: CATALOG_ONLY, ready: "Mentra Call Unlimited" });
-    expect(hrefs()).toContain(`/w/${ACME}/licenses`);
+    const { core } = await open(`/licenses`, scenario, { modules: CATALOG_ONLY, ready: "Mentra Call Unlimited" });
+    expect(hrefs()).toContain(`/licenses`);
     expect(find("h1").textContent).toBe("Licenses");
     // Names and licenses, and none of billing's: no money, no dates, no actions, no buying.
     expect(has("Fleet")).toBe(true);
@@ -200,7 +204,7 @@ describe("the Licenses page", () => {
   });
 
   test("and the account menu has Billing for someone offered billing", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
+    await open(`/licenses`, SCENARIOS.twoActive(), { ready: "Mentra Call Unlimited" });
     expect(hrefs()).not.toContain("/account/billing");
     await click(find("button[aria-label='Open account menu']"));
     const item = findAll<HTMLAnchorElement>("a[href='/account/billing']");
@@ -210,7 +214,7 @@ describe("the Licenses page", () => {
 
   test("Retry on the Licenses page also reads who the person is again, so a page opened before billing was ready can recover", async () => {
     // Billing wasn't ready when `me` was read (`billingCatalog: false`), and the workspace already holds licenses.
-    const { client } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), {
+    const { client } = await open(`/licenses`, SCENARIOS.twoActive(), {
       modules: { billing: false, billingCatalog: false },
       ready: "Licenses are unavailable",
     });
@@ -227,7 +231,7 @@ describe("the Licenses page", () => {
       licenses: [CALL_LICENSE].map(license => ({ ...license, seats: license.seats!.slice(0, 1), seatsUsed: 3 })),
       workspaceCatalog: workspaceCatalog(false),
     };
-    const { core } = await open(`/w/${ACME}/licenses`, scenario, { modules: BILLING_ON, ready: "Assigned to you" });
+    const { core } = await open(`/licenses`, scenario, { modules: BILLING_ON, ready: "Assigned to you" });
     expect(has("Mentra Call Unlimited")).toBe(true);
     expect(has("What Acme Field Services pays for")).toBe(false);
     expect(has("Your licenses in")).toBe(false);
@@ -245,7 +249,7 @@ describe("coming back from checkout", () => {
   const bought = SCENARIOS.purchased;
 
   test("?purchase=pur_1 reaches the view: billing is asked about it and the banner says the licenses are ready", async () => {
-    const { core } = await open(`/w/${ACME}/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
+    const { core } = await open(`/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
     const statuses = billingRequests(core).filter(request => request.path.endsWith("/status"));
     expect(statuses.length).toBeGreaterThan(0);
     for (const request of statuses) expect(request.query.get("purchase")).toBe("pur_1");
@@ -254,11 +258,11 @@ describe("coming back from checkout", () => {
   });
 
   test("dismissing the banner takes ?purchase= out of the address, and billing is asked without it from then on", async () => {
-    const { core } = await open(`/w/${ACME}/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
+    const { core } = await open(`/licenses?purchase=pur_1`, bought(), { ready: "Your 10 Fleet licenses are ready" });
     const before = window.history.length;
     await click(buttonNamed(/^Dismiss$/)!);
     expect(search()).toBe("");
-    expect(window.location.pathname).toBe(`/w/${ACME}/licenses`);
+    expect(window.location.pathname).toBe(`/licenses`);
     // The address was changed in place: Back does not return to the banner.
     expect(window.history.length).toBe(before);
     expect(has("Your 10 Fleet licenses are ready")).toBe(false);
@@ -293,17 +297,6 @@ describe("the personal Billing page", () => {
     expect(has("Fleet")).toBe(false);
   });
 
-  test("is not found for anyone who isn't offered billing, whatever else they may see, and asks billing for nothing", async () => {
-    for (const modules of [{ billing: false, billingCatalog: false }, CATALOG_ONLY]) {
-      const { core } = await open("/account/billing", SCENARIOS.personalActive(), { modules });
-      expect(has("Page not found")).toBe(true);
-      expect(has("Mentra Call Unlimited")).toBe(false);
-      expect(billingRequests(core)).toEqual([]);
-      await cleanup();
-      mock.restore();
-    }
-  });
-
   test("?purchase= is followed and dismissed on the personal page too", async () => {
     const scenario: Scenario = {
       ...SCENARIOS.personalActive(),
@@ -327,7 +320,7 @@ describe("Members", () => {
   const openDialog = () => document.querySelector("dialog[open]");
 
   test("the list gains the Licenses column with a chip per license held, from billing's catalog, and only shows them", async () => {
-    await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
+    await open(`/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     await until(() => has("Licenses") && findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     expect(rowOf("Hannah Kim").textContent).toContain("Call Unlimited");
     expect(rowOf("Luis Ortega").textContent).toContain("None");
@@ -339,7 +332,7 @@ describe("Members", () => {
   });
 
   test("a row opens nothing, and ?member= in the address is not read: there is no member panel", async () => {
-    await open(`/w/${ACME}/members?member=wm_luis`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
+    await open(`/members?member=wm_luis`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     expect(document.querySelector("dialog[data-slot='side-panel']")).toBeNull();
     expect(openDialog()).toBeNull();
     await click(rowOf("Luis Ortega"));
@@ -350,13 +343,13 @@ describe("Members", () => {
   });
 
   test("the Members page never asks billing for its status: the chips need only the catalog", async () => {
-    const { core } = await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
+    const { core } = await open(`/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     expect(billingRequests(core).map(request => request.path)).toEqual([`/api/portal/billing/workspaces/${ACME}/catalog`]);
   });
 
   test("an Owner changes a role from the row's menu, with the revision the page last saw", async () => {
-    const { core } = await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
+    const { core } = await open(`/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     await click(menuFor("Hannah Kim"));
     const items = findAll('[role="menuitem"]').map(item => item.textContent?.trim());
     expect(items).toEqual(["Change role to Developer", "Change role to Admin", "Change role to Owner", "Remove from workspace"]);
@@ -369,7 +362,7 @@ describe("Members", () => {
   });
 
   test("Remove asks in a dialog first, and removes the member only once it is confirmed", async () => {
-    const { core } = await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
+    const { core } = await open(`/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     await click(menuFor("Hannah Kim"));
     await click(byText("Remove from workspace", '[role="menuitem"]'));
     expect(find("h2", openDialog()!).textContent).toBe("Remove Hannah Kim from this workspace?");
@@ -382,21 +375,21 @@ describe("Members", () => {
   });
 
   test("there is no menu on the viewer's own row", async () => {
-    await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
+    await open(`/members`, SCENARIOS.threeActive(), { ready: "Hannah Kim" });
     expect(document.querySelector("button[aria-label='More for Dana Reyes']")).toBeNull();
     expect(findAll("button[aria-label^='More for ']").length).toBeGreaterThan(5);
   });
 
   test("without billing (a non-staff Admin) the list still has its chips, and asks billing for no status", async () => {
     const scenario: Scenario = { ...SCENARIOS.threeActive(), role: "admin", workspaceCatalog: workspaceCatalog(false) };
-    const { core } = await open(`/w/${ACME}/members`, scenario, { modules: CATALOG_ONLY, ready: "Hannah Kim" });
+    const { core } = await open(`/members`, scenario, { modules: CATALOG_ONLY, ready: "Hannah Kim" });
     await until(() => findAll("ul[aria-label='Licenses']").length > 0, "the Licenses column");
     expect(rowOf("Hannah Kim").textContent).toContain("Call Unlimited");
     expect(billingRequests(core).some(request => request.path.endsWith("/status"))).toBe(false);
   });
 
   test("without a catalog the list works without any of it (billing off: no Licenses column)", async () => {
-    const { core } = await open(`/w/${ACME}/members`, SCENARIOS.threeActive(), {
+    const { core } = await open(`/members`, SCENARIOS.threeActive(), {
       modules: { billing: false, billingCatalog: false },
       ready: "Hannah Kim",
     });
@@ -414,7 +407,7 @@ describe("an older Core", () => {
     const me = await fetchPortalMe();
     mock.restore();
     expect(me.modules).toEqual(BILLING_ON);
-    const { core } = await open(`/w/${ACME}/licenses`, SCENARIOS.twoActive(), { me, modules: me.modules, ready: "Mentra Call Unlimited" });
+    const { core } = await open(`/licenses`, SCENARIOS.twoActive(), { me, modules: me.modules, ready: "Mentra Call Unlimited" });
     expect(has("$145")).toBe(true);
     expect(billingRequests(core).some(request => request.path.endsWith("/catalog"))).toBe(true);
   });
@@ -433,7 +426,7 @@ describe("leaving for a hosted page", () => {
   });
 
   test("an action session's URL goes to window.location.assign, in this tab", async () => {
-    const { core } = await open(`/w/${ACME}/licenses`, answering(HOSTED.invoices), { ready: "Mentra Call Unlimited" });
+    const { core } = await open(`/licenses`, answering(HOSTED.invoices), { ready: "Mentra Call Unlimited" });
     const out = ways();
     await click(invoices());
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
@@ -445,7 +438,7 @@ describe("leaving for a hosted page", () => {
   });
 
   test.each(["https://billing.example.test/pay", "http://localhost:3000/pay", "http://127.0.0.1:8080/pay"])("follows %s", async url => {
-    await open(`/w/${ACME}/licenses`, answering(url), { ready: "Mentra Call Unlimited" });
+    await open(`/licenses`, answering(url), { ready: "Mentra Call Unlimited" });
     const out = ways();
     await click(invoices());
     await until(() => out.assign.mock.calls.length > 0, "the browser to leave");
@@ -455,7 +448,7 @@ describe("leaving for a hosted page", () => {
   test.each(["javascript:alert(1)", "data:text/html,<script>alert(1)</script>", "http://billing.example.test/pay", "http://localhost.evil.test/pay"])(
     "refuses %s with the generic refusal, and goes nowhere",
     async url => {
-      await open(`/w/${ACME}/licenses`, answering(url), { ready: "Mentra Call Unlimited" });
+      await open(`/licenses`, answering(url), { ready: "Mentra Call Unlimited" });
       const out = ways();
       await click(invoices());
       await until(() => has(GENERIC), "the refusal");
@@ -474,7 +467,7 @@ describe("leaving for a hosted page", () => {
   });
 
   test("an action listed with returns: false goes to a tab opened in the click, and this tab stays", async () => {
-    await open(`/w/${ACME}/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
+    await open(`/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
     const out = ways();
     await click(buttonNamed(/Complete payment/)!);
     // The tab was opened in the click itself, before billing answered.
@@ -488,7 +481,7 @@ describe("leaving for a hosted page", () => {
   test.each(["javascript:alert(1)", "data:text/html,x", "http://billing.example.test/pay"])(
     "a returns: false action whose URL is %s is refused: the tab it opened is closed",
     async url => {
-      await open(`/w/${ACME}/licenses`, unpaid(url), { ready: "Mentra Call Unlimited" });
+      await open(`/licenses`, unpaid(url), { ready: "Mentra Call Unlimited" });
       const out = ways();
       await click(buttonNamed(/Complete payment/)!);
       await until(() => has(GENERIC), "the refusal");
@@ -498,7 +491,7 @@ describe("leaving for a hosted page", () => {
   );
 
   test("a tab the person closed while billing answered is not an error: the link to the page is offered instead", async () => {
-    await open(`/w/${ACME}/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
+    await open(`/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
     const out = ways({ closeAfterOpen: true });
     await click(buttonNamed(/Complete payment/)!);
     await until(() => has("Open the payment page"), "the link");
@@ -511,7 +504,7 @@ describe("leaving for a hosted page", () => {
   });
 
   test("a tab the browser blocked leaves a link to the page for a second click", async () => {
-    await open(`/w/${ACME}/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
+    await open(`/licenses`, unpaid(HOSTED.invoice), { ready: "Mentra Call Unlimited" });
     const out = ways();
     out.openWindow.mockImplementation((() => null) as unknown as typeof window.open);
     await click(buttonNamed(/Complete payment/)!);
@@ -523,7 +516,7 @@ describe("leaving for a hosted page", () => {
   });
 
   test("a purchase goes the same way: the checkout's URL to this tab", async () => {
-    const { core } = await open(`/w/${ACME}/licenses`, answering(HOSTED.checkout, SCENARIOS.catalog()), { ready: "Mentra Call Unlimited" });
+    const { core } = await open(`/licenses`, answering(HOSTED.checkout, SCENARIOS.catalog()), { ready: "Mentra Call Unlimited" });
     const out = ways();
     await click(findAll<HTMLElement>("button").find(button => button.textContent?.trim() === "Buy")!);
     await until(() => has("Continue to payment"), "the licenses step");
@@ -546,7 +539,7 @@ describe("the test-mode notice", () => {
   afterEach(() => window.sessionStorage.clear());
 
   test("× hides it on the Licenses page and, in the same session, on the personal Billing page, and the other way round", async () => {
-    await open(`/w/${ACME}/licenses`, SCENARIOS.testMode(), { ready: "Test mode · Staging" });
+    await open(`/licenses`, SCENARIOS.testMode(), { ready: "Test mode · Staging" });
     expect(findAll("[role='note']")).toHaveLength(1);
     await click(find(HIDE));
     expect(findAll("[role='note']")).toHaveLength(0);
@@ -563,7 +556,7 @@ describe("the test-mode notice", () => {
     await click(find(HIDE));
     await cleanup();
     mock.restore();
-    await open(`/w/${ACME}/licenses`, SCENARIOS.testMode(), { ready: "Buy licenses for your members" });
+    await open(`/licenses`, SCENARIOS.testMode(), { ready: "Buy licenses for your members" });
     expect(findAll("[role='note']")).toHaveLength(0);
   });
 });
@@ -574,10 +567,10 @@ describe("what no page says", () => {
 
   test("neither the processor's name nor one of its ids, on the Licenses page, Members, or the personal page", async () => {
     const pages: Array<[string, Scenario, string]> = [
-      [`/w/${ACME}/licenses`, SCENARIOS.paymentFailed(), "Mentra Call Unlimited"],
-      [`/w/${ACME}/members`, SCENARIOS.threeActive(), "Hannah Kim"],
+      [`/licenses`, SCENARIOS.paymentFailed(), "Mentra Call Unlimited"],
+      [`/members`, SCENARIOS.threeActive(), "Hannah Kim"],
       ["/account/billing", SCENARIOS.personalActive(), "Mentra Call Unlimited"],
-      [`/w/${ACME}/licenses`, SCENARIOS.testMode(), "Mentra Call Unlimited"],
+      [`/licenses`, SCENARIOS.testMode(), "Mentra Call Unlimited"],
     ];
     for (const [path, scenario, ready] of pages) {
       await open(path, scenario, { ready });

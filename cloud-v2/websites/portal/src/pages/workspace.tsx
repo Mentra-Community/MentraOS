@@ -1,5 +1,6 @@
 /**
- * One workspace in the workspace portal: `/w/<workspaceId>/<section>`, framed by the sidebar.
+ * One workspace in the workspace portal: `/<section>` (`?workspace=<workspaceId>` when it is not the one the bare
+ * address opens), framed by the sidebar.
  *
  * The sections are the shared Core workspace screens (`@mentra/workspace-ui`): Members (the member list
  * with the pending invitations under it, and Invite in the header), Settings and the Audit log, and Licenses
@@ -39,12 +40,12 @@ import {
   type NavGroup,
 } from "@mentra/workspace-ui";
 import { CreditCard, ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { PortalShell } from "@/components/portal-shell";
 import { safeLocalStorage, type PortalMe } from "@/lib/api";
 import { navigate, Redirect } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
-import { forgetWorkspace, rememberWorkspace, workspacePath, type WorkspaceSection } from "@/lib/routes";
+import { forgetWorkspace, sectionHref, type WorkspaceSection } from "@/lib/routes";
 import { billingOffered, LicensesHeaderActions, LicensesScreen } from "./licenses";
 import { NotFoundMessage } from "./not-found";
 
@@ -118,8 +119,11 @@ export function visibleSections(
   });
 }
 
-/** The sidebar for this workspace and viewer. */
-export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSection[]): NavGroup[] {
+/**
+ * The sidebar for this workspace and viewer. Its links carry `?workspace=` exactly when `workspaceId` is not what the
+ * bare address opens (`bareWorkspaceId`).
+ */
+export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSection[], bareWorkspaceId: string | null): NavGroup[] {
   return NAV_GROUPS.map(group => ({
     key: group.key,
     label: group.label,
@@ -129,7 +133,7 @@ export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSe
         key: section,
         label: SECTIONS[section].label,
         icon: SECTIONS[section].icon,
-        href: workspacePath(workspaceId, section),
+        href: sectionHref(section, workspaceId, bareWorkspaceId),
       })),
   }));
 }
@@ -188,10 +192,14 @@ export function useMembersLicenses({
 
 export function WorkspaceScreen({
   workspaceId,
+  bareWorkspaceId,
   section,
   me,
 }: {
   workspaceId: string;
+  /** The workspace the bare address opens for this person, if they have one. */
+  bareWorkspaceId: string | null;
+  /** The section the address names; null for `/`, which opens the first one the viewer may. */
   section: WorkspaceSection | null;
   me: PortalMe;
 }) {
@@ -213,10 +221,6 @@ export function WorkspaceScreen({
   const waitingForLicenses = data !== undefined && section === "licenses" && active === null && licenses.isPending;
   // The Members list shows each member's licenses.
   const membersLicenses = useMembersLicenses({ me, workspaceId, detail: data, licenses: licenses.data, enabled: active === "members" });
-
-  useEffect(() => {
-    if (data) rememberWorkspace(safeLocalStorage(), workspaceId);
-  }, [data, workspaceId]);
 
   if (!data && detail.isError && isNoAccess(detail.error)) {
     return (
@@ -248,7 +252,7 @@ export function WorkspaceScreen({
     <PortalShell
       current={current}
       section={active ?? undefined}
-      nav={workspaceNav(workspaceId, sections)}
+      nav={workspaceNav(workspaceId, sections, bareWorkspaceId)}
       activeKey={active}
       title={meta?.label ?? name}
       description={meta?.description(name)}
@@ -281,8 +285,8 @@ export function WorkspaceScreen({
           <Spinner /> Loading licenses
         </div>
       ) : !active ? (
-        // `/w/<id>`, or a section this viewer does not have: open the first one they do.
-        <Redirect to={workspacePath(workspaceId, sections[0] ?? "settings")} />
+        // `/`, or a section this viewer does not have: open the first one they do.
+        <Redirect to={sectionHref(sections[0] ?? "settings", workspaceId, bareWorkspaceId)} />
       ) : active === "members" ? (
         <div className="space-y-6">
           {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}

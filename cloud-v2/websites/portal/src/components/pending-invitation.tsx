@@ -3,7 +3,7 @@
  * first run and on `/invitation`, and as an entry in the workspace switcher.
  *
  * Accept uses the link's token when the invitation came by this tab's link, its id otherwise; Core runs
- * the same checks either way. Accepting opens the workspace joined. Dismiss stops offering it in this
+ * the same checks either way. Accepting opens the workspace joined, at the address the person is on. Dismiss stops offering it in this
  * browser. An invitation for another account offers Switch account (the portal's sign-out) instead.
  */
 
@@ -17,7 +17,7 @@ import {
 import type { PendingInvitation } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { INVITATION_PATH, workspacePath } from "@/lib/routes";
+import { INVITATION_PATH, joinedAddress } from "@/lib/routes";
 
 /** Accept and Dismiss for `invitation`, with what each tells the rest of the portal. */
 function useInvitationActions(invitation: PendingInvitation) {
@@ -27,7 +27,8 @@ function useInvitationActions(invitation: PendingInvitation) {
   const accept = useAcceptInvitation(portalWorkspaceApi, token ? { token } : { invitationId: preview.invitationId }, {
     onAccepted: accepted => {
       portal.forgetInvitation(which, "accepted");
-      navigate(workspacePath(accepted.workspaceId), { replace: true });
+      // The joined workspace opens at the address the person is on, with the rest of its query (`?buy=`) kept.
+      navigate(joinedAddress(window.location.pathname, window.location.search, accepted.workspaceId), { replace: true });
     },
     onGone: () => portal.forgetInvitation(which, "gone"),
   });

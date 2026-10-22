@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BrandPage, buttonVariants, Spinner, workspaceListQuery } from "@mentra/workspace-ui";
-import { useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { PortalShell } from "@/components/portal-shell";
 import { SignedOutScreen } from "./components/signed-out";
 import { fetchPortalMe, safeLocalStorage, type PortalMe } from "./lib/api";
 import { DEVELOPER_CONSOLE_URL } from "./lib/config";
-import { Redirect, usePathname } from "./lib/navigation";
+import { Redirect, setQueryParam, usePathname, useSearch } from "./lib/navigation";
 import {
   expireSession,
   PORTAL_ME_KEY,
@@ -15,18 +15,20 @@ import {
   type PortalSession,
 } from "./lib/portal";
 import {
-  homeWorkspace,
+  currentWorkspace,
   INVITATION_PATH,
   invitationLanding,
+  legacyRedirect,
   parseRoute,
   recallWorkspace,
-  workspacePath,
+  rememberWorkspace,
+  workspaceParam,
   type PortalRoute,
+  type WorkspaceSection,
 } from "./lib/routes";
 import { loginHref, signOutOfEnterprisePortal } from "./lib/session";
 import { usePortalInvitations } from "./lib/use-portal-invitations";
 import { takePendingInvite } from "./lib/workspace-invite";
-import { AccountBillingScreen } from "./pages/account-billing";
 import { EnterpriseScreen } from "./pages/enterprise";
 import { NotFoundMessage } from "./pages/not-found";
 import { InvitationScreen, WelcomeScreen } from "./pages/welcome";
@@ -122,24 +124,24 @@ function PortalPage() {
   );
 }
 
-/** The screen for an address. Needs a `PortalProvider` and a `QueryClientProvider`. */
-export function PortalRoutes({ route, me }: { route: PortalRoute; me: PortalMe }) {
+/**
+ * The screen for an address. Needs a `PortalProvider` and a `QueryClientProvider`. `search` is the address's query
+ * string; without it, the window's.
+ */
+export function PortalRoutes({ route, me, search }: { route: PortalRoute; me: PortalMe; search?: string }) {
+  const query = useSearch(search);
   switch (route.kind) {
     case "home":
-      return <HomeRoute />;
+      return <WorkspaceRoute section={null} search={query} me={me} />;
+    case "section":
+      return <WorkspaceRoute section={route.section} search={query} me={me} />;
+    case "legacy-workspace": {
+      // An older `/w/<id>[/<section>]` address: the same page at its short address, keeping its query.
+      const older = `/w/${encodeURIComponent(route.workspaceId)}${route.section ? `/${route.section}` : ""}`;
+      return <Redirect to={legacyRedirect(older, query) ?? "/"} />;
+    }
     case "invitation":
       return <InvitationRoute />;
-    case "workspace":
-      return <WorkspaceScreen key={route.workspaceId} workspaceId={route.workspaceId} section={route.section} me={me} />;
-    case "account-billing":
-      // A person who is not offered billing gets the same page as for any address the portal does not have.
-      return me.modules.billing ? (
-        <AccountBillingScreen />
-      ) : (
-        <PortalShell current={null} nav={[]} activeKey={null}>
-          <NotFoundMessage kind="page" />
-        </PortalShell>
-      );
     case "enterprise":
       return <EnterpriseScreen page={route.page} me={me} />;
     case "not-found":
@@ -151,23 +153,44 @@ export function PortalRoutes({ route, me }: { route: PortalRoute; me: PortalMe }
   }
 }
 
-/** `/`: the last-used workspace, else the first one, else the first run. */
-function HomeRoute() {
+/**
+ * `/` and a section's address: the current workspace (`?workspace=`, else the last one opened from the person's
+ * own list, else their first), or the first run when there is none.
+ *
+ * A workspace opened from the person's list through `?workspace=` is remembered, and a `?workspace=` that names
+ * what the bare address opens is dropped from the address in place. One the person is not in (an Organization Admin
+ * at a customer's workspace) is neither remembered nor dropped: it never becomes the bare address.
+ */
+function WorkspaceRoute({ section, search, me }: { section: WorkspaceSection | null; search: string; me: PortalMe }) {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   const { invitations } = usePortal();
-  if (list.data === undefined && !list.isError) return <Splash label="Loading your workspaces" />;
-  const target = list.data ? homeWorkspace(list.data, recallWorkspace(safeLocalStorage())) : null;
-  // The first run offers the person's invitations instead of creating a workspace, so it waits for them.
-  if (!target && invitations === undefined) return <Splash label="Looking for your invitations" />;
-  if (target) {
-    return (
-      <>
-        <Splash label="Opening your workspace" />
-        <Redirect to={workspacePath(target)} />
-      </>
-    );
+  // Storage is read on every render, so what was just remembered (or forgotten) is what the bare address means now.
+  const [, rereadStorage] = useReducer((count: number) => count + 1, 0);
+  const param = workspaceParam(search);
+  const workspaces = list.data;
+  const bare = workspaces ? currentWorkspace({ param: null, remembered: recallWorkspace(safeLocalStorage()), workspaces }) : null;
+  const current = param ?? bare;
+  const inList = param !== null && (workspaces?.some(item => item.workspaceId === param) ?? false);
+
+  useEffect(() => {
+    if (!param || !inList) return;
+    if (recallWorkspace(safeLocalStorage()) !== param) {
+      rememberWorkspace(safeLocalStorage(), param);
+      rereadStorage();
+    }
+  }, [param, inList]);
+
+  useEffect(() => {
+    if (param && param === bare) setQueryParam("workspace", null, { replace: true });
+  }, [param, bare]);
+
+  if (workspaces === undefined && !list.isError) return <Splash label="Loading your workspaces" />;
+  if (!current) {
+    // The first run offers the person's invitations instead of creating a workspace, so it waits for them.
+    if (invitations === undefined) return <Splash label="Looking for your invitations" />;
+    return <WelcomeScreen />;
   }
-  return <WelcomeScreen />;
+  return <WorkspaceScreen key={current} workspaceId={current} bareWorkspaceId={bare} section={section} me={me} />;
 }
 
 /** `/invitation`: the invitation link this tab holds (or, once, that it is no longer valid); without one, home. */

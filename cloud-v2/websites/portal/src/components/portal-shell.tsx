@@ -17,10 +17,11 @@ import {
 import { CodeXml, CreditCard } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { SwitcherInvitationActions } from "@/components/pending-invitation";
+import { safeLocalStorage } from "@/lib/api";
 import type { PendingInvitation } from "@/lib/invitations";
 import { Link, navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { ACCOUNT_BILLING_PATH, workspacePath, type WorkspaceSection } from "@/lib/routes";
+import { ACCOUNT_BILLING_PATH, currentWorkspace, recallWorkspace, sectionHref, type WorkspaceSection } from "@/lib/routes";
 
 /**
  * The person's valid invitations as switcher entries, with Accept and Dismiss: the one this tab's link
@@ -42,6 +43,15 @@ export function switcherInvitation(invitation: PendingInvitation): SwitcherInvit
       : [ROLE_LABELS[preview.role], preview.invitedByEmail ? `from ${preview.invitedByEmail}` : null].filter(Boolean).join(" · "),
     actions: <SwitcherInvitationActions invitation={invitation} />,
   };
+}
+
+/**
+ * The workspace the bare address (`/members`, without `?workspace=`) opens for this person: the last one opened from
+ * their list while it is still there, else their first. Null while the list loads, and for a person in none.
+ */
+export function useBareWorkspaceId(): string | null {
+  const list = useQuery(workspaceListQuery(portalWorkspaceApi));
+  return list.data ? currentWorkspace({ param: null, remembered: recallWorkspace(safeLocalStorage()), workspaces: list.data }) : null;
 }
 
 /** The sidebar's links out of the portal: this environment's Developer Console, where there is one. */
@@ -87,13 +97,14 @@ export function PortalShell({
   const portal = usePortal();
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   const invitations = useSwitcherInvitations();
+  const bareWorkspaceId = useBareWorkspaceId();
   const [creating, setCreating] = useState(false);
 
   const workspaces: SwitcherWorkspace[] | undefined = list.data?.map(item => ({
     workspaceId: item.workspaceId,
     name: item.name,
     roleLabel: ROLE_LABELS[item.membership.role],
-    href: workspacePath(item.workspaceId, section),
+    href: sectionHref(section ?? null, item.workspaceId, bareWorkspaceId),
   }));
 
   return (
@@ -131,7 +142,7 @@ export function PortalShell({
         api={portalWorkspaceApi}
         open={creating}
         onClose={() => setCreating(false)}
-        onCreated={created => navigate(workspacePath(created.workspaceId))}
+        onCreated={created => navigate(sectionHref(null, created.workspaceId, null))}
       />
     </AppShell>
   );

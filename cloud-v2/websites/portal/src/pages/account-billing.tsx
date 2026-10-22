@@ -11,11 +11,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { licenseStrings, PersonalBillingHeaderActions, PersonalBillingView, workspaceListQuery, type NavGroup } from "@mentra/workspace-ui";
 import { ArrowLeft, CreditCard } from "lucide-react";
-import { PortalShell } from "@/components/portal-shell";
-import { safeLocalStorage } from "@/lib/api";
+import { PortalShell, useBareWorkspaceId } from "@/components/portal-shell";
 import { setQueryParam, useSearch } from "@/lib/navigation";
 import { portalBillingApi, portalNavigateOut, portalWorkspaceApi } from "@/lib/portal";
-import { ACCOUNT_BILLING_PATH, homeWorkspace, recallWorkspace, workspacePath } from "@/lib/routes";
+import { ACCOUNT_BILLING_PATH } from "@/lib/routes";
 import { purchaseParam } from "./licenses";
 
 const t = licenseStrings;
@@ -31,7 +30,7 @@ export function accountNav(workspace: { workspaceId: string; name: string } | nu
     {
       key: "workspace",
       items: workspace
-        ? [{ key: "workspace", label: t.nav.backTo(workspace.name), icon: ArrowLeft, href: workspacePath(workspace.workspaceId) }]
+        ? [{ key: "workspace", label: t.nav.backTo(workspace.name), icon: ArrowLeft, href: "/" }]
         : [],
     },
   ];
@@ -40,7 +39,7 @@ export function accountNav(workspace: { workspaceId: string; name: string } | nu
 export function AccountBillingScreen() {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
   // The workspace `/` would open: the last-used one while it is still theirs, else the first.
-  const homeId = list.data ? homeWorkspace(list.data, recallWorkspace(safeLocalStorage())) : null;
+  const homeId = useBareWorkspaceId();
   const home = list.data?.find(item => item.workspaceId === homeId) ?? null;
   // What the view and its header actions are both given, so that billing is asked once.
   const shared = { billing: portalBillingApi, purchaseId: purchaseParam(useSearch()), navigateOut: portalNavigateOut };
