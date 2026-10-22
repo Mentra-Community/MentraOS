@@ -125,6 +125,13 @@ describe("cloud workspace calls", () => {
     warn.mockRestore()
   })
 
+  test("a leave names the workspace on screen, so Core never removes the person from another", async () => {
+    workspaces.leave.mockResolvedValue(undefined)
+    useMyWorkspaceStore.getState().set(WORKSPACE)
+    await expect(cloudWorkspaceApi.leave()).resolves.toBeUndefined()
+    expect(workspaces.leave).toHaveBeenCalledWith({expectedAccount: "user_a", workspaceId: "ws_1"})
+  })
+
   test("refreshing desired state asks the reconciler and never throws", async () => {
     await expect(cloudWorkspaceApi.refreshDesiredState()).resolves.toBeUndefined()
     expect(triggerAssignmentReconcile).toHaveBeenCalledTimes(1)

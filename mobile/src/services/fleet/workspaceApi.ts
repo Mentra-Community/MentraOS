@@ -22,7 +22,10 @@ export interface WorkspaceApi {
   accept(invitationId: string): Promise<MyWorkspace>
   /** `POST .../invitations/:invitationId/decline`: turn the invitation down (idempotent). */
   decline(invitationId: string): Promise<void>
-  /** `POST /api/client/workspaces/leave`. Rejects `last_owner` for the workspace's only Owner. */
+  /**
+   * `POST /api/client/workspaces/leave`, naming the stored workspace. Rejects `last_owner` for the workspace's only
+   * Owner, and `membership_changed` when the person is no longer in the stored workspace.
+   */
   leave(): Promise<void>
   /**
    * Fetch Fleet's desired state now, without waiting for a revision ack, and apply it. It is called straight

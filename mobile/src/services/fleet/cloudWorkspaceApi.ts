@@ -87,7 +87,11 @@ export const cloudWorkspaceApi: WorkspaceApi = {
     await asSignedInAccount((opts) => cloudClientService.core.workspaces.declineInvitation(invitationId, opts))
   },
   async leave() {
-    await asSignedInAccount((opts) => cloudClientService.core.workspaces.leave(opts))
+    // The workspace on screen is the one the person chose to leave; Core refuses it once they are not in it.
+    const workspaceId = useMyWorkspaceStore.getState().workspace?.workspaceId
+    await asSignedInAccount((opts) =>
+      cloudClientService.core.workspaces.leave(workspaceId ? {...opts, workspaceId} : opts),
+    )
     try {
       notifyFleetWorkspaceLeft()
     } catch (error) {
