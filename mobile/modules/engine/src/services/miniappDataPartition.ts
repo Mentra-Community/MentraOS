@@ -5,11 +5,11 @@
  * A package runs in its workspace's partition while that workspace assigned it to the signed-in account, and in the
  * account's personal partition otherwise. Data written before partitions existed belongs to the personal one.
  *
- * - The partition a running package uses is pinned when it starts and released when it stops, so its private
- *   execution context changes only while it is stopped.
+ * - The partition a package's live context uses (a hidden or background one too) is pinned when the context starts
+ *   and released when it stops, so its private execution context changes only while it is stopped.
  * - Development selections (the `<pkg>_dev_*` keys and `dev_apps_index` in the default MMKV instance, read by many
  *   modules) are swapped as a set: the outgoing context's set is stashed, the incoming one's restored. A swap that
- *   would change the selection of a running package waits until it stops. `dev-*` snapshot directories are shared
+ *   would change the selection of a package with a live context waits until it stops. `dev-*` snapshot directories are shared
  *   on disk, so each is tagged with the context that installed it and is invisible elsewhere.
  *
  * Partition state lives in its own MMKV instance (`mentra-miniapp-partitions`), which logout does not clear.
@@ -18,7 +18,7 @@ import {createMMKV, type MMKV} from "react-native-mmkv"
 
 import {storage} from "../utils/storage/storage"
 import {normalizeCoreUrl} from "./fleet/coreUrl"
-import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {miniappContextRegistry} from "./MiniappRunningRegistry"
 
 /** The account a request speaks for, on its Core. */
 export interface MiniappDataSession {
@@ -76,7 +76,7 @@ const DEV_SWAP_KEY = "devsel.swap"
 let partitionStore: MMKV | undefined
 let hooks: MiniappDataPartitionHooks | null = null
 const pins = new Map<string, MiniappDataContext>()
-let unsubscribeRunning: (() => void) | null = null
+let unsubscribeContexts: (() => void) | null = null
 
 function store(): MMKV {
   return (partitionStore ??= createMMKV({id: MINIAPP_PARTITION_STORE_ID}))
@@ -128,11 +128,11 @@ function computeContext(packageName: string, session: MiniappDataSession): Minia
 
 function syncPins(): void {
   for (const packageName of [...pins.keys()]) {
-    if (!miniappRunningRegistry.has(packageName)) pins.delete(packageName)
+    if (!miniappContextRegistry.has(packageName)) pins.delete(packageName)
   }
   const session = currentSession()
   if (session) {
-    for (const packageName of miniappRunningRegistry.getAll()) {
+    for (const packageName of miniappContextRegistry.getAll()) {
       if (!pins.has(packageName)) pins.set(packageName, computeContext(packageName, session))
     }
   }
@@ -142,19 +142,19 @@ function syncPins(): void {
 /** Install the session and assignment sources. Safe to call again; the last hooks win. */
 export function configureMiniappDataPartitions(next: MiniappDataPartitionHooks): void {
   hooks = next
-  unsubscribeRunning ??= miniappRunningRegistry.subscribe(syncPins)
+  unsubscribeContexts ??= miniappContextRegistry.subscribe(syncPins)
   syncPins()
 }
 
 /** The data context `packageName` reads and writes now. Throws while no account is known. */
 export function miniappDataContext(packageName: string): MiniappDataContext {
   const pinned = pins.get(packageName)
-  if (pinned && miniappRunningRegistry.has(packageName)) return pinned
+  if (pinned && miniappContextRegistry.has(packageName)) return pinned
   pins.delete(packageName)
   const session = currentSession()
   if (!session) throw new Error("Mentra user identity is unavailable")
   const context = computeContext(packageName, session)
-  if (miniappRunningRegistry.has(packageName)) pins.set(packageName, context)
+  if (miniappContextRegistry.has(packageName)) pins.set(packageName, context)
   return context
 }
 
@@ -256,7 +256,7 @@ export function syncDevelopmentSelections(): void {
     const affected = [...Object.keys(outgoing), ...Object.keys(stashedDevSelection(target))]
       .map(packageOfDevKey)
       .filter((packageName): packageName is string => packageName !== null)
-    if (affected.some((packageName) => miniappRunningRegistry.has(packageName))) return
+    if (affected.some((packageName) => miniappContextRegistry.has(packageName))) return
     store().set(`devsel:${active}`, JSON.stringify(outgoing))
     store().set(DEV_SWAP_KEY, JSON.stringify({from: active, to: target}))
     finishSwap(target)
@@ -299,7 +299,7 @@ export function isDevSnapshotVisible(packageName: string, version: string): bool
 export function resetMiniappDataPartitionsForTests(): void {
   hooks = null
   pins.clear()
-  unsubscribeRunning?.()
-  unsubscribeRunning = null
+  unsubscribeContexts?.()
+  unsubscribeContexts = null
   partitionStore?.clearAll()
 }

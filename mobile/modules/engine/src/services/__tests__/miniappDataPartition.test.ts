@@ -6,7 +6,7 @@ import {fakeCreateMMKV, mmkvInstances, resetFakeMmkv} from "../fleet/__tests__/f
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 const partitions = await import("../miniappDataPartition")
 const {storage} = await import("../../utils/storage/storage")
-const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
+const {miniappContextRegistry, miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 
 const CORE = "https://core.mentra.glass"
 const pkg = "com.acme.notes"
@@ -20,6 +20,17 @@ function configure() {
   })
 }
 
+/** A projected context, as the router registers one: running and live. */
+function startRunning(packageName: string): void {
+  miniappContextRegistry.add(packageName)
+  miniappRunningRegistry.add(packageName)
+}
+
+function stopRunning(packageName: string): void {
+  miniappRunningRegistry.remove(packageName)
+  miniappContextRegistry.remove(packageName)
+}
+
 function load(key: string): unknown {
   const value = storage.load<unknown>(key)
   return value.is_ok() ? value.value : undefined
@@ -27,6 +38,7 @@ function load(key: string): unknown {
 
 beforeEach(() => {
   for (const running of miniappRunningRegistry.getAll()) miniappRunningRegistry.remove(running)
+  for (const live of miniappContextRegistry.getAll()) miniappContextRegistry.remove(live)
   partitions.resetMiniappDataPartitionsForTests()
   resetFakeMmkv()
   session = {coreUrl: CORE, mentraUserId: "mu_1"}
@@ -57,17 +69,27 @@ describe("data partition of a package", () => {
 
   test("changes only while the package is stopped", () => {
     assigned.set(pkg, "ws_A")
-    miniappRunningRegistry.add(pkg)
+    startRunning(pkg)
     const running = partitions.resolveMiniappDataPartition(pkg).id
     // Leave A, join B while it runs: the running code keeps A's context.
     assigned.set(pkg, "ws_B")
     expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(running)
     session = {coreUrl: CORE, mentraUserId: "mu_2"}
     expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(running)
-    miniappRunningRegistry.remove(pkg)
+    stopRunning(pkg)
     const after = partitions.resolveMiniappDataPartition(pkg)
     expect(after.id).not.toBe(running)
     expect(after.id).toBe(partitions.partitionIdOf({coreUrl: CORE, mentraUserId: "mu_2", workspaceId: "ws_B"}))
+  })
+
+  test("of a hidden or background context stays pinned for that context's lifetime", () => {
+    assigned.set(pkg, "ws_A")
+    miniappContextRegistry.add(pkg)
+    const live = partitions.resolveMiniappDataPartition(pkg).id
+    assigned.set(pkg, "ws_B")
+    expect(partitions.resolveMiniappDataPartition(pkg).id).toBe(live)
+    miniappContextRegistry.remove(pkg)
+    expect(partitions.resolveMiniappDataPartition(pkg).id).not.toBe(live)
   })
 
   test("is refused while no account is known", () => {
@@ -124,10 +146,19 @@ describe("development selections", () => {
 
   test("wait for a running package to stop before switching", () => {
     storage.save(`${pkg}_dev_url`, "http://192.168.1.5:5173")
-    miniappRunningRegistry.add(pkg)
+    startRunning(pkg)
     partitions.setFleetWorkspace(session!, "ws_B")
     expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
-    miniappRunningRegistry.remove(pkg)
+    stopRunning(pkg)
+    expect(load(`${pkg}_dev_url`)).toBeUndefined()
+  })
+
+  test("wait for a hidden context to stop before switching", () => {
+    storage.save(`${pkg}_dev_url`, "http://192.168.1.5:5173")
+    miniappContextRegistry.add(pkg)
+    partitions.setFleetWorkspace(session!, "ws_B")
+    expect(load(`${pkg}_dev_url`)).toBe("http://192.168.1.5:5173")
+    miniappContextRegistry.remove(pkg)
     expect(load(`${pkg}_dev_url`)).toBeUndefined()
   })
 
